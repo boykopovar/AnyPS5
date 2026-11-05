@@ -953,7 +953,7 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
             }
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
-            if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount || PipelineSpecialization::IsPushPlacement(found->first)) {
+            if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount || found->first == PipelineSpecialization::HeapImageSlots || PipelineSpecialization::IsPushPlacement(found->first)) {
                 retained.insert(words[cursor + 1u]);
                 cursor += count;
                 continue;
@@ -1395,6 +1395,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             auto constants = plan->bindings.specialization;
             constants.push_back({PipelineSpecialization::MeshLayerBase, 0u});
             constants.push_back({PipelineSpecialization::MeshLayerCount, 0xffffffffu});
+            constants.push_back({PipelineSpecialization::HeapImageSlots, RuntimeAbi::GpuImageHeapSlots});
             if (artifact.dataAddressPush) AppendPushSpecialization(constants, StandalonePushPlacement(request.shader.stage, artifact.pushItems, artifact.pushedData.size()));
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});

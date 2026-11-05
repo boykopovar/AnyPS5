@@ -503,8 +503,9 @@ void DefineDescriptors(SpirvEmitterState& state) {
         };
         const auto ArrayType = [&](std::uint32_t type) {
             const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const auto count = gpuHeap ? (binding.kind == DescriptorBindingKind::Samplers ? RuntimeAbi::GpuSamplerHeapSlots : RuntimeAbi::GpuImageHeapSlots) : static_cast<std::uint32_t>(binding.resources.size());
-            const auto length = heap && !gpuHeap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
+            const bool samplers = binding.kind == DescriptorBindingKind::Samplers;
+            const auto count = gpuHeap ? (samplers ? RuntimeAbi::GpuSamplerHeapSlots : RuntimeAbi::GpuImageHeapSlots) : static_cast<std::uint32_t>(binding.resources.size());
+            const auto length = gpuHeap && !samplers ? HeapImageSlotCount(state) : heap && !gpuHeap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
             return state.module.Type(spv::OpTypeArray, type, length);
         };
         switch (binding.kind) {
@@ -588,7 +589,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
                         const auto value = static_cast<std::uint32_t>(kind);
                         const auto part = RuntimeAbi::StorageHeapPart(value);
                         const auto heapKind = binding.kind != DescriptorBindingKind::ImageStorageTable ? RuntimeAbi::FirstImageBinding : part == RuntimeAbi::HeapPart::Atomic || part == RuntimeAbi::HeapPart::Atomic64 ? RuntimeAbi::HeapPartFirstBinding(part) : RuntimeAbi::FirstStorageImageBinding;
-                        const auto slotCount = ConstantU32(state, RuntimeAbi::GpuImageHeapSlots);
+                        const auto slotCount = HeapImageSlotCount(state);
                         state.tableImageVariables.push_back({kind, defineHeapArray(state, slotCount, ImageType(state, mode), name.c_str(), heapKind)});
                     } else {
                         state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});

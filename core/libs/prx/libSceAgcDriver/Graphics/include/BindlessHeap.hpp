@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -68,6 +69,8 @@ public:
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
     static std::uint32_t ImageSlotCapacity();
+    std::uint32_t ImageSlots() const { return slotCap; }
+    void TouchSlots(std::span<const std::vector<std::uint32_t>> slots) const;
 
     struct DataSpan {
         std::uint32_t offset = 0;
@@ -89,7 +92,8 @@ public:
 
     struct Counts {
         std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
-        std::uint64_t slotsFreed = 0, slotsReused = 0;
+        std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
+        std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0;
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, bufferDescriptors = 0;
     };
     Counts Statistics() const;
@@ -173,6 +177,18 @@ private:
     SlotPool imagePool;
     SlotPool samplerPool;
     std::uint32_t slotCap = 0;
+    std::unique_ptr<std::atomic<std::uint32_t>[]> slotUses;
+    std::atomic<std::uint32_t> useEpoch{1};
+    struct RetiringSlot {
+        std::uint32_t slot = 0;
+        std::uint64_t serial = 0;
+    };
+    std::deque<RetiringSlot> retiring;
+    std::size_t ringBatchBytes = 0;
+    Recorder* submitter = nullptr;
+    void touchLocked(std::uint32_t slot) const;
+    void evictLocked();
+    bool reclaimLocked(bool wait);
     std::optional<std::uint32_t> imageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout, Texture* texture);
     SlotOwner& claimSlotLocked(const ImageSlotKey& key, std::uint32_t slot);
     void freeSlotLocked(std::uint32_t slot);

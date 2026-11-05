@@ -42,6 +42,8 @@ struct Module {
     std::set<std::pair<std::uint32_t, std::uint32_t>> perPrimitiveMembers;
     std::map<std::uint32_t, Variable> variables;
     std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::uint32_t> specConstants;
+    std::map<std::uint32_t, std::uint32_t> specIds;
     std::set<std::uint32_t> interface;
     std::map<std::uint32_t, std::string> inputs;
     std::map<std::uint32_t, std::string> outputs;
@@ -167,6 +169,13 @@ struct Module {
         }
     }
 };
+
+bool heapImageSlotsLength(const Module& module, std::uint32_t id) {
+    const auto constant = module.specConstants.find(id);
+    const auto specId = module.specIds.find(id);
+    return constant != module.specConstants.end() && constant->second == ShaderRecompiler::RuntimeAbi::GpuImageHeapSlots && specId != module.specIds.end() &&
+           specId->second == ShaderRecompiler::PipelineSpecialization::HeapImageSlots;
+}
 
 Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool shaderResourceMinLod, bool fmaFloat16, std::span<const std::uint32_t> primitiveLocations = {}) {
     using Stage = ShaderRecompiler::ShaderStage;
@@ -423,6 +432,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     decoration.perVertex = true;
                 }
                 if (kind == spv::DecorationBlock) decoration.block = true;
+                if (kind == spv::DecorationSpecId && count == 4) module.specIds[instruction[1]] = instruction[3];
                 if (kind == spv::DecorationAliased) decoration.aliased = true;
                 break;
             }
@@ -453,6 +463,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 if (count == 4) module.constants.emplace(instruction[2], instruction[3]);
                 break;
             case spv::OpSpecConstant:
+                if (count == 4) module.specConstants.emplace(instruction[2], instruction[3]);
                 break;
             default: break;
         }
@@ -593,7 +604,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 tableAlias = tables && key.first == Abi::FragmentDescriptorSet && (samplerAlias || imageAlias);
                 if (tableAlias && binding == shader.bindings.end()) {
                     const auto count = type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray ? module.constants.find(type[3]) : module.constants.end();
-                    Require(count != module.constants.end() && count->second == (samplerAlias ? Abi::GpuSamplerHeapSlots : Abi::GpuImageHeapSlots), "an image table's heap array length disagrees with the global heap");
+                    Require(samplerAlias ? count != module.constants.end() && count->second == Abi::GpuSamplerHeapSlots : heapImageSlotsLength(module, type[3]),
+                            "an image table's heap array length disagrees with the global heap");
                     continue;
                 }
             }
@@ -611,7 +623,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const bool heapArray = binding->kind != ShaderRecompiler::DescriptorKind::StorageImage || (ShaderRecompiler::RuntimeAbi::GpuHeapStorageKind(static_cast<std::uint32_t>(heap)) && binding->descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet);
             if (shader.gpuResolvedImages && heapArray) {
                 const auto slots = binding->kind == ShaderRecompiler::DescriptorKind::Sampler ? ShaderRecompiler::RuntimeAbi::GpuSamplerHeapSlots : ShaderRecompiler::RuntimeAbi::GpuImageHeapSlots;
-                Require(binding->count != 0u && count != module.constants.end() && count->second == slots, "GPU-mode heap array length disagrees with the global heap");
+                const bool length = binding->kind == ShaderRecompiler::DescriptorKind::Sampler ? count != module.constants.end() && count->second == slots : heapImageSlotsLength(module, type[3]);
+                Require(binding->count != 0u && length, "GPU-mode heap array length disagrees with the global heap");
             } else {
                 Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
             }

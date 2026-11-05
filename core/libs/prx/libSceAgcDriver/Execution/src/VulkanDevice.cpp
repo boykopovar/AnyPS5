@@ -5956,6 +5956,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->pushPlacements = Graphics::PushDataPlacements(std::span(&placed, 1));
     Graphics::PipelineSpecialization specialization(shader);
     specialization.PlacePushData(objects->pushPlacements.front());
+    if (gpuMode && context.descriptorHeap && Graphics::DescriptorHeapEnabled()) specialization.PlaceHeapImageSlots(Graphics::BindlessHeap::For(context).ImageSlots());
     const auto subgroupSize = computeSubgroupSize(shader);
     const auto stageFlags = computeStageFlags(shader);
     if (const auto* directory = ComputePipelineDumpDirectory(); directory != nullptr && *directory != 0 && !state->probingFloatControls && ComputePipelineCapture::OptionalEnabled() && CaptureComputePipeline(shader.spirv.size())) {
@@ -6016,6 +6017,7 @@ VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, 
     for (std::uint32_t component = 0; component < offsets.size(); ++component) offsets[component] = {ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetBase + component, base[component]};
     Graphics::PipelineSpecialization specialization(shader, offsets);
     specialization.PlacePushData(objects.pushPlacements.front());
+    if (objects.descriptorHeap) specialization.PlaceHeapImageSlots(Graphics::BindlessHeap::For(context).ImageSlots());
     VkShaderModule module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
     VkPipeline pipeline = VK_NULL_HANDLE;
     try {

@@ -79,6 +79,12 @@ public:
 
     [[nodiscard]] const VkSpecializationInfo* Info() const { return entries.empty() ? nullptr : &info; }
 
+    void PlaceHeapImageSlots(std::uint32_t slots) {
+        for (auto& constant : values) {
+            if (constant.id == ShaderRecompiler::PipelineSpecialization::HeapImageSlots) constant.value = slots;
+        }
+    }
+
     void PlacePushData(const ShaderRecompiler::StagePushPlacement& placement) {
         namespace Ids = ShaderRecompiler::PipelineSpecialization;
         for (auto& constant : values) {

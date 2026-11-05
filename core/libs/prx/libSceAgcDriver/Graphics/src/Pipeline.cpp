@@ -549,6 +549,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             }
             specializations.emplace_back(shader, state.meshLayerBase, state.meshLayerCount);
             specializations.back().PlacePushData(pushPlacements[i]);
+            if (descriptorHeap) specializations.back().PlaceHeapImageSlots(BindlessHeap::For(context).ImageSlots());
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {

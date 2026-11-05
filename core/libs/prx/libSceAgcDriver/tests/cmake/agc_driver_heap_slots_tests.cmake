@@ -22,7 +22,7 @@ if(BUILD_TESTING)
     agc_add_default_test(agc_driver_heap_slots_tests)
     agc_add_env_test(agc_driver_heap_slots_ring_large_spans agc_driver_heap_slots_tests
             ARGS ring-large-spans ENV ANYPS5_NO_SHADER_CACHE=1)
-    foreach(agcHeapSlotsMode IN ITEMS comes-back storage-comes-back storage-views-come-back mixed-comes-back views-come-back two-heaps-come-back owner-views-release shared-owner-release)
+    foreach(agcHeapSlotsMode IN ITEMS comes-back storage-comes-back storage-views-come-back mixed-comes-back views-come-back two-heaps-come-back owner-views-release shared-owner-release idle-slots-evicted)
         string(REPLACE "-" "_" agcHeapSlotsName "${agcHeapSlotsMode}")
         agc_add_env_test(agc_driver_heap_slots_${agcHeapSlotsName} agc_driver_heap_slots_tests
                 ARGS ${agcHeapSlotsMode} ENV ANYPS5_NO_SHADER_CACHE=1)

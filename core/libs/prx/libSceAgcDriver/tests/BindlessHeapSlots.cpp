@@ -5,7 +5,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "RuntimeAbi.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -28,7 +30,7 @@ struct FakeOwner : HeapSlotOwner {
     FakeOwner() = default;
 };
 
-alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 8> fakeTextures{};
+alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 12> fakeTextures{};
 
 std::shared_ptr<Texture> fakeTexture(std::size_t index) {
     return std::shared_ptr<Texture>(reinterpret_cast<Texture*>(fakeTextures[index].data()), [](Texture*) {});
@@ -302,6 +304,53 @@ void heapComesBack(const Context& context, VkImageView view) {
     BindlessHeap::Release(context.device);
 }
 
+bool idleSlotsEvicted(const Context& context, VkImageView view) {
+    auto& heap = BindlessHeap::For(context);
+    const auto kind = Abi::FirstImageBinding;
+    Recorder recorder(context, true);
+    if (!recorder.HasTimeline()) return false;
+    recorder.Activate();
+    const auto submit = [&] {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        static_cast<void>(recorder.Commands());
+        recorder.Submit();
+    };
+    std::vector<std::shared_ptr<Texture>> held;
+    std::vector<std::uint32_t> slots;
+    const auto take = [&](std::size_t index) {
+        if (held.size() <= index) held.resize(index + 1u);
+        if (held[index] == nullptr) held[index] = fakeTexture(index);
+        return heap.TextureSlot(kind, held[index].get(), view, VK_IMAGE_LAYOUT_GENERAL);
+    };
+    for (std::size_t index = 0; index < 6u; ++index) {
+        const auto slot = take(index);
+        require(slot.has_value(), "a texture takes one of the eight capped slots");
+        slots.push_back(*slot);
+    }
+    const auto idleGeneration = heap.SlotGeneration(slots[0]);
+    submit();
+    submit();
+    require(take(5) == slots[5], "a texture a draw uses again keeps its slot");
+    require(take(6).has_value(), "the seventh texture takes a slot");
+    require(heap.Statistics().slotsEvicted == 5u, "the five slots idle for two submissions are evicted");
+    require(heap.SlotTexture(kind, slots[0]) == nullptr && heap.SlotGeneration(slots[0]) != idleGeneration,
+            "an evicted slot names no texture and moves its generation");
+    require(heap.SlotTexture(kind, slots[5]) == held[5].get(), "the slot used again stays with its texture");
+    require(take(7).has_value(), "the eighth texture takes the last never-used slot");
+    require(!take(8).has_value(), "an evicted slot is not reused before a submission covers the draws that used it");
+    require(!BindlessHeap::NearlyFull(), "evicted slots waiting for the GPU keep the heap open");
+    submit();
+    require(recorder.WaitSerialFor(recorder.Submissions(), ~std::uint64_t{0}), "the submission completes");
+    const auto reused = take(8);
+    require(reused.has_value() && std::find(slots.begin(), slots.begin() + 5, *reused) != slots.begin() + 5,
+            "an evicted slot is reused once the submission after its eviction completes");
+    const auto back = take(0);
+    require(back.has_value() && heap.SlotTexture(kind, *back) == held[0].get(), "an evicted texture takes a slot again when a draw uses it");
+    for (const auto& texture : held) heap.ReleaseSlots(texture.get());
+    BindlessHeap::Release(context.device);
+    return true;
+}
+
 void storageComesBack(const Context& context, VkImageView view) {
     auto& heap = BindlessHeap::For(context);
     std::array<FakeOwner, 7> owners{};
@@ -429,6 +478,12 @@ int main(int argc, char** argv) {
                 else if (mode == "two-heaps-come-back") twoHeapsComeBack(context, storage);
                 else if (mode == "owner-views-release") ownerViewsRelease(context, storage);
                 else if (mode == "shared-owner-release") sharedOwnerRelease(context, storage);
+                else if (mode == "idle-slots-evicted") {
+                    if (!idleSlotsEvicted(context, sampled)) {
+                        std::printf("skipped, the recorder has no timeline\n");
+                        return VulkanTestSkipped;
+                    }
+                }
                 else throw std::runtime_error("unknown mode " + mode);
                 device->WaitIdle();
             }
