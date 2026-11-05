@@ -139,18 +139,6 @@ int APS5_VABI FreeDescMetadata_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI GetImageDecodeIID_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI GetImageEncodeIID_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI GetPixelFormatFromHash_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI GetPosWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -163,14 +151,6 @@ std::int64_t APS5_VABI GetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
     if (!stream || !position) APS5_INVALID_ARG_EX;
     *position = stream->state[MemoryPosition];
     return WmpErrSuccess;
-}
-
-int APS5_VABI IDPEmpty_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI PKAllocAligned_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI PKCodecFactory_CreateCodec_nid_postfix() {
@@ -243,10 +223,6 @@ int APS5_VABI PKFormatConverter_Initialize_nid_postfix() {
 
 std::int64_t APS5_VABI PKFormatConverter_Release_nid_postfix(void** converter) {
     return PKFree_nid_postfix(converter);
-}
-
-int APS5_VABI PKFreeAligned_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI PKImageDecode_Copy_nid_postfix() {

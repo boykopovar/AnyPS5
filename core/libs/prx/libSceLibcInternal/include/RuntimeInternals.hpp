@@ -11,7 +11,7 @@ int APS5_VABI _CStrxfrm_nid_postfix();
 int APS5_VABI _CWcsxfrm_nid_postfix();
 int APS5_VABI _Call_onceEx_nid_postfix();
 int APS5_VABI _Closreg_nid_postfix();
-int APS5_VABI _Daysto_nid_postfix();
+int APS5_VABI _Daysto_nid_postfix(int year, int month);
 int APS5_VABI _Deletegloballocale_nid_postfix();
 int APS5_VABI _Do_call_nid_postfix();
 int APS5_VABI _Fac_tidy_nid_postfix();
