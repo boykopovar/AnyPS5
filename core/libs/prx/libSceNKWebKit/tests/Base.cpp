@@ -4,6 +4,8 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <thread>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -438,6 +440,42 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestRunLoop() {
+    WKRunLoopInitializeMain();
+    static int callCount = 0;
+    static void* receivedContext = nullptr;
+    callCount = 0;
+    receivedContext = nullptr;
+
+    WKRunLoopCallOnMainThread(nullptr, nullptr);
+
+    int testContext = 42;
+    WKRunLoopCallOnMainThread([](void* ctx) {
+        callCount++;
+        receivedContext = ctx;
+        WKRunLoopStopMain();
+    }, &testContext);
+
+    WKRunLoopRunMain();
+
+    Require(callCount == 1);
+    Require(receivedContext == &testContext);
+
+    std::thread backgroundThread([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        WKRunLoopCallOnMainThread([](void* ctx) {
+            auto* count = static_cast<int*>(ctx);
+            (*count) += 10;
+            WKRunLoopStopMain();
+        }, &callCount);
+    });
+
+    WKRunLoopRunMain();
+    backgroundThread.join();
+
+    Require(callCount == 11);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -453,6 +491,7 @@ int main() {
     TestError();
     TestHitTestResult();
     TestCertificateInfo();
+    TestRunLoop();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
