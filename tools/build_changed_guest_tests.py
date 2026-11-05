@@ -20,7 +20,7 @@ BROAD_CHANGES = {
 
 def reaches_libs(changed):
     return any(
-        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/"))
+        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/") + host_only.BUILD_WIDE_PREFIXES)
         for path in changed
     )
 
@@ -45,8 +45,8 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(path in BROAD_CHANGES or path.startswith("core/libs/") and (
-        path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
+    broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
+        path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
     if broad_change:
         return selected
@@ -86,7 +86,11 @@ def target_artifact_names(target):
 
 def test_owner(command, targets_by_name):
     candidates = [command[0]] if command else []
-    candidates += [part for part in command[1:] if Path(part).suffix.casefold() == ".exe"]
+    if "--" in command:
+        owner_index = command.index("--") + 1
+        candidates += command[owner_index:owner_index + 1]
+    else:
+        candidates += [part for part in command[1:] if not part.startswith("-") and Path(part).suffix.casefold() == ".exe"]
     for part in candidates:
         stem = Path(part).stem.casefold()
         if stem in targets_by_name:
@@ -94,7 +98,7 @@ def test_owner(command, targets_by_name):
     return None
 
 
-def ctest_resolutions(build_dir, targets_by_name):
+def ctest_resolutions(build_dir, targets_by_name, selected=None):
     result = subprocess.run(
         ["ctest", "--test-dir", str(build_dir), "--show-only=json-v1"],
         capture_output=True, text=True, check=True)
@@ -103,25 +107,34 @@ def ctest_resolutions(build_dir, targets_by_name):
     for index, test in enumerate(document.get("tests", []), 1):
         command = [str(part) for part in test.get("command", [])]
         owner = test_owner(command, targets_by_name)
-        if owner is not None:
+        references = {
+            targets_by_name.get(Path(part).stem.casefold()) for part in command
+            if not part.startswith("-") and ("/" in part or "\\" in part or Path(part).suffix.casefold() == ".exe")
+        }
+        if owner is not None and (selected is None or owner in selected or references & selected):
             resolutions[test["name"]] = (owner, index)
     return resolutions
 
 
-def run(build_dir, selected, targets_by_name):
+def run(build_dir, selected, targets_by_name, output_log=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     if selected:
         for batch in chunks(selected):
             subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
-        resolutions = ctest_resolutions(build_dir, targets_by_name)
-        missing = sorted(set(selected) - {owner for owner, _ in resolutions.values()})
+        selected_names = set(selected)
+        resolutions = ctest_resolutions(build_dir, targets_by_name, selected_names)
+        additional = sorted({owner for owner, _ in resolutions.values()} - selected_names, key=str.casefold)
+        for batch in chunks(additional):
+            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
+        missing = sorted(selected_names - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
             selection = Path(directory) / "selected-tests.txt"
-            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()), encoding="ascii")
+            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()) + "\n", encoding="ascii")
             subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                            "--parallel", "4", "--no-tests=error", "-I", str(selection)], check=True)
+                            "--parallel", "4", "--no-tests=error", "-I", str(selection),
+                            *(["--output-log", str(output_log)] if output_log else [])], check=True)
     else:
         print("No guest core/libs test sources changed; the libs build still ran")
 
@@ -130,6 +143,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="build and run changed core/libs tests that link guest libc")
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
+    parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.changed_paths is not None:
@@ -147,10 +161,11 @@ def main(argv=None):
             print("\n".join(selected))
         by_name = {target.get("name"): target for target in targets.values()}
         targets_by_name = {}
-        for name in selected:
-            targets_by_name.update(target_artifact_names(by_name[name]))
-            targets_by_name[name.casefold()] = name
-        run(args.build_dir, selected, targets_by_name)
+        for name, target in by_name.items():
+            if target.get("type") == "EXECUTABLE":
+                targets_by_name.update(target_artifact_names(target))
+                targets_by_name[name.casefold()] = name
+        run(args.build_dir, selected, targets_by_name, args.output_log)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
