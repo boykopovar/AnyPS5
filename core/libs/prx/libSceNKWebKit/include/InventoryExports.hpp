@@ -1672,9 +1672,7 @@ int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14Mappe
 int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev();
 int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev();
 int APS5_VABI _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_();
-int APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_();
-int APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi();
@@ -1687,7 +1685,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl27isSafeToUseMemoryMapForPathERKNS_6StringE
 int APS5_VABI _ZN3WTF14FileSystemImpl29makeSafeToUseMemoryMapForPathERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi();
 int APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc();
-int APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb();
@@ -6077,10 +6074,8 @@ int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF3URL11hostAndPortEv();
 int APS5_VABI _ZNK3WTF3URL14fileSystemPathEv();
 int APS5_VABI _ZNK3WTF3URL16isMatchingDomainENS_10StringViewE();
-int APS5_VABI _ZNK3WTF3URL17lastPathComponentEv();
 int APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv();
 int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv();
-int APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv();
 int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF3URL4userEv();
 int APS5_VABI _ZNK3WTF3URL8passwordEv();
