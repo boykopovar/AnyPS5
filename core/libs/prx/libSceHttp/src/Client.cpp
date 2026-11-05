@@ -118,10 +118,13 @@ Url Parse(const std::string& text) {
 std::string Redirect(const Url& base, std::string location) {
     const auto fragment = location.find('#');
     if (fragment != std::string::npos) location.erase(fragment);
-    if (location.find(':') < location.find_first_of("/?")) return location;
-    if (location.starts_with("//")) return "http:" + location;
+    std::string authority = base.authority;
     std::string target;
-    if (location.empty()) target = base.target;
+    if (location.find(':') < location.find_first_of("/?") || location.starts_with("//")) {
+        auto redirected = Parse(location.starts_with("//") ? "http:" + location : location);
+        authority = std::move(redirected.authority);
+        target = std::move(redirected.target);
+    } else if (location.empty()) target = base.target;
     else if (location.front() == '/') target = location;
     else if (location.front() == '?') target = base.target.substr(0, base.target.find('?')) + location;
     else {
@@ -150,7 +153,7 @@ std::string Redirect(const Url& base, std::string location) {
             input.erase(0, next == std::string::npos ? input.size() : next);
         }
     }
-    return "http://" + base.authority + output + query;
+    return "http://" + authority + output + query;
 }
 
 class Connection {
