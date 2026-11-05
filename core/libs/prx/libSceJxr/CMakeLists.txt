@@ -57,6 +57,8 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+include(ConversionEnumeration.cmake)
+
 if(BUILD_TESTING)
     add_test_executable(guest_jxr_stream_tests ${LIBS_INCLUDE_DIR}/tests/JxrStream.cpp)
     target_include_directories(guest_jxr_stream_tests PRIVATE ${LIBS_INCLUDE_DIR})
