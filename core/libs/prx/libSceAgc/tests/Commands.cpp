@@ -841,6 +841,17 @@ void testEndOfPipePatches() {
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(gds.data(), 0x100000000ull); });
     check(gds == gdsBefore, "a rejected GDS release data patch changed the packet");
     check(sceAgcQueueEndOfPipeActionPatchData(gds.data(), 0) == 0 && gds == gdsBefore, "zero data patch changed the GDS offset and size");
+    std::array<std::uint32_t, 8> interruptOnly{};
+    interruptOnly[0] = Agc::Command::Header(0x49u, 8);
+    interruptOnly[2] = 4u << 24u;
+    const auto interruptBefore = interruptOnly;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 1); });
+    check(interruptOnly == interruptBefore, "a rejected interrupt-only data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 0) == 0 && interruptOnly == interruptBefore, "zero data patch changed an interrupt-only release");
+    interruptOnly[3] = 0x1000u;
+    const auto addressed = interruptOnly;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(interruptOnly.data(), 0); });
+    check(interruptOnly == addressed, "an interrupt-only release with an address accepted a data patch");
     packet[0] = Agc::Command::Header(0x47u, 6);
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(packet.data(), 1); });
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 1); });
