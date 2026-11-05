@@ -4837,6 +4837,8 @@ void GuestBufferMemory::AcquireRegistered() {
             built->ranges.reserve(built->base.size());
             for (const auto& region : built->base) built->ranges.push_back(addressRange(region));
             planSpaceMirrors(*built);
+            const auto imported = [&](ImageMirror* mirror) { return importsNow(context, state, old->lease, mirror->base); };
+            if (std::any_of(built->heapMirrors.begin(), built->heapMirrors.end(), imported) || std::any_of(built->sparseMirrors.begin(), built->sparseMirrors.end(), imported)) return nullptr;
             for (std::size_t index = 0; index < built->heapRuns.size() && index < old->heapRuns.size(); ++index) built->verified[index].store(old->verified[index].load(std::memory_order_relaxed), std::memory_order_relaxed);
             return built;
         };
