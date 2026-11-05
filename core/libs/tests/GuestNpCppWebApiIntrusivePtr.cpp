@@ -249,7 +249,7 @@ static void TestMatchmakingSharedOwnership() {
 }
 
 static void TestMatchTeamVectorSize() {
-    int context = 0;
+    NpCppWebApiTest::LibContext context;
     alignas(8) unsigned char object[ObjectSize];
     std::memset(object, 0x5a, sizeof(object));
     WriteCount(object, 0, 1);
@@ -257,10 +257,10 @@ static void TestMatchTeamVectorSize() {
     deletedObject = nullptr;
 
     IntrusivePtr vector;
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, &context);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, context.value());
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 0);
 
-    IntrusivePtr filled{object, RecordDelete, &context};
+    IntrusivePtr filled{object, RecordDelete, context.value()};
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE8pushBackERKS8_(&vector, &filled) == 0);
     Require(ReadCount(object, 0) == 2);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 1);
@@ -573,10 +573,10 @@ static void TestUserProfileBoolAndSize() {
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(&empty) == 0);
 
     // a body created by pushBack is host-side, so size reads it
-    int context = 0;
+    NpCppWebApiTest::LibContext context;
     IntrusivePtr vector;
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, &context);
-    const IntrusivePtr element{nullptr, nullptr, &context};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, context.value());
+    const IntrusivePtr element{nullptr, nullptr, context.value()};
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(&vector, &element) == 0);
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(&vector, &element) == 0);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(&vector) == 2);

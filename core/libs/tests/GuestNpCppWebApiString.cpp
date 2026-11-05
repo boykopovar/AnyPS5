@@ -282,7 +282,7 @@ void TestVectorPushBackCopiesStringContent() {
 }
 
 void TestVectorIterationVisitsStringsInOrder() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage vector;
     IteratorStorage first;
     IteratorStorage last;
@@ -293,7 +293,7 @@ void TestVectorIterationVisitsStringsInOrder() {
     auto* firstIterator = reinterpret_cast<CommonIterator*>(first.bytes);
     auto* lastIterator = reinterpret_cast<CommonIterator*>(last.bytes);
 
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &libContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(firstIterator, self) == firstIterator);
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(lastIterator, self) == lastIterator);
     Require(!_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(firstIterator, lastIterator));
@@ -302,7 +302,7 @@ void TestVectorIterationVisitsStringsInOrder() {
     for (const char* text : texts) {
         Storage element;
         std::memset(element.bytes, kFill, sizeof(element.bytes));
-        _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &libContext);
+        _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), libContext.value());
         Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), text) == 0);
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(self, element.bytes) == 0);
         _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(element.bytes));
@@ -356,12 +356,12 @@ bool EndThrows(const IntrusivePtr* vector) {
 }
 
 void TestVectorIterationRejectsOtherBodies() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage vector;
     std::memset(vector.bytes, kFill, sizeof(vector.bytes));
     auto* self = reinterpret_cast<IntrusivePtr*>(vector.bytes);
-    const IntrusivePtr empty{nullptr, nullptr, &libContext};
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(self, &libContext);
+    const IntrusivePtr empty{nullptr, nullptr, libContext.value()};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEEC1EPNS2_10LibContextE(self, libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V112JoinableUserEEEE8pushBackERKS8_(self, &empty) == 0);
     Require(BeginThrows(self));
     Require(EndThrows(self));
