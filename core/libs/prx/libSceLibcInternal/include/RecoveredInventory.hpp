@@ -10,7 +10,7 @@ int APS5_VABI __std_bitset_to_string_1_nid_postfix();
 int APS5_VABI __std_max_1i_nid_postfix();
 int APS5_VABI __std_minmax_element_d_nid_postfix();
 int APS5_VABI __std_max_2u_nid_postfix();
-int APS5_VABI _ZNSt8__sce_v215_Thrd_sleep_forEm_nid_postfix();
+void APS5_VABI _ZNSt8__sce_v215_Thrd_sleep_forEm_nid_postfix(std::uint64_t milliseconds);
 int APS5_VABI __std_atomic_notify_multi_direct_nid_postfix();
 int APS5_VABI __std_min_d_nid_postfix();
 int APS5_VABI __std_max_1u_nid_postfix();
