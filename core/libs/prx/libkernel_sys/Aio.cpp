@@ -173,7 +173,7 @@ int Queue(GuestAiocb* user, int opcode) {
     const int notify = request.sigevent.notify;
     if (notify != SigevKevent && notify != SigevSignal && notify != SigevThreadId && notify != SigevNone) return fail(GuestEinval);
     if ((notify == SigevSignal || notify == SigevThreadId) && (request.sigevent.signo <= 0 || request.sigevent.signo > SignalMax))
-        return Fail(GuestEinval);
+        return fail(GuestEinval);
     const int flags = fcntl_nid_postfix(request.fildes, GetFlags);
     if (flags < 0) return fail(GuestEbadf);
     const int access = flags & AccessMode;
