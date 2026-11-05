@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <utility>
 #include <vector>
 
 namespace Relinker {
@@ -64,6 +65,7 @@ struct GuestImage {
     bool Symbolic = false;
     bool FunctionSymbolRoots = false;
     std::vector<std::size_t> NamedImports;
+    std::vector<std::pair<std::size_t, std::string>> BindingAliases;
 };
 
 class GuestImageReader {
