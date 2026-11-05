@@ -483,11 +483,6 @@ int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_check_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
