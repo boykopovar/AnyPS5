@@ -347,6 +347,11 @@ struct LibreSslOcspResponse {
     void* responseBytes;
 };
 
+struct LibreSslOcspResponseBytes {
+    LibreSslAsn1Object* responseType;
+    Asn1String* response;
+};
+
 struct LibreSslOcspRevokedInfo {
     Asn1String* revocationTime;
     Asn1String* revocationReason;
@@ -530,7 +535,7 @@ int APS5_VABI OBJ_nid2sn_nid_postfix(void);
 int APS5_VABI OBJ_obj2nid_nid_postfix(void);
 int APS5_VABI OBJ_sn2nid_nid_postfix(void);
 int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void);
-int APS5_VABI OCSP_RESPONSE_free_nid_postfix(void);
+void APS5_VABI OCSP_RESPONSE_free_nid_postfix(LibreSslOcspResponse* response);
 int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void);
 int APS5_VABI OCSP_basic_verify_nid_postfix(void);
 const char* APS5_VABI OCSP_cert_status_str_nid_postfix(std::int64_t status);
