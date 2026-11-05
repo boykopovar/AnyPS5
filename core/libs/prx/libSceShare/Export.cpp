@@ -117,8 +117,10 @@ int APS5_VABI sceShareUnregisterContentEventCallback(void* callback) {
 }
 
 int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtended* param, std::int32_t* requestId) {
-    if (param == nullptr || param->size != sizeof(*param)) return ERROR_INVALID_PARAM;
-    if (requestId != nullptr) *requestId = REQUEST_ID_INVALID;
+    ShareScreenshotParamExtended copy{};
+    if (param == nullptr || !GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
+    if (copy.size != sizeof(copy)) return ERROR_INVALID_PARAM;
+    if (requestId != nullptr && !WriteRequestIdInvalid(requestId)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
 }
 
