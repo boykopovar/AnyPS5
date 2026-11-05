@@ -1,9 +1,22 @@
-add_library(libSceZlib SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceZlib SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libkernel/Time/TimedWait.cpp)
 target_include_directories(libSceZlib PRIVATE ${LIBS_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
 set_target_properties(libSceZlib PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceZlib)
 target_link_libraries(libSceZlib PRIVATE jpeg_turbo)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_zlib_window_tests ${LIBS_INCLUDE_DIR}/tests/GuestZlibWindow.cpp)
+    target_include_directories(guest_zlib_window_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_zlib_window_tests PRIVATE libSceZlib libc)
+    configure_windows_unwind(guest_zlib_window_tests)
+    add_test(NAME guest_zlib_window COMMAND guest_zlib_window_tests)
+    set_tests_properties(guest_zlib_window PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_zlib_window PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceZlib>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_zlib_tests ${LIBS_INCLUDE_DIR}/tests/GuestZlib.cpp)

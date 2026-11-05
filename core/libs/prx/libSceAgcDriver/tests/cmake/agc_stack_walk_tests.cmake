@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_stack_walk_tests tests/StackWalk.cpp)
+    target_include_directories(agc_stack_walk_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_stack_walk_tests PRIVATE libc)
+    configure_windows_unwind(agc_stack_walk_tests)
+    add_test(NAME agc_stack_walk COMMAND agc_stack_walk_tests)
+    set_tests_properties(agc_stack_walk PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_stack_walk PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

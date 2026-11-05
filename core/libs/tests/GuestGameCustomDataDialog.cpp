@@ -65,4 +65,12 @@ int main() {
     Require(sceGameCustomDataDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceGameCustomDataDialogTerminate() == 0);
+    Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(&param) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
+    Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 }

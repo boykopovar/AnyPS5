@@ -71,7 +71,8 @@ void CheckHandleQueries(std::int32_t expected) {
     std::memset(sensor, 0x5a, sizeof(sensor));
     for (const auto handle : {0, -1, 1, 0x0f000000}) {
         Require(sceHmdGetFieldOfView(handle, nullptr) == Hmd::ParameterNull, "null field of view accepted");
-        Require(sceHmdGetFieldOfView(handle, reinterpret_cast<HmdFieldOfView*>(fieldOfView)) == expected, "field of view without a headset");
+        Require(sceHmdGetFieldOfView(handle, reinterpret_cast<HmdFieldOfView*>(fieldOfView)) == (handle != 0 ? Hmd::InvalidHandle : expected),
+                "field of view without a headset");
         Require(sceHmdGet2DEyeOffset(handle, reinterpret_cast<HmdEyeOffset*>(left), reinterpret_cast<HmdEyeOffset*>(right)) == expected, "eye offset without a headset");
         Require(sceHmdGet2DEyeOffset(handle, nullptr, nullptr) == expected, "eye offset with null outputs");
         Require(sceHmdGetInertialSensorData(handle, reinterpret_cast<HmdInertialSensorData*>(sensor), 1) == expected, "sensor data without a headset");
@@ -179,13 +180,18 @@ int main() {
     Require(sceHmdGetDeviceInformation(&info) == Hmd::NotInitialized, "query before initialize");
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "failed query modified output");
     CheckHandleQueries(Hmd::NotInitialized);
+    for (const auto handle : {-1, 1, 0x0f000000}) {
+        Require(sceHmdGetDeviceInformationByHandle(handle, &info) == Hmd::InvalidHandle, "handle query before initialize accepted an invalid handle");
+        Require(sceHmdGetDeviceInformationByHandle(handle, nullptr) == Hmd::InvalidHandle, "null handle query before initialize checked the output first");
+    }
+    Require(sceHmdGetDeviceInformationByHandle(0, nullptr) == Hmd::ParameterNull, "null handle query before initialize");
+    Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized, "handle query before initialize");
+    Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "a refused handle query modified its output");
     SetCompiledSdkVersion(LastSdkBeforeStartupState);
     CheckCommandQueries(true);
     SetCompiledSdkVersion(FirstSdkWithStartupState);
     CheckCommandQueries(false);
     CheckAssyError(Hmd::NotInitialized);
-    Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized,
-            "handle query before initialize");
     Require(sceHmdInitialize(nullptr) == Hmd::ParameterNull, "null initialize");
     Require(sceHmdInitialize315(nullptr) == Hmd::ParameterNull, "null initialize315");
     param.reserved0 = &param;

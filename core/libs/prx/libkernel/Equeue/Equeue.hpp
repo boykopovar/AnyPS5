@@ -6,6 +6,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -74,6 +75,8 @@ struct KernelEqueueEvent {
 
 class KernelEqueuePrivate {
 public:
+    static constexpr std::size_t kMaxPendingEvents = 64;
+
     explicit KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait = false);
     ~KernelEqueuePrivate();
 
@@ -91,6 +94,11 @@ public:
     int GetTriggeredEvents(KernelEvent* ev, int num);
     bool HasTriggeredEvents();
     std::size_t CountTriggeredEvents();
+    struct TriggeredSnapshot {
+        std::size_t count = 0;
+        std::uint64_t activations = 0;
+    };
+    TriggeredSnapshot SnapshotTriggered();
     std::vector<std::shared_ptr<KernelEqueuePrivate>> WatchedQueues();
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);
@@ -115,12 +123,15 @@ private:
 
     std::list<KernelEqueueEvent> m_events;
     std::vector<std::uintptr_t> m_pollers;
+    std::vector<int> m_measuring;
     std::mutex m_mutex;
+    std::condition_variable m_measured;
     TimedWait::Condition m_cond;
     std::string m_name;
     KernelEqueue m_handle;
     bool m_reportOncePerWait;
     bool m_closed = false;
+    std::uint64_t m_activations = 0;
 };
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
@@ -128,7 +139,8 @@ void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
 void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
-bool IsKqueueDescriptor(int descriptor);
+extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
+extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);
 void RequireVnodeNotes(uint32_t fflags);

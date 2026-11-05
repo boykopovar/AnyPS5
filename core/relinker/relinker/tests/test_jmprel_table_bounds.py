@@ -81,11 +81,13 @@ def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300, symtab=0x620,
     return image
 
 
-def run(relinker, work, name, image, expected_error=None, target="windows"):
+def run(relinker, work, name, image, expected_error=None, target="windows", filter_level=None):
     source = work / (name + ".elf")
     output = work / (name + ".out")
     source.write_bytes(image)
-    options = TARGET_OPTIONS.get(target, [])
+    options = list(TARGET_OPTIONS.get(target, []))
+    if filter_level is not None:
+        options.append(f"unused-filter={filter_level}")
     result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
                             capture_output=True, text=True, timeout=20)
     if expected_error is None:
@@ -138,6 +140,12 @@ def main():
                         "Unsupported PLT relocation type", target=output_target)
                     run(relinker, work, prefix + "-relative-in-plt", fixture(relocation_type=8, **options),
                         "Unsupported PLT relocation type", target=output_target)
+                    run(relinker, work, prefix + "-none-in-plt", fixture(relocation_type=0, symbol_index=0, **options),
+                        "Unsupported PLT relocation type", target=output_target)
+                    for level in (1, 2):
+                        run(relinker, work, f"{prefix}-none-in-plt-filter-{level}",
+                            fixture(relocation_type=0, symbol_index=0, **options),
+                            "Unsupported PLT relocation type", target=output_target, filter_level=level)
         for output_target in ("linux", "fixed", "lazy", "windows", "macos"):
             for data in (False, True):
                 prefix = f"{output_target}-{'glob-dat' if data else 'jump-slot'}-addend"

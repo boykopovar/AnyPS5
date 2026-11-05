@@ -5,9 +5,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
+#include <mutex>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -54,10 +53,14 @@ std::string CertificateBlocksOnly(const std::string& bundle) {
 }
 
 std::optional<std::string> ReadFile(const std::filesystem::path& path) {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) return std::nullopt;
     std::ifstream file(path, std::ios::binary);
     if (!file) return std::nullopt;
-    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad()) throw std::runtime_error("Reading " + path.string() + " failed");
+    std::string text;
+    char chunk[4096];
+    while (file.read(chunk, sizeof(chunk)) || file.gcount() > 0) text.append(chunk, static_cast<std::size_t>(file.gcount()));
+    if (file.bad()) return std::nullopt;
     return text;
 }
 
@@ -86,7 +89,9 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     const auto bundle = CertificateBlocksOnly(HostCertificates());
     if (bundle.empty()) return {};
     const auto directory = root / "cert_cache";
-    std::filesystem::create_directories(directory);
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) return {};
     const auto target = directory / "CA_LIST.cer";
     if (ReadFile(target) == bundle) return target;
     auto temporary = target;
@@ -94,23 +99,40 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         file.write(bundle.data(), static_cast<std::streamsize>(bundle.size()));
-        if (!file.flush()) throw std::runtime_error("Writing " + temporary.string() + " failed");
+        if (!file.flush()) {
+            file.close();
+            std::filesystem::remove(temporary, error);
+            return {};
+        }
     }
     using std::filesystem::perms;
-    std::filesystem::permissions(temporary, perms::owner_read | perms::group_read | perms::others_read);
-    std::error_code error;
-    if (std::filesystem::exists(target, error)) std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add);
-    std::filesystem::rename(temporary, target);
+    std::filesystem::permissions(temporary, perms::owner_read | perms::group_read | perms::others_read, error);
+    if (error) {
+        std::filesystem::remove(temporary, error);
+        return {};
+    }
+    if (std::filesystem::exists(target, error)) std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add, error);
+    std::filesystem::rename(temporary, target, error);
+    if (error) {
+        std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add, error);
+        std::filesystem::remove(temporary, error);
+        return ReadFile(target) == bundle ? target : std::filesystem::path{};
+    }
     return target;
 }
 
 std::filesystem::path CertificateList(const std::filesystem::path& root) {
-    static const std::filesystem::path list = WriteCertificateList(root);
+    static std::mutex lock;
+    static std::filesystem::path list;
+    std::lock_guard guard(lock);
+    if (list.empty()) list = WriteCertificateList(root);
     return list;
 }
 
 const bool g_certificateListProvided = [] {
     AddPathProvider_nid_no_patch((std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/cert/CA_LIST.cer").c_str(), &CertificateList);
+    AddPathProvider_nid_no_patch("/system/common/cert/CA_LIST.cer", &CertificateList);
+    AddPathProvider_nid_no_patch("/common/cert/CA_LIST.cer", &CertificateList);
     return true;
 }();
 }
