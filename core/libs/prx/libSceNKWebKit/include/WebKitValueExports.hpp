@@ -131,6 +131,11 @@ void APS5_VABI WKRunLoopCallOnMainThread(WKRunLoopFunction function, void* conte
 void APS5_VABI WKRunLoopInitializeMain();
 void APS5_VABI WKRunLoopRunMain();
 void APS5_VABI WKRunLoopStopMain();
+const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* host, int port);
+const void* APS5_VABI WKSecurityOriginCopyProtocol(const void* value);
+const void* APS5_VABI WKSecurityOriginCopyHost(const void* value);
+std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* value);
+const void* APS5_VABI WKSecurityOriginCopyToString(const void* value);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
 std::uint32_t APS5_VABI WKSessionStateGetTypeID();
