@@ -235,6 +235,7 @@ public:
     bool DualSrcBlend() const;
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
+    bool SamplerMirrorClampToEdge() const;
     bool ConservativeRasterization() const;
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;
@@ -388,6 +389,7 @@ public:
 private:
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
     friend struct VulkanDeviceTestAccess;
+    std::pair<VkBuffer, std::uint64_t> scratchPoolHeader(const ShaderRecompiler::RecompileResult& shader) const;
     VkPipeline splitComputePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, ComputePipelineObjects& objects, const std::array<std::uint32_t, 3>& base);
     ShaderRecompiler::SpirvTarget buildTarget() const;
     Graphics::Context buildContext() const;

@@ -656,6 +656,7 @@ int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {};
+std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18] {};
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
@@ -669,9 +670,10 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
     reinterpret_cast<std::uintptr_t>(&CollateTransform),
     reinterpret_cast<std::uintptr_t>(&CollateHash),
 };
+std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {};
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[16] {};
 std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
+std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots] {};
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {};
 std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
@@ -760,6 +762,194 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_post
 
 namespace {
 
+constexpr std::int64_t SceV2StandardStreamSlots = 8;
+std::mutex g_sceV2StandardStreamMutex;
+GuestLocale::SceV2IosBase* g_sceV2StandardStreams[SceV2StandardStreamSlots + 1] = {};
+unsigned char g_sceV2StandardStreamOpens[SceV2StandardStreamSlots + 1] = {};
+
+struct SceV2StreamNode {
+    SceV2StreamNode* next;
+    unsigned char reserved[24];
+};
+
+struct SceV2CallbackNode {
+    SceV2CallbackNode* next;
+    std::int32_t id;
+    std::uint32_t reserved;
+    void (APS5_VABI *callback)(int, void*, std::int32_t);
+};
+
+static_assert(sizeof(SceV2StreamNode) == 0x20);
+static_assert(sizeof(SceV2CallbackNode) == 0x18);
+
+std::vector<GuestLocale::Facet*> g_sceV2RegisteredFacets;
+std::atomic<GuestLocale::Implementation*> g_sceV2GlobalLocale{&g_classicLocale};
+GuestLocaleFacade g_sceV2ClassicLocaleFacade{&g_classicLocale};
+constexpr std::uint32_t SceV2AllLocaleCategories = 0x3f;
+constexpr int SceV2LocaleCategoryCount = 6;
+
+GuestLocale::Implementation* NewSceV2Locimp(bool transparent) {
+    auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
+    *self = {{&g_copiedLocaleVtable, 1, 0}, nullptr, 0, 0, transparent, "*"};
+    return self;
+}
+
+void CheckSceV2LocaleName(const char* localeName) {
+    if (localeName == nullptr || (*localeName != 0 && std::strcmp(localeName, "C") != 0))
+        _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
+}
+
+}
+
+std::uint64_t _ZNSt8__sce_v25ctypeIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28numpunctIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
+std::int32_t _ZNSt8__sce_v26locale2id7_Id_cntE_nid_postfix = 0;
+GuestLocale::Implementation* _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix = &g_classicLocale;
+alignas(16) unsigned char _ZNSt8__sce_v24coutE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v24cerrE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v25wcoutE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v25wcerrE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v23cinE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[0x400] {};
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale5_InitEb_nid_postfix(bool doIncref) {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    auto* global = g_sceV2GlobalLocale.load();
+    if (doIncref) global->base.vtable->retain(&global->base);
+    return global;
+}
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale16_GetgloballocaleEv_nid_postfix() {
+    return g_sceV2GlobalLocale.load();
+}
+
+void APS5_VABI _ZNSt8__sce_v28ios_base7_AddstdEPS0__nid_postfix(GuestLocale::SceV2IosBase* self) {
+    if (self == nullptr) throw std::invalid_argument("ios_base _Addstd: null stream");
+    std::lock_guard lock(g_sceV2StandardStreamMutex);
+    for (self->standardStream = 1; self->standardStream < SceV2StandardStreamSlots; ++self->standardStream) {
+        if (g_sceV2StandardStreams[self->standardStream] == nullptr || g_sceV2StandardStreams[self->standardStream] == self) break;
+    }
+    g_sceV2StandardStreams[self->standardStream] = self;
+    ++g_sceV2StandardStreamOpens[self->standardStream];
+}
+
+void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLocale::SceV2IosBase* self) {
+    if (self == nullptr) throw std::invalid_argument("ios_base destructor: null object");
+    {
+        std::lock_guard lock(g_sceV2StandardStreamMutex);
+        if (self->standardStream > 0) {
+            if (self->standardStream > SceV2StandardStreamSlots) throw std::runtime_error("ios_base destructor: unknown standard stream slot");
+            if (0 < --g_sceV2StandardStreamOpens[self->standardStream]) return;
+        }
+    }
+    for (auto* node = static_cast<SceV2CallbackNode*>(self->callbackNodes); node != nullptr; node = node->next) {
+        node->callback(0, self, node->id);
+    }
+    for (auto* node = static_cast<SceV2StreamNode*>(self->streamNodes); node != nullptr;) {
+        auto* next = node->next;
+        _ZdlPv_nid_postfix(node);
+        node = next;
+    }
+    self->streamNodes = nullptr;
+    for (auto* node = static_cast<SceV2CallbackNode*>(self->callbackNodes); node != nullptr;) {
+        auto* next = node->next;
+        _ZdlPv_nid_postfix(node);
+        node = next;
+    }
+    self->callbackNodes = nullptr;
+    auto** locale = self->locale;
+    if (locale != nullptr && locale != &_ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix) {
+        GuestLocale::Implementation* implementation = *locale;
+        if (implementation != nullptr) {
+            const GuestLocale::FacetVtable* vtable = implementation->base.vtable;
+            GuestLocale::Facet* released = vtable != nullptr ? vtable->release(&implementation->base) : nullptr;
+            if (released != nullptr && released->vtable != nullptr) released->vtable->deleteObject(released);
+        }
+    }
+    self->locale = nullptr;
+}
+
+void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet) {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    g_sceV2RegisteredFacets.push_back(facet);
+}
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(const GuestLocale::Implementation* source) {
+    if (source == nullptr) throw std::invalid_argument("_Locimp constructor: null source");
+    auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
+    _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(self, source);
+    return self;
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
+    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(self, facet, id);
+}
+
+GuestLocale::Implementation* _ZNSt8__sce_v26locale7_Locimp8_ClocptrE_nid_postfix = &g_classicLocale;
+
+GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale7classicEv_nid_postfix() {
+    return &g_sceV2ClassicLocaleFacade;
+}
+
+GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale5emptyEv_nid_postfix(GuestLocaleFacade* result) {
+    if (result == nullptr) throw std::invalid_argument("locale::empty: null result");
+    result->implementation = NewSceV2Locimp(true);
+    return result;
+}
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpEb_nid_postfix(bool transparent) {
+    return NewSceV2Locimp(transparent);
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale16_SetgloballocaleEPv_nid_postfix(void* locale) {
+    if (locale == nullptr) throw std::invalid_argument("locale::_Setgloballocale: null locale");
+    g_sceV2GlobalLocale.store(static_cast<GuestLocale::Implementation*>(locale));
+}
+
+GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale6globalERKS0__nid_postfix(GuestLocaleFacade* result, const GuestLocaleFacade* locale) {
+    if (result == nullptr || locale == nullptr || locale->implementation == nullptr) throw std::invalid_argument("locale::global: null locale");
+    result->implementation = _ZNSt8__sce_v26locale5_InitEb_nid_postfix(true);
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    auto* current = g_sceV2GlobalLocale.load();
+    auto* next = locale->implementation;
+    if (current == next) return result;
+    if (auto* released = current->base.vtable->release(&current->base)) released->vtable->deleteObject(released);
+    _ZNSt8__sce_v26locale16_SetgloballocaleEPv_nid_postfix(next);
+    next->base.vtable->retain(&next->base);
+    if ((next->category & SceV2AllLocaleCategories) == SceV2AllLocaleCategories) {
+        setlocale_nid_postfix(SceV2AllLocaleCategories, next->name);
+        return result;
+    }
+    for (int category = 0; category < SceV2LocaleCategoryCount; ++category) {
+        if ((next->category & (1u << category)) != 0) setlocale_nid_postfix(category + 1, next->name);
+    }
+    return result;
+}
+
+void APS5_VABI _ZNSt8__sce_v215_sceLibcLocinfoEPKc_nid_postfix(const char* localeName) {
+    CheckSceV2LocaleName(localeName);
+}
+
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_iPKc_nid_postfix(GuestLocale::SceV2Locinfo* self, int, const char* localeName) {
+    if (self == nullptr) throw std::invalid_argument("_Locinfo: null object");
+    const char* current = setlocale_nid_postfix(SceV2AllLocaleCategories, nullptr);
+    self->name = current != nullptr ? current : "";
+    CheckSceV2LocaleName(localeName);
+    self->classicName = setlocale_nid_postfix(SceV2AllLocaleCategories, nullptr);
+}
+
+GuestLocale::SceV2Locinfo* APS5_VABI _ZNSt8__sce_v28_Locinfo16_Locinfo_AddcatsEPS0_iPKc_nid_postfix(GuestLocale::SceV2Locinfo* self, int, const char* localeName) {
+    CheckSceV2LocaleName(localeName);
+    if (self == nullptr) throw std::invalid_argument("_Locinfo::_Addcats: null object");
+    self->classicName = setlocale_nid_postfix(SceV2AllLocaleCategories, nullptr);
+    return self;
+}
+
+namespace {
+
 GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 }
 
@@ -775,6 +965,11 @@ std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
         *facet = &collate->base;
     }
     return 1;
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7collateIcE9transformEPKcS2__nid_postfix(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last) {
+    if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument("collate::transform: null facet");
+    return reinterpret_cast<const GuestLocale::CollateVtable*>(self->base.vtable)->transform(result, self, first, last);
 }
 
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
