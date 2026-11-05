@@ -2911,12 +2911,18 @@ void growResident(ImageMirror& mirror, const GuestRuns& runs) {
         }
         sweepMirrors(need, mirror.base);
     }
+    bool waive = false;
     for (int attempt = 0;; ++attempt) try {
+        const WaiveHeapMirrorSlabRefusal waived(waive);
         mirror.resident->Bind(runs);
         break;
     } catch (const std::runtime_error& error) {
         if (attempt < 8 && shrinkHeapMirrorBudget(error)) {
             sweepMirrors(need, mirror.base);
+            continue;
+        }
+        if (!waive && dynamic_cast<const HeapMirrorSlabRefused*>(&error) != nullptr) {
+            waive = true;
             continue;
         }
         std::uint64_t held = 0;
@@ -3455,12 +3461,18 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         if (context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased) backed = GuestNonzeroBlocks(sparse ? clipPieces(pieces, mirror->base, mirror->base + mirror->bytes) : GuestRuns{{mirror->base, mirror->base + mirror->bytes}});
         auto need = blockBytes(backed);
         reserveHeapBytes(selected.address, selected.bytes, need);
+        bool waive = false;
         for (int attempt = 0;; ++attempt) try {
+            const WaiveHeapMirrorSlabRefusal waived(waive);
             mirror->resident = ResidentBuffer::Create(context, mirror->base, mirror->bytes, backed);
             break;
         } catch (const std::runtime_error& error) {
             if (attempt < 8 && shrinkHeapMirrorBudget(error)) {
                 sweepMirrors(need, selected.address);
+                continue;
+            }
+            if (!waive && dynamic_cast<const HeapMirrorSlabRefused*>(&error) != nullptr) {
+                waive = true;
                 continue;
             }
             std::uint64_t held = 0;

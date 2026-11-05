@@ -38,6 +38,8 @@ constexpr std::uint32_t SlabBlocks = static_cast<std::uint32_t>(SlabBytes / Bloc
 constexpr std::uint64_t ZeroBytes = SlabBytes;
 
 std::atomic<bool> deviceHeapFullForTests{false};
+std::atomic<std::uint64_t> slabReserveForTests{0};
+thread_local bool slabRefusalWaived = false;
 constexpr VkAccessFlags TransferredAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
 
 [[noreturn]] void fail(const char* step, VkResult result) {
@@ -184,8 +186,10 @@ public:
 private:
     void refuseSlab() {
         constexpr std::uint64_t Reserve = std::uint64_t{256} << 20u;
+        if (slabRefusalWaived) return;
         const auto live = Slabs().slabs.load(std::memory_order_relaxed) * SlabBytes;
-        if (live <= Reserve) return;
+        const auto testReserve = slabReserveForTests.load(std::memory_order_relaxed);
+        if (live <= (testReserve != 0 ? testReserve : Reserve)) return;
         const auto held = live + SlabBytes;
         const char* reason = nullptr;
         const auto limit = std::max((HeapMirrorSlabBudget() + SlabBytes - 1) / SlabBytes, std::uint64_t{1}) * SlabBytes;
@@ -430,6 +434,18 @@ GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {
 
 void SetDeviceHeapFullForTests(bool full) {
     deviceHeapFullForTests.store(full, std::memory_order_relaxed);
+}
+
+void SetHeapMirrorSlabReserveForTests(std::uint64_t bytes) {
+    slabReserveForTests.store(bytes, std::memory_order_relaxed);
+}
+
+WaiveHeapMirrorSlabRefusal::WaiveHeapMirrorSlabRefusal(bool waive) : previous(slabRefusalWaived) {
+    slabRefusalWaived = previous || waive;
+}
+
+WaiveHeapMirrorSlabRefusal::~WaiveHeapMirrorSlabRefusal() {
+    slabRefusalWaived = previous;
 }
 
 void SetResidentAddressSpaceLimit(std::uint64_t bytes) {
