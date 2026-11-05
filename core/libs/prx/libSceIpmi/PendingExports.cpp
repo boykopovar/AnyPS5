@@ -45,9 +45,9 @@ int APS5_VABI _ZN4IPMI6ServerD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN4IPMI6Client6Config24estimateClientMemorySizeEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI _ZN4IPMI6Client6Config24estimateClientMemorySizeEv(void* self) {
+    (void)self;
+    return 0x1000;
 }
 int APS5_VABI _ZN4IPMI6Server6createEPPS0_PKNS0_6ConfigEPvS6_(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -108,13 +108,15 @@ int APS5_VABI _ZN4IPMI6Server12EventHandlerD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN4IPMI7Session6Config25estimateSessionMemorySizeEv(void) {
-    NotImplemented_nid_no_patch(__func__);
+std::size_t APS5_VABI _ZN4IPMI7Session6Config25estimateSessionMemorySizeEv(void* self) {
+    (void)self;
     return 0;
 }
-int APS5_VABI _ZNK4IPMI6Server6Config29estimateTempWorkingMemorySizeEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI _ZNK4IPMI6Server6Config29estimateTempWorkingMemorySizeEv(const void* self) {
+    const auto* values = static_cast<const std::uint64_t*>(self);
+    const std::uint64_t fromFirst = values[0] + 0x100;
+    const std::uint64_t fromSecond = values[1] + 0x100;
+    return fromFirst >= fromSecond ? fromFirst : fromSecond;
 }
 int APS5_VABI _ZN4IPMI4impl11SessionImplD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
