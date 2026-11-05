@@ -9,6 +9,12 @@
 #include <utility>
 #include <stdexcept>
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool Ps4Library = true;
+#else
+static constexpr bool Ps4Library = false;
+#endif
+
 enum class Update { Play, Start, Pause, Kill, Volume, Matrix, Combined, Pitch, Gain, PlayStop, StopPlay, PauseResume, KillPlay, PlayKill, PlayPause, StopResume, LongPause, Mute, SelectMatrix, Over, Shift, ExternalShift, UnchangedShift };
 struct BufferedState {
     std::uintptr_t voice;
@@ -95,13 +101,17 @@ static int APS5_VABI UpdatePeer(Ngs2UserFxProcessContext* context) {
                     Require(volume() == 2.0f);
                 }
                 send(-1.0f, 1);
-                Require(std::bit_cast<std::uint32_t>(volume()) == 0);
+                Require(std::bit_cast<std::uint32_t>(volume()) == (Ps4Library ? std::bit_cast<std::uint32_t>(-1.0f) : 0));
                 send(std::bit_cast<float>(0x7fc00000u), 1);
                 Require(std::bit_cast<std::uint32_t>(volume()) == 0x7fc00000u);
                 send(-0.0f, 1);
                 Require(std::bit_cast<std::uint32_t>(volume()) == 0x80000000u);
+                if (Ps4Library) {
+                    send(-16.0f, 1);
+                    Require(volume() == -4.0f);
+                }
                 send(33.0f, 1);
-                Require(volume() == 32.0f);
+                Require(volume() == (Ps4Library ? 4.0f : 32.0f));
                 break;
             }
             case Update::Shift:
@@ -237,7 +247,7 @@ static void TestBuffer(Update update, bool custom, bool commands, unsigned order
         if (captured) captured->insert(captured->end(), samples.begin(), samples.begin() + grainFrames);
         for (unsigned i = 0; !shift && i < grainFrames; ++i) {
             if (update == Update::Over) {
-                if (grain != 1) Require(samples[i] == (grain == 0 && i < 3 ? 0.0f : 1000.0f / 32768.0f) * (grain == 0 ? 1.0f : 32.0f));
+                if (grain != 1) Require(samples[i] == (grain == 0 && i < 3 ? 0.0f : 1000.0f / 32768.0f) * (grain == 0 ? 1.0f : Ps4Library ? 4.0f : 32.0f));
                 continue;
             }
             float expected = 1000.0f / 32768.0f;
@@ -562,6 +572,69 @@ static void TestBufferedWaveformCodes() {
     ResetBuffers(firstBuffer);
 }
 
+static Ngs2SamplerVoiceFilterParam LowPass(std::uint32_t index, std::uint32_t location, std::uint32_t type) {
+    Ngs2SamplerVoiceFilterParam param{};
+    param.header = {sizeof(param), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER};
+    param.index = index;
+    param.location = location;
+    param.type = type;
+    param.frequency = 1000.0f;
+    param.q = 0.707f;
+    param.level = 1.0f;
+    return param;
+}
+
+static float RenderEnergy(std::uintptr_t system) {
+    std::array<float, 64> samples{};
+    const Ngs2RenderBufferInfo output{samples.data(), sizeof(samples), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+    Require(sceNgs2SystemRender(system, &output, 1) == SCE_NGS2_OK);
+    float energy = 0.0f;
+    for (const float sample : samples) energy += sample * sample;
+    return energy;
+}
+
+static void TestBufferedSamplerFilter() {
+    const auto firstBuffer = usedBuffers;
+    std::array<std::int16_t, 1024> pcm{};
+    for (std::size_t i = 0; i < pcm.size(); ++i) pcm[i] = i % 2 == 0 ? 8000 : -8000;
+    PeerAction peer;
+    const auto setup = CreatePeerSystem(peer);
+    const auto voice = MonoSampler(setup.system);
+    Require(AddBlocks(voice, pcm.data(), 0, {0, static_cast<std::uint32_t>(sizeof(pcm)), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0}) == SCE_NGS2_OK);
+    Patch(voice, setup.master);
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+    const auto direct = MonoSampler(setup.system);
+    const auto custom = Sampler(setup.system, true);
+    const auto badType = LowPass(0, 1, 12);
+    const auto badIndex = LowPass(8, 1, 1);
+    const auto badLocation = LowPass(0, 1000, 1);
+    const Ngs2VoiceParamHeader truncated{sizeof(Ngs2VoiceParamHeader), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER};
+    const auto filter = LowPass(0, 1, 1);
+    const std::array<const Ngs2VoiceParamHeader*, 4> rejected{&badType.header, &badIndex.header, &badLocation.header, &truncated};
+    std::array<int, 4> immediate{};
+    for (std::size_t i = 0; i < rejected.size(); ++i) {
+        immediate[i] = sceNgs2VoiceControl(direct, rejected[i]);
+        Require(immediate[i] != SCE_NGS2_OK);
+    }
+    const int customImmediate = sceNgs2VoiceControl(custom, &filter.header);
+    Require(customImmediate != SCE_NGS2_OK);
+    unsigned checked = 0;
+    peer.action = [&](unsigned tick) {
+        if (tick != 0) return;
+        for (std::size_t i = 0; i < rejected.size(); ++i) Require(sceNgs2VoiceControl(voice, rejected[i]) == immediate[i]);
+        Require(sceNgs2VoiceControl(custom, &filter.header) == customImmediate);
+        Require(sceNgs2VoiceControl(voice, &filter.header) == SCE_NGS2_OK);
+        ++checked;
+    };
+    const float unfiltered = RenderEnergy(setup.system);
+    Require(unfiltered > 1.0f);
+    float filtered = unfiltered;
+    for (unsigned grain = 0; grain < 6; ++grain) filtered = RenderEnergy(setup.system);
+    Require(checked == 1 && filtered < unfiltered * 1.0e-3f);
+    Require(sceNgs2SystemDestroy(setup.system, nullptr) == SCE_NGS2_OK);
+    ResetBuffers(firstBuffer);
+}
+
 static void TestBufferedAppendAfterDrain() {
     const auto firstBuffer = usedBuffers;
     std::array<std::int16_t, 64> pcm{};
@@ -732,9 +805,13 @@ static void TestBlockQueueRace() {
     ResetBuffers(firstBuffer);
 }
 
+static void TestPortVolumeOver() {
+    for (bool custom : {false, true}) for (bool commands : {false, true}) for (unsigned order = 0; order < 3; ++order) TestBuffer(Update::Over, custom, commands, order, 64);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) {
-        const std::pair<const char*, void (*)()> scenarios[] = {{"validation", TestCaptureValidation}, {"drained", TestBufferedAppendAfterDrain},
+        const std::pair<const char*, void (*)()> scenarios[] = {{"over", TestPortVolumeOver}, {"validation", TestCaptureValidation}, {"filter", TestBufferedSamplerFilter}, {"drained", TestBufferedAppendAfterDrain},
             {"emptysetup", TestEmptySetupPort}, {"destroyed", TestPendingPatchDestroyedDest}, {"race", TestBlockQueueRace}};
         for (const auto& [name, run] : scenarios) {
             if (std::strcmp(argv[1], name) != 0) continue;
@@ -760,10 +837,8 @@ int main(int argc, char** argv) {
         }
     }
     TestBuffer(Update::Combined, true, true, 2, 256);
-    for (bool custom : {false, true}) for (bool commands : {false, true}) for (unsigned order = 0; order < 3; ++order) {
-        TestBuffer(Update::Over, custom, commands, order, 64);
-        cases++;
-    }
+    TestPortVolumeOver();
+    cases += 12;
     std::vector<float> worker, external, unchanged;
     TestBuffer(Update::Shift, true, false, 2, 256, &worker);
     TestBuffer(Update::ExternalShift, true, false, 2, 256, &external);
@@ -785,11 +860,12 @@ int main(int argc, char** argv) {
     ++cases;
     TestCaptureValidation();
     TestBufferedWaveformCodes();
+    TestBufferedSamplerFilter();
     TestBufferedAppendAfterDrain();
     TestEmptySetupPort();
     TestPendingPatchDestroyedDest();
     TestBlockQueueRace();
-    cases += 6;
+    cases += 7;
     std::printf("NGS2 worker buffering: %u scenarios passed\n", cases + 1);
     return 0;
 }
