@@ -284,7 +284,7 @@ static bool TestAddedGroupNames() {
         try { correct = SSL_CTX_set1_groups_list_nid_postfix(fixture.Context(), name) == 0; }
         catch (const std::runtime_error& error) {
             const std::string text = error.what();
-            const char* function = test[0] ? "OBJ_sn2nid" : "SSL_CTX_set1_groups_list";
+            const char* function = "SSL_CTX_set1_groups_list";
             correct = text.find(function) != std::string::npos && text.find("not implemented") != std::string::npos;
         }
         OBJ_cleanup_nid_postfix();

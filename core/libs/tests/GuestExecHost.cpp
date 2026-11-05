@@ -2,6 +2,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -198,6 +199,16 @@ extern "C" void APS5_VABI ExecFirst_nid_no_patch(const std::uintptr_t* block) {
     char* const target[] = {const_cast<char*>("/app0/picker/second.bin"), const_cast<char*>("argument with spaces"),
                             const_cast<char*>("quote\"and\\slash\\ Кириллица 東京"), nullptr};
     try {
+        const char* mode = std::getenv("ANYPS5_KERNEL_SYS_EXEC_MODE");
+        if (mode != nullptr && std::strcmp(mode, "ve") == 0) {
+            _execve_nid_postfix("/app0/picker/second.bin", target, environment.data());
+            Require(false, "_execve returned instead of replacing the image");
+        }
+        if (mode != nullptr && std::strcmp(mode, "vpe") == 0) {
+            Require(setenv_nid_postfix("PATH", "/missing:/app0/picker", 1) == 0, "setting guest PATH failed");
+            _execvpe_nid_postfix("second.bin", target, environment.data());
+            Require(false, "_execvpe returned instead of replacing the image");
+        }
         execve_nid_postfix("/app0/picker/second.bin", target, environment.data());
     } catch (...) {
         Record("throw");

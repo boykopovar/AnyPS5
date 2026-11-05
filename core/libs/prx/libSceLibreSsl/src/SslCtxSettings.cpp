@@ -70,6 +70,12 @@ int APS5_VABI SSL_CTX_set_alpn_protos_nid_postfix(LibreSslCtx* ctx, const unsign
 int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(LibreSslCtx* ctx, const char* list) {
     LibreSslCtxInternal& internal = Internal(ctx, __func__);
     if (!list) throw std::invalid_argument(std::string(__func__) + ": null group list");
+    static const auto curveNames = [] {
+        std::array<std::string_view, CurveNids.size()> result;
+        for (std::size_t i = 0; i < CurveNids.size(); ++i)
+            result[i] = LibreSslObjectShortName_nid_no_patch(CurveNids[i]);
+        return result;
+    }();
     std::vector<std::uint16_t> groups;
     const std::string_view names = list;
     std::size_t start = 0;
@@ -77,7 +83,14 @@ int APS5_VABI SSL_CTX_set1_groups_list_nid_postfix(LibreSslCtx* ctx, const char*
         while (true) {
             const std::size_t end = names.find(':', start);
             const std::string name(names.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start));
-            int nid = OBJ_sn2nid_nid_postfix(name.c_str());
+            if (LibreSslHasAddedObjectName_nid_no_patch(name.c_str(), false)) NotImplemented_nid_no_patch(__func__);
+            int nid = 0;
+            for (std::size_t i = 0; i < curveNames.size(); ++i) {
+                if (curveNames[i] == name) {
+                    nid = CurveNids[i];
+                    break;
+                }
+            }
             if (!nid) {
                 if (LibreSslHasAddedObjectName_nid_no_patch(name.c_str(), true)) NotImplemented_nid_no_patch(__func__);
                 nid = NistCurveNid(name);
