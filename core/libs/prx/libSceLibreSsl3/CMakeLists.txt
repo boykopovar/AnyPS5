@@ -189,3 +189,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
         -- $<TARGET_FILE:guest_libressl3_mixed_evp_loader>)
     set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
 endif()
+
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_custom_target(libressl3_pkey_lifecycle_modules DEPENDS
+        ${PATCHED_DIR}/libc.prx ${PATCHED_DIR}/libkernel.prx
+        ${PATCHED_DIR}/libSceLibreSsl.prx ${PATCHED_DIR}/libSceLibreSsl3.prx)
+    add_test_executable(guest_libressl3_pkey_lifecycle_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyLifecycle.cpp)
+    add_dependencies(guest_libressl3_pkey_lifecycle_tests libressl3_pkey_lifecycle_modules)
+    target_link_libraries(guest_libressl3_pkey_lifecycle_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME guest_libressl3_pkey_lifecycle COMMAND guest_libressl3_pkey_lifecycle_tests ${PATCHED_DIR})
+    set_tests_properties(guest_libressl3_pkey_lifecycle PROPERTIES TIMEOUT 20)
+endif()
