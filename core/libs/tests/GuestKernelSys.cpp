@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -570,6 +571,13 @@ void CheckSigreturn() {
     }
     Require(sigreturnPasses == 4 && RoundingAndMasks(sigreturnMxcsr) == 0x1f80 && !blocked);
     _mm_setcsr(savedMxcsr);
+}
+
+void CheckReboot() {
+    for (const int options : {std::numeric_limits<std::int32_t>::min(), -1, 0, 1, 2, 0x10000, std::numeric_limits<std::int32_t>::max()}) {
+        *__error_nid_postfix() = 73;
+        Require(reboot_nid_postfix(options) == -1 && Error() == 1);
+    }
 }
 
 void CheckSchedSetscheduler() {
@@ -1254,6 +1262,7 @@ int main() {
     CheckAmmWrittenWaitsRun();
     CheckAmmMapperCalls();
     CheckAmmWaitConcurrentSubmits();
+    CheckReboot();
     CheckSchedSetscheduler();
     CheckSigreturn();
     CheckKernelEnvironment();
