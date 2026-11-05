@@ -22,6 +22,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/DispatchArguments_spv.h"
 #include <algorithm>
@@ -250,6 +251,10 @@ thread_local int completionDepth = 0;
 // This thread's hook syncs that waited for an unsignaled target (Recorder::ThreadHookWaits).
 thread_local std::uint64_t hookRealWaits = 0;
 
+}
+
+bool Recorder::Alive(std::uint64_t id) {
+    return RecorderAlive(id);
 }
 
 bool Recorder::InCompletion() {
@@ -1289,6 +1294,12 @@ std::uint64_t Recorder::PendingWriteBackCompletions() {
 
 std::uint64_t Recorder::RecordedWorkSinceSubmit() {
     return workSinceSubmit.load(std::memory_order_relaxed);
+}
+
+bool Recorder::NoteGuestWork(VkCommandBuffer commands) {
+    if (open == nullptr || open->commands != commands) return false;
+    open->guestWork = true;
+    return true;
 }
 
 void Recorder::CountRecordedWork() {
@@ -3104,7 +3115,8 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
     }
     if (offset != nullptr) *offset = 0;
     const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-    if (!sameRegistry || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+    const auto guestBytes = use == SnapshotUse::PaddedVertex ? static_cast<std::size_t>(found->second.derived) : bytes;
+    if (!sameRegistry || !GuestMemory::UnchangedSince(address, guestBytes, found->second.generation)) {
         if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
             eraseDrawSnapshot(found);
             return {};
@@ -3994,6 +4006,7 @@ void Recorder::Submit() {
         if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();
     }
     Check(result, "vkQueueSubmit recorder");
+    if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
     batch->submittedAt = std::chrono::steady_clock::now();

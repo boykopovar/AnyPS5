@@ -24,7 +24,7 @@ public:
         rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeRoundBits : 0u), 0u};
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
-    void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
+    void SetNativeFloat16(bool enabled, bool fma) { nativeFloat16 = enabled; nativeFloat16Fma = enabled && fma; }
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
@@ -218,6 +218,7 @@ private:
     bool float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand);
+    bool float16NativeFma(const RdnaInstruction& inst, bool accumulator);
     IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
@@ -385,6 +386,7 @@ private:
     RoundingState rounding;
     bool ieeeMode = false;
     bool nativeFloat16 = false;
+    bool nativeFloat16Fma = false;
     IrBuilder ir;
     IrBlock& block;
     IrU1 instructionBranchCondition;
