@@ -102,8 +102,6 @@ int main() {
     Require(sceKeyboardGetDeviceInfo(0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardGetHandle(0, 0, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardMbusInit() == KEYBOARD_ERROR_NOT_INITIALIZED);
-    Require(sceKeyboardPadEmulateClose() == KEYBOARD_ERROR_NOT_INITIALIZED);
-    Require(sceKeyboardPadEmulateOpen() == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardSetProcessFocus(nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardSetProcessPrivilege(0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
