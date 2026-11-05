@@ -1,5 +1,6 @@
 {
   "PPSA01153": {"relink": ["--trap-sdk-syscall-stubs"]},
+  "PPSA28319": {"relink": ["--module-dir", "Media/Modules", "--module-dir", "Media/Plugins"]},
   "PPSA59322": {"pad": {"after_s": 8, "repeat": 7, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 1500, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 4000, "hold_ms": 700, "buttons": ["right"]}, {"at_ms": 4750, "hold_ms": 250, "buttons": ["right", "cross"]}, {"at_ms": 5050, "hold_ms": 500, "buttons": ["right"]}, {"at_ms": 5600, "hold_ms": 250, "buttons": ["right", "cross"]}, {"at_ms": 5900, "hold_ms": 200, "buttons": ["up", "right", "square"]}, {"at_ms": 6150, "hold_ms": 400, "buttons": ["left"]}, {"at_ms": 6600, "hold_ms": 250, "buttons": ["left", "cross"]}]}},
   "PPSA68091": {"relink": ["--registry"]},
   "PPSA69421": {"relink": ["--trap-sdk-syscall-stubs"]},

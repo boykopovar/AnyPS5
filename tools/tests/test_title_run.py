@@ -279,6 +279,19 @@ class PreparationTests(unittest.TestCase):
         title_run.unwrap_or_copy(source, self.root / "out/eboot.elf")
         self.assertEqual((self.root / "out/eboot.elf").read_bytes(), source.read_bytes())
 
+    def test_module_dirs_are_staged_for_the_relinker(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "Media/Other/skip.prx"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf)
+        entry = {"relink": ["--trap-sdk-syscall-stubs", "--module-dir", "Media/Modules", "--module-dir", "Media/Plugins"]}
+        self.assertEqual(title_run.module_dirs(entry), ["Media/Modules", "Media/Plugins"])
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.relative_to(self.root / "input").as_posix() for path in (self.root / "input").rglob("*.*"))
+        self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
+        self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
+
     def test_link_tree_skips(self):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "sce_module").mkdir()
