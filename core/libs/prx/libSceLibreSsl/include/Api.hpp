@@ -523,6 +523,23 @@ struct LibreSslX509Name {
     int canonEnclen;
 };
 
+struct LibreSslCertKey {
+    void* x509;
+    void* privatekey;
+    const void* digest;
+};
+
+struct LibreSslCert {
+    LibreSslCertKey* key;
+    unsigned char rest[248];
+};
+
+struct LibreSslSession {
+    unsigned char beforeCipher[168];
+    const void* cipher;
+    unsigned char rest[56];
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -775,8 +792,8 @@ void APS5_VABI SSL_get0_alpn_selected_nid_postfix(const LibreSslSsl* ssl, const 
 int APS5_VABI SSL_get0_param_nid_postfix(void);
 int APS5_VABI SSL_get1_session_nid_postfix(void);
 void* APS5_VABI SSL_get_SSL_CTX_nid_postfix(const LibreSslSsl* ssl);
-int APS5_VABI SSL_get_certificate_nid_postfix(void);
-int APS5_VABI SSL_get_current_cipher_nid_postfix(void);
+void* APS5_VABI SSL_get_certificate_nid_postfix(const LibreSslSsl* ssl);
+const void* APS5_VABI SSL_get_current_cipher_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_get_error_nid_postfix(void);
 int APS5_VABI SSL_get_ex_data_nid_postfix(void);
 int APS5_VABI SSL_get_ex_data_X509_STORE_CTX_idx_nid_postfix(void);
@@ -784,13 +801,13 @@ int APS5_VABI SSL_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, Li
 int APS5_VABI SSL_get_fd_nid_postfix(void);
 int APS5_VABI SSL_get_peer_cert_chain_nid_postfix(void);
 int APS5_VABI SSL_get_peer_certificate_nid_postfix(void);
-int APS5_VABI SSL_get_privatekey_nid_postfix(void);
 void* APS5_VABI SSL_get_rbio_nid_postfix(const LibreSslSsl* ssl);
+void* APS5_VABI SSL_get_privatekey_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_get_servername_nid_postfix(void);
-int APS5_VABI SSL_get_session_nid_postfix(void);
 int APS5_VABI SSL_get_shutdown_nid_postfix(const LibreSslSsl* ssl);
 std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const LibreSslSsl* ssl);
 void* APS5_VABI SSL_get_wbio_nid_postfix(const LibreSslSsl* ssl);
+LibreSslSession* APS5_VABI SSL_get_session_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_library_init_nid_postfix(void);
 void APS5_VABI SSL_load_error_strings_nid_postfix(void);
 int APS5_VABI SSL_new_nid_postfix(void);
