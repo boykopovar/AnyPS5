@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -87,18 +88,25 @@ std::uint64_t BigEndian64(const std::uint8_t* bytes) {
 }
 
 std::optional<std::map<std::string, TrpEntry>> ReadPackage(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return std::nullopt;
+    const auto end = file.tellg();
+    if (end < static_cast<std::streamoff>(TrpHeaderBytes)) return std::map<std::string, TrpEntry>{};
+    const auto fileSize = static_cast<std::uint64_t>(end);
+    file.seekg(0);
     std::array<std::uint8_t, TrpHeaderBytes> header{};
     if (!file.read(reinterpret_cast<char*>(header.data()), header.size()) || BigEndian32(header.data()) != TrpMagic) return std::map<std::string, TrpEntry>{};
     const auto count = BigEndian32(header.data() + 0x10);
     if (BigEndian32(header.data() + 0x14) != TrpEntryBytes) return std::map<std::string, TrpEntry>{};
+    if (count > (fileSize - TrpHeaderBytes) / TrpEntryBytes) return std::map<std::string, TrpEntry>{};
     std::map<std::string, TrpEntry> entries;
     for (std::uint32_t i = 0; i < count; ++i) {
         std::array<std::uint8_t, TrpEntryBytes> entry{};
         if (!file.read(reinterpret_cast<char*>(entry.data()), entry.size())) return std::map<std::string, TrpEntry>{};
         const std::string name(reinterpret_cast<const char*>(entry.data()), strnlen(reinterpret_cast<const char*>(entry.data()), 32));
-        entries[name] = {BigEndian64(entry.data() + 32), BigEndian64(entry.data() + 40)};
+        const TrpEntry contents{BigEndian64(entry.data() + 32), BigEndian64(entry.data() + 40)};
+        if (contents.offset > fileSize || contents.size > fileSize - contents.offset) return std::map<std::string, TrpEntry>{};
+        entries[name] = contents;
     }
     return entries;
 }
@@ -419,14 +427,13 @@ int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyConfigHasGroupFeature(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
+    if (!config) return 0;
+    return config[0x90] & 1;
 }
 
-int APS5_VABI sceNpTrophyGroupArrayGetNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {
+    return std::popcount(groupArray[0]);
 }
 
 int APS5_VABI sceNpTrophyIntAbortHandle(void) {
@@ -484,19 +491,23 @@ int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyNumInfoGetTotal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
+    return static_cast<int>(numInfo[0] + numInfo[1] + numInfo[2] + numInfo[3]);
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
+    int count = 0;
+    for (std::size_t index = 0; index < 16; ++index) {
+        flagArray[index] = setInfo[index] | setInfo[16 + index] | setInfo[32 + index] | setInfo[48 + index];
+        count += std::popcount(flagArray[index]);
+    }
+    return count;
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
+    int count = 0;
+    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(setInfo[index]);
+    return count;
 }
 
 int APS5_VABI sceNpTrophyShowTrophyList(void) {
