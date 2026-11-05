@@ -2,11 +2,18 @@
 #include "prx/libSceVideodec/include/Api.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include "prx/libc/include/General.hpp"
 #include "H264Fixture.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace SceVideodec;
 
@@ -37,6 +44,52 @@ constexpr std::size_t FrameBytes = static_cast<std::size_t>(Pitch) * PictureHeig
 void check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+class PageTail {
+    void* memory = nullptr;
+    std::size_t page = 0;
+    void* data = nullptr;
+
+public:
+    PageTail(const void* source, std::size_t bytes) {
+#ifdef _WIN32
+        SYSTEM_INFO info;
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        check(memory != nullptr, "the guard pages could not be allocated");
+        DWORD previous;
+        check(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0, "the guard page could not be protected");
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        check(memory != MAP_FAILED, "the guard pages could not be allocated");
+        check(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0, "the guard page could not be protected");
+#endif
+        check(bytes <= page, "the guarded value does not fit in a page");
+        data = static_cast<unsigned char*>(memory) + page - bytes;
+        std::memcpy(data, source, bytes);
+    }
+    PageTail(const PageTail&) = delete;
+    PageTail& operator=(const PageTail&) = delete;
+    ~PageTail() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, page * 2);
+#endif
+    }
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous;
+        check(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "the page could not be made read-only");
+#else
+        check(mprotect(memory, page, PROT_READ) == 0, "the page could not be made read-only");
+#endif
+    }
+    template <typename T>
+    T* As() const { return static_cast<T*>(data); }
+};
 
 struct Session {
     Ctrl ctrl{sizeof(Ctrl)};
@@ -284,6 +337,48 @@ void testQueryResourceInfo() {
     check(refused.cpuMemorySize == 7 && refused.cpuGpuMemorySize == 7 && refused.maxFrameBufferSize == 7 && refused.frameBufferAlignment == 7,
           "a refused query wrote the resource information");
     check(shortResource.cpuMemorySize == 7 && shortResource.maxFrameBufferSize == 7, "a refused query wrote the resource information");
+
+    auto wideConfig = config;
+    wideConfig.thisSize = std::uint64_t{1} << 32;
+    auto wideResource = resource;
+    wideResource.thisSize = std::uint64_t{1} << 32;
+    check(sceVideodecQueryResourceInfo(&wideConfig, &wideResource) == 0, "a size field with only its upper bits set was refused by query");
+    Ctrl wideCtrl{std::uint64_t{1} << 32};
+    check(sceVideodecCreateDecoder(&wideConfig, &resource, &wideCtrl) == 0, "a size field with only its upper bits set was refused by create");
+    wideCtrl.thisSize = std::uint64_t{1} << 32;
+    check(sceVideodecDeleteDecoder(&wideCtrl) == 0, "a control block size with only its upper bits set was refused by delete");
+
+    Ctrl kept{0x5a5a5a5a5a5a5a5au, reinterpret_cast<void*>(std::uintptr_t{0x5a}), 0x5au};
+    auto unsizedConfig = config;
+    unsizedConfig.maxFrameWidth = 0;
+    check(sceVideodecCreateDecoder(&unsizedConfig, &resource, &kept) == ErrorConfigInfo, "create accepted a configuration without a frame size");
+    check(kept.thisSize == 0x5a5a5a5a5a5a5a5au && kept.handle == reinterpret_cast<void*>(std::uintptr_t{0x5a}) && kept.version == 0x5au, "a failed create wrote the control block");
+
+    const std::uint64_t shortSize = 8;
+    PageTail shortCtrl(&shortSize, sizeof(shortSize));
+    PageTail shortFrame(&shortSize, sizeof(shortSize));
+    PageTail shortPicture(&shortSize, sizeof(shortSize));
+    const SceVideodec2::InputData empty{sizeof(SceVideodec2::InputData), nullptr, 0, 0, 0, 0};
+    FrameBuffer frame{sizeof(FrameBuffer), nullptr, 0};
+    PictureInfo picture{sizeof(PictureInfo)};
+    Ctrl sized{sizeof(Ctrl)};
+    check(sceVideodecDeleteDecoder(shortCtrl.As<Ctrl>()) == ErrorStructSize, "delete gave a pointer error for a short control block at the end of a page");
+    check(sceVideodecReset(shortCtrl.As<Ctrl>()) == ErrorStructSize, "reset gave a pointer error for a short control block at the end of a page");
+    check(sceVideodecFlush(shortCtrl.As<Ctrl>(), &frame, &picture) == ErrorStructSize, "flush gave a pointer error for a short control block at the end of a page");
+    check(sceVideodecFlush(&sized, shortFrame.As<FrameBuffer>(), &picture) == ErrorStructSize, "flush gave a pointer error for a short frame buffer at the end of a page");
+    check(sceVideodecFlush(&sized, &frame, shortPicture.As<PictureInfo>()) == ErrorStructSize, "flush gave a pointer error for a short picture at the end of a page");
+    check(sceVideodecDecode(shortCtrl.As<Ctrl>(), &empty, &frame, &picture) == ErrorStructSize, "decode gave a pointer error for a short control block at the end of a page");
+    check(sceVideodecDecode(&sized, &empty, shortFrame.As<FrameBuffer>(), &picture) == ErrorStructSize, "decode gave a pointer error for a short frame buffer at the end of a page");
+
+    PageTail readOnlyResource(&resource, sizeof(resource));
+    readOnlyResource.ReadOnly();
+    check(sceVideodecQueryResourceInfo(&config, readOnlyResource.As<ResourceInfo>()) == ErrorArgumentPointer, "query accepted a read-only resource information block");
+    const Ctrl unwritten{sizeof(Ctrl)};
+    PageTail readOnlyCtrl(&unwritten, sizeof(unwritten));
+    readOnlyCtrl.ReadOnly();
+    check(sceVideodecCreateDecoder(&config, &resource, readOnlyCtrl.As<Ctrl>()) == ErrorArgumentPointer, "create accepted a read-only control block");
+    check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "create failed after a refused read-only control block");
+    check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder created after a refused read-only control block was not deleted");
 }
 
 }
