@@ -1212,13 +1212,31 @@ void CheckUnsupportedPathconf(F fn, int descriptor) {
         Require(fn(descriptor, name) == -1 && Error() == 45);
 }
 
+void CheckRawGetcwd() {
+    std::array<char, 4096> expected{};
+    Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
+    std::array<char, 4096> buffer;
+    buffer.fill('#');
+    Require(__getcwd_nid_postfix(buffer.data(), buffer.size()) == 0);
+    Require(std::strcmp(buffer.data(), expected.data()) == 0);
+    Require(buffer[std::strlen(expected.data()) + 1] == '#');
+
+    std::array<char, 1> shortBuffer{'#'};
+    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1 && Error() == 34);
+    Require(shortBuffer[0] == '#');
+    Require(__getcwd_nid_postfix(buffer.data(), 0) == -1 && Error() == 22);
+    Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 14);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
     CharUpperBuffW(hostDirectorySpelling.data(), static_cast<DWORD>(hostDirectorySpelling.size()));
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
+    Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
+    CheckRawGetcwd();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
@@ -1410,6 +1428,8 @@ int main() {
         Require(std::memcmp(buffer, "sub", 3) == 0 && buffer[3] == '#');
         Require(readlink_nid_postfix(link.c_str(), nullptr, 0) == 0);
         Require(readlink_nid_postfix(link.c_str(), nullptr, sizeof(buffer)) == -1 && Error() == 14);
+        auto* unmapped = reinterpret_cast<char*>(0x800000000000);
+        Require(readlink_nid_postfix(link.c_str(), unmapped, sizeof(buffer)) == -1 && Error() == 14);
         Require(readlink_nid_postfix((root / "LINK").string().c_str(), buffer, sizeof(buffer)) == 14);
         const int linkDir = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
         Require(linkDir >= 0);
@@ -1419,9 +1439,11 @@ int main() {
         Require(readlinkat_nid_postfix(linkDir, "link", buffer, 3) == 3 && std::memcmp(buffer, "sub", 3) == 0);
         Require(readlinkat_nid_postfix(linkDir, "link", nullptr, 0) == 0);
         Require(readlinkat_nid_postfix(linkDir, "link", nullptr, sizeof(buffer)) == -1 && Error() == 14);
+        Require(readlinkat_nid_postfix(linkDir, "link", unmapped, sizeof(buffer)) == -1 && Error() == 14);
         const auto guestLink = "/" + root.filename().string() + "/link";
         Require(readlinkat_nid_postfix(-1, guestLink.c_str(), buffer, sizeof(buffer)) == 14 && std::memcmp(buffer, "sub/target.txt", 14) == 0);
         Require(readlinkat_nid_postfix(-100, link.c_str(), buffer, sizeof(buffer)) == 14 && std::memcmp(buffer, "sub/target.txt", 14) == 0);
+        Require(readlinkat_nid_postfix(-100, link.c_str(), unmapped, sizeof(buffer)) == -1 && Error() == 14);
         Require(sceKernelClose(linkDir) == 0);
 #ifndef _WIN32
         std::filesystem::create_symlink("loopB", root / "loopA");
@@ -2019,6 +2041,10 @@ int main() {
     Require(fstatat_nid_postfix(base, "missing.bin", &stat, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, nullptr, &stat, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
+    Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);
     Require(fstatat_nid_postfix(-1, "file.txt", &stat, 0) == -1 && Error() == 9);
     const int notDirectory = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
