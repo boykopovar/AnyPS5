@@ -10,7 +10,7 @@ from guest_import_fixtures import dynamic, executable
 from test_guest_deferred_dependencies import page_aligned
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
 from test_guest_module_directories import needed_libraries
-from test_guest_symbol_names import imported_symbols, importing_executable, module_symbols
+from test_guest_symbol_names import dynamic_tags, file_offset, imported_symbols, importing_executable, module_symbols, symbol_name
 
 
 def module(value=None, owner=None, weak=False, data=False, symbol="shared#A#B"):
@@ -93,10 +93,24 @@ def call_and_exit(image, slots):
     code = bytearray(b"\x53")
     for index, slot in enumerate(slots):
         code += b"\xff\x15" + struct.pack("<i", slot - (0x4000 + len(code) + 6))
-        code += b"\x89\xc3" if index == 0 else b"\x01\xc3"
+        code += b"\x89\xc3" if index == 0 else b"\x6b\xdb\x0a\x01\xc3"
     code += b"\x89\xdf\xb8\x3c\0\0\0\x0f\x05"
     image[0x4000:0x4000 + len(code)] = code
     return image
+
+
+def relocation_bindings(image):
+    tags = dynamic_tags(image)
+    bindings = []
+    for address, size in ((7, 8), (23, 2)):
+        if address not in tags or tags.get(size, 0) == 0:
+            continue
+        table = file_offset(image, tags[address])
+        for position in range(table, table + tags[size], 24):
+            target, info = struct.unpack_from("<QQ", image, position)
+            if info >> 32:
+                bindings.append((target, symbol_name(image, tags, info >> 32)))
+    return sorted(bindings)
 
 
 def convert(relinker, case, modules, source=None, options=()):
@@ -202,10 +216,35 @@ def main():
         second = set(module_symbols((directory / "b.prx.guest.prx").read_bytes()))
         assert len(imports & first) == len(imports & second) == 1, (imports, first, second)
         assert not imports & first & second, (imports, first, second)
+        bindings = relocation_bindings(output.read_bytes())
+        assert len(bindings) == 2 and bindings[0][1] in first and bindings[1][1] in second, bindings
         if runnable:
             output.chmod(0o755)
             run = subprocess.run([str(output)], capture_output=True, text=True, timeout=20)
-            assert run.returncode == 33, (run.returncode, run.stdout, run.stderr)
+            assert run.returncode == 132, (run.returncode, run.stdout, run.stderr)
+
+        for duplicate in (False, True):
+            for data in (False, True):
+                second = module(22, data=data)
+                second[0x2298 + 4] = 0x10
+                modules = {"b.prx": second}
+                if duplicate:
+                    modules["a.prx"] = module(11, data=data)
+                source = executable("b.prx", extra_dependencies=("a.prx",) if duplicate else ())
+                source[0x4898 + 4] = 0x11 if data else 0x12
+                if data:
+                    code = b"\x48\x8b\x05" + struct.pack("<i", 0x4a20 - 0x4007)
+                    code += b"\x8b\x38\xb8\x3c\0\0\0\x0f\x05"
+                    source[0x4000:0x4000 + len(code)] = code
+                else:
+                    call_and_exit(source, [0x4a20])
+                result, output = convert(relinker, work / f"untyped-{duplicate}-{data}", modules, source,
+                                         ["--skip-syscall-check"])
+                assert result.returncode == 0, (duplicate, data, result.stdout, result.stderr)
+                if runnable:
+                    output.chmod(0o755)
+                    run = subprocess.run([str(output)], capture_output=True, text=True, timeout=20)
+                    assert run.returncode == 22, (duplicate, data, run.returncode, run.stdout, run.stderr)
 
         self_import = module(owner="b.prx")
         struct.pack_into("<II", self_import, 0x2240, 1, 4)
@@ -236,6 +275,14 @@ def main():
             source[0x4898 + 4] = info
             result, _ = convert(relinker, work / label, {"a.prx": module(11), "b.prx": second}, source)
             assert result.returncode == 2 and error in result.stderr, (result.returncode, result.stdout, result.stderr)
+
+        second = module(22)
+        second[0x2298 + 4] = 0x10
+        source = executable("b.prx", extra_dependencies=("a.prx",))
+        source[0x4898 + 4] = 0x16
+        struct.pack_into("<Q", source, 0x4900 + 8, (1 << 32) | 16)
+        result, _ = convert(relinker, work / "tls-untyped-export", {"a.prx": module(11), "b.prx": second}, source)
+        assert result.returncode == 2 and "Guest import/export type mismatch: shared" in result.stderr, result.stderr
 
         result, _ = convert(relinker, work / "ambiguous", {
             **twins, "consumer.prx": module(owner="b.prx", symbol="shared"),

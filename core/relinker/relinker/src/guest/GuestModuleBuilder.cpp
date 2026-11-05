@@ -266,7 +266,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (!windows && found != exports.end() && (declared == guestNames.end() || declaredProvider != nullptr)) {
             if (!macos && declaredProvider != nullptr) {
                 const auto type = dynamic.DynSymData[offset + 4] & 15;
-                if (type != 0 && type != declaredProvider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + name);
+                const auto exportType = declaredProvider->Type;
+                if (type != 0 && type != exportType && (exportType != 0 || type == 6)) throw Domain::RelinkerException("Guest import/export type mismatch: " + name);
                 if (declaredProvider->Type == 6 && type == 0 && executableReferences[offset / 24]) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + name);
             }
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, declaredProvider != nullptr ? bindingName(name, declared->second) : name);
