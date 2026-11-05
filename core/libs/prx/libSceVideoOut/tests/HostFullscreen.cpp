@@ -203,7 +203,7 @@ static bool Fullscreen(const DisplayWindow& window) {
 }
 
 static bool DisplayRequired() {
-    return std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr || std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr;
+    return std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr;
 }
 
 static bool SkipsWithoutDisplay(const std::string& reason, bool required) {
