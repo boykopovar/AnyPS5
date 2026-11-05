@@ -53,7 +53,7 @@ extern "C" {
 
 int APS5_VABI ASN1_INTEGER_free_nid_postfix(void);
 int APS5_VABI ASN1_OBJECT_free_nid_postfix(void);
-int APS5_VABI ASN1_STRING_get0_data_nid_postfix(void);
+const unsigned char* APS5_VABI ASN1_STRING_get0_data_nid_postfix(const LibreSsl3Asn1String* value);
 int APS5_VABI BIO_up_ref_nid_postfix(void);
 int APS5_VABI BIO_vfree_nid_postfix(void);
 int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, std::size_t length);

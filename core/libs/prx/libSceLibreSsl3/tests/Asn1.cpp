@@ -307,6 +307,21 @@ void AllocationFailures() {
     }
 }
 
+void StringData() {
+    unsigned char data[] = {0x61, 0x62, 0x63};
+    LibreSsl3Asn1String value{3, 12, data, 0};
+    Require(ASN1_STRING_get0_data_nid_postfix(&value) == data);
+    LibreSsl3Asn1String empty{0, 12, nullptr, 0};
+    Require(ASN1_STRING_get0_data_nid_postfix(&empty) == nullptr);
+    bool threw = false;
+    try {
+        ASN1_STRING_get0_data_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 } // namespace
 
 int main() {
@@ -316,6 +331,7 @@ int main() {
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Integers();
+    StringData();
     BerExtremes();
     Ownership();
     Rejections();
