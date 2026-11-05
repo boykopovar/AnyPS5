@@ -443,7 +443,21 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
         }
         filter = StatFilter{*filterPath, *filterValue};
     }
+    for (const auto& member : action->members) {
+        if (member.first != "input" && member.first != "output") {
+            rules.skipped.push_back(where + " for " + event->text + " has unsupported action member \"" + member.first + "\"; only direct property copies are supported");
+            return;
+        }
+    }
     const auto* output = action->Find("output");
+    if (output != nullptr) {
+        for (const auto& member : output->members) {
+            if (member.first != "statId") {
+                rules.skipped.push_back(where + " for " + event->text + " has unsupported output member \"" + member.first + "\"; only a statId output is supported");
+                return;
+            }
+        }
+    }
     const auto* id = output != nullptr ? output->Find("statId") : nullptr;
     const auto statId = id != nullptr ? id->Unsigned() : std::nullopt;
     if (!statId) {
