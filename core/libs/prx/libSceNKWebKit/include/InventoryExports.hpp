@@ -1834,7 +1834,6 @@ int APS5_VABI _ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOve
 int APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE();
 int APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv();
 int APS5_VABI _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE();
-int APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_();
 int APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE();
 int APS5_VABI _ZN3WTF28normalizeLineEndingsToNativeEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE();
 int APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj();
@@ -5151,10 +5150,6 @@ int APS5_VABI _ZN7bmalloc5Cache30tryReallocateSlowCaseNullCacheENS_8HeapKindEPvm
 int APS5_VABI _ZN7bmalloc5Cache8scavengeENS_8HeapKindE();
 int APS5_VABI _ZN7bmalloc6IsoTLS13ensureEntriesEj();
 int APS5_VABI _ZN7bmalloc6IsoTLS8scavengeEv();
-int APS5_VABI _ZN7bmalloc8FreeList14initializeBumpEPcj();
-int APS5_VABI _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj();
-int APS5_VABI _ZN7bmalloc8FreeList5clearEv();
-int APS5_VABI _ZN7bmalloc8FreeListC1Ev();
 int APS5_VABI _ZN7bmalloc8FreeListD1Ev();
 int APS5_VABI _ZN7bmalloc9Allocator12allocateImplEmmNS_13FailureActionE();
 int APS5_VABI _ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm();
