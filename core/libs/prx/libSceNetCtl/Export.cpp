@@ -260,6 +260,7 @@ void WatchHostAddresses(HostAddressCache& cache) {
 #endif
 
 static bool HostHasAddress(int family) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
 #ifdef _WIN32
     auto& cache = AddressCache();
     const int slot = family == AF_INET ? 0 : family == AF_INET6 ? 1 : 2;
@@ -460,6 +461,7 @@ static bool QueryHostIpv4Interface(HostIpv4Interface& found) {
 }
 
 static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
 #ifdef _WIN32
     auto& cache = AddressCache();
     std::lock_guard guard(cache.lock);
