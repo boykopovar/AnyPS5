@@ -20,6 +20,7 @@ using FreeType::GuestRaccessLibrary;
 using FreeType::GuestStreamRec;
 
 constexpr int CannotOpenResource = 0x01;
+constexpr int UnknownFileFormat = 0x02;
 constexpr int InvalidArgument = 0x06;
 constexpr int InvalidLibraryHandle = 0x21;
 constexpr int InvalidStreamHandle = 0x28;
@@ -81,6 +82,30 @@ void Write(const std::filesystem::path& path, const std::vector<std::uint8_t>& b
     std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path, std::ios::binary);
     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+void Put16(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
+    bytes[at] = static_cast<std::uint8_t>(value >> 8);
+    bytes[at + 1] = static_cast<std::uint8_t>(value);
+}
+
+void Put32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
+    Put16(bytes, at, value >> 16);
+    Put16(bytes, at + 2, value);
+}
+
+std::vector<std::uint8_t> AppleHeader(std::uint32_t magic, std::uint32_t forkOffset, bool withFork = true) {
+    std::vector<std::uint8_t> bytes(26 + 3 * 12 + 16, 0xA5);
+    Put32(bytes, 0, magic);
+    Put32(bytes, 4, 0x00020000);
+    Put16(bytes, 24, 3);
+    const std::uint32_t ids[3] = {9, withFork ? 2u : 3u, 1};
+    for (std::size_t index = 0; index < 3; ++index) {
+        Put32(bytes, 26 + index * 12, ids[index]);
+        Put32(bytes, 30 + index * 12, ids[index] == 2 ? forkOffset : 0x1000 + static_cast<std::uint32_t>(index));
+        Put32(bytes, 34 + index * 12, 0x20);
+    }
+    return bytes;
 }
 
 std::vector<std::uint8_t> Pattern(std::size_t size) {
@@ -207,6 +232,91 @@ void NewStream() {
     Require(FT_Stream_New_nid_postfix(&owner.library, &args, &stream) == OutOfMemory && !stream, "a failed record allocation is Out_Of_Memory");
 }
 
+struct Guess {
+    char* names[9];
+    std::int64_t offsets[9];
+    std::int32_t errors[9];
+
+    Guess() {
+        for (int index = 0; index < 9; ++index) {
+            names[index] = reinterpret_cast<char*>(1);
+            offsets[index] = -7;
+            errors[index] = -1;
+        }
+    }
+};
+
+bool Named(const char* name, const char* expected) {
+    return name && std::strcmp(name, expected) == 0;
+}
+
+void GuessForks() {
+    Write("app0/fonts/font.dfont", AppleHeader(0x00051600, 0x52));
+    Write("app0/fonts/._font.dfont", AppleHeader(0x00051607, 0x1234));
+    Write("app0/fonts/%font.dfont", AppleHeader(0x00051607, 0x80000000u));
+    Write("app0/fonts/.AppleDouble/font.dfont", AppleHeader(0x00051607, 0x99, false));
+
+    Library owner;
+    GuestStreamRec stream{};
+    Require(FT_Stream_Open_nid_postfix(&stream, "/app0/fonts/font.dfont") == 0, "the base file opens");
+    FT_Stream_Seek_nid_postfix(&stream, 20);
+    char base[] = "/app0/fonts/font.dfont";
+    Guess guess;
+    FT_Raccess_Guess_nid_postfix(&owner.library, &stream, base, guess.names, guess.offsets, guess.errors);
+    Require(guess.errors[0] == UnknownFileFormat && !guess.names[0] && guess.offsets[0] == -7, "AppleDouble rejects an AppleSingle magic");
+    Require(guess.errors[1] == 0 && !guess.names[1] && guess.offsets[1] == 0x52, "AppleSingle finds the fork entry after a rewind");
+    Require(guess.errors[2] == 0 && Named(guess.names[2], "/app0/fonts/._font.dfont") && guess.offsets[2] == 0x1234, "the darwin export file is read");
+    Require(guess.errors[3] == 0 && Named(guess.names[3], "/app0/fonts/font.dfont/..namedfork/rsrc") && guess.offsets[3] == 0, "the darwin named fork is appended");
+    Require(guess.errors[4] == 0 && Named(guess.names[4], "/app0/fonts/font.dfont/rsrc") && guess.offsets[4] == 0, "the HFS+ fork is appended");
+    Require(guess.errors[5] == 0 && Named(guess.names[5], "/app0/fonts/resource.frk/font.dfont") && guess.offsets[5] == 0, "the vfat name is inserted");
+    Require(guess.errors[6] == 0 && Named(guess.names[6], "/app0/fonts/.resource/font.dfont") && guess.offsets[6] == 0, "the CAP name is inserted");
+    Require(guess.errors[7] == 0 && Named(guess.names[7], "/app0/fonts/%font.dfont") && guess.offsets[7] == 0x80000000ll, "the double file offset is unsigned");
+    Require(guess.errors[8] == UnknownFileFormat && !guess.names[8] && guess.offsets[8] == -7, "a double file without a fork entry fails");
+    for (int index = 0; index < 9; ++index) ft_mem_free_nid_postfix(&owner.recorder.memory, guess.names[index]);
+    Require(owner.recorder.allocs == owner.recorder.frees, "rejected names and probe streams are freed");
+
+    Guess noStream;
+    char plain[] = "font.dfont";
+    FT_Raccess_Guess_nid_postfix(&owner.library, nullptr, plain, noStream.names, noStream.offsets, noStream.errors);
+    Require(noStream.errors[0] == CannotOpenStream && noStream.errors[1] == CannotOpenStream && !noStream.names[0] && !noStream.names[1],
+            "the Apple rules need a stream");
+    Require(noStream.errors[2] == CannotOpenResource && noStream.errors[7] == CannotOpenResource && noStream.errors[8] == CannotOpenResource,
+            "missing double files are Cannot_Open_Resource");
+    Require(Named(noStream.names[3], "font.dfont/..namedfork/rsrc") && Named(noStream.names[5], "resource.frk/font.dfont") &&
+                Named(noStream.names[6], ".resource/font.dfont"),
+            "a name without a directory gets the insertion first");
+    for (int index = 0; index < 9; ++index) ft_mem_free_nid_postfix(&owner.recorder.memory, noStream.names[index]);
+
+    std::vector<std::uint8_t> truncated = AppleHeader(0x00051600, 0x52);
+    truncated.resize(30);
+    std::vector<std::uint8_t> empty = AppleHeader(0x00051600, 0x52);
+    Put16(empty, 24, 0);
+    for (const auto& [bytes, expected] : {std::pair{truncated, InvalidStreamOperation}, std::pair{empty, UnknownFileFormat}}) {
+        GuestStreamRec memoryStream{};
+        FT_Stream_OpenMemory_nid_postfix(&memoryStream, bytes.data(), bytes.size());
+        Guess result;
+        FT_Raccess_Guess_nid_postfix(&owner.library, &memoryStream, plain, result.names, result.offsets, result.errors);
+        Require(result.errors[1] == expected && result.offsets[1] == -7, "a cut or empty entry list fails");
+        for (int index = 0; index < 9; ++index) ft_mem_free_nid_postfix(&owner.recorder.memory, result.names[index]);
+    }
+
+    owner.recorder.failAfter = 0;
+    Guess starved;
+    FT_Raccess_Guess_nid_postfix(&owner.library, &stream, base, starved.names, starved.offsets, starved.errors);
+    for (int index = 2; index < 9; ++index) Require(starved.errors[index] == OutOfMemory && !starved.names[index], "a failed name allocation is Out_Of_Memory");
+    owner.recorder.failAfter = -1;
+
+    Require(Throws([&] {
+        Guess unnamed;
+        FT_Raccess_Guess_nid_postfix(&owner.library, &stream, nullptr, unnamed.names, unnamed.offsets, unnamed.errors);
+    }), "a null base name throws");
+    Require(Throws([&] {
+        Guess orphan;
+        FT_Raccess_Guess_nid_postfix(nullptr, &stream, base, orphan.names, orphan.offsets, orphan.errors);
+    }), "a null library throws");
+    FT_Stream_Close_nid_postfix(&stream);
+}
+
 }
 
 int main() {
@@ -216,6 +326,7 @@ int main() {
     std::filesystem::current_path(root);
     OpenFile();
     NewStream();
+    GuessForks();
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     std::puts("Guest FreeType Ot system tests passed");
