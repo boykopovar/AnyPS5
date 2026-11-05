@@ -29,6 +29,9 @@ int main() {
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
+    std::int64_t validIds[1] = {1};
+    Require(sceContentDeleteByIdListForSf(validIds, 1) == static_cast<int>(0x809D5002u));
 
     ContentDeleteInitParam param{};
     for (const std::uint32_t badHeap : {0u, 0x1000u, 0x3fffu, 0x4001u, 0x10000u}) {
@@ -49,5 +52,7 @@ int main() {
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(validIds, 1) == static_cast<int>(0x809D5002u));
     return 0;
 }
