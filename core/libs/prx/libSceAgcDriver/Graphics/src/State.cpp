@@ -1689,7 +1689,11 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if (slotExport == 0) continue;
         if (slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
         auto color = DecodeColorBuffer(cx, slot);
-        if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
+        if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) {
+            const auto alias = Uint16ExportAlias(color.format);
+            if (alias == VK_FORMAT_UNDEFINED) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
+            color.format = alias;
+        }
         color.exportIndex = index;
         color.uintExport = slotExport == 7;
         if (color.uintExport && color.packing == ShaderRecompiler::ColorExportPacking::Uint) color.packing = ShaderRecompiler::ColorExportPacking::None;
