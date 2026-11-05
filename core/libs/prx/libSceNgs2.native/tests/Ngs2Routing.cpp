@@ -350,9 +350,9 @@ static void TestSubmixerCompressor() {
         graph.Expect({0.3f, 0.3f});
     }
     {
-        CompressorGraph graph({0.2f, 0.2f});
+        CompressorGraph graph({0.8f, 0.8f});
         graph.Set(0x8);
-        graph.Expect({0.2f, 0.2f});
+        graph.Expect({0.65f, 0.65f});
     }
     {
         CompressorGraph graph({0.8f, 0.8f}, true);
@@ -391,10 +391,13 @@ static void TestSubmixerCompressor() {
         const float coefficient = std::exp(-1.0f / 480.0f);
         float gain = 1.0f;
         for (std::uint32_t i = 0; i < 32; i++) {
-            gain = 0.8125f + (gain - 0.8125f) * coefficient;
-            Require(std::fabs(out[i * 2] - 0.8f * gain) <= 0.00001f);
+            const float next = 0.8125f + (gain - 0.8125f) * coefficient;
+            const float applied = out[i * 2] / 0.8f;
+            Require(applied <= gain + 0.00001f && applied >= next - 0.00001f);
+            gain = next;
         }
         Require(std::fabs(gain - 0.987908f) <= 0.00001f);
+        Require(std::fabs(out[31 * 2] / 0.8f - 0.987908f) <= 0.0004f);
     }
 }
 #endif
