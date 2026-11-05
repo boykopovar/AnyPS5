@@ -2789,23 +2789,17 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
         recorder.Sync();
         return 7;
     };
+    const bool syncGuest = syncUnimported && [&] {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), true);
+        return range != nullptr && range->address < address + bytes.size();
+    }();
+    if (syncGuest && !Graphics::HostImportCovers(context, address, bytes.size())) return unimported();
+    const auto* import = Graphics::HostImportFor(context, address, bytes.size());
     const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
     const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
-    std::shared_ptr<Graphics::HostImport> unregistered;
-    const auto importUnregistered = [&]() -> const Graphics::HostImport* {
-        if (listed || storesPending) return nullptr;
-        unregistered = Graphics::UnregisteredHostImport(context, address, bytes.size());
-        return unregistered.get();
-    };
-    const Graphics::HostImport* import = nullptr;
-    if (syncUnimported && !Graphics::HostImportCovers(context, address, bytes.size())) {
-        import = importUnregistered();
-        if (import == nullptr) return unimported();
-    } else {
-        import = Graphics::HostImportFor(context, address, bytes.size());
-        if (import == nullptr) import = importUnregistered();
-        if (import == nullptr) return syncUnimported ? unimported() : 3;
-    }
+    const auto unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
+    if (unregistered != nullptr) import = unregistered.get();
+    if (import == nullptr) return syncGuest ? unimported() : 3;
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
     // FlushPending of their own.
