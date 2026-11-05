@@ -620,7 +620,20 @@ void CheckUnregisteredClientError() {
     for (const std::uint32_t error : others) Require(!sceNpManagerIntIsUnregisteredClientError(static_cast<int>(error)), "only 0x82E0104D is the unregistered client error");
 }
 
+static void CheckSandboxInfo() {
+    unsigned char info[0x60];
+    std::memset(info, 0xa5, sizeof(info));
+    Require(sceNpGetSandboxInfo(info) == 0, "sceNpGetSandboxInfo failed");
+    Require(std::memcmp(info, "RETAIL", 7) == 0, "sceNpGetSandboxInfo must report the RETAIL platform at offset 0");
+    Require(std::memcmp(info + 0x28, "LIVE", 5) == 0, "sceNpGetSandboxInfo must report the LIVE environment at offset 0x28");
+    for (std::size_t index = 7; index < 0x28; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the platform field");
+    for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
+    for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
+    Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+}
+
 int main() {
+    CheckSandboxInfo();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
