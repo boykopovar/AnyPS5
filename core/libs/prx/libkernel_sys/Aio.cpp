@@ -169,7 +169,7 @@ int Queue(GuestAiocb* user, int opcode) {
     if (aio.all.size() >= QueuePerProcess) return fail(GuestEagain);
     GuestAiocb request{};
     if (!GuestCopyIn_nid_no_patch(&request, user, sizeof(request))) return fail(GuestEfault);
-    if (request.nbytes > IoSizeMax) return Fail(GuestEinval);
+    if (request.nbytes > IoSizeMax) return fail(GuestEinval);
     const int notify = request.sigevent.notify;
     if (notify != SigevKevent && notify != SigevSignal && notify != SigevThreadId && notify != SigevNone) return fail(GuestEinval);
     if ((notify == SigevSignal || notify == SigevThreadId) && (request.sigevent.signo <= 0 || request.sigevent.signo > SignalMax))
