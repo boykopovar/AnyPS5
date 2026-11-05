@@ -236,6 +236,19 @@ void RecoveryFailure(const std::string& executable) {
     Require(Tree(Old) == original);
     Require(Run(executable, {"check", "new"}) == 0);
     NoCopies();
+    for (const char* count : {"1", "2"}) {
+        const auto previous = Start(executable);
+        Require(Run(executable, {"backup", "new", "backup.flush", "fail", count}) == 0);
+        Require(Tree(Backup) == previous);
+        NoCopies();
+        Require(Run(executable, {"check", "old"}) == 0);
+    }
+    const auto previous = Start(executable);
+    Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
+    Require(Run(executable, {"check", "invalid", "backup.flush", "fail"}) == 0);
+    Require(Tree(Backup) == previous && !std::filesystem::exists(Old));
+    Require(Run(executable, {"check", "old"}) == 0);
+    NoCopies();
 }
 
 void Retry(const std::string& executable) {

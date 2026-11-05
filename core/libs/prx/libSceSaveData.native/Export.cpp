@@ -683,6 +683,7 @@ static void move_backup(const char* step, const std::string& from, const std::st
     file_step(step, to);
     std::filesystem::rename(from, to);
     if (moved != nullptr) *moved = true;
+    file_step("backup.flush", to);
     flush_path(std::filesystem::path(to).parent_path().string(), true);
     flush_path(std::filesystem::path(from).parent_path().string(), true);
 }
