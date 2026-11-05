@@ -291,6 +291,7 @@ public:
         }
         const ClosingDescriptor closing(previous, ::fileno(previous));
         const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
+        errno = error;
         if (kept >= 0) ::flockfile(previous);
         _handle = std::freopen(filename.c_str(), mode, previous);
         if (kept >= 0) RestoreHostStandard(previous, kept);
