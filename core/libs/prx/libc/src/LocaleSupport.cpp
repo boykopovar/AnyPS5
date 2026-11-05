@@ -798,6 +798,16 @@ alignas(16) unsigned char _ZNSt8__sce_v25wcoutE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v25wcerrE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v23cinE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v24clogE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v25wclogE_nid_postfix[0x400] {};
+unsigned char* _ZNSt8__sce_v28_Ptr_cinE_nid_postfix = _ZNSt8__sce_v23cinE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_coutE_nid_postfix = _ZNSt8__sce_v24coutE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix = _ZNSt8__sce_v24cerrE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_clogE_nid_postfix = _ZNSt8__sce_v24clogE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_wcinE_nid_postfix = _ZNSt8__sce_v24wcinE_nid_postfix;
+unsigned char* _ZNSt8__sce_v210_Ptr_wcoutE_nid_postfix = _ZNSt8__sce_v25wcoutE_nid_postfix;
+unsigned char* _ZNSt8__sce_v210_Ptr_wcerrE_nid_postfix = _ZNSt8__sce_v25wcerrE_nid_postfix;
+unsigned char* _ZNSt8__sce_v210_Ptr_wclogE_nid_postfix = _ZNSt8__sce_v25wclogE_nid_postfix;
 
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale5_InitEb_nid_postfix(bool doIncref) {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
