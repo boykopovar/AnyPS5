@@ -779,9 +779,9 @@ void Run() {
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestFileNameHelpers(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestFileNameHelpers(); }
 
 namespace Wtf2Tests {
 
@@ -803,9 +803,12 @@ const auto URLSrcdoc = &_ZNK3WTF3URL13isAboutSrcDocEv;
 const auto URLJavaScript = &_ZNK3WTF3URL20protocolIsJavaScriptEv;
 const auto URLInvalidate = &_ZN3WTF3URL10invalidateEv;
 const auto URLEqualIgnoringFragment = &_ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_;
+const auto URLPortAllowed = &_ZN3WTF11portAllowedERKNS_3URLE;
 const auto IsJavaScript = &_ZN3WTF20protocolIsJavaScriptENS_10StringViewE;
 const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
+const auto URLLastPathComponent = &_ZNK3WTF3URL17lastPathComponentEv;
+const auto URLStrippedForReferrer = &_ZNK3WTF3URL24strippedForUseAsReferrerEv;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
 
@@ -881,6 +884,190 @@ void TestURLStringHelpers() {
     Text(DataURLMime(ViewOf(accented)), "\xC3\x89/x");
     auto widePlain = Create16(u"data:,x", 7);
     Text(DataURLMime(ViewOf(widePlain)), "text/plain");
+}
+
+const auto EncodeName = &_ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE;
+const auto DecodeName = &_ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE;
+const auto LastComponent = &_ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE;
+
+bool NameIs8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
+
+std::u16string NameUnits(const String& value) {
+    Check(value.impl != nullptr);
+    std::u16string units;
+    for (unsigned i = 0; i < value.impl->length; ++i) {
+        units.push_back(NameIs8Bit(value) ? static_cast<const unsigned char*>(value.impl->data)[i] : static_cast<const char16_t*>(value.impl->data)[i]);
+    }
+    return units;
+}
+
+String Wide(const std::u16string& units) { return Create16(units.data(), static_cast<unsigned>(units.size())); }
+
+String NameString(const char* text) { return Create8(U8(text), static_cast<unsigned>(std::strlen(text))); }
+
+void TestFileNameHelpers() {
+    for (unsigned c = 0; c < 128; ++c) {
+        char16_t unit = static_cast<char16_t>(c);
+        auto encoded = EncodeName(&(const String&)Wide(std::u16string(1, unit)));
+        bool escaped = c < 0x20 || c == 0x7F || std::strchr(" \"%*/:<>?\\|", static_cast<int>(c)) != nullptr;
+        if (escaped) {
+            static const char Hex[] = "0123456789ABCDEF";
+            std::u16string expected{u'%', static_cast<char16_t>(Hex[c >> 4]), static_cast<char16_t>(Hex[c & 15])};
+            Check(NameUnits(encoded) == expected);
+        } else {
+            Check(NameUnits(encoded) == std::u16string(1, unit));
+        }
+        Check(NameIs8Bit(encoded));
+    }
+
+    Text(EncodeName(&(const String&)NameString("a b/c%")), "a%20b%2Fc%25");
+    Text(EncodeName(&(const String&)NameString("#+.~ -_")), "#+.~%20-_");
+    Text(EncodeName(&(const String&)NameString("a\\b|c:d*e?f<g>h\"i")), "a%5Cb%7Cc%3Ad%2Ae%3Ff%3Cg%3Eh%22i");
+
+    auto accented = Wide(u"café");
+    Check(!NameIs8Bit(accented));
+    auto accentedEncoded = EncodeName(&accented);
+    Check(NameUnits(accentedEncoded) == u"café" && NameIs8Bit(accentedEncoded));
+    Check(accentedEncoded.impl != accented.impl);
+
+    const unsigned char latin1Source[] = {'c', 'a', 'f', 0xE9, '/'};
+    auto latin1Bytes = Create8(latin1Source, 5);
+    auto latin1Encoded = EncodeName(&latin1Bytes);
+    Check(NameUnits(latin1Encoded) == u"café%2F" && NameIs8Bit(latin1Encoded));
+    auto latin1Decoded = DecodeName(&latin1Encoded);
+    Check(NameUnits(latin1Decoded) == u"café/" && NameIs8Bit(latin1Decoded));
+
+    auto wide = Wide(u"a中 b");
+    auto wideEncoded = EncodeName(&wide);
+    Check(NameUnits(wideEncoded) == u"a中%20b" && !NameIs8Bit(wideEncoded));
+
+    auto paired = Wide(u"\xD83D\xDE00");
+    auto pairedEncoded = EncodeName(&paired);
+    Check(NameUnits(pairedEncoded) == u"\xD83D\xDE00" && !NameIs8Bit(pairedEncoded));
+
+    auto loneLeadEnd = Wide(u"a\xD83D");
+    Check(NameUnits(EncodeName(&loneLeadEnd)) == u"a%+D83D");
+    auto loneLeadMiddle = Wide(u"\xD83D" u"a");
+    Check(NameUnits(EncodeName(&loneLeadMiddle)) == u"%+D83Da");
+    auto loneTrailStart = Wide(u"\xDE00" u"a");
+    Check(NameUnits(EncodeName(&loneTrailStart)) == u"%+DE00a");
+    auto loneTrailMiddle = Wide(u"a\xDE00");
+    Check(NameUnits(EncodeName(&loneTrailMiddle)) == u"a%+DE00");
+    auto doubleLead = Wide(u"\xD83D\xD83D\xDE00");
+    Check(NameUnits(EncodeName(&doubleLead)) == u"%+D83D\xD83D\xDE00");
+    auto doubleTrail = Wide(u"\xD83D\xDE00\xDE00");
+    Check(NameUnits(EncodeName(&doubleTrail)) == u"\xD83D\xDE00%+DE00");
+    auto reversed = Wide(u"\xDE00\xD83D");
+    Check(NameUnits(EncodeName(&reversed)) == u"%+DE00%+D83D");
+
+    auto latinWide = Wide(u"a/é");
+    Check(!NameIs8Bit(latinWide) && !NameIs8Bit(wide) && !NameIs8Bit(paired));
+    auto latinWideEncoded = EncodeName(&latinWide);
+    Check(NameUnits(latinWideEncoded) == u"a%2Fé" && NameIs8Bit(latinWideEncoded));
+    auto highByte = Wide(u"\x00ff\x0100");
+    Check(NameUnits(EncodeName(&highByte)) == u"\x00ff\x0100");
+
+    String null;
+    Check(EncodeName(&null).impl == nullptr);
+    auto empty = NameString("");
+    auto emptyEncoded = EncodeName(&empty);
+    Check(emptyEncoded.impl == empty.impl && empty.impl->length == 0);
+    Throws([&] { EncodeName(nullptr); });
+
+    StringImpl privateEmpty{4, 0, nullptr, 0};
+    String privateHolder(&privateEmpty);
+    Check(EncodeName(&privateHolder).impl == &privateEmpty);
+    Check(DecodeName(&privateHolder).impl == &privateEmpty);
+    Check(LastComponent(&privateHolder).impl == &privateEmpty);
+    Check(privateEmpty.refCount == 4);
+
+    auto plain = NameString("name.txt");
+    auto plainEncoded = EncodeName(&plain);
+    Text(plainEncoded, "name.txt");
+    Check(plainEncoded.impl != plain.impl);
+
+    auto roundTrip = Wide(u"a b/\x01\x7Fé中\xD83D\xDE00\xD83D%\xDE00");
+    auto roundTripEncoded = EncodeName(&roundTrip);
+    Check(NameUnits(DecodeName(&roundTripEncoded)) == NameUnits(roundTrip));
+
+    Text(DecodeName(&(const String&)NameString("a%20b%2fc%2Fd")), "a b/c/d");
+    Text(DecodeName(&(const String&)NameString("%41")), "A");
+    Text(DecodeName(&(const String&)NameString("%+0041")), "A");
+    Text(DecodeName(&(const String&)NameString("plain+text")), "plain+text");
+    Text(DecodeName(&(const String&)NameString("%41%42")), "AB");
+    auto e9 = DecodeName(&(const String&)NameString("%+00e9"));
+    Check(NameUnits(e9) == u"é" && NameIs8Bit(e9));
+    auto latin1 = DecodeName(&(const String&)NameString("%E9"));
+    Check(NameUnits(latin1) == u"é" && NameIs8Bit(latin1));
+    auto cjk = DecodeName(&(const String&)NameString("x%+4E2Dy"));
+    Check(NameUnits(cjk) == u"x中y" && !NameIs8Bit(cjk));
+    auto lone = DecodeName(&(const String&)NameString("%+d83D"));
+    Check(NameUnits(lone) == u"\xD83D");
+    auto nul = DecodeName(&(const String&)NameString("a%00b"));
+    Check(NameUnits(nul) == std::u16string(u"a\0b", 3));
+    auto widePlain = Wide(u"中%41");
+    Check(NameUnits(DecodeName(&widePlain)) == u"中A");
+
+    for (const char* invalid : {"%", "%4", "a%4", "%G1", "%1G", "%+", "%+4", "%+41", "%+004", "%+00G1", "%+G041", "%+0G41", "%+00", "x%", "x%4"}) {
+        auto result = DecodeName(&(const String&)NameString(invalid));
+        Check(result.impl == nullptr);
+    }
+    auto truncatedInSharedParent = [&](const char* parentText, unsigned length) {
+        auto parent = NameString(parentText);
+        auto part = SharedSubstring(&parent, 0, length);
+        Check((part.impl->hashAndFlags & 3) == 2 && part.impl->length == length);
+        Check(DecodeName(&part).impl == nullptr);
+    };
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%41", 18);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 17);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 19);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+4141", 20);
+
+    auto invalidWide = Wide(u"中%4");
+    Check(DecodeName(&invalidWide).impl == nullptr);
+    auto nonHexWide = Wide(u"%١٢");
+    Check(DecodeName(&nonHexWide).impl == nullptr);
+
+    Check(DecodeName(&null).impl == nullptr);
+    auto emptyDecoded = DecodeName(&empty);
+    Check(emptyDecoded.impl == empty.impl);
+    Throws([&] { DecodeName(nullptr); });
+    auto unchanged = NameString("abc");
+    Check(DecodeName(&unchanged).impl != unchanged.impl);
+
+    auto sameImpl = [&](const char* path) {
+        auto input = NameString(path);
+        auto result = LastComponent(&input);
+        Check(result.impl == input.impl);
+    };
+    sameImpl("abc");
+    sameImpl("");
+    Check(LastComponent(&null).impl == nullptr);
+
+    Text(LastComponent(&(const String&)NameString("/abc")), "abc");
+    Text(LastComponent(&(const String&)NameString("a/b/c")), "c");
+    Text(LastComponent(&(const String&)NameString("a/b/")), "b");
+    Text(LastComponent(&(const String&)NameString("abc/")), "abc");
+    Text(LastComponent(&(const String&)NameString("a/")), "a");
+    Text(LastComponent(&(const String&)NameString("x/abc/")), "abc");
+    Text(LastComponent(&(const String&)NameString("/a/")), "a");
+    Text(LastComponent(&(const String&)NameString("/")), "");
+    Text(LastComponent(&(const String&)NameString("//")), "");
+    Text(LastComponent(&(const String&)NameString("a//")), "");
+    Text(LastComponent(&(const String&)NameString("///")), "");
+    Text(LastComponent(&(const String&)NameString("a/b//")), "");
+    Text(LastComponent(&(const String&)NameString("dir/file.txt")), "file.txt");
+    sameImpl("a\\b\\c");
+    sameImpl("a\\b\\c\\");
+
+    auto widePath = Wide(u"中/文/");
+    auto wideLast = LastComponent(&widePath);
+    Check(NameUnits(wideLast) == u"文" && !NameIs8Bit(wideLast));
+    auto wideNoSlash = Wide(u"中文");
+    Check(LastComponent(&wideNoSlash).impl == wideNoSlash.impl);
+    auto wideTail = Wide(u"a/文");
+    Check(NameUnits(LastComponent(&wideTail)) == u"文");
+    Throws([&] { LastComponent(nullptr); });
 }
 
 void TestURLsAndReallocation() {
@@ -1029,6 +1216,176 @@ void TestURLsAndReallocation() {
     Check(!URLEqualIgnoringFragment(&absent, &javascript));
     Throws([&] { URLEqualIgnoringFragment(nullptr, &url); });
     Throws([&] { URLEqualIgnoringFragment(&url, nullptr); });
+    auto urlNoPortStr = FromUTF8Z(U8("http://example.test/path"));
+    URL urlNoPort{urlNoPortStr.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 24, 24};
+    Check(URLPortAllowed(&urlNoPort));
+    auto urlPort80Str = FromUTF8Z(U8("http://example.test:80/path"));
+    URL urlPort80{urlPort80Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&urlPort80));
+    auto urlPort443Str = FromUTF8Z(U8("http://example.test:443/path"));
+    URL urlPort443{urlPort443Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(URLPortAllowed(&urlPort443));
+    auto urlPort8080Str = FromUTF8Z(U8("http://example.test:8080/path"));
+    URL urlPort8080{urlPort8080Str.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
+    Check(URLPortAllowed(&urlPort8080));
+    auto urlPort0Str = FromUTF8Z(U8("http://example.test:0/path"));
+    URL urlPort0{urlPort0Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(URLPortAllowed(&urlPort0));
+    auto urlPort10081Str = FromUTF8Z(U8("http://example.test:10081/path"));
+    URL urlPort10081{urlPort10081Str.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(URLPortAllowed(&urlPort10081));
+    auto urlPort1Str = FromUTF8Z(U8("http://example.test:1/path"));
+    URL urlPort1{urlPort1Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(!URLPortAllowed(&urlPort1));
+    auto urlPort7Str = FromUTF8Z(U8("http://example.test:7/path"));
+    URL urlPort7{urlPort7Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(!URLPortAllowed(&urlPort7));
+    auto urlPort21Str = FromUTF8Z(U8("http://example.test:21/path"));
+    URL urlPort21{urlPort21Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort21));
+    auto urlPort22Str = FromUTF8Z(U8("http://example.test:22/path"));
+    URL urlPort22{urlPort22Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort22));
+    auto urlPort25Str = FromUTF8Z(U8("http://example.test:25/path"));
+    URL urlPort25{urlPort25Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort25));
+    auto urlPort87Str = FromUTF8Z(U8("http://example.test:87/path"));
+    URL urlPort87{urlPort87Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(!URLPortAllowed(&urlPort87));
+    auto urlPort10080Str = FromUTF8Z(U8("http://example.test:10080/path"));
+    URL urlPort10080{urlPort10080Str.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(!URLPortAllowed(&urlPort10080));
+    auto ftpPort20Str = FromUTF8Z(U8("ftp://example.test:20/path"));
+    URL ftpPort20{ftpPort20Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(!URLPortAllowed(&ftpPort20));
+    auto ftpPort21Str = FromUTF8Z(U8("ftp://example.test:21/path"));
+    URL ftpPort21{ftpPort21Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpPort21));
+    auto ftpPort22Str = FromUTF8Z(U8("ftp://example.test:22/path"));
+    URL ftpPort22{ftpPort22Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpPort22));
+    auto ftpPort25Str = FromUTF8Z(U8("ftp://example.test:25/path"));
+    URL ftpPort25{ftpPort25Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(!URLPortAllowed(&ftpPort25));
+    auto ftpUpper21Str = FromUTF8Z(U8("FTP://example.test:21/path"));
+    URL ftpUpper21{ftpUpper21Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpUpper21));
+    auto ftpUpper22Str = FromUTF8Z(U8("FTP://example.test:22/path"));
+    URL ftpUpper22{ftpUpper22Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(URLPortAllowed(&ftpUpper22));
+    auto ftpUpper25Str = FromUTF8Z(U8("FTP://example.test:25/path"));
+    URL ftpUpper25{ftpUpper25Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
+    Check(!URLPortAllowed(&ftpUpper25));
+    auto filePort1Str = FromUTF8Z(U8("file://example.test:1/path"));
+    URL filePort1{filePort1Str.impl, 1U | 0U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(URLPortAllowed(&filePort1));
+    auto filePort21Str = FromUTF8Z(U8("file://example.test:21/path"));
+    URL filePort21{filePort21Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&filePort21));
+    auto filePort25Str = FromUTF8Z(U8("file://example.test:25/path"));
+    URL filePort25{filePort25Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&filePort25));
+    auto filePort10080Str = FromUTF8Z(U8("file://example.test:10080/path"));
+    URL filePort10080{filePort10080Str.impl, 1U | 0U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(URLPortAllowed(&filePort10080));
+    auto fileUpper25Str = FromUTF8Z(U8("FILE://example.test:25/path"));
+    URL fileUpper25{fileUpper25Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
+    Check(URLPortAllowed(&fileUpper25));
+    auto urlMinusPortStr = FromUTF8Z(U8("http://example.test:-80/path"));
+    URL urlMinusPort{urlMinusPortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(URLPortAllowed(&urlMinusPort));
+    auto urlOverflowPortStr = FromUTF8Z(U8("http://example.test:65536/path"));
+    URL urlOverflowPort{urlOverflowPortStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
+    Check(URLPortAllowed(&urlOverflowPort));
+    auto urlBarePlusPortStr = FromUTF8Z(U8("http://example.test:+/path"));
+    URL urlBarePlusPort{urlBarePlusPortStr.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
+    Check(URLPortAllowed(&urlBarePlusPort));
+    auto urlPlus25PortStr = FromUTF8Z(U8("http://example.test:+25/path"));
+    URL urlPlus25Port{urlPlus25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlPlus25Port));
+    auto urlSpace25PortStr = FromUTF8Z(U8("http://example.test: 25 /path"));
+    URL urlSpace25Port{urlSpace25PortStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
+    Check(!URLPortAllowed(&urlSpace25Port));
+    auto urlTab25PortStr = FromUTF8Z(U8("http://example.test:\t25/path"));
+    URL urlTab25Port{urlTab25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTab25Port));
+    auto urlLf25PortStr = FromUTF8Z(U8("http://example.test:\n25/path"));
+    URL urlLf25Port{urlLf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlLf25Port));
+    auto urlCr25PortStr = FromUTF8Z(U8("http://example.test:\r25/path"));
+    URL urlCr25Port{urlCr25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlCr25Port));
+    auto urlFf25PortStr = FromUTF8Z(U8("http://example.test:\f25/path"));
+    URL urlFf25Port{urlFf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlFf25Port));
+    auto urlTrailingTab25PortStr = FromUTF8Z(U8("http://example.test:25\t/path"));
+    URL urlTrailingTab25Port{urlTrailingTab25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingTab25Port));
+    auto urlTrailingLf25PortStr = FromUTF8Z(U8("http://example.test:25\n/path"));
+    URL urlTrailingLf25Port{urlTrailingLf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingLf25Port));
+    auto urlTrailingCr25PortStr = FromUTF8Z(U8("http://example.test:25\r/path"));
+    URL urlTrailingCr25Port{urlTrailingCr25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingCr25Port));
+    auto urlTrailingFf25PortStr = FromUTF8Z(U8("http://example.test:25\f/path"));
+    URL urlTrailingFf25Port{urlTrailingFf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(!URLPortAllowed(&urlTrailingFf25Port));
+    auto urlJunk25PortStr = FromUTF8Z(U8("http://example.test:25x/path"));
+    URL urlJunk25Port{urlJunk25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
+    Check(URLPortAllowed(&urlJunk25Port));
+    auto urlJunk80PortStr = FromUTF8Z(U8("http://example.test:80junk/path"));
+    URL urlJunk80Port{urlJunk80PortStr.impl, 1U | 2U | (7U << 3) | (4U << 6), 7, 7, 7, 19, 27, 31, 31};
+    Check(URLPortAllowed(&urlJunk80Port));
+    auto widePort8080 = Create16(u"http://wide.test:8080/path", 26);
+    URL urlWidePort8080{widePort8080.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 26, 26};
+    Check(URLPortAllowed(&urlWidePort8080));
+    auto widePort25 = Create16(u"http://wide.test:25/path", 24);
+    URL urlWidePort25{widePort25.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
+    Check(!URLPortAllowed(&urlWidePort25));
+    auto wideFtpPort21 = Create16(u"ftp://wide.test:21/path", 23);
+    URL urlWideFtpPort21{wideFtpPort21.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 15, 19, 23, 23};
+    Check(URLPortAllowed(&urlWideFtpPort21));
+    auto wideFilePort25 = Create16(u"file://wide.test:25/path", 24);
+    URL urlWideFilePort25{wideFilePort25.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
+    Check(URLPortAllowed(&urlWideFilePort25));
+    auto wideFtpUpper21 = Create16(u"FTP://wide.test:21/path", 23);
+    URL urlWideFtpUpper21{wideFtpUpper21.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 15, 19, 23, 23};
+    Check(URLPortAllowed(&urlWideFtpUpper21));
+    auto wideFileUpper25 = Create16(u"FILE://wide.test:25/path", 24);
+    URL urlWideFileUpper25{wideFileUpper25.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
+    Check(URLPortAllowed(&urlWideFileUpper25));
+    auto wideTab25 = Create16(u"http://wide.test:\t25/path", 25);
+    URL urlWideTab25{wideTab25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTab25));
+    auto wideLf25 = Create16(u"http://wide.test:\n25/path", 25);
+    URL urlWideLf25{wideLf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideLf25));
+    auto wideCr25 = Create16(u"http://wide.test:\r25/path", 25);
+    URL urlWideCr25{wideCr25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideCr25));
+    auto wideFf25 = Create16(u"http://wide.test:\f25/path", 25);
+    URL urlWideFf25{wideFf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideFf25));
+    auto wideTrailingTab25 = Create16(u"http://wide.test:25\t/path", 25);
+    URL urlWideTrailingTab25{wideTrailingTab25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingTab25));
+    auto wideTrailingLf25 = Create16(u"http://wide.test:25\n/path", 25);
+    URL urlWideTrailingLf25{wideTrailingLf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingLf25));
+    auto wideTrailingCr25 = Create16(u"http://wide.test:25\r/path", 25);
+    URL urlWideTrailingCr25{wideTrailingCr25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingCr25));
+    auto wideTrailingFf25 = Create16(u"http://wide.test:25\f/path", 25);
+    URL urlWideTrailingFf25{wideTrailingFf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(!URLPortAllowed(&urlWideTrailingFf25));
+    auto wideJunk25 = Create16(u"http://wide.test:25x/path", 25);
+    URL urlWideJunk25{wideJunk25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
+    Check(URLPortAllowed(&urlWideJunk25));
+    auto urlWraparoundPortStr = FromUTF8Z(U8("25://example.test/path"));
+    URL urlWraparoundPort{urlWraparoundPortStr.impl, 1U | 2U | (3U << 3) | (2U << 6), 5, 5, 5, ~0U, 23, 22, 22};
+    Check(URLPortAllowed(&urlWraparoundPort));
+    Check(URLPortAllowed(&absent));
+    Throws([&] { URLPortAllowed(nullptr); });
     URLInvalidate(&url);
     Check(url.impl == string.impl && url.bits == 0 && url.userStart == 0 && url.userEnd == 0);
     Check(url.passwordEnd == 0 && url.hostEnd == 0 && url.pathEnd == 0 && url.pathAfterLastSlash == 0 && url.queryEnd == 0);
@@ -1042,6 +1399,97 @@ void TestURLsAndReallocation() {
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
     TestURLStringHelpers();
+}
+
+void TestURLLastPathComponentAndReferrer() {
+    auto httpBits = [](unsigned schemeEnd, unsigned portLength) { return 1U | 2U | (portLength << 3) | (schemeEnd << 6); };
+    auto simple = FromUTF8Z(U8("http://h/a/b"));
+    URL url{simple.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    Check(ViewText(URLLastPathComponent(&url)) == "b");
+    auto trailing = FromUTF8Z(U8("http://h/a/b/"));
+    URL slashed{trailing.impl, httpBits(4, 0), 7, 7, 7, 8, 13, 13, 13};
+    Check(ViewText(URLLastPathComponent(&slashed)) == "b");
+    auto root = FromUTF8Z(U8("http://h/"));
+    URL rootUrl{root.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 9, 9};
+    Check(!URLLastPathComponent(&rootUrl).data);
+    auto hostOnly = FromUTF8Z(U8("http://h"));
+    URL noPath{hostOnly.impl, httpBits(4, 0), 7, 7, 7, 8, 8, 8, 8};
+    Check(!URLLastPathComponent(&noPath).data);
+    auto opaque = FromUTF8Z(U8("mailto:abc"));
+    URL mailto{opaque.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 10, 10};
+    Check(ViewText(URLLastPathComponent(&mailto)) == "mailto:abc");
+    auto wide = Create16(u"http://h/a/b", 12);
+    URL wideUrl{wide.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    auto wideResult = URLLastPathComponent(&wideUrl);
+    Check(!wideResult.is8Bit && wideResult.length == 1 && ViewText(wideResult) == "b");
+    auto port = FromUTF8Z(U8("http://h:80/dir/file.txt?q"));
+    URL withPort{port.impl, httpBits(4, 3), 7, 7, 7, 8, 16, 24, 26};
+    Check(ViewText(URLLastPathComponent(&withPort)) == "file.txt");
+    auto slashDot = FromUTF8Z(U8("foo:/.//a"));
+    URL dotted{slashDot.impl, 1U | (3U << 6), 4, 4, 4, 4, 8, 9, 9};
+    Check(ViewText(URLLastPathComponent(&dotted)) == "a");
+    auto beforePath = FromUTF8Z(U8("foo:/.a"));
+    URL guarded{beforePath.impl, 1U | (3U << 6), 4, 4, 4, 4, 5, 7, 7};
+    Check(!URLLastPathComponent(&guarded).data);
+    auto emptyComponent = FromUTF8Z(U8("http://h//"));
+    URL doubled{emptyComponent.impl, httpBits(4, 0), 7, 7, 7, 8, 10, 10, 10};
+    auto emptyResult = URLLastPathComponent(&doubled);
+    Check(emptyResult.data && emptyResult.length == 0);
+    URL absent{};
+    Check(!URLLastPathComponent(&absent).data);
+    URL pastEnd = url;
+    pastEnd.pathEnd = 50;
+    Throws([&] { URLLastPathComponent(&pastEnd); });
+    Throws([&] { URLLastPathComponent(nullptr); });
+
+    auto full = FromUTF8Z(U8("https://u:p@h:80/a?q#f"));
+    URL credentialed{full.impl, httpBits(5, 3), 8, 9, 11, 13, 17, 18, 20};
+    auto stripped = URLStrippedForReferrer(&credentialed);
+    Check(Bytes(UTF8(&stripped, 1)) == "https://h:80/a?q" && stripped.impl != full.impl && stripped.impl->length == 16);
+    auto plain = FromUTF8Z(U8("http://h/a?q"));
+    URL untouched{plain.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 12};
+    auto same = URLStrippedForReferrer(&untouched);
+    Check(same.impl == plain.impl && plain.impl->refCount == 4);
+    auto fragment = FromUTF8Z(U8("http://h/a#f"));
+    URL fragmentOnly{fragment.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 10};
+    auto noFragment = URLStrippedForReferrer(&fragmentOnly);
+    Check(Bytes(UTF8(&noFragment, 1)) == "http://h/a");
+    auto userOnly = FromUTF8Z(U8("http://u@h/a"));
+    URL userUrl{userOnly.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto noUser = URLStrippedForReferrer(&userUrl);
+    Check(Bytes(UTF8(&noUser, 1)) == "http://h/a");
+    auto wideFull = Create16(u"http://u@h/a#f", 14);
+    URL wideCredentialed{wideFull.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto wideStripped = URLStrippedForReferrer(&wideCredentialed);
+    Check(!(wideStripped.impl->hashAndFlags & 4) && wideStripped.impl->length == 10 && Bytes(UTF8(&wideStripped, 1)) == "http://h/a");
+    URL invalid{plain.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    {
+        const unsigned before = plain.impl->refCount;
+        auto kept = URLStrippedForReferrer(&invalid);
+        Check(kept.impl == plain.impl && plain.impl->refCount == before + 2);
+    }
+    Check(plain.impl->refCount == 4);
+    URL badBounds = untouched;
+    badBounds.queryEnd = 99;
+    Throws([&] { URLStrippedForReferrer(&badBounds); });
+    auto passwordOnly = FromUTF8Z(U8("http://:p@h/"));
+    URL passwordUrl{passwordOnly.impl, httpBits(4, 0), 7, 7, 9, 11, 12, 12, 12};
+    auto noPassword = URLStrippedForReferrer(&passwordUrl);
+    Check(Bytes(UTF8(&noPassword, 1)) == "http://h/");
+    URL reversedCredentials = userUrl;
+    reversedCredentials.userStart = 200;
+    Throws([&] { URLStrippedForReferrer(&reversedCredentials); });
+    auto hostless = FromUTF8Z(U8("mailto:@x"));
+    URL atSign{hostless.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 9, 9};
+    Check(URLStrippedForReferrer(&atSign).impl == hostless.impl);
+    auto allCredentials = FromUTF8Z(U8("ab"));
+    URL consumed{allCredentials.impl, 1U, 0, 0, 0, 0, 0, 0, 0};
+    auto vanished = URLStrippedForReferrer(&consumed);
+    Check(vanished.impl && vanished.impl->length == 0 && vanished.impl != allCredentials.impl);
+    URL queryBeforeCredentials = userUrl;
+    queryBeforeCredentials.queryEnd = 8;
+    Throws([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
+    Throws([&] { URLStrippedForReferrer(nullptr); });
 }
 
 }  // namespace Wtf2Tests
