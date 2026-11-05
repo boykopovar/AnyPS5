@@ -3068,7 +3068,8 @@ long double APS5_VABI _LCosh_nid_postfix(long double x, long double y) {
     if (magnitude > MaximumExponentSpan * (Ln2High + Ln2Low))
         return std::scalbn(scale, INT_MAX);
     const int exponent = static_cast<int>(magnitude * InverseLn2);
-    const long double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
+    const long double negatedExponent = -exponent;
+    const long double reduced = std::fma(negatedExponent, Ln2Low, std::fma(negatedExponent, Ln2High, magnitude));
     return std::scalbn(scale * (0.5L * std::exp(reduced)), scaleExponent + exponent);
 }
 
@@ -3092,7 +3093,8 @@ long double APS5_VABI _LSinh_nid_postfix(long double x, long double y) {
     if (magnitude > MaximumExponentSpan * (Ln2High + Ln2Low))
         return sign * std::scalbn(scale, INT_MAX);
     const int exponent = static_cast<int>(magnitude * InverseLn2);
-    const long double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
+    const long double negatedExponent = -exponent;
+    const long double reduced = std::fma(negatedExponent, Ln2Low, std::fma(negatedExponent, Ln2High, magnitude));
     return sign * std::scalbn(scale * (0.5L * std::exp(reduced)), scaleExponent + exponent);
 }
 
@@ -3138,6 +3140,8 @@ int APS5_VABI feholdexcept_nid_postfix(GuestFloatingPointEnvironment* environmen
     if (environment == nullptr) throw std::invalid_argument("feholdexcept: null environment");
     const auto csr = _mm_getcsr();
     asm volatile("fnstenv %0\n\tfnclex" : "=m"(*environment));
+    const auto masked = static_cast<std::uint16_t>(environment->control | 0x3fu);
+    asm volatile("fldcw %0" : : "m"(masked));
     environment->mxcsr = csr;
     _mm_setcsr((csr & ~0x3fu) | 0x1f80u);
     return 0;
