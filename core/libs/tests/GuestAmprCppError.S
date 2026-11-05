@@ -17,7 +17,8 @@ GuestCatch:
     .cfi_def_cfa_register %rbp
     subq $16, %rsp
 .Lcatch_call:
-    call _ZSt16_Throw_Cpp_errori_nid_postfix
+    movq FixtureThrow(%rip), %rax
+    call *%rax
 .Lcatch_call_end:
     ud2
 .Lcatch_landing:
