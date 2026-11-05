@@ -231,7 +231,12 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.SectionSize = _readU64At(offset + 0x20);
         sh.Link = _readU32At(offset + 0x28);
         sh.Info = _readU32At(offset + 0x2c);
+        sh.Alignment = _readU64At(offset + kShdrAlignOffset);
         sh.EntrySize = _readU64At(offset + kShdrEntSizeOffset);
+
+        if (sh.Type != SHT_NULL && sh.Alignment > 1 && !std::has_single_bit(sh.Alignment)) {
+            throw RelinkerException("Section header alignment is not a power of two", offset + kShdrAlignOffset);
+        }
 
         if (sh.Type == SHT_SYMTAB && sh.EntrySize != kSymEntrySize) {
             throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);

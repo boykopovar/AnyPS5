@@ -1966,6 +1966,11 @@ void verifyServedSpace(const Context& context, const State& state, const Pm4::Dr
     throw std::runtime_error(message);
 }
 
+bool drawStagingEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_DRAW_STAGING") != nullptr;
+    return !disabled;
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -2050,7 +2055,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     }
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
-        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots, recordable && drawStagingEnabled());
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
@@ -3434,7 +3439,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(lean && binding.resident != nullptr && !binding.proxied, "a partial write of a packed color target is merged into its resident image by a recorded draw only");
         Require(storesIntoResident(*resources, *binding.resident), "the partial write of a packed color target does not store into the target's resident image");
     }
-    if (!lean && !resolved.moved.empty()) {
+    if (!lean && (!resolved.moved.empty() || resolved.resources->HasStagedCopies())) {
         if (resolved.resources->SpaceReuse()) static_cast<void>(resolved.resources->ReleaseSpace());
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
         resolved.moved.clear();
