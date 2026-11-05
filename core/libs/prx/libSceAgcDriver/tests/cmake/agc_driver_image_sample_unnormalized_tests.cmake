@@ -1,4 +1,5 @@
 if(BUILD_TESTING)
+    set_tests_properties(agc_driver_image_sample_unnormalized PROPERTIES TIMEOUT 30)
     add_test(NAME agc_driver_image_sample_unnormalized_without_compute_derivatives COMMAND agc_driver_image_sample_unnormalized_tests --without-compute-derivatives)
     set_tests_properties(agc_driver_image_sample_unnormalized_without_compute_derivatives PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;ANYPS5_REQUIRE_VULKAN=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
