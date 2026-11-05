@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
@@ -2366,6 +2367,274 @@ void verifyTypeZeroImageMaterialization() {
     }
 }
 
+void verifyAllocationChurnSnapshot() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0u;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto userWord = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto load = [&](IrValue& address, std::uint32_t offset) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(offset);
+        auto& read = make(IrOpcode::LoadAddressU32, IrType::U32);
+        read.AddArgument(&address);
+        read.AddArgument(&immediate);
+        read.SetFlags(MemoryFlags{0, 0});
+        return read;
+    };
+    auto& base = make(IrOpcode::CompositeConstructU64, IrType::U64);
+    base.AddArgument(&userWord(0u));
+    base.AddArgument(&userWord(1u));
+    DescriptorSource descriptor;
+    descriptor.dwordCount = 4u;
+    for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &load(base, dword * 4u);
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    resources.userDataCount = 2u;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    resources.descriptorSources.push_back(descriptor);
+    resources.info.buffers.push_back(BufferResource{});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    constexpr std::uint64_t Base = 0x10000u;
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(Base), 0u};
+    std::array<std::uint32_t, 4> target{};
+    const auto targetAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(target.data()));
+    const std::array<std::uint32_t, 4> bufferV{static_cast<std::uint32_t>(targetAddress), static_cast<std::uint32_t>((targetAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    struct ChurnMemory {
+        std::array<std::uint32_t, 4> words{};
+        std::uint64_t generation = 0u;
+        std::uint32_t checks = 0u;
+        bool current = false;
+    };
+    for (const std::uint32_t mode : {0u, 1u, 2u}) {
+        ChurnMemory churn;
+        churn.words = bufferV;
+        churn.current = mode == 1u;
+        SrtRuntime runtime{userData};
+        runtime.userContext = &churn;
+        runtime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
+            auto& self = *static_cast<ChurnMemory*>(ctx);
+            if (address < Base || address >= Base + sizeof(self.words)) return false;
+            *value = self.words[static_cast<std::size_t>((address - Base) / sizeof(std::uint32_t))];
+            return true;
+        };
+        runtime.readSpecializationMemory = runtime.readMemory;
+        runtime.descriptorScope = +[](void*, std::size_t) -> std::uint64_t { return 0u; };
+        runtime.imageViewGeneration = +[](void* ctx) -> std::uint64_t { return ++static_cast<ChurnMemory*>(ctx)->generation; };
+        if (mode != 0u) {
+            runtime.snapshotCurrent = +[](void* ctx, std::span<const RegisteredImageView>) {
+                auto& self = *static_cast<ChurnMemory*>(ctx);
+                ++self.checks;
+                return self.current;
+            };
+        }
+        ResourceSnapshot snapshot;
+        if (mode == 1u) {
+            ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+            require(!snapshot.buffers.empty() && std::equal(bufferV.begin(), bufferV.end(), snapshot.buffers[0].dwords.begin()) && churn.checks == 1u,
+                    "allocation churn: a snapshot whose image views stayed current was not accepted on the first pass while unrelated guest allocations kept moving the generation");
+        } else {
+            expectFailure([&] { ResourceMaterializer{}.Materialize(plan, runtime, snapshot); }, "did not stabilize",
+                          mode == 0u ? "allocation churn: without an image view check, a snapshot taken while the allocation generation moved was accepted"
+                                     : "allocation churn: a snapshot whose image views no longer match their allocations was accepted");
+        }
+    }
+}
+
+void verifySnapshotAllocationMoves() {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t RangeBytes = 65536u;
+    static std::array<std::uint8_t, 3u * RangeBytes> texelStorage{};
+    static std::uint8_t* const texels = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(texelStorage.data()) + RangeBytes - 1u) & ~static_cast<std::uintptr_t>(RangeBytes - 1u));
+    alignas(4096) static std::array<std::uint8_t, 4096> unrelated{};
+    const auto texelAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
+    const std::array<std::uint32_t, 8> arrayT{static_cast<std::uint32_t>(texelAddress >> 8u), static_cast<std::uint32_t>((texelAddress >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 1u, 0xfacu | (12u << 28u), 3u, 0u, 0u, 0u};
+    struct MoveState {
+        bool ownRange = false;
+        std::uint32_t normalized = 0u;
+        std::uint32_t checks = 0u;
+    };
+    for (const bool ownRange : {false, true}) {
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(texels, RangeBytes, true, false, true);
+        }
+        IrResourcePlan plan;
+        plan.srtPlanComplete = true;
+        plan.resourceTrackingComplete = true;
+        plan.userDataCount = 0u;
+        plan.materializationSources = {0u};
+        std::vector<std::unique_ptr<IrValue>> values;
+        DescriptorSource source;
+        source.dwordCount = static_cast<std::uint32_t>(arrayT.size());
+        for (std::uint32_t i = 0u; i < arrayT.size(); ++i) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, i);
+            value->SetImmediateU32(arrayT[i]);
+            source.dwords[i] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources.push_back(source);
+        ImageResource image;
+        image.source = 0u;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim1DArray;
+        image.layerRowsCompatible = true;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        MoveState state;
+        state.ownRange = ownRange;
+        SrtRuntime runtime{};
+        runtime.userContext = &state;
+        runtime.imageViewGeneration = +[](void*) -> std::uint64_t { return GuestAllocations::GuestAllocationsGeneration_nid_postfix(); };
+        runtime.normalizeImageView = +[](void* ctx, std::uint32_t, std::array<std::uint32_t, 8>& descriptor, SrtImageViewIdentity& identity) {
+            auto& self = *static_cast<MoveState*>(ctx);
+            const auto address = (static_cast<std::uint64_t>(descriptor[1] & 0xffu) << 40u) | (static_cast<std::uint64_t>(descriptor[0]) << 8u);
+            identity.generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+            identity.address = address;
+            if (const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(address), false); range != nullptr) {
+                identity.hasRange = true;
+                identity.readable = range->readable;
+                identity.writable = range->writable;
+                identity.gpu = range->gpu;
+                identity.rangeAddress = range->address;
+                identity.rangeBytes = range->bytes;
+                identity.allocationAddress = range->allocationAddress;
+                identity.allocationBytes = range->allocationBytes;
+                identity.backingSerial = range->backingSerial;
+            }
+            if (self.normalized++ == 0u) {
+                GuestAllocations::Mutation mutation;
+                if (self.ownRange) {
+                    mutation.Remove(texels);
+                    mutation.Add(texels, 2u * RangeBytes, true, false, true);
+                } else {
+                    mutation.Add(unrelated.data(), unrelated.size(), true, false, true);
+                }
+            }
+            return false;
+        };
+        runtime.snapshotCurrent = +[](void* ctx, std::span<const RegisteredImageView> views) {
+            ++static_cast<MoveState*>(ctx)->checks;
+            return AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views);
+        };
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+        const bool kept = snapshot.registeredImages.size() == 1u && snapshot.registeredImages.front().hasRange;
+        const auto rangeBytes = kept ? snapshot.registeredImages.front().rangeBytes : 0u;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(texels);
+            if (!ownRange) mutation.Remove(unrelated.data());
+        }
+        if (ownRange) {
+            require(state.normalized == 2u && state.checks == 1u && kept && rangeBytes == 2u * RangeBytes,
+                    "snapshot allocation moves: an attempt during which the image's own range changed was accepted instead of retried with the new range");
+        } else {
+            require(state.normalized == 1u && state.checks == 1u && kept && rangeBytes == RangeBytes,
+                    "snapshot allocation moves: an attempt during which only an unrelated allocation moved was not accepted on the first pass with its directly bound image view");
+        }
+    }
+
+    std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
+    for (std::uint32_t dword = 0; dword < 8u; dword++) code.push_back(0xbe800300u | ((8u + dword) << 16u) | (32u + dword));
+    code.insert(code.end(), {0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u});
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture textures[2];
+    const auto makeImage = [](const Texture& texture, std::uint32_t extent) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (56u << 20u) | (extent << 30u), extent << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    };
+    static std::array<std::uint32_t, 8> oldT{};
+    static std::array<std::uint32_t, 8> newT{};
+    static std::array<std::uint32_t, 4> oldV{};
+    oldT = makeImage(textures[0], 3u);
+    newT = makeImage(textures[1], 7u);
+    static std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    oldV = {static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    alignas(4096) static std::array<std::uint32_t, 2048> pages{};
+    static std::uint32_t* const table = pages.data() + 1024 - 24;
+    static const auto pageA = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pages.data()));
+    static const auto pageB = pageA + 4096u;
+    static std::uint64_t firstPage = 0;
+    static bool remapped = false;
+    pages.fill(0u);
+    std::copy(oldT.begin(), oldT.end(), table);
+    std::copy(oldV.begin(), oldV.end(), table + 16);
+    table[20] = 1u;
+    firstPage = 0;
+    remapped = false;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pages.data(), 4096u, true, true, true);
+        mutation.Add(pages.data() + 1024, 4096u, true, true, true);
+    }
+    const auto serialBefore = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(pageA), false)->backingSerial;
+    struct HookReset {
+        ~HookReset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); }
+    } hookReset;
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+        if (bytes != 4096u || (address != pageA && address != pageB) || remapped) return;
+        if (firstPage == 0) {
+            firstPage = address;
+            return;
+        }
+        if (address == firstPage) return;
+        remapped = true;
+        std::copy(newT.begin(), newT.end(), table);
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(reinterpret_cast<void*>(firstPage));
+        mutation.Add(reinterpret_cast<void*>(firstPage), 4096u, true, true, true);
+    });
+    const auto tableAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(table));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x23001u, code, 0, {}};
+    request.context.waveSize = 32u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    AgcDriver::ShaderMemory memory({});
+    const auto capture = memory.Capture(request);
+    const auto serialAfter = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(firstPage), false)->backingSerial;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(pages.data());
+        mutation.Remove(pages.data() + 1024);
+    }
+    require(remapped && serialAfter != serialBefore, "snapshot allocation moves: the descriptor page was not remapped during the capture");
+    const auto holds = [&](const auto& values, const auto& words) {
+        return std::ranges::any_of(values, [&](const DescriptorValue& value) { return std::equal(words.begin(), words.end(), value.dwords.begin()); });
+    };
+    require(firstPage == pageA, "snapshot allocation moves: the page holding T# was not the first page the capture read");
+    require(holds(capture->snapshot.images, newT) && !holds(capture->snapshot.images, oldT),
+            "snapshot allocation moves: after the page holding T# was remapped during the capture, the snapshot kept the T# read before the remap");
+}
+
 void verifyUnsetFormatImageMaterialization() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 8> measuredImage{0xffffffffu, 0xffffffffu, 0x00000019u, 0xc0017901u, 0x00000342u, 0xc8000000u, 0xc0064900u, 0x0000062fu};
@@ -3476,6 +3745,10 @@ std::uint32_t* AllocateWatchedTable(std::size_t bytes) {
     return heap;
 }
 
+AgcDriver::ShaderMemory::PendingWrite NoPendingSpan(std::uint64_t, std::size_t, std::span<std::byte>) {
+    return AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
 void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
     GuestArena::GuestArenaSetProtection_nid_postfix(page, 4096u, protection);
 #ifdef _WIN32
@@ -3558,6 +3831,106 @@ void verifyRegionMerge(bool strided = false, bool benchmark = false) {
     std::puts("region merge: mixed initial, captured and shared regions retain order, coverage and recent-read semantics");
 }
 
+
+void verifyNestedSnapshotRetry() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
+    constexpr std::uint32_t Children = ImageTableAbi::MaxNestedKeys / 2u + 1u;
+    std::vector<std::array<std::uint32_t, 8>> leaves(Children, TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
+    const auto child = TableV(leaves.data(), 32u, Children);
+    std::vector<std::uint64_t> parents(Parents, reinterpret_cast<std::uintptr_t>(child.data()));
+    const auto root = TableV(parents.data(), 8u, Parents);
+    std::vector<std::unique_ptr<IrValue>> values;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.resourceTrackingComplete = true;
+    plan.userDataCount = 0u;
+    plan.materializationSources = {2u};
+    plan.descriptorSources.resize(3u);
+    for (std::uint32_t word = 0; word < 4u; ++word) {
+        auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+        value->SetImmediateU32(root[word]);
+        plan.descriptorSources[0].dwords[word] = value.get();
+        values.push_back(std::move(value));
+    }
+    plan.descriptorSources[0].dwordCount = 4u;
+    TableColumn parent;
+    parent.heapSource = 0u;
+    parent.stride = 8u;
+    parent.dwordCount = 4u;
+    parent.indirect = true;
+    parent.buffer = true;
+    plan.descriptorSources[1].tableColumn = parent;
+    TableColumn nested;
+    nested.heapSource = 1u;
+    nested.stride = 32u;
+    nested.dwordCount = 8u;
+    plan.descriptorSources[2].tableColumn = nested;
+    ImageResource image;
+    image.source = 2u;
+    image.table = 0u;
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    plan.info.images.push_back(image);
+    plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    struct Memory {
+        std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
+        std::uint64_t epoch = 0;
+        bool invalidate = false;
+        std::uint32_t firstReads = 0;
+        std::uint32_t epochQueries = 0;
+        std::vector<std::array<std::size_t, 2>> coverage;
+    };
+    const auto capture = [&](bool invalidate) {
+        Memory memory{{{{reinterpret_cast<std::uintptr_t>(parents.data()), parents.size() * sizeof(parents[0])},
+                         {reinterpret_cast<std::uintptr_t>(child.data()), sizeof(child)},
+                         {reinterpret_cast<std::uintptr_t>(leaves.data()), leaves.size() * sizeof(leaves[0])}}}, 0u, invalidate};
+        SrtRuntime runtime{};
+        runtime.userContext = &memory;
+        runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+            auto& memory = *static_cast<Memory*>(context);
+            for (const auto& [base, size] : memory.ranges) {
+                if (address >= base && address - base <= size - sizeof(*value)) {
+                    if (address == memory.ranges[0].first) {
+                        ++memory.firstReads;
+                        memory.coverage.push_back({});
+                    }
+                    if (memory.invalidate && address == memory.ranges[2].first + memory.ranges[2].second - sizeof(*value)) {
+                        ++memory.epoch;
+                        memory.invalidate = false;
+                    }
+                    if (!memory.coverage.empty()) {
+                        if (base == memory.ranges[0].first) memory.coverage.back()[0] = std::max(memory.coverage.back()[0], static_cast<std::size_t>(address - base + sizeof(*value)));
+                        if (base == memory.ranges[2].first) memory.coverage.back()[1] = std::max(memory.coverage.back()[1], static_cast<std::size_t>(address - base + sizeof(*value)));
+                    }
+                    std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                    return true;
+                }
+            }
+            return false;
+        };
+        runtime.descriptorScope = +[](void* context, std::size_t bytes) -> std::uint64_t {
+            auto& memory = *static_cast<Memory*>(context);
+            if (bytes == 0u) ++memory.epochQueries;
+            return memory.epoch;
+        };
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+        require(memory.epochQueries != 0u, "nested retry: a single nested table did not check the descriptor epoch");
+        require(memory.firstReads == (invalidate ? 3u : 1u), "nested retry: expected inner retry and outer revalidation");
+        for (const auto& covered : memory.coverage)
+            require(covered[0] == memory.ranges[0].second && covered[1] == memory.ranges[2].second,
+                    "nested retry: a discarded attempt consumed the next attempt key budgets");
+        require(snapshot.tables.tables.at(0).keys == Parents && snapshot.tables.nested.at(0).keys == Children,
+                "nested retry: parent or child key coverage was truncated");
+        return snapshot.tables;
+    };
+    const auto stable = capture(false);
+    const auto retried = capture(true);
+    require(stable.tables == retried.tables && stable.nested == retried.nested,
+            "nested retry: an invalidation changed the captured keys, pointers, words or codes");
+}
 
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
@@ -5174,6 +5547,54 @@ void verifyScalarAddressRule() {
             require(Abi::KeyRecords(maxKey, stride) == (exact ? maxKey + 1u : 0xffffffffu), "scalar address rule: the key bound is wrong");
         }
     }
+}
+
+void verifyPointerTableUnwrittenReuse() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Palette = 0x40;
+    constexpr std::size_t Bytes = 65536;
+    static TableTexture textures[2];
+    auto* root = AllocateWatchedTable(Bytes);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root));
+    if (AgcDriver::GuestMemory::CollectWrites(base, Bytes) == 0) {
+        std::puts("pointer table unwritten reuse: guest memory has no write watch, not tested");
+        return;
+    }
+    static std::array<std::uint32_t, 8> keys{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto keysV = TableV(keys.data(), 0u, static_cast<std::uint32_t>(sizeof(keys)));
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(keysV.begin(), keysV.end(), root);
+    std::copy(outputV.begin(), outputV.end(), root + 4);
+    const auto pointer = base + Palette + 0x100u;
+    root[12] = static_cast<std::uint32_t>(pointer);
+    root[13] = static_cast<std::uint32_t>(pointer >> 32u);
+    const auto entry = [&](std::uint32_t index, std::array<std::uint32_t, 8> words) {
+        std::copy(words.begin(), words.end(), root + (Palette + index * 32u) / 4u);
+    };
+    entry(0, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    entry(1, TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const std::vector<std::uint32_t> maskedCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u,
+        0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    auto request = TableRequest(maskedCode, userData);
+    request.shader.codeAddress = 0x33000u;
+    const auto capture = [&] {
+        const auto before = ResourceMaterializer::TableReuse();
+        AgcDriver::ShaderMemory memory({}, nullptr, nullptr, nullptr, &NoPendingSpan);
+        const auto words = memory.Capture(request)->snapshot.tables.tables.at(0);
+        const auto after = ResourceMaterializer::TableReuse();
+        return std::tuple{after.unwritten - before.unwritten, after.compared - before.compared, words.words.at(words.codes.at(1)).dwords};
+    };
+    static_cast<void>(capture());
+    const auto [comparedUnwritten, compared, comparedWords] = capture();
+    require(comparedUnwritten == 0u && compared == 1u, "pointer table unwritten reuse: the second capture of a pointer-addressed table was not compared");
+    const auto [unwritten, recompared, unwrittenWords] = capture();
+    require(unwritten == 1u && recompared == 0u && unwrittenWords == comparedWords, "pointer table unwritten reuse: a pointer-addressed table nothing wrote was compared again instead of reused");
+    entry(1, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    const auto [written, writtenCompared, writtenWords] = capture();
+    require(written == 0u && writtenWords[1] == root[(Palette + 32u) / 4u + 1u], "pointer table unwritten reuse: a pointer-addressed table the CPU wrote was reused without a read");
+    std::puts("pointer table unwritten reuse passed");
 }
 
 void verifyPointerImageTable() {
@@ -8514,7 +8935,7 @@ void verifyPixelExportReplay() {
     }
 }
 
-std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileRequest twoParameterRequest(std::span<const std::uint32_t> code) {
     using namespace ShaderRecompiler;
     RecompileRequest request{};
     request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
@@ -8525,7 +8946,12 @@ std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t>
     request.target.subgroupSize = 64;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    const auto result = Recompile(request);
+    return request;
+}
+
+std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+    using namespace ShaderRecompiler;
+    const auto result = Recompile(twoParameterRequest(code));
     const auto& words = result.spirv.Words();
     std::map<std::uint32_t, std::uint32_t> locations;
     std::vector<std::uint32_t> decorated;
@@ -8548,7 +8974,8 @@ void verifyPixelInputs() {
     const auto linear = noPerspectiveLocations(byPair);
     require(linear.size() == 1u && linear[0] == 1u, "only the parameter interpolated through the linear pair must be NoPerspective");
     static constexpr std::array<std::uint32_t, 7> bothPairs{0xc8100000u, 0xc8110001u, 0xc8140002u, 0xc8150003u, 0xf800180fu, 0x05040504u, 0xbf810000u};
-    expectFailure([&] { static_cast<void>(noPerspectiveLocations(bothPairs)); }, "interpolated through both a perspective and a linear I/J pair", "a parameter read through both pairs was given one interpolation");
+    const auto both = ShaderRecompiler::Recompile(twoParameterRequest(bothPairs));
+    require(both.barycentricEmulation.active && both.barycentricEmulation.smooth && both.barycentricEmulation.linear, "a parameter read through both pairs did not fall back to both barycentrics");
 
     static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
     RecompileRequest request{};
@@ -11140,6 +11567,7 @@ int main(int argc, char** argv) {
             verifyImageTableRegistration();
             verifyScalarAddressRule();
             verifyPointerImageTable();
+            verifyPointerTableUnwrittenReuse();
             verifyPointerTableOffsetCarry();
             verifySelectedRecordFallbacks();
             verifySelectedRecordOffsetCarry();
@@ -11151,6 +11579,11 @@ int main(int argc, char** argv) {
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
+            verifyNestedSnapshotRetry();
+            std::cout << "Nested snapshot retry preserves parent and child coverage\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
@@ -11236,6 +11669,7 @@ int main(int argc, char** argv) {
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
+        verifyPointerTableUnwrittenReuse();
         verifyPointerTableOffsetCarry();
         verifyChainedTableOffset();
         verifyPointerChainImageTable();
@@ -11543,6 +11977,8 @@ int main(int argc, char** argv) {
         const auto nullRootRegions = nullRoot.Regions();
         request.context.memory = nullRootRegions;
         require(Recompile(request, *nullRootCapture)->poisonedSrtReads >= nullRootCapture->snapshot.nullRootReads, "a capture through a null user-data pointer is cacheable");
+        verifyAllocationChurnSnapshot();
+        verifySnapshotAllocationMoves();
         std::cout << "Shader memory capture, strict validation and deterministic replay passed\n";
         return 0;
     } catch (const std::exception& error) {

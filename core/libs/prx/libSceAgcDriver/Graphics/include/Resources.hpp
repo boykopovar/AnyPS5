@@ -97,6 +97,8 @@ private:
     std::uint32_t memoryType = 0;
 };
 
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands);
+
 class CommandBatch {
 public:
     explicit CommandBatch(const Context& context);
