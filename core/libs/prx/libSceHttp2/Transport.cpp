@@ -8,6 +8,7 @@
 #endif
 
 #include "Transport.hpp"
+#include "Cookies.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 
 #include "zlib.h"
@@ -360,6 +361,8 @@ struct Request::State {
 
     ~State() { Close(); }
 
+    std::string Address() const { return std::string(url.secure ? "https://" : "http://") + url.authority + url.path; }
+
     void Close() {
         callbackLock = nullptr;
         if (session) nghttp2_session_del(std::exchange(session, nullptr));
@@ -674,6 +677,8 @@ struct Request::State {
                     Require(!hasLocation, "sceHttp2: duplicate HTTP1 Location");
                     hasLocation = true;
                     location = value;
+                } else if (name == "set-cookie" && settings.cookieBox != 0) {
+                    Http2StoreResponseCookie(settings.cookieBox, Address(), value);
                 }
             }
             if (status >= 100 && status < 200) {
@@ -697,7 +702,23 @@ struct Request::State {
         header += "Host: " + authority + "\r\nConnection: close\r\n";
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& field) { return field.first == "user-agent"; }))
             header += "User-Agent: " + settings.userAgent + "\r\n";
-        for (const auto& [name, value] : settings.headers) if (name != "host") header += name + ": " + value + "\r\n";
+        std::string cookies;
+        bool hasCookie = false;
+        for (const auto& [name, value] : settings.headers) {
+            if (name == "cookie") {
+                if (!cookies.empty() && !value.empty()) cookies += "; ";
+                cookies += value;
+                hasCookie = true;
+            } else if (name != "host") header += name + ": " + value + "\r\n";
+        }
+        if (settings.cookieBox != 0) {
+            if (const auto stored = Http2CookieHeader(settings.cookieBox, Address())) {
+                if (!cookies.empty()) cookies += "; ";
+                cookies += *stored;
+                hasCookie = true;
+            }
+        }
+        if (hasCookie) header += "cookie: " + cookies + "\r\n";
         const bool chunkUpload = settings.noContentLength && size;
         if (chunkUpload) header += "Transfer-Encoding: chunked\r\n";
         else if (!settings.noContentLength) header += "Content-Length: " + std::to_string(size) + "\r\n";
@@ -812,6 +833,7 @@ struct Request::State {
                 state.contentLength = Number(text);
                 state.hasLength = true;
             }
+            if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
         });
     }
@@ -894,6 +916,9 @@ struct Request::State {
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& header) { return header.first == "user-agent"; }))
             fields.emplace_back("user-agent", settings.userAgent);
         for (const auto& header : settings.headers) if (header.first != "host") fields.push_back(header);
+        if (settings.cookieBox != 0) {
+            if (auto cookie = Http2CookieHeader(settings.cookieBox, Address())) fields.emplace_back("cookie", std::move(*cookie));
+        }
         if (!settings.noContentLength) fields.emplace_back("content-length", std::to_string(settings.contentLength));
         std::vector<nghttp2_nv> headers;
         for (auto& [name, value] : fields) headers.push_back({reinterpret_cast<std::uint8_t*>(name.data()),
