@@ -773,7 +773,7 @@ std::int64_t APS5_VABI SSL_ctrl_nid_postfix(LibreSslSsl* ssl, int command, std::
 int APS5_VABI SSL_free_nid_postfix(void);
 void APS5_VABI SSL_get0_alpn_selected_nid_postfix(const LibreSslSsl* ssl, const unsigned char** data, unsigned int* length);
 int APS5_VABI SSL_get0_param_nid_postfix(void);
-int APS5_VABI SSL_get1_session_nid_postfix(void);
+void* APS5_VABI SSL_get1_session_nid_postfix(LibreSslSsl* ssl);
 void* APS5_VABI SSL_get_SSL_CTX_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_get_certificate_nid_postfix(void);
 int APS5_VABI SSL_get_current_cipher_nid_postfix(void);
