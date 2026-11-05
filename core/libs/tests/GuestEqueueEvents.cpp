@@ -394,7 +394,25 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyInvalidQueueAttributes() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(nullptr, "invalid") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(sceKernelCreateEqueue(&eq, "bounds") == SCE_OK);
+    KernelEvent event{};
+    int count = -1;
+    const KernelUseconds timeout = 0;
+    Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, 1, nullptr, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
+    VerifyInvalidQueueAttributes();
     VerifyPeriodicTimer();
     VerifyHRTimerDelete();
     VerifyUserEventReportedOncePerWait();
@@ -431,6 +449,11 @@ int main() {
     Require(sceKernelGetEventId(&timerEvent) == 9);
     Require(sceKernelGetEventFilter(&timerEvent) == EVFILT_HRTIMER);
     Require(sceKernelGetEventUserData(&timerEvent) == &payload);
+    const KernelTimespec later{60, 0};
+    Require(sceKernelAddHRTimerEvent(eq, 16, &later, &payload) == SCE_OK);
+    Require(sceKernelDeleteTimerEvent(eq, 16) == SCE_KERNEL_ERROR_ENOENT);
+    Require(sceKernelDeleteHRTimerEvent(eq, 16) == SCE_OK);
+    Require(sceKernelDeleteHRTimerEvent(eq, 16) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 
     KernelEvent rawEvent{};

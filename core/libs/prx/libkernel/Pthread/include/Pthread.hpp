@@ -48,6 +48,8 @@ struct PthreadMutexPrivate {
     int _count;
     std::atomic<int> _spinloops = 0;
     std::atomic<int> _yieldloops = 0;
+    int _protocol = 0;
+    std::atomic<int> _ceiling{0};
     std::string _name;
     bool _named = false;
 
@@ -204,5 +206,8 @@ bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& pr
 bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mask);
 extern "C" std::size_t GetDefaultStackSize_nid_no_patch();
 extern "C" bool SetDefaultStackSize_nid_no_patch(std::size_t size);
+#if defined(__linux__)
+extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*));
+#endif
 
 #endif
