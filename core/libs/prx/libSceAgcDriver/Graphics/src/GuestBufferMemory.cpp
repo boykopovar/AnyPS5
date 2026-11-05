@@ -2929,7 +2929,7 @@ bool compareBlock(const RefreshBlock& block) {
             return true;
         }
         const auto index = static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536);
-        if (target != nullptr && block.fill == 0 && std::memcmp(target, guest, block.length) == 0) {
+        if (target != nullptr && block.fill == 0 && block.generation != 0 && std::memcmp(target, guest, block.length) == 0) {
             block.mirror->generations[index] = block.generation;
             block.unchanged = true;
             return false;
@@ -2947,7 +2947,7 @@ bool compareBlock(const RefreshBlock& block) {
     if (block.mirror->heap) {
         const auto index = static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536);
         auto* target = block.mirror->buffer->Bytes().data() + offset;
-        const bool same = std::memcmp(target, guest, block.length) == 0;
+        const bool same = block.generation != 0 && std::memcmp(target, guest, block.length) == 0;
         if (!same) std::memcpy(target, guest, block.length);
         block.mirror->generations[index] = block.generation;
         return !same;
