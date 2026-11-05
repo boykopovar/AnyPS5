@@ -59,6 +59,18 @@ struct String {
     ~String() { Release(impl); }
 };
 
+struct StringVector {
+    String* buffer;
+    unsigned capacity;
+    unsigned size;
+    StringVector() : buffer(nullptr), capacity(0), size(0) {}
+    StringVector(StringVector&& other) noexcept
+        : buffer(std::exchange(other.buffer, nullptr)), capacity(std::exchange(other.capacity, 0)), size(std::exchange(other.size, 0)) {}
+    StringVector(const StringVector&) = delete;
+    StringVector& operator=(const StringVector&) = delete;
+    ~StringVector();
+};
+
 struct CString {
     CStringBuffer* buffer;
     explicit CString(CStringBuffer* value = nullptr) : buffer(value) {}
@@ -83,6 +95,11 @@ static_assert(offsetof(StringImpl, data) == 8);
 static_assert(offsetof(StringImpl, hashAndFlags) == 16);
 static_assert(sizeof(String) == 8);
 static_assert(offsetof(String, impl) == 0);
+static_assert(sizeof(StringVector) == 16);
+static_assert(offsetof(StringVector, buffer) == 0);
+static_assert(offsetof(StringVector, capacity) == 8);
+static_assert(offsetof(StringVector, size) == 12);
+static_assert(!std::is_trivially_destructible_v<StringVector>);
 static_assert(sizeof(StringView) == 16);
 static_assert(offsetof(StringView, data) == 0);
 static_assert(offsetof(StringView, length) == 8);
