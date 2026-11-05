@@ -2582,6 +2582,33 @@ DepthSurface* planeSurface(VkDevice device, std::uint64_t address) {
     return found == list.rend() ? nullptr : found->get();
 }
 
+void RequireNativeDepthGraph(std::span<const NativeDepthSnapshot> snapshots) {
+    std::map<std::uint64_t, const NativeDepthSnapshot*> depths;
+    std::map<std::uint64_t, const NativeDepthSnapshot*> stencils;
+    for (const auto& snapshot : snapshots) {
+        const auto& target = snapshot.target;
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const bool stencil = target.format == VK_FORMAT_D16_UNORM_S8_UINT || target.format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+        Require(target.address != 0u && (target.stencilAddress == 0u || stencil), "native depth snapshot has incompatible target aspects");
+        const auto depthBytes = DepthSliceBytes(target.extent, d16 ? 2u : 4u);
+        const auto stencilBytes = target.stencilAddress == 0u ? 0u : DepthSliceBytes(target.extent, 1u);
+        Require(target.address <= std::numeric_limits<std::uint64_t>::max() - depthBytes && target.stencilAddress <= std::numeric_limits<std::uint64_t>::max() - stencilBytes, "native depth snapshot attachment range overflows");
+        if (!snapshot.depth.empty()) depths.emplace(target.address, &snapshot);
+        if (!snapshot.stencil.empty()) stencils.emplace(target.stencilAddress, &snapshot);
+    }
+    for (const auto& snapshot : snapshots) {
+        const auto& target = snapshot.target;
+        const auto compatible = [&](const auto& owners, std::uint64_t address) {
+            const auto found = owners.find(address);
+            Require(found != owners.end(), "native depth snapshot has a missing companion owner");
+            const auto& owner = found->second->target;
+            Require(owner.format == target.format && owner.extent.width == target.extent.width && owner.extent.height == target.extent.height, "native depth snapshot companion has incompatible geometry or format");
+        };
+        compatible(depths, target.address);
+        if (target.stencilAddress != 0u) compatible(stencils, target.stencilAddress);
+    }
+}
+
 void settlePendingHtileClear(const Context& context, std::uint64_t address) {
     if (Recorder::InCompletion()) return;
     auto* recorder = RecorderFor(context);
@@ -4041,6 +4068,11 @@ std::vector<NativeDepthSnapshot> CaptureNativeDepthSurfaces(VkDevice device) {
         if (surface->StencilMirrorable()) surface->SyncStencilFromMemory(stencilResource(target));
         surface->ApplyFastClear();
     }
+    for (const auto& surface : surfaces()) {
+        if (!live(surface.get()) || !surface->stencilStale) continue;
+        const auto owner = stencilOwners().find({device, surface->target.stencilAddress});
+        if (owner != stencilOwners().end() && selected.contains(owner->second.surface) && owner->second.surface != surface.get()) retireStencil(*surface);
+    }
     if (!selected.empty()) {
         if (auto* recorder = RecorderFor((*selected.begin())->context)) recorder->Sync();
     }
@@ -4052,17 +4084,25 @@ std::vector<NativeDepthSnapshot> CaptureNativeDepthSurfaces(VkDevice device) {
         snapshot.target.clearStencil = surface->clearStencil;
         snapshot.hostFormat = surface->hostFormat;
         const auto aspects = owners.at(surface);
-        if (aspects.first) snapshot.depth = surface->CapturePlane(VK_IMAGE_ASPECT_DEPTH_BIT);
-        if (aspects.second) snapshot.stencil = surface->CapturePlane(VK_IMAGE_ASPECT_STENCIL_BIT);
+        if (aspects.first) {
+            snapshot.depthOrder = depthOwners().at({device, snapshot.target.address}).serial;
+            snapshot.depth = surface->CapturePlane(VK_IMAGE_ASPECT_DEPTH_BIT);
+        }
+        if (aspects.second) {
+            snapshot.stencilOrder = stencilOwners().at({device, snapshot.target.stencilAddress}).serial;
+            snapshot.stencil = surface->CapturePlane(VK_IMAGE_ASPECT_STENCIL_BIT);
+        }
         snapshots.push_back(std::move(snapshot));
     }
     std::ranges::sort(snapshots, [](const auto& left, const auto& right) { return std::tie(left.target.address, left.target.stencilAddress) < std::tie(right.target.address, right.target.stencilAddress); });
     static_cast<void>(ValidateNativeDepthSnapshots(snapshots));
+    RequireNativeDepthGraph(snapshots);
     return snapshots;
 }
 
 void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDepthSnapshot> snapshots) {
     static_cast<void>(ValidateNativeDepthSnapshots(snapshots));
+    RequireNativeDepthGraph(snapshots);
     if (snapshots.empty()) return;
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
@@ -4099,19 +4139,34 @@ void RestoreNativeDepthSurfaces(const Context& context, std::span<const NativeDe
         restored.push_back(found->get());
     }
     if (auto* recorder = RecorderFor(context)) recorder->Sync();
+    for (auto* surface : restored) retireStencil(*surface);
+    std::vector<std::pair<std::uint64_t, PlaneOwner*>> bindings;
     for (std::size_t index = 0; index < snapshots.size(); ++index) {
         const auto& snapshot = snapshots[index];
         auto* surface = restored[index];
         if (!snapshot.depth.empty()) {
             surface->RestorePlane(VK_IMAGE_ASPECT_DEPTH_BIT, snapshot.depth);
-            depthOwners()[{context.device, snapshot.target.address}] = {surface, ++planeBinds};
+            auto& owner = depthOwners()[{context.device, snapshot.target.address}];
+            owner = {surface, 0u};
+            bindings.emplace_back(snapshot.depthOrder, &owner);
+            if (mirrorable(snapshot.target)) {
+                const auto bytes = DescribeSurface(mirrorResource(snapshot.target)).guestBytes;
+                surface->NoteDepthWork();
+                surface->MarkAllStale(bytes);
+                noteStalePlane(snapshot.target.address, snapshot.target.address + bytes);
+            }
         }
         if (!snapshot.stencil.empty()) {
             surface->RestorePlane(VK_IMAGE_ASPECT_STENCIL_BIT, snapshot.stencil);
-            stencilOwners()[{context.device, snapshot.target.stencilAddress}] = {surface, ++planeBinds};
+            auto& owner = stencilOwners()[{context.device, snapshot.target.stencilAddress}];
+            owner = {surface, 0u};
+            bindings.emplace_back(snapshot.stencilOrder, &owner);
+            surface->MarkStencilStale();
         }
         surface->NoteMemory();
     }
+    std::ranges::sort(bindings, {}, &std::pair<std::uint64_t, PlaneOwner*>::first);
+    for (const auto& [order, owner] : bindings) owner->serial = ++planeBinds;
     surfacesSerial.fetch_add(1u, std::memory_order_release);
 }
 
