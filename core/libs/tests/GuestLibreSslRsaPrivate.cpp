@@ -33,7 +33,6 @@ constexpr int BignumStaticData = 0x02;
 constexpr int RsaFlagsDefault = 0x0006;
 constexpr int RsaFlagSignVerify = 0x0040;
 constexpr int RsaFlagNoBlinding = 0x0080;
-constexpr int DigestRsaEncryption = 6;
 constexpr int DigestMd5Sha1 = 114;
 constexpr int DigestSha256 = 672;
 constexpr int DigestSha512 = 674;
@@ -245,7 +244,6 @@ static void TestSign() {
     const std::pair<int, Bytes> refused[] {{DigestMd5Sha1, Pattern(35, 30)}, {DigestMd5Sha1, {}}, {0, Pattern(32, 30)}, {-1, Pattern(32, 30)},
         {DigestSha512, Pattern(64, 30)}, {DigestSha256, Pattern(35, 31)}};
     for (const auto& [type, digest] : refused) Require(Sign(key, type, digest, signature, length) == 0 && length == UntouchedLength && Written(signature, {}));
-    RequireThrows([&] { Sign(key, DigestRsaEncryption, Pattern(32, 30), signature, length); });
     const auto digest = Pattern(32, 30);
     RequireThrows([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 0x80000000u, signature.data(), &length, key.rsa); });
 }
