@@ -2,3 +2,4 @@
 
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/LibTls.hpp"
+#include "prx/libSceLibreSsl3/include/ChaCha.hpp"
