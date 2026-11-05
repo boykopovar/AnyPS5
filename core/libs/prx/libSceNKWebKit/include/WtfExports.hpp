@@ -10,6 +10,41 @@
 
 extern "C" {
 
+void APS5_VABI _ZN3WTF17StringPrintStreamC1Ev(NKWebKit::WtfAbi::StringPrintStream* self);
+void APS5_VABI _ZN3WTF17StringPrintStreamC2Ev(NKWebKit::WtfAbi::StringPrintStream* self);
+void APS5_VABI _ZN3WTF17StringPrintStreamD1Ev(NKWebKit::WtfAbi::StringPrintStream* self);
+void APS5_VABI _ZN3WTF17StringPrintStreamD2Ev(NKWebKit::WtfAbi::StringPrintStream* self);
+void APS5_VABI _ZN3WTF17StringPrintStreamD0Ev(NKWebKit::WtfAbi::StringPrintStream* self);
+void APS5_VABI _ZN3WTF17StringPrintStream5resetEv(NKWebKit::WtfAbi::StringPrintStream* self);
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF17StringPrintStream9toCStringEv(NKWebKit::WtfAbi::StringPrintStream* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF17StringPrintStream8toStringEv(NKWebKit::WtfAbi::StringPrintStream* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF17StringPrintStream26toStringWithLatin1FallbackEv(NKWebKit::WtfAbi::StringPrintStream* self);
+NKWebKit::WtfAbi::ExpectedString APS5_VABI _ZN3WTF17StringPrintStream11tryToStringEv(NKWebKit::WtfAbi::StringPrintStream* self);
+void APS5_VABI _ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag(NKWebKit::WtfAbi::StringPrintStream* self, const char* format, void* args);
+void APS5_VABI _ZN3WTF11PrintStream6printfEPKcz(NKWebKit::WtfAbi::PrintStream* self, const char* format, ...);
+void APS5_VABI _ZN3WTF11PrintStream20printfVariableFormatEPKcz(NKWebKit::WtfAbi::PrintStream* self, const char* format, ...);
+NKWebKit::WtfAbi::PrintStream& APS5_VABI _ZN3WTF11PrintStream5beginEv(NKWebKit::WtfAbi::PrintStream* self);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKc(NKWebKit::WtfAbi::PrintStream* self, const char* value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEa(NKWebKit::WtfAbi::PrintStream* self, signed char value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEh(NKWebKit::WtfAbi::PrintStream* self, unsigned char value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEs(NKWebKit::WtfAbi::PrintStream* self, short value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEt(NKWebKit::WtfAbi::PrintStream* self, unsigned short value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEi(NKWebKit::WtfAbi::PrintStream* self, int value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEj(NKWebKit::WtfAbi::PrintStream* self, unsigned value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEl(NKWebKit::WtfAbi::PrintStream* self, std::int64_t value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEm(NKWebKit::WtfAbi::PrintStream* self, std::uint64_t value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEx(NKWebKit::WtfAbi::PrintStream* self, long long value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEy(NKWebKit::WtfAbi::PrintStream* self, unsigned long long value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEf(NKWebKit::WtfAbi::PrintStream* self, float value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEd(NKWebKit::WtfAbi::PrintStream* self, double value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE(NKWebKit::WtfAbi::PrintStream* self, NKWebKit::WtfAbi::RawPointer value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEb(NKWebKit::WtfAbi::PrintStream* self, bool value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(NKWebKit::WtfAbi::PrintStream* self, WTF::ClockType value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE(NKWebKit::WtfAbi::PrintStream* self, const NKWebKit::WtfAbi::CString& value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE(NKWebKit::WtfAbi::PrintStream* self, const NKWebKit::WtfAbi::String& value);
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(NKWebKit::WtfAbi::PrintStream* self, const NKWebKit::WtfAbi::StringImpl* value);
+void APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc(NKWebKit::WtfAbi::PrintStream* self, char value);
+
 [[noreturn]] void APS5_VABI WTFCrash();
 [[noreturn]] void APS5_VABI WTFCrashWithSecurityImplication();
 void APS5_VABI WTFGetBacktrace(void** stack, int* size);
@@ -243,5 +278,8 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF7SecondsmiERKNS_24TimeWithDynami
 WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::Seconds* self, WTF::MonotonicTime other);
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self);
+
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode);
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length);
 
 }
