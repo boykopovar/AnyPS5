@@ -356,6 +356,22 @@ void skipsFragmentsThatPopWithoutPushing() {
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
     require(sites.empty() && displacements.empty() && report.Skipped.at("push or pop in a leaf without pushes") == 1, "a fragment without pushes that pops a register its caller pushed was framed");
+    Codegen::RedZoneFrameReport relocated;
+    std::vector<Codegen::RedZoneDisplacement> relocatedDisplacements;
+    const auto relocatedSites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, relocated, relocatedDisplacements, true);
+    require(relocatedSites.empty() && relocated.Relocated == 0 && relocated.NotRelocated.at("pops a value its caller pushed") == 1, "a fragment that pops a register its caller pushed was relocated");
+}
+
+void refusesRelocatingSegmentOperands() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00});
+    append(body, {0x53, 0x5b});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, Ret)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("segment-prefixed operand, which a later pass rewrites in the original code") == 1, "a leaf reading fs:0, which the TLS pass rewrites in place, was relocated");
 }
 
 void skipsWideningOverBranchTargets() {
@@ -882,6 +898,7 @@ int main() {
         widensAShortFramePointerPrologue();
         framesLeavesWithoutPushes();
         skipsFragmentsThatPopWithoutPushing();
+        refusesRelocatingSegmentOperands();
         skipsWideningOverBranchTargets();
         skipsBranchesIntoTheInstructionsAfterAShortPrologue();
         widensAShortPrologueThatAllocates();

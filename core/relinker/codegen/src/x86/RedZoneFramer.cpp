@@ -317,6 +317,88 @@ std::optional<TrampolineSite> relocateLeaf(
         return std::nullopt;
     }
 
+    {
+        std::vector<std::optional<std::int64_t>> depthAt(body.size());
+        std::vector<std::optional<std::int64_t>> frameAt(body.size());
+        std::vector<std::size_t> work{0};
+        depthAt[0] = 0;
+        const auto reach = [&](const std::size_t k, const std::int64_t depth, const std::optional<std::int64_t> frame) {
+            if (!depthAt[k]) {
+                depthAt[k] = depth;
+                frameAt[k] = frame;
+                work.push_back(k);
+                return true;
+            }
+            return *depthAt[k] == depth && frameAt[k] == frame;
+        };
+        while (!work.empty()) {
+            const auto k = work.back();
+            work.pop_back();
+            const auto& insn = body[k];
+            const auto* code = seg.data() + insn.Offset;
+            const auto& info = insn.Info;
+            auto depth = *depthAt[k];
+            auto frame = frameAt[k];
+            const auto reg = static_cast<std::uint8_t>((info.ModRmByte >> 3) & 7);
+            const bool push = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x50 && info.Opcode <= 0x57) || info.Opcode == 0x68 || info.Opcode == 0x6a || info.Opcode == 0x9c || (info.Opcode == 0xff && info.HasModRm && reg == 6)) : (info.Opcode == 0xa0 || info.Opcode == 0xa8);
+            const bool pop = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x58 && info.Opcode <= 0x5f) || info.Opcode == 0x9d || (info.Opcode == 0x8f && info.HasModRm && reg == 0)) : (info.Opcode == 0xa1 || info.Opcode == 0xa9);
+            const auto move = quadRegisterMove(code, insn);
+            if (pushesOrPops(code, insn) && (push || pop)) {
+                if (pop && depth < 8) {
+                    refusal = "pops a value its caller pushed";
+                    return std::nullopt;
+                }
+                depth += push ? 8 : -8;
+            } else if (const auto adjustment = rspAdjustment(code, insn)) {
+                depth -= *adjustment;
+                if (depth < 0) {
+                    refusal = "frees stack its caller allocated";
+                    return std::nullopt;
+                }
+            } else if (move && move->Destination == kRegRbp && move->Source == kRegRsp) {
+                frame = depth;
+            } else if (move && move->Destination == kRegRsp && move->Source == kRegRbp) {
+                if (!frame) {
+                    refusal = "rsp restored from rbp without a frame";
+                    return std::nullopt;
+                }
+                depth = *frame;
+            } else if (!info.IsTwoByteOpcode && info.Opcode == 0xc9 && insn.Length == 1) {
+                if (!frame || *frame < 8) {
+                    refusal = "leave without a frame";
+                    return std::nullopt;
+                }
+                depth = *frame - 8;
+                frame.reset();
+            }
+            const auto flow = info.FlowKind;
+            if (flow == ControlFlowKind::Return) {
+                if (depth != 0) {
+                    refusal = "returns at another stack depth";
+                    return std::nullopt;
+                }
+                continue;
+            }
+            std::optional<std::int64_t> target;
+            if ((flow == ControlFlowKind::UnconditionalJump || flow == ControlFlowKind::ConditionalBranch) && info.HasBranchTarget) {
+                const auto at = static_cast<std::int64_t>(insn.Offset + insn.Length) + info.BranchDisp;
+                if (at >= static_cast<std::int64_t>(start) && at < static_cast<std::int64_t>(end)) target = at;
+                else if (depth != 0) {
+                    refusal = "leaves the function at another stack depth";
+                    return std::nullopt;
+                }
+            }
+            if (target && !reach(index.at(static_cast<std::size_t>(*target)), depth, frame)) {
+                refusal = "inconsistent stack depth";
+                return std::nullopt;
+            }
+            if (flow != ControlFlowKind::UnconditionalJump && k + 1 < body.size() && !reach(k + 1, depth, frame)) {
+                refusal = "inconsistent stack depth";
+                return std::nullopt;
+            }
+        }
+    }
+
     constexpr std::int64_t shift = kRedZoneBytes;
     std::vector<std::uint8_t> out = lowerRsp(shift);
     std::vector<StubRelocation> relocations;
@@ -335,7 +417,20 @@ std::optional<TrampolineSite> relocateLeaf(
         out.insert(out.end(), 4, 0);
         relocations.push_back({field, out.size(), target - static_cast<std::int64_t>(start), false});
     };
+    static const char* traceText = std::getenv("APS5_RELINK_RELOCATE_TRACE");
+    const bool trace = traceText != nullptr && std::strtoull(traceText, nullptr, 0) == ph.MappedAddress + start;
+    std::size_t traced = 0;
+    const auto traceStep = [&](const Insn& insn) {
+        if (!trace) return;
+        std::fprintf(stderr, "reloc +0x%04zx ->", insn.Offset - start);
+        for (std::size_t index = 0; index < insn.Length; ++index) std::fprintf(stderr, " %02x", seg[insn.Offset + index]);
+        std::fprintf(stderr, " | out +0x%04zx:", traced);
+        for (std::size_t index = traced; index < out.size(); ++index) std::fprintf(stderr, " %02x", out[index]);
+        std::fprintf(stderr, "\n");
+    };
     for (const auto& insn : body) {
+        if (trace && !placed.empty()) traceStep(body[placed.size() - 1]);
+        traced = out.size();
         placed.emplace(insn.Offset, out.size());
         const auto* code = seg.data() + insn.Offset;
         const auto& info = insn.Info;
@@ -351,6 +446,14 @@ std::optional<TrampolineSite> relocateLeaf(
         }
         if (info.AddressSize32 && info.HasRipRelativeDisp) {
             refusal = "eip-relative operand";
+            return std::nullopt;
+        }
+        if (info.SegmentPrefix != 0) {
+            refusal = "segment-prefixed operand, which a later pass rewrites in the original code";
+            return std::nullopt;
+        }
+        if ((info.IsTwoByteOpcode && (info.Opcode == 0x05 || info.Opcode == 0x34)) || (!info.IsTwoByteOpcode && (info.Opcode == 0xcd || info.Opcode == 0xce || info.Opcode == 0xf1))) {
+            refusal = "system call or interrupt";
             return std::nullopt;
         }
         if (!info.IsTwoByteOpcode && (info.Opcode == 0xc8 || (info.Opcode >= 0xe0 && info.Opcode <= 0xe3))) {
@@ -408,7 +511,7 @@ std::optional<TrampolineSite> relocateLeaf(
                 }
             }
             const bool leaIntoRsp = !info.IsTwoByteOpcode && info.Opcode == 0x8d && use.RspBased && ((info.ModRmByte >> 3) & 7) == kRegRsp && (info.RexPrefix & 4) == 0;
-            if (!rspAdjustment(code, insn) && !leaIntoRsp && !(info.Opcode == 0x83 && !info.IsTwoByteOpcode && ((info.ModRmByte >> 3) & 7) == 4 && (info.ModRmByte >> 6) == 3)) {
+            if (!rspAdjustment(code, insn) && !leaIntoRsp) {
                 refusal = "register use of rsp";
                 return std::nullopt;
             }
@@ -443,6 +546,7 @@ std::optional<TrampolineSite> relocateLeaf(
         }
         out.insert(out.end(), code, code + insn.Length);
     }
+    if (trace) traceStep(body.back());
     if (body.back().Info.FlowKind != ControlFlowKind::Return && body.back().Info.FlowKind != ControlFlowKind::UnconditionalJump) {
         refusal = "falls off its end";
         return std::nullopt;
