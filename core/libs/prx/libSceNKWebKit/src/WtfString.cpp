@@ -1,4 +1,6 @@
+#include "WtfAtoms.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstddef>
@@ -6,14 +8,25 @@
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 #include "WtfStringAbi.hpp"
+
+using NKWebKit::Atoms::RemoveAtom_nid_no_patch;
+using NKWebKit::Atoms::CreateSharedSubstring_nid_no_patch;
+using NKWebKit::Atoms::CreateSymbol_nid_no_patch;
+using NKWebKit::Atoms::FindAtom_nid_no_patch;
+using NKWebKit::Atoms::AddAtomBuffer_nid_no_patch;
+using NKWebKit::Atoms::AddStaticAtom_nid_no_patch;
+using NKWebKit::Atoms::RequireAtomStorage_nid_no_patch;
+using NKWebKit::Atoms::AddAtom_nid_no_patch;
 
 namespace {
 
@@ -164,19 +177,18 @@ double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
 }
 
 namespace NKWebKit {
-void* Allocate(std::size_t size, std::size_t alignment = 16);
 void Deallocate(void* ptr);
 }  // namespace NKWebKit
 
 namespace NKWebKit::WtfAbi {
 
-void Release(StringImpl* impl) {
-    if (!impl) return;
-    if (impl->refCount != 2) {
-        impl->refCount -= 2;
-        return;
-    }
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+static bool UnsupportedDestruction(const StringImpl* impl) {
+    return (impl->hashAndFlags & 3) == 3 ||
+        ((impl->hashAndFlags & 32) && (reinterpret_cast<const SymbolImpl*>(impl)->flags & 2));
+}
+
+static void Destroy(StringImpl* impl) {
+    if ((impl->hashAndFlags & 16) && impl->length) RemoveAtom_nid_no_patch(impl);
     switch (impl->hashAndFlags & 3) {
     case 1:
         Deallocate(const_cast<void*>(impl->data));
@@ -186,6 +198,16 @@ void Release(StringImpl* impl) {
         break;
     }
     Deallocate(impl);
+}
+
+void Release(StringImpl* impl) {
+    if (!impl) return;
+    if (impl->refCount != 2) {
+        impl->refCount -= 2;
+        return;
+    }
+    if (UnsupportedDestruction(impl)) std::terminate();
+    Destroy(impl);
 }
 
 void Release(CStringBuffer* buffer) {
@@ -441,16 +463,7 @@ String SharedSubstring(const String* string, unsigned start, unsigned length) {
     start = std::min(start, size);
     length = std::min(length, size - start);
     if (!start && length == size) return String(Retain(value.impl));
-    if (!length) return String(EmptyImpl());
-    const auto& impl = Checked(value.impl);
-    bool is8Bit = impl.hashAndFlags & 4;
-    if (32 >= 20 + std::size_t(length) * (is8Bit ? 1 : 2)) return Substring(&impl, start, length);
-    auto* owner = value.impl;
-    if ((impl.hashAndFlags & 3) == 2) owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(&impl) + 24);
-    auto* memory = static_cast<unsigned char*>(NKWebKit::Allocate(32));
-    auto* result = new (memory) StringImpl{2, length, static_cast<const unsigned char*>(impl.data) + std::size_t(start) * (is8Bit ? 1 : 2), (is8Bit ? 4U : 0U) | 2U};
-    *reinterpret_cast<StringImpl**>(memory + 24) = Retain(owner);
-    return String(result);
+    return CreateSharedSubstring_nid_no_patch(value.impl, start, length);
 }
 
 template<typename T> String IntegerString(T value) {
@@ -463,6 +476,94 @@ template<typename T> String IntegerString(T value) {
 }  // namespace
 
 extern "C" {
+String APS5_VABI _ZN3WTF14AtomStringImpl10addLiteralEPKcj(const char* data, unsigned length) {
+    return AddStaticAtom_nid_no_patch({data, length, true});
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(StringImpl& impl) {
+    return AddAtom_nid_no_patch(&impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(StringImpl& impl) {
+    if (!impl.length) return String(EmptyImpl());
+    auto view = View(&impl);
+    return String(Retain(FindAtom_nid_no_patch(view, Hash(view))));
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDsj(const char16_t* data, unsigned length) {
+    return AddAtomBuffer_nid_no_patch({data, length, false});
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKhj(const unsigned char* data, unsigned length) {
+    return AddAtomBuffer_nid_no_patch({data, length, true});
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKNS_10StringImpl16StaticStringImplE(const StringImpl* impl) {
+    const auto& value = Checked(impl);
+    if (!(value.refCount & 1)) throw std::invalid_argument("nonstatic WTF static atom");
+    return AddStaticAtom_nid_no_patch(View(impl));
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKDsj(const char16_t* data, unsigned length) {
+    StringView view{data, length, false};
+    return String(Retain(FindAtom_nid_no_patch(view, Hash(view))));
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKhj(const unsigned char* data, unsigned length) {
+    StringView view{data, length, true};
+    return String(Retain(FindAtom_nid_no_patch(view, Hash(view))));
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEi(int value) {
+    auto string = IntegerString(value);
+    return AddAtom_nid_no_patch(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEj(unsigned value) {
+    auto string = IntegerString(value);
+    return AddAtom_nid_no_patch(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEm(std::uint64_t value) {
+    auto string = IntegerString(value);
+    return AddAtom_nid_no_patch(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEy(std::uint64_t value) {
+    auto string = IntegerString(value);
+    return AddAtom_nid_no_patch(string.impl, __func__);
+}
+
+String APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv(const String* self) {
+    auto* impl = Checked(self).impl;
+    String converted(ConvertCase(View(impl), false, impl));
+    return AddAtom_nid_no_patch(converted.impl, __func__);
+}
+
+void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
+    if (!impl || (impl->refCount & 1)) throw std::invalid_argument("invalid WTF string destruction");
+    if (NKWebKit::WtfAbi::UnsupportedDestruction(impl))
+        throw std::runtime_error("StringImpl::destroy: registered symbols and external strings are not modelled");
+    NKWebKit::WtfAbi::Destroy(impl);
+}
+
+unsigned APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv() {
+    static std::atomic<unsigned> next{1};
+    unsigned hash;
+    do {
+        hash = next.fetch_add(1, std::memory_order_relaxed) << 8;
+    } while (!hash);
+    return hash;
+}
+
+String APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE(StringImpl& impl) {
+    return CreateSymbol_nid_no_patch(impl, 0);
+}
+
+String APS5_VABI _ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE(StringImpl& impl) {
+    return CreateSymbol_nid_no_patch(impl, 4);
+}
+
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {
     return String(CopyImpl({data, length, false}));
 }
@@ -1074,3 +1175,20 @@ String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self,
 }
 
 }
+
+
+namespace NKWebKit::Atoms {
+
+struct AtomTableTag {};
+
+AtomTable& AtomTable_nid_no_patch() { return HostThreadLocal<AtomTable, AtomTableTag>(); }
+StringView View_nid_no_patch(const StringImpl* value) { return View(value); }
+unsigned Hash_nid_no_patch(StringView view) { return Hash(view); }
+bool EqualViews_nid_no_patch(StringView a, StringView b) { return EqualViews(a, b); }
+StringImpl* Retain_nid_no_patch(StringImpl* impl) { return Retain(impl); }
+StringImpl* EmptyImpl_nid_no_patch() { return EmptyImpl(); }
+StringImpl* CopyImpl_nid_no_patch(StringView view, bool narrow) { return CopyImpl(view, narrow); }
+String SharedSubstring_nid_no_patch(const String* value, unsigned start, unsigned length) { return SharedSubstring(value, start, length); }
+String FromUTF8_nid_no_patch(const unsigned char* input, std::size_t length) { return FromUTF8(input, length); }
+
+}  // namespace NKWebKit::Atoms
