@@ -89,6 +89,9 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
     return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
    }
    if (name.data[0] != '\0') {
+    if (std::memchr(name.data, '\0', sizeof(name.data)) == nullptr) {
+     return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+    }
     std::snprintf(dir_name, sizeof(dir_name), "%s", name.data);
     break;
    }
