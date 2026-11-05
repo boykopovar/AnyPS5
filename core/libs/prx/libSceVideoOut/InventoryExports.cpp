@@ -3,6 +3,13 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cstdint>
+#include <cstring>
+
+namespace {
+constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
+constexpr int VideoOutErrorLatestEopHandle = static_cast<int>(0x802900FFu);
+}
 
 extern "C" {
 
@@ -19,7 +26,7 @@ int APS5_VABI sceVideoOutAddBufferAnisoPrivilege() {
 }
 
 int APS5_VABI sceVideoOutAddBufferHdrPrivilege() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutAddBufferYccPrivilege() {
@@ -91,7 +98,7 @@ int APS5_VABI sceVideoOutCursorSetPositionStereo() {
 }
 
 int APS5_VABI sceVideoOutCurveSamplePointsCalc_() {
-    NotImplemented_nid_no_patch(__func__);
+    return VideoOutErrorCurveSamplePoints;
 }
 
 int APS5_VABI sceVideoOutDebugAddVrrPrivilege() {
@@ -155,7 +162,7 @@ int APS5_VABI sceVideoOutDriverGetFinishedEopHandle() {
 }
 
 int APS5_VABI sceVideoOutDriverGetLatestEopHandle() {
-    NotImplemented_nid_no_patch(__func__);
+    return VideoOutErrorLatestEopHandle;
 }
 
 int APS5_VABI sceVideoOutDriverIncrementBufferLabel() {
@@ -255,7 +262,7 @@ int APS5_VABI sceVideoOutRazorAddCallback() {
 }
 
 int APS5_VABI sceVideoOutRazorRecallCallbacks() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutRazorRemoveCallback() {
@@ -383,7 +390,7 @@ int APS5_VABI sceVideoOutSysGetKsvList() {
 }
 
 int APS5_VABI sceVideoOutSysGetMonitorInfo_() {
-    NotImplemented_nid_no_patch(__func__);
+    return -1;
 }
 
 int APS5_VABI sceVideoOutSysGetOutputStatus() {
@@ -462,8 +469,10 @@ int APS5_VABI sceVideoOutSysModeIsVrNative() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSysModeIsVr() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysModeIsVr(const void* mode) {
+    std::uint32_t flags;
+    std::memcpy(&flags, static_cast<const std::uint8_t*>(mode) + 0x20, sizeof(flags));
+    return static_cast<int>((flags >> 1) & 1u);
 }
 
 int APS5_VABI sceVideoOutSysOpenInternal() {
@@ -523,7 +532,7 @@ int APS5_VABI sceVideoOutSysUpdatePrivilege() {
 }
 
 int APS5_VABI sceVideoOutSysUpdateRenderingMode() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceVideoOutUnlockBuffer() {
