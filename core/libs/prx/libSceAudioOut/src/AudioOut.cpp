@@ -432,6 +432,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
 static std::atomic<bool> g_audioOut2Initialized{false};
 static std::atomic<bool> g_audioOutInitialized{false};
 static constexpr int SCE_AUDIO_OUT2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80268004);
+static constexpr int SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED = static_cast<int>(0x80268006);
 static constexpr int SCE_AUDIO_OUT_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8026000e);
 static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_FORMAT = static_cast<int>(0x80260007);
 
@@ -447,6 +448,13 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2Initialize(void) {
     return g_audioOut2Initialized.exchange(true) ? SCE_AUDIO_OUT2_ERROR_ALREADY_INITIALIZED : 0;
+}
+
+int APS5_VABI sceAudioOut2Terminate(void) {
+    if (!g_audioOut2Initialized.exchange(false)) {
+        return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
+    }
+    return 0;
 }
 
 int APS5_VABI sceAudioOutInit() {
