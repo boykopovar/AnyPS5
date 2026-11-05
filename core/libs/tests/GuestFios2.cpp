@@ -61,6 +61,8 @@ static void CheckInitialization() {
 }
 
 static void CheckQueries(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 0, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 1, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
     char overlayResult[64]{};
     REQUIRE(sceFiosOverlayResolveSync(0, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
     REQUIRE(sceFiosOverlayResolveSync(1, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);

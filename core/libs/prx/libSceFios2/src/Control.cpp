@@ -65,7 +65,7 @@ int APS5_VABI sceFiosIOFilterAdd(std::int32_t index, SceFiosIOFilterCallback cal
 }
 
 int APS5_VABI sceFiosIOFilterPsarcDearchiver(void* descriptor, std::int32_t mode, void*) {
-    if (mode == 0 && descriptor == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    if (descriptor == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
     NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
