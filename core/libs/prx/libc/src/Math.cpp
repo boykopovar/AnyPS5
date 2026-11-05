@@ -2572,9 +2572,11 @@ double APS5_VABI atanh_nid_postfix(double x) {
     const std::int32_t ix = hx & 0x7fffffff;
     if ((static_cast<std::uint32_t>(ix) | ((lx | (0u - lx)) >> 31)) > 0x3ff00000u) {
         _Feraise_nid_postfix(0x01);
+        errno = EDOM;
         return (x - x) / (x - x);
     }
     if (ix == 0x3ff00000) {
+        _Feraise_nid_postfix(0x04);
         errno = ERANGE;
         return x / zero;
     }
