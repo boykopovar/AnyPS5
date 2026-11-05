@@ -135,6 +135,7 @@ jobs:
                   'core/libs/nid/include/nid/NidCompute.hpp', 'core/libs/nid/include/nid/Sha1.hpp',
                   'core/libs/prx/libScePad/tests/InputCommandFile.cpp', 'core/libs/prx/libScePad/include/InputCommandFile.hpp',
                   'core/shader/recompiler/', '.github/pull_request_template.md', '.github/workflows/pr-overlap.yml',
+                  '.github/workflows/daily-tag.yml',
                   'tools/', 'cmake/', 'CMakeLists.txt'
                 ),
                 registerContext: edits('register-context') ||

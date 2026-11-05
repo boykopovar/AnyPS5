@@ -230,6 +230,15 @@ class DailySnapshotTests(unittest.TestCase):
     def test_manual_main_run_creates_the_same_snapshot(self):
         self.require_created(self.run_snapshot(eventName="workflow_dispatch"))
 
+    def test_every_api_request_targets_the_upstream_repository(self):
+        result = self.run_snapshot()
+        self.require_created(result)
+        for call in result["calls"]:
+            if "params" in call:
+                with self.subTest(endpoint=call["name"]):
+                    self.assertEqual({key: call["params"].get(key) for key in ("owner", "repo")},
+                                     {"owner": "boykopovar", "repo": "AnyPS5"})
+
     def test_wrong_repository_branch_event_and_fork_are_rejected_without_api_calls(self):
         cases = ({"repo": {"owner": "contributor"}}, {"repo": {"repo": "other"}},
                  {"ref": "refs/heads/topic"}, {"ref": "refs/tags/v1"},
