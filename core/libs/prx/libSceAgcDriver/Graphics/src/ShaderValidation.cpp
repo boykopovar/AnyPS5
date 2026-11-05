@@ -604,7 +604,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 tableAlias = tables && key.first == Abi::FragmentDescriptorSet && (samplerAlias || imageAlias);
                 if (tableAlias && binding == shader.bindings.end()) {
                     const auto count = type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray ? module.constants.find(type[3]) : module.constants.end();
-                    Require(samplerAlias ? count != module.constants.end() && count->second == Abi::GpuSamplerHeapSlots : heapImageSlotsLength(module, type[3]),
+                    const bool array = type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray;
+                    Require(array && (samplerAlias ? count != module.constants.end() && count->second == Abi::GpuSamplerHeapSlots : heapImageSlotsLength(module, type[3])),
                             "an image table's heap array length disagrees with the global heap");
                     continue;
                 }

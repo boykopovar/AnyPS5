@@ -336,10 +336,11 @@ bool idleSlotsEvicted(const Context& context, VkImageView view) {
     require(heap.SlotTexture(kind, slots[0]) == nullptr && heap.SlotGeneration(slots[0]) != idleGeneration,
             "an evicted slot names no texture and moves its generation");
     require(heap.SlotTexture(kind, slots[5]) == held[5].get(), "the slot used again stays with its texture");
+    require(BindlessHeap::NearlyFull(), "evicted slots no submission covers yet do not count as free");
     require(take(7).has_value(), "the eighth texture takes the last never-used slot");
     require(!take(8).has_value(), "an evicted slot is not reused before a submission covers the draws that used it");
-    require(!BindlessHeap::NearlyFull(), "evicted slots waiting for the GPU keep the heap open");
     submit();
+    require(!BindlessHeap::NearlyFull(), "evicted slots a submission covers take the heap again");
     require(recorder.WaitSerialFor(recorder.Submissions(), ~std::uint64_t{0}), "the submission completes");
     const auto reused = take(8);
     require(reused.has_value() && std::find(slots.begin(), slots.begin() + 5, *reused) != slots.begin() + 5,

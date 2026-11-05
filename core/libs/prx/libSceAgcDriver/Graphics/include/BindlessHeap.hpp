@@ -70,7 +70,7 @@ public:
     static bool NearlyFull();
     static std::uint32_t ImageSlotCapacity();
     std::uint32_t ImageSlots() const { return slotCap; }
-    void TouchSlots(std::span<const std::vector<std::uint32_t>> slots) const;
+    std::uint32_t TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::uint32_t touched) const;
 
     struct DataSpan {
         std::uint32_t offset = 0;
@@ -93,7 +93,7 @@ public:
     struct Counts {
         std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
         std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
-        std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0;
+        std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0, ringBytes = 0, imageSlotsHeld = 0;
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, bufferDescriptors = 0;
     };
     Counts Statistics() const;
@@ -185,6 +185,8 @@ private:
     };
     std::deque<RetiringSlot> retiring;
     std::size_t ringBatchBytes = 0;
+    std::size_t retiringAssigned = 0;
+    std::uint32_t evictScanEpoch = 0;
     Recorder* submitter = nullptr;
     void touchLocked(std::uint32_t slot) const;
     void evictLocked();

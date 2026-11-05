@@ -683,6 +683,7 @@ private:
         std::vector<std::uint32_t> samplerSlots;
         std::vector<std::uint32_t> samplerGenerations;
         std::uint64_t slotSerial = 0;
+        std::uint32_t touchedEpoch = 0;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
         struct KeptSpan {
             std::vector<std::uint32_t> words;

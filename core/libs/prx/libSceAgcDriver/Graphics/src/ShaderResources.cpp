@@ -7159,7 +7159,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
         takeHeapSlots(heap, stageState, stageBit, key);
         noteHeapSlotGenerations(heap, stageState);
     } else {
-        heap.TouchSlots(stageState.slots);
+        stageState.touchedEpoch = heap.TouchSlots(stageState.slots, stageState.touchedEpoch);
     }
     stageState.slotSerial = slotSerial;
     static const bool verifySlots = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;

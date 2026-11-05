@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "Recompiler.hpp"
 #include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
@@ -453,7 +454,7 @@ std::uint32_t BindlessHeap::imageMargin() const {
 }
 
 bool BindlessHeap::roomLocked() const {
-    if (imagePool.Unused() < 2u * static_cast<std::size_t>(imageMargin())) return false;
+    if (imagePool.Unused() + retiringAssigned < 2u * static_cast<std::size_t>(imageMargin())) return false;
     return samplerPool.Unused() >= 2u * SamplerSlotMargin;
 }
 
@@ -466,29 +467,32 @@ void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
 
 void BindlessHeap::noteTakenLocked() {
     const auto margin = imageMargin();
-    if (imagePool.Unused() >= margin) return;
-    reclaimLocked(false);
-    if (imagePool.Unused() + retiring.size() < margin) evictLocked();
-    if (!refused && imagePool.Unused() + retiring.size() < margin) noteRefusedLocked("image", margin);
+    if (imagePool.Unused() >= 2u * static_cast<std::size_t>(margin)) return;
+    if (imagePool.Unused() + retiring.size() < 2u * static_cast<std::size_t>(margin)) evictLocked();
+    if (!refused && imagePool.Unused() + retiringAssigned < margin) noteRefusedLocked("image", margin);
 }
 
 void BindlessHeap::touchLocked(std::uint32_t slot) const {
     if (slot < slotCap) slotUses[slot].store(useEpoch.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
 
-void BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t>> slots) const {
+std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::uint32_t touched) const {
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
+    if (touched == epoch) return epoch;
     for (const auto& kindSlots : slots) {
         for (const auto slot : kindSlots) {
             if (slot < slotCap) slotUses[slot].store(epoch, std::memory_order_relaxed);
         }
     }
+    return epoch;
 }
 
 void BindlessHeap::evictLocked() {
     static const bool disabled = std::getenv("APS5_NO_HEAP_EVICTION") != nullptr;
-    if (disabled) return;
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
+    if (disabled || submitter == nullptr || !submitter->HasTimeline() || evictScanEpoch == epoch) return;
+    GuestMemory::AssertGpuLockHeld("BindlessHeap::evictLocked");
+    evictScanEpoch = epoch;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
     for (std::uint32_t slot = SamplerKind; slot < imagePool.next && slot < owners.size(); ++slot) {
         if (owners[slot].key.owner == nullptr) continue;
@@ -521,13 +525,14 @@ bool BindlessHeap::reclaimLocked(bool wait) {
     while (!retiring.empty() && retiring.front().serial != 0u && submitter != nullptr && submitter->HasTimeline()) {
         const auto serial = retiring.front().serial;
         if (!submitter->WaitSerialFor(serial, 0u)) {
-            if (!wait || reclaimed) break;
+            if (!wait || reclaimed || serial > submitter->Submissions()) break;
             submitter->WaitSerial(serial);
             ++counts.evictionWaits;
         }
         while (!retiring.empty() && retiring.front().serial != 0u && retiring.front().serial <= serial) {
             imagePool.free.push_back(retiring.front().slot);
             retiring.pop_front();
+            --retiringAssigned;
             reclaimed = true;
         }
     }
@@ -646,7 +651,9 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
         offset = wrapRingOffset((chunkOf(offset) + 1u) * RingChunkBytes, bytes);
         ++counts.keptChunksSkipped;
     }
-    ringBatchBytes += bytes + (offset >= ringCursor ? offset - ringCursor : ringBytes - ringCursor + offset);
+    const auto consumed = bytes + (offset >= ringCursor ? offset - ringCursor : ringBytes - ringCursor + offset);
+    ringBatchBytes += consumed;
+    counts.ringBytes += consumed;
     counts.ringSpanPeakBytes = std::max<std::uint64_t>(counts.ringSpanPeakBytes, bytes);
     ringCursor = offset + bytes;
     for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) enterRingChunk(chunk);
@@ -1094,6 +1101,8 @@ void reportHeapStatistics() {
             totals.slotsEvicted += counts.slotsEvicted;
             totals.evictionWaits += counts.evictionWaits;
             totals.ringWaits += counts.ringWaits;
+            totals.ringBytes += counts.ringBytes;
+            totals.imageSlotsHeld += counts.imageSlotsHeld;
             totals.ringBatchPeakBytes = std::max(totals.ringBatchPeakBytes, counts.ringBatchPeakBytes);
             totals.ringSpanPeakBytes = std::max(totals.ringSpanPeakBytes, counts.ringSpanPeakBytes);
         }
@@ -1108,15 +1117,16 @@ void reportHeapStatistics() {
     const auto slotsEvicted = windowDelta(totals.slotsEvicted, lastTotals.slotsEvicted);
     const auto evictionWaits = windowDelta(totals.evictionWaits, lastTotals.evictionWaits);
     const auto ringWaits = windowDelta(totals.ringWaits, lastTotals.ringWaits);
+    const auto ringMiB = windowDelta(totals.ringBytes, lastTotals.ringBytes) >> 20u;
     lastTotals = totals;
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; fallbacks:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); ring spans %llu written / %llu kept / %llu expired, %llu waits, peak %llu KiB per batch, largest span %llu KiB; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %u, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); ring spans %llu written / %llu kept / %llu expired, %llu MiB, %llu waits, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), fallbacks.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(ringWaits), printed(totals.ringBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(ringMiB), printed(ringWaits), printed(totals.ringBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {
@@ -1301,11 +1311,13 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
     useEpoch.fetch_add(1, std::memory_order_relaxed);
     counts.ringBatchPeakBytes = std::max<std::uint64_t>(counts.ringBatchPeakBytes, ringBatchBytes);
     ringBatchBytes = 0;
-    for (auto entry = retiring.rbegin(); entry != retiring.rend() && entry->serial == 0u; ++entry) entry->serial = serial;
-    if (refused) {
-        reclaimLocked(false);
-        if (refused && retiring.empty()) evictLocked();
+    if (refused && imagePool.Unused() + retiring.size() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked();
+    for (auto entry = retiring.rbegin(); entry != retiring.rend() && entry->serial == 0u; ++entry) {
+        entry->serial = serial;
+        ++retiringAssigned;
     }
+    if (!retiring.empty()) reclaimLocked(false);
+    noteReleasedLocked();
     for (std::size_t index = 0; index < ringChunks.size(); ++index) {
         if (!ringChunks[index].open && index != ringChunk) continue;
         ringChunks[index].recorder = &recorder;
@@ -1316,7 +1328,9 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
 
 BindlessHeap::Counts BindlessHeap::Statistics() const {
     std::lock_guard lock(mutex);
-    return counts;
+    auto snapshot = counts;
+    snapshot.imageSlotsHeld = imagePool.next - std::min<std::size_t>(imagePool.next, SamplerKind + imagePool.free.size() + retiring.size());
+    return snapshot;
 }
 
 }
