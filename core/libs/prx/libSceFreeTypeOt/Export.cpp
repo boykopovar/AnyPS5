@@ -118,11 +118,6 @@ int APS5_VABI sceFreeTypeOtGlyphSlotOblique_nid_no_patch() {
 }
 APS5_EXPORT("wBKAYO7yEXw", sceFreeTypeOtGlyphSlotOblique_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("nSIux4OQyJM", sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOtGlyphCopy_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

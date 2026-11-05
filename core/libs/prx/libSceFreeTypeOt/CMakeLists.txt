@@ -92,7 +92,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceFreeTypeOt PRIVATE src/GlyphSlot.cpp)
+target_sources(libSceFreeTypeOt PRIVATE src/GlyphSlot.cpp src/Bitmap.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_ot_glyph_slot_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtGlyphSlot.cpp)
     target_include_directories(guest_freetype_ot_glyph_slot_tests PRIVATE ${LIBS_INCLUDE_DIR})
