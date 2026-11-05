@@ -516,7 +516,7 @@ void APS5_VABI _ZNSt12system_errorC2ERKS__nid_postfix(LibcException::SystemError
 void APS5_VABI LibcExceptionConstructSystemError_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message) {
     if (!code.category) throw std::invalid_argument(std::string(__func__) + ": null category");
     std::string what = message ? message : "";
-    what += ": ";
+    if (!what.empty()) what += ": ";
     what += LibcException::ErrorCodeMessage(code);
     LibcException::Construct(&self->base, _ZTVSt12system_error_nid_postfix, what.c_str());
     self->code = code;
