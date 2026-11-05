@@ -159,6 +159,17 @@ static void CheckOutOfRange(int code) {
     Require(threw, 3);
 }
 
+static void CheckConstructor() {
+    LibcException::SystemErrorObject constructed {};
+    const LibcException::ErrorCode code {0, 22, nullptr};
+    _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&constructed, code, "invalid argument");
+    Require(constructed.code.reserved == 0 && constructed.code.value == 22 && constructed.code.category == nullptr, 50);
+    const char* what = Slot<GuestWhat>(reinterpret_cast<const void* const*>(constructed.base.vtable), 2)(&constructed);
+    Require(what && std::strcmp(what, "invalid argument") == 0, 51);
+    _ZNSt12system_errorD1Ev_nid_postfix(&constructed.base);
+    Require(constructed.base.message == nullptr, 52);
+}
+
 static void CheckCErrorReturns(int code) {
     try {
         _ZSt14_Throw_C_errori_nid_postfix(code);
@@ -171,6 +182,7 @@ static void CheckCErrorReturns(int code) {
 int main() {
     const std::array<void*, 10> api {};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    CheckConstructor();
     FixtureOtherType = _ZTISt11logic_error_nid_postfix;
     for (int code = 0; code < static_cast<int>(std::size(Errors)); ++code) Catch(_ZTISt12system_error_nid_postfix, code);
     Catch(_ZTISt13runtime_error_nid_postfix, 5);

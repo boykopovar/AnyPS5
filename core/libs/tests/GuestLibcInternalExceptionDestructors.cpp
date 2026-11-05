@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -77,6 +78,16 @@ void CheckFutureError() {
 
 }
 
+void CheckSystemErrorConstructor() {
+    LibcException::SystemErrorObject object{};
+    const LibcException::ErrorCode code {0, 22, nullptr};
+    libSceLibcInternalInventory_019_nid_no_patch(&object, code, "invalid argument");
+    Require(object.base.vtable != nullptr && object.code.value == 22 && object.code.category == nullptr, "the system_error constructor keeps its code");
+    Require(std::strcmp(_ZNKSt12system_error4whatEv_nid_postfix(&object.base), "invalid argument") == 0, "the system_error constructor keeps its message");
+    _ZNSt12system_errorD1Ev_nid_postfix(&object.base);
+    Require(object.base.message == nullptr, "the system_error constructor's message is released");
+}
+
 int main() {
     const std::array<void*, 10> api{
         reinterpret_cast<void*>(&TestAllocate), reinterpret_cast<void*>(&TestFree),
@@ -85,6 +96,7 @@ int main() {
         reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
+    CheckSystemErrorConstructor();
     CheckMessageDestructor(&sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch, "value too large");
     CheckMessageDestructor(&sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch, "value too small");
     CheckFutureError();

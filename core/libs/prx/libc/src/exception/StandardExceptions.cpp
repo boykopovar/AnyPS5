@@ -511,6 +511,13 @@ void APS5_VABI _ZNSt12system_errorC2ERKS__nid_postfix(LibcException::SystemError
     LibcException::Copy(&self->base, &source->base, _ZTVSt12system_error_nid_postfix);
     self->code = source->code;
 }
+void APS5_VABI LibcExceptionConstructSystemError_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message) {
+    LibcException::Construct(&self->base, _ZTVSt12system_error_nid_postfix, message);
+    self->code = code;
+}
+void APS5_VABI _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message) {
+    LibcExceptionConstructSystemError_nid_no_patch(self, code, message);
+}
 LibcException::SystemErrorObject* APS5_VABI _ZNSt12system_erroraSERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source) {
     LibcException::Assign(&self->base, &source->base);
     self->code = source->code;
