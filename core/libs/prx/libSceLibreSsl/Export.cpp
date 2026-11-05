@@ -346,9 +346,8 @@ int APS5_VABI OBJ_sn2nid_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI OCSP_BASICRESP_free_nid_postfix(void* response) {
+    if (response != nullptr) NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI OCSP_RESPONSE_free_nid_postfix(void) {
