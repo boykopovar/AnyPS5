@@ -386,28 +386,37 @@ static void TestVectorSizeAndElements() {
     for (const auto element : elements) Require(Throws([&] { element(&foreign, 0); }), "indexing a foreign body did not throw");
 }
 
-static void TestLeaderboardEntryRanks() {
-    alignas(16) unsigned char objects[3][0xb0];
+static void TestLeaderboardEntryAccessors() {
+    alignas(16) unsigned char objects[3][0xd0];
     std::memset(objects, 0xa5, sizeof(objects));
     constexpr std::uint32_t values[] = {0, 1, 0x80000000u, 0xffffffffu, 0x12345678u};
     for (const auto value : values) {
-        for (unsigned int index = 0; index < 3; ++index) {
-            auto* object = objects[index] + 0x10;
-            const auto highest = value ^ (index * 0x13579bdu);
-            const auto serial = ~highest;
-            std::memcpy(object + 0x3c, &highest, sizeof(highest));
-            std::memcpy(object + 0x98, &serial, sizeof(serial));
-            unsigned char before[sizeof(objects)];
-            std::memcpy(before, objects, sizeof(before));
-            Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(object) == highest, "highest rank does not read the entry field");
-            Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialRankEv(object) == serial, "serial rank does not read the entry field");
-            Require(std::memcmp(before, objects, sizeof(objects)) == 0, "rank accessors modified the object or adjacent storage");
+        for (unsigned int flags = 0; flags < 4; ++flags) {
+            for (unsigned int index = 0; index < 3; ++index) {
+                auto* object = objects[index] + 0x10;
+                const auto highest = value ^ (index * 0x13579bdu);
+                const auto serial = ~highest;
+                const auto highestSerial = highest ^ 0xa55a5aa5u;
+                std::memcpy(object + 0x3c, &highest, sizeof(highest));
+                std::memcpy(object + 0x40, &highestSerial, sizeof(highestSerial));
+                std::memcpy(object + 0x98, &serial, sizeof(serial));
+                object[0x68] = flags & 1;
+                object[0xb8] = (flags >> 1) & 1;
+                unsigned char before[sizeof(objects)];
+                std::memcpy(before, objects, sizeof(before));
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(object) == highest, "highest rank does not read the entry field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialRankEv(object) == serial, "serial rank does not read the entry field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(object) == highestSerial, "highest serial rank does not read the entry field");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13objectIdIsSetEv(object) == ((flags & 1) != 0), "object ID presence does not read its own flag");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14smallDataIsSetEv(object) == ((flags & 2) != 0), "small data presence does not read its own flag");
+                Require(std::memcmp(before, objects, sizeof(objects)) == 0, "entry accessors modified the object or adjacent storage");
+            }
         }
     }
 }
 
 int main() {
-    TestLeaderboardEntryRanks();
+    TestLeaderboardEntryAccessors();
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
     TestLeaderboardsParameterLifecycles();
