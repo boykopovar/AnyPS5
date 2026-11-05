@@ -490,7 +490,8 @@ std::optional<TrampolineSite> relocateLeaf(
             refusal = "segment-prefixed operand, which a later pass rewrites in the original code";
             return std::nullopt;
         }
-        if ((info.IsTwoByteOpcode && (info.Opcode == 0x05 || info.Opcode == 0x34)) || (!info.IsTwoByteOpcode && (info.Opcode == 0xcd || info.Opcode == 0xce || info.Opcode == 0xf1))) {
+        const bool assertTrap = !info.IsTwoByteOpcode && info.Opcode == 0xcd && insn.Length == 2 && code[0] == 0xcd && code[1] == 0x41;
+        if ((info.IsTwoByteOpcode && (info.Opcode == 0x05 || info.Opcode == 0x34)) || (!info.IsTwoByteOpcode && ((info.Opcode == 0xcd && !assertTrap) || info.Opcode == 0xce || info.Opcode == 0xf1))) {
             refusal = "system call or interrupt";
             return std::nullopt;
         }
@@ -585,7 +586,8 @@ std::optional<TrampolineSite> relocateLeaf(
         out.insert(out.end(), code, code + insn.Length);
     }
     if (trace) traceStep(body.back());
-    if (body.back().Info.FlowKind != ControlFlowKind::Return && body.back().Info.FlowKind != ControlFlowKind::UnconditionalJump) {
+    const bool endsInUd2 = body.back().Info.IsTwoByteOpcode && body.back().Info.Opcode == 0x0b;
+    if (body.back().Info.FlowKind != ControlFlowKind::Return && body.back().Info.FlowKind != ControlFlowKind::UnconditionalJump && !endsInUd2) {
         refusal = "falls off its end";
         return std::nullopt;
     }

@@ -375,6 +375,18 @@ void refusesRelocatingSegmentOperands() {
     require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("segment-prefixed operand, which a later pass rewrites in the original code") == 1, "a leaf reading fs:0, which the TLS pass rewrites in place, was relocated");
 }
 
+void relocatesLeavesEndingInTheSdkAssertTrap() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x5b});
+    append(body, LoadBelowRsp);
+    append(body, {0x48, 0x85, 0xc0, 0x74, 0x01, 0xc3});
+    const auto input = image({framelessLeaf({}, body, {0xcd, 0x41, 0x0f, 0x0b})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf whose failure path ends in int 0x41 and ud2 was not relocated");
+}
+
 void refusesRelocatingRipRelativeBranches() {
     std::vector<std::uint8_t> body = StoreBelowRsp;
     append(body, LoadBelowRsp);
@@ -942,6 +954,7 @@ int main() {
         skipsFragmentsThatPopWithoutPushing();
         refusesRelocatingSegmentOperands();
         refusesRelocatingRipRelativeBranches();
+        relocatesLeavesEndingInTheSdkAssertTrap();
         relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
         refusesRelocatingStackReadsOfAPushedRegister();
         skipsWideningOverBranchTargets();
