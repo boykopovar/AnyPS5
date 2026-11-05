@@ -1,0 +1,16 @@
+add_library(libScePsmlBcSisr SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePsmlBcSisr PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePsmlBcSisr)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_psml_bcsisr_catalog_tests ${LIBS_INCLUDE_DIR}/tests/GuestPsmlBcSisrCatalog.cpp)
+    target_include_directories(guest_psml_bcsisr_catalog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_psml_bcsisr_catalog_tests PRIVATE libScePsmlBcSisr libkernel libc)
+    configure_windows_unwind(guest_psml_bcsisr_catalog_tests)
+    add_test(NAME guest_psml_bcsisr_catalog COMMAND guest_psml_bcsisr_catalog_tests)
+    set_tests_properties(guest_psml_bcsisr_catalog PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_psml_bcsisr_catalog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePsmlBcSisr>")
+    endif()
+endif()
