@@ -167,6 +167,7 @@ int main() {
     Require(copy->base.vtable->release(&copy->base) == nullptr, "a release above zero keeps the copy");
     auto* released = copy->base.vtable->release(&copy->base);
     Require(released == &copy->base, "the last release returns the copy");
+    const auto* const locimpVtable = copy->base.vtable;
     released->vtable->deleteObject(released);
     Require(gLastFreed == copy, "deleteObject frees the copy");
     Require(Counts(second, 1, 3, 2, 0) && Counts(third, 1, 2, 1, 0), "destroying the copy releases its facets");
@@ -233,7 +234,7 @@ int main() {
     Require(Counts(fifth, 0, 1, 1, 1) && Counts(seventh, 0, 1, 1, 1), "deleting the owner deletes its facets");
 
     auto* fresh = _ZNSt8__sce_v26locale7_Locimp11_New_LocimpEb_nid_postfix(true);
-    Require(fresh->base.vtable == copy->base.vtable && fresh->facets == nullptr && fresh->facetCount == 0, "_New_Locimp(bool) uses the owning vtable");
+    Require(fresh->base.vtable == locimpVtable && fresh->facets == nullptr && fresh->facetCount == 0, "_New_Locimp(bool) uses the owning vtable");
     CountingFacet eighth = MakeFacet();
     _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(fresh, &eighth.base, 0);
     Require(fresh->facetCount == 40 && fresh->facets[0] == &eighth.base, "Addfac grows an empty vector");
@@ -242,7 +243,7 @@ int main() {
     Require(gLastFreed == fresh && Counts(eighth, 0, 1, 1, 1), "deleting the fresh locale deletes its facet");
     GuestLocaleFacade facade{};
     _ZNSt8__sce_v26locale5emptyEv_nid_postfix(&facade);
-    Require(facade.implementation != nullptr && facade.implementation->base.vtable == copy->base.vtable, "empty() uses the owning vtable");
+    Require(facade.implementation != nullptr && facade.implementation->base.vtable == locimpVtable, "empty() uses the owning vtable");
     Require(facade.implementation->base.vtable->release(&facade.implementation->base) == &facade.implementation->base, "the empty locale drops to zero");
     facade.implementation->base.vtable->deleteObject(&facade.implementation->base);
     Require(gLastFreed == facade.implementation, "deleting the empty locale frees it");
