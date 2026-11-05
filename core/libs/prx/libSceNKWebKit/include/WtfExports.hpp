@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/PalTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
@@ -50,6 +51,9 @@ void APS5_VABI _ZN3JSC30waitForAsynchronousDisassemblyEv();
 unsigned int APS5_VABI _ZN3JSC31numberOfStaticOSRExitFuzzChecksEv();
 unsigned int APS5_VABI _ZN3JSC38numberOfExecutableAllocationFuzzChecksEv();
 void APS5_VABI _ZN3PAL10systemBeepEv();
+void APS5_VABI _ZN3PAL9SessionID26enableGenerationProtectionEv();
+PAL::SessionID APS5_VABI _ZN3PAL9SessionID26generateEphemeralSessionIDEv();
+PAL::SessionID APS5_VABI _ZN3PAL9SessionID27generatePersistentSessionIDEv();
 std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const NKWebKit::WtfAbi::StringImpl* self, char16_t value, unsigned start);
 std::int32_t APS5_VABI _ZN3WTF10StringImpl19characterStartingAtEj(const NKWebKit::WtfAbi::StringImpl* self, unsigned index);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPDs(unsigned length, char16_t*& data);
