@@ -577,6 +577,7 @@ long long APS5_VABI atoll_nid_postfix(const char* str) {
 }
 
 std::div_t APS5_VABI div_nid_postfix(int numerator, int denominator) {
+    if (denominator == -1) return {static_cast<int>(0u - static_cast<unsigned int>(numerator)), 0};
     return std::div(numerator, denominator);
 }
 
