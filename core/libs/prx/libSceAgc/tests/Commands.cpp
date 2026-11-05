@@ -740,10 +740,10 @@ void testMemory() {
         waitPacket[6] |= lowMask;
         waitPacket[7] = 0xa5fc0000u;
         const auto tag = waitPacket[2] & 0xffff0000u;
-        const std::uintptr_t address = 0x1236abcd12345679ull;
+        const std::uintptr_t address = 0x123456789ab8ull;
         check(sceAgcWaitRegMemPatchAddress(waitPacket, reinterpret_cast<const volatile void*>(address)) == 0, "wait address patch failed");
-        check(waitPacket[2] == (tag | 0xabcdu) && waitPacket[3] == 0x12345679u, "wait wrapper address patch mismatch");
-        check(waitPacket[6] == ((0x12345679u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5feabcdu, "wait address patch did not preserve control bits");
+        check(waitPacket[2] == (tag | 0x1234u) && waitPacket[3] == 0x56789ab8u, "wait wrapper address patch mismatch");
+        check(waitPacket[6] == ((0x56789ab8u & ~lowMask) | lowMask) && waitPacket[7] == 0xa5fc1234u, "wait address patch did not preserve control bits");
         for (std::uint32_t comparison = 0; comparison <= 255; ++comparison) {
             const auto control = waitPacket[5] & ~7u;
             check(sceAgcWaitRegMemPatchCompareFunction(waitPacket, static_cast<std::uint8_t>(comparison)) == 0, "wait comparison patch failed");
