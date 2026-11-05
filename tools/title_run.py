@@ -304,11 +304,22 @@ def module_dirs(entry):
     return [relink[index + 1] for index in range(len(relink) - 1) if relink[index] == "--module-dir"]
 
 
+MODULE_MAGICS = (b"\x7fELF", b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")
+
+
+def is_module(path):
+    with path.open("rb") as file:
+        return file.read(4) in MODULE_MAGICS
+
+
 def stage_inputs(package, entry, source):
     (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
     for directory in ["sce_module", *module_dirs(entry)]:
-        for module in sorted((package / directory).glob("*.prx")):
+        if not (package / directory).is_dir():
+            continue
+        (source / directory).mkdir(parents=True, exist_ok=True)
+        for module in sorted(path for path in (package / directory).iterdir() if path.is_file() and is_module(path)):
             unwrap_or_copy(module, source / directory / module.name)
     for executable in entry.get("executables", []):
         unwrap_or_copy(package / executable, source / executable)
