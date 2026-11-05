@@ -8,9 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 
-extern "C" std::uint64_t APS5_VABI NotImplementedCalls_nid_no_patch();
-
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "libSceNKWebKit forwarding check failed at line %d\n", line);
