@@ -1,0 +1,14 @@
+# Sample list of missing PS5 sce function declarations.
+# One declaration per line; '#' comments and blank lines are ignored.
+# These are stubbed until the real implementation is added.
+
+int sceKernelCreateThread(const char *name, SceKernelThreadEntry entry,
+                          int priority, unsigned int stackSize,
+                          unsigned int attr, const void *arg)
+int sceKernelExitThread(int status)
+uint32_t sceKernelGetThreadId(void)
+SceUid sceKernelCreateEventFlag(void)
+int sceKernelSetEventFlag(SceUid eflag, int bits)
+int sceKernelWaitEventFlag(SceUid eflag, int bits, int mode,
+                           unsigned int *result, const void *timeout)
+SceBool sceKernelIsDebuggerAttached(void)

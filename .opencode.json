@@ -1,0 +1,42 @@
+{
+  "$schema": "https://opencode.ai",
+  "mcp": {
+    "adb": {
+      "type": "local",
+      "command": ["npx", "-y", "android-debug-bridge-mcp"],
+      "enabled": true
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem",
+                  "C:\\Users\\alfas\\Desktop\\REA"],
+      "enabled": true,
+      "description": "Filesystem access for automating PR submissions"
+    },
+    "shell": {
+      "type": "stdio",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-shell"],
+      "enabled": true,
+      "description": "Command execution (git, gh, python) for automating PR submissions"
+    }
+  },
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio Local",
+      "options": {
+        "baseURL": "http://127.0.0.1:1235/v1",
+        "apiKey": "lm-studio"
+      },
+      "models": {
+        "flint-ud": {
+          "id": "flint-ud",
+          "name": "Flint UD 24B",
+          "tool_call": true,
+          "reasoning": true
+        }
+      }
+    }
+  },
+  "model": "lmstudio/flint-ud"
+}
