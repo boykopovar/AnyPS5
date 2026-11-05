@@ -5,12 +5,14 @@ import os
 import re
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -18,6 +20,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import pad_input
 import pad_timeline
 import unwrap_self
+from audit_dump import comparison_path
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
@@ -494,10 +497,85 @@ def stage_inputs(package, entry, source):
     for executable in entry.get("executables", []):
         unwrap_or_copy(package / executable, source / executable)
 
+def path_locations(path):
+    return {Path(os.path.abspath(path)), comparison_path(path)}
+
+
+def linked_path(path):
+    return path.is_symlink() or (os.name == "nt" and path.exists() and
+                                 path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def validate_layout(args, found, ids, titles, source, platform):
+    package_trees = [title["package"] for title in found.values()]
+    trees = list(package_trees)
+    files = [args.titles, args.build / "CMakeCache.txt"]
+    if args.compare:
+        files.append(args.compare)
+    for title_id in ids:
+        for executable in titles.get(title_id, {}).get("executables", []):
+            relative = PureWindowsPath(executable)
+            if not relative.parts or relative.drive or relative.root or ".." in relative.parts:
+                raise ValueError(f"unsafe executable path for {title_id}: {executable!r}")
+    for title_id, title in found.items():
+        package = title["package"]
+        files.append(package / "eboot.bin")
+        files.extend((package / "sce_module").glob("*.prx"))
+        files.extend(package / executable for executable in titles.get(title_id, {}).get("executables", []))
+    build_trees = [args.build / "core/relinker", args.build / "core/libs/libs"]
+    for tree in [*trees, *build_trees]:
+        for path in tree.rglob("*"):
+            if linked_path(path):
+                (trees if path.is_dir() else files).append(path)
+                if tree in package_trees and path.is_dir():
+                    package_trees.append(path)
+    trees.extend(build_trees)
+    if platform == "windows":
+        try:
+            runtime = windows_runtime(args.build)
+        except RuntimeError:
+            pass
+        else:
+            files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
+    directory_inputs = [(path, path_locations(path)) for path in trees]
+    file_inputs = [(path, path_locations(path)) for path in files]
+    containing_inputs = [(path, path_locations(path)) for path in (args.build, source, ROOT)]
+    output = path_locations(args.out)
+    for path in package_trees:
+        locations = path_locations(path)
+        if any(destination.is_relative_to(origin) for destination in output for origin in locations):
+            raise ValueError(f"output directory {args.out} overlaps input {path}")
+    for title_id in ids:
+        work = args.out / "work" / title_id
+        lock = work.with_suffix(".lock")
+        if linked_path(work) or linked_path(lock):
+            raise ValueError(f"unsafe linked work or lock path: {work}")
+        locations = path_locations(work)
+        if any(origin.is_relative_to(destination) for destination in locations for origin in output):
+            raise ValueError(f"work directory {work} overlaps output directory {args.out}")
+        for path, origins in directory_inputs:
+            if any(destination.is_relative_to(origin) or origin.is_relative_to(destination)
+                   for destination in locations for origin in origins):
+                raise ValueError(f"work directory {work} overlaps input {path}")
+        for path, origins in [*file_inputs, *containing_inputs]:
+            if any(origin.is_relative_to(destination) for destination in locations for origin in origins):
+                raise ValueError(f"work directory {work} overlaps input {path}")
+        lock_locations = path_locations(lock)
+        for path, origins in [*directory_inputs, *file_inputs, *containing_inputs]:
+            if lock_locations & origins:
+                raise ValueError(f"lock file {lock} overlaps input {path}")
+
+
+def reset_work(work):
+    if linked_path(work):
+        raise OSError(f"unsafe linked work directory: {work}")
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+
 
 def prepare(title_id, found, entry, platform, build, work):
     package = found["package"]
-    shutil.rmtree(work, ignore_errors=True)
     source = work / "input"
     stage_inputs(package, entry, source)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
@@ -808,15 +886,19 @@ def main(argv=None):
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
+    source = source_root(args.build)
+    try:
+        validate_layout(args, found, ids, titles, source, platform)
+    except (OSError, RuntimeError, ValueError) as error:
+        parser.error(f"unsafe title-run layout: {error}")
     locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
     busy = [title_id for title_id, handle in locks.items() if handle is None]
     if busy:
         raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
     if previous and args.ids:
         previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
-    source = source_root(args.build)
     commit = git(source, "rev-parse", "--short", "HEAD")
-    output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    output = Path(tempfile.mkdtemp(prefix=f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}-", dir=args.out.resolve()))
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
@@ -825,6 +907,10 @@ def main(argv=None):
         seconds = args.seconds or entry.get("seconds", 60)
         work = args.out.resolve() / "work" / title_id
         missing = []
+        try:
+            reset_work(work)
+        except OSError as error:
+            parser.error(f"cannot reset work directory {work}: {error}")
         try:
             executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
             missing = stage_files(entry.get("files", {}), work, args.content) if executable else []
