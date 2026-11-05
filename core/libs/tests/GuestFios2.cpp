@@ -61,6 +61,9 @@ static void CheckInitialization() {
 }
 
 static void CheckQueries(const std::string& directory, const std::string& file) {
+    sceFiosCacheFlushSync();
+    sceFiosCacheFlushFileSync(file.c_str());
+    sceFiosCacheFlushFileRangeSync(file.c_str(), 0, 10);
     REQUIRE(sceFiosExistsSync(nullptr, file.c_str()));
     REQUIRE(sceFiosExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosExistsSync(nullptr, (directory + "/missing").c_str()));

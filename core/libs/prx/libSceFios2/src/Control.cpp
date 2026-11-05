@@ -190,17 +190,11 @@ void APS5_VABI sceFiosOpReschedule(SceFiosOp op, const void* scheduler) {
     sceFiosOpRescheduleWithPriority(op, scheduler, attr->priority);
 }
 
-void APS5_VABI sceFiosCacheFlushSync() {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI sceFiosCacheFlushSync() {}
 
-void APS5_VABI sceFiosCacheFlushFileSync() {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI sceFiosCacheFlushFileSync(const char*) {}
 
-void APS5_VABI sceFiosCacheFlushFileRangeSync() {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI sceFiosCacheFlushFileRangeSync(const char*, SceFiosOffset, SceFiosSize) {}
 
 std::int64_t APS5_VABI sceFiosCacheContainsFileRangeSync(const char*, std::uint64_t, std::uint64_t) {
     return SCE_FIOS_ERROR_BAD_INDEX;

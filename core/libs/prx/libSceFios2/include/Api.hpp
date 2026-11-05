@@ -125,8 +125,8 @@ SceFiosOp APS5_VABI sceFiosArchiveUnmount(const SceFiosOpAttr* attr, SceFiosFH a
 int APS5_VABI sceFiosArchiveUnmountSync(const SceFiosOpAttr* attr, SceFiosFH archive);
 std::int64_t APS5_VABI sceFiosCacheContainsFileRangeSync(const char* path, std::uint64_t offset, std::uint64_t length);
 std::int64_t APS5_VABI sceFiosCacheContainsFileSync(const char* path, std::uint64_t* outCached);
-void APS5_VABI sceFiosCacheFlushFileRangeSync();
-void APS5_VABI sceFiosCacheFlushFileSync();
+void APS5_VABI sceFiosCacheFlushFileRangeSync(const char* path, SceFiosOffset offset, SceFiosSize length);
+void APS5_VABI sceFiosCacheFlushFileSync(const char* path);
 void APS5_VABI sceFiosCacheFlushSync();
 SceFiosOp APS5_VABI sceFiosCachePrefetchFH(const SceFiosOpAttr* attr, SceFiosFH fh);
 SceFiosOp APS5_VABI sceFiosCachePrefetchFHRange(const SceFiosOpAttr* attr, SceFiosFH fh, SceFiosOffset offset, SceFiosSize length);
