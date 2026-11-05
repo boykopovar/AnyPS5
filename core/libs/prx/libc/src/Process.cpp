@@ -18,6 +18,7 @@
 #include <atomic>
 #include <stdexcept>
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
 
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -183,6 +184,7 @@ extern "C" {
             std::fputs("[libc] host exit drain failed\n", stderr);
         }
     }
+    LibcRunReportFinishExit_nid_no_patch(code);
     LibcRunEndFlush_nid_no_patch();
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
@@ -198,6 +200,7 @@ void LibcStartExit_nid_postfix() {
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
     LibcRunShutdown_nid_postfix();
+    LibcRunReportFinishExit_nid_no_patch(code);
     std::exit(code);
 }
 

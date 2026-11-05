@@ -88,6 +88,13 @@ bool Replay(const char* path) {
         // mem_<code address>_<guest address>.bin next to the request for inspection with other tools.
         const auto& context = request.request.context;
         for (std::size_t i = 0; i < context.userData.size(); ++i) std::printf("  user[%zu] = 0x%08x\n", i, context.userData[i]);
+        if (request.request.graphics.has_value()) {
+            const auto& linked = request.request.graphics->linkedPrograms;
+            for (std::size_t index = 0; index < linked.size(); ++index) {
+                std::printf("  linked program %zu (stage %u, 0x%llx): user data base register %u, first user SGPR %u\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linked[index].userDataBaseRegister, linked[index].firstUserSgpr);
+                for (std::size_t i = 0; i < linked[index].userData.size(); ++i) std::printf("    user[%zu] = 0x%08x\n", i, linked[index].userData[i]);
+            }
+        }
         for (const auto& region : context.memory) {
             char name[96];
             std::snprintf(name, sizeof(name), "mem_%llx_%llx.bin", static_cast<unsigned long long>(request.request.shader.codeAddress), static_cast<unsigned long long>(region.guestAddress));
@@ -109,6 +116,20 @@ bool Replay(const char* path) {
             return false;
         }
         std::printf("  code -> %s\n", name.c_str());
+        if (request.request.graphics.has_value()) {
+            const auto& linked = request.request.graphics->linkedPrograms;
+            for (std::size_t index = 0; index < linked.size(); ++index) {
+                const auto linkedName = name + ".linked" + std::to_string(index);
+                const auto& linkedCode = linked[index].binary.code;
+                std::ofstream linkedFile(linkedName, std::ios::binary);
+                linkedFile.write(reinterpret_cast<const char*>(linkedCode.data()), static_cast<std::streamsize>(linkedCode.size() * sizeof(linkedCode[0])));
+                if (!linkedFile) {
+                    std::printf("  could not write %s\n", linkedName.c_str());
+                    return false;
+                }
+                std::printf("  linked program %zu (stage %u, 0x%llx) -> %s\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linkedName.c_str());
+            }
+        }
     }
     if (g_assembly) {
         const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.request.shader.code);
