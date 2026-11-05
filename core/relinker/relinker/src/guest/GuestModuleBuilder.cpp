@@ -244,13 +244,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         const std::string name(start, end);
         if (declaresHost(executableModules[offset / 24])) continue;
         const std::string base = name.substr(0, name.find('#'));
-        const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
-        const auto found = exports.find(name);
-        const GuestExport* declaredProvider = nullptr;
-        if (declared != guestNames.end() && found != exports.end()) {
-            const auto candidate = std::find_if(found->second.begin(), found->second.end(), [&](const auto& entry) { return entry.Provider == declared->second; });
-            if (candidate != found->second.end()) declaredProvider = &*candidate;
-        }
         const auto shared = sharedExports.find(base);
         std::size_t needed = 0;
         if (shared != sharedExports.end()) {
@@ -261,6 +254,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                     (soname.empty() || std::find(neededNames.begin(), neededNames.end(), soname) == neededNames.end())) continue;
                 if (++needed > 1) break;
             }
+        }
+        const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
+        const auto found = exports.find(name);
+        const GuestExport* declaredProvider = nullptr;
+        if (declared != guestNames.end() && found != exports.end()) {
+            const auto candidate = std::find_if(found->second.begin(), found->second.end(), [&](const auto& entry) { return entry.Provider == declared->second; });
+            if (candidate != found->second.end()) declaredProvider = &*candidate;
         }
         if (needed != 1 && (macos || declaredProvider == nullptr)) rejectSharedImport(base, Io::Utf8Path(inputPath));
         if (!windows && found != exports.end() && (declared == guestNames.end() || declaredProvider != nullptr)) {
