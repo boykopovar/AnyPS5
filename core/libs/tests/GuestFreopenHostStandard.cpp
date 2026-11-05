@@ -1,4 +1,6 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
@@ -51,11 +53,24 @@ static std::string Contents(const std::string& name) {
 }
 
 int main() {
-    const auto sinkName = "anyps5-freopen-host-standard-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt";
-    std::FILE* sink = std::fopen(sinkName.c_str(), "wb");
+    const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto sinkName = "anyps5-freopen-host-standard-" + stamp + ".txt";
+    const auto directoryName = "anyps5-freopen-host-standard-" + stamp;
+    FileStream* sink = fopen_nid_postfix(sinkName.c_str(), "wb");
     Check(sink != nullptr);
+    const int sinkDescriptor = fileno_nid_postfix(sink);
     const int original = HostDup(1);
-    Check(original >= 0 && HostDup2(HostFileno(sink), 1) == 0);
+    Check(sinkDescriptor >= 0 && original >= 0 && HostDup2(sinkDescriptor, 1) == 0);
+
+    Check(std::filesystem::create_directory(directoryName));
+    errno = 0;
+    Check(freopen_nid_postfix(directoryName.c_str(), "r", __stdoutp_nid_postfix) == __stdoutp_nid_postfix);
+    FileStat status{};
+    Check(sceKernelFstat(fileno_nid_postfix(__stdoutp_nid_postfix), &status) == 0 && (status.st_mode & 0170000) == 0040000);
+    char block[16];
+    Check(fread_nid_postfix(block, 1, sizeof(block), __stdoutp_nid_postfix) == 0);
+    Check(ferror_nid_postfix(__stdoutp_nid_postfix) != 0 && errno == EISDIR);
+    Check(HostDup2(sinkDescriptor, 1) == 0);
 
     errno = 0;
     FileStream* const reopened = freopen_nid_postfix("", "w", __stdoutp_nid_postfix);
@@ -63,7 +78,7 @@ int main() {
 
     const int written = HostWrite(1, "host", 4);
     const bool restored = HostDup2(original, 1) == 0 && HostClose(original) == 0;
-    Check(std::fclose(sink) == 0);
+    Check(fclose_nid_postfix(sink) == 0);
     Check(restored);
     Check(reopened == nullptr);
     Check(error == ENOENT);
@@ -73,5 +88,6 @@ int main() {
     errno = 0;
     Check(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && errno == EBADF);
     Check(std::filesystem::remove(sinkName));
+    Check(std::filesystem::remove(directoryName));
     return 0;
 }
