@@ -90,7 +90,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::set<std::string>& executableModuleNames, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
     std::vector<std::filesystem::path> paths;
     std::map<std::filesystem::path, GuestImage> discovered;
     progress.Report({Domain::ProgressStage::Modules, {}, 0, modules.size()});
@@ -218,11 +218,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     const auto executableExports = windows ? std::set<std::string>{} : ExportedNames(dynamic);
-    std::map<std::string, bool> importsExportedByExecutable;
+    std::set<std::string> resolvedOnExecutable;
     const auto noteHostImport = [&](const std::string& library, const std::string& symbol) {
-        if (!Domain::ModuleSuffix(library).empty()) return;
-        const auto found = importsExportedByExecutable.emplace(library, true).first;
-        found->second = found->second && executableExports.contains(symbol);
+        if (!executableModuleNames.contains(library)) return;
+        if (!executableExports.contains(symbol))
+            throw Domain::RelinkerException("--executable-module " + library + ": the executable does not export " + symbol);
+        if (resolvedOnExecutable.insert(library).second)
+            progress.Message("Needed module " + library + " is resolved on the executable (--executable-module)\n");
     };
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
     std::vector<bool> executableReferences(executableModules.size());
@@ -380,8 +382,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
     const auto loadsHost = [&](const std::string& name) {
         if (findGuest(name) != guestNames.end()) return false;
-        const auto imports = importsExportedByExecutable.find(name);
-        return imports == importsExportedByExecutable.end() || !imports->second;
+        return windows || !executableModuleNames.contains(name);
     };
     std::vector<std::filesystem::path> runDirectories;
     bool runDirectoriesExist = !windows && !macos;

@@ -69,7 +69,7 @@ std::u16string toUtf16(const std::string& text) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::set<std::string>& executableExports) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::set<std::string>& executableExports, const std::set<std::string>& executableModules) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -147,22 +147,19 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     std::vector<bool> executableProviders(libraries.size());
     for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
-        if (!Domain::ModuleSuffix(libraries[index]).empty()) continue;
-        bool requested = false;
-        bool exported = true;
+        if (!executableModules.contains(libraries[index])) continue;
         for (const auto& import : imports) {
-            if (Domain::NeededLibraryName(import.Library) != libraries[index]) continue;
-            requested = true;
-            exported = exported && executableExports.contains(import.Name);
+            if (Domain::NeededLibraryName(import.Library) == libraries[index] && !executableExports.contains(import.Name))
+                throw Domain::RelinkerException("--executable-module " + libraries[index] + ": the executable does not export " + import.Name);
         }
-        executableProviders[index] = requested && exported;
+        executableProviders[index] = true;
     }
 
     std::vector<std::uint32_t> libraryPaths;
     std::vector<std::size_t> libraryUnits;
     for (std::size_t index = 0; index < libraries.size(); ++index) {
         auto name = index < guestModules.size() ? libraries[index] : path + libraries[index];
-        if (executableProviders[index]) name += ".dll";
+        if (executableProviders[index] && Domain::ModuleSuffix(libraries[index]).empty()) name += ".dll";
         std::replace(name.begin(), name.end(), '/', '\\');
         const auto wideName = toUtf16(name);
         if (wideName.size() + 1 >= PathCapacity)
