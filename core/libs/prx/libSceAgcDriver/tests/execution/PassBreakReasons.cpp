@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
@@ -9,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <stdexcept>
@@ -34,11 +37,29 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Samples = 4;
 
-alignas(4096) std::array<std::byte, Width * Height * 4 * Samples> ColorA{};
-alignas(4096) std::array<std::byte, Width * Height * 4 * Samples> ColorB{};
-alignas(4096) std::array<float, Width * Height> DepthA{};
-alignas(4096) std::array<float, Width * Height> DepthB{};
-alignas(4096) std::array<float, Width * Height> DepthC{};
+constexpr std::size_t SurfaceBytes = 65536;
+
+class Surface {
+public:
+    std::span<std::byte> Bytes() {
+        void* pointer = storage.data();
+        std::size_t space = storage.size();
+        auto* aligned = static_cast<std::byte*>(std::align(SurfaceBytes, SurfaceBytes, pointer, space));
+        Require(aligned != nullptr, "pass break reasons: cannot align the surface backing");
+        return {aligned, SurfaceBytes};
+    }
+
+    std::uint64_t Address() { return reinterpret_cast<std::uintptr_t>(Bytes().data()); }
+
+private:
+    std::array<std::byte, SurfaceBytes * 2> storage{};
+};
+
+Surface ColorA{};
+Surface ColorB{};
+Surface DepthA{};
+Surface DepthB{};
+Surface DepthC{};
 
 struct Counts {
     DrawPassCounts passes;
@@ -69,16 +90,19 @@ void ExpectBreak(const Counts& before, const Counts& after, PassBreak reason, co
     }
 }
 
-void Draw(const Context& context, AgcDriver::VulkanDevice& device, const Shaders& compiled, std::span<std::byte> color, std::uint64_t depth) {
+void Draw(const Context& context, AgcDriver::VulkanDevice& device, const Shaders& compiled, Surface& color, std::uint64_t depth) {
     const std::array<CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &compiled.vertex, 0},
         {ShaderStage::Fragment, &compiled.pixel, PixelPushOffset(compiled.vertexPush, device.Target())}
     }};
     State state{};
     state.stages = {ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(color.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, color.size(), 0xe4u};
+    state.color = {color.Address(), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, color.Bytes().size(), 0xe4u};
     state.color.surfaceAddress = state.color.address;
+    state.color.surfaceExtent = state.color.extent;
+    state.color.tileMode = ColorTileMode::RenderTarget;
     state.color.samples = Samples;
+    Expect(MultisampledColorBytes(state.color) == color.Bytes().size(), "the color backing differs from its multisample footprint");
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.depth = DepthTarget{depth, 0, {Width, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0, false, Samples};
@@ -121,9 +145,10 @@ int main() {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         Recorder recorder(context);
         recorder.Activate();
-        const auto depthA = reinterpret_cast<std::uintptr_t>(DepthA.data());
-        const auto depthB = reinterpret_cast<std::uintptr_t>(DepthB.data());
-        const auto depthC = reinterpret_cast<std::uintptr_t>(DepthC.data());
+        Expect(MultisampledDepthBytes_nid_no_patch({Width, Height}, sizeof(float), Samples) == DepthA.Bytes().size(), "the depth backing differs from its multisample footprint");
+        const auto depthA = DepthA.Address();
+        const auto depthB = DepthB.Address();
+        const auto depthC = DepthC.Address();
         auto before = Snapshot();
         Draw(context, *device, shaders, ColorA, depthA);
         auto after = Snapshot();

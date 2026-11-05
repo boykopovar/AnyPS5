@@ -3,6 +3,7 @@
 ### Unknown function info
 
 
+- [sceAgcAcquireMemSetEngine](../../../core/libs/prx/libSceAgc/Patch/src/WaitRegMem.cpp) (libSceAgc) - packet-patching behaviour follows the PS5 12.70 module (NID W0WEyog0f74 @ 0xd450): patches bit 31 of word 1 in an ACQUIRE_MEM (0x58) packet with (engine << 31) without checking packet length; a non-ACQUIRE_MEM packet returns 0x8a6c000c and is left unchanged
 - [sceAgcDcbSetCfRegisterDirect, sceAgcDcbSetCfRegisterRangeDirect](../../../core/libs/prx/libSceAgc/DcbState/src/Registers.cpp) (libSceAgc) - signatures follow [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/main/src/game_compat.c) and [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/main/src/SharpProspero/Interop/Agc/SceAgc.cs), which agree; the SET_CONFIG_REG (0x68) packet is OpenAGC's. The driver does not execute SET_CONFIG_REG, so a submitted packet throws
 - [Command buffer cursors](../../../core/libs/prx/libSceAgc/Command/src/Packet.cpp) (libSceAgc) - a null `cursor_down` is taken as a buffer without downward allocations, whose limit is `top`. PPSA16064 builds one-packet buffers of 8 dwords that way; the console's handling is unconfirmed
 - [sceAgcGetRegisterDefaultsInternal](../../../core/libs/prx/libSceAgc/Misc/src/RegisterDefaults.cpp) (libSceAgc) - returns the version 0 internal table while `sceAgcGetRegisterDefaults` now returns the version 13 public one; which internal table a console returns is not known. [OpenAGC](https://github.com/OpenAGC/OpenAGC/blob/main/src/game_compat.c) returns the table of the version passed to `sceAgcInit` instead, and null before it
@@ -53,4 +54,3 @@
 - [sceAgcDcbEventWrite](../../../core/libs/prx/libSceAgc/DcbFlow/src/Sync.cpp) (libSceAgc) - non-sample-dump event types (any event other than 0x38 and 0x39) emit a 2-dword PM4 packet 0x46 without address dwords; the address argument is ignored for these events. Void Terrarium (PPSA03061, #5055) passes a non-null address buffer (0x00000002d2a10000) with event type 0x16 (cache flush).
 
 - This pending declaration has an unverified signature and behavior; it is a parameterless import-resolution declaration that throws through `NotImplemented_nid_no_patch`: [`sceAgcAcbInitializeDefaultHardwareState`](../../../core/libs/prx/libSceAgc/Unimplemented.cpp).
-- [sceAgcAcquireMemSetEngine](../../../core/libs/prx/libSceAgc/Unimplemented.cpp) (libSceAgc) - declared with canonical signature from decrypted headers; behavior on retail consoles remains unmeasured. Throws through `NotImplemented_nid_no_patch`.

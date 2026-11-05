@@ -8504,6 +8504,7 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 image->MarkDirty();
                 const auto slabRetilesBefore = StorageTexture::SlabRetiles();
                 const auto paddingSeedsBefore = StorageTexture::PaddingSeedCopies();
+                const auto importRetilesBefore = StorageTexture::LinearImportRetiles();
                 image->WriteBack();
                 recorder.Submit();
                 device.WaitQueue();
@@ -8512,6 +8513,14 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 if (test.direct && watched && UnitShadowEnabled() && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
                 const auto paddingSeeded = StorageTexture::PaddingSeedCopies() - paddingSeedsBefore;
                 if (test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && paddingSeeded != 0) failures += what + ": the write-back copied " + std::to_string(paddingSeeded) + " pieces of row padding from the import through its scratch\n";
+                const auto importRetiled = StorageTexture::LinearImportRetiles() - importRetilesBefore;
+                static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
+                const auto* surfaceImport = watched ? HostImportFor(context, address, surfaceBytes) : nullptr;
+                const bool deviceLocalImport = surfaceImport != nullptr && HostImportDeviceLocal(context, *surfaceImport);
+                const bool expectImportRetile = importRetile && deviceLocalImport && test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes);
+                if (expectImportRetile && importRetiled == 0) failures += what + ": the linear write-back went through its scratch instead of retiling into the import\n";
+                if (!importRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into the import with APS5_NO_LINEAR_IMPORT_RETILE set\n";
+                if (watched && !deviceLocalImport && importRetiled != 0) failures += what + ": the linear write-back retiled into an import outside a device-local heap\n";
                 std::vector<std::byte> read(bytes);
                 if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
                 else std::memcpy(read.data(), memory, bytes);
@@ -8526,6 +8535,22 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                     }
                     if (isTexel) ++texels;
                     else if (!isPattern) ++(inside ? garbage : outside);
+                }
+                if (test.tileMode == TextureTileMode::kLinear) {
+                    std::vector<bool> texelByte(surfaceBytes, false);
+                    for (const auto& mip : geometry.mips) {
+                        for (std::uint32_t y = 0; y < mip.height; ++y) {
+                            const auto row = static_cast<std::size_t>(mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes);
+                            std::fill(texelByte.begin() + static_cast<std::ptrdiff_t>(row), texelByte.begin() + static_cast<std::ptrdiff_t>(row + mip.width * 4u), true);
+                        }
+                    }
+                    std::size_t misplaced = 0;
+                    for (std::size_t i = 0; i < surfaceBytes; ++i) {
+                        const auto at = static_cast<std::size_t>(test.offset) + i;
+                        const auto byte = std::to_integer<std::uint8_t>(read[at]);
+                        if (byte != (texelByte[i] ? colour[i % 4] : pattern(at))) ++misplaced;
+                    }
+                    if (misplaced != 0) failures += what + ", write-back " + std::to_string(pass + 1) + ": " + std::to_string(misplaced) + " bytes differ from the texels at their rows' places and the untouched pitch padding\n";
                 }
                 if (garbage != 0 || outside != 0 || texels != texelCount) {
                     failures += what + ", write-back " + std::to_string(pass + 1) + ": stored " + std::to_string(texels) + " texels of " + std::to_string(texelCount) + " and changed " + std::to_string(garbage) + " words no texel holds (" + std::to_string(outside) + " past the surface)\n";
@@ -11547,7 +11572,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         std::cout << "4x color targets or nullDescriptor unavailable: multisampled target guest access not tested\n";
         return;
     }
-    constexpr std::uint32_t side = 64;
+    constexpr std::uint32_t side = 128;
     constexpr std::size_t targetBytes = 65536u;
     constexpr std::size_t bytes = 5u * 65536u;
 #ifdef _WIN32
@@ -11606,6 +11631,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     target.extent = {side, side};
     target.surfaceExtent = target.extent;
     target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
     target.bytes = targetBytes;
     target.samples = 4;
     const bool ordered = MayReorderSamples(context, target.samples) && SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) != VK_FORMAT_UNDEFINED;
@@ -11723,7 +11749,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         ShaderResources arraySecond(context, sampledArrayCompute);
         ShaderResources combined(context, bothShapesCompute);
         Require(first.SampledTextures().size() == 1 && first.SampledTextures().front() != nullptr, "the multisampled target was not bound as a sampled texture");
-        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_GENERAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a view of the target's image in its layout");
+        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a read-only view of the target's image");
         Require(first.SampledTextures().front()->SampledViewRange(false).type == VK_IMAGE_VIEW_TYPE_2D, "Image2DMultisample did not bind a 2D image view");
         Require(second.SampledTextures().front() == first.SampledTextures().front(), "a second lookup of the multisampled target made another texture");
         Require(arrayFirst.SampledTextures().size() == 1 && arrayFirst.SampledTextures().front() != nullptr, "the multisampled array target was not bound as a sampled texture");
@@ -11736,8 +11762,8 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         device.WaitQueue();
         recorder.Sync();
     }
-    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 3u, address), "as a 64x64 texture of 8 samples", "sampling a 4x target as an 8x texture");
-    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side / 2u, 2u, address), "as a 32x64 texture of 4 samples", "sampling a 4x target as a narrower texture");
+    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 3u, address), "as a 128x128 texture of 8 samples", "sampling a 4x target as an 8x texture");
+    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side / 2u, 2u, address), "as a 64x128 texture of 4 samples", "sampling a 4x target as a narrower texture");
     refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address + 4u * 65536u), "which no draw rendered to and whose tile mode 0 has no modeled multisampled color footprint", "sampling a linear multisampled texture no draw rendered to");
     if (context.storageImageMultisample) {
         const auto stored = sampledProgram(ShaderRecompiler::DescriptorKind::StorageImage, multisampledWords(side, 2u, address));
@@ -11753,10 +11779,11 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     } else {
         refusedSample(ShaderRecompiler::DescriptorKind::StorageImage, multisampledWords(side, 2u, address), "as a storage image at its sample count", "storage access to a multisampled target without shaderStorageImageMultisample");
     }
-    refused([&] { AgcDriver::GuestMemory::Read(address + 3u * 65536u + 256u, texels); }, "a CPU read", "a CPU read in the padding of a later sample plane");
+    refused([&] { AgcDriver::GuestMemory::Read(address + 3u * 65536u + 256u, texels); }, "a CPU read", "a CPU read in the last block of the 4x target");
     AgcDriver::GuestMemory::Read(address + 4u * 65536u, texels);
     clearTargets();
-    target.tileMode = ColorTileMode::RenderTarget;
+    target.extent = {side / 2u, side / 2u};
+    target.surfaceExtent = target.extent;
     {
         std::lock_guard gpu(GpuMutex());
         Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the tiled multisampled target has no view");
@@ -11917,6 +11944,8 @@ void repeatStorageGuardTests(const Device& device, Recorder& recorder) {
         target.format = VK_FORMAT_R8G8B8A8_UNORM;
         target.bytes = targetBytes;
         target.samples = 4;
+        target.tileMode = ColorTileMode::RenderTarget;
+        Require(MultisampledColorBytes(target) == targetBytes, "the guarding multisampled target has an unexpected footprint");
         std::lock_guard gpu(GpuMutex());
         Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the guarding multisampled target has no view");
         recorder.Submit();
