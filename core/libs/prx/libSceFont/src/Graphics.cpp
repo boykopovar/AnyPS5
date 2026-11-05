@@ -310,6 +310,13 @@ void SetGraphicsErrorCallback(GraphicsErrorCallback callback) {
     g_errorCallback.store(callback);
 }
 
+int ReportGraphicsError(int error) {
+    const auto callback = g_errorCallback.load();
+    if (callback == nullptr) return static_cast<int>(0x80460020);
+    callback(error);
+    return 0;
+}
+
 int GraphicsRegionInit(FontGraphicsRegion* region, float x, float y, float width, float height) {
     if (!region || 0.0f > width || 0.0f > height) return Fail(SCE_FONT_ERROR_INVALID_PARAMETER);
     *region = {x, y, width, height, RectangleRegionFlags, RegionTag, 0.0f, 0.0f};
