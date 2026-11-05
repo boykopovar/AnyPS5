@@ -1,5 +1,6 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
@@ -632,8 +633,144 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckValueClasses() {
+    constexpr int OnlineIdTooLong = static_cast<int>(0x80559E11u);
+    constexpr int UserInvalid = static_cast<int>(0x80559E2Au);
+    constexpr int AccountIdMissing = static_cast<int>(0x80559E2Bu);
+    constexpr int GuestUser = 0x20000000;
+
+    NpOnlineIdObject onlineId;
+    _ZN3sce2np10NpOnlineIdC1Ev(&onlineId);
+    Require(_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a default online id must be empty");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "player") == 0, "a short online id must be accepted");
+    Require(!_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a set online id must not be empty");
+    Require(std::strcmp(onlineId.data, "player") == 0, "the online id text must be stored");
+    Require(onlineId.data[6] == '\0' && onlineId.data[15] == '\0', "the online id must be zero padded");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdef") == 0, "a 16-character online id must be accepted");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdefg") == OnlineIdTooLong, "a longer online id must be refused");
+    Require(std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0, "a refused online id must leave the text untouched");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, nullptr) == InvalidArgument, "a null online id text must be refused");
+
+    NpOnlineIdObject onlineIdCopy;
+    _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
+    Require(_ZN3sce2npeqERKNS0_10NpOnlineIdES3_(&onlineId, &onlineIdCopy), "an online id must equal its copy");
+    Require(!_ZN3sce2npneERKNS0_10NpOnlineIdES3_(&onlineId, &onlineIdCopy), "an online id must not differ from its copy");
+    SceNpOnlineId sdkOnlineId {};
+    std::memcpy(sdkOnlineId.data, onlineId.data, sizeof(sdkOnlineId.data));
+    sdkOnlineId.term = onlineId.term;
+    Require(_ZN3sce2npeqERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(&sdkOnlineId, &onlineId), "an SDK online id must equal the matching object");
+    Require(_ZN3sce2npeqERKNS0_10NpOnlineIdERK13SceNpOnlineId(&onlineId, &sdkOnlineId), "the object must equal the matching SDK online id");
+    sdkOnlineId.data[0] = 'x';
+    Require(_ZN3sce2npneERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(&sdkOnlineId, &onlineId), "a different SDK online id must differ");
+    Require(_ZN3sce2npneERKNS0_10NpOnlineIdERK13SceNpOnlineId(&onlineId, &sdkOnlineId), "the object must differ from a different SDK online id");
+    _ZN3sce2np10NpOnlineId5ClearEv(&onlineId);
+    Require(_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a cleared online id must be empty");
+
+    NpIdObject npId;
+    _ZN3sce2np4NpIdC1Ev(&npId);
+    SceNpId sdkNpId {};
+    std::memcpy(sdkNpId.handle.data, "player", 6);
+    sdkNpId.opt[0] = 1;
+    sdkNpId.reserved[0] = 2;
+    NpIdObject npIdFromSdk;
+    _ZN3sce2np4NpIdC1ERK7SceNpId(&npIdFromSdk, &sdkNpId);
+    Require(std::memcmp(&npIdFromSdk.id, &sdkNpId, sizeof(sdkNpId)) == 0, "an NpId must copy the SDK block");
+    NpIdObject npIdCopy;
+    _ZN3sce2np4NpIdC1ERKS1_(&npIdCopy, &npIdFromSdk);
+    Require(std::memcmp(&npIdCopy.id, &sdkNpId, sizeof(sdkNpId)) == 0, "an NpId must copy another NpId");
+    _ZN3sce2np4NpId5ClearEv(&npIdCopy);
+    Require(npIdCopy.id.handle.data[0] == '\0', "a cleared NpId must drop the handle");
+
+    UserObject user;
+    _ZN3sce2np4UserC1Ev(&user);
+    Require(_ZNK3sce2np4User7IsEmptyEv(&user), "a default user must be empty");
+    Require(_ZNK3sce2np4User9GetUserIdEv(&user) == USER_SERVICE_USER_ID_INVALID, "a default user must have the invalid id");
+    UserObject guestUser;
+    _ZN3sce2np4UserC1Ei(&guestUser, GuestUser);
+    Require(_ZNK3sce2np4User7IsGuestEv(&guestUser), "a guest id must be reported as a guest");
+    Require(!_ZNK3sce2np4User7IsGuestEv(&user), "an invalid id must not be reported as a guest");
+    Require(!_ZNK3sce2np4User10IsLoggedInEv(&user), "an invalid id must not be logged in");
+    std::uint64_t accountId = 0x5a5a;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&user, &accountId) < 0 && accountId == 0, "a missing user must not report an account id");
+    bool hasAccountId = true;
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&user, &hasAccountId) < 0, "a missing user must not answer an account id query");
+    Require(_ZNK3sce2np4User25GetAccountIdFromRegistoryEPm(&user, &accountId) < 0, "a missing user must not read the registry");
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&user, nullptr) == InvalidArgument, "a null account id output must be refused");
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&user, nullptr) == InvalidArgument, "a null account id flag must be refused");
+
+    UserObject userCopy;
+    _ZN3sce2np4UserC1ERKS1_(&userCopy, &guestUser);
+    Require(_ZN3sce2npeqERKNS0_4UserES3_(&userCopy, &guestUser), "a user must equal its copy");
+    const int guestId = GuestUser;
+    Require(_ZN3sce2npeqERKNS0_4UserERKi(&userCopy, &guestId), "a user must equal its id");
+    Require(!_ZN3sce2npneERKNS0_4UserES3_(&userCopy, &guestUser), "a user must not differ from its copy");
+    Require(!_ZN3sce2npneERKNS0_4UserERKi(&userCopy, &guestId), "a user must not differ from its id");
+    _ZN3sce2np4User5ClearEv(&userCopy);
+    Require(_ZNK3sce2np4User7IsEmptyEv(&userCopy), "a cleared user must be empty");
+
+    UserObject initialUser;
+    _ZN3sce2np4UserC1Ei(&initialUser, USER_SERVICE_INITIAL_USER_ID);
+    Require(_ZNK3sce2np4User10IsLoggedInEv(&initialUser), "the initial user must be logged in");
+    Require(!_ZNK3sce2np4User7IsGuestEv(&initialUser), "the initial user must not be a guest");
+    accountId = 0x5a5a;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&initialUser, &accountId) == AccountIdMissing && accountId == 0, "a user without an account id must report the missing id");
+    hasAccountId = true;
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&initialUser, &hasAccountId) == 0 && !hasAccountId, "a user without an account id must report no account");
+    Require(_ZNK3sce2np4User25GetAccountIdFromRegistoryEPm(&initialUser, &accountId) == 0 && accountId == 0, "the registry lookup must return the empty account id");
+
+    UserObject fetchedUser;
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_USER_ID_INVALID, &fetchedUser) == UserInvalid, "GetUser must refuse the invalid id");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(123, &fetchedUser) == UserInvalid, "GetUser must refuse a user that is not registered");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, &fetchedUser) == 0 && fetchedUser.userId == USER_SERVICE_INITIAL_USER_ID, "GetUser must return the registered user");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "GetUser must refuse a null output");
+
+    SceNpOnlineId onlineIdOut {};
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    NpOnlineIdObject onlineIdObjectOut;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+
+    NpTitleTokenObject titleToken;
+    _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
+    Require(_ZNK3sce2np12NpTitleToken6GetStrEv(&titleToken) == titleToken.data, "GetStr must point at the token storage");
+    Require(titleToken.data[0] == '\0' && titleToken.data[0x40f] == '\0', "a default title token must be empty");
+    NpTitleTokenObject titleTokenCopy;
+    _ZN3sce2np12NpTitleTokenC1ERKS1_(&titleTokenCopy, &titleToken);
+    Require(std::memcmp(titleTokenCopy.data, titleToken.data, sizeof(titleToken.data)) == 0, "a title token must copy the full block");
+    _ZN3sce2np12NpTitleToken5ClearEv(&titleTokenCopy);
+    Require(titleTokenCopy.data[0] == '\0', "a cleared title token must be empty");
+
+    NpAccessTokenObject accessToken;
+    _ZN3sce2np13NpAccessTokenC1Ev(&accessToken);
+    Require(_ZNK3sce2np13NpAccessToken7IsEmptyEv(&accessToken), "a default access token must be empty");
+    accessToken.data[0] = 1;
+    Require(!_ZNK3sce2np13NpAccessToken7IsEmptyEv(&accessToken), "a set access token must not be empty");
+    NpAccessTokenObject accessTokenCopy;
+    _ZN3sce2np13NpAccessTokenC1ERKS1_(&accessTokenCopy, &accessToken);
+    Require(std::memcmp(accessTokenCopy.data, accessToken.data, sizeof(accessToken.data)) == 0, "an access token must copy the full block");
+    _ZN3sce2np13NpAccessToken5ClearEv(&accessTokenCopy);
+    Require(_ZNK3sce2np13NpAccessToken7IsEmptyEv(&accessTokenCopy), "a cleared access token must be empty");
+
+    NpTicketObject ticket {};
+    std::uint8_t ticketData[4] {};
+    ticket.data = ticketData;
+    ticket.size = sizeof(ticketData);
+    Require(_ZNK3sce2np8NpTicket13GetTicketDataEv(&ticket) == ticketData, "GetTicketData must return the stored data");
+    Require(_ZNK3sce2np8NpTicket13GetTicketSizeEv(&ticket) == sizeof(ticketData), "GetTicketSize must return the stored size");
+    ticket.data = nullptr;
+    try {
+        _ZNK3sce2np8NpTicket13GetTicketDataEv(&ticket);
+        Require(false, "GetTicketData must throw without data");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "NpTicket data is empty", "GetTicketData threw");
+    }
+}
+
 int main() {
     CheckSandboxInfo();
+    CheckValueClasses();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
