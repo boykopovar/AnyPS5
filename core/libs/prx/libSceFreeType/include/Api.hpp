@@ -52,6 +52,11 @@ int APS5_VABI FT_Select_Charmap_nid_postfix(FreeType::GuestFaceRec* face, std::i
 int APS5_VABI FT_Set_Charmap_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestCharMapRec* charmap);
 std::uint64_t APS5_VABI FT_Get_First_Char_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t* glyphIndex);
 std::uint64_t APS5_VABI FT_Get_Next_Char_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint32_t* glyphIndex);
+std::uint32_t APS5_VABI FT_Face_GetCharVariantIndex_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector);
+int APS5_VABI FT_Face_GetCharVariantIsDefault_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector);
+std::uint32_t* APS5_VABI FT_Face_GetVariantSelectors_nid_postfix(FreeType::GuestFaceRec* face);
+std::uint32_t* APS5_VABI FT_Face_GetVariantsOfChar_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t charcode);
+std::uint32_t* APS5_VABI FT_Face_GetCharsOfVariant_nid_postfix(FreeType::GuestFaceRec* face, std::uint64_t variantSelector);
 void APS5_VABI FT_Set_Transform_nid_postfix(FreeType::GuestFaceRec* face, const FreeType::GuestMatrix* matrix, const FreeType::GuestVector* delta);
 int APS5_VABI FT_Get_Charmap_Index_nid_postfix(FreeType::GuestCharMapRec* charmap);
 std::uint64_t APS5_VABI FT_Get_CMap_Language_ID_nid_postfix(FreeType::GuestCharMapRec* charmap);
@@ -113,6 +118,7 @@ int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t 
 const char* APS5_VABI FT_Get_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
+int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);

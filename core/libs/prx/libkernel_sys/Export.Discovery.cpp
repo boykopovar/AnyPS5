@@ -11,6 +11,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -256,17 +257,7 @@ int APS5_VABI pthread_multi_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_mutex_init_for_mono_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -338,19 +329,22 @@ int APS5_VABI ptrace_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pwrite_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI reboot_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI revoke_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI revoke_nid_postfix(const char* path) {
+    constexpr std::uint16_t typeMask = 0170000;
+    constexpr std::uint16_t characterDevice = 0020000;
+    constexpr int guestEinval = 22;
+    FileStat status{};
+    if (stat_nid_postfix(path, &status) != 0) return -1;
+    if ((status.st_mode & typeMask) != characterDevice) {
+        *__error_nid_postfix() = guestEinval;
+        return -1;
+    }
+    NotImplemented_nid_no_patch("revoke of a character device");
 }
 
 int APS5_VABI rfork_thread_nid_postfix(void) {
@@ -906,8 +900,7 @@ int APS5_VABI sceKernelGetParentApp(void) {
 }
 
 int APS5_VABI sceKernelGetPhysPageSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(PS5_PAGE_SIZE);
 }
 
 int APS5_VABI sceKernelGetProcessName(void) {
@@ -2009,18 +2002,8 @@ int APS5_VABI scePthreadMulti(void) {
     return error == 0 ? 0 : SceKernelError(error);
 }
 
-int APS5_VABI scePthreadMutexGetprioceiling(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI scePthreadMutexInitForInternalLibc(PthreadMutex* mutex, const PthreadMutexattr* attr) {
     return SceResult(pthread_mutex_init_nid_postfix(mutex, attr));
-}
-
-int APS5_VABI scePthreadMutexSetprioceiling(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* generation) {
