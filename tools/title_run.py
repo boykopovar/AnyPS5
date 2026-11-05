@@ -299,16 +299,26 @@ def lock_work(path):
     return handle
 
 
+def module_dirs(entry):
+    relink = entry.get("relink", [])
+    return [relink[index + 1] for index in range(len(relink) - 1) if relink[index] == "--module-dir"]
+
+
+def stage_inputs(package, entry, source):
+    (source / "sce_module").mkdir(parents=True)
+    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    for directory in ["sce_module", *module_dirs(entry)]:
+        for module in sorted((package / directory).glob("*.prx")):
+            unwrap_or_copy(module, source / directory / module.name)
+    for executable in entry.get("executables", []):
+        unwrap_or_copy(package / executable, source / executable)
+
+
 def prepare(title_id, found, entry, platform, build, work):
     package = found["package"]
     shutil.rmtree(work, ignore_errors=True)
     source = work / "input"
-    (source / "sce_module").mkdir(parents=True)
-    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
-    for module in sorted((package / "sce_module").glob("*.prx")):
-        unwrap_or_copy(module, source / "sce_module" / module.name)
-    for executable in entry.get("executables", []):
-        unwrap_or_copy(package / executable, source / executable)
+    stage_inputs(package, entry, source)
     executable = work / (title_id + (".exe" if platform == "windows" else ""))
     relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
     with (work / "relink.log").open("w", encoding="utf-8") as log:
