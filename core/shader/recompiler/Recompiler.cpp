@@ -1,4 +1,6 @@
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Recompiler.hpp"
+#include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
 #include <algorithm>
 #include <array>
@@ -261,6 +263,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
+    translateOptions.nativeFloat16Fma = translateOptions.nativeFloat16 && supports(spv::CapabilityFMAKHR);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
@@ -624,7 +627,7 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
 CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program) {
     const auto inputInfo = RequestInputInfo(request);
     constexpr BindingAllocator bindingAllocator;
-    bool registration = request.target.registrationModules && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Fragment);
+    bool registration = request.target.registrationModules && request.shader.stage == ShaderStage::Fragment;
     program.Metadata().bindingLayoutComplete = false;
     const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
     auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay);
@@ -1314,6 +1317,18 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     if (patch != nullptr) recordMemoPatch(*patch, *bindingPlan, variant);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
     result.bindings = std::move(bindings.bindings);
+    static const bool reporting = [] {
+        const auto* sink = Diagnostics();
+        return sink != nullptr && sink->descriptor != nullptr && (sink->enabled == nullptr || sink->enabled());
+    }();
+    if (const auto* sink = Diagnostics(); reporting && sink != nullptr) {
+        for (const auto& binding : result.bindings) {
+            if (binding.role != DescriptorRole::GuestBuffers && binding.role != DescriptorRole::GuestImages && binding.role != DescriptorRole::GuestSamplers) continue;
+            const bool atomic = std::ranges::any_of(binding.bufferAtomic, [](bool value) { return value; }) || std::ranges::any_of(binding.imageAtomic, [](bool value) { return value; });
+            const bool written = std::ranges::any_of(binding.imageWritten, [](bool value) { return value; }) || std::ranges::any_of(binding.bufferWritten, [](bool value) { return value; });
+            sink->descriptor(static_cast<int>(binding.kind), 0, atomic ? 2 : written ? 1 : binding.readOnly ? 0 : 3);
+        }
+    }
     if (std::ranges::none_of(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::BdaPagetable || binding.role == DescriptorRole::FaultBuffer; })) result.bdaAbiVersion = 0u;
     result.pushConstants = std::move(bindings.pushConstants);
     result.readsDepthRemapPush = depthRemap;
@@ -1427,10 +1442,44 @@ struct PreparedInterface {
 
 namespace {
 
+void NoteShader(int what) {
+    if (const auto* sink = Diagnostics(); sink != nullptr && sink->shader != nullptr) sink->shader(what);
+}
+
+void NoteFailureOnce() {
+    struct CountedStorage {};
+    auto& counted = HostThreadLocal<std::exception_ptr, CountedStorage>();
+    const auto current = std::current_exception();
+    if (current == nullptr || current == counted) return;
+    counted = current;
+    NoteShader(1);
+    try {
+        std::rethrow_exception(current);
+    } catch (const UnsupportedInstructionError& error) {
+        if (const auto* sink = Diagnostics(); sink != nullptr && sink->unsupportedInstruction != nullptr) sink->unsupportedInstruction(error.encoding, nullptr, error.opcodeValue, error.file, error.line);
+    } catch (...) {
+    }
+}
+
+template <typename Compile>
+auto CountedCompile(Compile&& compile) {
+    try {
+        auto result = compile();
+        NoteShader(0);
+        return result;
+    } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const std::exception&) {
+        NoteFailureOnce();
+        throw;
+    }
+}
+
 std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source, const RecompileRequest& request, bool& cacheHit, ShaderPreparationContext* preparation = nullptr) {
     for (const auto& candidate : source.variants) {
         if (sameLayout(candidate->layout, request.layout)) {
             cacheHit = true;
+            NoteShader(2);
             return candidate;
         }
     }
@@ -1449,6 +1498,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             loaded.artifact.variantId = nextVariantId();
             attachSubstitutes(loaded);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
+            NoteShader(2);
         }
     }
     if (variant == nullptr) {
@@ -1456,10 +1506,10 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         std::exception_ptr emissionFailure;
         try {
             auto compiled = [&] {
-                if (layoutPair && preparation != nullptr) return PreparedInterface::Compile(source, request, *preparation, &emissionFailure);
+                if (layoutPair && preparation != nullptr) return CountedCompile([&] { return PreparedInterface::Compile(source, request, *preparation, &emissionFailure); });
                 auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request, preparation);
                 source.program.reset();
-                return compileVariant(request, std::move(program), &emissionFailure);
+                return CountedCompile([&] { return compileVariant(request, std::move(program), &emissionFailure); });
             }();
             attachSubstitutes(compiled);
             variant = std::make_shared<const CompiledVariant>(std::move(compiled));
@@ -1499,7 +1549,7 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
         auto program = PrepareResourceProgram(request);
         const auto plan = materializer.ExtractPlan(program);
         materializer.Materialize(plan, runtime, snapshot);
-        const auto variant = compileVariant(request, std::move(program));
+        const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
@@ -1822,18 +1872,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mix(snapshot.uniformFill.value);
     const auto& tables = snapshot.tables;
     mix(tables.shader);
-    mix(tables.tables.size());
-    for (const auto& table : tables.tables) {
+    const auto mixTable = [&](const ImageTableColumnSnapshot& table) {
         mix(table.base);
         mix(table.size);
         mix(table.records);
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
+        mix(table.nested ? 1u : 0u);
+        mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
         mix(table.readRanges.Hash());
-    }
+    };
+    mix(tables.tables.size());
+    for (const auto& table : tables.tables) mixTable(table);
+    mix(tables.nested.size());
+    for (const auto& table : tables.nested) mixTable(table);
     mix(tables.ranges.size());
     for (const auto& [base, size] : tables.ranges) {
         mix(base);
@@ -1995,7 +2050,7 @@ std::shared_ptr<const RecompileResult> materializeMemoized(SourceEntry& source, 
 std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (!request.useCache || capture.source == nullptr) {
         auto program = PrepareResourceProgram(request);
-        const auto variant = compileVariant(request, std::move(program));
+        const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
         return std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot));
     }
     if (!ResultMemo()) return std::make_shared<const RecompileResult>(materializeVariant(*capture.source, request, capture.snapshot));
@@ -2006,7 +2061,10 @@ template <typename Impl>
 auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
     try {
         return impl();
+    } catch (const ConvertedSampleRequired&) {
+        throw;
     } catch (const std::exception& e) {
+        NoteFailureOnce();
         constexpr auto requestSerializer = RequestSerializer{};
         const auto inputInfo = "\nRecompileRequest:\n" + requestSerializer.Serialize(request);
         throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + inputInfo);
