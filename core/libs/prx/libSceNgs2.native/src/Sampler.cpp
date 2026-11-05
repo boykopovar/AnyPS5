@@ -88,6 +88,7 @@ void Ngs2ConsumeSampler(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sam
     }
     const auto count = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9
         ? Ngs2ReadSamplerAtrac9(voice, voice.samplerScratch.data() + cached, stride, requested)
+        : voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG ? Ngs2ReadSamplerVag(voice, voice.samplerScratch.data() + cached, stride, requested)
         : Ngs2ReadSamplerPcm(voice, voice.samplerScratch.data() + cached, stride, requested);
     if (voice.waveformRevision != revision) return;
     const auto& kernel = SamplerKernel();
