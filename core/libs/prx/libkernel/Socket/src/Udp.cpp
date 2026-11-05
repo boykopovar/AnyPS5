@@ -1783,7 +1783,19 @@ int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32
     return CopyAddressOut(native, false, address, length, capacity);
 }
 int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument) {
-    if (!GuestSockets::IsOpen(descriptor)) return File::Ioctl(descriptor, request, argument);
+    if (!GuestSockets::IsOpen(descriptor)) {
+        const auto command = static_cast<std::uint32_t>(request);
+        std::shared_ptr<void> owner;
+        std::uintptr_t native = 0;
+        if (command == 0x20006601 || command == 0x20006602 || !KernelFindSocketNative_nid_no_patch(descriptor, &owner, &native)) {
+            return File::Ioctl(descriptor, request, argument);
+        }
+        if (File::IoctlRequestMalformed(request)) return Fail(25);
+        if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
+        int error = 0;
+        if (!KernelControlSocketIoctl_nid_no_patch(descriptor, command, argument, &error)) return Fail(9);
+        return error == 0 ? 0 : Fail(error);
+    }
     if (File::IoctlRequestMalformed(request)) return Fail(25);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
