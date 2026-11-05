@@ -71,9 +71,16 @@ Mapping MapsEntry(std::uint64_t address) {
     while (std::getline(maps, line)) {
         unsigned long long start = 0;
         unsigned long long end = 0;
-        char path[4096] = {};
-        const int parsed = std::sscanf(line.c_str(), "%llx-%llx %*s %*x %*x:%*x %*u %4095s", &start, &end, path);
-        if (parsed >= 2 && address >= start && address < end) return Mapping{start, end, parsed == 3 ? path : ""};
+        int prefix = 0;
+        const int parsed = std::sscanf(line.c_str(), "%llx-%llx %*s %*x %*x:%*x %*u%n", &start, &end, &prefix);
+        if (parsed >= 2 && address >= start && address < end) {
+            std::string path;
+            if (prefix > 0 && static_cast<std::size_t>(prefix) < line.size()) {
+                std::size_t begin = line.find_first_not_of(" \t", static_cast<std::size_t>(prefix));
+                if (begin != std::string::npos) path = line.substr(begin, 4095);
+            }
+            return Mapping{start, end, path};
+        }
     }
     std::abort();
 }
@@ -114,7 +121,7 @@ void CheckUnwindInfo() {
 #endif
 
 std::uint16_t UnknownModuleId() {
-    for (std::uint32_t id = 0xffff; id != 0; --id) {
+    for (std::uint32_t id = 0xff; id != 0; --id) {
         if (kModuleTable.find(id) == kModuleTable.end()) return static_cast<std::uint16_t>(id);
     }
     std::abort();
@@ -267,7 +274,7 @@ int main() {
         Require(result == 0x5a5a5a5a);
     }
 
-    Require(ThrowsRuntimeError([] { sceSysmoduleIsLoadedInternal(0x00ffffffu); }));
+    Require(sceSysmoduleIsLoadedInternal(0x00ffffffu) == kInvalidValue);
     Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);

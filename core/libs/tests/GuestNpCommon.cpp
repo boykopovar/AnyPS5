@@ -4,7 +4,9 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
@@ -35,6 +37,8 @@ static int testIds() {
     const NpOnlineId kestrelCopy = onlineId("kestrel_77");
     const NpOnlineId heron = onlineId("heron-4");
     bool ok = expect(sceNpCmpOnlineId(nullptr, &kestrel) == INVALID_ARGUMENT, "a null online ID was compared");
+    ok &= expect(sceNpCmpOnlineId(&kestrel, nullptr) == INVALID_ARGUMENT, "a null second online ID was compared");
+    ok &= expect(sceNpCmpOnlineId(nullptr, nullptr) == INVALID_ARGUMENT, "null online IDs were compared");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &kestrelCopy) == 0, "equal online IDs did not match");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &heron) == NOT_MATCH, "different online IDs matched");
 
@@ -43,6 +47,10 @@ static int testIds() {
     high.reserved[7] = 1;
     std::int32_t order = 5;
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, nullptr) == INVALID_ARGUMENT, "a null order was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, &high, &order) == INVALID_ARGUMENT, "a null first NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, nullptr, &order) == INVALID_ARGUMENT, "a null second NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, &order) == INVALID_ARGUMENT, "null NpIds were accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, nullptr) == INVALID_ARGUMENT, "all null arguments were accepted");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &order) == 0 && order == -1, "reserved bytes did not order the NpIds");
     ok &= expect(sceNpCmpNpIdInOrder(&high, &low, &order) == 0 && order == 1, "the reverse order is not 1");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &low, &order) == 0 && order == 0, "an NpId is not equal to itself");
@@ -87,6 +95,68 @@ static void* APS5_VABI returnTicket(void* arg) {
     return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(arg) + 1);
 }
 
+struct Wakeup {
+    PthreadCond cond = nullptr;
+    PthreadMutex mutex = nullptr;
+    bool lightweight = false;
+    int waiting = 0;
+    int woken = 0;
+    bool ready = false;
+};
+
+static void* APS5_VABI waitUntilReady(void* arg) {
+    auto* wakeup = static_cast<Wakeup*>(arg);
+    sceNpMutexLock(&wakeup->mutex);
+    ++wakeup->waiting;
+    int result = 0;
+    while (!wakeup->ready && result == 0) result = wakeup->lightweight ? sceNpLwCondWait(&wakeup->cond, &wakeup->mutex) : sceNpCondWait(&wakeup->cond, &wakeup->mutex);
+    if (result == 0) ++wakeup->woken;
+    sceNpMutexUnlock(&wakeup->mutex);
+    return nullptr;
+}
+
+enum class Wake { One, All, To };
+
+static bool wakeWaiters(bool lightweight, int count, Wake wake) {
+    Wakeup wakeup;
+    wakeup.lightweight = lightweight;
+    bool ok = expect(sceNpMutexInit(&wakeup.mutex, "np-wake", 0) == 0, "the wake mutex was not created");
+    ok &= expect((lightweight ? sceNpLwCondInit(&wakeup.cond, "np-lw-wake") : sceNpCondInit(&wakeup.cond, "np-wake", 0)) == 0 && wakeup.cond, "the wake condition was not created");
+    if (!ok) return false;
+    Pthread threads[2] = {};
+    for (int index = 0; index < count; ++index)
+        if (!expect(scePthreadCreate(&threads[index], nullptr, waitUntilReady, &wakeup, "np-waiter") == 0, "a waiter was not created")) std::abort();
+    for (;;) {
+        sceNpMutexLock(&wakeup.mutex);
+        const bool waiting = wakeup.waiting == count;
+        if (waiting) break;
+        sceNpMutexUnlock(&wakeup.mutex);
+        scePthreadYield();
+    }
+    wakeup.ready = true;
+    int signalled = 0;
+    if (wake == Wake::All) signalled = lightweight ? sceNpLwCondSignalAll(&wakeup.cond) : sceNpCondSignalAll(&wakeup.cond);
+    else if (wake == Wake::To) signalled = lightweight ? sceNpLwCondSignalTo(&wakeup.cond, threads[0]) : sceNpCondSignalTo(&wakeup.cond, threads[0]);
+    else signalled = lightweight ? sceNpLwCondSignal(&wakeup.cond) : sceNpCondSignal(&wakeup.cond);
+    sceNpMutexUnlock(&wakeup.mutex);
+    if (!expect(signalled == 0, "signalling the waiters failed")) std::abort();
+    for (int index = 0; index < count; ++index) ok &= expect(scePthreadJoin(threads[index], nullptr) == 0, "a waiter was not joined");
+    ok &= expect(wakeup.woken == count, "not every waiter returned from its wait");
+    ok &= expect((lightweight ? sceNpLwCondDestroy(&wakeup.cond) : sceNpCondDestroy(&wakeup.cond)) == 0, "the wake condition was not destroyed");
+    ok &= expect(sceNpMutexDestroy(&wakeup.mutex) == 0, "the wake mutex was not destroyed");
+    return ok;
+}
+
+static int testWake() {
+    bool ok = true;
+    for (const bool lightweight : {false, true}) {
+        ok &= expect(wakeWaiters(lightweight, 1, Wake::One), lightweight ? "sceNpLwCondSignal did not wake its waiter" : "sceNpCondSignal did not wake its waiter");
+        ok &= expect(wakeWaiters(lightweight, 2, Wake::All), lightweight ? "sceNpLwCondSignalAll did not wake both waiters" : "sceNpCondSignalAll did not wake both waiters");
+        ok &= expect(wakeWaiters(lightweight, 1, Wake::To), lightweight ? "sceNpLwCondSignalTo did not wake its thread" : "sceNpCondSignalTo did not wake its thread");
+    }
+    return ok ? 0 : 1;
+}
+
 static int testSync() {
     PthreadMutex plain = nullptr;
     PthreadMutex recursive = nullptr;
@@ -126,13 +196,16 @@ static int testClock() {
 
     bool ok = expect(sceNpGetSystemClockUsec(&usec) == 0, "the clock was not read");
     sceKernelClockGettime(4, &after);
+    ok &= expect(sceNpGetSystemClockUsec(nullptr) == INVALID_ARGUMENT, "a null destination was not rejected");
+    std::int64_t later = -1;
+    ok &= expect(sceNpGetSystemClockUsec(&later) == 0 && later >= usec && usec >= 0, "the clock went backwards");
 
     ok &= expect(usec >= before.tv_sec * 1000000 + before.tv_nsec / 1000 && usec <= after.tv_sec * 1000000 + after.tv_nsec / 1000, "the clock is not the monotonic kernel clock in microseconds");
     char version[12];
     std::memset(version, 'x', sizeof(version));
     sceNpGetSdkVersion(version);
 
-    ok &= expect(std::strcmp(version, "1.00") == 0, "the version is not 1.00");
+    ok &= expect(std::memcmp(version, "1.00\0\0\0\0", 8) == 0, "the version is not 1.00 padded with zeros");
     ok &= expect(version[8] == 'x', "the version was written past 8 bytes");
     return ok ? 0 : 1;
 }
@@ -143,6 +216,7 @@ int main(int argc, char** argv) {
     if (std::strcmp(argv[1], "ids") == 0) status = testIds();
     else if (std::strcmp(argv[1], "sync") == 0) status = testSync();
     else if (std::strcmp(argv[1], "clock") == 0) status = testClock();
+    else if (std::strcmp(argv[1], "wake") == 0) status = testWake();
     if (status == 0) std::printf("NpCommon %s tests passed\n", argv[1]);
     return status;
 }

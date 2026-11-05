@@ -148,4 +148,10 @@ int APS5_VABI sceDebugWriteProcessMemory();
 int APS5_VABI sceDebugWriteProcessRegister();
 int APS5_VABI sceDebugWriteThreadRegister();
 
+int APS5_VABI sceDebugGetAmprCounterInfo();
+int APS5_VABI sceMdbgFinalizeForShellCore();
+int APS5_VABI sceMdbgInitForShellCore();
+int APS5_VABI sceMdbgReceiveEvent();
+int APS5_VABI sceMdbgSetResult();
+
 }

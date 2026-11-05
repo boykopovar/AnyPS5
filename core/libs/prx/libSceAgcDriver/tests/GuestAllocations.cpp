@@ -30,6 +30,62 @@ void reject(TAction action) {
     throw std::runtime_error("expected guest allocation ownership rejection");
 }
 
+void heapHeaderTests() {
+    for (const auto [alignment, bytes] : std::array<std::pair<std::size_t, std::size_t>, 4>{{{32, 32}, {256, 32}, {32, 131072}, {32, 0}}}) {
+        void* pointer = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        void* neighbor = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        auto& raw = reinterpret_cast<void**>(pointer)[-2];
+        auto& blockBytes = reinterpret_cast<std::size_t*>(pointer)[-1];
+        void* savedRaw = raw;
+        const auto savedBytes = blockBytes;
+        void* forgedRaw = static_cast<std::byte*>(pointer) - 2 * sizeof(void*);
+        if (forgedRaw == savedRaw) forgedRaw = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(savedRaw) - sizeof(void*));
+        raw = forgedRaw;
+        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
+        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 64, 256); });
+        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 0); });
+        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 0, alignment); });
+        {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            Require(lease.size() == (bytes == 0 ? 0u : 2u), "rejected heap operation changed the registered allocations");
+            const auto found = std::find_if(lease.begin(), lease.end(), [&](const auto& range) { return range->address == reinterpret_cast<std::uintptr_t>(pointer); });
+            Require(bytes == 0 || (found != lease.end() && (*found)->bytes == bytes), "rejected free lost the original registered range");
+        }
+        Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes && GuestHeap::GuestHeapUsableSize_nid_postfix(neighbor) == bytes, "rejected free lost a registered allocation");
+        void* next = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        void* nextRaw = reinterpret_cast<void**>(next)[-2];
+        const auto nextBytes = reinterpret_cast<std::size_t*>(next)[-1];
+        const auto start = reinterpret_cast<std::uintptr_t>(savedRaw);
+        const auto nextStart = reinterpret_cast<std::uintptr_t>(nextRaw);
+        Require(nextRaw != forgedRaw && (nextStart >= start + savedBytes || start >= nextStart + nextBytes), "same-class allocation received a forged overlapping block");
+        GuestHeap::GuestHeapFree_nid_postfix(next);
+        raw = savedRaw;
+        for (const auto corruptedBytes : {std::size_t{0}, savedBytes * 2}) {
+            blockBytes = corruptedBytes;
+            reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+            Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes, "size corruption removed the allocation");
+        }
+        blockBytes = savedBytes;
+        raw = reinterpret_cast<void**>(neighbor)[-2];
+        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        raw = savedRaw;
+        GuestHeap::GuestHeapFree_nid_postfix(pointer);
+        GuestHeap::GuestHeapFree_nid_postfix(neighbor);
+        Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().empty(), "restored heap allocations remain registered");
+    }
+    alignas(32) std::array<std::byte, 128> mapping{};
+    void* pointer = mapping.data() + 32;
+    reinterpret_cast<void**>(pointer)[-2] = mapping.data();
+    reinterpret_cast<std::size_t*>(pointer)[-1] = mapping.size();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pointer, 32, true, true, false);
+    }
+    reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+    GuestAllocations::Mutation().Remove(pointer);
+}
+
 void leaseSnapshotTests() {
     std::array<std::byte, 128> memory{};
     const auto address = reinterpret_cast<std::uintptr_t>(memory.data());
@@ -171,6 +227,7 @@ void RunGuestAllocationTests() {
     Require(static_cast<unsigned char*>(pointer)[31] == 0x66, "aligned guest realloc lost data");
     GuestHeap::GuestHeapFree_nid_postfix(pointer);
     Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().empty(), "freed guest allocations remain registered");
+    heapHeaderTests();
     std::array<std::byte, 128> mapping{};
     {
         GuestAllocations::Mutation mutation;
@@ -358,5 +415,96 @@ void RunVanishedPageReadTests() {
     GuestArena::GuestArenaReset_nid_postfix(block, page);
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
     GuestArena::GuestArenaRelease_nid_postfix(block, 2 * page);
+#endif
+}
+
+void RunPageBlockTests() {
+#if defined(__linux__)
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    using Ranges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+    if (!GuestArena::GuestArenaAvailable_nid_postfix()) return;
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    if (page != 4096) return;
+    constexpr std::size_t count = 1536;
+    const auto bytes = count * page;
+    auto* guest = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 512 * page));
+    Require(guest != nullptr && mmap(guest, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == guest, "cannot map the page block test pages");
+    const auto base = reinterpret_cast<std::uint64_t>(guest);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(guest, bytes, true, true, true);
+    }
+    const auto protect = [&](std::size_t index, bool writable) {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(guest + index * page, page, true, writable, true, [&] { Require(mprotect(guest + index * page, page, writable ? PROT_READ | PROT_WRITE : PROT_READ) == 0, "cannot change a page block test page"); });
+    };
+    Require(GuestMemory::Accessible(guest, bytes, true), "mapped arena pages are not writable");
+    Require(mprotect(guest + 700 * page, page, PROT_READ) == 0, "cannot protect a page block test page behind the registry");
+    Require(GuestMemory::Accessible(guest, bytes, true), "a long run of checked arena pages was queried again instead of read from the page table");
+    Require(mprotect(guest + 700 * page, page, PROT_READ | PROT_WRITE) == 0, "cannot restore a page block test page behind the registry");
+    for (const std::size_t index : {std::size_t{700}, std::size_t{512}, std::size_t{1535}}) {
+        protect(index, false);
+        Require(!GuestMemory::Accessible(guest, bytes, true) && GuestMemory::Accessible(guest, bytes), "a page protected inside a long run of cached pages kept its old access");
+        Ranges expected{{base, base + index * page}};
+        if (index + 1 < count) expected.emplace_back(base + (index + 1) * page, base + bytes);
+        Require(GuestMemory::CommittedRanges(base, bytes, true) == expected, "the writable pages around a protected page inside a long run were misdescribed");
+        Require(GuestMemory::CommittedRanges(base, bytes) == Ranges{{base, base + bytes}}, "the readable pages of a long run with one read-only page were misdescribed");
+        protect(index, true);
+        Require(GuestMemory::DescribeCommitted(base, bytes, true).whole, "a long run of pages made writable again was not described whole");
+    }
+    std::atomic<bool> done{false};
+    std::atomic<std::size_t> described{0};
+    std::vector<std::thread> readers;
+    for (int reader = 0; reader < 2; ++reader) {
+        readers.emplace_back([&] {
+            while (!done.load(std::memory_order_relaxed)) {
+                static_cast<void>(GuestMemory::DescribeCommitted(base, bytes, true));
+                described.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (std::size_t round = 0; round < 2000 || described.load(std::memory_order_relaxed) < 2000; ++round) {
+        const auto index = 640 + round % 128;
+        protect(index, false);
+        protect(index, true);
+    }
+    protect(700, false);
+    done = true;
+    for (auto& reader : readers) reader.join();
+    Require(GuestMemory::CommittedRanges(base, bytes, true) == Ranges{{base, base + 700 * page}, {base + 701 * page, base + bytes}}, "a page protected while other threads described its run is still reported writable");
+    protect(700, true);
+    for (std::size_t round = 0; round < 256; ++round) {
+        const auto index = (1 + round % 22) * 64 + (round * 37) % 64;
+        Require(GuestMemory::DescribeCommitted(base, bytes, true).whole, "the pages of a block were not described whole before one of them flipped");
+        std::atomic<bool> stop{false};
+        std::array<std::atomic<std::size_t>, 2> scans{};
+        std::vector<std::thread> scanners;
+        for (auto& scanned : scans) {
+            scanners.emplace_back([&] {
+                while (!stop.load(std::memory_order_relaxed)) {
+                    static_cast<void>(GuestMemory::DescribeCommitted(base, bytes, true));
+                    scanned.fetch_add(1, std::memory_order_release);
+                }
+            });
+        }
+        for (const auto& scanned : scans) {
+            while (scanned.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+        }
+        protect(index, false);
+        for (const auto& scanned : scans) {
+            const auto flipped = scanned.load(std::memory_order_acquire);
+            while (scanned.load(std::memory_order_acquire) < flipped + 2) std::this_thread::yield();
+        }
+        stop = true;
+        for (auto& scanner : scanners) scanner.join();
+        Require(GuestMemory::CommittedRanges(base, bytes, true) == Ranges{{base, base + index * page}, {base + (index + 1) * page, base + bytes}}, "a page flipped in a marked block while other threads ran over the block is still reported writable");
+        protect(index, true);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(guest, bytes, [](const void* pointer, std::size_t length, const void*, bool) { Require(munmap(const_cast<void*>(pointer), length) == 0, "cannot unmap the page block test pages"); });
+    }
+    Require(!GuestMemory::Accessible(guest, page) && GuestMemory::CommittedRanges(base, bytes).empty(), "unmapped pages of a long run are still accessible");
+    GuestArena::GuestArenaRelease_nid_postfix(guest, bytes);
 #endif
 }
