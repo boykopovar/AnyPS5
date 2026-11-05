@@ -9,6 +9,7 @@
 #include <cstring>
 #include "../src/WtfStringAbi.hpp"
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <source_location>
@@ -633,6 +634,40 @@ void TestUTFConversions() {
     Throws([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
 }
 
+void TestDestroy() {
+    auto narrow = Create8(U8("destroy narrow"), 14);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(narrow.impl, nullptr));
+    auto wide = Create16(u"destroy wide", 12);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(wide.impl, nullptr));
+
+    for (const bool guest : {false, true}) {
+        auto* bytes = static_cast<unsigned char*>(_ZN3WTF10fastMallocEm(3));
+        std::memcpy(bytes, "own", 3);
+        String owned(new (_ZN3WTF10fastMallocEm(sizeof(StringImpl))) StringImpl{2, 3, bytes, 5});
+        Text(owned, "own");
+        if (guest) _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(owned.impl, nullptr));
+    }
+
+    static const unsigned char literal[] = "literal";
+    auto* borrowed = new (_ZN3WTF10fastMallocEm(sizeof(StringImpl))) StringImpl{2, 7, literal, 4};
+    _ZN3WTF10StringImpl7destroyEPS0_(borrowed);
+    Check(!std::memcmp(literal, "literal", 7));
+
+    auto owner = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
+    auto substring = SharedSubstring(&owner, 1, 20);
+    Check((substring.impl->hashAndFlags & 3) == 2 && owner.impl->refCount == 4);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(substring.impl, nullptr));
+    Check(owner.impl->refCount == 2);
+    Text(owner, "abcdefghijklmnopqrstuvwx");
+
+    auto wideOwner = Create16(u"abcdefghijklmnopqrstuvwx", 24);
+    auto wideSubstring = SharedSubstring(&wideOwner, 1, 20);
+    Check((wideSubstring.impl->hashAndFlags & 3) == 2 && wideOwner.impl->refCount == 4);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(wideSubstring.impl, nullptr));
+    Check(wideOwner.impl->refCount == 2);
+    Text(wideOwner, "abcdefghijklmnopqrstuvwx");
+}
+
 void TestSubstrings() {
     auto original = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
     { auto same = Substring(original.impl, 0, 99); Check(same.impl == original.impl); }
@@ -772,6 +807,7 @@ void Run() {
     TestASCIIAndViews();
     TestUTFConversions();
     TestSubstrings();
+    TestDestroy();
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
