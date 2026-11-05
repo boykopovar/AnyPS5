@@ -109,6 +109,20 @@ class GuestTestTargets(unittest.TestCase):
 
 
 class OwnerResolution(unittest.TestCase):
+    def test_cmake_owner_marker_precedes_tool_options_and_client_arguments(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["C:/cmake.exe", "-DPATCHER=C:/b/nid_patcher.exe", "-P", "wrapper.cmake", "--",
+             "C:/b/guest_owner_tests.exe", "C:/b/guest_client_tests.exe"],
+            {"nid_patcher": "nid_patcher", "guest_owner_tests": "guest_owner_tests",
+             "guest_client_tests": "guest_client_tests"})
+        self.assertEqual(owner, "guest_owner_tests")
+
+    def test_cmake_owner_marker_also_resolves_extensionless_executables(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["/usr/bin/cmake", "-P", "wrapper.cmake", "--", "/build/guest_owner_tests", "/build/guest_client_tests"],
+            {"guest_owner_tests": "guest_owner_tests", "guest_client_tests": "guest_client_tests"})
+        self.assertEqual(owner, "guest_owner_tests")
+
     def test_resolves_the_executable_not_a_test_argument(self):
         owner = build_changed_guest_tests.test_owner(
             ["C:/b/tests/guest_np_common_tests.exe", "build"], {"guest_np_common_tests": "guest_np_common_tests"})
@@ -188,6 +202,52 @@ class Main(unittest.TestCase):
         run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and not any("--show-only" in part for part in cmd)][0]
         self.assertEqual(selections, ["0,0,0,1,2,3\n"])
         self.assertIn("--no-tests=error", run_cmd)
+
+    def test_cmake_wrapper_is_not_owned_by_its_guest_client_argument(self):
+        build = self.fixture([
+            self.target("guest_http_client_tests", source="core/libs/tests/HttpClient.cpp", fragment="libc.prx"),
+            self.target("guest_avplayer_tests", source="core/libs/tests/AvPlayer.cpp", fragment="libc.prx"),
+            self.target("avplayer_http_patched_modules_tests", source="core/libs/tests/AvPlayerHttpModules.cpp"),
+            self.target("nid_patcher", source="core/nid_patcher/main.cpp"),
+        ])
+        listing = json.dumps({"tests": [
+            {"name": "guest_http_client", "command": ["C:/b/tests/guest_http_client_tests.exe"]},
+            {"name": "guest_avplayer", "command": ["C:/b/tests/guest_avplayer_tests.exe"]},
+            {"name": "avplayer_http_patched_modules", "command": [
+                "C:/cmake/bin/cmake.exe", "-DPATCHER=C:/b/nid_patcher.exe",
+                "-P", "AvPlayerHttpModules.cmake", "--",
+                "C:/b/tests/avplayer_http_patched_modules_tests.exe",
+                "C:/b/tests/guest_http_client_tests.exe", "C:/b/tests/guest_avplayer_tests.exe",
+            ]},
+        ]})
+        selections = []
+        builds = []
+        def execute(cmd, **_):
+            if cmd[0] == "cmake":
+                builds.append(cmd[cmd.index("--target") + 1:])
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            code = self.main(build, ["core/libs/include/Changed.hpp"])
+        self.assertEqual(code, 0)
+        self.assertEqual(selections, ["0,0,0,1,2,3\n"])
+        self.assertIn(["avplayer_http_patched_modules_tests"], builds)
+
+    def test_output_log_reaches_the_ctest_run(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_text("core/libs/tests/Guest.cpp", encoding="utf-8")
+        calls = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            code = build_changed_guest_tests.main([str(build), str(changed), "--output-log", "ctest.log"])
+        self.assertEqual(code, 0)
+        run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and "-I" in cmd]
+        self.assertEqual(len(run_cmd), 1)
+        self.assertEqual(run_cmd[0][run_cmd[0].index("--output-log") + 1], "ctest.log")
 
     def test_large_selection_fits_windows_commands_and_preserves_every_test(self):
         selected = ["guest_" + "long_name_" * 8 + str(index) for index in range(600)]
