@@ -114,6 +114,7 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     if (std::filesystem::exists(target, error)) std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add, error);
     std::filesystem::rename(temporary, target, error);
     if (error) {
+        std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add, error);
         std::filesystem::remove(temporary, error);
         return ReadFile(target) == bundle ? target : std::filesystem::path{};
     }
