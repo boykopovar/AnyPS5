@@ -1971,9 +1971,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF9MediaTimenwEmPv` | `4Fp5Pq1VTWs` |
 | `_ZN3WTF9MediaTimenwEm` | `Q+IdDa+f7P4` |
 | `_ZN3WTF9MediaTimepLERKS0_` | `S2G9jJwRMqs` |
-| `_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_` | `MlSHagwBWI4` |
 | `_ZN3WTF9URLParser19parseURLEncodedFormENS_10StringViewE` | `Ev+2GetBNwE` |
-| `_ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE` | `jKPJKar5yGY` |
 | `_ZN3WTF9URLParser9serializeERKNS_6VectorINS_12KeyValuePairINS_6StringES3_EELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE` | `sx-mGnQPyeg` |
 | `_ZN3WTFlsERNS_10TextStreamENS_7SecondsE` | `UgIITEJeYRo` |
 | `_ZN3WTFlsERNS_10TextStreamERKNS_3URLE` | `8M6cv85VPG4` |
@@ -7459,6 +7457,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Functional
 
 - [WTF URL scalar helpers](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - The device WebKit revision and guest ABI are unmeasured. The port assumes a 16-byte release [StringView](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.h), follows the published [UUID](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/UUID.cpp), [URL](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp) and [URLParser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URLParser.cpp) behavior, and supports only the five built-in default ports. Testing-only port override exports still throw; nonempty null pointers throw rather than dereference.
+- [WTF::URLParser checks](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) - `allValuesEqual` and `internalValuesConsistent` are not compared with a console module. They follow pinned WebKit [URLParser.cpp](https://github.com/WebKit/WebKit/blob/3539f609da3d/Source/WTF/wtf/URLParser.cpp#L2976-L3031) over the [URL fields](https://github.com/WebKit/WebKit/blob/3539f609da3d/Source/WTF/wtf/URL.h#L229-L247), reading the scheme end from bits 6-31 and the port length from bits 3-5 of the bitfield word as the other `URL` accessors do. A null `URL` reference, or a string with a null character pointer and a nonzero length, throws where WebKit dereferences it.
 - [WTF::Thread::yield](../../../core/libs/prx/libSceNKWebKit/Export.cpp) is source-guided, not console-measured; the PS5 build may differ from pinned upstream WebKit [Threading.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Threading.h#L182) and [ThreadingPOSIX.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/posix/ThreadingPOSIX.cpp#L572-L580). It returns void and requests a yield through libc's existing `_Thrd_yield` helper.
 
 - [parseDateFromNullTerminatedCharacters(const char*)](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - still throws: it subtracts [calculateLocalTimeOffset](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L318-L361), whose code path follows `HAVE_LOCALTIME_R`, `HAVE_TIMEGM` and `HAVE_TM_GMTOFF` from [configure checks](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/cmake/OptionsCommon.cmake#L131-L148) against the port's sysroot, and the device time zone.

@@ -20220,15 +20220,7 @@ int APS5_VABI _ZN3WTF9MediaTimepLERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF9URLParser19parseURLEncodedFormENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
