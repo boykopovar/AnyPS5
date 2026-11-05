@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include "Stream.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
@@ -229,8 +230,25 @@ int APS5_VABI PKFormatConverter_GetSize_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t getPixelFormatOffset = sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - getPixelFormatOffset) APS5_INVALID_ARG_EX;
+    using DecoderGetPixelFormat = std::int64_t (APS5_VABI*)(void*, JxrGuestGuid*);
+    static_assert(sizeof(DecoderGetPixelFormat) == sizeof(void*));
+    DecoderGetPixelFormat getPixelFormat = nullptr;
+    const auto* callbackField = reinterpret_cast<const void*>(decoderAddress + getPixelFormatOffset);
+    if (!GuestCopyIn_nid_no_patch(&getPixelFormat, callbackField, sizeof(getPixelFormat)) || !getPixelFormat) APS5_INVALID_ARG_EX;
+
+    return getPixelFormat(decoder, pixelFormat);
 }
 
 int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix() {

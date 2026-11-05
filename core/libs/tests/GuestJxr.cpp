@@ -22,6 +22,11 @@ std::size_t lastCount = 0;
 std::size_t lastSize = 0;
 void* lastAllocated = nullptr;
 int callocCalls = 0;
+JxrGuestGuid getPixelFormatValue{};
+void* observedPixelFormatDecoder = nullptr;
+JxrGuestGuid* observedPixelFormatOutput = nullptr;
+std::int64_t getPixelFormatResult = 0;
+int getPixelFormatCalls = 0;
 
 void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free(void* pointer) {
@@ -44,6 +49,14 @@ void* APS5_VABI Realign(void* pointer, std::size_t size, std::size_t) { return s
 int APS5_VABI PosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
+}
+
+std::int64_t APS5_VABI DecoderGetPixelFormat(void* decoder, JxrGuestGuid* pixelFormat) {
+    ++getPixelFormatCalls;
+    observedPixelFormatDecoder = decoder;
+    observedPixelFormatOutput = pixelFormat;
+    if (pixelFormat) *pixelFormat = getPixelFormatValue;
+    return getPixelFormatResult;
 }
 
 void InitializeHeap() {
@@ -111,5 +124,58 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+
+    alignas(8) std::array<std::byte, 24> decoder{};
+    std::memset(decoder.data(), 0x6b, decoder.size());
+    using DecoderGetPixelFormatFn = std::int64_t (APS5_VABI*)(void*, JxrGuestGuid*);
+    const DecoderGetPixelFormatFn getPixelFormatCallback = &DecoderGetPixelFormat;
+    std::memcpy(decoder.data() + sizeof(void*), &getPixelFormatCallback, sizeof(getPixelFormatCallback));
+    const auto decoderBefore = decoder;
+    JxrGuestFormatConverter converter{};
+    std::memset(converter.beforeDecoder, 0x5a, sizeof(converter.beforeDecoder));
+    converter.decoder = decoder.data();
+    const auto converterBefore = converter;
+    struct GuardedGuid {
+        std::uint8_t before[8];
+        JxrGuestGuid value;
+        std::uint8_t after[8];
+    } output;
+    std::memset(&output, 0xa5, sizeof(output));
+    getPixelFormatValue = {0x12345678, 0x9abc, 0xdef0, {1, 2, 3, 4, 5, 6, 7, 8}};
+    getPixelFormatResult = 0x123456789abcdef0;
+    auto calls = getPixelFormatCalls;
+    Require(PKFormatConverter_GetSourcePixelFormat_nid_postfix(&converter, &output.value) == getPixelFormatResult);
+    Require(getPixelFormatCalls == calls + 1 && observedPixelFormatDecoder == decoder.data());
+    Require(observedPixelFormatOutput == &output.value);
+    Require(std::memcmp(&output.value, &getPixelFormatValue, sizeof(getPixelFormatValue)) == 0);
+    for (const auto value : output.before) Require(value == 0xa5);
+    for (const auto value : output.after) Require(value == 0xa5);
+    Require(std::memcmp(&converter, &converterBefore, sizeof(converter)) == 0);
+    Require(std::memcmp(decoder.data(), decoderBefore.data(), decoder.size()) == 0);
+
+    getPixelFormatResult = -0x123456789abcdef;
+    calls = getPixelFormatCalls;
+    Require(PKFormatConverter_GetSourcePixelFormat_nid_postfix(&converter, nullptr) == getPixelFormatResult);
+    Require(getPixelFormatCalls == calls + 1 && observedPixelFormatDecoder == decoder.data());
+    Require(observedPixelFormatOutput == nullptr);
+    Require(std::memcmp(&converter, &converterBefore, sizeof(converter)) == 0);
+    Require(std::memcmp(decoder.data(), decoderBefore.data(), decoder.size()) == 0);
+
+    threw = false;
+    calls = getPixelFormatCalls;
+    try { PKFormatConverter_GetSourcePixelFormat_nid_postfix(nullptr, &output.value); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && getPixelFormatCalls == calls);
+    JxrGuestFormatConverter invalidConverter{};
+    threw = false;
+    try { PKFormatConverter_GetSourcePixelFormat_nid_postfix(&invalidConverter, &output.value); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && getPixelFormatCalls == calls);
+    invalidConverter.decoder = decoder.data();
+    std::memset(decoder.data() + sizeof(void*), 0, sizeof(getPixelFormatCallback));
+    threw = false;
+    try { PKFormatConverter_GetSourcePixelFormat_nid_postfix(&invalidConverter, &output.value); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && getPixelFormatCalls == calls);
     return 0;
 }
