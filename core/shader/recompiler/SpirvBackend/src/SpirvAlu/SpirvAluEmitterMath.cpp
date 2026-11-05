@@ -1943,6 +1943,13 @@ std::uint32_t EmitPackHalf2x16Value(SpirvEmitterState& state, const IrValue& ins
 }
 
 std::uint32_t EmitFPFma32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2) {
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFMAKHR)) != state.supportedCapabilities.end()) {
+        state.module.EmitCapability(spv::CapabilityFMAKHR);
+        state.module.EmitExtension("SPV_KHR_fma");
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFmaKHR, TypeF32(state), result, arg0, arg1, arg2);
+        return Exact(state, result);
+    }
     return Exact(state, EmitGlsl<GLSLstd450Fma, IrType::F32>(state, arg0, arg1, arg2));
 }
 
