@@ -118,7 +118,7 @@ int APS5_VABI sceVideoOutSysModeIsHdr();
 int APS5_VABI sceVideoOutSysModeIsSystemDefault();
 int APS5_VABI sceVideoOutSysModeIsVrLegacy();
 int APS5_VABI sceVideoOutSysModeIsVrNative();
-int APS5_VABI sceVideoOutSysModeIsVr();
+int APS5_VABI sceVideoOutSysModeIsVr(const void* mode);
 int APS5_VABI sceVideoOutSysOpenInternal();
 int APS5_VABI sceVideoOutSysOpenVrNative();
 int APS5_VABI sceVideoOutSysReadCrc64();

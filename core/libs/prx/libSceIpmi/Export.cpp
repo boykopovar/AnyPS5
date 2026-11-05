@@ -46,8 +46,9 @@ int APS5_VABI _ZN4IPMI4impl10ClientImpl11getUserDataEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN4IPMI4impl10ClientImpl12tryGetResultEjPiPvPmm() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN4IPMI4impl10ClientImpl12tryGetResultEjPiPvPmm(void* self, unsigned int, int*, void*, unsigned long*, unsigned long) {
+    (void)self;
+    return 0;
 }
 
 int APS5_VABI _ZN4IPMI4impl10ClientImpl12tryGetResultEjjPiPNS_10BufferInfoEj() {
@@ -74,8 +75,9 @@ int APS5_VABI _ZN4IPMI4impl10ClientImpl17invokeAsyncMethodEjPKNS_8DataInfoEjPjPK
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN4IPMI4impl10ClientImpl17invokeAsyncMethodEjPKvmPjPKNS_6Client12EventNotifeeE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN4IPMI4impl10ClientImpl17invokeAsyncMethodEjPKvmPjPKNS_6Client12EventNotifeeE(void* self, unsigned int, const void*, unsigned long, unsigned int*, const void*) {
+    (void)self;
+    return 0;
 }
 
 int APS5_VABI _ZN4IPMI4impl10ClientImpl19terminateConnectionEv() {
@@ -170,8 +172,9 @@ int APS5_VABI _ZN4IPMI4impl11SessionImpl11getUserDataEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN4IPMI4impl11SessionImpl11tryDispatchEPvm() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN4IPMI4impl11SessionImpl11tryDispatchEPvm(void* self, void*, unsigned long) {
+    (void)self;
+    return 0;
 }
 
 int APS5_VABI _ZN4IPMI4impl11SessionImpl12getClientPidEv() {

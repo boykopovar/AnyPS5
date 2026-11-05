@@ -543,6 +543,7 @@ int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArr
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
  if (!param) return ErrorInvalidAddress;
+ if (user_id == UserIdInvalid) return ErrorInvalidUserId;
  std::lock_guard lock(g_keyboardMutex);
  if (!g_openKeyboards.insert(user_id).second) return ErrorBusy;
  return 0;
@@ -610,6 +611,15 @@ int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geome
 }
 
 int APS5_VABI sceImeUpdate(EventHandler handler) {
+    bool keyboardOpen;
+    {
+        std::lock_guard lock(g_keyboardMutex);
+        keyboardOpen = !g_openKeyboards.empty();
+    }
+    if (!keyboardOpen) {
+        std::lock_guard lock(g_imeMutex);
+        if (!g_session) return ErrorNotOpened;
+    }
     if (!handler) return ErrorInvalidHandler;
     for (;;) {
         ImeEvent event{};
