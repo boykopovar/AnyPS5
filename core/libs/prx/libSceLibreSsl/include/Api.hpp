@@ -345,6 +345,8 @@ struct LibreSslCtx {
     void* defaultPasswdCallback;
     void* defaultPasswdCallbackUserdata;
     LibreSslCtxInternal* internal;
+};
+
 struct EvpMdContext;
 
 struct EvpMd {
