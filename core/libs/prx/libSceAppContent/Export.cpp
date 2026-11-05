@@ -62,6 +62,7 @@ bool IsTemporaryMountPoint(const AppContentMountPoint* mountPoint) {
     return std::strncmp(mountPoint->data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint->data)) == 0;
 }
 
+std::atomic<std::uint64_t> download1QuotaBytes{0};
 std::atomic<std::uint64_t> download2QuotaBytes{0};
 
 bool IsDownloadMountPoint(const AppContentMountPoint* mountPoint) {
@@ -173,10 +174,10 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
         const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
         if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
         quotaKb = quotaMiB * 1024u;
+    } else if (std::strncmp(mountPoint->data, "/download1", sizeof(mountPoint->data)) == 0) {
+        quotaKb = download1QuotaBytes.load() / 1024u;
     } else if (std::strncmp(mountPoint->data, "/download2", sizeof(mountPoint->data)) == 0) {
         quotaKb = download2QuotaBytes.load() / 1024u;
-    } else {
-        NotImplemented_nid_no_patch(__func__);
     }
     if (quotaKb == 0) {
         *availableSpaceKb = 0;
@@ -322,8 +323,13 @@ int APS5_VABI sceAppContentDownload0Shrink(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload1Expand(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentDownload1Expand(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto directory = ResolvePath_nid_no_patch("/download1");
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
+    size_t current = download1QuotaBytes.load();
+    while (size > current && !download1QuotaBytes.compare_exchange_weak(current, size)) {}
     return 0;
 }
 
