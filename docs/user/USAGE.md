@@ -100,7 +100,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 
 Specify `unused-filter=0|1|2` without `--`, at most once. Unknown options and extra positional arguments are errors. Use `relinker --help` to print the usage syntax to stdout and exit with code `0` without converting files. Invoking `relinker` without arguments prints the usage syntax to stderr and exits with code `1`.
 
-The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, and `--lazy-binding` flags are deprecated. If the application runs with these flags enabled, it will be extremely unstable and unsuitable for general use. These flags are only for debugging.
+The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, `--lazy-binding` and `--trap-sdk-syscall-stubs` flags are deprecated. If the application runs with these flags enabled, it will be extremely unstable and unsuitable for general use. These flags are only for debugging.
 
 `--trap-sdk-syscall-stubs` is also for debugging. It preserves a runtime failure if a syscall wrapper is called; it does not implement FreeBSD syscalls or make these applications generally safe to run.
 
