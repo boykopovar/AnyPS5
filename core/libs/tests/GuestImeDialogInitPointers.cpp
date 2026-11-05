@@ -9,12 +9,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <cstring>
 
 namespace {
 
 constexpr int StatusNone = 0;
 constexpr int StatusFinished = 2;
+constexpr std::uint32_t EndStatusOk = 0;
 constexpr std::uint32_t EndStatusAborted = 2;
 constexpr int ErrorInvalidAddress = static_cast<int>(0x80bc0031u);
 constexpr int ErrorInvalidInputTextBuffer = static_cast<int>(0x80bc0017u);
