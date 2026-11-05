@@ -399,7 +399,9 @@ int main() {
         Io::WriteU32(fdeOverflowBytes, 96, 1000);
         bool fdeOverflowRejected = false;
         try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeOverflowBytes, {augLoad, augEh}, {}, {}); }
-        catch (const std::exception&) { fdeOverflowRejected = true; }
+        catch (const Domain::RelinkerException& error) {
+            fdeOverflowRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
+        }
         Require(fdeOverflowRejected);
         std::cout << "35 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
