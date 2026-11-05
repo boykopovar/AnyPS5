@@ -101,17 +101,17 @@ public:
     bool valid = false;
 };
 
-class OpenPanelParameters final : public ObjectOf<ObjectType::OpenPanelParameters> {
+class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
-    OpenPanelParameters() = default;
-    OpenPanelParameters(bool allowsDirectories, bool allowsMultipleFiles, std::vector<Retained<String>> acceptMIMETypes, std::vector<Retained<String>> acceptFileExtensions, std::vector<Retained<String>> selectedFiles)
-        : acceptMIMETypes(std::move(acceptMIMETypes)), acceptFileExtensions(std::move(acceptFileExtensions)), selectedFiles(std::move(selectedFiles)), allowsDirectories(allowsDirectories), allowsMultipleFiles(allowsMultipleFiles) {}
-
-    std::vector<Retained<String>> acceptMIMETypes;
-    std::vector<Retained<String>> acceptFileExtensions;
-    std::vector<Retained<String>> selectedFiles;
-    bool allowsDirectories = false;
-    bool allowsMultipleFiles = false;
+    std::string absoluteImageURL;
+    std::string absoluteLinkURL;
+    std::string absoluteMediaURL;
+    std::string absolutePDFURL;
+    std::u16string linkLabel;
+    std::u16string linkTitle;
+    std::u16string lookupText;
+    RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
+    bool isContentEditable = false;
 };
 
 }  // namespace NKWebKit
