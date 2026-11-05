@@ -324,6 +324,69 @@ int main() {
             lsdaUdata8Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaUdata8Rejected);
-        std::cout << "29 unwind record cases passed\n";
+        std::vector<std::uint8_t> lsdaS2Bytes(0x400, 0);
+        Io::WriteU32(lsdaS2Bytes, 0x200, 25);
+        lsdaS2Bytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), lsdaS2Bytes.begin() + 0x209);
+        lsdaS2Bytes[0x212] = 0;
+        Io::WriteU64(lsdaS2Bytes, 0x213, 0x1000);
+        lsdaS2Bytes[0x21B] = 0x4A;
+        lsdaS2Bytes[0x21C] = 0;
+        Io::WriteU32(lsdaS2Bytes, 0x220, 29);
+        Io::WriteU32(lsdaS2Bytes, 0x224, 0x24);
+        Io::WriteU64(lsdaS2Bytes, 0x228, 0x1000);
+        Io::WriteU64(lsdaS2Bytes, 0x230, 0x20);
+        lsdaS2Bytes[0x238] = 2;
+        Io::WriteU16(lsdaS2Bytes, 0x239, 0xEFFF);
+        lsdaS2Bytes[0x300] = 1;
+        lsdaS2Bytes[0x302] = 3;
+        Io::WriteU64(lsdaS2Bytes, 0x304, 0x200);
+        Io::WriteU32(lsdaS2Bytes, 0x30C, 1);
+        Io::WriteU64(lsdaS2Bytes, 0x310, 0x1000);
+        Io::WriteU64(lsdaS2Bytes, 0x318, 0x220);
+        Domain::ProgramHeader lsdaS2Load{}; lsdaS2Load.Type = 1; lsdaS2Load.Flags = 4; lsdaS2Load.FileSize = lsdaS2Bytes.size(); lsdaS2Load.MemorySize = lsdaS2Bytes.size(); lsdaS2Load.Alignment = 8;
+        Domain::ProgramHeader lsdaS2Eh = lsdaS2Load; lsdaS2Eh.Type = 0x6474E550; lsdaS2Eh.Offset = 0x300; lsdaS2Eh.MappedAddress = 0x300; lsdaS2Eh.FileSize = 32; lsdaS2Eh.MemorySize = 32; lsdaS2Eh.Alignment = 4;
+        bool lsdaS2Rejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaS2Bytes, {lsdaS2Load, lsdaS2Eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsdaS2Rejected);
+        Domain::ProgramHeader augLoad{}; augLoad.Type = 1; augLoad.MappedAddress = 0x1000; augLoad.FileSize = 128;
+        Domain::ProgramHeader augEh = augLoad; augEh.Type = 0x6474E550; augEh.FileSize = 32;
+        auto unterminatedAugBytes = Fixture();
+        unterminatedAugBytes[73] = 'z';
+        unterminatedAugBytes[74] = 'R';
+        unterminatedAugBytes[75] = 'L';
+        unterminatedAugBytes[76] = 'P';
+        bool unterminatedAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedAugRejected = std::string(error.what()).find("unterminated CIE augmentation") != std::string::npos;
+        }
+        Require(unterminatedAugRejected);
+        auto outOfBoundsAugBytes = Fixture();
+        Io::WriteU32(outOfBoundsAugBytes, 64, 12);
+        outOfBoundsAugBytes[73] = 'z';
+        outOfBoundsAugBytes[74] = 0;
+        outOfBoundsAugBytes[75] = 1;
+        outOfBoundsAugBytes[76] = 0x78;
+        outOfBoundsAugBytes[77] = 16;
+        outOfBoundsAugBytes[78] = 10;
+        bool outOfBoundsAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(outOfBoundsAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            outOfBoundsAugRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(outOfBoundsAugRejected);
+        auto unterminatedRecordBytes = Fixture();
+        Io::WriteU32(unterminatedRecordBytes, 64, 8);
+        bool unterminatedRecordRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedRecordBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedRecordRejected = std::string(error.what()).find("CIE fields exceed record") != std::string::npos;
+        }
+        Require(unterminatedRecordRejected);
+        std::cout << "33 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -24,6 +24,7 @@ constexpr std::uint32_t Height = 16;
 constexpr std::uint32_t Size = 16;
 constexpr std::uint32_t Mips = 1;
 constexpr std::uint32_t Format8888UNorm = 56;
+constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type3D = 10;
 constexpr float SecondCoordinateScale = 1.0f / static_cast<float>(Size);
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
@@ -79,7 +80,7 @@ void FillTexture() {
     }
 }
 
-void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false) {
     const auto& target = device.Target();
     alignas(256) std::array<std::uint32_t, 13> code{};
     std::copy_n(BiasPixelCode.begin(), 3u, code.begin());
@@ -134,8 +135,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture,
         target,
         PixelPushLayout(vertexPush, target)
     };
-    fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    Require(!target.registrationModules || pixelResult.registrationModule, "single-level volume bias did not exercise its requested registration module");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
@@ -159,6 +160,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture,
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+    return pixelResult.variantId;
 }
 
 void Check(bool degamma = false) {
@@ -197,24 +199,35 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillTexture();
+        std::uint64_t ordinaryArtifact = 0u;
         for (const float bias : {-16.0f, -0.5f, 0.0f, 0.5f, 16.0f}) {
-            Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
+            ordinaryArtifact = Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
             Check();
         }
-        for (const std::uint32_t reduction : {1u, 2u}) {
-            auto sampler = SamplerDescriptor();
-            sampler[0] |= reduction << 29u;
-            Draw(*device, VolumeDescriptor(), sampler, 8.0f);
-            Check();
+        if (!device->SamplerFilterMinmax()) {
+            std::puts("the device has no min/max sampler reduction with component mapping: the reduction cases are skipped");
+        } else {
+            for (const std::uint32_t reduction : {1u, 2u}) {
+                auto sampler = SamplerDescriptor();
+                sampler[0] |= reduction << 29u;
+                Draw(*device, VolumeDescriptor(), sampler, 8.0f);
+                Check();
+            }
         }
+        auto plane = VolumeDescriptor();
+        plane[3] = (plane[3] & ~(0xfu << 28u)) | (Type2D << 28u);
+        Require(Draw(*device, plane, SamplerDescriptor(), 0.0f) == ordinaryArtifact, "single-level volume and plane modes did not share their cached artifact");
+        Check();
         auto integerTexture = VolumeDescriptor();
         integerTexture[1] = (integerTexture[1] & ~(0x1ffu << 20u)) | (60u << 20u);
         auto forcedSampler = SamplerDescriptor();
         forcedSampler[0] |= 1u << 20u;
         for (const float bias : {-16.0f, 0.0f, 16.0f}) {
-            Draw(*device, integerTexture, forcedSampler, bias);
+            Require(Draw(*device, integerTexture, forcedSampler, bias) == ordinaryArtifact, "single-level volume numeric modes did not share their cached artifact");
             Check(true);
         }
+        Require(Draw(*device, VolumeDescriptor(), SamplerDescriptor(), 0.0f) == ordinaryArtifact, "single-level volume did not reuse its original artifact after a numeric mode change");
+        Check();
         std::string mixedRefusal;
         try {
             Draw(*device, integerTexture, forcedSampler, 0.0f, true);
