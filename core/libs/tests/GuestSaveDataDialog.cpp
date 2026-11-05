@@ -124,6 +124,17 @@ int main() {
     Require(sceSaveDataDialogGetResult(&keptResult) == 0, "read result after unreadable items");
     Require(keptResult.mode == 1 && std::strcmp(keptDir.data, "SDU1") == 0,
             "unreadable items must not change the previous result");
+    SaveDataDialogItems unreadableNameItems{};
+    unreadableNameItems.dir_names = reinterpret_cast<const SaveDataDirName*>(0x10);
+    unreadableNameItems.dir_names_num = 1;
+    SaveDataDialogParam unreadableNameParam{};
+    unreadableNameParam.size = sizeof(unreadableNameParam);
+    unreadableNameParam.mode = 0;
+    unreadableNameParam.items = &unreadableNameItems;
+    Require(sceSaveDataDialogOpen(&unreadableNameParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with unreadable directory name entry");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
+            "unreadable directory name entry must leave the previous result finished");
     Require(sceSaveDataDialogTerminate() == 0, "terminate after unreadable items");
 
     Require(sceSaveDataDialogInitialize() == 0, "re-initialize");
