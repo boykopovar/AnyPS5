@@ -6,6 +6,8 @@
 
 ### Value types and handle constructors
 
+- [`NodeId::operator!`, `operator==(int)` and `operator!=(int)`](../../../core/libs/prx/libSceXml/Export.cpp) (libSceXml) - a `NodeId` is null when both pointers and the flag byte are zero, padding ignored. `operator!` reports that, `operator==(int)` is true only for a null `NodeId` and 0, and `operator!=(int)` is its negation, as firmware 13.42's `libSceXml.sprx` does: read to the return, disassembly only, not measured on a console. Whether titles compare with values other than 0 is not known.
+
 - [The `String`, `SimpleData`, `SerializeParameter`, `NodeId` and `Node` value operations and the handle constructors](../../../core/libs/prx/libSceXml/Export.cpp) (libSceXml) - follow `libSceXml.sprx` of firmware 13.60, read from disassembly, not measured on a console. `NodeId::operator void*` returns null for every `NodeId`, and the `NodeId` constructor and copies leave its padding bytes untouched. The handle constructors only clear the implementation pointer. Exports that read the objects `initialize` builds still throw, because nothing creates those objects yet: `AttributeList` `getLength` and `isAvailable`, `Document::resetStatus`, the `DocumentBuilder` and `Sax::Parser` setters, `Node(NodeId)`, and `Node` `getNodeType`, `hasChildNodes`, `hasAttributes` and `getOwnerDocument`. `Node::getAttributes` and `getChildNodes` are a bare return in the module, and the deleting `MemAllocator` destructor is `ud2`, so they still throw too.
 
 ### Additional callable exports

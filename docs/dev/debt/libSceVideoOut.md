@@ -9,6 +9,8 @@
 
 ### Unknown function info
 
+- [sceVideoOutGetDeviceCapabilityInfo_, sceVideoOutModeSetAny_](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut, PS4) - CUSA04865 and CUSA12435 import both. Measured on a PS4 Pro (firmware 10.71): `GetDeviceCapabilityInfo_(handle, info, size)` writes the 64-bit value 1 for size 8 and answers INVALID_VALUE for any other size and for a null `info`, as `libSceVideoOut.sprx` of firmware 10.71 does, INVALID_HANDLE for a closed handle; what the capability bit means is undocumented. `ModeSetAny_(mode, size)` has no return value: it writes `size` into the first 32-bit word and fills the rest of the struct up to `size` with 0xFF; what a title does with the filled struct is unknown
+
 - [sceVideoOutSetFlipRate](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) takes a rate of 0, 1 or 2 and returns `VIDEO_OUT_ERROR_INVALID_VALUE` for any other rate; at rate n, [each flip](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) waits until n + 1 vblanks have passed since the previous flip, or since the port opened for the first flip. The rate is read when a flip is submitted, so a later call does not change flips already queued. PPSA13356 calls it with 60 (at 0xbedef, ignoring the result). A PS4 Pro (firmware 10.71) also accepts only 0, 1 and 2 and returns this error for 60 ([measured](https://github.com/boykopovar/AnyPS5/pull/12721#issuecomment-6526496342)); the PS5 result, and whether either console applies a new rate to queued flips, is unverified.
 - [sceVideoOutSetFlipMaster, sceVideoOutClearFlipMaster](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - what flip-master ownership means is unknown, and the signatures `sceVideoOutSetFlipMaster(handle, masterHandle)` and `sceVideoOutClearFlipMaster(handle)` are unverified; PPSA29866 imports both. Both throw on a handle that has ever had buffers registered, and `SetFlipMaster` throws for a master handle other than 0 or 1; those states are unmeasured, as is a closed handle (answered like -1). Measured in a payload process on a PS5 (firmware 12.70) on a handle from `sceVideoOutOpen(0xff, 0, 0, NULL)` with no buffer registered: `SetFlipMaster` with (handle), (handle, 0) and (handle, 1) returned 0x8029000b, `ClearFlipMaster(handle)` returned 0x8029001c, and both returned 0x8029000b for handle -1
 - [sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_, sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_, sceVideoOutAdjustColorSpaceConversion_, sceVideoOutSetGlobalBlendSpace](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - PPSA30630 imports these to configure color space conversion and global blend space. Color space conversion settings are accepted with size validation (32 bytes) but conversion blocks and blend space parameters are not applied to the presentation swapchain
@@ -63,14 +65,13 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/ea0a096e6231dbe7b98b5a308e2ac91e/00f8422a1ae71e32816d72ae579c2f2d097f63a0) records module, logical library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp); it is a metadata summary rather than independent verification. Some NIDs belong to multiple logical libraries within the module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 182 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 175 entries observed in a 3.20-labelled image and a later 13.60-labelled image; of the original 182, 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
 | `sceVideoOutAddBuffer` | `4iy9hG9Du1s` |
 | `sceVideoOutAddBuffer4k2kPrivilege` | `twrSaoZ9cJs` |
 | `sceVideoOutAddBufferAnisoPrivilege` | `lm+1oyWKwy0` |
-| `sceVideoOutAddBufferHdrPrivilege` | `VAlir52gpQI` |
 | `sceVideoOutAddBufferYccPrivilege` | `D3s8DoEnuR4` |
 | `sceVideoOutAddDisplayPositionEvent` | `Cxb2w82t7lw` |
 | `sceVideoOutAddDriver` | `HtwSd4H2Tws` |
@@ -88,7 +89,6 @@
 | `sceVideoOutControlHdcpEncryption` | `M-JkRj7X+No` |
 | `sceVideoOutCursorIsUpdatePending` | `HibOtezzT6M` |
 | `sceVideoOutCursorSetPositionStereo` | `735GfVO9v2s` |
-| `sceVideoOutCurveSamplePointsCalc_` | `kazBRXPqR7c` |
 | `sceVideoOutDebugAddVrrPrivilege` | `rAYR4zzw414` |
 | `sceVideoOutDebugBlankPipe` | `-9YA0lVAq+U` |
 | `sceVideoOutDebugReadCrc` | `4E8qvHf7Cj0` |
@@ -104,7 +104,6 @@
 | `sceVideoOutDriverGetBufferLabelAddress` | `NGyEl5aT4fc` |
 | `sceVideoOutDriverGetEopHandle` | `P1bIHoga4jE` |
 | `sceVideoOutDriverGetFinishedEopHandle` | `G6peSSDP4iA` |
-| `sceVideoOutDriverGetLatestEopHandle` | `GL8+3RHW5vk` |
 | `sceVideoOutDriverIncrementBufferLabel` | `Ztx4b2LhRDk` |
 | `sceVideoOutDriverResetBufferLabel` | `soAIjspgdt8` |
 | `sceVideoOutDriverTriggerEvent` | `OHnnkrUcShM` |
@@ -129,7 +128,6 @@
 | `sceVideoOutHdmiMonitorInfoIsSupportedVideoOutMode_` | `WBZrUaQY+EU` |
 | `sceVideoOutLockBuffer` | `7ifZFxWJ9Q4` |
 | `sceVideoOutRazorAddCallback` | `ZX7C79uOujU` |
-| `sceVideoOutRazorRecallCallbacks` | `hGcTks-qqIU` |
 | `sceVideoOutRazorRemoveCallback` | `zUDW7kIFclI` |
 | `sceVideoOutRegisterBufferAttribute` | `EJQifjOp8s4` |
 | `sceVideoOutRegisterStereoBuffers` | `lCTCOogRbk0` |
@@ -161,7 +159,6 @@
 | `sceVideoOutSysGetDeviceInfo` | `2sgenMqwczM` |
 | `sceVideoOutSysGetFlipStatus` | `21sS8EU45cw` |
 | `sceVideoOutSysGetKsvList` | `Ur8iOIm0tyE` |
-| `sceVideoOutSysGetMonitorInfo_` | `vMLWuJckGv0` |
 | `sceVideoOutSysGetOutputStatus` | `Ip78YCQUrTo` |
 | `sceVideoOutSysGetPipelineStatus` | `dFhciCfO31s` |
 | `sceVideoOutSysGetResolutionStatus2` | `qLDCAl8ygCw` |
@@ -181,7 +178,6 @@
 | `sceVideoOutSysModeIsSystemDefault` | `5Y8uUbGMio0` |
 | `sceVideoOutSysModeIsVrLegacy` | `zecl8Gox+P0` |
 | `sceVideoOutSysModeIsVrNative` | `SgA2MtojPto` |
-| `sceVideoOutSysModeIsVr` | `QEiuHxjungc` |
 | `sceVideoOutSysOpenInternal` | `kP4l+nyBjRA` |
 | `sceVideoOutSysOpenVrNative` | `WUU+ufqgLJg` |
 | `sceVideoOutSysReadCrc64` | `eBvoaLwfBBQ` |
@@ -196,7 +192,6 @@
 | `sceVideoOutSysSetOverscanRatio` | `nMbAqI1ty8w` |
 | `sceVideoOutSysUpdateDisplayParameter` | `UFDoqv4XXC0` |
 | `sceVideoOutSysUpdatePrivilege` | `Jl91AhxKc0w` |
-| `sceVideoOutSysUpdateRenderingMode` | `4G37EIMMD+Q` |
 | `sceVideoOutUnlockBuffer` | `amghnA-Ev5s` |
 | `sceVideoOutUnregisterBufferAttribute` | `SRQSpP4QK5U` |
 | `Unknown` | `-5AIEU9+11g` |
@@ -249,6 +244,8 @@
 | `Unknown` | `yGMBA0AKcgQ` |
 | `Unknown` | `yoK0AjkkBkI` |
 | `Unknown` | `ys239q8VgXY` |
+
+- [Firmware 13.42 answers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutAddBufferHdrPrivilege`, `sceVideoOutRazorRecallCallbacks` and `sceVideoOutSysUpdateRenderingMode` return 0, `sceVideoOutCurveSamplePointsCalc_` returns 0x8029001C, `sceVideoOutDriverGetLatestEopHandle` 0x802900FF and `sceVideoOutSysGetMonitorInfo_` -1, and `sceVideoOutSysModeIsVr` returns bit 1 of the dword at offset 0x20 of its argument, as firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. Their parameter lists are unverified beyond what the code reads; the layout of the structure `sceVideoOutSysModeIsVr` reads is unknown apart from that dword. The module reads that dword without checking the pointer, so a null argument faults on the console as it does here
 
 - [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
 
