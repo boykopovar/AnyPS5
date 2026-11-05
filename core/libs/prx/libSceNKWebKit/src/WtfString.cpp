@@ -972,6 +972,84 @@ bool JavaScriptProtocol(StringView view) {
     return false;
 }
 
+bool ContainsColon(StringView view) {
+    for (unsigned i = 0; i < view.length; ++i) {
+        if (Unit(view, i) == ':') return true;
+    }
+    return false;
+}
+
+bool IsIPv4Address(StringView string) {
+    if (!string.length) return false;
+    unsigned count = 0;
+    unsigned pos = 0;
+    while (pos <= string.length) {
+        if (count >= 4) return false;
+        unsigned octetStart = pos;
+        while (pos < string.length && Unit(string, pos) != '.') {
+            ++pos;
+        }
+        unsigned octetLen = pos - octetStart;
+        if (!octetLen || octetLen > 3) return false;
+        unsigned value = 0;
+        for (unsigned i = 0; i < octetLen; ++i) {
+            char16_t digit = Unit(string, octetStart + i);
+            if (digit > '9' || digit < (!i && octetLen > 1 ? '1' : '0')) return false;
+            value = value * 10 + (digit - '0');
+        }
+        if (value > 255) return false;
+        ++count;
+        if (pos == string.length) break;
+        ++pos;
+    }
+    return count == 4;
+}
+
+bool IsIPv6Address(StringView string) {
+    if (!string.length) return false;
+    enum SkipState { None, WillSkip, Skipping, Skipped, Final };
+    SkipState skipState = None;
+    unsigned count = 0;
+    unsigned pos = 0;
+    while (pos <= string.length) {
+        if (count >= 8 || skipState == Final) return false;
+        unsigned hextetStart = pos;
+        while (pos < string.length && Unit(string, pos) != ':') {
+            ++pos;
+        }
+        unsigned length = pos - hextetStart;
+        if (!length) {
+            if (skipState == Skipped) return false;
+            if (skipState == WillSkip) skipState = Skipping;
+            else if (skipState == None) skipState = WillSkip;
+            else skipState = Final;
+            if (pos == string.length) break;
+            ++pos;
+            continue;
+        }
+        if (skipState == WillSkip) skipState = Skipped;
+        else if (skipState == Skipping) skipState = Final;
+
+        if (length > 4) return false;
+        unsigned value = 0;
+        for (unsigned i = 0; i < length; ++i) {
+            char16_t digit = Unit(string, hextetStart + i);
+            unsigned digitValue = 0;
+            if (digit >= '0' && digit <= '9') digitValue = digit - '0';
+            else if (digit >= 'a' && digit <= 'f') digitValue = digit - 'a' + 10;
+            else if (digit >= 'A' && digit <= 'F') digitValue = digit - 'A' + 10;
+            else return false;
+            value = (value << 4) | digitValue;
+        }
+        ++count;
+        if (pos == string.length) break;
+        ++pos;
+    }
+    if (skipState == WillSkip) return false;
+    if (skipState == None && count != 8) return false;
+    return true;
+}
+
 StringView ViewWithoutFragment(const URL& url) {
     auto view = View(url.impl);
     if (!(url.bits & 1)) return view;
@@ -1127,8 +1205,35 @@ StringView APS5_VABI _ZNK3WTF3URL28queryWithLeadingQuestionMarkEv(const URL* sel
     return url.queryEnd > url.pathEnd ? Slice(View(url.impl), url.pathEnd, url.queryEnd - url.pathEnd) : StringView{nullptr, 0, true};
 }
 
+bool APS5_VABI _ZN3WTF3URL15hostIsIPAddressENS_10StringViewE(StringView host) {
+    return ContainsColon(host) ? IsIPv6Address(host) : IsIPv4Address(host);
+}
+
+bool APS5_VABI _ZNK3WTF3URL10protocolIsEPKc(const URL* self, const char* protocol) {
+    if (!protocol) return false;
+    const auto& url = Checked(self);
+    if (!(url.bits & 1)) return false;
+    unsigned protocolLen = static_cast<unsigned>(std::strlen(protocol));
+    if ((url.bits >> 6) != protocolLen) return false;
+    return EqualViews(Slice(View(url.impl), 0, protocolLen), {protocol, protocolLen, true}, true);
+}
+
 bool APS5_VABI _ZNK3WTF3URL10protocolIsENS_10StringViewE(const URL* self, StringView protocol) {
     return URLProtocol(Checked(self), protocol);
+}
+
+bool APS5_VABI _ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(const URL* self, StringView domain) {
+    const auto& url = Checked(self);
+    if (!(url.bits & 1)) return false;
+    if (!domain.length) return true;
+    if (!URLProtocol(url, {"http", 4, true}) && !URLProtocol(url, {"https", 5, true})) return false;
+    unsigned start = HostStart(url);
+    unsigned hostLen = url.hostEnd - start;
+    if (hostLen < domain.length) return false;
+    auto host = Slice(View(url.impl), start, hostLen);
+    auto suffix = Slice(host, hostLen - domain.length, domain.length);
+    if (!EqualViews(suffix, domain, true)) return false;
+    return hostLen == domain.length || Unit(host, hostLen - domain.length - 1) == '.';
 }
 
 bool APS5_VABI _ZNK3WTF3URL14isHierarchicalEv(const URL* self) {

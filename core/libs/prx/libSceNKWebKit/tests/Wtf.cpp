@@ -777,6 +777,86 @@ void Run() {
     TestIntegersAndConstructors();
 }
 
+
+void TestURLDomainAndIPHelpers() {
+    auto v4Valid1 = FromUTF8Z(U8("127.0.0.1"));
+    auto v4Valid2 = FromUTF8Z(U8("0.0.0.0"));
+    auto v4Valid3 = FromUTF8Z(U8("255.255.255.255"));
+    auto v4Valid4 = FromUTF8Z(U8("192.168.1.1"));
+    auto v4Valid5 = FromUTF8Z(U8("10.0.0.1"));
+    Check(HostIsIPAddress(ViewOf(v4Valid1)));
+    Check(HostIsIPAddress(ViewOf(v4Valid2)));
+    Check(HostIsIPAddress(ViewOf(v4Valid3)));
+    Check(HostIsIPAddress(ViewOf(v4Valid4)));
+    Check(HostIsIPAddress(ViewOf(v4Valid5)));
+
+    Check(!HostIsIPAddress(Literal("256.0.0.1")));
+    Check(!HostIsIPAddress(Literal("1.2.3")));
+    Check(!HostIsIPAddress(Literal("1.2.3.4.5")));
+    Check(!HostIsIPAddress(Literal("01.1.1.1")));
+    Check(!HostIsIPAddress(Literal("1.2..3")));
+    Check(!HostIsIPAddress(Literal(".1.2.3")));
+    Check(!HostIsIPAddress(Literal("1.2.3.")));
+    Check(!HostIsIPAddress(Literal("1.2.3.a")));
+    Check(!HostIsIPAddress(Literal("example.com")));
+    Check(!HostIsIPAddress(Literal("")));
+
+    Check(HostIsIPAddress(Literal("::1")));
+    Check(HostIsIPAddress(Literal("::")));
+    Check(HostIsIPAddress(Literal("2001:db8::1")));
+    Check(HostIsIPAddress(Literal("fe80::1")));
+    Check(HostIsIPAddress(Literal("1:2:3:4:5:6:7:8")));
+    Check(HostIsIPAddress(Literal("2001:0db8:85a3:0000:0000:8a2e:0370:7334")));
+
+    Check(!HostIsIPAddress(Literal("1::2::3")));
+    Check(!HostIsIPAddress(Literal("1:2:3:4:5:6:7:8:9")));
+    Check(!HostIsIPAddress(Literal("12345::1")));
+    Check(!HostIsIPAddress(Literal("gggg::1")));
+    Check(!HostIsIPAddress(Literal(":::")));
+
+    auto v4Wide = Create16(u"192.168.1.1", 11);
+    auto v6Wide = Create16(u"::1", 3);
+    Check(HostIsIPAddress(ViewOf(v4Wide)));
+    Check(HostIsIPAddress(ViewOf(v6Wide)));
+
+    auto httpUrlStr = FromUTF8Z(U8("http://sub.example.com/path"));
+    URL httpUrl{httpUrlStr.impl, 1U | (4U << 6), 7, 7, 7, 22, 22, 27, 27};
+    Check(IsMatchingDomain(&httpUrl, Literal("sub.example.com")));
+    Check(IsMatchingDomain(&httpUrl, Literal("example.com")));
+    Check(IsMatchingDomain(&httpUrl, Literal("EXAMPLE.COM")));
+    Check(IsMatchingDomain(&httpUrl, Literal("")));
+    Check(!IsMatchingDomain(&httpUrl, Literal("other.com")));
+    Check(!IsMatchingDomain(&httpUrl, Literal("evil-example.com")));
+    Check(!IsMatchingDomain(&httpUrl, Literal("xample.com")));
+
+    auto httpsUrlStr = FromUTF8Z(U8("https://sub.example.com/path"));
+    URL httpsUrl{httpsUrlStr.impl, 1U | (5U << 6), 8, 8, 8, 23, 23, 28, 28};
+    Check(IsMatchingDomain(&httpsUrl, Literal("example.com")));
+
+    auto ftpUrlStr = FromUTF8Z(U8("ftp://sub.example.com/path"));
+    URL ftpUrl{ftpUrlStr.impl, 1U | (3U << 6), 6, 6, 6, 21, 21, 26, 26};
+    Check(!IsMatchingDomain(&ftpUrl, Literal("example.com")));
+
+    URL invalidUrl{httpUrlStr.impl, 0, 7, 7, 7, 22, 22, 27, 27};
+    Check(!IsMatchingDomain(&invalidUrl, Literal("example.com")));
+    Throws([&] { IsMatchingDomain(nullptr, Literal("example.com")); });
+
+    Check(ProtocolIs(&httpUrl, "http"));
+    Check(ProtocolIs(&httpUrl, "HTTP"));
+    Check(ProtocolIs(&httpUrl, "Http"));
+    Check(!ProtocolIs(&httpUrl, "https"));
+    Check(!ProtocolIs(&httpUrl, "ftp"));
+    Check(!ProtocolIs(&httpUrl, "htt"));
+    Check(!ProtocolIs(&httpUrl, "http_extra"));
+    Check(!ProtocolIs(&httpUrl, nullptr));
+    Check(!ProtocolIs(&invalidUrl, "http"));
+    Throws([&] { ProtocolIs(nullptr, "http"); });
+
+    Check(ProtocolIs(&httpsUrl, "https"));
+    Check(ProtocolIs(&httpsUrl, "HTTPS"));
+    Check(!ProtocolIs(&httpsUrl, "http"));
+}
+
 }  // namespace Wtf2Tests
 
 namespace Wtf2Tests { void TestURLsAndReallocation(); }
@@ -797,6 +877,9 @@ const auto URLFragment = &_ZNK3WTF3URL18fragmentIdentifierEv;
 const auto URLFragmentSign = &_ZNK3WTF3URL39fragmentIdentifierWithLeadingNumberSignEv;
 const auto URLQuery = &_ZNK3WTF3URL28queryWithLeadingQuestionMarkEv;
 const auto URLIsProtocol = &_ZNK3WTF3URL10protocolIsENS_10StringViewE;
+const auto HostIsIPAddress = &_ZN3WTF3URL15hostIsIPAddressENS_10StringViewE;
+const auto IsMatchingDomain = &_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE;
+const auto ProtocolIs = &_ZNK3WTF3URL10protocolIsEPKc;
 const auto URLHierarchical = &_ZNK3WTF3URL14isHierarchicalEv;
 const auto URLBlank = &_ZNK3WTF3URL12isAboutBlankEv;
 const auto URLSrcdoc = &_ZNK3WTF3URL13isAboutSrcDocEv;
@@ -1213,6 +1296,87 @@ void TestURLsAndReallocation() {
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
     TestURLStringHelpers();
+    TestURLDomainAndIPHelpers();
+}
+
+
+void TestURLDomainAndIPHelpers() {
+    auto v4Valid1 = FromUTF8Z(U8("127.0.0.1"));
+    auto v4Valid2 = FromUTF8Z(U8("0.0.0.0"));
+    auto v4Valid3 = FromUTF8Z(U8("255.255.255.255"));
+    auto v4Valid4 = FromUTF8Z(U8("192.168.1.1"));
+    auto v4Valid5 = FromUTF8Z(U8("10.0.0.1"));
+    Check(HostIsIPAddress(ViewOf(v4Valid1)));
+    Check(HostIsIPAddress(ViewOf(v4Valid2)));
+    Check(HostIsIPAddress(ViewOf(v4Valid3)));
+    Check(HostIsIPAddress(ViewOf(v4Valid4)));
+    Check(HostIsIPAddress(ViewOf(v4Valid5)));
+
+    Check(!HostIsIPAddress(Literal("256.0.0.1")));
+    Check(!HostIsIPAddress(Literal("1.2.3")));
+    Check(!HostIsIPAddress(Literal("1.2.3.4.5")));
+    Check(!HostIsIPAddress(Literal("01.1.1.1")));
+    Check(!HostIsIPAddress(Literal("1.2..3")));
+    Check(!HostIsIPAddress(Literal(".1.2.3")));
+    Check(!HostIsIPAddress(Literal("1.2.3.")));
+    Check(!HostIsIPAddress(Literal("1.2.3.a")));
+    Check(!HostIsIPAddress(Literal("example.com")));
+    Check(!HostIsIPAddress(Literal("")));
+
+    Check(HostIsIPAddress(Literal("::1")));
+    Check(HostIsIPAddress(Literal("::")));
+    Check(HostIsIPAddress(Literal("2001:db8::1")));
+    Check(HostIsIPAddress(Literal("fe80::1")));
+    Check(HostIsIPAddress(Literal("1:2:3:4:5:6:7:8")));
+    Check(HostIsIPAddress(Literal("2001:0db8:85a3:0000:0000:8a2e:0370:7334")));
+
+    Check(!HostIsIPAddress(Literal("1::2::3")));
+    Check(!HostIsIPAddress(Literal("1:2:3:4:5:6:7:8:9")));
+    Check(!HostIsIPAddress(Literal("12345::1")));
+    Check(!HostIsIPAddress(Literal("gggg::1")));
+    Check(!HostIsIPAddress(Literal(":::")));
+
+    auto v4Wide = Create16(u"192.168.1.1", 11);
+    auto v6Wide = Create16(u"::1", 3);
+    Check(HostIsIPAddress(ViewOf(v4Wide)));
+    Check(HostIsIPAddress(ViewOf(v6Wide)));
+
+    auto httpUrlStr = FromUTF8Z(U8("http://sub.example.com/path"));
+    URL httpUrl{httpUrlStr.impl, 1U | (4U << 6), 7, 7, 7, 22, 22, 27, 27};
+    Check(IsMatchingDomain(&httpUrl, Literal("sub.example.com")));
+    Check(IsMatchingDomain(&httpUrl, Literal("example.com")));
+    Check(IsMatchingDomain(&httpUrl, Literal("EXAMPLE.COM")));
+    Check(IsMatchingDomain(&httpUrl, Literal("")));
+    Check(!IsMatchingDomain(&httpUrl, Literal("other.com")));
+    Check(!IsMatchingDomain(&httpUrl, Literal("evil-example.com")));
+    Check(!IsMatchingDomain(&httpUrl, Literal("xample.com")));
+
+    auto httpsUrlStr = FromUTF8Z(U8("https://sub.example.com/path"));
+    URL httpsUrl{httpsUrlStr.impl, 1U | (5U << 6), 8, 8, 8, 23, 23, 28, 28};
+    Check(IsMatchingDomain(&httpsUrl, Literal("example.com")));
+
+    auto ftpUrlStr = FromUTF8Z(U8("ftp://sub.example.com/path"));
+    URL ftpUrl{ftpUrlStr.impl, 1U | (3U << 6), 6, 6, 6, 21, 21, 26, 26};
+    Check(!IsMatchingDomain(&ftpUrl, Literal("example.com")));
+
+    URL invalidUrl{httpUrlStr.impl, 0, 7, 7, 7, 22, 22, 27, 27};
+    Check(!IsMatchingDomain(&invalidUrl, Literal("example.com")));
+    Throws([&] { IsMatchingDomain(nullptr, Literal("example.com")); });
+
+    Check(ProtocolIs(&httpUrl, "http"));
+    Check(ProtocolIs(&httpUrl, "HTTP"));
+    Check(ProtocolIs(&httpUrl, "Http"));
+    Check(!ProtocolIs(&httpUrl, "https"));
+    Check(!ProtocolIs(&httpUrl, "ftp"));
+    Check(!ProtocolIs(&httpUrl, "htt"));
+    Check(!ProtocolIs(&httpUrl, "http_extra"));
+    Check(!ProtocolIs(&httpUrl, nullptr));
+    Check(!ProtocolIs(&invalidUrl, "http"));
+    Throws([&] { ProtocolIs(nullptr, "http"); });
+
+    Check(ProtocolIs(&httpsUrl, "https"));
+    Check(ProtocolIs(&httpsUrl, "HTTPS"));
+    Check(!ProtocolIs(&httpsUrl, "http"));
 }
 
 }  // namespace Wtf2Tests

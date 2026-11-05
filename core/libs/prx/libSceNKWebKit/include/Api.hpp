@@ -29,7 +29,6 @@ int APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv();
 int APS5_VABI _ZN3JSC30int52AwareSpeculationFromValueENS_7JSValueE();
 int APS5_VABI _ZN9Inspector18InjectedScriptHost7subtypeEPN3JSC14JSGlobalObjectENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_();
-int APS5_VABI _ZNK3WTF3URL10protocolIsEPKc();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControllerEPNS_4PageESt10unique_ptrINS0_8SettingsESt14default_deleteIS6_EE();
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD1Ev();

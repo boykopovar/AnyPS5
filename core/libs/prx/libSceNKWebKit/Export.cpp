@@ -12142,9 +12142,6 @@ int APS5_VABI _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF3URL10protocolIsEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControllerEPNS_4PageESt10unique_ptrINS0_8SettingsESt14default_deleteIS6_EE() {
     NotImplemented_nid_no_patch(__func__);
@@ -19522,9 +19519,6 @@ int APS5_VABI _ZN3WTF3URL14setHostAndPortENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URL15hostIsIPAddressENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN3WTF3URL17removeCredentialsEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -36322,9 +36316,6 @@ int APS5_VABI _ZNK3WTF3URL14fileSystemPathEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF3URL16isMatchingDomainENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK3WTF3URL17lastPathComponentEv() {
     NotImplemented_nid_no_patch(__func__);
