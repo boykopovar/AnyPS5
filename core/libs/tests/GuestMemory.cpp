@@ -3885,6 +3885,8 @@ static void CheckSceKernelMmap() {
     Require(sceKernelMmap(probe, page, 3, 0x1012, -1, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     VirtualQueryInfo gone{};
     Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
+    Require(sceKernelMmap(probe, page, 3, 0x1012, -1, 0, reinterpret_cast<void**>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
 }
 
 static void CheckVirtualQueryPartialMunmap() {
