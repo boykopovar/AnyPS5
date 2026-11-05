@@ -22,15 +22,21 @@ constexpr std::int32_t ERROR_INVALID_PARAM = static_cast<std::int32_t>(0x8196000
 constexpr std::int32_t ERROR_NOT_SUPPORTED = static_cast<std::int32_t>(0x81960007);
 constexpr std::int32_t REQUEST_ID_INVALID = -1;
 
+bool WriteRequestIdInvalid(std::int32_t* requestId) {
+    const std::int32_t invalid = REQUEST_ID_INVALID;
+    const auto savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &invalid, sizeof(invalid));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
 
 int APS5_VABI sceShareCaptureScreenshot(const void* param, int32_t* req_id) {
     (void)param;
-    if (req_id != nullptr) {
-        *req_id = REQUEST_ID_INVALID;
-    }
+    if (req_id != nullptr && !WriteRequestIdInvalid(req_id)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
 }
 
