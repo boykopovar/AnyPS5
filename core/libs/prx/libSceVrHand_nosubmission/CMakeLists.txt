@@ -1,0 +1,16 @@
+add_library(libSceVrHand_nosubmission SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVrHand_nosubmission PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVrHand_nosubmission)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_vrhand_nosub_catalog_tests ${LIBS_INCLUDE_DIR}/tests/GuestVrHandNosubCatalog.cpp)
+    target_include_directories(guest_vrhand_nosub_catalog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_vrhand_nosub_catalog_tests PRIVATE libSceVrHand_nosubmission libkernel libc)
+    configure_windows_unwind(guest_vrhand_nosub_catalog_tests)
+    add_test(NAME guest_vrhand_nosub_catalog COMMAND guest_vrhand_nosub_catalog_tests)
+    set_tests_properties(guest_vrhand_nosub_catalog PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_vrhand_nosub_catalog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrHand_nosubmission>")
+    endif()
+endif()
