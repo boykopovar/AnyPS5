@@ -18594,10 +18594,6 @@ int APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF11setDataFileEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
