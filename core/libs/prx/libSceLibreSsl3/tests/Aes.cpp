@@ -111,6 +111,12 @@ void TestIntegrityFailure() {
         corrupted[index] ^= 0x01;
         RequireRejected(key, nullptr, corrupted);
     }
+    for (std::size_t index = 0; index < sizeof(DefaultIv); ++index) {
+        unsigned char iv[sizeof(DefaultIv)];
+        std::memcpy(iv, DefaultIv, sizeof(iv));
+        iv[index] ^= 0x01;
+        RequireRejected(key, iv, Rfc41);
+    }
     AesKey wrongKey = DecryptKey(Sequence(24));
     RequireRejected(wrongKey, nullptr, Rfc41);
 }

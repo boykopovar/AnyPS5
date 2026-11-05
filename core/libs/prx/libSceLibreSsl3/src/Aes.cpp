@@ -73,8 +73,9 @@ int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, u
     std::memcpy(block, in, 8);
     std::memmove(out, in + 8, length);
     for (unsigned int round = 0; round < 6; ++round) {
-        unsigned char* chunk = out + length - 8;
-        for (unsigned int offset = 0; offset < length; offset += 8, --step, chunk -= 8) {
+        unsigned char* chunk = out + length;
+        for (unsigned int offset = 0; offset < length; offset += 8, --step) {
+            chunk -= 8;
             block[7] ^= static_cast<unsigned char>(step & 0xff);
             if (step > 0xff) {
                 block[6] ^= static_cast<unsigned char>((step >> 8) & 0xff);
@@ -88,7 +89,7 @@ int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, u
     }
     if (!iv)
         iv = DefaultIv;
-    if (std::memcmp(block, iv, 8)) {
+    if (CRYPTO_memcmp_nid_postfix(block, iv, 8)) {
         volatile unsigned char* cleared = out;
         for (unsigned int index = 0; index < length; ++index) cleared[index] = 0;
         return 0;
