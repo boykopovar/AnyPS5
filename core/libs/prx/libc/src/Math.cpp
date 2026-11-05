@@ -2240,7 +2240,44 @@ double APS5_VABI sinh_nid_postfix(double x) {
     errno = ERANGE;
     return x * shuge;
 }
-double APS5_VABI cosh_nid_postfix(double x) { return std::cosh(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_cosh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_cosh.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+double APS5_VABI cosh_nid_postfix(double x) {
+    static volatile double huge = 1.0e+300;
+    const std::uint32_t ix = static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(x) >> 32) & 0x7fffffffu;
+    if (ix >= 0x7ff00000u) return x * x;
+    const double absolute = std::fabs(x);
+    if (ix < 0x3fd62e43u) {
+        const double t = expm1_nid_postfix(absolute);
+        const double w = 1.0 + t;
+        if (ix < 0x3c800000u) return w;
+        return 1.0 + (t * t) / (w + w);
+    }
+    if (ix < 0x40360000u) {
+        const double t = exp_nid_postfix(absolute);
+        return 0.5 * t + 0.5 / t;
+    }
+    if (ix < 0x40862e42u) return 0.5 * exp_nid_postfix(absolute);
+    double result;
+    const std::uint32_t lx = static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(x));
+    if (ix < 0x408633ceu || (ix == 0x408633ceu && lx <= 0x8fb9f87du)) {
+        const double w = exp_nid_postfix(0.5 * absolute);
+        result = 0.5 * w * w;
+    } else {
+        result = huge * huge;
+    }
+    if (std::isinf(result)) errno = ERANGE;
+    return result;
+}
 float APS5_VABI coshf_nid_postfix(float x) {
     const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
     if (magnitude >= 0x7f800000u) return x * x;
