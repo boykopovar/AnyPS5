@@ -8,6 +8,7 @@
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Outline.hpp"
+#include "prx/libSceFreeTypeOt/include/OutlineTransform.hpp"
 #include "prx/libSceFreeTypeOt/include/Polar.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
 #include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
