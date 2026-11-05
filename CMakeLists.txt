@@ -671,6 +671,9 @@ if(BUILD_TESTING)
             endfunction()
             cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
         endif()
+        add_test(NAME daily_tag_workflow COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_daily_tag.py)
+        set_tests_properties(daily_tag_workflow PROPERTIES TIMEOUT 20)
     endif()
 endif()
 
