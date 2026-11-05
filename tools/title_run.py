@@ -506,7 +506,107 @@ def linked_path(path):
                                  path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
+class PathChecks:
+    def __init__(self):
+        self.identities = {}
+        self.ancestors = {}
+        self.directories = {}
+
+    def identity(self, path):
+        if path not in self.identities:
+            try:
+                info = path.stat()
+            except (FileNotFoundError, NotADirectoryError):
+                self.identities[path] = None
+            else:
+                self.identities[path] = (info.st_dev, info.st_ino)
+        return self.identities[path]
+
+    def directory(self, path):
+        if path not in self.directories:
+            try:
+                if sys.platform == "linux":
+                    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                    try:
+                        info = os.fstat(descriptor)
+                        try:
+                            fields = Path(f"/proc/self/fdinfo/{descriptor}").read_text(encoding="ascii").splitlines()
+                        except (OSError, UnicodeError) as error:
+                            raise ValueError(f"cannot determine mount ID for {path}; readable /proc/self/fdinfo is required") from error
+                        mounts = [line.split()[1:] for line in fields if line.startswith("mnt_id:")]
+                        if len(mounts) != 1 or len(mounts[0]) != 1 or not mounts[0][0].isdigit():
+                            raise ValueError(f"cannot determine mount ID for {path}; readable /proc/self/fdinfo is required")
+                        mount = int(mounts[0][0])
+                    finally:
+                        os.close(descriptor)
+                else:
+                    info = path.stat()
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise NotADirectoryError(str(path))
+                    mount = None
+            except (FileNotFoundError, NotADirectoryError):
+                if path.is_dir():
+                    raise ValueError(f"cannot inspect directory {path}; readable /proc/self/fdinfo is required")
+                self.directories[path] = None
+            else:
+                identity = (info.st_dev, info.st_ino)
+                self.identities[path] = identity
+                self.directories[path] = (identity, mount)
+        return self.directories[path]
+
+    def contains(self, directory, path):
+        if path.is_relative_to(directory):
+            return True
+        identity = self.identity(directory)
+        if identity is None:
+            return False
+        if path not in self.ancestors:
+            self.ancestors[path] = {self.identity(parent) for parent in (path, *path.parents)}
+        return identity in self.ancestors[path]
+
+    def same(self, first, second):
+        identity = self.identity(first)
+        return first == second or (identity is not None and identity == self.identity(second))
+
+
+def check_work_directories(work, output, protected, checks):
+    previous = checks.directory(output)
+    for path in (work.parent, work):
+        current = checks.directory(path)
+        if current is not None and previous is not None and (
+                current[0][0] != previous[0][0] or current[1] != previous[1] or os.path.ismount(path)):
+            raise ValueError(f"work directory {work} crosses a mount boundary at {path}")
+        if current is not None:
+            previous = current
+    root = checks.directory(work)
+    if root is None:
+        return
+    pending = [work]
+    visited = {}
+    while pending:
+        path = pending.pop()
+        directory = checks.directory(path)
+        if directory is None:
+            continue
+        identity, mount = directory
+        if identity[0] != root[0][0] or mount != root[1] or (path != work and os.path.ismount(path)):
+            raise ValueError(f"work directory {work} crosses a mount boundary at {path}")
+        if identity in protected:
+            raise ValueError(f"work directory {work} overlaps an input directory at {path}")
+        if directory in visited:
+            if mount is None and comparison_path(path) != comparison_path(visited[directory]):
+                raise ValueError(f"ambiguous directory aliases in work directory {work}: {path}")
+            continue
+        visited[directory] = path
+        with os.scandir(path) as entries:
+            for entry in entries:
+                child = path / entry.name
+                if not linked_path(child) and entry.is_dir(follow_symlinks=False):
+                    pending.append(child)
+
+
 def validate_layout(args, found, ids, titles, source, platform):
+    checks = PathChecks()
     package_trees = [title["package"] for title in found.values()]
     trees = list(package_trees)
     files = [args.titles, args.build / "CMakeCache.txt"]
@@ -523,12 +623,32 @@ def validate_layout(args, found, ids, titles, source, platform):
         files.extend((package / "sce_module").glob("*.prx"))
         files.extend(package / executable for executable in titles.get(title_id, {}).get("executables", []))
     build_trees = [args.build / "core/relinker", args.build / "core/libs/libs"]
-    for tree in [*trees, *build_trees]:
-        for path in tree.rglob("*"):
-            if linked_path(path):
-                (trees if path.is_dir() else files).append(path)
-                if tree in package_trees and path.is_dir():
-                    package_trees.append(path)
+    pending = [(tree, True) for tree in trees] + [(tree, False) for tree in build_trees]
+    visited = {}
+    protected_directories = set()
+    while pending:
+        tree, package = pending.pop()
+        directory = checks.directory(tree)
+        if directory is None:
+            continue
+        identity, mount = directory
+        key = (directory, package)
+        if key in visited:
+            if mount is None and comparison_path(tree) != comparison_path(visited[key]):
+                raise ValueError(f"ambiguous input directory aliases: {tree}")
+            continue
+        visited[key] = tree
+        protected_directories.add(identity)
+        with os.scandir(tree) as entries:
+            for entry in entries:
+                path = tree / entry.name
+                directory = entry.is_dir()
+                if linked_path(path):
+                    (trees if directory else files).append(path)
+                    if package and directory:
+                        package_trees.append(path)
+                if directory:
+                    pending.append((path, package))
     trees.extend(build_trees)
     if platform == "windows":
         try:
@@ -540,10 +660,14 @@ def validate_layout(args, found, ids, titles, source, platform):
     directory_inputs = [(path, path_locations(path)) for path in trees]
     file_inputs = [(path, path_locations(path)) for path in files]
     containing_inputs = [(path, path_locations(path)) for path in (args.build, source, ROOT)]
+    for path in (args.build, source, ROOT, *(parent for path in files for parent in path.parents)):
+        identity = checks.identity(path)
+        if identity is not None:
+            protected_directories.add(identity)
     output = path_locations(args.out)
     for path in package_trees:
         locations = path_locations(path)
-        if any(destination.is_relative_to(origin) for destination in output for origin in locations):
+        if any(checks.contains(origin, destination) for destination in output for origin in locations):
             raise ValueError(f"output directory {args.out} overlaps input {path}")
     for title_id in ids:
         work = args.out / "work" / title_id
@@ -551,19 +675,20 @@ def validate_layout(args, found, ids, titles, source, platform):
         if linked_path(work) or linked_path(lock):
             raise ValueError(f"unsafe linked work or lock path: {work}")
         locations = path_locations(work)
-        if any(origin.is_relative_to(destination) for destination in locations for origin in output):
+        if any(checks.contains(destination, origin) for destination in locations for origin in output):
             raise ValueError(f"work directory {work} overlaps output directory {args.out}")
         for path, origins in directory_inputs:
-            if any(destination.is_relative_to(origin) or origin.is_relative_to(destination)
+            if any(checks.contains(origin, destination) or checks.contains(destination, origin)
                    for destination in locations for origin in origins):
                 raise ValueError(f"work directory {work} overlaps input {path}")
         for path, origins in [*file_inputs, *containing_inputs]:
-            if any(origin.is_relative_to(destination) for destination in locations for origin in origins):
+            if any(checks.contains(destination, origin) for destination in locations for origin in origins):
                 raise ValueError(f"work directory {work} overlaps input {path}")
         lock_locations = path_locations(lock)
         for path, origins in [*directory_inputs, *file_inputs, *containing_inputs]:
-            if lock_locations & origins:
+            if any(checks.same(destination, origin) for destination in lock_locations for origin in origins):
                 raise ValueError(f"lock file {lock} overlaps input {path}")
+        check_work_directories(work, args.out, protected_directories, checks)
 
 
 def reset_work(work):
