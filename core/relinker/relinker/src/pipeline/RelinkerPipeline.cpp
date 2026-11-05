@@ -87,6 +87,8 @@ RelinkResult RelinkerPipeline::Relink() {
     ByteCount gotSize = 0;
 
     for (const auto& ph : programHeaders) {
+        if (ph.Type == PT_LOAD && (ph.Flags & ~7u) != 0)
+            throw RelinkerException("Unsupported PT_LOAD permission flags", ph.Offset);
         if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
             auto segment = elfReader->ReadSegment(ph);
             if (!segment.empty()) {
@@ -125,6 +127,15 @@ RelinkResult RelinkerPipeline::Relink() {
 
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
+
+    bool hasEhFrameSegment = false;
+    for (const auto& ph : programHeaders) {
+        if (ph.Type != PT_GNU_EH_FRAME)
+            continue;
+        if (hasEhFrameSegment)
+            throw RelinkerException("Multiple PT_GNU_EH_FRAME segments", ph.Offset);
+        hasEhFrameSegment = true;
+    }
 
     auto hasTag = [&](const std::int64_t tag) {
         for (const auto& t : dynTags)
@@ -347,9 +358,12 @@ RelinkResult RelinkerPipeline::Relink() {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
         std::uint16_t section = 0;
         std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
+        const auto type = raw[symOff + 4] & 15;
+        if (section == SHN_UNDEF && type != STT_TLS)
+            throw RelinkerException("TLS relocation names an undefined symbol that is not STT_TLS", pos);
         if (section == SHN_UNDEF)
             return std::nullopt;
-        if ((raw[symOff + 4] & 15) != STT_TLS)
+        if (type != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
         if (section >= SHN_LORESERVE)
             throw RelinkerException("Unsupported executable TLS symbol section", pos);
@@ -526,7 +540,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
     }

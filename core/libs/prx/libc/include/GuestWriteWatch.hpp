@@ -13,6 +13,7 @@ void GuestWriteWatchRegister_nid_postfix(const void* pointer, std::size_t bytes)
 bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t bytes);
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes);
 bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes);
+bool GuestWriteWatchHandleFault_nid_postfix(std::uintptr_t address);
 bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
 void GuestWriteWatchBeginHostWrite_nid_postfix(const void* pointer, std::size_t bytes);
 void GuestWriteWatchEndHostWrite_nid_postfix(const void* pointer, std::size_t bytes);
@@ -21,6 +22,9 @@ int GuestWriteWatchProtect_nid_postfix(void* pointer, std::size_t bytes, int pro
 int GuestWriteWatchProtection_nid_postfix(std::uintptr_t address, std::uintptr_t limit, std::uintptr_t* runEnd);
 bool GuestWriteWatchCollectArmed_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
 bool GuestWriteWatchCollectFresh_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context);
+bool GuestWriteWatchSetReadTrapResolver_nid_postfix(void (*resolve)(std::uintptr_t begin, std::uintptr_t end));
+bool GuestWriteWatchTrapReads_nid_postfix(std::uintptr_t address, std::size_t bytes);
+void GuestWriteWatchReleaseReads_nid_postfix(std::uintptr_t address, std::size_t bytes);
 
 }
 

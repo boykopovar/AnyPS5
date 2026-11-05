@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <array>
 #include <iterator>
 #include <algorithm>
@@ -126,11 +127,11 @@ static int APS5_VABI ScanShortCharacterList(FileStream* stream, const char* form
     return result;
 }
 
-static void CheckShortCharacterScanLocking() {
+static void CheckShortCharacterScanLocking(bool secure, int (APS5_VABI* scanner)(FileStream*, const char*, ...)) {
     constexpr std::size_t bytes = 1u << 20;
     using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
-    for (const Scanner scan : {fscanf_s_nid_postfix, ScanShortCharacterList}) {
-        auto* native = std::tmpfile();
+    for (const Scanner scan : {scanner}) {
+        auto* native = TemporaryFile::Open();
         Require(native != nullptr);
         const std::vector<char> input(bytes, 'a');
         Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
@@ -144,7 +145,7 @@ static void CheckShortCharacterScanLocking() {
         std::thread reader([&] {
             start.arrive_and_wait();
             try {
-                result = scan(&stream, "%1048576c%n", output.data(), output.size(), &consumed);
+                result = secure ? scan(&stream, "%1048576c%n", output.data(), output.size(), &consumed) : scan(&stream, "%1048576c%n", output.data(), &consumed);
             } catch (...) {
                 failure = std::current_exception();
             }
@@ -172,14 +173,15 @@ static void CheckShortCharacterScanLocking() {
 }
 
 static void CheckShortCharacterScans() {
-    CheckShortCharacterScanLocking();
+    CheckShortCharacterScanLocking(true, fscanf_s_nid_postfix);
+    CheckShortCharacterScanLocking(true, ScanShortCharacterList);
     using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
     for (const Scanner scan : {fscanf_s_nid_postfix, ScanShortCharacterList}) {
         for (const std::string input : {std::string(), std::string("a"), std::string("ab"), std::string("a\0b", 3), std::string("a b")}) {
             for (const unsigned width : {1u, 2u, 8u}) {
                 const auto taken = std::min<std::size_t>(input.size(), width);
                 for (const bool suppress : {false, true}) {
-                    auto* native = std::tmpfile();
+                    auto* native = TemporaryFile::Open();
                     Require(native != nullptr && std::fwrite(input.data(), 1, input.size(), native) == input.size());
                     std::rewind(native);
                     FileStream stream(native);
@@ -225,7 +227,7 @@ static void CheckScanInputFailureErrno(const std::string& path) {
         for (const int seed : {0, 22, 97}) {
             for (const char* input : {"", " "}) {
                 for (const char* format : {"%d", "%*d"}) {
-                    auto* native = std::tmpfile();
+                    auto* native = TemporaryFile::Open();
                     Require(native != nullptr);
                     Require(std::fwrite(input, 1, std::strlen(input), native) == std::strlen(input));
                     std::rewind(native);
@@ -240,7 +242,7 @@ static void CheckScanInputFailureErrno(const std::string& path) {
             }
         }
 #if defined(__GLIBC__)
-        auto* errorNative = std::tmpfile();
+        auto* errorNative = TemporaryFile::Open();
         Require(errorNative != nullptr);
         const int writeOnly = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
         Require(writeOnly >= 0);
@@ -253,7 +255,7 @@ static void CheckScanInputFailureErrno(const std::string& path) {
         Require(unchanged == 123 && ferror_nid_postfix(&readError) != 0, "Stream scan did not keep its read error indicator");
         Require(std::fclose(errorNative) == 0 && std::remove(path.c_str()) == 0);
 #endif
-        auto* native = std::tmpfile();
+        auto* native = TemporaryFile::Open();
         Require(native != nullptr && std::fputs("1e99999", native) >= 0);
         std::rewind(native);
         FileStream stream(native);
@@ -275,6 +277,12 @@ static std::string ReadWhole(const std::string& path) {
     return std::string(buffer.data(), size);
 }
 
+#if defined(__clang__) && !defined(_WIN32)
+#define __builtin_sysv_va_list va_list
+#define __builtin_sysv_va_start va_start
+#define __builtin_sysv_va_end va_end
+#endif
+
 static int APS5_VABI ScanSafeList(FileStream* stream, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -292,7 +300,7 @@ static void CheckCharacterScanLengths() {
 #endif
         for (const char* length : {"hh", "h", "ll", "j", "z", "t", "L"}) {
             for (const char* conversion : {"s", "c", "[a-z]"}) {
-                auto* native = std::tmpfile();
+                auto* native = TemporaryFile::Open();
                 Require(native != nullptr && std::fputs("ab", native) >= 0);
                 std::rewind(native);
                 FileStream stream(native);
@@ -393,6 +401,35 @@ static void CheckWriteAfterRead(const std::string& path, const char* mode, const
     Require(ReadWhole(path) == expected, "Write after read wrote other bytes");
 }
 
+static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
+    for (const char* mode : {"wb", "ab"}) {
+        auto* stream = fopen_nid_postfix(path.c_str(), mode);
+        Require(stream != nullptr && fwrite_nid_postfix("abc", 1, 3, stream) == 3, "fwrite on a write-only stream");
+        const auto failed = [stream](bool result, const char* message) {
+            Require(result && errno == EBADF && ferror_nid_postfix(stream) != 0, message);
+            clearerr_nid_postfix(stream);
+            errno = 0;
+        };
+        std::array<char, 4> buffer{};
+        errno = 0;
+        failed(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == 0, "fread on a write-only stream");
+        failed(fgetc_nid_postfix(stream) == EOF, "fgetc on a write-only stream");
+        failed(getc_unlocked_nid_postfix(stream) == EOF, "getc_unlocked on a write-only stream");
+        failed(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), stream) == nullptr, "fgets on a write-only stream");
+        int value = 0;
+        Require(fscanf_nid_postfix(stream, "%d", &value) == EOF, "fscanf on a write-only stream");
+#ifdef _WIN32
+        Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "fscanf on a write-only stream left errno or the error indicator unset");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(ungetc_nid_postfix('q', stream) == EOF && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetc on a write-only stream");
+#endif
+        Require(fclose_nid_postfix(stream) == 0, "fclose after reads on a write-only stream");
+        Require(ReadWhole(path) == "abc", "Reads on a write-only stream changed the file");
+        Require(std::remove(path.c_str()) == 0);
+    }
+}
+
 static void CheckStreamWritesAfterReads(const std::string& base) {
     CheckCharacterScanLengths();
     const std::string path = base + ".written";
@@ -448,6 +485,7 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
         errno = 0;
         Require(fprintf_nid_postfix(stream, "%s", "XY") == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fprintf after fgetc on a read-only stream");
     });
+    CheckReadsOnWriteOnlyStreams(base + ".write-only");
     Require(std::remove(path.c_str()) == 0);
 }
 
@@ -474,10 +512,127 @@ static void CheckZeroSizedTransfers(const std::string& base) {
     Require(fclose_nid_postfix(stream) == 0 && std::remove(path.c_str()) == 0, "Removing the zero-sized transfer file");
 }
 
+static void CheckOrdinaryCharacterScans() {
+#ifndef _WIN32
+    CheckShortCharacterScanLocking(false, fscanf_nid_postfix);
+    CheckShortCharacterScanLocking(false, ScanList);
+    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
+    for (const Scanner scan : {fscanf_nid_postfix, ScanList}) {
+        for (const std::string input : {std::string(), std::string("a"), std::string("ab"), std::string("a\0b", 3), std::string("a b")}) {
+            for (const unsigned width : {1u, 2u, 8u}) {
+                const auto taken = std::min<std::size_t>(input.size(), width);
+                for (const bool suppress : {false, true}) {
+                    auto* native = TemporaryFile::Open();
+                    Require(native != nullptr && std::fwrite(input.data(), 1, input.size(), native) == input.size());
+                    std::rewind(native);
+                    FileStream stream(native);
+                    std::array<char, 32> output;
+                    output.fill('Z');
+                    int consumed = -1;
+                    const std::string format = std::string("%") + (suppress ? "*" : "") + std::to_string(width) + "c%n";
+                    const int result = suppress ? scan(&stream, format.c_str(), &consumed) : scan(&stream, format.c_str(), output.data(), &consumed);
+                    Require(result == (taken == 0 ? EOF : (suppress ? 0 : 1)) && consumed == (taken == 0 ? -1 : static_cast<int>(taken)), "Ordinary short character scan result or consumption");
+                    const auto written = suppress ? 0 : taken;
+                    Require(std::memcmp(output.data(), input.data(), written) == 0);
+                    for (std::size_t i = written; i < output.size(); ++i) Require(output[i] == 'Z');
+                    Require(ftell_nid_postfix(&stream) == static_cast<long>(taken));
+                    Require((feof_nid_postfix(&stream) != 0) == (input.size() < width));
+                    Require(ferror_nid_postfix(&stream) == 0);
+                    Require(std::fclose(native) == 0);
+                }
+            }
+        }
+    }
+    for (const Scanner scan : {fscanf_nid_postfix, ScanList}) {
+        for (const char* format : {"%qd %c%n", "%qi %c%n", "%qu %c%n", "%qo %c%n", "%qx %c%n", "%qX %c%n"}) {
+            auto* native = std::tmpfile();
+            Require(native != nullptr && std::fputs("12345670123 z!", native) >= 0);
+            std::rewind(native);
+            FileStream stream(native);
+            std::uint64_t value = 0;
+            char output = 'Z';
+            int count = -77;
+            const std::uint64_t expected = format[2] == 'o' ? 012345670123ull : (format[2] == 'x' || format[2] == 'X' ? 0x12345670123ull : 12345670123ull);
+            Require(scan(&stream, format, &value, &output, &count) == 2 && value == expected && output == 'z' && count == 13, "Ordinary stream scan lost the host quad length");
+            Require(ftell_nid_postfix(&stream) == 13 && fgetc_nid_postfix(&stream) == '!' && ferror_nid_postfix(&stream) == 0);
+            Require(std::fclose(native) == 0);
+        }
+    }
+    const struct { const char* width; int taken; } boundaries[] = {
+        {"2147483647", 3}, {"2147483648", 1}, {"2147483649", 1}, {"4294967295", 1}, {"4294967296", 1}, {"4294967297", 1}, {"4294967298", 2},
+        {"9223372036854775807", 1}, {"9223372036854775808", 1}, {"18446744073709551615", 1}, {"18446744073709551616", 1}, {"99999999999999999999999999999999", 1}
+    };
+    for (const Scanner scan : {fscanf_nid_postfix, ScanList}) {
+        for (const auto& boundary : boundaries) {
+            for (const bool suppress : {false, true}) {
+                auto* native = std::tmpfile();
+                Require(native != nullptr && std::fputs("abc", native) >= 0);
+                std::rewind(native);
+                FileStream stream(native);
+                std::array<char, 4> output{'Z', 'Z', 'Z', 'Z'};
+                int count = -1;
+                const std::string format = std::string("%") + (suppress ? "*" : "") + boundary.width + "c%n";
+                const int result = suppress ? scan(&stream, format.c_str(), &count) : scan(&stream, format.c_str(), output.data(), &count);
+                Require(result == (suppress ? 0 : 1) && count == boundary.taken, "Ordinary stream character width changed at its signed boundary");
+                const auto written = suppress ? 0 : boundary.taken;
+                Require(std::memcmp(output.data(), "abc", written) == 0);
+                for (std::size_t i = written; i < output.size(); ++i) Require(output[i] == 'Z');
+                Require(ftell_nid_postfix(&stream) == boundary.taken && ferror_nid_postfix(&stream) == 0);
+                if (boundary.taken < 3) Require(fgetc_nid_postfix(&stream) == "abc"[boundary.taken]);
+                Require(std::fclose(native) == 0);
+            }
+        }
+    }
+    const int savedError = errno;
+    for (const Scanner scan : {fscanf_nid_postfix, ScanList, fscanf_s_nid_postfix, ScanShortCharacterList}) {
+        const bool secure = scan == fscanf_s_nid_postfix || scan == ScanShortCharacterList;
+        for (const char* input : {"", " ", "+", "-", ".", "+.", "0x", "infi"}) {
+            auto* native = std::tmpfile();
+            Require(native != nullptr && std::fwrite(input, 1, std::strlen(input), native) == std::strlen(input));
+            std::rewind(native);
+            FileStream stream(native);
+            float value = 42.0f;
+            std::array<char, 4> output{'Z', 'Z', 'Z', 'Z'};
+            int count = -77;
+            errno = 97;
+            const int result = secure ? scan(&stream, "%64f %1c%n", &value, output.data(), 4u, &count) : scan(&stream, "%64f %1c%n", &value, output.data(), &count);
+            const int expected = *input == '\0' || std::strcmp(input, " ") == 0 ? EOF : 0;
+            Require(result == expected && value == 42.0f && count == -77 && output[0] == 'Z', "Stream scan changed a matching failure to input failure");
+            Require(errno == 97 && ferror_nid_postfix(&stream) == 0);
+            Require(std::fclose(native) == 0);
+        }
+        for (const char* input : {"0x.", "nan("}) {
+            auto* reference = std::tmpfile();
+            Require(reference != nullptr && std::fwrite(input, 1, std::strlen(input), reference) == std::strlen(input));
+            std::rewind(reference);
+            float hostValue = 42.0f;
+            char hostOutput = 'Z';
+            int hostCount = -77;
+            const int hostResult = std::fscanf(reference, "%64f %1c%n", &hostValue, &hostOutput, &hostCount);
+            Require(std::fclose(reference) == 0);
+            auto* native = std::tmpfile();
+            Require(native != nullptr && std::fwrite(input, 1, std::strlen(input), native) == std::strlen(input));
+            std::rewind(native);
+            FileStream stream(native);
+            float value = 42.0f;
+            std::array<char, 4> output{'Z', 'Z', 'Z', 'Z'};
+            int count = -77;
+            const int result = secure ? scan(&stream, "%64f %1c%n", &value, output.data(), 4u, &count) : scan(&stream, "%64f %1c%n", &value, output.data(), &count);
+            Require(result == hostResult, "Stream scan of a host-dependent float field differs from the host libc");
+            if (hostResult == 0) Require(value == 42.0f && count == -77 && output[0] == 'Z', "Stream scan changed a matching failure to input failure");
+            Require(std::fclose(native) == 0);
+        }
+    }
+    errno = savedError;
+
+#endif
+}
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
     CheckShortCharacterScans();
+    CheckOrdinaryCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
@@ -513,7 +668,7 @@ int main(int argc, char** argv) {
     Require(fclose_nid_postfix(stream) == 0);
     ExpectException([] { fputs_nid_postfix("invalid stream", nullptr); });
     ExpectException([] { fopen_nid_postfix(nullptr, "r"); });
-    FileStream closed(std::tmpfile());
+    FileStream closed(TemporaryFile::Open());
     closed.Close();
     Require(fflush_nid_postfix(&closed) == -1 && errno == 9);
     Require(std::remove(argv[1]) == 0);

@@ -1,5 +1,15 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+
+#include <atomic>
+#include <cstdint>
+
+namespace {
+
+std::atomic<std::uint8_t> g_flag1WXQlxMpnNA{0};
+
+}
 
 extern "C" {
 
@@ -187,8 +197,8 @@ int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _dup2_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _dup2_nid_postfix(int from, int to) {
+    return dup2_nid_postfix(from, to);
 }
 
 int APS5_VABI _execve_nid_postfix() {
@@ -213,8 +223,9 @@ int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch() {
 
 APS5_EXPORT("0CV40L3tznI", libkernel_sysUnknown_0CV40L3tznI_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch() {
+    g_flag1WXQlxMpnNA.store(1, std::memory_order_relaxed);
+    return 0;
 }
 
 APS5_EXPORT("1WXQlxMpnNA", libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch);
@@ -428,8 +439,8 @@ int APS5_VABI libkernel_sysUnknown_C3xgqN95IoE_nid_no_patch() {
 
 APS5_EXPORT("C3xgqN95IoE", libkernel_sysUnknown_C3xgqN95IoE_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_C49jelxiaVE_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_C49jelxiaVE_nid_no_patch() {
+    return 0x20018u;
 }
 
 APS5_EXPORT("C49jelxiaVE", libkernel_sysUnknown_C49jelxiaVE_nid_no_patch);
@@ -485,8 +496,8 @@ int APS5_VABI libkernel_sysUnknown_FIUPjhnoI_plus_o_nid_no_patch() {
 
 APS5_EXPORT("FIUPjhnoI+o", libkernel_sysUnknown_FIUPjhnoI_plus_o_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_FR0odl35yQY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_FR0odl35yQY_nid_no_patch() {
+    return g_flag1WXQlxMpnNA.load(std::memory_order_relaxed);
 }
 
 APS5_EXPORT("FR0odl35yQY", libkernel_sysUnknown_FR0odl35yQY_nid_no_patch);
@@ -619,8 +630,8 @@ int APS5_VABI libkernel_sysUnknown_MKlp_minus_bW1bz8_nid_no_patch() {
 
 APS5_EXPORT("MKlp-bW1bz8", libkernel_sysUnknown_MKlp_minus_bW1bz8_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch() {
+    return 0x8002004eu;
 }
 
 APS5_EXPORT("N94a0T4F4+U", libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch);
@@ -986,8 +997,8 @@ int APS5_VABI libkernel_sysUnknown_gBiaAGKEvHM_nid_no_patch() {
 
 APS5_EXPORT("gBiaAGKEvHM", libkernel_sysUnknown_gBiaAGKEvHM_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_gJ5gpW45mU0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_gJ5gpW45mU0_nid_no_patch() {
+    return 0;
 }
 
 APS5_EXPORT("gJ5gpW45mU0", libkernel_sysUnknown_gJ5gpW45mU0_nid_no_patch);
@@ -1142,8 +1153,8 @@ int APS5_VABI sceKernelInternalUnmapMapperSharedMemory() {
 }
 
 
-int APS5_VABI libkernel_sysUnknown_pCbBddNl66Y_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_pCbBddNl66Y_nid_no_patch() {
+    return 0;
 }
 
 APS5_EXPORT("pCbBddNl66Y", libkernel_sysUnknown_pCbBddNl66Y_nid_no_patch);
@@ -1272,8 +1283,8 @@ int APS5_VABI libkernel_sysUnknown_vfYaxkxnJXQ_nid_no_patch() {
 
 APS5_EXPORT("vfYaxkxnJXQ", libkernel_sysUnknown_vfYaxkxnJXQ_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_vq2_plus_HyP5U5I_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_vq2_plus_HyP5U5I_nid_no_patch() {
+    return 0;
 }
 
 APS5_EXPORT("vq2+HyP5U5I", libkernel_sysUnknown_vq2_plus_HyP5U5I_nid_no_patch);
@@ -1330,14 +1341,14 @@ int APS5_VABI libkernel_sysUnknown_z0qKN5kkVj0_nid_no_patch() {
 
 APS5_EXPORT("z0qKN5kkVj0", libkernel_sysUnknown_z0qKN5kkVj0_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_zAloppPJxy0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_zAloppPJxy0_nid_no_patch() {
+    return 0;
 }
 
 APS5_EXPORT("zAloppPJxy0", libkernel_sysUnknown_zAloppPJxy0_nid_no_patch);
 
-int APS5_VABI libkernel_sysUnknown_z_plus_e0vV_minus_tnH4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libkernel_sysUnknown_z_plus_e0vV_minus_tnH4_nid_no_patch() {
+    return 0;
 }
 
 APS5_EXPORT("z+e0vV-tnH4", libkernel_sysUnknown_z_plus_e0vV_minus_tnH4_nid_no_patch);
@@ -1355,10 +1366,6 @@ int APS5_VABI sceKernelAddDynlibEvent() {
 }
 
 int APS5_VABI sceKernelAddFGCInfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelCallIndirectBuffer3() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1451,10 +1458,6 @@ int APS5_VABI sceKernelGetToolMemoryRange() {
 }
 
 int APS5_VABI sceKernelGetUpdatemode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelHasTrinityMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1659,10 +1662,6 @@ int APS5_VABI sceKernelUseCronosKura() {
 }
 
 int APS5_VABI sceKernelUseCronosStreaming() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelWriteUnmapToPrtCommand() {
     NotImplemented_nid_no_patch(__func__);
 }
 

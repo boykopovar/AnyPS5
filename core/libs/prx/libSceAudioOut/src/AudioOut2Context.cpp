@@ -17,6 +17,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "AudioOut2Internal.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -244,7 +245,9 @@ static void Render(AudioOut2Context& context, const AudioOut2Grain& grain) {
     if (pad != nullptr) {
         AudioOut2FinishPadMix(pad, context.grain);
         if (context.padDevice != 0) QueuePadGrain(context);
-        else {
+        else if (PadHapticStreamOpen_nid_postfix()) {
+            PadSubmitHapticFrames_nid_postfix(pad + AUDIO_OUT2_PAD_VIBRATION_LEFT, pad + AUDIO_OUT2_PAD_VIBRATION_RIGHT, AUDIO_OUT2_PAD_CHANNELS, context.grain, AUDIO_OUT2_SAMPLE_RATE);
+        } else {
             const auto rumble = AudioOut2RumbleFromPadFrames(pad, context.grain);
             PadSubmitAudioHaptics_nid_postfix(rumble[0], rumble[1]);
         }
@@ -263,6 +266,7 @@ static void DeviceCallback(void* userdata, Uint8* stream, int length) {
     std::copy_n(context.output.begin(), count, out);
     context.output.erase(context.output.begin(), context.output.begin() + static_cast<std::ptrdiff_t>(count));
     std::fill(out + count, out + samples, 0.0f);
+    context.hostGain.Apply(out, samples / AUDIO_OUT2_OUTPUT_CHANNELS, AUDIO_OUT2_OUTPUT_CHANNELS, HostVolumeGain_nid_no_patch());
     if (count < samples && !context.priming) {
         context.priming = true;
         context.primes++;
