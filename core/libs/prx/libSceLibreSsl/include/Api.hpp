@@ -5,7 +5,7 @@
 #include "Bio.hpp"
 #include "Cmac.hpp"
 
-class FileStream;
+#include "prx/libc/include/FileStream.hpp"
 
 struct Asn1String {
     std::int32_t length;
