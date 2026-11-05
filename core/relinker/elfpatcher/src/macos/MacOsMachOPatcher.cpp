@@ -66,6 +66,8 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
     const auto relocations = Windows::WindowsRelocationBuilder().Apply(image, dynamicSection, originalHeaders);
+    if (!relocations.Base32Relocations.empty())
+        throw Domain::RelinkerException("Relocation type 10 is not supported for this target", relocations.Base32Relocations.front());
     const auto needed = ReadNeededLibraries(dynamicSection);
     if (traceImports && std::find(needed.begin(), needed.end(), "libc.prx") == needed.end())
         throw Domain::RelinkerException("--trace-imports requires libc.prx among the libraries");

@@ -33,7 +33,6 @@ void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRv
 WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vector<std::uint8_t>> icon, std::filesystem::path iconName, std::function<void(std::uint64_t, std::uint64_t)> progress, const std::optional<std::uint64_t> fixedBase, const bool traceImports, std::function<void(std::string_view)> message, std::string outputName) : progress(std::move(progress)), windowsGui(windowsGui), icon(std::move(icon)), iconName(std::move(iconName)), fixedBase(fixedBase), traceImports(traceImports), message(std::move(message)), outputName(std::move(outputName)) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed Windows guest image base");
-
 }
 
 const std::string& WindowsPePatcher::GetDiagnostics() const { return diagnostics; }
@@ -120,7 +119,6 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         relocations.BaseRelocations.push_back(lazyStub.TargetRva);
     }
     auto relocationData = fixedBase ? std::vector<std::uint8_t>{} : relocationBuilder.BuildBaseRelocations(relocations.BaseRelocations);
-
     if (!relocationData.empty()) {
         directories[5] = {nextRva, CheckedRva(relocationData.size())};
         sections.push_back({".reloc", nextRva, SectionRead | 0x02000040u, std::move(relocationData)});
@@ -140,7 +138,6 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, image.GetImageBase(), fixedBase.has_value(), false);
     report(10000);
     return result;
-
 }
 
 }

@@ -16,6 +16,15 @@
 #include <type_traits>
 #include <unordered_map>
 
+// General.hpp maps the pre-macro entry point onto the At form, which the runtime
+// libc this module ships against does not export yet. Resolve the At form here so
+// the library keeps importing the entry point the runtime provides.
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName, const char* file, int line) {
+    (void)file;
+    (void)line;
+    (NotImplemented_nid_no_patch)(funcName);
+}
+
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
@@ -263,10 +272,11 @@ int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func, void* user_arg) {
+    // A redirect callback is valid on a context too: templates inherit the context settings when created.
     return Update(id, __func__, [&](auto& settings) {
         settings.redirectCallback = cb_func;
         settings.redirectArgument = user_arg;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {

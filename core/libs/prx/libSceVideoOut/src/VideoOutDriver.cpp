@@ -5,11 +5,15 @@
 #include <cstring>
 #include <cstdio>
 #include <exception>
+#include <mutex>
 #include <thread>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "SDL.h"
 #include "SDL_vulkan.h"
@@ -26,6 +30,8 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libSceVideoOut/include/PresentLoopTrace.hpp"
+#include "prx/libSceVideoOut/include/SubmitFlipTrace.hpp"
 #if APS5_ENABLE_TIMING_LOG
 #include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
 #endif
@@ -49,8 +55,31 @@ constexpr std::uint64_t FLIP_ROOM_WAIT_MICROS = 60000000;
 constexpr std::uint64_t PRESENT_POLL_MICROS = 10000;
 constexpr std::int64_t FRAME_LIMIT_SLICE_NANOS = 20000000;
 
+// Same identifier domain as the waits and presenter probes: the host OS thread id.
+unsigned long VideoOutTraceThreadId() {
+#ifdef _WIN32
+    return static_cast<unsigned long>(::GetCurrentThreadId());
+#else
+    return static_cast<unsigned long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+#endif
+}
+
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("VideoOut: ") + reason);
+}
+
+// The waits probe lives in libkernel and cannot know which thread submits flips, so the submission
+// probe names it: the focus follows the busiest submitting thread and the kernel report is narrowed
+// to it. Nothing else in libkernel changes and the report is unchanged when no focus was ever set.
+void PublishWaitFocus(unsigned long thread) {
+    sceKernelTraceWaitsFocus_nid_postfix(thread);
+}
+
+void EnsureWaitFocusSink(VideoOutTrace::SubmitFlipTrace& stats) {
+    static bool hooked = false;
+    if (hooked) return;
+    hooked = true;
+    stats.SetFocusSink(&PublishWaitFocus);
 }
 
 std::optional<AgcDriver::FramePacer>& framePacer() {
@@ -194,6 +223,9 @@ public:
     }
 
     void WaitForFlipRoom() override {
+        auto& stats = VideoOutTrace::FlipRoomStats();
+        const bool traced = stats.Enabled();
+        const std::uint64_t started = traced ? sceKernelGetProcessTime() * 1000ull : 0;
         std::unique_lock queueLock(queue->mutex);
         const bool room = queue->changed.WaitUntil(queueLock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
             return queue->failure || queue->stopping || cfg->shutdownToken.stop_requested() || queue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
@@ -201,6 +233,15 @@ public:
         if (queue->failure) std::rethrow_exception(queue->failure);
         if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
         require(room, "flip queue stayed full for 60 s: the presenter is not completing flips");
+        if (traced) {
+            const std::uint64_t ended = sceKernelGetProcessTime() * 1000ull;
+            stats.Note(started, ended);
+            char line[256];
+            if (stats.Report(ended, line, sizeof line)) {
+                std::fputs(line, stderr);
+                std::fflush(stderr);
+            }
+        }
     }
 
     std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo& info) override { return Reserve(info, false); }
@@ -208,36 +249,61 @@ public:
 
     std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo& info, bool limited) {
         // All flip modes are presented at the next vsync.
-        require(info.mode >= VIDEO_OUT_FLIP_MODE_VSYNC && info.mode <= 6, "unsupported flip mode");
-        require(info.index >= VIDEO_OUT_BUFFER_INDEX_BLACK && info.index < VIDEO_OUT_BUFFER_NUM_MAX, "invalid flip index");
-        auto request = std::make_shared<FlipRequest>();
-        request->cfg = cfg;
-        request->queue = queue;
-        request->index = info.index;
-        request->outputHandle = info.handle;
-        request->flipMode = static_cast<int>(info.mode);
-        request->flipArg = info.argument;
-        std::lock_guard queueLock(queue->mutex);
-        if (queue->failure) std::rethrow_exception(queue->failure);
-        if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
-        if (limited && queue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return {};
-        std::lock_guard lock(cfg->mutex);
-        checkConfig(*cfg);
-        request->generation = cfg->generation;
-        request->flipRate = cfg->flipRate;
-        if (info.index >= 0) {
-            if (limited) require(cfg->buffers[info.index].Occupied(), "EOP flip buffer is not registered");
-            request->reuseTicket = cfg->bufferReuse[info.index].Reserve();
+        auto& stats = VideoOutTrace::SubmitFlipStats();
+        const bool traced = stats.Enabled();
+        if (traced) EnsureWaitFocusSink(stats);
+        const std::uint64_t started = traced ? sceKernelGetProcessTime() * 1000ull : 0;
+        const std::uint32_t depth = traced ? static_cast<std::uint32_t>(queue->reservations.load(std::memory_order_relaxed)) : 0;
+        const auto reserve = [&]() -> std::shared_ptr<AgcDriver::IFlipRequest> {
+            require(info.mode >= VIDEO_OUT_FLIP_MODE_VSYNC && info.mode <= 6, "unsupported flip mode");
+            require(info.index >= VIDEO_OUT_BUFFER_INDEX_BLACK && info.index < VIDEO_OUT_BUFFER_NUM_MAX, "invalid flip index");
+            auto request = std::make_shared<FlipRequest>();
+            request->cfg = cfg;
+            request->queue = queue;
+            request->index = info.index;
+            request->outputHandle = info.handle;
+            request->flipMode = static_cast<int>(info.mode);
+            request->flipArg = info.argument;
+            std::lock_guard queueLock(queue->mutex);
+            if (queue->failure) std::rethrow_exception(queue->failure);
+            if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
+            if (limited && queue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return {};
+            std::lock_guard lock(cfg->mutex);
+            checkConfig(*cfg);
+            request->generation = cfg->generation;
+            request->flipRate = cfg->flipRate;
+            if (info.index >= 0) {
+                if (limited) require(cfg->buffers[info.index].Occupied(), "EOP flip buffer is not registered");
+                request->reuseTicket = cfg->bufferReuse[info.index].Reserve();
+            }
+            ++queue->reservations;
+            ++cfg->flipStatus.flipPendingNum;
+            if (info.index >= 0) ++cfg->bufferPending[info.index];
+            if (info.index >= 0 && cfg->buffers[info.index].Occupied() && cfg->buffers[info.index].groupIndex < VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX && cfg->groups[cfg->buffers[info.index].groupIndex].occupied) {
+                request->group = cfg->groups[cfg->buffers[info.index].groupIndex];
+                request->groupCaptured = true;
+            }
+            request->reserved = true;
+            return request;
+        };
+        const auto note = [&](bool accepted) {
+            if (!traced) return;
+            const std::uint64_t ended = sceKernelGetProcessTime() * 1000ull;
+            stats.Note(info.handle, VideoOutTraceThreadId(), started, ended, depth, accepted);
+            char line[1024];
+            if (stats.Report(ended, line, sizeof line)) {
+                std::fputs(line, stderr);
+                std::fflush(stderr);
+            }
+        };
+        try {
+            auto request = reserve();
+            note(request != nullptr);
+            return request;
+        } catch (...) {
+            note(false);
+            throw;
         }
-        ++queue->reservations;
-        ++cfg->flipStatus.flipPendingNum;
-        if (info.index >= 0) ++cfg->bufferPending[info.index];
-        if (info.index >= 0 && cfg->buffers[info.index].Occupied() && cfg->buffers[info.index].groupIndex < VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX && cfg->groups[cfg->buffers[info.index].groupIndex].occupied) {
-            request->group = cfg->groups[cfg->buffers[info.index].groupIndex];
-            request->groupCaptured = true;
-        }
-        request->reserved = true;
-        return request;
     }
 
     void Fail(std::exception_ptr error) noexcept override {
@@ -698,6 +764,23 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
             request.cfg->vblankCond.notify_all();
         };
         const auto plane = overlayPlane();
+        // APS5_TRACE_WAITS_TID: name the presenting thread once, in the same OS-thread-id domain the
+        // [waits] lines use when that probe is on. Off by default: no output, no branch cost beyond one
+        // env read per call site instance.
+        static const bool traceWaitsTid = std::getenv("APS5_TRACE_WAITS_TID") != nullptr;
+        if (traceWaitsTid) {
+            static std::once_flag once;
+            std::call_once(once, [] {
+                std::fprintf(stderr, "[presenter] tid=%lu t=%.3f s\n",
+#ifdef _WIN32
+                    static_cast<unsigned long>(::GetCurrentThreadId()),
+#else
+                    static_cast<unsigned long>(std::hash<std::thread::id>{}(std::this_thread::get_id())),
+#endif
+                    static_cast<double>(sceKernelGetProcessTime()) / 1e6);
+                std::fflush(stderr);
+            });
+        }
         if (req.index >= 0 && !req.unregistered) {
             const auto display = DescribeVideoOutBuffer(req.buffer, req.group);
             AgcDriverPresentBuffer_nid_postfix(target, display, plane ? &*plane : nullptr, gpuReady, &req);
@@ -783,6 +866,11 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
     std::optional<KeyboardInput> keyboardInput;
     std::optional<ImeTextInput> imeTextInput;
     std::optional<DialogInput> dialogInput;
+    // APS5_TRACE_PRESENT_LOOP: aggregate the two blocking points of this host thread (the flip
+    // request wait and the present call, which contains the fence and GPU-mutex waits). Off by
+    // default: one env read and no output.
+    static const bool tracePresentLoop = std::getenv("APS5_TRACE_PRESENT_LOOP") != nullptr;
+    static VideoOutTrace::PresentLoopTrace loopTrace(tracePresentLoop);
 #if APS5_ENABLE_TIMING_LOG
     std::unique_ptr<FrameTimingLog> timingLog;
 #endif
@@ -799,6 +887,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             imeTextInput->SetClipboardProvider(&readHostClipboard);
         });
         while (!token.stop_requested()) {
+            const std::uint64_t waitStart = loopTrace.Enabled() ? sceKernelGetProcessTime() * 1000ull : 0;
             {
                 std::unique_lock lock(flipQueue->mutex);
                 flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(PRESENT_POLL_MICROS), [&] { return token.stop_requested() || flipQueue->failure || !flipQueue->requests.empty(); });
@@ -809,6 +898,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                     flipQueue->requests.pop_front();
                 }
             }
+            if (loopTrace.Enabled()) loopTrace.NoteWait(sceKernelGetProcessTime() * 1000ull - waitStart);
 
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
@@ -844,7 +934,12 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 ModalDialogView dialogView;
                 const bool dialogShown = !keyboardShown && ModalDialogReadView_nid_postfix(dialogView);
                 AgcDriverSetSystemDialog_nid_postfix(dialogShown ? &dialogView : nullptr);
+                const std::uint64_t presentStart = loopTrace.Enabled() ? sceKernelGetProcessTime() * 1000ull : 0;
                 processFlip(*current);
+                if (loopTrace.Enabled()) {
+                    loopTrace.NotePresent(sceKernelGetProcessTime() * 1000ull - presentStart);
+                    loopTrace.NoteFrame();
+                }
                 int windowWidth = 0;
                 int windowHeight = 0;
                 if (window.Handle() != nullptr) OnMainThread([&] { SDL_GetWindowSize(window.Handle(), &windowWidth, &windowHeight); });
@@ -867,6 +962,13 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             if (current) {
                 current.reset();
                 flipQueue->changed.NotifyAll();
+            }
+            if (loopTrace.Enabled()) {
+                char line[1024];
+                if (loopTrace.Report(sceKernelGetProcessTime() * 1000ull, line, sizeof line)) {
+                    std::fputs(line, stderr);
+                    std::fflush(stderr);
+                }
             }
         }
     } catch (const ProcessShutdown&) {

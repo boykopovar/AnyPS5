@@ -59,6 +59,7 @@ struct PeImport {
 
 struct PeRelocations {
     std::vector<std::uint32_t> BaseRelocations;
+    std::vector<std::uint32_t> Base32Relocations;
     std::vector<PeImport> Imports;
 };
 

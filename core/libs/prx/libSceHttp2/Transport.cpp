@@ -938,10 +938,13 @@ struct Request::State {
         std::unique_lock lock(mutex, std::try_to_lock);
         Require(lock.owns_lock(), "sceHttp2: concurrent operation on one request is not implemented");
         Require(!callbackActive, "sceHttp2: operation during request callback is not implemented");
-        if (failure) std::rethrow_exception(failure);
-        Require(!cancelled.load(), "sceHttp2: request cancelled; console error mapping is unknown");
         return lock;
     }
+
+    // A failed or cancelled request reports the error to the guest instead of throwing:
+    // the console error code for a transport failure is not known here, and an exception
+    // crossing the API boundary would terminate the title.
+    bool Halted() const { return failure != nullptr || cancelled.load(); }
 
     void Fail() {
         failure = std::current_exception();
@@ -956,6 +959,7 @@ Request::~Request() = default;
 
 int Request::Send(const void* data, std::size_t size) {
     auto lock = state->Lock();
+    if (state->Halted()) return ResponseUnavailable;
     if (state->started && state->networkResult) return state->networkResult;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
@@ -1046,11 +1050,12 @@ int Request::Send(const void* data, std::size_t size) {
         state->upload = nullptr;
         if (state->ended && state->body.empty()) state->Close();
         return 0;
-    } catch (...) { state->Fail(); throw; }
+    } catch (...) { state->Fail(); return ResponseUnavailable; }
 }
 
 int Request::Read(void* data, std::size_t size) {
     auto lock = state->Lock();
+    if (state->Halted()) return ResponseUnavailable;
     if (state->networkResult) return ResponseUnavailable;
     Require(state->ready, "sceHttp2ReadData: response unavailable");
     Require(data || size == 0, "sceHttp2ReadData: null buffer");
@@ -1073,7 +1078,7 @@ int Request::Read(void* data, std::size_t size) {
         if (count && !state->ended) CheckNg(nghttp2_session_consume(state->session, state->stream, count));
         if (state->ended && state->body.empty()) state->Close();
         return static_cast<int>(count);
-    } catch (...) { state->Fail(); throw; }
+    } catch (...) { state->Fail(); return ResponseUnavailable; }
 }
 
 int Request::Status(int* status) {
@@ -1083,6 +1088,7 @@ int Request::Status(int* status) {
         *status = 0;
         return 0;
     }
+    if (state->Halted()) return ResponseUnavailable;
     Require(status && state->ready, "sceHttp2GetStatusCode: null output or response unavailable");
     *status = state->status;
     return 0;
@@ -1090,13 +1096,14 @@ int Request::Status(int* status) {
 
 int Request::ContentLength(int* kind, std::uint64_t* length) {
     auto lock = state->Lock();
+    if (state->Halted()) return ResponseUnavailable;
     if (state->networkResult) return ResponseUnavailable;
     Require(kind && length && state->ready, "sceHttp2GetResponseContentLength: null output or response unavailable");
     if (state->Inflating()) {
         try {
             const auto deadline = state->Deadline(state->settings.recvTimeout);
             while (!state->ended) state->Pump(deadline);
-        } catch (...) { state->Fail(); throw; }
+        } catch (...) { state->Fail(); return ResponseUnavailable; }
     }
     *kind = state->chunked ? 2 : state->hasLength ? 0 : 1;
     *length = state->hasLength ? state->contentLength : 0;
@@ -1105,6 +1112,7 @@ int Request::ContentLength(int* kind, std::uint64_t* length) {
 
 int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
+    if (state->Halted()) return ResponseUnavailable;
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
     Require(state->version < 3, "sceHttp2GetAllResponseHeaders: HTTP2 header representation is unimplemented");

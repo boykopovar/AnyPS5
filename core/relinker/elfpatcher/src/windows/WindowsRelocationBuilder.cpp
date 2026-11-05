@@ -26,7 +26,7 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             const auto addend = Io::ReadU64(table, offset + 16);
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
-            if ((plt && type != 7) || (type != 1 && type != 6 && type != 7 && type != 8 && type != 16 && type != 17 && type != 18))
+            if ((plt && type != 7) || (type != 1 && type != 6 && type != 7 && type != 8 && type != 10 && type != 16 && type != 17 && type != 18))
                 throw Domain::RelinkerException("Relocation type " + std::to_string(type) + " is not supported for this target", target);
             if (target > std::numeric_limits<std::uint64_t>::max() - 8)
                 throw Domain::RelinkerException("Relocation target address overflow", target);
@@ -60,6 +60,24 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
                 image.WritePointer(target, type == 17 ? addend : addend - Io::AlignUp64(tls->MemorySize, alignment));
                 continue;
             }
+            if (type == 10) {
+                if (symbol != 0) {
+                    if (symbol >= dynamicSection.DynSymData.size() / 24)
+                        throw Domain::RelinkerException("R_X86_64_32 relocation references an invalid symbol", target);
+                    const auto symOffset = static_cast<std::size_t>(symbol) * 24;
+                    if (Io::ReadU16(dynamicSection.DynSymData, symOffset + 6) != 0)
+                        throw Domain::RelinkerException("R_X86_64_32 relocation with a defined symbol is not supported for this target", target);
+                }
+                if (addend > std::numeric_limits<std::uint32_t>::max())
+                    throw Domain::RelinkerException("R_X86_64_32 addend does not fit in 32 bits", target);
+                const auto relocated = image.GetRelocatedAddress(addend);
+                if (relocated > std::numeric_limits<std::uint32_t>::max())
+                    throw Domain::RelinkerException("R_X86_64_32 relocated value does not fit in 32 bits", target);
+                image.RequireWritable(target, 4);
+                image.WritePointer32(target, static_cast<std::uint32_t>(relocated));
+                result.Base32Relocations.push_back(rva);
+                continue;
+            }
             if (symbol == 0 || symbol >= dynamicSection.DynSymData.size() / 24)
                 throw Domain::RelinkerException("Invalid import symbol index", target);
             const auto symbolOffset = static_cast<std::size_t>(symbol) * 24;
@@ -89,14 +107,16 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
     return result;
 }
 
-std::vector<std::uint8_t> WindowsRelocationBuilder::BuildBaseRelocations(const std::vector<std::uint32_t>& targets) const {
+std::vector<std::uint8_t> WindowsRelocationBuilder::BuildBaseRelocations(const std::vector<std::uint32_t>& targets, const std::vector<std::uint32_t>& low32Targets) const {
     std::map<std::uint32_t, std::vector<std::uint16_t>> pages;
-    for (const auto target : targets) {
+    const auto add = [&](const std::uint32_t target, const std::uint16_t type) {
         auto& entries = pages[target & ~0xfffu];
-        const auto entry = static_cast<std::uint16_t>(0xa000u | (target & 0xfffu));
+        const auto entry = static_cast<std::uint16_t>(type | (target & 0xfffu));
         if (std::find(entries.begin(), entries.end(), entry) == entries.end())
             entries.push_back(entry);
-    }
+    };
+    for (const auto target : targets) add(target, 0xa000u);
+    for (const auto target : low32Targets) add(target, 0x3000u);
     std::vector<std::uint8_t> result;
     for (const auto& [page, entries] : pages) {
         Io::AppendU32(result, page);

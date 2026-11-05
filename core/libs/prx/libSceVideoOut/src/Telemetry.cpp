@@ -205,4 +205,48 @@ Writer* Instance() {
     return writer.get();
 }
 
+std::uint64_t ParsePresentSampleInterval(const std::string& value) {
+    constexpr std::uint64_t maxInterval = 1000000;
+    std::size_t begin = 0;
+    std::size_t end = value.size();
+    while (begin < end && (value[begin] == ' ' || value[begin] == '\t')) ++begin;
+    while (end > begin && (value[end - 1] == ' ' || value[end - 1] == '\t')) --end;
+    if (begin == end) return 0;
+    std::uint64_t parsed = 0;
+    for (std::size_t index = begin; index < end; ++index) {
+        const char digit = value[index];
+        if (digit < '0' || digit > '9') return 0;
+        parsed = parsed * 10 + static_cast<std::uint64_t>(digit - '0');
+        if (parsed > maxInterval) return maxInterval;
+    }
+    return parsed;
+}
+
+std::uint64_t PresentSampleInterval() {
+    static const std::uint64_t interval = [] {
+        constexpr std::uint64_t fallback = 30;
+        std::string configured;
+#ifdef _WIN32
+        const wchar_t* value = _wgetenv(L"APS5_VIDEOOUT_TELEMETRY_EVERY");
+        if (value == nullptr) return fallback;
+        const auto text = std::filesystem::path(value).u8string();
+        configured.assign(reinterpret_cast<const char*>(text.data()), text.size());
+#else
+        const char* value = std::getenv("APS5_VIDEOOUT_TELEMETRY_EVERY");
+        if (value == nullptr) return fallback;
+        configured = value;
+#endif
+        const std::uint64_t parsed = ParsePresentSampleInterval(configured);
+        if (parsed == 0) {
+            if (!configured.empty()) {
+                std::fprintf(stderr, "[videoout-telemetry] invalid APS5_VIDEOOUT_TELEMETRY_EVERY, using %llu\n",
+                    static_cast<unsigned long long>(fallback));
+            }
+            return fallback;
+        }
+        return parsed;
+    }();
+    return interval;
+}
+
 }

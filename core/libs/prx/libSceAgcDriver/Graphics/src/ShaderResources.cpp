@@ -6364,12 +6364,12 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
     const auto sizesOf = [&](std::size_t set) { return std::span<const VkDescriptorPoolSize>(counts[set]); };
     const auto variableOf = [&](std::size_t set) { return tableBindings[set] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(std::max(1u, static_cast<std::uint32_t>(bindings[tableBindings[set]].imageAllocations.size()))) : std::nullopt; };
     result.cache = context.descriptorCache;
-    if (described[0] || splitSets) {
+    if (touched[0]) {
         result.allocation = result.cache->AllocateRewritten(_layout, sizesOf(0), updateAfterBind, variableOf(0));
         result.layout = _layout;
         Require(result.allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
-    if (described[1] || splitSets) {
+    if (touched[1]) {
         result.fragmentAllocation = result.cache->AllocateRewritten(fragment.layout, sizesOf(1), updateAfterBind, variableOf(1));
         result.fragmentLayout = fragment.layout;
         Require(result.fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
@@ -6386,18 +6386,23 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
     writes.reserve(descriptorWrites.size());
     auto nextWrite = descriptorWrites.begin();
     for (const auto& binding : bindings) {
-        const auto original = setOf(binding) == 0 ? _set : fragment.set;
-        while (nextWrite != writes.end() && nextWrite->dstBinding == binding.layout.binding && nextWrite->dstSet == original) {
-            auto& write = *nextWrite++;
-            write.dstSet = setOf(binding) == 0 ? result.allocation.set : result.fragmentAllocation.set;
-            if (binding.allocations.empty()) continue;
-            const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
-            write.pBufferInfo = buffers.data() + offset;
-            for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
-                const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
-                if (snapshotIndex == selected.size()) continue;
-                const auto& snapshot = result.snapshots[snapshotIndex];
-                buffers[offset + element] = wholeDwordRange({snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes});
+        const auto set = setOf(binding);
+        const auto original = set == 0 ? _set : fragment.set;
+        const auto rewritten = set == 0 ? result.allocation.set : result.fragmentAllocation.set;
+        while (nextWrite != descriptorWrites.end() && nextWrite->dstBinding == binding.layout.binding && nextWrite->dstSet == original) {
+            const auto& sourceWrite = *nextWrite++;
+            if (!touched[set]) continue;
+            auto write = sourceWrite;
+            write.dstSet = rewritten;
+            if (!binding.allocations.empty()) {
+                const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
+                write.pBufferInfo = buffers.data() + offset;
+                for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
+                    const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
+                    if (snapshotIndex == selected.size()) continue;
+                    const auto& snapshot = result.snapshots[snapshotIndex];
+                    buffers[offset + element] = wholeDwordRange({snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes});
+                }
             }
             writes.push_back(write);
         }
