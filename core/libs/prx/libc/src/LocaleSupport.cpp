@@ -789,16 +789,16 @@ constexpr int SceV2LocaleCategoryCount = 6;
 
 std::recursive_mutex g_sceV2LocimpMutex;
 
-void APS5_VABI DestroySceV2Locimp(GuestLocale::Facet* self) {
+void APS5_VABI DestroySceV2Locimp_nid_no_patch(GuestLocale::Facet* self) {
     _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(self));
 }
 
-void APS5_VABI DeleteSceV2Locimp(GuestLocale::Facet* self) {
+void APS5_VABI DeleteSceV2Locimp_nid_no_patch(GuestLocale::Facet* self) {
     _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(self));
     _ZdlPv_nid_postfix(self);
 }
 
-const GuestLocale::FacetVtable g_sceV2LocimpVtable{DestroySceV2Locimp, DeleteSceV2Locimp, RetainFacet, ReleaseFacet};
+const GuestLocale::FacetVtable g_sceV2LocimpVtable{DestroySceV2Locimp_nid_no_patch, DeleteSceV2Locimp_nid_no_patch, RetainFacet, ReleaseFacet};
 
 void ReleaseSceV2Facet(GuestLocale::Facet* facet) {
     if (auto* released = facet->vtable->release(facet)) released->vtable->deleteObject(released);
