@@ -205,11 +205,12 @@ static void TestRequestFlow(const RequestFlow& flow) {
     alignas(16) unsigned char transaction[0x100];
     alignas(16) unsigned char parameter[0x100];
     std::memset(transaction, 0x5a, sizeof(transaction));
-    std::memset(transaction, 0, 0x10);
     std::memset(parameter, 0x5a, sizeof(parameter));
     NpCppWebApiTest::LibContext context;
 
     Require(flow.transactionConstruct(transaction) == 0);
+    for (std::size_t index = 0; index < sizeof(transaction); ++index)
+        Require(transaction[index] == (index < 0x10 ? 0 : 0x5a));
     Require(flow.setOnFinishedCallback(transaction, nullptr, nullptr, nullptr) == TransactionNotStarted);
     Require(flow.setResponseInformationOption(transaction, nullptr) == TransactionNotStarted);
     Require(flow.parameterConstruct(parameter) == 0);
