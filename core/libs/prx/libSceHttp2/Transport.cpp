@@ -425,48 +425,70 @@ struct Request::State {
     void InflateGzip() {
         if (inflatedGzip || !Inflating() || body.empty()) return;
         inflatedGzip = true;
-        const std::uint8_t* data = body.data();
-        const std::size_t size = body.size();
-        Require(size >= 18 && data[0] == 0x1f && data[1] == 0x8b && data[2] == 8, "sceHttp2: malformed gzip header");
-        const std::uint8_t flags = data[3];
-        Require((flags & 0xe0) == 0, "sceHttp2: unknown gzip header flags");
-        std::size_t offset = 10;
-        const auto skip = [&](std::size_t count) { Require(offset + count <= size - 8, "sceHttp2: truncated gzip header"); offset += count; };
-        if (flags & 4) {
-            Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip extra field");
-            const std::size_t extra = static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
-            skip(2 + extra);
-        }
-        if (flags & 8) while (skip(1), data[offset - 1] != 0) {}
-        if (flags & 16) while (skip(1), data[offset - 1] != 0) {}
-        if (flags & 2) skip(2);
+        Require(body.size() <= MaxGzipBytes, "sceHttp2: encoded gzip response exceeds the host limit");
+        const auto* data = body.data();
+        const auto size = body.size();
         z_stream inflater{};
         Require(inflateInit2(&inflater, -15) == Z_OK, "sceHttp2: gzip inflate initialization failed");
         struct End {
             z_stream* stream;
             ~End() { inflateEnd(stream); }
         } end{&inflater};
-        inflater.next_in = const_cast<std::uint8_t*>(data + offset);
-        inflater.avail_in = static_cast<uInt>(size - offset - 8);
         std::vector<std::uint8_t> output;
-        std::uint8_t chunk[16384];
-        int result = Z_OK;
-        while (result != Z_STREAM_END) {
-            inflater.next_out = chunk;
-            inflater.avail_out = sizeof(chunk);
-            result = inflate(&inflater, Z_NO_FLUSH);
-            Require(result == Z_OK || result == Z_STREAM_END, "sceHttp2: gzip inflate failed");
-            output.insert(output.end(), chunk, chunk + (sizeof(chunk) - inflater.avail_out));
-            Require(result == Z_STREAM_END || inflater.avail_in != 0 || inflater.avail_out == 0, "sceHttp2: truncated gzip stream");
-            Require(output.size() <= MaxGzipBytes, "sceHttp2: inflated response exceeds the host limit");
-        }
-        Require(inflater.avail_in == 0, "sceHttp2: concatenated gzip members are not implemented");
+        std::size_t offset = 0;
         const auto readLe32 = [&](std::size_t position) {
             return static_cast<std::uint32_t>(data[position]) | (static_cast<std::uint32_t>(data[position + 1]) << 8) |
                 (static_cast<std::uint32_t>(data[position + 2]) << 16) | (static_cast<std::uint32_t>(data[position + 3]) << 24);
         };
-        Require(crc32(0, output.data(), static_cast<uInt>(output.size())) == readLe32(size - 8), "sceHttp2: gzip checksum mismatch");
-        Require(static_cast<std::uint32_t>(output.size()) == readLe32(size - 4), "sceHttp2: gzip size mismatch");
+        while (offset < size) {
+            const auto header = offset;
+            Require(size - offset >= 18 && data[offset] == 0x1f && data[offset + 1] == 0x8b && data[offset + 2] == 8,
+                "sceHttp2: malformed gzip header");
+            const auto flags = data[offset + 3];
+            Require((flags & 0xe0) == 0, "sceHttp2: unknown gzip header flags");
+            offset += 10;
+            const auto skip = [&](std::size_t count) {
+                Require(offset <= size - 8 && count <= size - 8 - offset, "sceHttp2: truncated gzip header");
+                offset += count;
+            };
+            if (flags & 4) {
+                Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip extra field");
+                const auto extra = static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
+                skip(2 + extra);
+            }
+            if (flags & 8) while (skip(1), data[offset - 1] != 0) {}
+            if (flags & 16) while (skip(1), data[offset - 1] != 0) {}
+            if (flags & 2) {
+                Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip header checksum");
+                const auto expected = static_cast<std::uint32_t>(data[offset]) | (static_cast<std::uint32_t>(data[offset + 1]) << 8);
+                Require((crc32(0, data + header, static_cast<uInt>(offset - header)) & 0xffffu) == expected,
+                    "sceHttp2: gzip header checksum mismatch");
+                offset += 2;
+            }
+            inflater.next_in = const_cast<std::uint8_t*>(data + offset);
+            inflater.avail_in = static_cast<uInt>(size - offset);
+            const auto begin = output.size();
+            std::uint8_t chunk[16384];
+            int result = Z_OK;
+            while (result != Z_STREAM_END) {
+                inflater.next_out = chunk;
+                inflater.avail_out = sizeof(chunk);
+                result = inflate(&inflater, Z_NO_FLUSH);
+                Require(result == Z_OK || result == Z_STREAM_END, "sceHttp2: gzip inflate failed");
+                const auto count = sizeof(chunk) - inflater.avail_out;
+                Require(count <= MaxGzipBytes - output.size(), "sceHttp2: inflated response exceeds the host limit");
+                output.insert(output.end(), chunk, chunk + count);
+                Require(result == Z_STREAM_END || inflater.avail_in != 0 || inflater.avail_out == 0, "sceHttp2: truncated gzip stream");
+            }
+            offset = size - inflater.avail_in;
+            Require(size - offset >= 8, "sceHttp2: truncated gzip trailer");
+            const auto length = output.size() - begin;
+            Require(crc32(0, length ? output.data() + begin : nullptr, static_cast<uInt>(length)) == readLe32(offset),
+                "sceHttp2: gzip checksum mismatch");
+            Require(static_cast<std::uint32_t>(length) == readLe32(offset + 4), "sceHttp2: gzip size mismatch");
+            offset += 8;
+            if (offset < size) Require(inflateReset(&inflater) == Z_OK, "sceHttp2: gzip member reset failed");
+        }
         body = std::move(output);
         bodyOffset = 0;
         contentLength = body.size();
