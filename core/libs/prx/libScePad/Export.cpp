@@ -395,6 +395,12 @@ int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
  return PAD_OK;
 }
 
+int APS5_VABI scePadSetConnection(std::int32_t handle, bool connected) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
@@ -629,6 +635,8 @@ int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t
 }
 
 int APS5_VABI scePadSetLightBarBlinking(std::int32_t handle, const PadLightBarBlinkingParameter* parameter) {
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
