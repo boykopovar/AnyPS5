@@ -95,7 +95,9 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
+std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
+void SetOwnStoreCompare(bool compare);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Collect epoch: within one epoch a range already collected is not walked again, CollectWrites
