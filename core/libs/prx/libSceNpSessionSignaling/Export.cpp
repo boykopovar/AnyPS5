@@ -302,14 +302,12 @@ int APS5_VABI sceNpSessionSignalingJoinActivate() {
 }
 
 int APS5_VABI sceNpSessionSignalingSetCustomProperty(std::uint32_t contextId, const std::uint32_t* property, std::uint32_t* previous) {
+    (void)previous;
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!property) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
-    auto* context = FindContext(contextId);
-    if (!context) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
-    if (previous) *previous = context->customProperty;
-    context->customProperty = *property;
-    return 0;
+    if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection() {

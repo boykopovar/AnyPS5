@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <stdexcept>
 
 namespace {
 
@@ -84,14 +85,20 @@ int main() {
     std::uint32_t previousProperty = 0;
     int callbackMarker = 0;
     int userDataMarker = 0;
-    Require(sceNpSessionSignalingSetCustomProperty(contextId, &staleProperty, &previousProperty) == 0 && previousProperty == 0, "set property before context reuse");
+    bool staleSetRefused = false;
+    try { sceNpSessionSignalingSetCustomProperty(contextId, &staleProperty, &previousProperty); }
+    catch (const std::runtime_error&) { staleSetRefused = true; }
+    Require(staleSetRefused, "set property before context reuse was not refused");
     Require(sceNpSessionSignalingRegisterInternalCallback(contextId, &callbackMarker, &userDataMarker) == 0, "register callback before context reuse");
     Require(sceNpSessionSignalingDestroyContext(contextId) == 0, "destroy context before reuse two");
     const std::int32_t secondReuseUser = 11;
     std::memcpy(contextParam, &secondReuseUser, sizeof(secondReuseUser));
     Require(sceNpSessionSignalingCreateContext2(reinterpret_cast<const SessionSignalingContextParam2*>(contextParam), &contextId) == 0, "reuse context slot two");
     Require(sceNpSessionSignalingGetCustomProperty(contextId, &previousProperty) == 0 && previousProperty == 0, "reused context two kept state");
-    Require(sceNpSessionSignalingSetCustomProperty(otherContexts[0], &staleProperty, &previousProperty) == 0 && previousProperty == 0, "set property before context one reuse");
+    staleSetRefused = false;
+    try { sceNpSessionSignalingSetCustomProperty(otherContexts[0], &staleProperty, &previousProperty); }
+    catch (const std::runtime_error&) { staleSetRefused = true; }
+    Require(staleSetRefused, "set property before context one reuse was not refused");
     Require(sceNpSessionSignalingRegisterInternalCallback(otherContexts[0], &callbackMarker, &userDataMarker) == 0, "register callback before context one reuse");
     Require(sceNpSessionSignalingDestroyContext(otherContexts[0]) == 0, "destroy context before reuse one");
     const std::int32_t thirdReuseUser = 12;
@@ -177,11 +184,12 @@ int main() {
     Require(sceNpSessionSignalingSetCustomProperty(firstId, &property, nullptr) == ContextNotFound, "set custom property stale context");
     std::uint32_t value = 0x12345678u;
     std::uint32_t previous = 0xa5a5a5a5u;
-    Require(sceNpSessionSignalingSetCustomProperty(contextId, &value, &previous) == 0 && previous == 0, "set custom property");
-    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == value, "get custom property");
-    value = 0xabcdef01u;
-    Require(sceNpSessionSignalingSetCustomProperty(contextId, &value, &previous) == 0 && previous == 0x12345678u, "replace custom property");
-    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == value, "get replaced custom property");
+    bool setRefused = false;
+    try { sceNpSessionSignalingSetCustomProperty(contextId, &value, &previous); }
+    catch (const std::runtime_error&) { setRefused = true; }
+    Require(setRefused, "valid custom property set was not refused");
+    Require(previous == 0xa5a5a5a5u, "refused custom property set wrote the previous value");
+    Require(sceNpSessionSignalingGetCustomProperty(contextId, &property) == 0 && property == 0, "refused custom property set changed the property");
     Require(sceNpSessionSignalingRegisterInternalCallback(firstId, nullptr, nullptr) == ContextNotFound, "register callback stale context");
     Require(sceNpSessionSignalingRegisterInternalCallback(contextId, nullptr, nullptr) == 0, "register callback");
     const char* const activateSessionId = reinterpret_cast<const char*>(sessionId);
