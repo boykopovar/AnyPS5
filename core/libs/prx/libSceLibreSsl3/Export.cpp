@@ -74,11 +74,6 @@ int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_DigestInit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_DigestSignFinal_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -90,16 +85,6 @@ int APS5_VABI EVP_DigestSignInit_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_EncryptInit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_MD_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_MD_CTX_new_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -175,16 +160,6 @@ int APS5_VABI EVP_aes_192_wrap_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_aes_256_wrap_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_sha1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_sha224_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
