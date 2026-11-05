@@ -327,6 +327,56 @@ void CheckIdMapperLookup(const char* name, decltype(&sceNpIdMapperNpIdToAccountI
     Require(std::memcmp(output, untouched, sizeof(output)) == 0, name);
 }
 
+struct TicketReleaseRecord {
+    void* pointer;
+    int calls;
+};
+
+void APS5_VABI ReleaseTicket(void* pointer, void* context) {
+    auto* record = static_cast<TicketReleaseRecord*>(context);
+    record->pointer = pointer;
+    record->calls += 1;
+}
+
+struct TicketAllocator {
+    void* (APS5_VABI *allocate)(std::size_t, void*);
+    void* (APS5_VABI *reallocate)(void*, std::size_t, void*);
+    void (APS5_VABI *release)(void*, void*);
+    void* context;
+    int outOfMemoryError;
+};
+
+struct TicketStorage {
+    const void* const* vtable;
+    void* allocator;
+    void* data;
+    std::size_t size;
+};
+
+void CheckTicketTeardown() {
+    TicketReleaseRecord record{};
+    TicketAllocator allocator{};
+    allocator.release = ReleaseTicket;
+    allocator.context = &record;
+    std::uint8_t data[4] {};
+    TicketStorage ticket{};
+    ticket.allocator = &allocator;
+    ticket.data = data;
+    ticket.size = sizeof(data);
+    _ZN3sce2np8NpTicket5ClearEv(&ticket);
+    Require(record.calls == 1 && record.pointer == data, "NpTicket::Clear must release the stored data");
+    Require(ticket.data == nullptr && ticket.size == 0, "NpTicket::Clear must clear the data and size");
+    ticket.data = data;
+    ticket.size = sizeof(data);
+    _ZN3sce2np8NpTicketD1Ev(&ticket);
+    Require(record.calls == 2 && record.pointer == data, "the NpTicket destructor must release the stored data");
+    Require(ticket.vtable != nullptr, "the NpTicket destructor must restore the vtable");
+    ticket.data = nullptr;
+    ticket.size = 0;
+    _ZN3sce2np8NpTicket5ClearEv(&ticket);
+    Require(record.calls == 2, "NpTicket::Clear must not release an empty ticket");
+}
+
 struct SentinelBuffer {
     unsigned char bytes[64];
     SentinelBuffer() { std::memset(bytes, 0x5a, sizeof(bytes)); }
@@ -634,6 +684,7 @@ static void CheckSandboxInfo() {
 
 int main() {
     CheckSandboxInfo();
+    CheckTicketTeardown();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();

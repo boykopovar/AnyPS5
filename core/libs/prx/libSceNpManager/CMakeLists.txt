@@ -2,6 +2,8 @@ add_library(libSceNpManager SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cp
 target_include_directories(libSceNpManager PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpManager)
 target_sources(libSceNpManager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
+target_sources(libSceNpManager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Destructors.cpp)
+target_link_libraries(libSceNpManager PRIVATE libSceNpCommon)
 
 if(MINGW)
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)

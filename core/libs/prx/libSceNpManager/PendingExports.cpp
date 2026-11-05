@@ -46,10 +46,6 @@ int APS5_VABI _ZN3sce2np10NpOnlineIdC2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np10NpOnlineIdD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI _ZN3sce2np10NpOnlineIdD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -118,10 +114,6 @@ int APS5_VABI _ZN3sce2np12NpTitleTokenC2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np12NpTitleTokenD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI _ZN3sce2np12NpTitleTokenD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -155,10 +147,6 @@ int APS5_VABI _ZN3sce2np13NpAccessTokenC2ERKS1_(void) {
     return 0;
 }
 int APS5_VABI _ZN3sce2np13NpAccessTokenC2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -242,10 +230,6 @@ int APS5_VABI _ZN3sce2np4NpIdC2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np4NpIdD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI _ZN3sce2np4NpIdD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -286,31 +270,11 @@ int APS5_VABI _ZN3sce2np4UserC2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np4UserD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI _ZN3sce2np4UserD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI _ZN3sce2np4UserD2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicket5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
