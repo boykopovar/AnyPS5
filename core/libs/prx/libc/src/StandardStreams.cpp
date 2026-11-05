@@ -245,13 +245,9 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
+    if (size < 2) return nullptr;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (stream) stream->Orientation(-1);
-    if (size <= 0) {
-        stream->SetError();
-        errno = 22;
-        return nullptr;
-    }
     auto* native = GetNativeStream(stream);
     const int previousError = errno;
     errno = 0;
