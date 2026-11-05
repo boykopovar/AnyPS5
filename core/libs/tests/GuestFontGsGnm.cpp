@@ -229,7 +229,7 @@ void GnmSelect() {
         else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
         else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
         else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
-        else RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
+        else if (entry.opcode != 0x47000001) RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
     }
 }
 
@@ -250,6 +250,51 @@ void APS5_VABI GnmDeallocate(void* object, void* p) {
     std::free(p);
 }
 
+std::uint32_t Word(const std::uint8_t* bytes, std::size_t offset) {
+    std::uint32_t value;
+    std::memcpy(&value, bytes + offset, sizeof(value));
+    return value;
+}
+
+std::uint64_t Fnv(const std::uint8_t* bytes, std::size_t begin, std::size_t end) {
+    std::uint64_t hash = 0xcbf29ce484222325;
+    for (std::size_t i = begin; i < end; ++i) hash = (hash ^ bytes[i]) * 0x100000001b3;
+    return hash;
+}
+
+void GnmInstanceImage(const std::uint8_t* instance, bool neo) {
+    std::uint64_t header = 0;
+    std::memcpy(&header, instance + 8, sizeof(header));
+    Require(Word(instance, 0x10) == 0x1400 && header == reinterpret_cast<std::uintptr_t>(instance) + 0x120);
+    Require(Word(instance, 0x120) == 0x3c8 && Word(instance, 0x124) == 1);
+    Require(Word(instance, 0x170) == (neo ? 0x96u : 0x83u) && Word(instance, 0x188) == (neo ? 0x33u : 0x2du) && Word(instance, 0x1a0) == 0xef);
+    std::uint64_t draws = 0;
+    std::memcpy(&draws, instance + 0x1a8, sizeof(draws));
+    Require(draws == reinterpret_cast<std::uintptr_t>(instance) + (neo ? 0x1d358 : 0x1d290));
+    Require(Word(instance, 0x1cc98) == 0xc0016900 && Word(instance, 0x1cc9c) == 0x2aa && Word(instance, 0x1cca0) == 0x17);
+    const std::size_t draw = neo ? 0x1d370 : 0x1d2a8;
+    const std::uint32_t expected[6] = {0xc0032400, 0, 0x5a, 0x5b, 2, 0xc0021000};
+    for (std::size_t i = 0; i < 6; ++i) Require(Word(instance, draw + 4 * i) == expected[i]);
+    Require(Fnv(instance, 0x4e8, 0x610) == 0x01db8b6815e167dbull && Fnv(instance, 0x26f8, 0xaacc) == 0x00508a6ebe972dceull);
+    Require(Fnv(instance, 0x10000, 0x10064) == 0x9182e12201b215d1ull && Fnv(instance, 0x11100, 0x18358) == 0x837f4c8fe1728b74ull);
+}
+
+void GnmServiceCreate(bool neo) {
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    GnmAllocations allocations;
+    allocations.fail = false;
+    const FontMemoryInterface iface{GnmAllocate, GnmDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == 0);
+    Require(*backend->instanceSlot == nullptr);
+    FontGraphicsService* service = nullptr;
+    Require(sceFontCreateGraphicsService(&memory, backend, &service) == 0 && service != nullptr && allocations.live == 1);
+    const auto* const instance = static_cast<const std::uint8_t*>(*backend->instanceSlot);
+    Require(instance != nullptr && instance != reinterpret_cast<const std::uint8_t*>(~std::uintptr_t{0}) && Word(instance, 4) == 1);
+    GnmInstanceImage(instance, neo);
+    Require(sceFontDestroyGraphicsService(&service) == 0 && service == nullptr && allocations.live == 0 && *backend->instanceSlot == nullptr);
+}
+
 void GnmService() {
     const FontGraphicsServiceParam* const backend = GnmBackend();
     GnmAllocations allocations;
@@ -260,9 +305,6 @@ void GnmService() {
     const int before = g_errorCount;
     Require(sceFontCreateGraphicsService(&memory, backend, &service) == static_cast<int>(0x80460010));
     Require(g_errorCount == before + 1 && g_lastError == static_cast<int>(0x80460010) && *backend->instanceSlot == nullptr);
-    allocations.fail = false;
-    RequireNotImplemented([&] { sceFontCreateGraphicsService(&memory, backend, &service); }, GnmHandlerName(0x47000001));
-    Require(service == nullptr && *backend->instanceSlot == reinterpret_cast<void*>(~std::uintptr_t{0}) && allocations.live == 1);
 }
 
 void GnmDrawupImage() {
@@ -637,6 +679,7 @@ int main(int argc, char** argv) {
     if (argc == 3) {
         std::filesystem::current_path(argv[2]);
         GnmSurfaceInitCases(std::string(argv[1]) == "--surface-neo");
+        GnmServiceCreate(std::string(argv[1]) == "--surface-neo");
         return 0;
     }
     ReportError();
