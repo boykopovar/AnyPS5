@@ -106,6 +106,9 @@ int APS5_VABI FT_Stroker_GetCounts_nid_postfix(void* stroker, std::uint32_t* poi
 int APS5_VABI FT_Stroker_CubicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control1, const FreeType::GuestVector* control2, const FreeType::GuestVector* to);
 void APS5_VABI FT_Stroker_Done_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_GetBorderCounts_nid_postfix(void* stroker, std::int32_t border, std::uint32_t* points, std::uint32_t* contours);
+int APS5_VABI FT_Stroker_ParseOutline_nid_postfix(void* stroker, const FreeType::GuestOutline* outline, std::uint8_t opened);
+void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t border, FreeType::GuestOutline* outline);
+void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Stroker_EndSubPath_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_LineTo_nid_postfix(void* stroker, const FreeType::GuestVector* to);
 int APS5_VABI FT_Stroker_New_nid_postfix(FreeType::GuestLibrary* library, void** stroker);
@@ -124,4 +127,9 @@ int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::u
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
 int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
 int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
+void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const char* moduleName);
+void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t format);
+int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
+void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
+int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch();
 }

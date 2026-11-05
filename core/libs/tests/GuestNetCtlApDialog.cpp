@@ -15,6 +15,7 @@ constexpr int kStatusFinished = 3;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003);
 constexpr int kErrAlreadyInitialized = static_cast<int>(0x80B80004);
 constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
+constexpr int kErrInvalidArgument = static_cast<int>(0x80B8000A);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
 constexpr int kResultUserCanceled = 1;
 
@@ -39,6 +40,19 @@ int main() {
     Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
     Require(sceNetCtlApDialogOpen(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
+    param.base.size = 0;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
+    param.base.size = sizeof(param.base);
+    param.base.magic = 0;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
+    param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
+    param.size = 0;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
+    param.size = 103;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
+    param.size = sizeof(param);
+    Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetStatus() == kStatusNone);
     Require(sceNetCtlApDialogClose() == kErrNotInitialized);
     Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotInitialized);
@@ -56,9 +70,18 @@ int main() {
     std::memset(result + 4, 0, 36);
     Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotFinished);
 
+    param.base.size = 0;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
+    param.base.size = sizeof(param.base);
+    param.base.magic = 0;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
+    param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
+    param.size = 0;
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
     param.size = 103;
-    Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
+    Require(sceNetCtlApDialogOpen(&param) == kErrInvalidArgument);
     param.size = sizeof(param);
+    Require(sceNetCtlApDialogGetStatus() == kStatusInitialized);
     param.reserved60 = 1;
     Require(sceNetCtlApDialogOpen(&param) == static_cast<int>(0x80B8000Au));
     param.reserved60 = 0;
