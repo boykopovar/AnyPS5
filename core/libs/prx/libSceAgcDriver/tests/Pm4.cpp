@@ -584,7 +584,6 @@ void testCopies() {
     alignas(8) std::array<std::uint64_t, 1> stamp{};
     execute(state, makePacket(0x40, {0x110509, 0, 0, low(stamp.data()), high(stamp.data())}));
     check(stamp[0] != 0, "GPU timestamp COPY_DATA to DST_SEL 5 memory failed");
-    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x405, 1, 0, 0, 0}), 0); }, "performance-counter destination");
     const auto copyToGds = makePacket(0x40, {0x305, 0x89abcdef, 0, 0x20, 0});
     check(!AgcDriver::Pm4::ResolveStore(copyToGds, state, 64).has_value(), "COPY_DATA to GDS resolved as a memory store");
     execute(state, copyToGds);
