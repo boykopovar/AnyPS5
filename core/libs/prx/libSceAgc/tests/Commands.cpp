@@ -1148,6 +1148,12 @@ void testAcquireMem() {
     Storage large;
     sceAgcDcbAcquireMem(&large.buffer, 0, 0, 0, base, (1ull << 40u) + 1u, 0);
     check(large.words[2] == 0 && large.words[4] == 0, "an acquire over 1 TiB did not cover the whole address space");
+    Storage exact;
+    sceAgcDcbAcquireMem(&exact.buffer, 0, 0, 0, base, 1ull << 40u, 0);
+    check(exact.words[2] == 0 && exact.words[4] == 0, "an acquire of exactly 1 TiB did not cover the whole address space");
+    Storage encodable;
+    sceAgcDcbAcquireMem(&encodable.buffer, 0, 0, 0, nullptr, (1ull << 40u) - 0x100u, 0);
+    check(encodable.words[2] == 0xffffffffu && encodable.words[4] == 0, "an acquire just below 1 TiB was not encoded as its exact size");
     Storage asynchronous;
     sceAgcAcbAcquireMem(&asynchronous.buffer, 0x55u, base, 0x100, 80);
     const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 2, 0x55u};
