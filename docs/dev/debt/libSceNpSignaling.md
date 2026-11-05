@@ -10,12 +10,13 @@
 
 - [Unsettled connection and peer queries](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - `sceNpSignalingGetConnectionStatus`, `sceNpSignalingGetConnectionStatistics`, `sceNpSignalingGetConnectionFromPeerAddressA` and `sceNpSignalingGetPeerNetInfoA` have no established console contract for the offline case. Their typed declarations follow the pinned shadPS4 source, but the inactive result, zero counts, context-kind error and validation order are unverified. All four throw through `NotImplemented_nid_no_patch` before examining arguments or state and leave outputs untouched. Closes when: the return values, output writes and check order are established from the firmware module or console measurements.
 
+- [sceNpSignalingGetPeerNetInfo](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - a request that passes the checks throws: no peer information request is staged offline. Initialization, null pointers, an invalid NpId (`INVALID_ARGUMENT`) and then the context (`CTX_NOT_FOUND`) are checked in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/98ef621decb6a35dba62e367a8a89186f5d49dcc/src/core/libraries/np/np_signaling/np_signaling.cpp#L688-L717)'s order. Not measured on a PS5.
+
 ### Additional callable export inventory
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 3 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
+- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 2 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
 | `sceNpSignalingGetLocalNetInfo` | `U8AQMlOFBc8` |
 | `sceNpSignalingGetMemoryInfo` | `tOpqyDyMje4` |
-| `sceNpSignalingGetPeerNetInfo` | `zFgFHId7vAE` |
