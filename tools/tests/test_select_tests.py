@@ -741,8 +741,11 @@ class MissingCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "nested").mkdir()
-            os.symlink("second", root / "first")
-            os.symlink("first", root / "second")
+            try:
+                os.symlink("second", root / "first")
+                os.symlink("first", root / "second")
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
             (root / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
             (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
             build = object.__new__(select_tests.Build)

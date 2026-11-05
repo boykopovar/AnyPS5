@@ -145,8 +145,11 @@ class RegistrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
             (build / "nested").mkdir()
-            os.symlink("second", build / "first")
-            os.symlink("first", build / "second")
+            try:
+                os.symlink("second", build / "first")
+                os.symlink("first", build / "second")
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
             (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
             (build / "nested/CTestTestfile.cmake").write_text(
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
