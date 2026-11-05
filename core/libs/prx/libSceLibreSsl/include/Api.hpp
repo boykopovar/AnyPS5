@@ -286,7 +286,8 @@ struct LibreSslSslInternal {
     void* aeadWriteCtx;
     void* encWriteCtx;
     void* writeHash;
-    unsigned char beforeMaxCertList[24];
+    LibreSslExData exData;
+    unsigned char beforeMaxCertList[16];
     std::int64_t maxCertList;
     unsigned char beforeState[108];
     int state;
@@ -801,7 +802,7 @@ int APS5_VABI SSL_select_next_proto_nid_postfix(unsigned char** output, unsigned
 int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void);
 int APS5_VABI SSL_set_bio_nid_postfix(void);
 void APS5_VABI SSL_set_connect_state_nid_postfix(LibreSslSsl* ssl);
-int APS5_VABI SSL_set_ex_data_nid_postfix(void);
+int APS5_VABI SSL_set_ex_data_nid_postfix(LibreSslSsl* ssl, int index, void* value);
 int APS5_VABI SSL_set_fd_nid_postfix(void);
 int APS5_VABI SSL_set_session_nid_postfix(void);
 void APS5_VABI SSL_set_verify_nid_postfix(LibreSslSsl* ssl, int mode, void* callback);
