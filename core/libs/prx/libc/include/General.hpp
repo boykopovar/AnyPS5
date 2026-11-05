@@ -13,6 +13,8 @@
 #include "general/ExportMacros.hpp"
 
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName, const char* file, int line);
+#define NotImplemented_nid_no_patch(name) NotImplementedAt_nid_no_patch(name, __FILE__, __LINE__)
 extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
@@ -59,6 +61,10 @@ extern "C" int WindowsOpenError_nid_no_patch(unsigned long error);
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
 #endif
+
+struct KernelTimespec;
+using ClockGetresFn_nid_no_patch = int (APS5_VABI*)(std::int32_t, KernelTimespec*);
+extern "C" void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn);
 
 using PthreadCreateFn_nid_no_patch = int (APS5_VABI*)(void**, const void*, void* (APS5_VABI*)(void*), void*);
 using PthreadJoinFn_nid_no_patch = int (APS5_VABI*)(void*, void**);
