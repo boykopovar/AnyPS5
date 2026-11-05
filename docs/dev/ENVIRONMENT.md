@@ -754,3 +754,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_TIMERS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | on Windows, runs a timed-wait selftest at startup and prints mean, p50 and max latencies |
 | `APS5_TRACE_USLEEP` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | reports every 2000 `sceKernelUsleep` calls the call sites that sleep most, including calls through `sceNetUsleep` and the `APS5_TRACE_TIMERS` measurement on Windows; guest `usleep` calls are not counted |
 | `APS5_TRACE_WAITS` | presence | `core/libs/prx/libkernel/Time/Time.cpp` |  | aggregates blocking waits per guest call site and prints the longest-waiting sites every 3 s |
+### tools
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `ANYPS5_NID_DB` | string | `tools/nid_names.py` | (unset: `aerolib.csv` in `anyps5-nid-db` under the system temp directory, downloaded when missing) | NID database CSV that `tools/nid_names.py` reads when `--db` is not given; see its `--db` help |
