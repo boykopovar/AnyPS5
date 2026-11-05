@@ -26,7 +26,8 @@ static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
 static constexpr std::size_t MAX_REQUESTS = 32;
-static constexpr std::uint32_t MAX_SERVICE_CHECKER2_REQUEST_ID = 0x1000;
+static constexpr std::size_t MAX_SERVICE_CHECKER2_REQUESTS = 0x1000;
+static constexpr std::uint32_t MAX_SERVICE_CHECKER2_REQUEST_ID = 0x7FFFFFFF;
 static constexpr int WORD_FILTER_TITLE_CTX_ID_OFFSET = 0x01000000;
 static constexpr int WORD_FILTER_REQUEST_ID_OFFSET = 0x02000000;
 static constexpr std::size_t WORD_FILTER_COMMENT_MAX_LENGTH = 0x400;
@@ -393,10 +394,12 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     std::lock_guard lock(serviceChecker2.mutex);
     if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
     if (!requestId) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
-    if (serviceChecker2.nextRequest > MAX_SERVICE_CHECKER2_REQUEST_ID) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
-    const int id = static_cast<int>(serviceChecker2.nextRequest++);
-    serviceChecker2.requests.insert(id);
-    *requestId = id;
+    if (serviceChecker2.requests.size() >= MAX_SERVICE_CHECKER2_REQUESTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
+    std::uint32_t id = serviceChecker2.nextRequest;
+    while (serviceChecker2.requests.contains(static_cast<int>(id))) id = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
+    serviceChecker2.nextRequest = id >= MAX_SERVICE_CHECKER2_REQUEST_ID ? 1 : id + 1;
+    serviceChecker2.requests.insert(static_cast<int>(id));
+    *requestId = static_cast<int>(id);
     return 0;
 }
 int APS5_VABI sceNpServiceChecker2IntDestroyRequest(int requestId) {

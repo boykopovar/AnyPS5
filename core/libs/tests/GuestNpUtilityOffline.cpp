@@ -165,6 +165,11 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == TooManyObjects, "sceNpServiceChecker2IntCreateRequest", "the host request limit was not enforced");
     Require(boundaryId == lastId, "sceNpServiceChecker2IntCreateRequest", "the request output changed on refusal");
     Require(sceNpServiceChecker2IntGetServiceAvailability(lastId, selfNpId, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailability", "an existing request was lost at the host limit");
+    Require(sceNpServiceChecker2IntDestroyRequest(lastId) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying a request at the host limit failed");
+    for (std::uint32_t index = 0; index < 0x2000; ++index) {
+        Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == 0, "sceNpServiceChecker2IntCreateRequest", "the host limit counted destroyed requests");
+        Require(sceNpServiceChecker2IntDestroyRequest(boundaryId) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying a recycled request failed");
+    }
     Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization after the host limit failed");
     Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
 }
