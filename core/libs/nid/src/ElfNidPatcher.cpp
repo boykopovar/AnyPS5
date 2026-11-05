@@ -99,9 +99,19 @@ void ReorderDynSymForGnuHash(
     std::uint32_t symOffset,
     std::uint32_t bucketCount,
     std::vector<std::string>& symbolNames,
-    std::vector<std::uint32_t>& oldToNewIndex
+    std::vector<std::uint32_t>& oldToNewIndex,
+    std::size_t versymOffset
 ) {
     using namespace Internal;
+
+    std::vector<std::uint16_t> oldVersions;
+    std::vector<std::uint16_t> reorderedVersions;
+    if (versymOffset != 0u) {
+        oldVersions.resize(symCount);
+        reorderedVersions.resize(symCount);
+        for (std::size_t i = 0u; i < symCount; ++i)
+            oldVersions[i] = Read<std::uint16_t>(elf, versymOffset + i * sizeof(std::uint16_t));
+    }
 
     std::vector<std::uint32_t> movableIndices;
     for (std::uint32_t i = symOffset; i < symCount; ++i)
@@ -121,6 +131,7 @@ void ReorderDynSymForGnuHash(
         reorderedSyms[i] = Read<Elf64_Sym>(elf, dynSymOffset + i * sizeof(Elf64_Sym));
         reorderedNames[i] = symbolNames[i];
         oldToNewIndex[i] = i;
+        if (versymOffset != 0u) reorderedVersions[i] = oldVersions[i];
     }
 
     for (std::size_t position = 0u; position < movableIndices.size(); ++position) {
@@ -129,10 +140,13 @@ void ReorderDynSymForGnuHash(
         reorderedSyms[newIndex] = Read<Elf64_Sym>(elf, dynSymOffset + oldIndex * sizeof(Elf64_Sym));
         reorderedNames[newIndex] = symbolNames[oldIndex];
         oldToNewIndex[oldIndex] = newIndex;
+        if (versymOffset != 0u) reorderedVersions[newIndex] = oldVersions[oldIndex];
     }
 
     for (std::size_t i = 0u; i < symCount; ++i)
         Write(elf, dynSymOffset + i * sizeof(Elf64_Sym), reorderedSyms[i]);
+    for (std::size_t i = 0u; versymOffset != 0u && i < symCount; ++i)
+        Write(elf, versymOffset + i * sizeof(std::uint16_t), reorderedVersions[i]);
 
     symbolNames = std::move(reorderedNames);
 }
@@ -369,7 +383,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     std::size_t gnuHashOffset = 0u, gnuHashSize = 0u;
     std::size_t sysvHashOffset = 0u, sysvHashSize = 0u;
     std::uint32_t sysvHashLink = 0u;
-    std::size_t versymOffset = 0u;
+    std::size_t versymOffset = 0u, versymSize = 0u;
     bool hasDynamic = false;
     std::uint32_t dynSymSectionIndex = 0u;
     std::uint32_t gnuHashSymOffset = 0u;
@@ -394,8 +408,10 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             sysvHashSize = static_cast<std::size_t>(shdr.sh_size);
             sysvHashLink = shdr.sh_link;
         }
-        if (shdr.sh_type == kShtGnuVersym)
+        if (shdr.sh_type == kShtGnuVersym) {
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
+            versymSize = static_cast<std::size_t>(shdr.sh_size);
+        }
         if (shdr.sh_type == kShtGnuVerdef)
             throw std::runtime_error("unsupported .gnu.version_d section: symbol version definitions cannot be preserved");
     }
@@ -637,7 +653,9 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     if (gnuHashOffset != 0u) {
         const auto bucketCount = Read<std::uint32_t>(elf, gnuHashOffset);
         std::vector<std::uint32_t> oldToNewIndex(symCount);
-        ReorderDynSymForGnuHash(elf, dynSymOffset, symCount, gnuHashSymOffset, bucketCount, newSymbolNames, oldToNewIndex);
+        if (versymOffset != 0u && versymSize < symCount * sizeof(std::uint16_t))
+            throw std::runtime_error("invalid ELF version symbol table size");
+        ReorderDynSymForGnuHash(elf, dynSymOffset, symCount, gnuHashSymOffset, bucketCount, newSymbolNames, oldToNewIndex, versymOffset);
         FixupRelocationSymbolIndices(elf, ehdr, dynSymSectionIndex, oldToNewIndex);
         RebuildGnuHash(elf, gnuHashOffset, gnuHashSize, symCount, newSymbolNames);
     }

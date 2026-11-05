@@ -27,6 +27,12 @@ int main() {
 
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    param.size = 63;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param);
+    param.mode = 2;
+    Require(sceLoginDialogOpen(&param) == kErrArgNull);
+    param.mode = 0;
     Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
     Require(sceLoginDialogClose() == kErrNotInitialized);
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
@@ -43,6 +49,8 @@ int main() {
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
     Require(sceLoginDialogGetResult(&result) == kErrNotFinished);
     Require(result.result == 1 && result.errorCode == static_cast<int>(0x81340007u));
+    Require(result.data[0] == 11 && result.data[1] == 22 && result.data[2] == 33 && result.data[3] == 44 &&
+            result.data[4] == 55 && result.data[5] == 66 && result.data[6] == 77 && result.data[7] == 88);
 
     param.size = 63;
     Require(sceLoginDialogOpen(&param) == kErrArgNull);
