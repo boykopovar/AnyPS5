@@ -135,6 +135,19 @@ int main() {
             "open with unreadable directory name entry");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
             "unreadable directory name entry must leave the previous result finished");
+    SaveDataDirName unterminatedName{};
+    std::memset(unterminatedName.data, 'U', sizeof(unterminatedName.data));
+    SaveDataDialogItems unterminatedItems{};
+    unterminatedItems.dir_names = &unterminatedName;
+    unterminatedItems.dir_names_num = 1;
+    SaveDataDialogParam unterminatedParam{};
+    unterminatedParam.size = sizeof(unterminatedParam);
+    unterminatedParam.mode = 0;
+    unterminatedParam.items = &unterminatedItems;
+    Require(sceSaveDataDialogOpen(&unterminatedParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with a directory name that has no terminating NUL");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
+            "unterminated directory name must leave the previous result finished");
     Require(sceSaveDataDialogTerminate() == 0, "terminate after unreadable items");
 
     Require(sceSaveDataDialogInitialize() == 0, "re-initialize");
