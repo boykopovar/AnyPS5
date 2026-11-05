@@ -19,6 +19,7 @@
 #else
 #include <spawn.h>
 #include <sys/wait.h>
+#include <unistd.h>
 extern char** environ;
 #endif
 
@@ -34,6 +35,8 @@ const char* stopStep = nullptr;
 int stopCall = 1;
 int calls = 0;
 bool failStep = false;
+int rollbackCall = 0;
+int rollbackCalls = 0;
 
 void Require(bool condition, const std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -73,6 +76,7 @@ SceSaveDataDirName Name() {
 }
 
 bool Step(const char* step, const char*) {
+    if (rollbackCall != 0 && std::strcmp(step, "backup.rollback") == 0 && ++rollbackCalls == rollbackCall) return false;
     if (stopStep == nullptr || std::strcmp(stopStep, step) != 0 || ++calls != stopCall) return true;
     if (failStep) return false;
     std::_Exit(Interrupted);
@@ -131,6 +135,7 @@ int Child(int argc, char** argv) {
     AddPathAlias_nid_no_patch("/app0", std::filesystem::current_path().string().c_str());
     Require(sceSaveDataInitialize3(nullptr) == 0);
     const std::string operation = argv[2];
+    if (argc > 7) rollbackCall = std::stoi(argv[7]);
     if (argc > 4) SetStep(argv[4], argc > 5 && std::strcmp(argv[5], "fail") == 0, argc > 6 ? std::stoi(argv[6]) : 1);
     if (operation == "backup") {
         BackUp(argv[3]);
@@ -155,7 +160,7 @@ int Child(int argc, char** argv) {
 }
 
 int Run(const std::string& executable, std::initializer_list<const char*> arguments) {
-    std::vector<const char*> values{executable.c_str(), "--child"};
+    std::vector<const char*> values{"savedata-backup-recovery", "--child"};
     values.insert(values.end(), arguments.begin(), arguments.end());
     values.push_back(nullptr);
 #ifdef _WIN32
@@ -188,6 +193,10 @@ Snapshot Start(const std::string& executable) {
 
 void NoCopies() {
     Require(!std::filesystem::exists(Old) && !std::filesystem::exists(Staged));
+}
+
+void NoLiveSave() {
+    for (const char* path : {"_sd/kept", "_sd/kept.param", "_sd/kept.blocks"}) Require(!std::filesystem::exists(path));
 }
 
 void InterruptedReplacement(const std::string& executable) {
@@ -275,18 +284,27 @@ void Restore(const std::string& executable) {
 }
 
 void Delete(const std::string& executable) {
+    Start(executable);
+    Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
+    Require(Run(executable, {"delete", "unused"}) == 0);
+    NoCopies();
+    NoLiveSave();
+    Require(Run(executable, {"check", "missing"}) == 0);
     const auto original = Start(executable);
     Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
-    const auto live = Tree("_sd/kept");
     const auto staged = Tree(Staged);
     Require(Run(executable, {"delete", "invalid", "backup.delete", "fail"}) == 0);
-    Require(Tree(Old) == original && Tree(Staged) == staged && Tree("_sd/kept") == live);
+    Require(Tree(Old) == original && Tree(Staged) == staged);
+    NoLiveSave();
     Require(Run(executable, {"delete", "unused"}) == 0);
     Require(!std::filesystem::exists(Backup));
+    NoCopies();
+    NoLiveSave();
     for (const char* count : {"1", "2"}) {
         const auto previous = Start(executable);
         Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
         Require(Run(executable, {"delete", "unused", "backup.delete", "stop", count}) == Interrupted);
+        NoLiveSave();
         Require(Run(executable, {"check", "old"}) == 0);
         Require(Tree(Backup) == previous);
         NoCopies();
@@ -296,14 +314,82 @@ void Delete(const std::string& executable) {
     const auto published = Tree(Backup);
     Write(Staged / "incomplete", "partial");
     Require(Run(executable, {"delete", "unused", "backup.delete", "stop", "3"}) == Interrupted);
+    NoLiveSave();
     Require(Tree(Backup) == published);
     NoCopies();
     Require(Run(executable, {"check", "new"}) == 0);
     Require(Run(executable, {"delete", "unused"}) == 0);
+    NoLiveSave();
     Require(Run(executable, {"check", "missing"}) == 0);
     NoCopies();
     Require(Run(executable, {"check", "missing"}) == 0);
     Require(!std::filesystem::exists(Backup));
+}
+
+#ifndef _WIN32
+void DeleteFailure(const std::string& executable) {
+    for (const bool interrupted : {false, true}) {
+        const auto original = Start(executable);
+        if (interrupted) Require(Run(executable, {"backup", "new", "backup.place"}) == Interrupted);
+        const auto protectedDirectory = std::filesystem::path("_sd/kept/protected");
+        Write(protectedDirectory / "surviving.bin", "keep this backup recoverable");
+        const auto metadata = Read("_sd/kept.param");
+        const auto blocks = Read("_sd/kept.blocks");
+        std::filesystem::permissions(protectedDirectory, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+        int result = -1;
+        try {
+            result = Run(executable, {"delete", "invalid"});
+        } catch (...) {
+            std::filesystem::permissions(protectedDirectory, std::filesystem::perms::owner_all);
+            throw;
+        }
+        std::filesystem::permissions(protectedDirectory, std::filesystem::perms::owner_all);
+        Require(result == 0);
+        Require(Read(protectedDirectory / "surviving.bin") == "keep this backup recoverable");
+        Require(Read("_sd/kept.param") == metadata && Read("_sd/kept.blocks") == blocks);
+        Require(Tree(interrupted ? Old : Backup) == original);
+        Require(Run(executable, {"check", "old"}) == 0);
+        Require(Tree(Backup) == original);
+        NoCopies();
+        Require(Run(executable, {"delete", "unused"}) == 0);
+        NoLiveSave();
+        NoCopies();
+        Require(!std::filesystem::exists(Backup));
+        Require(Run(executable, {"check", "missing"}) == 0);
+    }
+}
+#endif
+
+void Rollback(const std::string& executable) {
+    for (const char* count : {"1", "2"}) {
+        const auto original = Start(executable);
+        Require(Run(executable, {"backup", "new", "backup.flush", "fail", "2", count}) == 0);
+        Require(Tree(Old) == original);
+        const auto expected = std::strcmp(count, "1") == 0 ? "new" : "old";
+        const auto selected = std::strcmp(expected, "new") == 0 ? Tree(Backup) : original;
+        Require(Run(executable, {"check", expected}) == 0);
+        Require(Tree(Backup) == selected);
+        NoCopies();
+    }
+}
+
+void DeleteSidecarFailure(const std::string& executable) {
+    for (const char* sidecar : {"_sd/kept.param", "_sd/kept.blocks"}) {
+        const auto original = Start(executable);
+        Require(std::filesystem::remove(sidecar));
+        Write(std::filesystem::path(sidecar) / "blocking.bin", "failed removal");
+        Require(Run(executable, {"delete", "invalid"}) == 0);
+        Require(!std::filesystem::exists("_sd/kept"));
+        Require(Read(std::filesystem::path(sidecar) / "blocking.bin") == "failed removal");
+        Require(Tree(Backup) == original);
+        Require(Run(executable, {"check", "old"}) == 0);
+        NoCopies();
+        std::filesystem::remove_all(sidecar);
+        Require(Run(executable, {"delete", "unused"}) == 0);
+        NoLiveSave();
+        NoCopies();
+        Require(!std::filesystem::exists(Backup));
+    }
 }
 
 void Invalid(const std::string& executable) {
@@ -327,6 +413,14 @@ void Invalid(const std::string& executable) {
 }
 
 void Published(const std::string& executable) {
+    Start(executable);
+    Require(Run(executable, {"backup", "new"}) == 0);
+    const auto complete = Tree(Backup);
+    Write(Old / "remaining", "interrupted cleanup");
+    Write(Staged / "incomplete", "uncommitted staging");
+    Require(Run(executable, {"check", "new"}) == 0);
+    Require(Tree(Backup) == complete);
+    NoCopies();
     Start(executable);
     Require(Run(executable, {"backup", "new", "backup.cleanup"}) == Interrupted);
     const auto committed = Tree(Backup);
@@ -398,6 +492,14 @@ int main(int argc, char** argv) {
         else if (operation == "retry") Retry(executable);
         else if (operation == "restore") Restore(executable);
         else if (operation == "delete") Delete(executable);
+#ifndef _WIN32
+        else if (operation == "delete_failure") {
+            if (geteuid() == 0) result = 77;
+            else DeleteFailure(executable);
+        }
+#endif
+        else if (operation == "rollback") Rollback(executable);
+        else if (operation == "delete_sidecar_failure") DeleteSidecarFailure(executable);
         else if (operation == "invalid") Invalid(executable);
         else if (operation == "published") Published(executable);
         else if (operation == "unpublished") Unpublished(executable);

@@ -840,15 +840,17 @@ static int deleteSave(const SaveDataDelete* del) {
     if (error) return SAVE_DATA_ERROR_INTERNAL;
     try {
         require_plain_paths(dirName, {BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
-        for (const char* root : {BACKUP_STAGING_DIR, BACKUP_OLD_DIR, BACKUP_DIR}) {
-            remove_backup_copy("backup.delete", backup_entry(root, dirName));
-        }
         if (std::filesystem::is_directory(path)) {
             RemoveTree(path);
         }
         std::error_code ec;
         std::filesystem::remove(param_path(path), ec);
+        if (ec) return SAVE_DATA_ERROR_INTERNAL;
         std::filesystem::remove(blocks_path(path), ec);
+        if (ec) return SAVE_DATA_ERROR_INTERNAL;
+        for (const char* root : {BACKUP_STAGING_DIR, BACKUP_OLD_DIR, BACKUP_DIR}) {
+            remove_backup_copy("backup.delete", backup_entry(root, dirName));
+        }
     } catch (const std::filesystem::filesystem_error&) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
