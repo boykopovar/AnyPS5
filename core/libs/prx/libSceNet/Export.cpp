@@ -9,7 +9,6 @@
 #include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
-#include <cerrno>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <fcntl.h>
@@ -25,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <climits>
 #include <chrono>
 #include <condition_variable>
@@ -176,6 +176,7 @@ constexpr int NET_SO_PROTOCOL = 0x1016;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
 constexpr int NET_SO_KEEPALIVE = 0x8;
+constexpr int NET_SO_DONTROUTE = 0x10;
 constexpr int NET_SO_BROADCAST = 0x20;
 constexpr int NET_SO_ONESBCAST = 0x10000;
 constexpr int NET_SO_OOBINLINE = 0x100;
@@ -1730,9 +1731,9 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     } else if (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO) {
         if (value < 0) return fail(NET_EINVAL);
         if (set_native_timeout(socket.native->value, optname, value) != 0) return fail(native_error());
-    } else if (optname == NET_SO_REUSEADDR || optname == NET_SO_BROADCAST || optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) {
+    } else if (optname == NET_SO_REUSEADDR || optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST || optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) {
         if ((optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) && value < 1) return fail(NET_EINVAL);
-        const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
+        const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_DONTROUTE ? SO_DONTROUTE : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
             return fail(native_error());
     } else if (optname == NET_SO_KEEPALIVE) {
@@ -1855,17 +1856,17 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return 0;
     }
     if (*optlen < sizeof(int) &&
-        !(level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
-
+        !(level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
     int value = 0;
     switch (timeout_option(optname)) {
         case NET_SO_REUSEADDR:
+        case NET_SO_DONTROUTE:
         case NET_SO_BROADCAST: {
             int enabled = 0;
             NativeLength size = sizeof(enabled);
-            const int nativeOption = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : SO_BROADCAST;
+            const int nativeOption = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_DONTROUTE ? SO_DONTROUTE : SO_BROADCAST;
             if (::getsockopt(socket.native->value, SOL_SOCKET, nativeOption, reinterpret_cast<char*>(&enabled), &size) != 0)
                 return fail(native_error());
             value = enabled != 0 ? optname : 0;
@@ -2807,7 +2808,11 @@ int APS5_VABI sceNetClearDnsCache(int flags) {
 int APS5_VABI sceNetGetStatisticsInfo(NetStatisticsInfo* info, std::uint32_t flags) {
     if (info == nullptr) return fail(NET_EFAULT);
     constexpr std::int32_t FREE_BYTES = 16 * 1024 * 1024;
-    *info = {FREE_BYTES, FREE_BYTES, 0, 0, FREE_BYTES, FREE_BYTES};
+    const NetStatisticsInfo stats{FREE_BYTES, FREE_BYTES, 0, 0, FREE_BYTES, FREE_BYTES};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &stats, sizeof(stats));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -3002,10 +3007,17 @@ int APS5_VABI sceNetGetNameToIndex(std::uint32_t interfaceId) {
 int APS5_VABI sceNetGetRandom(std::uint32_t* output) {
     if (!g_net_inited) return fail(NET_ENOTINIT);
     if (output == nullptr) return fail(NET_EINVAL);
-    static std::mutex mutex;
-    static std::random_device device;
-    const std::lock_guard<std::mutex> lock(mutex);
-    *output = static_cast<std::uint32_t>(device());
+    const int savedErrno = errno;
+    std::uint32_t value{};
+    {
+        static std::mutex mutex;
+        static std::random_device device;
+        const std::lock_guard<std::mutex> lock(mutex);
+        value = static_cast<std::uint32_t>(device());
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(output, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 

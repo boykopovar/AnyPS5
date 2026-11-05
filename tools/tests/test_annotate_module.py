@@ -545,6 +545,8 @@ class AnnotateModuleTests(unittest.TestCase):
 
 class InputProtectionTests(unittest.TestCase):
     def test_cli_rejects_alias_without_success_or_partial_reports(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             module = root / "report.exports.txt"
@@ -775,4 +777,4 @@ class PathResolutionTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
