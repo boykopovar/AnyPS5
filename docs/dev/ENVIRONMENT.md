@@ -586,6 +586,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `APS5_TRACE_UDS` | presence | `core/libs/prx/libSceNpTrophy2/src/TitleTrophies.cpp` |  | prints the UDS events contexts post and the stat changes trophy rules apply, and the trophy files a lookup does not find (read in NpUniversalDataSystem/Event and NpTrophy2/TitleTrophies) |
 
+### libSceNetCtl
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `APS5_NET_DISCONNECTED` | presence | `core/libs/prx/libSceNetCtl/Export.cpp` |  | libSceNetCtl and the libSceNet route, DNS-server and interface queries report no connection; sockets are not affected |
+
 ### libScePad
 
 | Name | Kind | Source | Default | Description |
