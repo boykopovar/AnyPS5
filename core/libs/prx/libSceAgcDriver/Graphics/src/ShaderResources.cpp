@@ -5636,7 +5636,15 @@ void ShaderResources::resolveImageTables() {
         const auto state = CurrentTableState();
         std::vector<std::shared_ptr<Texture>> cached;
         const bool storageTable = std::find(binding.imageWritten.begin(), binding.imageWritten.end(), true) != binding.imageWritten.end();
-        if (auto* reused = storageTable || item == nullptr ? nullptr : FindReusedTable(context.device, binding, state); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+        auto* reused = storageTable || item == nullptr ? nullptr : FindReusedTable(context.device, binding, state);
+        if (reused != nullptr && AnyPendingCpuWrites(context)) {
+            bool landed = false;
+            for (const auto& entry : reused->elements) {
+                if (!entry.rejected && CompletePendingCpuWrites(context, entry.resource.baseAddress, static_cast<std::size_t>(entry.guestBytes))) landed = true;
+            }
+            if (landed && CurrentTableState() != state) reused = nullptr;
+        }
+        if (reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
@@ -5649,7 +5657,6 @@ void ShaderResources::resolveImageTables() {
                 } else if (entry.rejected) {
                     table.map[faults + element] = rejectTableElement(table, words, entry.message);
                 } else {
-                    CompletePendingCpuWrites(context, entry.resource.baseAddress, static_cast<std::size_t>(entry.guestBytes));
                     if (!replay) {
                         reused->bound[element] = bind(element, words, std::move(*next++), entry.resource, entry.guestBytes, entry.firstLayer);
                     } else if (!reused->bound[element].empty()) {
