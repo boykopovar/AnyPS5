@@ -119,6 +119,7 @@ void Codecs() {
     Require(factory->createCodec != nullptr, "CreateCodec slot");
     Require(factory->createFormatConverter != nullptr, "CreateFormatConverter slot");
     Require(factory->release != nullptr, "Release slot");
+    Require(reinterpret_cast<void* const*>(factory)[3] == nullptr && reinterpret_cast<void* const*>(factory)[4] == reinterpret_cast<void*>(factory->release), "Release is not at offset 0x20 behind an empty slot");
 
     void* codec = reinterpret_cast<void*>(1);
     for (const std::uint32_t iid : {0u, 1u, 2u, 100u, 202u, 0xffffffffu}) {
