@@ -3879,6 +3879,12 @@ static void CheckSceKernelMmap() {
     void* untouched = &mapped;
     Require(sceKernelMmap(nullptr, 0, 3, 0x1002, -1, 0, &untouched) == static_cast<int>(0x80020016u));
     Require(untouched == &mapped);
+    void* probe = nullptr;
+    Require(sceKernelMmap(nullptr, page, 3, 0x1002, -1, 0, &probe) == 0 && probe != nullptr);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(probe), page) == 0);
+    Require(sceKernelMmap(probe, page, 3, 0x1012, -1, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    VirtualQueryInfo gone{};
+    Require(sceKernelVirtualQuery(probe, 0, &gone, sizeof(gone)) == SCE_KERNEL_ERROR_EACCES);
 }
 
 static void CheckVirtualQueryPartialMunmap() {
