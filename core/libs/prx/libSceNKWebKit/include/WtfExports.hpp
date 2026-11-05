@@ -90,6 +90,7 @@ bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::T
 bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
+bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv();
 void APS5_VABI _ZN3WTF13StringBuilder11shrinkToFitEv(NKWebKit::WtfAbi::StringBuilder* self);
 void APS5_VABI _ZN3WTF13StringBuilder12appendNumberEf(NKWebKit::WtfAbi::StringBuilder* self, float number);
