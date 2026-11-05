@@ -409,6 +409,9 @@ static void TestLeaderboardEntryAccessors() {
                 Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(object) == highestSerial, "highest serial rank does not read the entry field");
                 Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13objectIdIsSetEv(object) == ((flags & 1) != 0), "object ID presence does not read its own flag");
                 Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14smallDataIsSetEv(object) == ((flags & 2) != 0), "small data presence does not read its own flag");
+                Require(static_cast<const void*>(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(object)) == object + 0x18, "comment getter did not return its embedded object reference");
+                Require(static_cast<const void*>(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getObjectIdEv(object)) == object + 0x48, "object ID getter did not return its embedded object reference");
+                Require(static_cast<const void*>(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getSmallDataEv(object)) == object + 0xa0, "small data getter did not return its embedded object reference");
                 Require(std::memcmp(before, objects, sizeof(objects)) == 0, "entry accessors modified the object or adjacent storage");
             }
         }
