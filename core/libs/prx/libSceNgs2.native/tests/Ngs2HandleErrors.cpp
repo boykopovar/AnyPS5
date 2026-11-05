@@ -1,5 +1,7 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
+#include "tests/ExportLookup.hpp"
 
 #include <cstdint>
 #include <array>
@@ -18,6 +20,45 @@ static void Status(int actual, int expected, const char* message) {
 static void CheckExportLinked() {
     auto* volatile linked = &sceNgs2RackQueryInfo;
     Require(linked != nullptr);
+}
+
+static void CheckPendingExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
+        {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
+        {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
+        {sceNgs2RackRunCommands, "sceNgs2RackRunCommands"},
+        {sceNgs2StreamCreate, "sceNgs2StreamCreate"},
+        {sceNgs2StreamCreateWithAllocator, "sceNgs2StreamCreateWithAllocator"},
+        {sceNgs2StreamDestroy, "sceNgs2StreamDestroy"},
+        {sceNgs2StreamQueryBufferSize, "sceNgs2StreamQueryBufferSize"},
+        {sceNgs2StreamQueryInfo, "sceNgs2StreamQueryInfo"},
+        {sceNgs2StreamResetOption, "sceNgs2StreamResetOption"},
+        {sceNgs2StreamRunCommands, "sceNgs2StreamRunCommands"},
+        {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
+        {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
+    }
+}
+
+static void CheckCorePendingExports(const char* path) {
+    struct Export {
+        void (*function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftInit), "sceNgs2FftInit"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftProcess), "sceNgs2FftProcess"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2 exports do not all resolve by name");
+    }
 }
 
 static void CheckResetOption() {
@@ -433,7 +474,7 @@ static void CheckEnumeration() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
@@ -476,6 +517,8 @@ int main() {
         CheckFftQuerySize();
         CheckEnumeration();
         CheckExportLinked();
+        CheckPendingExports(argc > 1 ? argv[1] : nullptr);
+        CheckCorePendingExports(argc > 2 ? argv[2] : nullptr);
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {

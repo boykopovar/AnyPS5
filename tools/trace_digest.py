@@ -124,7 +124,7 @@ class Trace:
                 while stack and start >= round(stack[-1][0] * 1000) + round(stack[-1][1] * 1000):
                     stack.pop()
                 entry[3] = len(stack)
-                entry[4] = any(is_wait(parent[2]) for parent in stack)
+                entry[4] = bool(stack and (stack[-1][4] or is_wait(stack[-1][2])))
                 stack.append(entry)
 
     def select_threads(self, names):
