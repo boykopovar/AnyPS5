@@ -31,6 +31,8 @@ struct GuestRuntime {
     std::set<std::string> ZeroReturnExports;
     bool DeferInitialization = false;
     bool RequiresGuestGsRuntime = false;
+    std::vector<std::string> DeferredDependencies;
+    std::vector<std::string> DeferredSweep;
 };
 
 }
