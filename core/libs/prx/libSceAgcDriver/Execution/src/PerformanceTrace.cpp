@@ -325,7 +325,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     auto& state = session();
     std::lock_guard lock(state.mutex);
     if (!state.started) {
-        state.window = TraceWindow::Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
+        state.window = TraceWindow::FromEnvironment();
         state.interval = TraceInterval::Parse(std::getenv("APS5_TRACE_SUMMARY_EVERY"));
         state.bench = TraceBench::Parse(std::getenv("APS5_TRACE_BENCH"), state.interval.has_value());
         state.first = now;
@@ -398,12 +398,21 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     summary.firstPresent = state.firstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.gpuBusyAtOpen;
     summary.trace = "aps5-trace-" + summary.commit + "-" + std::to_string(process) + ".json.gz";
-    auto events = TraceFormat::Events(process, state.presents.front(), snapshots, presenter, state.presents, state.firstPresent);
+    auto capture = std::make_shared<TraceCapture>();
+    capture->summary = std::move(summary);
+    capture->presents = state.presents;
+    capture->process = process;
+    capture->presenter = presenter;
+    for (auto& snapshot : snapshots) capture->Add(std::move(snapshot));
+    const auto name = capture->summary.trace;
     auto& output = writer();
-    output = std::make_unique<ProfileOutput>([directory = traceDirectory(), name = summary.trace, line = TraceFormat::Summary(summary, snapshots, state.presents)](std::string_view text) {
+    output = std::make_unique<ProfileOutput>([directory = traceDirectory(), name, capture = std::move(capture)](std::string_view) mutable {
+        auto closed = std::move(capture);
         try {
+            const auto events = TraceFormat::Events(closed->process, closed->presents.front(), closed->threads, closed->presenter, closed->presents, closed->summary.firstPresent);
+            const auto line = TraceFormat::Summary(closed->summary, closed->threads, closed->presents);
             std::filesystem::create_directories(directory);
-            TraceFile::WriteGzip(directory / name, text);
+            TraceFile::WriteGzip(directory / name, events);
             TraceFile::AppendLine(directory / "aps5-summary.jsonl", line);
             std::fprintf(stderr, "[trace] wrote %s and its line in aps5-summary.jsonl\n", name.c_str());
             std::fflush(stderr);
@@ -412,9 +421,9 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
             std::fflush(stderr);
             throw;
         }
-    }, std::numeric_limits<std::size_t>::max());
-    ProfilePrint_nid_no_patch("[trace] closed at present %llu, writing %s (%zu bytes of JSON)\n", static_cast<unsigned long long>(present), summary.trace.c_str(), events.size());
-    output->Write(std::move(events));
+    });
+    ProfilePrint_nid_no_patch("[trace] closed at present %llu, formatting %s off-thread\n", static_cast<unsigned long long>(present), name.c_str());
+    if (!output->Write(name)) throw std::runtime_error("trace output rejected the closed capture");
 }
 
 void PerformanceTrace::StopOutput() {

@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -385,7 +386,9 @@ bool BufferDescriptorPresent(const DescriptorValue& descriptor) {
 BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index) {
     const bool present = BufferDescriptorPresent(descriptor);
     if (!present && !substitutes.empty()) return index < substitutes.size() && substitutes[index].known ? substitutes[index] : BufferSubstitute{};
-    return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present};
+    const auto stride = (descriptor.dwords[1] >> 16u) & 0x3fffu;
+    const auto tail = (stride == 0u ? descriptor.dwords[2] : stride * descriptor.dwords[2]) & 3u;
+    return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present ? tail : 0u, present};
 }
 
 DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) const {
@@ -401,6 +404,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
         const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return mode.conversionFormat == IrBufferFormat::Format11_11_10UNorm; });
+        if (info.images[index].volumeGather) {
+            if (info.images[index].depthCompare || convertedSample) fail("a 3D gather of a compared or converted image is not implemented");
+            compareStates[index] = ResourceMaterializer::VolumeGatherState(info, snapshot, index);
+            if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::VolumeGatherBase + index, compareStates[index]});
+            continue;
+        }
         if (!info.images[index].depthCompare && !convertedSample) continue;
         const auto compare = compareStates[index] = ResourceMaterializer::EmulatedCompareState(info, snapshot, index);
         const auto first = PipelineSpecialization::CompareBase + index * PipelineSpecialization::CompareWords;
@@ -426,11 +435,13 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
         if (alignment == 0u || misalignment % alignment != 0u) fail("is a formatted buffer access through a V# whose base is not aligned to its element");
         if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, fields.word3});
+        if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 2u, fields.tail});
         if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 3u, misalignment});
         if (!registrationModules) {
             const auto first = PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords;
             plan.specialization.push_back({first, fields.word1});
             plan.specialization.push_back({first + 1u, fields.word3});
+            plan.specialization.push_back({first + 2u, fields.tail});
             plan.specialization.push_back({first + 3u, misalignment});
         }
         if (buffer.formattedReadMask != 0u) {
@@ -613,12 +624,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         plan.runtimeState.assign(layout.runtimeStateDwords, 0u);
         for (std::uint32_t target = 0; target < exportMappings.size(); ++target) plan.runtimeState.at(RuntimeAbi::StateExportMappings + target / 4u) |= static_cast<std::uint32_t>(exportMappings[target]) << (target % 4u * 8u);
     }
-    std::vector<std::uint32_t> samplerMasks(info.samplers.size());
+    std::vector<std::uint64_t> samplerMasks(info.samplers.size());
     for (const auto& binding : plan.bindings) {
         if (binding.descriptor.role != DescriptorRole::GuestSamplers) continue;
-        if (binding.resources.size() > ShaderInfo::MaxSamplers) fail("prepared sampler mask capacity exceeded");
+        if (binding.resources.size() > std::numeric_limits<std::uint64_t>::digits) fail("prepared sampler mask capacity exceeded");
         for (std::uint32_t element = 0; element < binding.resources.size(); ++element) {
-            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= 1u << element;
+            if (binding.inactive.empty() || !binding.inactive[element]) samplerMasks.at(binding.resources[element]) |= std::uint64_t{1} << element;
         }
     }
     for (auto& binding : plan.bindings) {
@@ -713,9 +724,9 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
                 physical.imageAtomic.push_back(element.atomic);
                 physical.imageAtomic64.push_back(element.atomic64);
-                std::uint32_t samplers = 0;
+                std::uint64_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
-                    if ((element.samplers & (1u << sampler)) != 0u) samplers |= entry.tableSamplerMasks[sampler];
+                    if (((element.samplers >> sampler) & 1u) != 0u) samplers |= entry.tableSamplerMasks[sampler];
                 }
                 physical.imageSamplers.push_back(samplers);
             }
