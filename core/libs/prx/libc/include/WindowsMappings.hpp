@@ -570,6 +570,12 @@ public:
         return true;
     }
 
+    void ForgetKnownZero(std::uintptr_t address, std::size_t bytes) {
+        if (bytes == 0 || bytes > UINTPTR_MAX - address) return;
+        std::lock_guard lock(mutex);
+        forgetZero(address, address + bytes);
+    }
+
     void KnownZero(std::uintptr_t address, std::size_t bytes, void (*zero)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
         if (bytes == 0 || bytes > UINTPTR_MAX - address) return;
         const auto end = address + bytes;

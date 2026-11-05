@@ -801,6 +801,10 @@ void GuestArenaKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes,
     WindowsMappings::Get().KnownZero(address, bytes, zero, context);
 }
 
+void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().ForgetKnownZero(address, bytes);
+}
+
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
