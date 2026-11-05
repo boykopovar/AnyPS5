@@ -395,7 +395,7 @@ int APS5_VABI sceUserServiceSetGlsLiveQuality4(int userId, std::int32_t value);
 int APS5_VABI sceUserServiceGetHearingAssistPresetType(int userId, std::int32_t* value);
 int APS5_VABI sceUserServiceGetHearingAssistWeakenAdjustment(int userId, std::int32_t* value);
 int APS5_VABI sceUserServiceSetPbtcWednesdayDuration(int userId, std::int32_t value);
-int APS5_VABI sceUserServiceIsGuestUser(void);
+int APS5_VABI sceUserServiceIsGuestUser(std::int32_t userId);
 int APS5_VABI sceUserServiceGetPadProfileDataHuntList(int userId, void* profiles, std::uint32_t count, std::uint32_t flags);
 int APS5_VABI sceUserServiceGetAccessibilityKeyremapData(int userId, void* data);
 int APS5_VABI sceUserServiceSetCaptureStatus2(int userId, std::uint32_t value);
@@ -491,7 +491,7 @@ int APS5_VABI sceUserServiceGetEventUiFlag(int userId, std::int32_t* value);
 int APS5_VABI sceUserServiceSetGlsBroadcastUiLayout(int userId, std::int32_t value);
 int APS5_VABI sceUserServiceSetVibrationEnabled(int userId, std::int32_t value);
 int APS5_VABI sceUserServiceSetPbtcAdditionalTime(int userId, std::int32_t value);
-int APS5_VABI sceUserServiceIsSharePlayClientUser(void);
+int APS5_VABI sceUserServiceIsSharePlayClientUser(std::int32_t userId);
 int APS5_VABI sceUserServiceGetMonoOutput(int userId, std::int32_t* value);
 int APS5_VABI sceUserServiceSetNpLoginId(int userId, const char* value);
 int APS5_VABI sceUserServiceGetShareStatus(int userId, std::uint32_t* value);
@@ -575,7 +575,7 @@ int APS5_VABI sceUserServiceGetUserGroupNum(void);
 int APS5_VABI sceUserServiceSetPartySettingFlags(int userId, std::uint32_t value);
 int APS5_VABI sceUserServiceGetGlsCameraEffect(int userId, std::uint32_t* value);
 int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(int userId, std::int32_t* value);
-int APS5_VABI sceUserServiceGetIsSpartacusEnabled(void);
+int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t userId, bool* enabled);
 }
 
 #endif
