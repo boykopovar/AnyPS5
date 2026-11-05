@@ -3717,7 +3717,16 @@ void uint16ExportTests() {
     auto queue = makeState();
     queue.context[0x1c5] = 7;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 7");
-    queue.context[0x31c] = (queue.context[0x31c] & ~0x77cu) | 0x404u;
+    queue.context[0x31c] = 0x714u;
+    const auto float16 = AgcDriver::Graphics::DecodeState(queue);
+    Require(float16.hasColorTarget && float16.color.format == VK_FORMAT_R16G16_UINT && float16.color.elementBytes == 4u && float16.color.uintExport && float16.color.packing == ShaderRecompiler::ColorExportPacking::None, "a UINT16_ABGR export into an R16G16_SFLOAT target did not decode as its unsigned alias");
+    queue.context[0x31c] = 0x730u;
+    Require(AgcDriver::Graphics::DecodeState(queue).color.format == VK_FORMAT_R16G16B16A16_UINT, "a UINT16_ABGR export into an R16G16B16A16_SFLOAT target did not decode as its unsigned alias");
+    queue.context[0x31c] = 0x708u;
+    Require(AgcDriver::Graphics::DecodeState(queue).color.format == VK_FORMAT_R16_UINT, "a UINT16_ABGR export into an R16_SFLOAT target did not decode as its unsigned alias");
+    queue.context[0x31c] = 0x014u;
+    Require(AgcDriver::Graphics::DecodeState(queue).color.format == VK_FORMAT_R16G16_UINT, "a UINT16_ABGR export into an R16G16_UNORM target did not decode as its unsigned alias");
+    queue.context[0x31c] = 0x404u;
     const auto state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.hasColorTarget && state.color.format == VK_FORMAT_R8_UINT && state.color.uintExport, "a UINT16_ABGR export into an unsigned integer target did not decode");
     Require(!AgcDriver::Graphics::DecodeState(makeState()).color.uintExport, "a float export was marked unsigned integer");
@@ -5489,6 +5498,8 @@ struct MockVulkan {
     LiveCounter live;
     bool deferFences = false;
     std::map<VkFence, bool> signaled;
+    std::map<VkQueryPool, std::vector<std::uint64_t>> timestamps;
+    std::uint64_t nextTimestamp = 0;
     std::uint64_t fenceWaits = 0;
     struct BufferCopy { VkBuffer source; VkBuffer destination; VkBufferCopy region; };
     std::vector<BufferCopy> bufferCopies;
@@ -5869,11 +5880,48 @@ VKAPI_ATTR void VKAPI_CALL mockCmdCopyBuffer(VkCommandBuffer, VkBuffer source, V
 VKAPI_ATTR void VKAPI_CALL mockCmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdBeginQuery(VkCommandBuffer, VkQueryPool, std::uint32_t, VkQueryControlFlags) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdEndQuery(VkCommandBuffer, VkQueryPool, std::uint32_t) {}
-VKAPI_ATTR void VKAPI_CALL mockCmdResetQueryPool(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t) {}
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateQueryPool(VkDevice, const VkQueryPoolCreateInfo* info, const VkAllocationCallbacks*, VkQueryPool* pool) {
+    Require(info->queryType == VK_QUERY_TYPE_TIMESTAMP, "mock query pool only supports timestamps");
+    *pool = makeHandle<VkQueryPool>();
+    mock.timestamps.emplace(*pool, std::vector<std::uint64_t>(info->queryCount));
+    ++mock.live;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyQueryPool(VkDevice, VkQueryPool pool, const VkAllocationCallbacks*) {
+    Require(mock.timestamps.erase(pool) == 1, "mock query pool destroyed twice");
+    --mock.live;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockCmdResetQueryPool(VkCommandBuffer, VkQueryPool pool, std::uint32_t first, std::uint32_t count) {
+    auto& stamps = mock.timestamps.at(pool);
+    Require(first <= stamps.size() && count <= stamps.size() - first, "mock query reset exceeds pool");
+    std::fill_n(stamps.begin() + first, count, 0);
+}
+
+VKAPI_ATTR void VKAPI_CALL mockCmdWriteTimestamp(VkCommandBuffer, VkPipelineStageFlagBits, VkQueryPool pool, std::uint32_t query) {
+    mock.timestamps.at(pool).at(query) = ++mock.nextTimestamp;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockGetQueryPoolResults(VkDevice, VkQueryPool pool, std::uint32_t first, std::uint32_t count, std::size_t size, void* data, VkDeviceSize stride, VkQueryResultFlags flags) {
+    Require(flags == VK_QUERY_RESULT_64_BIT, "mock timestamps only support nonblocking 64-bit results");
+    const auto& stamps = mock.timestamps.at(pool);
+    Require(first <= stamps.size() && count <= stamps.size() - first, "mock query read exceeds pool");
+    Require(stride >= sizeof(std::uint64_t) && (count == 0 || (size >= sizeof(std::uint64_t) && count - 1 <= (size - sizeof(std::uint64_t)) / stride)), "mock query results exceed destination");
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (stamps[first + index] == 0) return VK_NOT_READY;
+    }
+    for (std::uint32_t index = 0; index < count; ++index) std::memcpy(static_cast<std::byte*>(data) + index * stride, &stamps[first + index], sizeof(std::uint64_t));
+    return VK_SUCCESS;
+}
 VKAPI_ATTR void VKAPI_CALL mockCmdCopyQueryPoolResults(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t, VkBuffer, VkDeviceSize, VkDeviceSize, VkQueryResultFlags) {}
 
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
+        {"vkCreateQueryPool", reinterpret_cast<PFN_vkVoidFunction>(mockCreateQueryPool)},
+        {"vkDestroyQueryPool", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyQueryPool)},
+        {"vkCmdWriteTimestamp", reinterpret_cast<PFN_vkVoidFunction>(mockCmdWriteTimestamp)},
+        {"vkGetQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(mockGetQueryPoolResults)},
         {"vkAllocateCommandBuffers", reinterpret_cast<PFN_vkVoidFunction>(mockAllocateCommandBuffers)},
         {"vkFreeCommandBuffers", reinterpret_cast<PFN_vkVoidFunction>(mockFreeCommandBuffers)},
         {"vkCreateFence", reinterpret_cast<PFN_vkVoidFunction>(mockCreateFence)},
