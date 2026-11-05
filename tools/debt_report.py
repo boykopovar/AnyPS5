@@ -103,13 +103,14 @@ def exported_names(root):
     for path in (root / "core" / "libs" / "prx").rglob("*"):
         if path.suffix in SOURCES and "tests" not in path.relative_to(root).parts and path.is_file():
             text = path.read_text(encoding="utf-8", errors="ignore")
-            names.update(EXPORTED.findall(text))
+            names.update(HELPER_SUFFIX.sub("", name) for name in EXPORTED.findall(text))
             names.update(POSTFIXED.findall(text))
     return names
 
 
 def untested(text, words, exported=frozenset()):
-    found = [name for name in entry_names(text) if not PLAIN.fullmatch(name) or name in exported]
+    names = [HELPER_SUFFIX.sub("", name) for name in entry_names(text)]
+    found = [name for name in names if not PLAIN.fullmatch(name) or name in exported]
     return None if not found else not any(name in words for name in found)
 
 

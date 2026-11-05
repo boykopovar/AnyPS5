@@ -344,10 +344,11 @@ class Check:
     def debt_entries(self):
         known = {label for labels in DEBT_LABELS.values() for label in labels}
         for path, lines in self.files(lambda p: is_debt(p.as_posix())):
+            entry_lines = {start + offset for start, entry in debt_entries(self.show(path)).items() for offset in range(len(entry.split("\n")))}
             for number, text in lines:
                 if long_debt_entry(text):
                     self.report("debt-length", path, number, f"{len(text)} characters")
-                for label in debt_labels(text) if text.startswith(("- ", " ", "\t")) else []:
+                for label in debt_labels(text) if number in entry_lines else []:
                     if label not in known:
                         self.report("debt-labels", path, number, label)
 

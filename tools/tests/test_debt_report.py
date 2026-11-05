@@ -113,6 +113,30 @@ class LabelTests(unittest.TestCase):
             })
             self.assertEqual(debt_report.exported_names(root), {"sceA", "fchmodat"})
 
+    def test_helper_names_in_entries_match_test_words(self):
+        for suffix in ("_nid_postfix", "_nid_no_patch", "_nid_no_patch_cut"):
+            with self.subTest(suffix=suffix):
+                text = f"- [sceA{suffix}]({LINK}) - partial"
+                self.assertFalse(debt_report.untested(text, {"sceA"}))
+                self.assertTrue(debt_report.untested(text, set()))
+
+    def test_plain_helper_exports_keep_their_base_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, {
+                "core/libs/prx/libSceExample/Export.cpp": (
+                    "int APS5_VABI fchmodat_nid_no_patch(int a) { return a; }\n"
+                    "int APS5_VABI fchownat_nid_no_patch_cut(int a) { return a; }\n"
+                    "int APS5_VABI fstatat_nid_postfix(int a) { return a; }\n"
+                ),
+            })
+            exported = debt_report.exported_names(root)
+        self.assertEqual(exported, {"fchmodat", "fchownat", "fstatat"})
+        for name in exported:
+            with self.subTest(name=name):
+                self.assertTrue(debt_report.untested(f"- [{name}]({LINK}) - partial", set(), exported))
+                self.assertFalse(debt_report.untested(f"- [{name}]({LINK}) - partial", {name}, exported))
+
     def test_stale_is_a_link_to_a_file_that_is_gone(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -160,6 +184,15 @@ class ReportTests(unittest.TestCase):
         self.assertIn(f"{DEBT}:7: sceGone: code, no-test, stale? (missing link core/libs/prx/libSceExample/Gone.cpp)", output)
         self.assertNotIn(f"{DEBT}:6:", output)
         self.assertIn("2 entries: 2 no-test, 1 console, 1 windows, 1 code, 1 stale?", output)
+
+    def test_json_helper_named_entry_is_tested(self):
+        files = dict(self.FILES)
+        files[DEBT] = f"# libSceExample technical debt\n\n### Functional\n\n- [sceQuiet_nid_no_patch]({LINK}) - partial\n"
+        files["core/libs/prx/libSceExample/tests/Example.cpp"] = "int main() { return sceQuiet_nid_no_patch(); }\n"
+        with mock.patch.object(self, "FILES", files):
+            code, output = self.run_main(["--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)[0]["labels"], ["code"])
 
     def test_unknown_debt_file_is_a_usage_error(self):
         with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
