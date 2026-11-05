@@ -103,6 +103,35 @@ def accesses(body, name):
     return sorted(found)
 
 
+def splice_lines(text):
+    lines = []
+    pending = ""
+    joined = 0
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if line.endswith("\\"):
+            pending += line[:-1]
+            joined += 1
+            continue
+        lines.append(pending + line + "\n" * joined)
+        pending = ""
+        joined = 0
+    if joined:
+        lines.append(pending + "\n" * joined)
+    return "\n".join(lines)
+
+
+def keep_lines(match):
+    if match.group("code") is not None:
+        return match.group()
+    if match.group("comment") is None:
+        return "LITERAL" + "\n" * match.group().count("\n")
+    return re.sub(r"[^\n]", " ", match.group())
+
+
+def source_code(text):
+    return progress.CPP_TOKEN.sub(keep_lines, splice_lines(text))
+
+
 def audit_text(text):
     results = []
     for match in progress.DEFINITION.finditer(text):
@@ -124,7 +153,7 @@ def audit(libraries):
         for source in sorted(library.rglob("*.cpp")):
             if "tests" in source.relative_to(library).parts:
                 continue
-            text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
+            text = source_code(source.read_text(encoding="utf-8", errors="ignore"))
             for entry in audit_text(text):
                 report.append({"library": library.name, "file": source.relative_to(ROOT).as_posix(), **entry})
     return report

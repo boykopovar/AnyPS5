@@ -13,7 +13,7 @@ import progress
 
 
 def findings(source):
-    return [(entry["function"], entry["parameter"], entry["kinds"]) for entry in guest_pointer_audit.audit_text(progress.code(source))]
+    return [(entry["function"], entry["parameter"], entry["kinds"]) for entry in guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))]
 
 
 class AccessTests(unittest.TestCase):
@@ -101,15 +101,21 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(findings(source), [("sceExampleSn", "p", ["library call"]), ("sceExampleS", "p", ["library call"])])
 
     def test_line_is_the_earliest_access_of_any_kind(self):
-        entry, = guest_pointer_audit.audit_text(progress.code("int APS5_VABI sceExampleEarly(Info* p)\n{\n  p[0] = {};\n  p->field = 1;\n  return 0;\n}\n"))
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code("int APS5_VABI sceExampleEarly(Info* p)\n{\n  p[0] = {};\n  p->field = 1;\n  return 0;\n}\n"))
         self.assertEqual((entry["line"], entry["kinds"]), (3, ["index", "member"]))
 
     def test_comments_and_literals_are_ignored(self):
         source = "int APS5_VABI sceExampleText(Info* info) { // info->size = 4;\n  return Log(\"info->size *info info[0]\"); }\n"
         self.assertEqual(findings(source), [])
 
+    def test_line_counts_blank_spliced_and_commented_lines(self):
+        source = ("int APS5_VABI sceExampleBlank(int* out)\n{\n\n\n  /* one\n     two */\n  const char* s = R\"(a\nb)\";\n"
+                  "  int wide = 1 + \\\n    2;\n\n  *out = wide;\n  return 0;\n}\n")
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code(source))
+        self.assertEqual(entry["line"], 12)
+
     def test_line_points_at_the_first_access(self):
-        entry, = guest_pointer_audit.audit_text(progress.code("int APS5_VABI sceExampleLine(int* out)\n{\n  int a = 0;\n  *out = a;\n  return 0;\n}\n"))
+        entry, = guest_pointer_audit.audit_text(guest_pointer_audit.source_code("int APS5_VABI sceExampleLine(int* out)\n{\n  int a = 0;\n  *out = a;\n  return 0;\n}\n"))
         self.assertEqual(entry["line"], 4)
 
 
