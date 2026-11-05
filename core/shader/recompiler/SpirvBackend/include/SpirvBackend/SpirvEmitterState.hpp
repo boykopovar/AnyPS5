@@ -149,6 +149,13 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> memoryByteOffsets;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedBufferFunctions;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedGpuBufferFunctions;
+    struct FaultCheckEntry {
+        const IrBlock* block = nullptr;
+        std::uint32_t guard = 0;
+    };
+    std::map<std::vector<std::uint32_t>, std::vector<FaultCheckEntry>> faultChecks;
+    std::unordered_map<const IrBlock*, const IrBlock*> faultDominators;
+    bool faultCheckDedup = false;
     struct BufferLengthCacheEntry {
         std::array<const IrValue*, 4> descriptor{};
         std::uint32_t variable = 0;
