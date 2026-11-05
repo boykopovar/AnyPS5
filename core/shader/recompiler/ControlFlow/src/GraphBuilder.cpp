@@ -1563,33 +1563,12 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
         const bool lowOk = loadedDword(program, target, index, swappc.waveSize, reader, lowLoad, lowDword);
         const bool highOk = loadedDword(program, target + 1u, index, swappc.waveSize, reader, highLoad, highDword);
         if (!lowOk || !highOk || lowLoad != highLoad || highDword != lowDword + 1u) continue;
-        const auto dominates = [&](std::uint32_t writer) {
-            std::vector<bool> seen(program.instructions.size());
-            std::vector<std::uint32_t> pending{0u};
-            while (!pending.empty()) {
-                const auto at = pending.back();
-                pending.pop_back();
-                if (at == writer || seen[at]) continue;
-                seen[at] = true;
-                if (at == index) return false;
-                const auto& instruction = program.instructions[at];
-                if (instruction.op == RdnaOpcode::SSwappcB64 || instruction.op == RdnaOpcode::SCallB64) return false;
-                if (instruction.op != RdnaOpcode::SEndpgm && instruction.op != RdnaOpcode::SCodeEnd && instruction.op != RdnaOpcode::SSetpcB64 && instruction.op != RdnaOpcode::SBranch)
-                    pending.push_back(at + 1u);
-                if (IsDirectBranchOpcode(instruction.op)) {
-                    const auto targetIndex = instructionIndexOfProgramCounter(program, instruction.branchTarget);
-                    if (targetIndex != InvalidControlFlowId) pending.push_back(targetIndex);
-                }
-            }
-            return true;
-        };
         const auto loadReaches = [&](std::uint32_t targetRegister) {
             auto at = index;
             auto reg = targetRegister;
             for (std::uint32_t copies = 0u; copies < 4u; ++copies) {
                 std::uint32_t writer = 0;
-                if (!findLastWriter(program, at, {reg}, writer, swappc.waveSize, reader)) return false;
-                if (!dominates(writer)) return false;
+                if (!reachingWriter(program, at, {reg}, writer, swappc.waveSize)) return false;
                 if (writer == lowLoad) return true;
                 const auto& copy = program.instructions[writer];
                 const auto destination = scalarIndex(copy.destination);
@@ -1614,7 +1593,7 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             unchangedUntil(program, descriptor + 2u, lowLoad, swappc.waveSize) && unchangedUntil(program, descriptor + 3u, lowLoad, swappc.waveSize);
         if (descriptorInUserData) {
             std::uint32_t userDataStride = 0;
-            if (load.source1.kind == RdnaOperandKind::ScalarRegister) {
+            if (load.source1.kind != RdnaOperandKind::Null) {
                 const auto offset = scalarIndex(load.source1);
                 std::uint32_t shift = 0, shiftIndex = 0;
                 if (offset == NoScalarRegister || !findLastWriter(program, lowLoad, {offset}, shiftIndex, swappc.waveSize, reader) || !sameBlock(shiftIndex, index)) continue;
