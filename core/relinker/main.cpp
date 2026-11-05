@@ -27,6 +27,12 @@
 
 #include "RelinkerRevision.hpp"
 
+#if defined(_WIN32) && defined(__MINGW32__)
+extern "C" {
+int _dowildcard = 0;
+}
+#endif
+
 namespace {
 
 struct ConvertedExecutable {
@@ -65,6 +71,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
     options.UnusedFilterLevel = args.unusedFilterLevel;
     options.LazyBinding = args.lazyBinding;
+    options.OmitUnavailableDependencies = args.omitUnavailableDependencies;
     options.RunPath = args.runPath;
     options.WindowsGui = args.windowsGui;
     options.TraceImports = args.traceImports;
@@ -284,7 +291,14 @@ int Run(const int argc, char* argv[]) {
             throw Domain::RelinkerException("Executable output would overwrite the input executable");
         if (Io::NativePath(args.outputPath).filename().empty() || std::filesystem::is_directory(Io::NativePath(args.outputPath)))
             throw Domain::RelinkerException("Executable output is a directory: " + args.outputPath);
-        const std::string absPath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.outputPath)));
+        const auto requestedOutput = Io::NativePath(args.outputPath);
+#ifdef _WIN32
+        const auto& nativeOutput = requestedOutput.native();
+        const bool extendedOutput = nativeOutput.starts_with(L"\\\\?\\") || nativeOutput.starts_with(L"\\\\.\\");
+#else
+        const bool extendedOutput = false;
+#endif
+        const std::string absPath = Io::Utf8Path(extendedOutput ? requestedOutput : std::filesystem::absolute(requestedOutput));
 
         struct ExtraExecutable {
             std::string Argument;
@@ -368,6 +382,8 @@ int Run(const int argc, char* argv[]) {
             for (const auto& artifact : guestArtifacts)
                 if (SameOutputFile(artifact.SourcePath, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite an input module: " + Io::Utf8Path(path));
+            if (!args.noPatches && std::filesystem::is_regular_file(patchFile) && SameOutputFile(patchFile, path))
+                throw Domain::RelinkerException(std::string(kind) + " output would overwrite the patch file: " + Io::Utf8Path(path));
         };
         for (std::size_t index = 1; index < executables.size(); ++index) checkOutputInputs(Io::NativePath(executables[index].OutputPath), "Executable");
         if (desktopEntry) {
@@ -397,11 +413,7 @@ int Run(const int argc, char* argv[]) {
         }
 
         checkOutputInputs(Io::NativePath(absPath), "Executable");
-        if (!manifestPath.empty()) {
-            checkOutputInputs(manifestPath, "Patch manifest");
-            if (std::filesystem::exists(manifestPath) && std::filesystem::exists(patchFile) && std::filesystem::equivalent(manifestPath, patchFile))
-                throw Domain::RelinkerException("Patch manifest output would overwrite the patch file: " + Io::Utf8Path(manifestPath));
-        }
+        if (!manifestPath.empty()) checkOutputInputs(manifestPath, "Patch manifest");
         for (const auto& artifact : guestArtifacts) checkOutputInputs(artifact.Path, "Guest module");
 
         std::vector<std::filesystem::path> outputPaths;
