@@ -73,11 +73,14 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
  if (param == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- const auto* p = static_cast<const SaveDataDialogParam*>(param);
- g_mode = p->mode;
- g_user_data = p->user_data;
+ SaveDataDialogParam p{};
+ if (!GuestCopyIn_nid_no_patch(&p, param, sizeof(p))) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ g_mode = p.mode;
+ g_user_data = p.user_data;
  g_dir_name[0] = '\0';
- const auto* items = static_cast<const SaveDataDialogItems*>(p->items);
+ const auto* items = static_cast<const SaveDataDialogItems*>(p.items);
  if (items != nullptr && items->dir_names != nullptr) {
   for (std::uint32_t i = 0; i < items->dir_names_num; i++) {
    const char* name = items->dir_names[i].data;
