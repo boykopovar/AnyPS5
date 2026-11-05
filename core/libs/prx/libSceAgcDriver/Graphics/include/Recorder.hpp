@@ -64,18 +64,6 @@ public:
     std::uint64_t Generation() const { return generation; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
-    class Untracked {
-    public:
-        explicit Untracked(CommandState& owner) : state(owner) { state.Invalidate(); }
-        ~Untracked() { state.Invalidate(); }
-        Untracked(const Untracked&) = delete;
-        Untracked& operator=(const Untracked&) = delete;
-        VkCommandBuffer Commands() const { return state.commands; }
-
-    private:
-        CommandState& state;
-    };
-
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
     void SetViewport(const Context& context, const VkViewport& viewport);
     void SetScissor(const Context& context, const VkRect2D& scissor);
@@ -355,7 +343,7 @@ public:
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
-    void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
+    void RecordUncounted(const std::function<void(CommandState&)>& record);
     CommandState& GraphicsState();
     struct SampleDumpStatistics {
         std::uint64_t queued;
