@@ -3745,6 +3745,10 @@ std::uint32_t* AllocateWatchedTable(std::size_t bytes) {
     return heap;
 }
 
+AgcDriver::ShaderMemory::PendingWrite NoPendingSpan(std::uint64_t, std::size_t, std::span<std::byte>) {
+    return AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
 void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
     GuestArena::GuestArenaSetProtection_nid_postfix(page, 4096u, protection);
 #ifdef _WIN32
@@ -5543,6 +5547,54 @@ void verifyScalarAddressRule() {
             require(Abi::KeyRecords(maxKey, stride) == (exact ? maxKey + 1u : 0xffffffffu), "scalar address rule: the key bound is wrong");
         }
     }
+}
+
+void verifyPointerTableUnwrittenReuse() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Palette = 0x40;
+    constexpr std::size_t Bytes = 65536;
+    static TableTexture textures[2];
+    auto* root = AllocateWatchedTable(Bytes);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root));
+    if (AgcDriver::GuestMemory::CollectWrites(base, Bytes) == 0) {
+        std::puts("pointer table unwritten reuse: guest memory has no write watch, not tested");
+        return;
+    }
+    static std::array<std::uint32_t, 8> keys{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto keysV = TableV(keys.data(), 0u, static_cast<std::uint32_t>(sizeof(keys)));
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(keysV.begin(), keysV.end(), root);
+    std::copy(outputV.begin(), outputV.end(), root + 4);
+    const auto pointer = base + Palette + 0x100u;
+    root[12] = static_cast<std::uint32_t>(pointer);
+    root[13] = static_cast<std::uint32_t>(pointer >> 32u);
+    const auto entry = [&](std::uint32_t index, std::array<std::uint32_t, 8> words) {
+        std::copy(words.begin(), words.end(), root + (Palette + index * 32u) / 4u);
+    };
+    entry(0, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    entry(1, TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const std::vector<std::uint32_t> maskedCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u,
+        0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    auto request = TableRequest(maskedCode, userData);
+    request.shader.codeAddress = 0x33000u;
+    const auto capture = [&] {
+        const auto before = ResourceMaterializer::TableReuse();
+        AgcDriver::ShaderMemory memory({}, nullptr, nullptr, nullptr, &NoPendingSpan);
+        const auto words = memory.Capture(request)->snapshot.tables.tables.at(0);
+        const auto after = ResourceMaterializer::TableReuse();
+        return std::tuple{after.unwritten - before.unwritten, after.compared - before.compared, words.words.at(words.codes.at(1)).dwords};
+    };
+    static_cast<void>(capture());
+    const auto [comparedUnwritten, compared, comparedWords] = capture();
+    require(comparedUnwritten == 0u && compared == 1u, "pointer table unwritten reuse: the second capture of a pointer-addressed table was not compared");
+    const auto [unwritten, recompared, unwrittenWords] = capture();
+    require(unwritten == 1u && recompared == 0u && unwrittenWords == comparedWords, "pointer table unwritten reuse: a pointer-addressed table nothing wrote was compared again instead of reused");
+    entry(1, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    const auto [written, writtenCompared, writtenWords] = capture();
+    require(written == 0u && writtenWords[1] == root[(Palette + 32u) / 4u + 1u], "pointer table unwritten reuse: a pointer-addressed table the CPU wrote was reused without a read");
+    std::puts("pointer table unwritten reuse passed");
 }
 
 void verifyPointerImageTable() {
@@ -8883,7 +8935,7 @@ void verifyPixelExportReplay() {
     }
 }
 
-std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileRequest twoParameterRequest(std::span<const std::uint32_t> code) {
     using namespace ShaderRecompiler;
     RecompileRequest request{};
     request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
@@ -8894,7 +8946,12 @@ std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t>
     request.target.subgroupSize = 64;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    const auto result = Recompile(request);
+    return request;
+}
+
+std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+    using namespace ShaderRecompiler;
+    const auto result = Recompile(twoParameterRequest(code));
     const auto& words = result.spirv.Words();
     std::map<std::uint32_t, std::uint32_t> locations;
     std::vector<std::uint32_t> decorated;
@@ -8917,7 +8974,8 @@ void verifyPixelInputs() {
     const auto linear = noPerspectiveLocations(byPair);
     require(linear.size() == 1u && linear[0] == 1u, "only the parameter interpolated through the linear pair must be NoPerspective");
     static constexpr std::array<std::uint32_t, 7> bothPairs{0xc8100000u, 0xc8110001u, 0xc8140002u, 0xc8150003u, 0xf800180fu, 0x05040504u, 0xbf810000u};
-    expectFailure([&] { static_cast<void>(noPerspectiveLocations(bothPairs)); }, "interpolated through both a perspective and a linear I/J pair", "a parameter read through both pairs was given one interpolation");
+    const auto both = ShaderRecompiler::Recompile(twoParameterRequest(bothPairs));
+    require(both.barycentricEmulation.active && both.barycentricEmulation.smooth && both.barycentricEmulation.linear, "a parameter read through both pairs did not fall back to both barycentrics");
 
     static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
     RecompileRequest request{};
@@ -11509,6 +11567,7 @@ int main(int argc, char** argv) {
             verifyImageTableRegistration();
             verifyScalarAddressRule();
             verifyPointerImageTable();
+            verifyPointerTableUnwrittenReuse();
             verifyPointerTableOffsetCarry();
             verifySelectedRecordFallbacks();
             verifySelectedRecordOffsetCarry();
@@ -11610,6 +11669,7 @@ int main(int argc, char** argv) {
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
+        verifyPointerTableUnwrittenReuse();
         verifyPointerTableOffsetCarry();
         verifyChainedTableOffset();
         verifyPointerChainImageTable();

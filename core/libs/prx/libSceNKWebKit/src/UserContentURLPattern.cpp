@@ -3,12 +3,14 @@
 
 namespace {
 
-bool EqualLettersIgnoringASCIICase(std::u16string_view text, std::u16string_view lowercaseLetters) {
-    if (text.size() != lowercaseLetters.size()) return false;
-    for (std::size_t index = 0; index < text.size(); ++index) {
-        char16_t character = text[index];
-        if (character >= u'A' && character <= u'Z') character = static_cast<char16_t>(character - u'A' + u'a');
-        if (character != lowercaseLetters[index]) return false;
+bool EqualLettersIgnoringASCIICase(std::u16string_view a, std::u16string_view b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t index = 0; index < a.size(); ++index) {
+        char16_t ca = a[index];
+        char16_t cb = b[index];
+        if (ca >= u'A' && ca <= u'Z') ca = static_cast<char16_t>(ca - u'A' + u'a');
+        if (cb >= u'A' && cb <= u'Z') cb = static_cast<char16_t>(cb - u'A' + u'a');
+        if (ca != cb) return false;
     }
     return true;
 }
@@ -45,12 +47,12 @@ bool WildcardMatchesPath(std::u16string_view pattern, std::u16string_view path) 
     std::size_t starP = std::u16string_view::npos;
     std::size_t starPath = 0;
     while (pathIndex < path.size()) {
-        if (pIndex < pattern.size() && pattern[pIndex] == path[pathIndex]) {
-            ++pIndex;
-            ++pathIndex;
-        } else if (pIndex < pattern.size() && pattern[pIndex] == u'*') {
+        if (pIndex < pattern.size() && pattern[pIndex] == u'*') {
             starP = pIndex++;
             starPath = pathIndex;
+        } else if (pIndex < pattern.size() && pattern[pIndex] == path[pathIndex]) {
+            ++pIndex;
+            ++pathIndex;
         } else if (starP != std::u16string_view::npos) {
             pIndex = starP + 1;
             pathIndex = ++starPath;
@@ -78,16 +80,19 @@ bool MatchesURL(const NKWebKit::UserContentURLPattern* pattern, const NKWebKit::
     }
     const bool fileScheme = EqualLettersIgnoringASCIICase(pattern->scheme, u"file");
     const auto hostStart = schemeEnd + 3;
-    const auto pathStart = urlString.find(u'/', hostStart);
+    const auto authEnd = urlString.find_first_of(u"/?#", hostStart);
     std::u16string_view authority;
     std::u16string_view urlPath;
-    if (pathStart == std::u16string_view::npos) {
+    if (authEnd == std::u16string_view::npos) {
         authority = urlString.substr(hostStart);
         urlPath = u"/";
+    } else if (urlString[authEnd] == u'/') {
+        authority = urlString.substr(hostStart, authEnd - hostStart);
+        const auto queryOrFragment = urlString.find_first_of(u"?#", authEnd);
+        urlPath = (queryOrFragment == std::u16string_view::npos) ? urlString.substr(authEnd) : urlString.substr(authEnd, queryOrFragment - authEnd);
     } else {
-        authority = urlString.substr(hostStart, pathStart - hostStart);
-        const auto queryOrFragment = urlString.find_first_of(u"?#", pathStart);
-        urlPath = (queryOrFragment == std::u16string_view::npos) ? urlString.substr(pathStart) : urlString.substr(pathStart, queryOrFragment - pathStart);
+        authority = urlString.substr(hostStart, authEnd - hostStart);
+        urlPath = u"/";
     }
     const auto atPos = authority.rfind(u'@');
     const auto hostAndPort = (atPos == std::u16string_view::npos) ? authority : authority.substr(atPos + 1);
