@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 
 namespace {
@@ -249,6 +251,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
@@ -319,7 +322,7 @@ struct TestSegmentStop {
 
 static_assert(sizeof(TestDrawupRecord) == 0x80);
 static_assert(sizeof(TestDrawupEntry) == 0x30);
-static_assert(offsetof(TestDrawupPool, entries) == 0x18);
+static_assert(offsetof(TestDrawupPool, entries) == 0x20);
 static_assert(offsetof(TestDrawupOwner, pool) == 0x160);
 static_assert(offsetof(TestDrawupObject, head) == 0x28 && offsetof(TestDrawupObject, tail) == 0x30);
 static_assert(offsetof(TestDrawupFrame, object) == 0x8 && offsetof(TestDrawupFrame, sequence) == 0x28);
@@ -1068,6 +1071,238 @@ void GraphicsServiceDispatchFill() {
     Require(sceFontDestroyGraphicsService(&service) == SCE_FONT_OK && g_backend.terminates == 1 && g_backendSlot == nullptr);
 }
 
+
+constexpr int InvalidDevice = static_cast<int>(0x80460081);
+constexpr int InvalidSurface = static_cast<int>(0x80460092);
+
+template <typename TCall>
+void RequireNotImplemented(TCall call, const char* name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == std::string(name) + " not implemented");
+        return;
+    }
+    Require(false);
+}
+
+struct TestGraphicsDevice {
+    std::uint16_t tag;
+    std::uint8_t reserved2[0x76];
+    void* service;
+    std::uint8_t reserved80[0xd0];
+    PthreadMutex* surfaceMutex;
+    std::uint8_t reserved158[8];
+    TestDrawupPool* pool;
+    TestDrawupPool* payloadPool;
+};
+
+static_assert(offsetof(TestGraphicsDevice, service) == 0x78 && offsetof(TestGraphicsDevice, pool) == 0x160);
+static_assert(offsetof(TestGraphicsDevice, payloadPool) == 0x168);
+
+struct TextureCalls {
+    int calls = 0;
+    void* object = nullptr;
+    void* surface = nullptr;
+    std::uint64_t base = 0;
+};
+
+TextureCalls g_texture;
+
+int APS5_VABI StructureTexture(void* object, void* surface, std::uint64_t base) {
+    ++g_texture.calls;
+    g_texture.object = object;
+    g_texture.surface = surface;
+    g_texture.base = base;
+    std::memset(static_cast<std::uint8_t*>(object) + 0x40, 0x5a, 0x20);
+    return 0x20;
+}
+
+void InitPool(TestDrawupPool& pool, PthreadMutex* mutex, std::uint8_t* memory, std::uint16_t* nodes) {
+    nodes[0] = TotalSlots << 1;
+    pool.mutex = mutex;
+    pool.reserved8 = TotalSlots * 0x80;
+    pool.entryCount = 1;
+    pool.limit = memory + TotalSlots * 0x80;
+    pool.entries[0] = {memory, 0, 0x80, TotalSlots, 0, nodes, nodes, 0};
+}
+
+struct SurfaceTextureFixture {
+    PthreadMutex mutex{};
+    PthreadMutex payloadMutex{};
+    std::uint8_t memory[TotalSlots * 0x80]{};
+    std::uint8_t payloadMemory[TotalSlots * 0x80]{};
+    std::uint16_t nodes[TotalSlots]{};
+    std::uint16_t payloadNodes[TotalSlots]{};
+    TestDrawupPool pool{};
+    TestDrawupPool payloadPool{};
+    TestGraphicsDevice device{};
+    std::uint8_t service[0x100]{};
+    std::uint8_t instance[0x118]{};
+    void* slot = nullptr;
+    std::uint8_t surface[0x100]{};
+
+    SurfaceTextureFixture() {
+        scePthreadMutexInit(&mutex, nullptr, "surface");
+        scePthreadMutexInit(&payloadMutex, nullptr, "payload");
+        InitPool(pool, &mutex, memory, nodes);
+        InitPool(payloadPool, &payloadMutex, payloadMemory, payloadNodes);
+        device.tag = 0xf50;
+        device.service = service;
+        device.pool = &pool;
+        device.payloadPool = &payloadPool;
+        const std::uint16_t serviceTag = 0xf0e;
+        std::memcpy(service, &serviceTag, sizeof(serviceTag));
+        void** const slotPointer = &slot;
+        std::memcpy(service + 0x80, &slotPointer, sizeof(slotPointer));
+        slot = instance;
+        const std::uint64_t sizes = 0x2000000040;
+        std::memcpy(instance + 0x50, &sizes, sizeof(sizes));
+        const auto handler = reinterpret_cast<std::uint64_t>(&StructureTexture);
+        std::memcpy(instance + 0x58, &handler, sizeof(handler));
+        for (std::size_t i = 0; i < sizeof(surface); ++i) surface[i] = static_cast<std::uint8_t>(i * 7);
+        const std::uint64_t base = 0x12345600;
+        std::memcpy(surface, &base, sizeof(base));
+        const std::uint16_t tag = 0x47e5;
+        std::memcpy(surface + 0x0e, &tag, sizeof(tag));
+        g_texture = {};
+    }
+
+    ~SurfaceTextureFixture() {
+        scePthreadMutexDestroy(&mutex);
+        scePthreadMutexDestroy(&payloadMutex);
+    }
+
+    FontGraphicsDevice* Device() { return reinterpret_cast<FontGraphicsDevice*>(&device); }
+    const FontGraphicsSurface* Surface() const { return reinterpret_cast<const FontGraphicsSurface*>(surface); }
+};
+
+void SurfaceTextureValidation() {
+    SurfaceTextureFixture f;
+    FontGraphicsSurfaceTexture* texture = reinterpret_cast<FontGraphicsSurfaceTexture*>(0x1);
+    RequireError(sceFontGraphicsStructureSurfaceTexture(nullptr, f.Surface(), &texture), InvalidDevice);
+    Require(texture == nullptr);
+    RequireError(sceFontGraphicsStructureSurfaceTexture(reinterpret_cast<FontGraphicsDevice*>(~std::uintptr_t{0}), f.Surface(), &texture),
+                 InvalidDevice);
+    f.device.tag = 0xf51;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), InvalidDevice);
+    f.device.tag = 0xf50;
+    f.service[0] = 0x0f;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), InvalidDevice);
+    f.service[0] = 0x0e;
+    f.slot = nullptr;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), nullptr, &texture), Uninitialized);
+    f.slot = f.instance;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), nullptr, &texture), InvalidSurface);
+    f.surface[0x0e] = 0xf0;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), nullptr), InvalidSurface);
+    f.surface[0x0e] = 0xe5;
+    std::uint8_t fill[4];
+    std::memcpy(fill, f.surface + 0x28, sizeof(fill));
+    std::memset(f.surface + 0x28, 0, 4);
+    f.surface[0x2c] = 1;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), InvalidSurface);
+    std::memcpy(f.surface + 0x28, fill, sizeof(fill));
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), nullptr), InvalidParameter);
+    f.device.pool = nullptr;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
+    f.device.pool = &f.pool;
+    f.pool.entries[0].total = 2;
+    f.nodes[0] = 2 << 1;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
+    Require(f.pool.used == 2 && f.pool.maximum == 2 && f.pool.entries[0].used == 2 && f.nodes[0] == 5 && f.nodes[1] == 1);
+    f.pool.used = f.pool.entries[0].used = 0;
+    f.pool.entries[0].total = 1;
+    f.nodes[0] = 1 << 1;
+    RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
+    Require(texture == nullptr && g_texture.calls == 0);
+    f.pool.entries[0].total = TotalSlots;
+    f.nodes[0] = TotalSlots << 1;
+    f.nodes[1] = 0;
+    std::memset(f.surface, 0, 8);
+    RequireNotImplemented([&] { sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture); },
+                          "sceFontGraphicsStructureSurfaceTexture");
+}
+
+void SurfaceTextureLifecycle() {
+    SurfaceTextureFixture f;
+    FontGraphicsSurfaceTexture* texture = nullptr;
+    const int errors = g_errorCount;
+    Require(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture) == SCE_FONT_OK && g_errorCount == errors);
+    auto* const object = reinterpret_cast<std::uint8_t*>(texture);
+    Require(object == f.memory + 0x100 && f.pool.used == 3 && f.pool.maximum == 3 && f.pool.entries[0].used == 3);
+    Require(Read32At(object, 0) == 0xf82 && Read32At(object, 4) == 0x20);
+    Require(Read64At(object, 8) == reinterpret_cast<std::uint64_t>(&f.device) && Read64At(object, 0x10) == 0);
+    Require(Read64At(object, 0x18) == reinterpret_cast<std::uint64_t>(f.memory));
+    Require(AllBytes(*reinterpret_cast<std::uint8_t(*)[0x40]>(object + 0x20), 0, 0x20, 0));
+    Require(AllBytes(*reinterpret_cast<std::uint8_t(*)[0x20]>(object + 0x40), 0, 0x20, 0x5a));
+    Require(std::memcmp(f.memory, f.surface, sizeof(f.surface)) == 0);
+    Require(g_texture.calls == 1 && g_texture.object == object && g_texture.surface == f.memory + 0x40 && g_texture.base == 0x12345600);
+    Require(reinterpret_cast<const std::uint8_t*>(sceFontGraphicsTextureRefersSurface(texture)) == f.memory);
+    Require(sceFontGraphicsTextureRefersSurface(nullptr) == nullptr);
+
+    TestDrawupObject drawup{};
+    drawup.owner = reinterpret_cast<TestDrawupOwner*>(&f.device);
+    TestDrawupFrame frame{};
+    frame.tag = 0xf53;
+    frame.object = &drawup;
+    const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
+    void* out = nullptr;
+    Require(sceFontGraphicsDrawupFillFlatColor(reinterpret_cast<FontGraphicsFrame*>(&frame), color, &out) == SCE_FONT_OK);
+    auto* const record = static_cast<TestDrawupRecord*>(out);
+    Require(reinterpret_cast<std::uint8_t*>(record) == f.memory + 0x180 && record->sizeTag == 0x80 && f.pool.used == 4);
+    record->type = 0x40;
+    record->flags = 0x30;
+    void* const payload = f.payloadMemory;
+    std::memcpy(reinterpret_cast<std::uint8_t*>(record) + 0x50, &payload, sizeof(payload));
+    f.payloadNodes[0] = (1 << 1) | 1;
+    f.payloadNodes[1] = TotalSlots << 1;
+    f.payloadPool.used = f.payloadPool.entries[0].used = 1;
+    std::memcpy(object + 0x10, &out, sizeof(out));
+
+    void* released = texture;
+    Require(sceFontGraphicsRelease(&released) == SCE_FONT_OK && released == nullptr && g_errorCount == errors);
+    Require(Read32At(object, 0) == 0 && Read64At(object, 0x10) == 0 && sceFontGraphicsTextureRefersSurface(texture) == nullptr);
+    Require(f.pool.used == 0 && f.pool.entries[0].used == 0 && f.payloadPool.used == 0 && f.payloadPool.entries[0].used == 0);
+    Require(f.payloadNodes[0] == TotalSlots << 1);
+}
+
+void SurfaceTextureRelease() {
+    SurfaceTextureFixture f;
+    RequireError(sceFontGraphicsRelease(nullptr), InvalidParameter);
+    void* object = nullptr;
+    RequireError(sceFontGraphicsRelease(&object), InvalidParameter);
+    std::uint8_t fake[0x60] = {};
+    object = fake;
+    for (const std::uint16_t tag : {0x0f50, 0x0f53, 0x0f6f, 0x0f7f, 0x0f83, 0x8f82}) {
+        std::memcpy(fake, &tag, sizeof(tag));
+        RequireError(sceFontGraphicsRelease(&object), InvalidParameter);
+    }
+    for (const std::uint16_t tag : {0x0f51, 0x0f52, 0x0f70, 0x0f80, 0x0f81}) {
+        std::memcpy(fake, &tag, sizeof(tag));
+        RequireNotImplemented([&] { sceFontGraphicsRelease(&object); }, "sceFontGraphicsRelease");
+    }
+    const std::uint16_t texture = 0xf82;
+    std::memcpy(fake, &texture, sizeof(texture));
+    RequireError(sceFontGraphicsRelease(&object), Uninitialized);
+    TestGraphicsDevice* device = &f.device;
+    std::memcpy(fake + 8, &device, sizeof(device));
+    f.slot = nullptr;
+    RequireError(sceFontGraphicsRelease(&object), Uninitialized);
+    Require(object == fake && Read32At(fake, 0) == 0xf82);
+    f.slot = f.instance;
+    f.device.pool = nullptr;
+    std::uint8_t copy[0x100] = {};
+    std::uint8_t* copyPointer = copy;
+    std::memcpy(fake + 0x18, &copyPointer, sizeof(copyPointer));
+    Require(sceFontGraphicsRelease(&object) == SCE_FONT_OK && object == nullptr && Read32At(fake, 0) == 0);
+    std::memcpy(fake, &texture, sizeof(texture));
+    object = fake;
+    copy[0] = 1;
+    copy[0x0e] = 2;
+    RequireNotImplemented([&] { sceFontGraphicsRelease(&object); }, "sceFontGraphicsRelease");
+}
+
 }
 
 int main() {
@@ -1083,6 +1318,9 @@ int main() {
     GraphicsServiceLifecycle();
     GraphicsServiceInstanceStates();
     GraphicsServiceDispatchFill();
+    SurfaceTextureValidation();
+    SurfaceTextureLifecycle();
+    SurfaceTextureRelease();
     Require(g_errorCount == g_expectedErrors);
     sceFontSetGraphicsErrorCallback(nullptr);
     const int before = g_errorCount;

@@ -368,7 +368,7 @@ int APS5_VABI sceFontGraphicsGetDrawingFrameHandle();
 int APS5_VABI sceFontGraphicsGetIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsProcessWaitAllSequences();
 int APS5_VABI sceFontGraphicsStructureVertexesGlyph();
-int APS5_VABI sceFontGraphicsTextureRefersSurface();
+FontGraphicsSurface* APS5_VABI sceFontGraphicsTextureRefersSurface(const FontGraphicsSurfaceTexture* texture);
 int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph();
 int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color);
 int APS5_VABI sceFontSupportSystemUpdation();

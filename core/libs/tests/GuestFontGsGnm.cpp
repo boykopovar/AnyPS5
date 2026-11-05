@@ -60,6 +60,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
@@ -227,6 +228,7 @@ void GnmSelect() {
         if (entry.opcode == 0x47000003) Require(entry.value == 0x1000000040);
         else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
         else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
+        else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
         else RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
     }
 }
@@ -532,6 +534,55 @@ void GnmSurfaceInitCases(bool neo) {
     }
 }
 
+struct StructureTextureCase {
+    std::uint32_t resource[8];
+    std::uint32_t base;
+};
+
+const StructureTextureCase StructureTextureCases[5][2] = {
+    {{{0x00001000, 0x00100000, 0x7007c03f, 0x94800849, 0x0007e000, 0, 0, 0}, 0x00001000},
+     {{0x00001000, 0x00100000, 0x7007c03f, 0x94800849, 0x0007e000, 0, 0x01000000, 0}, 0x00001000}},
+    {{{0x00023456, 0x00a00000, 0x700c4063, 0x94d00fac, 0x000ce000, 0, 0, 0}, 0x00023456},
+     {{0x00023456, 0x00a00000, 0x700c4063, 0x94d00fac, 0x000ce000, 0, 0x01000000, 0}, 0x00023456}},
+    {{{0x7fffabc5, 0x1ce00000, 0x710dc77f, 0x94a00fac, 0x00efe000, 0, 0, 0}, 0x7fffabc5},
+     {{0x7fffab8d, 0x1ce00000, 0x710dc77f, 0x94a00fac, 0x00efe000, 0, 0x01000000, 0}, 0x7fffab8d}},
+    {{{0x40000f87, 0x00300000, 0x7031c12b, 0x94200b24, 0x002fe000, 0, 0, 0}, 0x40000f87},
+     {{0x40000f8f, 0x00300000, 0x7031c12b, 0x94200b24, 0x003fe000, 0, 0x01000000, 0}, 0x40000f8f}},
+    {{{0x12345600, 0x00c00000, 0x707fc1ff, 0x95000f2e, 0x003fe000, 0, 0, 0}, 0x12345600},
+     {{0x12345608, 0x00c00000, 0x707fc1ff, 0x95000f2e, 0x003fe000, 0, 0x01000000, 0}, 0x12345608}}};
+
+using GnmStructureTextureHandler = int(APS5_VABI*)(void*, void*, std::uint64_t);
+
+GnmStructureTextureHandler GnmStructureTexture() {
+    const auto* const list = reinterpret_cast<const FontGraphicsBackendList*>(reinterpret_cast<const std::uint8_t*>(GnmBackend()) + 0x170);
+    for (std::int32_t i = 0; i < list->count; ++i)
+        if (list->entries[i].opcode == 0x47000005) return reinterpret_cast<GnmStructureTextureHandler>(list->entries[i].value);
+    return nullptr;
+}
+
+void GnmStructureTextureCases() {
+    const GnmStructureTextureHandler structure = GnmStructureTexture();
+    Require(structure != nullptr);
+    std::uint32_t texture[16];
+    std::memcpy(texture, SurfaceCases[0].texture[0], sizeof(texture));
+    Require(structure(nullptr, texture, 0x100) == 0 && std::memcmp(texture, SurfaceCases[0].texture[0], sizeof(texture)) == 0);
+    for (std::size_t i = 0; i < 5; ++i) {
+        for (std::size_t neo = 0; neo < 2; ++neo) {
+            const StructureTextureCase& expected = StructureTextureCases[i][neo];
+            std::memcpy(texture, SurfaceCases[i].texture[neo], sizeof(texture));
+            std::uint32_t object[24];
+            std::memset(object, 0xcc, sizeof(object));
+            Require(structure(object, texture, SurfaceCases[i].base) == 0x20);
+            for (std::size_t w = 0; w < 16; ++w) Require(object[w] == 0xcccccccc);
+            for (std::size_t w = 0; w < 8; ++w) Require(object[16 + w] == expected.resource[w]);
+            for (std::size_t w = 0; w < 16; ++w) {
+                const std::uint32_t value = w == 0 ? expected.base : w == 7 || w == 9 ? 0 : SurfaceCases[i].texture[neo][w];
+                Require(texture[w] == value);
+            }
+        }
+    }
+}
+
 void WriteParamSfo(const std::filesystem::path& directory, std::uint32_t attribute) {
     const auto metadata = directory / "app0" / "sce_sys";
     std::filesystem::create_directories(metadata);
@@ -594,6 +645,7 @@ int main(int argc, char** argv) {
     GnmDrawupPattern();
     GnmSequences();
     GnmSurfaceValidation();
+    GnmStructureTextureCases();
     GnmSurfaceModes(argv[0]);
     GnmService();
     sceFontSetGraphicsErrorCallback(nullptr);

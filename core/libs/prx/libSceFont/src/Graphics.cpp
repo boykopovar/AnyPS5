@@ -6,6 +6,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceFont/include/FontGraphics.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 
@@ -87,10 +88,11 @@ struct FontDrawupPoolEntry {
 
 struct FontDrawupPool {
     PthreadMutex* mutex;
-    std::uint32_t reserved8;
+    std::uint32_t span;
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     FontDrawupPoolEntry entries[];
 };
 
@@ -169,7 +171,7 @@ struct FontSegmentStop {
 static_assert(sizeof(FontDrawupRecord) == DrawupRecordHeader);
 static_assert(sizeof(FontDrawupPoolEntry) == 0x30);
 static_assert(offsetof(FontDrawupPoolEntry, slotSize) == 0x0c);
-static_assert(offsetof(FontDrawupPool, entries) == 0x18);
+static_assert(offsetof(FontDrawupPool, limit) == 0x18 && offsetof(FontDrawupPool, entries) == 0x20);
 static_assert(offsetof(FontDrawupPoolOwner, pool) == 0x160);
 static_assert(offsetof(FontDrawupObject, resource) == 0x10);
 static_assert(offsetof(FontDrawupObject, head) == 0x28 && offsetof(FontDrawupObject, tail) == 0x30);
@@ -975,6 +977,192 @@ void DetachInstance(void** slot) {
     UnlockInstanceSlot(slot, instance);
 }
 
+constexpr int FONT_GRAPHICS_ERROR_INVALID_DEVICE = static_cast<int>(0x80460081);
+constexpr int FONT_GRAPHICS_ERROR_INVALID_SURFACE = static_cast<int>(0x80460092);
+constexpr std::uint16_t DeviceTag = 0xf50;
+constexpr std::uint16_t SurfaceTextureTag = 0xf82;
+constexpr std::uint16_t SurfaceTag = 0x47e0;
+constexpr std::uint32_t SurfaceSize = 0x100;
+constexpr std::uint32_t SurfaceTextureHeader = 0x40;
+constexpr std::uint8_t SurfaceOwnsMemory = 2;
+constexpr std::size_t DrawupRecordPayload = 0x50;
+
+struct FontGraphicsDeviceData {
+    std::uint16_t tag;
+    std::uint8_t reserved2[0x76];
+    FontGraphicsServiceData* service;
+    std::uint8_t reserved80[0xd0];
+    PthreadMutex* surfaceMutex;
+    std::uint8_t reserved158[8];
+    FontDrawupPool* pool;
+    FontDrawupPool* payloadPool;
+};
+
+static_assert(offsetof(FontGraphicsDeviceData, service) == 0x78);
+static_assert(offsetof(FontGraphicsDeviceData, surfaceMutex) == 0x150);
+static_assert(offsetof(FontGraphicsDeviceData, pool) == 0x160 && offsetof(FontGraphicsDeviceData, payloadPool) == 0x168);
+
+struct FontSurfaceTexture {
+    std::uint16_t tag;
+    std::uint16_t reserved2;
+    std::uint32_t state;
+    FontGraphicsDeviceData* device;
+    FontDrawupRecord* records;
+    std::uint8_t* surface;
+    std::uint8_t reserved20[0x20];
+};
+
+static_assert(offsetof(FontSurfaceTexture, device) == 0x08 && offsetof(FontSurfaceTexture, records) == 0x10);
+static_assert(offsetof(FontSurfaceTexture, surface) == 0x18 && sizeof(FontSurfaceTexture) == SurfaceTextureHeader);
+
+using BackendStructureTextureFunction = int (APS5_VABI*)(void* texture, void* surface, std::uint64_t base);
+
+std::uint32_t BackendTextureSize(const FontGraphicsInstance* instance) {
+    return static_cast<std::uint32_t>(instance->dispatch[3] >> 32) + SurfaceTextureHeader;
+}
+
+int DeviceInstance(const FontGraphicsDeviceData* device, int invalid, FontGraphicsInstance*& instance) {
+    if (!IsObject(device) || device->tag != DeviceTag || device->service->tag != ServiceTag) return invalid;
+    instance = static_cast<FontGraphicsInstance*>(*device->service->instanceSlot);
+    return instance == nullptr ? FONT_GRAPHICS_ERROR_UNINITIALIZED : SCE_FONT_OK;
+}
+
+void* PoolAllocate(FontDrawupPool* pool, std::uint32_t size) {
+    if (scePthreadMutexLock(pool->mutex) != 0) return nullptr;
+    FontDrawupPoolEntry* entry = pool->entries;
+    FontDrawupPoolEntry* const end = pool->entries + pool->entryCount;
+    FontDrawupRecord* block = nullptr;
+    std::uint32_t slots = 0;
+    do {
+        slots = static_cast<std::uint32_t>((std::uint64_t{size} - 1 + entry->slotSize) / entry->slotSize);
+        block = DrawupPoolAllocate(entry, slots);
+        ++entry;
+    } while (block == nullptr && entry < end);
+    if (block != nullptr) {
+        pool->used += slots;
+        if (pool->used > pool->maximum) pool->maximum = pool->used;
+    }
+    scePthreadMutexUnlock(pool->mutex);
+    return block;
+}
+
+std::uint32_t DrawupPoolFree(FontDrawupPoolEntry* entry, const std::uint8_t* pointer, std::uint32_t slots) {
+    if (entry == nullptr || entry->memory > pointer) return 0;
+    const auto index = static_cast<std::uint32_t>(
+        (reinterpret_cast<std::uintptr_t>(pointer) - reinterpret_cast<std::uintptr_t>(entry->memory)) / entry->slotSize);
+    const std::uint32_t total = entry->total;
+    if (total <= index) return 0;
+    std::uint16_t* const nodes = entry->nodes;
+    std::uint16_t* marker = entry->scan;
+    std::uint16_t* node = marker;
+    std::uint16_t* previous = marker;
+    std::uint32_t nodeIndex = 0;
+    std::uint32_t word = *node;
+    std::uint32_t next = word >> 1;
+    if (word >= 2 && index >= next) {
+        for (std::uint32_t remaining = total;;) {
+            if (--remaining == 0) return 0;
+            previous = node;
+            nodeIndex = next;
+            node = nodes + (next & 0xffff);
+            word = *node;
+            next = word >> 1;
+            if (word < 2 || index < next) break;
+        }
+    }
+    const std::uint32_t allocated = word & 1;
+    if (allocated == 0) return 0;
+    const auto end = static_cast<std::int32_t>(index + slots);
+    const auto signedTotal = static_cast<std::int32_t>(total);
+    std::uint16_t* target = previous;
+    std::uint32_t value = 0;
+    bool link = true;
+    if (nodeIndex == index) {
+        if (end < static_cast<std::int32_t>(next)) {
+            if (index != 0) marker = nodes + index;
+            nodes[end] = static_cast<std::uint16_t>((nodes[end] & 1) | (word & ~1u));
+            value = static_cast<std::uint32_t>(end) * 2;
+        } else if (index != 0) {
+            const std::uint32_t following = end < signedTotal ? nodes[end] >> 1 : static_cast<std::uint32_t>(end);
+            marker = nodes + index;
+            value = following * 2;
+        } else if (end < signedTotal) {
+            value = nodes[end] & ~1u;
+            target = marker;
+        } else {
+            link = false;
+        }
+    } else {
+        marker = nodes + index;
+        *node = static_cast<std::uint16_t>(allocated | index * 2);
+        if (end < static_cast<std::int32_t>(next)) {
+            *marker = static_cast<std::uint16_t>((*marker & 1) + static_cast<std::uint32_t>(end) * 2);
+            value = word & 0xfffe;
+            target = nodes + end;
+        } else {
+            value = end < signedTotal ? nodes[end] & ~1u : static_cast<std::uint32_t>(end) * 2;
+            target = marker;
+        }
+    }
+    if (link) *target = static_cast<std::uint16_t>((*target & 1) | value);
+    entry->used -= slots;
+    *reinterpret_cast<std::uint8_t*>(marker) &= 0xfe;
+    return slots;
+}
+
+int PoolFree(FontDrawupPool* pool, const void* pointer, std::uint32_t size) {
+    if (scePthreadMutexLock(pool->mutex) != 0) return FONT_GRAPHICS_ERROR_UNINITIALIZED;
+    int result = FONT_GRAPHICS_ERROR_UNINITIALIZED;
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    const auto first = reinterpret_cast<std::uintptr_t>(pool->entries[0].memory);
+    if (first <= address && address < reinterpret_cast<std::uintptr_t>(pool->limit)) {
+        FontDrawupPoolEntry* const entry = &pool->entries[(address - first) / pool->span];
+        const std::uint64_t slotSize = entry->slotSize;
+        const auto slots = static_cast<std::uint32_t>((std::uint64_t{size} + slotSize - 1) / slotSize);
+        const auto memory = reinterpret_cast<std::uintptr_t>(entry->memory);
+        if ((address - memory) % slotSize == 0 && memory + std::uint64_t{entry->total - slots} * slotSize > address) {
+            const std::uint32_t freed = DrawupPoolFree(entry, static_cast<const std::uint8_t*>(pointer), slots);
+            if (freed != 0) result = SCE_FONT_OK;
+            pool->used -= freed;
+        }
+    }
+    scePthreadMutexUnlock(pool->mutex);
+    return result;
+}
+
+int ReleaseSurfaceTexture(void** object) {
+    auto* const texture = static_cast<FontSurfaceTexture*>(*object);
+    FontGraphicsDeviceData* const device = texture->device;
+    FontGraphicsInstance* instance = nullptr;
+    if (const int error = DeviceInstance(device, FONT_GRAPHICS_ERROR_UNINITIALIZED, instance); error != SCE_FONT_OK) return Fail(error);
+    FontDrawupRecord* record = texture->records;
+    std::uint8_t* const surface = texture->surface;
+    texture->tag = 0;
+    while (record != nullptr) {
+        FontDrawupRecord* const next = record->next;
+        void* payload;
+        std::memcpy(&payload, reinterpret_cast<const std::uint8_t*>(record) + DrawupRecordPayload, sizeof(payload));
+        if ((record->type | 0x10) == DrawupTypeTexturePattern && payload != nullptr && device->payloadPool != nullptr)
+            PoolFree(device->payloadPool, payload, record->flags);
+        if (device->pool != nullptr) PoolFree(device->pool, record, record->sizeTag);
+        record = next;
+    }
+    texture->records = nullptr;
+    if (surface != nullptr) {
+        std::uint64_t memory;
+        std::memcpy(&memory, surface, sizeof(memory));
+        if ((surface[0x0e] & SurfaceOwnsMemory) != 0 && memory != 0) NotImplemented_nid_no_patch("sceFontGraphicsRelease");
+        if (device->pool == nullptr) {
+            *object = nullptr;
+            return SCE_FONT_OK;
+        }
+        PoolFree(device->pool, surface, SurfaceSize);
+    }
+    if (device->pool != nullptr) PoolFree(device->pool, texture, BackendTextureSize(instance));
+    *object = nullptr;
+    return SCE_FONT_OK;
+}
+
 bool IsUsableMemory(const FontMemory* memory) {
     return memory != nullptr && memory->mem_kind == ServiceMemoryTag && memory->iface != nullptr && memory->iface->alloc != nullptr &&
            memory->iface->dealloc != nullptr;
@@ -1014,6 +1202,65 @@ int DestroyGraphicsService(FontGraphicsService** service) {
     data->memory.iface->dealloc(data->memory.mspace_handle, data);
     *service = nullptr;
     return SCE_FONT_OK;
+}
+
+int GraphicsStructureSurfaceTexture(FontGraphicsDevice* device, const FontGraphicsSurface* surface, FontGraphicsSurfaceTexture** texture) {
+    if (texture != nullptr) *texture = nullptr;
+    auto* const data = reinterpret_cast<FontGraphicsDeviceData*>(device);
+    FontGraphicsInstance* instance = nullptr;
+    if (const int error = DeviceInstance(data, FONT_GRAPHICS_ERROR_INVALID_DEVICE, instance); error != SCE_FONT_OK) return Fail(error);
+    const auto* const source = reinterpret_cast<const std::uint8_t*>(surface);
+    if (source == nullptr) return Fail(FONT_GRAPHICS_ERROR_INVALID_SURFACE);
+    std::uint16_t surfaceTag;
+    std::uint32_t fillObject;
+    std::memcpy(&surfaceTag, source + 0x0e, sizeof(surfaceTag));
+    std::memcpy(&fillObject, source + 0x28, sizeof(fillObject));
+    if ((surfaceTag & 0xfff0) != SurfaceTag || fillObject == 0) return Fail(FONT_GRAPHICS_ERROR_INVALID_SURFACE);
+    if (texture == nullptr) return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    if (data->pool == nullptr) return Fail(FONT_GRAPHICS_ERROR_NO_RECORD_SPACE);
+    std::uint64_t base;
+    std::memcpy(&base, source, sizeof(base));
+    const std::uint32_t size = BackendTextureSize(instance);
+    auto* const copy = static_cast<std::uint8_t*>(PoolAllocate(data->pool, SurfaceSize));
+    if (copy == nullptr || data->pool == nullptr) return Fail(FONT_GRAPHICS_ERROR_NO_RECORD_SPACE);
+    auto* const object = static_cast<FontSurfaceTexture*>(PoolAllocate(data->pool, size));
+    if (object == nullptr) {
+        if (data->pool != nullptr) PoolFree(data->pool, copy, SurfaceSize);
+        return Fail(FONT_GRAPHICS_ERROR_NO_RECORD_SPACE);
+    }
+    if (base == 0) NotImplemented_nid_no_patch("sceFontGraphicsStructureSurfaceTexture");
+    std::memcpy(copy, source, SurfaceSize);
+    std::memset(object, 0, sizeof(*object));
+    object->tag = SurfaceTextureTag;
+    object->device = data;
+    object->records = nullptr;
+    object->surface = copy;
+    const auto structure = reinterpret_cast<BackendStructureTextureFunction>(instance->dispatch[4]);
+    object->state = static_cast<std::uint32_t>(structure(object, copy + SurfaceTextureHeader, base));
+    *texture = reinterpret_cast<FontGraphicsSurfaceTexture*>(object);
+    return SCE_FONT_OK;
+}
+
+FontGraphicsSurface* GraphicsTextureRefersSurface(const FontGraphicsSurfaceTexture* texture) {
+    const auto* const object = reinterpret_cast<const FontSurfaceTexture*>(texture);
+    if (object == nullptr || object->tag != SurfaceTextureTag) return nullptr;
+    return reinterpret_cast<FontGraphicsSurface*>(object->surface);
+}
+
+int GraphicsRelease(void** object) {
+    if (object == nullptr || *object == nullptr) return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    switch (*static_cast<const std::uint16_t*>(*object)) {
+    case 0xf51:
+    case 0xf52:
+    case 0xf70:
+    case 0xf80:
+    case 0xf81:
+        NotImplemented_nid_no_patch("sceFontGraphicsRelease");
+    case SurfaceTextureTag:
+        return ReleaseSurfaceTexture(object);
+    default:
+        return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    }
 }
 
 }
