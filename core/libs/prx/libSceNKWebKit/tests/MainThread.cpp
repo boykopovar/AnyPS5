@@ -15,9 +15,9 @@ void Require(bool condition) {
 }
 
 int main() {
-    Require(_ZN3WTF12isMainThreadEv());
-    Require(_ZN3WTF13isMainRunLoopEv());
-    Require(_ZN3WTF22isMainThreadOrGCThreadEv());
+    Require(!_ZN3WTF12isMainThreadEv());
+    Require(!_ZN3WTF13isMainRunLoopEv());
+    Require(!_ZN3WTF22isMainThreadOrGCThreadEv());
 
     _ZN3WTF20initializeMainThreadEv();
 
@@ -33,12 +33,17 @@ int main() {
         workerIsMainThread.store(_ZN3WTF12isMainThreadEv());
         workerIsMainRunLoop.store(_ZN3WTF13isMainRunLoopEv());
         workerIsMainOrGC.store(_ZN3WTF22isMainThreadOrGCThreadEv());
+        _ZN3WTF20initializeMainThreadEv();
     });
     worker.join();
 
     Require(!workerIsMainThread.load());
     Require(!workerIsMainRunLoop.load());
     Require(!workerIsMainOrGC.load());
+
+    Require(_ZN3WTF12isMainThreadEv());
+    Require(_ZN3WTF13isMainRunLoopEv());
+    Require(_ZN3WTF22isMainThreadOrGCThreadEv());
 
     std::printf("All libSceNKWebKit MainThread tests passed!\n");
     return 0;

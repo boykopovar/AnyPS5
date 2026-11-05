@@ -5,25 +5,25 @@
 
 namespace {
 
+std::once_flag s_initializeOnce;
 std::atomic<bool> s_mainThreadInitialized{false};
 std::thread::id s_mainThreadId;
-std::mutex s_mainThreadMutex;
 
 }
 
 extern "C" {
 
 void APS5_VABI _ZN3WTF20initializeMainThreadEv() {
-    std::lock_guard<std::mutex> lock(s_mainThreadMutex);
-    s_mainThreadId = std::this_thread::get_id();
-    s_mainThreadInitialized.store(true, std::memory_order_release);
+    std::call_once(s_initializeOnce, []() {
+        s_mainThreadId = std::this_thread::get_id();
+        s_mainThreadInitialized.store(true, std::memory_order_release);
+    });
 }
 
 bool APS5_VABI _ZN3WTF12isMainThreadEv() {
     if (!s_mainThreadInitialized.load(std::memory_order_acquire)) {
-        return true;
+        return false;
     }
-    std::lock_guard<std::mutex> lock(s_mainThreadMutex);
     return std::this_thread::get_id() == s_mainThreadId;
 }
 
