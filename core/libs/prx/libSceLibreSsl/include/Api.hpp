@@ -782,7 +782,7 @@ int APS5_VABI SSL_get_ex_data_nid_postfix(void);
 int APS5_VABI SSL_get_ex_data_X509_STORE_CTX_idx_nid_postfix(void);
 int APS5_VABI SSL_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, LibreSslExNew newFunction, LibreSslExDup dupFunction, LibreSslExFree freeFunction);
 int APS5_VABI SSL_get_fd_nid_postfix(void);
-int APS5_VABI SSL_get_peer_cert_chain_nid_postfix(void);
+LibreSslStack* APS5_VABI SSL_get_peer_cert_chain_nid_postfix(const LibreSslSsl* ssl);
 int APS5_VABI SSL_get_peer_certificate_nid_postfix(void);
 int APS5_VABI SSL_get_privatekey_nid_postfix(void);
 void* APS5_VABI SSL_get_rbio_nid_postfix(const LibreSslSsl* ssl);
