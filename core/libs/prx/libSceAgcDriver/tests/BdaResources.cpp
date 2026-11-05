@@ -1842,6 +1842,10 @@ std::uint64_t importsMade() {
     return made;
 }
 
+std::uint64_t growing() {
+    return HostImportCounters().growing;
+}
+
 bool importKept(const PieceWindow& window, std::size_t offset, std::uint64_t serial) {
     return window.Reconciled(offset) == serial && HostImportFor(window.importing, window.Address(offset), 16) != nullptr && window.Serial(offset) == serial;
 }
@@ -1934,6 +1938,209 @@ void importValidityTakenTests(const Context& context) {
     const auto* grown = HostImportFor(window.importing, window.Address(0), 2 * MiB);
     Require(grown == nullptr && window.Serial(0) == serial && importsMade() == made, "a request for a larger run replaced an import a build still holds: " + std::to_string(importsMade() - made) + " made");
     leased.WriteBack();
+}
+
+void importValidityGrownHeldTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, MiB);
+    GuestBufferMemory leased(window.importing);
+    leased.AcquireRegistered();
+    leased.Upload(true);
+    const auto serial = window.Serial(0);
+    Require(window.Block(0, MiB) && serial != 0, "16 pieces were not imported as one 1 MiB block: " + blockText(window, 0, MiB));
+    const auto made = importsMade();
+    window.Add(MiB, MiB);
+    Require(window.Reconciled(0) == serial, "a range registered next to an import a build holds retired it");
+    for (int request = 0; request < 2; ++request) static_cast<void>(HostImportFor(window.importing, window.Address(0), 2 * MiB));
+    Require(growing() == 1, "an import whose growth a held build refused left the growth queue");
+    const auto* spanning = HostImportFor(window.importing, window.Address(0), 2 * MiB);
+    Require(window.Serial(0) == serial && importsMade() == made && (spanning == nullptr || spanning->buffer != nullptr), "a request spanning an import queued for growth retired it while a build holds a pointer into it: " + std::to_string(importsMade() - made) + " made, " + blockText(window, 0, 2 * MiB));
+    leased.WriteBack();
+    window.Build();
+    Require(window.Block(0, 2 * MiB) && window.Serial(0) != serial, "the import queued for growth was not replaced by one 2 MiB import at the next build: " + blockText(window, 0, 2 * MiB));
+}
+
+void importValidityGrowthRetryTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, MiB);
+    window.Build();
+    const auto serial = window.Serial(0);
+    Require(window.Block(0, MiB) && serial != 0, "16 pieces were not imported as one 1 MiB block: " + blockText(window, 0, MiB));
+    SetHostImportBudget(HostImportLiveBytes() + MiB / 2);
+    window.Add(MiB, MiB);
+    window.Build();
+    window.Build();
+    Require(importKept(window, 0, serial) && growing() == 1, "an import whose growth the budget refused was replaced or left the growth queue: " + std::to_string(growing()) + " queued, " + blockText(window, 0, 2 * MiB));
+    const auto made = importsMade();
+    SetHostImportBudget(HostImportLiveBytes() + 8 * MiB);
+    window.Build();
+    Require(window.Block(0, 2 * MiB) && window.Serial(0) != serial && importsMade() == made + 1 && growing() == 0, "an import queued for growth was not replaced by one 2 MiB import at the first build after the budget allowed it, without a registry change: " + std::to_string(importsMade() - made) + " made, " + std::to_string(growing()) + " queued, " + blockText(window, 0, 2 * MiB));
+}
+
+void importValidityPartialPromotionTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(MiB, 2 * MiB);
+    window.Build();
+    Require(window.Block(MiB, MiB), "16 pieces were not imported as one 1 MiB block: " + blockText(window, MiB, 2 * MiB));
+    window.AddPieces(0, MiB);
+    window.AddPieces(2 * MiB, 4 * MiB);
+    SetHostImportBudget(HostImportLiveBytes() + 2 * MiB);
+    window.Build();
+    Require(window.Serial(0) != 0 && !window.Block(0, 4 * MiB) && growing() > 0, "a promotion that fit only a smaller run than the registry allowed left no import queued for growth: " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+    SetHostImportBudget(HostImportLiveBytes() + 8 * MiB);
+    window.Build();
+    Require(window.Block(0, 4 * MiB) && window.Imports(0, 4 * MiB) == 1 && growing() == 0, "the imports left by a partial promotion were not replaced by one 4 MiB import once the budget allowed it, without a registry change: " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+}
+
+void importValidityRetiredGrowthTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, 4 * MiB);
+    window.Build();
+    Require(window.Block(0, 4 * MiB), "64 pieces were not imported as one 4 MiB block: " + blockText(window, 0, 4 * MiB));
+    const auto others = HostImportLiveBytes() - 4 * MiB;
+    window.Remove(MiB);
+    window.Add(MiB, PieceWindow::Piece);
+    SetHostImportBudget(others + 2 * MiB);
+    window.Build();
+    Require(window.Block(0, 2 * MiB) && growing() == 1, "a run whose import a registry change retired was imported again smaller under the budget without its growth queued: " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+    const auto made = importsMade();
+    SetHostImportBudget(others + 8 * MiB);
+    window.Build();
+    Require(window.Block(0, 4 * MiB) && window.Imports(0, 4 * MiB) == 1 && importsMade() == made + 1 && growing() == 0, "the run whose import a registry change retired was not imported whole once only the budget rose: " + std::to_string(importsMade() - made) + " made, " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+}
+
+void importValidityFragmentedTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, 4 * MiB);
+    SetHostImportBudget(HostImportLiveBytes() + 2 * MiB);
+    window.Build();
+    window.Build();
+    Require(window.Block(0, 2 * MiB) && growing() == 1, "a run first imported smaller under the budget was not queued for growth: " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+    const auto made = importsMade();
+    SetHostImportBudget(HostImportLiveBytes() + 8 * MiB);
+    window.Build();
+    Require(window.Block(0, 4 * MiB) && window.Imports(0, 4 * MiB) == 1 && importsMade() == made + 1 && growing() == 0, "a run first imported smaller under the budget was not imported whole once only the budget rose: " + std::to_string(importsMade() - made) + " made, " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+}
+
+void importValidityHeldGrowthTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, 4 * MiB);
+    SetHostImportBudget(HostImportLiveBytes() + 2 * MiB);
+    GuestBufferMemory leased(window.importing);
+    leased.AcquireRegistered();
+    leased.Upload(true);
+    Require(window.Block(0, 2 * MiB), "a 4 MiB run over the budget did not step down to a 2 MiB block: " + blockText(window, 0, 4 * MiB));
+    SetHostImportBudget(HostImportLiveBytes() + 8 * MiB);
+    static_cast<void>(HostImportFor(window.importing, window.Address(2 * MiB), 16));
+    Require(window.Block(0, 2 * MiB) && window.Block(2 * MiB, 2 * MiB) && growing() == 1, "a run a held build kept from being imported whole was not queued for growth: " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+    leased.WriteBack();
+    const auto made = importsMade();
+    const bool covered = spaceCovers(window, 0, 4 * MiB);
+    Require(covered && window.Block(0, 4 * MiB) && importsMade() == made + 1 && growing() == 0, "a run a held build kept from being imported whole was not imported whole before the pass of the next build: " + std::to_string(importsMade() - made) + " made, " + std::to_string(growing()) + " queued, " + blockText(window, 0, 4 * MiB));
+}
+
+void importValidityGrowthBoundTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    SetHostImportBudget(HostImportLiveBytes() + MiB / 2);
+    std::array<bool, 4> live{};
+    for (std::size_t round = 0; round < 24; ++round) {
+        const auto run = round * 3 % live.size();
+        const auto offset = run * 2 * MiB;
+        if (live[run]) {
+            for (auto piece = offset; piece < offset + MiB; piece += PieceWindow::Piece) window.Remove(piece);
+        } else {
+            window.AddPieces(offset, offset + MiB);
+        }
+        live[run] = !live[run];
+        window.Build();
+        const auto runs = static_cast<std::uint64_t>(std::count(live.begin(), live.end(), true));
+        Require(growing() == runs, "the growth queue held " + std::to_string(growing()) + " runs with " + std::to_string(runs) + " live runs over the budget (round " + std::to_string(round) + ")");
+    }
+    window.AddPieces(0, MiB);
+    window.AddPieces(2 * MiB, 3 * MiB);
+    window.Build();
+    Require(growing() == 2 && window.Serial(2 * MiB) == 0, "two runs over the budget, one not imported at all, were not both queued: " + std::to_string(growing()) + " queued");
+    SetHostImportBudget(HostImportLiveBytes() + 8 * MiB);
+    Require(HostImportFor(window.importing, window.Address(2 * MiB), MiB) != nullptr && growing() == 1, "a run a request imported whole stayed queued: " + std::to_string(growing()) + " queued");
+}
+
+void importValidityCachedBudgetTests(const Context& context) {
+    if (!AddressSpaceCounters().enabled) return;
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, MiB);
+    window.Build();
+    Require(window.Block(0, MiB), "16 pieces were not imported as one 1 MiB block: " + blockText(window, 0, MiB));
+    SetHostImportBudget(HostImportLiveBytes() + MiB / 2);
+    window.Add(MiB, MiB);
+    window.Build();
+    Require(growing() == 1, "an import whose growth the budget refused left the growth queue");
+    window.Build();
+    std::uint64_t queried = 0;
+    const auto hits = AddressSpaceCounters().hits;
+    for (int build = 0; build < 2; ++build) {
+        GuestBufferMemory leased(window.importing);
+        const auto checks = HostImportCounters().budgetChecks;
+        leased.AcquireRegistered();
+        queried += HostImportCounters().budgetChecks - checks;
+        leased.Upload(true);
+        leased.WriteBack();
+    }
+    const auto hit = AddressSpaceCounters().hits - hits;
+    Require(hit == 2 && queried == 0, "cached builds with a run queued for growth queried the host import budget " + std::to_string(queried) + " times (" + std::to_string(hit) + " of 2 hit the cached space)");
+}
+
+void importValidityMixedRetryTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, MiB);
+    window.Build();
+    const auto serial = window.Serial(0);
+    Require(window.Block(0, MiB) && serial != 0, "16 pieces were not imported as one 1 MiB block: " + blockText(window, 0, MiB));
+    window.Add(MiB, MiB, false);
+    window.Build();
+    Require(importKept(window, 0, serial) && growing() == 0, "an incompatible neighbour retired the import or queued it for growth: " + std::to_string(growing()) + " queued");
+    window.Remove(MiB);
+    window.Add(MiB, MiB);
+    Require(window.Reconciled(0) == serial && growing() == 1, "an import beside a neighbour that became compatible was retired or not queued for growth: " + std::to_string(growing()) + " queued");
+    GuestBufferMemory leased(window.importing);
+    leased.AcquireRegistered();
+    Require(window.Block(0, 2 * MiB) && window.Serial(0) != serial && growing() == 0, "the import beside a neighbour that became compatible was not replaced before the build pass: " + blockText(window, 0, 2 * MiB));
+    leased.Upload(true);
+    leased.WriteBack();
+}
+
+void importValidityGrowthStaleTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    window.AddPieces(0, MiB);
+    window.Build();
+    const auto serial = window.Serial(0);
+    Require(window.Block(0, MiB) && serial != 0, "16 pieces were not imported as one 1 MiB block: " + blockText(window, 0, MiB));
+    SetHostImportBudget(HostImportLiveBytes() + MiB / 2);
+    window.Add(MiB, MiB);
+    window.Build();
+    Require(growing() == 1, "an import whose growth the budget refused left the growth queue");
+    window.Remove(MiB);
+    Require(window.Reconciled(0) == serial && growing() == 0, "an import whose run shrank back stayed queued for growth");
+    window.Build();
+    const auto made = importsMade();
+    const auto rebuilt = AddressSpaceCounters().rebuiltGrowth;
+    SetHostImportBudget(HostImportLiveBytes() + 8 * MiB);
+    window.Build();
+    window.Build();
+    Require(importKept(window, 0, serial) && importsMade() == made && AddressSpaceCounters().rebuiltGrowth == rebuilt, "an import whose run shrank back was imported again or rebuilt the address space when the budget grew");
+    window.Add(MiB, MiB);
+    Require(window.Reconciled(0) == serial && growing() == 1, "an import whose run grew again was not queued for growth");
+    window.Remove(MiB / 2);
+    Require(window.Reconciled(0) == 0 && growing() == 0, "a retired import stayed queued for growth");
 }
 
 void importValidityUnrelatedTests(const Context& context) {
@@ -4997,6 +5204,16 @@ void RunHostImportValidityTests(const Context& context, const BdaTestAccess& acc
     importValidityReplacementTests(context, access);
     importValidityCeilingTests(context, access);
     importValidityTakenTests(context);
+    importValidityGrownHeldTests(context);
+    importValidityGrowthRetryTests(context);
+    importValidityGrowthStaleTests(context);
+    importValidityPartialPromotionTests(context);
+    importValidityMixedRetryTests(context);
+    importValidityRetiredGrowthTests(context);
+    importValidityFragmentedTests(context);
+    importValidityHeldGrowthTests(context);
+    importValidityGrowthBoundTests(context);
+    importValidityCachedBudgetTests(context);
     std::cout << "host imports stay while their ranges are unchanged and retire when their backing changes\n";
 }
 
