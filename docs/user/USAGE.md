@@ -206,7 +206,7 @@ description = "pool size"
 
 | Entry key | Meaning |
 |-----------|---------|
-| `name` | Optional. A setting name of `[a-z0-9_]`, unique within the file and not one of the reserved top-level key names (`format` and the eight keys above), used by a later `--set` option. Shown in the progress line, the manifest and the verify report. |
+| `name` | Optional. A setting name of `[a-z0-9_]`, unique within the file and not one of the reserved top-level key names (`format` and the eight keys above). Shown in the progress line, the manifest and the verify report. |
 | `target` | Required. The main executable's file name, or for `--executable` files and bundled modules the path relative to the module parent directory, for example `sce_module/libc.prx`. |
 | `va` | Required. The virtual address of the ELF as a disassembler shows it. |
 | `type` | Optional: `u8 u16 u32 u64 i8 i16 i32 i64`. Then `expected`, `value`, `min`, `max` and `align` are integers, range-checked and written little-endian. Without it, `expected` and `value` are hexadecimal byte strings of the same length. |
