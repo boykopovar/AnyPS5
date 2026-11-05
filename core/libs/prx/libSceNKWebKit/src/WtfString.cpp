@@ -42,6 +42,7 @@
  * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  *
+ * Derived from Source/WTF/wtf/text/StringHash.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
  */
 /*
  * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
@@ -61,6 +62,8 @@
  * along with this library; see the file COPYING.LIB.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
  */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -298,7 +301,7 @@ unsigned Hash(StringView view, bool masked = true) {
 }
 
 unsigned AvoidDeletedHashValue(unsigned hash) {
-    return hash ^ (static_cast<unsigned>(!(hash + 1)) << 31);
+    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
 }
 
 StringImpl* EmptyImpl() {
