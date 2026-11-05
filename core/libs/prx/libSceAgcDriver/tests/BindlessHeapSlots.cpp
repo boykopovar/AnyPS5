@@ -254,7 +254,7 @@ bool ringLargeSpans(const Context& context) {
     require(heap.Held(pin), "the pinned span outlives the large span");
     bool refused = false;
     try {
-        static_cast<void>(heap.Allocate(AgcDriver::Graphics::BindlessHeap::RingBytes / sizeof(std::uint32_t) / 2u + 1u));
+        static_cast<void>(heap.Allocate(heap.RingChunkCount() * AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t) / 2u + 1u));
     } catch (const std::runtime_error&) {
         refused = true;
     }
@@ -284,6 +284,32 @@ void ringCurrentChunk(const Context& context) {
     }
     require(refused, "a span never wraps onto the current chunk behind data this batch already wrote");
     require(heap.Held(live), "the current chunk's span is still held");
+}
+
+bool ringBusyChunks(const Context& context) {
+    BindlessHeap heap(context);
+    if (heap.RingChunkCount() < 3u) return false;
+    Recorder recorder(context, true);
+    if (!recorder.HasTimeline()) return false;
+    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
+    const auto unreached = recorder.Submissions() + (1ull << 40u);
+    BindlessHeap::SpanMark busy;
+    static_cast<void>(heap.Allocate(16u, busy));
+    static_cast<void>(heap.Allocate(chunkWords));
+    heap.Submitted(recorder, unreached);
+    heap.Submitted(recorder, 0u);
+    BindlessHeap::SpanMark fill;
+    const auto wraps = heap.Statistics().ringWraps;
+    BindlessHeap::DataSpan last{};
+    while (heap.Statistics().ringWraps == wraps) {
+        last = heap.Allocate(chunkWords, fill);
+        heap.Submitted(recorder, 0u);
+    }
+    require(last.offset >= AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips the chunk a batch still in flight reads");
+    const auto counts = heap.Statistics();
+    require(counts.busyChunksSkipped >= 1u && counts.ringWaits == 0u, "the busy chunk is skipped without a wait");
+    require(heap.Held(busy), "a span in the skipped busy chunk is still held");
+    return true;
 }
 
 void heapComesBack(const Context& context, VkImageView view) {
@@ -440,7 +466,8 @@ void twoHeapsComeBack(const Context& context, VkImageView view) {
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     const bool largeSpans = mode == "ring-large-spans";
-    const bool comesBack = !mode.empty() && !largeSpans;
+    const bool busyChunks = mode == "ring-busy-chunks";
+    const bool comesBack = !mode.empty() && !largeSpans && !busyChunks;
     try {
         SetTestEnvironment("APS5_GPU_HEAP", "1");
         SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
@@ -449,6 +476,21 @@ int main(int argc, char** argv) {
         if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
+        }
+        if (busyChunks) {
+            bool ran = false;
+            {
+                const auto context = device->graphicsContext();
+                ran = ringBusyChunks(context);
+                device->WaitIdle();
+            }
+            device.reset();
+            if (!ran) {
+                std::printf("skipped, the heap ring has fewer than three chunks or the recorder no timeline\n");
+                return VulkanTestSkipped;
+            }
+            std::cout << "bindless heap ring busy chunk tests passed\n";
+            return 0;
         }
         if (largeSpans) {
             bool ran = false;

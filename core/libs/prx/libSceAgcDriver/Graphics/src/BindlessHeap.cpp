@@ -144,6 +144,18 @@ struct HeapSizes {
     std::size_t ringBytes = 0;
 };
 
+std::size_t ringTargetBytes() {
+    static const std::size_t bytes = [] {
+        std::size_t target = BindlessHeap::RingBytes;
+        if (const char* value = std::getenv("APS5_HEAP_RING_MIB")) {
+            const auto mib = std::strtoull(value, nullptr, 10);
+            if (mib != 0u) target = static_cast<std::size_t>(std::clamp<unsigned long long>(mib, (2u * BindlessHeap::RingChunkBytes) >> 20u, BindlessHeap::RingBytes >> 20u)) << 20u;
+        }
+        return target / BindlessHeap::RingChunkBytes * BindlessHeap::RingChunkBytes;
+    }();
+    return bytes;
+}
+
 VkDeviceSize alignUp(VkDeviceSize value, VkDeviceSize alignment) {
     return alignment == 0 ? value : (value + alignment - 1) / alignment * alignment;
 }
@@ -163,7 +175,7 @@ HeapSizes heapLayout(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& properti
     const auto offset = alignUp(sizes.resourceUsed + properties.minResourceHeapReservedRange, std::max<VkDeviceSize>(uniformAlignment, properties.resourceHeapAlignment));
     if (offset >= properties.maxResourceHeapSize) return sizes;
     const auto room = static_cast<std::size_t>(properties.maxResourceHeapSize - offset) / BindlessHeap::RingChunkBytes * BindlessHeap::RingChunkBytes;
-    const auto bytes = std::min(room, BindlessHeap::RingBytes);
+    const auto bytes = std::min(room, ringTargetBytes());
     if (bytes < 2u * BindlessHeap::RingChunkBytes) return sizes;
     sizes.ringOffset = offset;
     sizes.ringBytes = bytes;
@@ -257,7 +269,8 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
         ringData = resourceHeap->Bytes().data() + ringHeapOffset;
         ringAlignment = static_cast<std::uint32_t>(std::max<VkDeviceSize>({context.limits.minStorageBufferOffsetAlignment, context.limits.minUniformBufferOffsetAlignment, RingSpanAlignment}));
     } else {
-        ring = makeBuffer(RingBytes, ringUsage, true);
+        ringBytes = ringTargetBytes();
+        ring = makeBuffer(ringBytes, ringUsage, true);
         ringData = ring->Bytes().data();
         ringAlignment = static_cast<std::uint32_t>(std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, RingSpanAlignment));
     }
@@ -640,16 +653,54 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
     if (bytes > ringBytes / 2u) throw std::runtime_error("AGC bindless heap: per-draw data exceeds half the shader data ring");
     std::lock_guard lock(mutex);
     auto offset = wrapRingOffset(alignUp(ringCursor, ringAlignment), bytes);
-    const auto keptAhead = [&] {
+    enum class Taken { No, Kept, Busy };
+    const auto taken = [&](bool skipBusy) {
         for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) {
-            if (chunk == ringChunk ? offset < ringCursor : ringChunks[chunk].open) return true;
+            if (chunk == ringChunk ? offset < ringCursor : ringChunks[chunk].open) return Taken::Kept;
         }
-        return false;
+        if (!skipBusy) return Taken::No;
+        for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) {
+            auto& entry = ringChunks[chunk];
+            if (chunk == ringChunk || entry.serial == 0u || entry.recorder == nullptr || !entry.recorder->HasTimeline()) continue;
+            if (!entry.recorder->WaitSerialFor(entry.serial, 0u)) return Taken::Busy;
+            entry.serial = 0u;
+        }
+        return Taken::No;
     };
-    for (std::size_t skipped = 0; keptAhead(); ++skipped) {
-        if (skipped == ringChunks.size()) throw std::runtime_error("AGC bindless heap: one batch's shader data exceeds its ring");
+    const auto start = offset;
+    const auto wraps = counts.ringWraps;
+    const auto keptSkips = counts.keptChunksSkipped;
+    const auto busySkips = counts.busyChunksSkipped;
+    auto reason = taken(true);
+    for (std::size_t skipped = 0; reason != Taken::No && skipped < ringChunks.size(); ++skipped) {
         offset = wrapRingOffset((chunkOf(offset) + 1u) * RingChunkBytes, bytes);
-        ++counts.keptChunksSkipped;
+        ++(reason == Taken::Busy ? counts.busyChunksSkipped : counts.keptChunksSkipped);
+        reason = taken(true);
+    }
+    if (reason != Taken::No) {
+        counts.ringWraps = wraps;
+        counts.keptChunksSkipped = keptSkips;
+        counts.busyChunksSkipped = busySkips;
+        std::optional<std::size_t> oldest;
+        std::uint64_t oldestSerial = ~std::uint64_t{0};
+        offset = start;
+        for (std::size_t step = 0; step < ringChunks.size(); ++step) {
+            if (taken(false) == Taken::No) {
+                std::uint64_t serial = 0;
+                for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) {
+                    if (chunk != ringChunk) serial = std::max(serial, ringChunks[chunk].serial);
+                }
+                if (serial < oldestSerial) {
+                    oldest = offset;
+                    oldestSerial = serial;
+                }
+            }
+            offset = wrapRingOffset((chunkOf(offset) + 1u) * RingChunkBytes, bytes);
+        }
+        counts.ringWraps = wraps;
+        if (!oldest) throw std::runtime_error("AGC bindless heap: one batch's shader data exceeds its ring");
+        offset = *oldest;
+        if (offset < start) ++counts.ringWraps;
     }
     const auto consumed = bytes + (offset >= ringCursor ? offset - ringCursor : ringBytes - ringCursor + offset);
     ringBatchBytes += consumed;
@@ -1101,6 +1152,7 @@ void reportHeapStatistics() {
             totals.slotsEvicted += counts.slotsEvicted;
             totals.evictionWaits += counts.evictionWaits;
             totals.ringWaits += counts.ringWaits;
+            totals.busyChunksSkipped += counts.busyChunksSkipped;
             totals.ringBytes += counts.ringBytes;
             totals.imageSlotsHeld += counts.imageSlotsHeld;
             totals.ringBatchPeakBytes = std::max(totals.ringBatchPeakBytes, counts.ringBatchPeakBytes);
@@ -1117,16 +1169,17 @@ void reportHeapStatistics() {
     const auto slotsEvicted = windowDelta(totals.slotsEvicted, lastTotals.slotsEvicted);
     const auto evictionWaits = windowDelta(totals.evictionWaits, lastTotals.evictionWaits);
     const auto ringWaits = windowDelta(totals.ringWaits, lastTotals.ringWaits);
+    const auto busySkips = windowDelta(totals.busyChunksSkipped, lastTotals.busyChunksSkipped);
     const auto ringMiB = windowDelta(totals.ringBytes, lastTotals.ringBytes) >> 20u;
     lastTotals = totals;
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; fallbacks:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); ring spans %llu written / %llu kept / %llu expired, %llu MiB, %llu waits, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); ring spans %llu written / %llu kept / %llu expired, %llu MiB, %llu waits, %llu busy chunks skipped, since start at most %llu KiB per batch and %llu KiB per span; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), fallbacks.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(ringMiB), printed(ringWaits), printed(totals.ringBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(totals.ringBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {
