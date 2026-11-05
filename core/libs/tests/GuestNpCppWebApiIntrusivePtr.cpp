@@ -373,14 +373,14 @@ static void TestScalarVectorAssignment() {
 }
 
 static void TestVectorFunctionsAcceptTheHandleObject() {
-    int context = 0;
+    NpCppWebApiTest::LibContext context;
 
     IntrusivePtr vector;
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, &context);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, context.value());
     unsigned char object[ObjectSize];
     std::memset(object, 0x5a, sizeof(object));
     WriteCount(object, 0, 1);
-    IntrusivePtr filled{object, RecordDelete, &context};
+    IntrusivePtr filled{object, RecordDelete, context.value()};
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE8pushBackERKS8_(&vector, &filled) == 0);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 1);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(vector.object) == 1);
@@ -396,7 +396,7 @@ static void TestVectorFunctionsAcceptTheHandleObject() {
     *reinterpret_cast<IntrusivePtr**>(body + 0x38) = elements;
     *reinterpret_cast<std::uint64_t*>(body + 0x40) = 2;
     *reinterpret_cast<std::uint64_t*>(body + 0x48) = 2;
-    IntrusivePtr handle{body, nullptr, &context};
+    IntrusivePtr handle{body, nullptr, context.value()};
 
     const auto presenceBegin = reinterpret_cast<void* (APS5_VABI*)(void*, void*)>(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE5beginEv);
     const auto presenceEnd = reinterpret_cast<void* (APS5_VABI*)(void*, void*)>(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE3endEv);
