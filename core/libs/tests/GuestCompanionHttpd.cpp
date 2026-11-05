@@ -87,6 +87,14 @@ void CheckStates() {
     Require(sceCompanionHttpdInitialize(reinterpret_cast<const CompanionHttpdOptParam*>(param)) == 0, "initializing again after the termination failed");
     Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == 0, "the termination kept the callback");
     Require(sceCompanionHttpdTerminate() == 0, "the last termination failed");
+    Require(sceCompanionHttpdGetEvent(nullptr) == InvalidParam, "a null event after the last termination");
+    Require(sceCompanionHttpdGetEvent(event) == NotInitialized, "an event after the last termination");
+    Require(sceCompanionHttpdStart() == NotInitialized, "a start after the last termination");
+    Require(sceCompanionHttpdStop() == NotInitialized, "a stop after the last termination");
+    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == InvalidParam, "a null callback after the last termination");
+    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == NotInitialized, "a callback after the last termination");
+    Require(sceCompanionHttpdUnregisterRequestCallback() == NotInitialized, "an unregistration after the last termination");
+    Require(sceCompanionHttpdInitialize(nullptr) == InvalidParam, "a null parameter on reinit after termination");
 }
 
 void CheckResponseBuilders() {
