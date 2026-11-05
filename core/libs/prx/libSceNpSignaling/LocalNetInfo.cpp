@@ -3,13 +3,12 @@
 // Derived from shadPS4 src/core/libraries/np/np_signaling/np_signaling.cpp@2183807e592b36d4440384878165b43d930c1dee
 
 #include "prx/libSceNpSignaling/include/Api.hpp"
+#include "prx/libSceNpSignaling/include/SignalingState.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 static constexpr int SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED = static_cast<int>(0x80552701);
 static constexpr int SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552715);
-
-extern "C" bool NpSignalingIsInitialized_nid_no_patch();
 
 extern "C" {
 

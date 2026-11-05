@@ -1,5 +1,6 @@
 #include "prx/libSceNpSignaling/include/InventoryExports.hpp"
 #include "prx/libSceNpSignaling/include/Api.hpp"
+#include "prx/libSceNpSignaling/include/SignalingState.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>
