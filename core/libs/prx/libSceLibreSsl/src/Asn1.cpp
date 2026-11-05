@@ -117,6 +117,24 @@ int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value) {
     return value->type;
 }
 
+int APS5_VABI ASN1_STRING_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* value) {
+    if (!value) return 0;
+    int written = 0;
+    char buffer[80];
+    const auto* data = reinterpret_cast<const char*>(value->data);
+    for (int index = 0; index < value->length; ++index) {
+        const char byte = data[index];
+        buffer[written] = (byte > '~' || (byte < ' ' && byte != '\n' && byte != '\r')) ? '.' : byte;
+        ++written;
+        if (written >= 80) {
+            if (LibreSslBioWrite_nid_no_patch(bio, buffer, written) <= 0) return 0;
+            written = 0;
+        }
+    }
+    if (written > 0 && LibreSslBioWrite_nid_no_patch(bio, buffer, written) <= 0) return 0;
+    return 1;
+}
+
 int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String* value) {
     if (!value) return -1;
     const auto& string = *value;
