@@ -57,7 +57,9 @@ STALL_SECONDS = 20
 
 
 def first_error(text):
-    return next((line.strip() for line in text.splitlines() if ERROR.search(line)), "")
+    lines = [line.strip() for line in text.splitlines()]
+    notifications = [line for line in lines if line.startswith("[notification] ")]
+    return next((line for line in lines if ERROR.search(line)), notifications[-1] if notifications else "")
 
 
 def warning_counts(text):

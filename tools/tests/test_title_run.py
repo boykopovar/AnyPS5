@@ -85,6 +85,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.first_error("radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s\nVkResult is ERROR_DEVICE_LOST\n"), "radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s")
         self.assertEqual(title_run.first_error("Converting\nFAIL: Forbidden syscall instruction at code offset 0x1\nInput: x\n"), "FAIL: Forbidden syscall instruction at code offset 0x1")
         self.assertEqual(title_run.first_error("all fine\n"), "")
+        self.assertEqual(title_run.first_error("[notification] Welcome\n[notification] PICO-8: could not get access to /data.\nMake sure elfldr is running\n"), "[notification] PICO-8: could not get access to /data.")
+        self.assertEqual(title_run.first_error("[notification] Welcome\nunhandled exception 'St13runtime_error'\n"), "unhandled exception 'St13runtime_error'")
 
     def test_warning_counts(self):
         text = "[gpu] storage image 0x1 destroyed with GPU results pending\n" * 2
