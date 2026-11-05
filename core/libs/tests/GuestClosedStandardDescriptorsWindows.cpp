@@ -38,15 +38,31 @@ int Child(const char* closed) {
         if (::_fileno(host) != descriptor) return 82 + descriptor;
         if (guest->GuestState().descriptor != descriptor) return 96 + descriptor;
         if (fileno_nid_postfix(guest) != descriptor) return 85 + descriptor;
+        char buffer[16];
         if (descriptor == 0) {
             if (std::fgetc(host) != EOF || std::feof(host) == 0 || std::ferror(host) != 0) return 88;
             std::clearerr(host);
             if (fgetc_nid_postfix(guest) != EOF || feof_nid_postfix(guest) == 0 || ferror_nid_postfix(guest) != 0) return 89;
             clearerr_nid_postfix(guest);
+            if (read_nid_postfix(0, buffer, sizeof(buffer)) != 0) return 100;
+            if (_read_nid_postfix(0, buffer, sizeof(buffer)) != 0) return 101;
+            *__error_nid_postfix() = 0;
+            if (write_nid_postfix(0, "x", 1) != -1 || *__error_nid_postfix() != 9) return 102;
+            *__error_nid_postfix() = 0;
+            if (_write_nid_postfix(0, "x", 1) != -1 || *__error_nid_postfix() != 9) return 103;
         } else {
             if (std::fputc('x', host) == EOF || std::fflush(host) != 0 || std::ferror(host) != 0) return 90 + descriptor;
             if (fputc_nid_postfix('x', guest) == EOF || fflush_nid_postfix(guest) != 0 || ferror_nid_postfix(guest) != 0) return 93 + descriptor;
+            if (write_nid_postfix(descriptor, "x", 1) != 1) return 104 + descriptor;
+            if (_write_nid_postfix(descriptor, "x", 1) != 1) return 107 + descriptor;
+            *__error_nid_postfix() = 0;
+            if (read_nid_postfix(descriptor, buffer, sizeof(buffer)) != -1 || *__error_nid_postfix() != 9) return 110 + descriptor;
+            *__error_nid_postfix() = 0;
+            if (_read_nid_postfix(descriptor, buffer, sizeof(buffer)) != -1 || *__error_nid_postfix() != 9) return 113 + descriptor;
         }
+        FileStat sb{};
+        if (_fstat_nid_postfix(descriptor, &sb) != 0) return 116 + descriptor;
+        if ((sb.st_mode & 0170000) != 0020000) return 119 + descriptor;
     }
     return 0;
 }
@@ -79,6 +95,9 @@ int main(int argc, char** argv) {
         {true, false, false, "stdin"},
         {false, true, false, "stdout"},
         {false, false, true, "stderr"},
+        {true, true, false, "stdin and stdout"},
+        {true, false, true, "stdin and stderr"},
+        {false, true, true, "stdout and stderr"},
         {true, true, true, "all three"},
     };
     for (const auto& test : cases) {

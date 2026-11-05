@@ -412,6 +412,45 @@ void testWorkloadStreams() {
     check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3) == nullptr, "ACB workload complete packet after unregistration");
 }
 
+void testDrawPackets() {
+    Storage indirect;
+    const auto* draw = sceAgcDcbDrawIndirect(&indirect.buffer, 0x40, 0);
+    const std::array<std::uint32_t, 5> indirectExpected{0xc0032400u, 0x40, 0x280, 0x280, 2};
+    check(draw == indirect.words.data() && std::equal(indirectExpected.begin(), indirectExpected.end(), indirect.words.begin()), "DRAW_INDIRECT packet mismatch");
+    Storage flagged;
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100);
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100000100ull);
+    check(flagged.words[4] == 0x22u && flagged.words[9] == 2, "DRAW_INDIRECT initiator flags mismatch");
+    Storage offset;
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);
+    const std::array<std::uint32_t, 10> offsetExpected{0xc0033500u, 1, 16, 0, 0, 0xc0033500u, 9, 16, 9, 0};
+    check(std::equal(offsetExpected.begin(), offsetExpected.end(), offset.words.begin()), "DRAW_INDEX_OFFSET_2 packet mismatch");
+    Storage instances;
+    sceAgcDcbSetNumInstances(&instances.buffer, 3);
+    check(instances.words[0] == 0xc0002f00u && instances.words[1] == 3, "NUM_INSTANCES packet mismatch");
+    Storage size;
+    sceAgcDcbSetIndexSize(&size.buffer, 1, 2);
+    sceAgcDcbSetIndexSize_0600(&size.buffer, 2, 3, 1);
+    const std::array<std::uint32_t, 6> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u};
+    check(std::equal(sizeExpected.begin(), sizeExpected.end(), size.words.begin()), "index size packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 2, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 0, 0x200000000ull); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize_0600(&rejected.buffer, 0, 0, 2); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbDrawIndirectGetSize() == 20 && sceAgcDcbDrawIndexOffsetGetSize() == 20 && sceAgcDcbSetNumInstancesGetSize() == 8 && sceAgcDcbSetIndexSizeGetSize() == 12, "draw packet sizes");
+}
+
 void testIndexBuffer() {
     Storage storage;
     alignas(4) std::uint16_t indices[2]{};
@@ -714,6 +753,50 @@ void testMemory() {
     const auto beforeMask = storage.words;
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
+
+    Storage acquireStorage;
+    auto* acquire = sceAgcDcbAcquireMem(&acquireStorage.buffer, 0, 0x1234u, 0x567u, nullptr, 0x1000, 0);
+    check(acquire[0] == Agc::Command::Header(0x58u, 8), "acquire mem header mismatch");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was set");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 2) == 0, "sceAgcAcquireMemSetEngine failed with engine 2");
+    check(acquire[1] == 0x1234u, "engine 2 did not clear the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 3) == 0, "sceAgcAcquireMemSetEngine failed with engine 3");
+    check(acquire[1] == 0x80001234u, "engine 3 did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 4) == 0, "sceAgcAcquireMemSetEngine failed with engine 4");
+    check(acquire[1] == 0x1234u, "engine 4 did not clear the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, static_cast<std::uint8_t>(0xffffffffu)) == 0, "sceAgcAcquireMemSetEngine failed with 0xffffffff");
+    check(acquire[1] == 0x80001234u, "0xffffffff did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(sceAgcAcquireMemSetEngine(acquire, 0xffu) == 0, "sceAgcAcquireMemSetEngine failed with 0xff");
+    check(acquire[1] == 0x80001234u, "0xff did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    const auto beforeAcquire = acquireStorage.words;
+    expectFailure([&] { sceAgcAcquireMemSetEngine(nullptr, 0); });
+    auto* misalignedAcquire = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(acquire) + 1);
+    expectFailure([&] { sceAgcAcquireMemSetEngine(misalignedAcquire, 0); });
+    check(acquireStorage.words == beforeAcquire, "invalid acquire engine patch modified packet memory");
+    std::uint32_t wrongAcquire[8] = {0xc0065000u, 0x12345678u};
+    check(sceAgcAcquireMemSetEngine(wrongAcquire, 0) == static_cast<int>(0x8a6c000c), "non-ACQUIRE_MEM packet did not return 0x8a6c000c");
+    check(wrongAcquire[0] == 0xc0065000u && wrongAcquire[1] == 0x12345678u, "non-ACQUIRE_MEM packet was modified");
+    check(sceAgcAcquireMemSetEngine(wrongAcquire, 1) == static_cast<int>(0x8a6c000c), "non-ACQUIRE_MEM packet did not return 0x8a6c000c with engine 1");
+    check(wrongAcquire[0] == 0xc0065000u && wrongAcquire[1] == 0x12345678u, "non-ACQUIRE_MEM packet was modified with engine 1");
+
+    std::uint32_t customLengthAcquire[4] = {Agc::Command::Header(0x58u, 4), 0x4321u, 0, 0};
+    check(sceAgcAcquireMemSetEngine(customLengthAcquire, 1) == 0, "custom length acquire mem failed");
+    check(customLengthAcquire[1] == 0x80004321u, "custom length acquire mem engine bit was not set");
+
+    auto* acbAcquire = sceAgcAcbAcquireMem(&acquireStorage.buffer, 0x567u, nullptr, 0x1000, 0);
+    check(acbAcquire[1] == 0x80000000u, "ACB acquire mem engine bit was not default 1");
+    check(sceAgcAcquireMemSetEngine(acbAcquire, 0) == 0, "sceAgcAcquireMemSetEngine failed on ACB acquire");
+    check(acbAcquire[1] == 0u, "ACB acquire mem engine bit was not cleared to 0");
 }
 
 void testEndOfPipePatches() {
@@ -1108,6 +1191,7 @@ int main(int argc, char** argv) {
         testEndOfPipeAddressPatch();
         testWorkloadStreams();
         testIndexBuffer();
+        testDrawPackets();
         testIndexIndirectArgs();
         testIndirectBase();
         testContextState();
