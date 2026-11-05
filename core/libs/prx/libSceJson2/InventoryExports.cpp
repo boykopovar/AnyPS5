@@ -53,12 +53,6 @@ int APS5_VABI sceJson2Unknown_008_nid_no_patch() {
 }
 APS5_EXPORT("_ZN3sce4Json12MemAllocatorD1Ev", sceJson2Unknown_008_nid_no_patch);
 
-int APS5_VABI sceJson2Unknown_009_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZN3sce4Json17InitParameterRttiC2EPNS0_14AllocParamRttiEPvm", sceJson2Unknown_009_nid_no_patch);
-
 int APS5_VABI sceJson2Unknown_010_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -101,12 +95,6 @@ int APS5_VABI sceJson2Unknown_016_nid_no_patch() {
 }
 APS5_EXPORT("_ZN3sce4Json4FreeEPv", sceJson2Unknown_016_nid_no_patch);
 
-int APS5_VABI sceJson2Unknown_017_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZN3sce4Json5Array10push_frontERKNS0_5ValueE", sceJson2Unknown_017_nid_no_patch);
-
 int APS5_VABI sceJson2Unknown_018_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -136,18 +124,6 @@ int APS5_VABI sceJson2Unknown_022_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("_ZN3sce4Json5Array8iteratorD2Ev", sceJson2Unknown_022_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_023_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZN3sce4Json5Array8pop_backEv", sceJson2Unknown_023_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_024_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZN3sce4Json5Array9pop_frontEv", sceJson2Unknown_024_nid_no_patch);
 
 int APS5_VABI sceJson2Unknown_025_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -370,35 +346,5 @@ int APS5_VABI sceJson2Unknown_062_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("_ZN3sce4Json6StringD2Ev", sceJson2Unknown_062_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_063_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json14InitParameter211getUserDataEv", sceJson2Unknown_063_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_064_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json14InitParameter212getAllocatorEv", sceJson2Unknown_064_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_065_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json14InitParameter217getFileBufferSizeEv", sceJson2Unknown_065_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_066_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv", sceJson2Unknown_066_nid_no_patch);
-
-int APS5_VABI sceJson2Unknown_067_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("_ZNK3sce4Json5ValueixERKNS0_6StringE", sceJson2Unknown_067_nid_no_patch);
 
 }

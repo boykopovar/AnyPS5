@@ -714,6 +714,16 @@ Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
     *self = copy;
     return self;
 }
+void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array* self, const Value* value) {
+    Value copy{};
+    CopyInto(copy, *value);
+    try {
+        self->items->push_front(copy);
+    } catch (...) {
+        Destroy(copy);
+        throw;
+    }
+}
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);
@@ -744,6 +754,11 @@ void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
     Destroy(self->items->front());
     self->items->pop_front();
+}
+void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array* self) {
+    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_back: empty array");
+    Destroy(self->items->back());
+    self->items->pop_back();
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { delete self->state; self->state = nullptr; }
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {
@@ -975,6 +990,9 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* 
             if (std::strcmp(pair.key.text->c_str(), key) == 0) return &pair.value;
     return &MissingElement(self);
 }
+const Value* APS5_VABI _ZNK3sce4Json5ValueixERKNS0_6StringE(const Value* self, const String* key) {
+    return _ZNK3sce4Json5Value8getValueERKNS0_6StringE(self, key);
+}
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t index) {
     const Node& n = NodeOf(*self);
     if (n.type == TypeArray && index < n.array.items->size()) {
@@ -1058,6 +1076,10 @@ void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitP
     self->fileBufferSize = fileBufferSize;
 }
 
+void APS5_VABI _ZN3sce4Json17InitParameterRttiC2EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
+    _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(self, allocParam, userData, fileBufferSize);
+}
+
 static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, specialFloatFormatType) == 0x18);
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
@@ -1075,6 +1097,14 @@ void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv
     self->userData = userData;
 }
 
+void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) {
+    return self->allocator;
+}
+
+void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) {
+    return self->userData;
+}
+
 void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(InitParameter2* self, void* allocParam, void* userData) {
     self->allocator = allocParam;
     self->userData = userData;
@@ -1084,8 +1114,16 @@ void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(InitParameter2*
     self->fileBufferSize = size;
 }
 
+std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) {
+    return self->fileBufferSize;
+}
+
 void APS5_VABI _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(InitParameter2* self, std::int32_t type) {
     self->specialFloatFormatType = type;
+}
+
+std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) {
+    return self->specialFloatFormatType;
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {

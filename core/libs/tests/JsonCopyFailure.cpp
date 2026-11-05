@@ -157,7 +157,7 @@ static unsigned CheckFailures(const char* name, TOperation operation) {
 }
 
 enum class Operation {
-    ValueCopy, ArrayCopy, ObjectCopy, ValueAssign, ObjectAssign, ArrayAppend,
+    ValueCopy, ArrayCopy, ObjectCopy, ValueAssign, ObjectAssign, ArrayAppend, ArrayPrepend,
     ValueArray, ValueObject, ValueString, ValueText, ValueTypeString, ValueTypeArray,
     ValueTypeObject, SetArray, SetObject, SetTypeArray, SetTypeObject, SetTypeString, PairCopy
 };
@@ -174,7 +174,7 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
 
         valueReady = true;
     }
-    if (operation == Operation::ArrayAppend) { _ZN3sce4Json5ArrayC1Ev(&arrayResult); arrayReady = true; }
+    if (operation == Operation::ArrayAppend || operation == Operation::ArrayPrepend) { _ZN3sce4Json5ArrayC1Ev(&arrayResult); arrayReady = true; }
     if (operation == Operation::ObjectAssign) { _ZN3sce4Json6ObjectC1Ev(&objectResult); objectReady = true; }
     bool succeeded = false;
     allocationBudget = activeBudget;
@@ -186,6 +186,7 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
             case Operation::ValueAssign: _ZN3sce4Json5ValueaSERKS1_(&result, &source); break;
             case Operation::ObjectAssign: _ZN3sce4Json6ObjectaSERKS1_(&objectResult, &object); break;
             case Operation::ArrayAppend: _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&arrayResult, &source); break;
+            case Operation::ArrayPrepend: _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(&arrayResult, &source); break;
             case Operation::ValueArray: _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(&result, &array); valueReady = true; break;
             case Operation::ValueObject: _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(&result, &object); valueReady = true; break;
             case Operation::ValueString: _ZN3sce4Json5ValueC1ERKNS0_6StringE(&result, &text); valueReady = true; break;
@@ -215,8 +216,9 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
     }
     if (arrayReady) {
         const auto count = _ZNK3sce4Json5Array4sizeEv(&arrayResult);
-        Require(count == (succeeded ? (operation == Operation::ArrayAppend ? 1 : 3) : 0), "array contents changed");
-        if (succeeded && operation == Operation::ArrayAppend) CheckValue(*_ZNK3sce4Json5Array5frontEv(&arrayResult), expected);
+        const bool single = operation == Operation::ArrayAppend || operation == Operation::ArrayPrepend;
+        Require(count == (succeeded ? (single ? 1 : 3) : 0), "array contents changed");
+        if (succeeded && single) CheckValue(*_ZNK3sce4Json5Array5frontEv(&arrayResult), expected);
         _ZN3sce4Json5ArrayD1Ev(&arrayResult);
 
     }
@@ -254,6 +256,7 @@ int main() {
         {"value assignment", Operation::ValueAssign, &objectValue, objectJson},
         {"object assignment", Operation::ObjectAssign, &objectValue, objectJson},
         {"array append", Operation::ArrayAppend, &objectValue, objectJson},
+        {"array prepend", Operation::ArrayPrepend, &objectValue, objectJson},
         {"value from array", Operation::ValueArray, &arrayValue, arrayJson},
         {"value from object", Operation::ValueObject, &objectValue, objectJson},
         {"value from string", Operation::ValueString, &objectValue, stringJson},
