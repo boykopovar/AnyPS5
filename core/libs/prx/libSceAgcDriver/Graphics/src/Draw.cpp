@@ -3224,6 +3224,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (color.staged) {
                 const auto packed = StagedMergeTarget(color);
                 binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
+                PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
                 static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
                 binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
                 Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
@@ -3231,6 +3232,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 timer.phase(PhaseReadTarget);
                 continue;
             }
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
             targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
             timer.phase(PhaseReadTarget);
             continue;

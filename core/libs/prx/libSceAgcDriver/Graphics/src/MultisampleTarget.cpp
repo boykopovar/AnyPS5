@@ -195,10 +195,10 @@ struct TargetUse {
 
 class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget> {
 public:
-    MultisampleTarget(const Context& context, const ColorTarget& target, bool guestSamples = false) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
+    MultisampleTarget(const Context& context, const ColorTarget& target, bool guestSamples = false, std::optional<VkClearColorValue> initialClear = std::nullopt) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
         this->context.bufferPool.reset();
         if (target.dccAddress != 0) metadataValid = std::make_shared<std::atomic<bool>>(true);
-        const auto initial = initialDccClear(target);
+        const auto initial = initialClear ? *initialClear : initialDccClear(target);
         if (target.dccAddress != 0) cleared = initial;
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
@@ -1059,7 +1059,7 @@ bool holdHostOnly(const MultisampleTarget& target) {
     return true;
 }
 
-MultisampleTarget& acquire(const Context& context, const ColorTarget& requested) {
+MultisampleTarget& acquire(const Context& context, const ColorTarget& requested, std::optional<VkClearColorValue> initialClear = std::nullopt) {
     discardRetiredTargets();
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
@@ -1104,7 +1104,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
         return *target;
     }
     const auto& use = requested;
-    auto target = std::make_shared<MultisampleTarget>(context, use);
+    auto target = std::make_shared<MultisampleTarget>(context, use, false, initialClear);
     target->Keep();
     targets().push_back(std::move(target));
     auto& created = *targets().back();
@@ -1420,6 +1420,41 @@ bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colo
     if (!fill) return false;
     Require(MultisampledFillClearColor(use, *fill, clear), "a fill over the color memory of a multisampled target has no exact clear value in its format");
     return true;
+}
+
+void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target) {
+    {
+        TargetsLock lock;
+        discardRetiredTargets();
+        if (std::ranges::any_of(targets(), [&](const auto& candidate) { return candidate->context.device == context.device && candidate->Serves(target); })) return;
+    }
+    if (target.dccAddress != 0u || target.cmaskFastClear) return;
+    Require(target.cmaskAddress == 0u, "initial multisample color contents with CMASK require a modeled metadata import");
+    Require(target.layers == 1u && target.arraySlice == 0u && target.arrayLastSlice == 0u && target.depth == 1u && target.depthSlice == 0u && target.mipCount == 1u && target.mip == 0u && !target.mipTail, "initial multisample array, volume or mip contents are not implemented");
+    Require(FindGuestColorTargetFormat(target.format, target.elementBytes).has_value(), "initial multisample color format or element size is unsupported");
+    Require(target.elementBytes != 0u && target.elementBytes <= 16u && 16u % target.elementBytes == 0u, "initial multisample color texel size is not implemented");
+    const auto bytes = MultisampledColorBytes(target);
+    Require(bytes != 0u && bytes <= std::numeric_limits<std::size_t>::max() && target.address <= std::numeric_limits<std::uint64_t>::max() - bytes, "initial multisample color footprint is not implemented");
+    const auto requireUnowned = [&] {
+        Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
+        std::shared_lock guardLock(guardedMutex());
+        Require(std::ranges::none_of(guarded(), [&](const GuardedRange& range) { return range.active->load(std::memory_order_acquire) && target.address < range.address + range.bytes && range.address < target.address + bytes; }), "initial multisample color contents overlap another native owner");
+    };
+    requireUnowned();
+    Require(GuestMemory::Accessible(reinterpret_cast<const void*>(target.address), static_cast<std::size_t>(bytes)), "initial multisample color contents are not fully mapped");
+    std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
+    GuestMemory::Read(target.address, snapshot);
+    requireUnowned();
+    Require(GuestMemory::CompareMapped(target.address, snapshot) == GuestMemory::Compare::Equal, "initial multisample color contents changed during capture");
+    Require(std::equal(snapshot.begin() + target.elementBytes, snapshot.end(), snapshot.begin()), "nonuniform initial multisample color contents are not implemented");
+    std::array<std::uint32_t, 4> pattern{};
+    auto texels = std::as_writable_bytes(std::span(pattern));
+    for (std::size_t offset = 0u; offset < texels.size(); offset += target.elementBytes) std::memcpy(texels.data() + offset, snapshot.data(), target.elementBytes);
+    VkClearColorValue clear{};
+    Require(ClearColorForTexel(target.format, target.elementBytes, pattern, clear), "initial multisample color texel has no exact clear value");
+    TargetsLock lock;
+    requireUnowned();
+    acquire(context, target, clear);
 }
 
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target) {
