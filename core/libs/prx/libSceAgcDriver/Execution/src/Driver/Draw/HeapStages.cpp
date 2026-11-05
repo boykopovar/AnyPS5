@@ -333,6 +333,7 @@ std::uint64_t descriptorBindingBytes(const ShaderRecompiler::DescriptorBinding& 
            vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) +
            vectorBytes(binding.imageShapes) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) +
            vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) +
+           vectorBytes(binding.samplerEmbedded) + vectorBytes(binding.samplerEmbeddedWords) +
            vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.imageSamplers) +
            vectorBytes(binding.bufferRead) + vectorBytes(binding.bufferExtent);
 }

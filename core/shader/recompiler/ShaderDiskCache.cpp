@@ -90,7 +90,7 @@ static_assert(sizeof(ShaderInvocation) == 240, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 648, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 704, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -98,7 +98,7 @@ static_assert(sizeof(CompiledShaderInfo) == 400, "CompiledShaderInfo changed: up
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
-static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
+static_assert(sizeof(SamplerResource) == 44, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
@@ -144,7 +144,7 @@ constexpr std::size_t fieldCount() {
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 50, "ImageResource changed: update the info encoder");
-static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
+static_assert(fieldCount<SamplerResource>() == 10, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
@@ -477,6 +477,8 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageUnnormalizedBaseLevel);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerCoordinatesIgnored);
+    writer.Values(std::span<const std::uint32_t>(binding.samplerEmbedded));
+    writer.Values(std::span<const std::uint32_t>(binding.samplerEmbeddedWords));
     writer.Values(std::span<const std::uint64_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
@@ -506,6 +508,8 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageUnnormalizedBaseLevel);
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerCoordinatesIgnored);
+    reader.Values(binding.samplerEmbedded);
+    reader.Values(binding.samplerEmbeddedWords);
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
     reader.Values(binding.bufferExtent);
@@ -878,6 +882,8 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(sampler.uses);
         out.Value(sampler.foldTexelOffsetsOnly);
         out.Value(sampler.table);
+        out.Value(sampler.constant);
+        for (const auto word : sampler.constantWords) out.Value(word);
     });
     writer.List(info.sampledPairs, [](Writer& out, const SampledResourcePair& pair) {
         out.Value(pair.image);
@@ -987,7 +993,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
     if (preparedImageModes) ResourceMaterializer::PrepareImageModes(info);
-    reader.List(info.samplers, 21, [](Reader& in, SamplerResource& sampler) {
+    reader.List(info.samplers, 38, [](Reader& in, SamplerResource& sampler) {
         in.Value(sampler.source);
         in.Value(sampler.firstUsePc);
         in.Value(sampler.copyOf);
@@ -996,6 +1002,8 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(sampler.uses);
         in.Value(sampler.foldTexelOffsetsOnly);
         in.Value(sampler.table);
+        in.Value(sampler.constant);
+        for (auto& word : sampler.constantWords) in.Value(word);
     });
     reader.List(info.sampledPairs, 13, [](Reader& in, SampledResourcePair& pair) {
         in.Value(pair.image);

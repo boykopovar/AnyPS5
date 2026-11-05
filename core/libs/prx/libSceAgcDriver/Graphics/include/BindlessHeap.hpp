@@ -3,10 +3,12 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "RuntimeAbi.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -18,6 +20,7 @@
 
 namespace ShaderRecompiler {
 struct StagePushPlacement;
+struct DescriptorBinding;
 }
 
 namespace AgcDriver::Graphics {
@@ -48,10 +51,12 @@ public:
     bool DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
                                 std::uint32_t workgroupAddressOffset = ~0u, bool rootGds = false, bool rootFault = false,
                                 bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
-                                const ShaderRecompiler::StagePushPlacement* placement = nullptr) const;
+                                const ShaderRecompiler::StagePushPlacement* placement = nullptr,
+                                const std::vector<ShaderRecompiler::DescriptorBinding>* bindings = nullptr) const;
     void WritePixelLdsBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     void WriteMeshWindowBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     std::pair<VkBuffer, VkDeviceSize> DataLocation(VkDeviceAddress address) const;
+    std::uint32_t EmbeddedSamplerCount() const;
 
     std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, Texture* texture, VkImageView view, VkImageLayout layout);
     std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view);
@@ -164,6 +169,16 @@ private:
     void trimPoolLocked();
     std::uint32_t ringAlignment = 256;
     mutable std::mutex mutex;
+    struct EmbeddedSampler {
+        VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        VkSamplerReductionModeCreateInfoEXT reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT};
+        std::shared_ptr<Sampler> heapSampler;
+        std::uint32_t slot = ~0u;
+    };
+    mutable std::mutex embeddedMutex;
+    mutable std::map<std::array<std::uint32_t, 5>, EmbeddedSampler> embeddedSamplers;
+    mutable std::uint32_t embeddedSamplerCount = 0;
+    std::optional<VkDescriptorSetAndBindingMappingEXT> embeddedSamplerMapping(const ShaderRecompiler::DescriptorBinding& binding, std::size_t element) const;
     std::atomic<std::uint64_t> slotSerial{1};
     struct ImageSlotKey {
         std::uint32_t kind;
@@ -266,6 +281,7 @@ void NoteDataAddressPush();
 void NoteEmptyResourceSet();
 std::uint64_t EmptyResourceSets();
 std::uint64_t DataAddressPushes();
+std::uint64_t EmbeddedSamplerMappings();
 enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, FirstSampleCopy, Count };
 enum class HeapFallback : std::uint8_t { DrawUnmapped, DrawMixedRetry, DrawRefusedPair, DrawMixedReused, DispatchUnmapped, Count };
 enum class HeapStageReason : std::uint8_t {

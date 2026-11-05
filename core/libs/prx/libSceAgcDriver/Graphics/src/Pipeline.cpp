@@ -527,7 +527,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             const bool rooted = RootedPushData(shaders);
             descriptorHeap = std::all_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
                 const auto index = static_cast<std::size_t>(&shader - shaders.data());
-                return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index], ~0u, shader.program->dataAddressPush, PushesGeneratedFaultAddress(shader, rooted), shader.program->functionLdsBuffer, shader.program->meshWindowBuffer, false, &pushPlacements[index]);
+                return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index], ~0u, shader.program->dataAddressPush, PushesGeneratedFaultAddress(shader, rooted), shader.program->functionLdsBuffer, shader.program->meshWindowBuffer, false, &pushPlacements[index], &shader.program->bindings);
             });
         }
         Require(descriptorHeap || !AnyHeapShader(shaders), "a pipeline with GPU-mode stages does not map onto VK_EXT_descriptor_heap");

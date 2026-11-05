@@ -466,6 +466,7 @@ private:
         std::uint32_t dataStage = 0;
         std::uint32_t addressDword = 0;
         ShaderRecompiler::DescriptorRole role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+        std::vector<bool> embeddedSamplers;
     };
 
     struct TableStage {

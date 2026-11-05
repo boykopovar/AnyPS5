@@ -558,7 +558,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             }
             if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(logical.kind), element), active ? static_cast<std::uint32_t>(compact.resources.size()) : 0u});
             if (active && sampledSlots) plan.heapSlotWords.push_back({imageSlotBase + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
-            if (active && slotWords && samplerHeap) plan.heapSlotWords.push_back({layout.SamplerSlotDword() + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
+            const bool embeddedSampler = samplerHeap && layout.gpuResolvedImages && info.samplers.at(resource).constant;
+            if (active && slotWords && samplerHeap && !embeddedSampler) plan.heapSlotWords.push_back({layout.SamplerSlotDword() + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
             if (active || ((imageHeap || samplerHeap) && registrationModules)) {
                 compact.resources.push_back(resource);
                 originals.push_back(element);
@@ -617,6 +618,13 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 const auto& words = snapshot.samplers.at(resource).dwords;
                 const bool tablePointOnly = (directSamplerModes.at(resource) & 2u) == 0u;
                 if ((originals[element] & 1u) != 0u && !inactive[element] && !(tablePointOnly && ReducesBetweenTexels(words[0], words[2]))) entry.samplerFilterElements.push_back(element);
+                const auto& sampler = info.samplers.at(resource);
+                const bool embedded = layout.gpuResolvedImages && sampler.constant && !inactive[element];
+                physical.samplerEmbedded.push_back(embedded ? originals[element] : RuntimeAbi::NoEmbeddedSampler);
+                auto embeddedWords = sampler.constantWords;
+                if (embedded && (originals[element] & 1u) != 0u && !(tablePointOnly && ReducesBetweenTexels(embeddedWords[0], embeddedWords[2])))
+                    embeddedWords[2] = PointFilteredSamplerWord(embeddedWords[0], embeddedWords[2]);
+                physical.samplerEmbeddedWords.insert(physical.samplerEmbeddedWords.end(), embeddedWords.begin(), embeddedWords.end());
             }
         } else if (physical.role == DescriptorRole::ShaderData && layout.UsesPushData()) {
             fail("DescriptorBindingBuilder::Populate shader-data binding must not exist when push data is used");
@@ -694,7 +702,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
         const bool addressed = IsAddressedRole(plan, binding.descriptor.role);
-        if (remaining.erase(binding.descriptor.binding) == 0u && !addressed) continue;
+        const bool embedded = std::ranges::any_of(binding.descriptor.samplerEmbedded, [](std::uint32_t element) { return element != RuntimeAbi::NoEmbeddedSampler; });
+        if (remaining.erase(binding.descriptor.binding) == 0u && !addressed && !embedded) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
     }

@@ -29,6 +29,7 @@ public:
     bool ReadsOpaqueBlackBorder() const;
     bool RequiresNonSeamlessCube() const;
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
+    static VkSamplerCreateInfo CreateInfo(const Context& context, const GuestSamplerResource& descriptor, VkSamplerReductionModeCreateInfoEXT& reduction);
     static bool ShaderAppliesLodBias(const GuestSamplerResource& descriptor);
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
     const std::array<std::uint32_t, 5>* CacheKey() const { return cacheKey ? &*cacheKey : nullptr; }

@@ -583,6 +583,8 @@ struct DescriptorBinding {
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> samplerIntegerBorder;
     std::vector<bool> samplerCoordinatesIgnored;
+    std::vector<std::uint32_t> samplerEmbedded;
+    std::vector<std::uint32_t> samplerEmbeddedWords;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
     std::vector<std::uint64_t> imageSamplers;

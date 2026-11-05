@@ -454,6 +454,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             case spv::OpTypeRuntimeArray:
             case spv::OpTypeStruct:
             case spv::OpTypePointer:
+            case spv::OpTypeSampler:
                 Require(count >= 2 && module.types.emplace(instruction[1], std::vector<std::uint32_t>(instruction.begin(), instruction.end())).second, "invalid or duplicate SPIR-V type");
                 break;
             case spv::OpVariable:
@@ -516,6 +517,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     } else Require(module.modes.empty(), "unsupported vertex execution mode");
     std::set<std::pair<std::uint32_t, std::uint32_t>> descriptors;
     std::set<const ShaderRecompiler::DescriptorBinding*> declared;
+    std::set<std::uint32_t> embeddedSamplers;
+    std::set<const ShaderRecompiler::DescriptorBinding*> embeddedOwners;
     std::map<std::pair<std::uint32_t, std::uint32_t>, bool> bufferViews;
     bool push = false;
     for (const auto& [id, variable] : module.variables) {
@@ -594,6 +597,16 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         } else if (variable.storage == spv::StorageClassUniformConstant) {
             Require(decoration.set && decoration.binding, "unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
+            if (key.first == ShaderRecompiler::RuntimeAbi::EmbeddedSamplerSet) {
+                const auto owner = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) {
+                    return item.role == ShaderRecompiler::DescriptorRole::GuestSamplers && std::find(item.samplerEmbedded.begin(), item.samplerEmbedded.end(), key.second) != item.samplerEmbedded.end();
+                });
+                Require(shader.gpuResolvedImages && owner != shader.bindings.end(), "an embedded sampler has no constant sampler element in the recompiler binding metadata");
+                Require(type.size() == 2 && (type[0] & 0xffffu) == spv::OpTypeSampler, "an embedded sampler must be declared as a single sampler");
+                Require(embeddedSamplers.insert(key.second).second, "duplicate embedded sampler binding");
+                embeddedOwners.insert(&*owner);
+                continue;
+            }
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             bool tableAlias = false;
             {
@@ -689,7 +702,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         Require(shader.vertexAttributes.empty(), "vertex attribute metadata is invalid for this stage");
     }
     const auto addressedBindings = static_cast<std::size_t>(std::count_if(shader.bindings.begin(), shader.bindings.end(), [&](const ShaderRecompiler::DescriptorBinding& binding) { return !declared.contains(&binding) && ((shader.bufferAddressCount != 0u && binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) || (shader.dataAddressPush && (binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer || binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable || binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap))); }));
-    Require(descriptors.size() + addressedBindings == shader.bindings.size(), "recompiler binding metadata contains undeclared resources");
+    const auto embeddedOnly = static_cast<std::size_t>(std::count_if(embeddedOwners.begin(), embeddedOwners.end(), [&](const ShaderRecompiler::DescriptorBinding* owner) {
+        return !descriptors.contains(std::make_pair(owner->descriptorSet, owner->binding));
+    }));
+    Require(descriptors.size() + addressedBindings + embeddedOnly == shader.bindings.size(), "recompiler binding metadata contains undeclared resources");
     Require(push == (!shader.pushConstants.empty() || shader.readsDepthRemapPush || shader.dataAddressPush || mesh || (control && !rectListControl && !barycentricPatches) || (geometry && state.tessellationCapture)), "recompiler push constant metadata disagrees with SPIR-V");
     for (const auto id : module.interface) Require(module.variables.contains(id), "entry point interface contains an unknown variable");
     if (mesh) Require(module.primitiveIndices == state.stages.mesh->outputPrimitiveSize, "mesh shader does not export primitive indices");

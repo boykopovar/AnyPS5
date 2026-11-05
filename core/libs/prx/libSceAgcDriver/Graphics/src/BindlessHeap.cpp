@@ -81,6 +81,7 @@ std::atomic<std::uint64_t> heapComputeStages{0};
 std::atomic<bool> descriptorHeapDevice{false};
 std::atomic<std::uint64_t> imageTableBuilds{0};
 std::atomic<std::uint64_t> dataAddressPushes{0};
+std::atomic<std::uint64_t> embeddedSamplerMappings{0};
 std::atomic<std::uint64_t> emptyResourceSets{0};
 
 }
@@ -104,6 +105,10 @@ void NoteDataAddressPush() {
 
 std::uint64_t DataAddressPushes() {
     return dataAddressPushes.load(std::memory_order_relaxed);
+}
+
+std::uint64_t EmbeddedSamplerMappings() {
+    return embeddedSamplerMappings.load(std::memory_order_relaxed);
 }
 
 void NoteEmptyResourceSet() {
@@ -564,6 +569,7 @@ void BindlessHeap::noteReleasedLocked() {
 }
 
 std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
+    if (slot == Abi::NoEmbeddedSampler) return 0u;
     std::lock_guard lock(mutex);
     return samplerPool.Generation(slot);
 }
@@ -579,6 +585,7 @@ bool BindlessHeap::GenerationsCurrent(std::span<const std::vector<std::uint32_t>
         }
     }
     for (std::size_t i = 0; i < samplerSlots.size(); ++i) {
+        if (samplerSlots[i] == Abi::NoEmbeddedSampler) continue;
         if (i >= samplerGenerations.size() || samplerPool.Generation(samplerSlots[i]) != samplerGenerations[i]) return false;
     }
     return true;
@@ -921,6 +928,7 @@ struct HeapBindingUse {
     bool scratchPoolMemory = false;
     std::vector<std::uint32_t> dataUniforms;
     std::vector<SetAndBinding> ringDescriptors;
+    std::vector<std::uint32_t> embeddedSamplers;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
 };
 
@@ -978,6 +986,10 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
         }
         if (set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::ShaderData) && binding / bindingCount < Abi::StageCount) {
             use.dataUniforms.push_back(binding);
+            continue;
+        }
+        if (set == Abi::EmbeddedSamplerSet) {
+            use.embeddedSamplers.push_back(binding);
             continue;
         }
         const bool stageBinding = binding / bindingCount < Abi::StageCount;
@@ -1075,9 +1087,72 @@ bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroup
     return mappable;
 }
 
+namespace {
+
+constexpr std::uint32_t InternalEmbeddedSamplers = 8u;
+
+std::uint32_t embeddedSamplerLimit(const Context& context) {
+    static const auto cap = [] {
+        const char* value = std::getenv("APS5_EMBEDDED_SAMPLER_CAP");
+        return value != nullptr ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : ~0u;
+    }();
+    const auto device = context.descriptorHeapProperties.maxDescriptorHeapEmbeddedSamplers;
+    return std::min(cap, device > InternalEmbeddedSamplers ? device - InternalEmbeddedSamplers : 0u);
+}
+
+}
+
+std::uint32_t BindlessHeap::EmbeddedSamplerCount() const {
+    std::lock_guard lock(embeddedMutex);
+    return embeddedSamplerCount;
+}
+
+std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSamplerMapping(const ShaderRecompiler::DescriptorBinding& binding, std::size_t element) const {
+    if (binding.samplerEmbeddedWords.size() < (element + 1u) * 4u || element >= binding.samplerDepthCompare.size()) return std::nullopt;
+    std::array<std::uint32_t, 4> words{};
+    std::copy_n(binding.samplerEmbeddedWords.begin() + static_cast<std::ptrdiff_t>(element * 4u), 4u, words.begin());
+    if (element < binding.samplerCoordinatesIgnored.size() && binding.samplerCoordinatesIgnored[element]) words[0] &= ~(1u << 15u);
+    const bool compare = binding.samplerDepthCompare[element];
+    const bool unnormalized = element < binding.samplerUnnormalized.size() && binding.samplerUnnormalized[element];
+    const bool integerBorder = element < binding.samplerIntegerBorder.size() && binding.samplerIntegerBorder[element];
+    const std::array<std::uint32_t, 5> key{words[0], words[1], words[2], words[3], (compare ? 1u : 0u) | (unnormalized ? 2u : 0u) | (integerBorder ? 4u : 0u)};
+    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+    mapping.descriptorSet = Abi::EmbeddedSamplerSet;
+    mapping.firstBinding = binding.samplerEmbedded[element];
+    mapping.bindingCount = 1;
+    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
+    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
+    std::lock_guard lock(embeddedMutex);
+    auto found = embeddedSamplers.find(key);
+    if (found == embeddedSamplers.end()) {
+        auto resource = DecodeSamplerResource(words, unnormalized, true, integerBorder);
+        resource.compareEnable = compare;
+        EmbeddedSampler made;
+        made.info = Sampler::CreateInfo(context, resource, made.reduction);
+        if (embeddedSamplerCount < embeddedSamplerLimit(context)) ++embeddedSamplerCount;
+        else made.heapSampler = std::make_shared<Sampler>(context, resource);
+        found = embeddedSamplers.emplace(key, std::move(made)).first;
+        if (found->second.info.pNext != nullptr) found->second.info.pNext = &found->second.reduction;
+    }
+    auto& entry = found->second;
+    if (entry.heapSampler == nullptr) {
+        mapping.sourceData.constantOffset.pEmbeddedSampler = &entry.info;
+        embeddedSamplerMappings.fetch_add(1, std::memory_order_relaxed);
+        return mapping;
+    }
+    if (entry.slot == ~0u) {
+        const auto slot = const_cast<BindlessHeap*>(this)->SamplerSlot(entry.heapSampler);
+        Require(slot.has_value(), "the global sampler heap is full");
+        entry.slot = *slot;
+    }
+    mapping.sourceData.constantOffset.heapOffset = static_cast<std::uint32_t>(entry.slot * samplerHeapStride);
+    return mapping;
+}
+
 bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
                                           std::uint32_t workgroupAddressOffset, bool rootGds, bool rootFault, bool pixelLds, bool meshWindow,
-                                          bool scratchPool, const ShaderRecompiler::StagePushPlacement* placement) const {
+                                          bool scratchPool, const ShaderRecompiler::StagePushPlacement* placement,
+                                          const std::vector<ShaderRecompiler::DescriptorBinding>* bindings) const {
     mappings.clear();
     if (resourceHeap == nullptr) return false;
     HeapBindingUse use;
@@ -1098,6 +1173,20 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
             mappings.push_back(
                 heapMapping(Abi::FragmentDescriptorSet, binding, VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT, 0, samplerHeapStride));
         else mappings.push_back(heapMapping(Abi::FragmentDescriptorSet, binding, imageResources, 0, imageHeapStride));
+    }
+    std::sort(use.embeddedSamplers.begin(), use.embeddedSamplers.end());
+    for (const auto binding : use.embeddedSamplers) {
+        if (bindings == nullptr) return false;
+        std::optional<VkDescriptorSetAndBindingMappingEXT> mapping;
+        for (const auto& candidate : *bindings) {
+            if (candidate.role != ShaderRecompiler::DescriptorRole::GuestSamplers) continue;
+            const auto found = std::ranges::find(candidate.samplerEmbedded, binding);
+            if (found == candidate.samplerEmbedded.end()) continue;
+            mapping = embeddedSamplerMapping(candidate, static_cast<std::size_t>(found - candidate.samplerEmbedded.begin()));
+            break;
+        }
+        if (!mapping) return false;
+        mappings.push_back(*mapping);
     }
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, placement));
     std::sort(use.ringDescriptors.begin(), use.ringDescriptors.end());

@@ -5209,6 +5209,7 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
             }
             samplerSources.push_back({{words[0], words[1], words[2], words[3]}, compareEnable, unnormalized, integerBorder});
             item.imageAllocations.push_back(samplers.size() - 1);
+            item.embeddedSamplers.push_back(element < binding.samplerEmbedded.size() && binding.samplerEmbedded[element] != ShaderRecompiler::RuntimeAbi::NoEmbeddedSampler);
         }
         Require(samplers.size() <= context.limits.maxDescriptorSetSamplers, "pipeline sampler descriptors exceed device limits");
     }
@@ -7016,9 +7017,10 @@ void ShaderResources::takeHeapSlots(BindlessHeap& heap, HeapStageState& state, V
                 kindSlots.push_back(takenSlot(heap.StorageSlot(kind, storageTextures[index].get(), view), "the global storage image heap is full"));
             }
         } else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) {
-            for (const auto index : binding.imageAllocations) {
+            for (std::size_t element = 0; element < binding.imageAllocations.size(); ++element) {
                 ++cursor;
-                state.samplerSlots.push_back(takenSlot(heap.SamplerSlot(samplers[index]), "the global sampler heap is full"));
+                const bool embedded = element < binding.embeddedSamplers.size() && binding.embeddedSamplers[element];
+                state.samplerSlots.push_back(embedded ? ShaderRecompiler::RuntimeAbi::NoEmbeddedSampler : takenSlot(heap.SamplerSlot(samplers[binding.imageAllocations[element]]), "the global sampler heap is full"));
             }
         }
     }

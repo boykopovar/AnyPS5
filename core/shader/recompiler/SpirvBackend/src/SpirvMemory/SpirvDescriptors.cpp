@@ -274,7 +274,16 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
     }
     const auto arrayIndex = ResourceForDescriptor(state, DescriptorBindingKind::Samplers, sampler) + (point ? 1u : 0u);
     std::uint32_t pointer = 0;
-    if (state.gpuResolvedImages) {
+    if (state.gpuResolvedImages && samplerResource.constant) {
+        auto& variable = state.embeddedSamplerVariables[arrayIndex];
+        if (variable == 0u) {
+            variable = state.module.DefineGlobalVariable(pointerType, spv::StorageClassUniformConstant);
+            state.module.AddName(variable, "embedded_sampler");
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::EmbeddedSamplerSet);
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, arrayIndex);
+        }
+        pointer = variable;
+    } else if (state.gpuResolvedImages) {
         if (state.samplerVariable == 0) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
         state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
         const auto slot = LoadHeapSlotWord(state, state.program.Metadata().bindings.SamplerSlotDword() + arrayIndex);
