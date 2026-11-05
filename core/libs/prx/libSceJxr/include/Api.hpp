@@ -3,7 +3,20 @@
 #include "SceTypes.hpp"
 #include <cstddef>
 #include "prx/libSceJxr/GuestPixelInfo.h"
+#include "prx/libSceJxr/include/GuidExports.hpp"
 #include "prx/libSceJxr/Stream.hpp"
+
+struct JxrGuestFormatConverter {
+    std::byte beforeDecoder[9 * sizeof(void*)];
+    void* decoder;
+    JxrGuestGuid pixelFormat;
+};
+
+static_assert(sizeof(void*) == 8);
+static_assert(alignof(JxrGuestFormatConverter) == 8);
+static_assert(offsetof(JxrGuestFormatConverter, decoder) == 72);
+static_assert(offsetof(JxrGuestFormatConverter, pixelFormat) == 80);
+static_assert(sizeof(JxrGuestFormatConverter) == 96);
 
 extern "C" {
 
@@ -46,7 +59,7 @@ int APS5_VABI PKFormatConverter_Copy_nid_postfix();
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix();
 int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix();
 int APS5_VABI PKFormatConverter_GetResolution_nid_postfix();
-int APS5_VABI PKFormatConverter_GetSize_nid_postfix();
+std::int64_t APS5_VABI PKFormatConverter_GetSize_nid_postfix(JxrGuestFormatConverter* converter, std::int32_t* width, std::int32_t* height);
 int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix();
 int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix();
 int APS5_VABI PKFormatConverter_Initialize_nid_postfix();

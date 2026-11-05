@@ -22,6 +22,13 @@ std::size_t lastCount = 0;
 std::size_t lastSize = 0;
 void* lastAllocated = nullptr;
 int callocCalls = 0;
+void* observedDecoder = nullptr;
+std::int32_t* observedWidth = nullptr;
+std::int32_t* observedHeight = nullptr;
+std::int64_t getSizeResult = 0;
+std::int32_t getSizeWidth = 0;
+std::int32_t getSizeHeight = 0;
+int getSizeCalls = 0;
 
 void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free(void* pointer) {
@@ -44,6 +51,16 @@ void* APS5_VABI Realign(void* pointer, std::size_t size, std::size_t) { return s
 int APS5_VABI PosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
+}
+
+std::int64_t APS5_VABI DecoderGetSize(void* decoder, std::int32_t* width, std::int32_t* height) {
+    ++getSizeCalls;
+    observedDecoder = decoder;
+    observedWidth = width;
+    observedHeight = height;
+    if (width) *width = getSizeWidth;
+    if (height) *height = getSizeHeight;
+    return getSizeResult;
 }
 
 void InitializeHeap() {
@@ -109,6 +126,55 @@ int main() {
     failAllocation = false;
     bool threw = false;
     try { PKAlloc_nid_postfix(nullptr, 1); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+
+    alignas(8) std::array<std::byte, 24> decoder{};
+    using DecoderGetSizeFn = std::int64_t (APS5_VABI*)(void*, std::int32_t*, std::int32_t*);
+    const DecoderGetSizeFn getSizeCallback = &DecoderGetSize;
+    std::memcpy(decoder.data() + 2 * sizeof(void*), &getSizeCallback, sizeof(getSizeCallback));
+    JxrGuestFormatConverter converter{};
+    std::memset(converter.beforeDecoder, 0x5a, sizeof(converter.beforeDecoder));
+    converter.decoder = decoder.data();
+    const auto converterBefore = converter;
+    struct GuardedSize {
+        std::uint8_t before[8];
+        std::int32_t width;
+        std::int32_t height;
+        std::uint8_t after[8];
+    } output;
+    std::memset(&output, 0xa5, sizeof(output));
+    getSizeWidth = 3840;
+    getSizeHeight = 2160;
+    getSizeResult = 0x123456789abcdef0;
+    auto calls = getSizeCalls;
+    Require(PKFormatConverter_GetSize_nid_postfix(&converter, &output.width, &output.height) == getSizeResult);
+    Require(getSizeCalls == calls + 1 && observedDecoder == decoder.data());
+    Require(observedWidth == &output.width && observedHeight == &output.height);
+    Require(output.width == getSizeWidth && output.height == getSizeHeight);
+    for (const auto value : output.before) Require(value == 0xa5);
+    for (const auto value : output.after) Require(value == 0xa5);
+    Require(std::memcmp(&converter, &converterBefore, sizeof(converter)) == 0);
+
+    getSizeResult = -0x123456789abcdef;
+    calls = getSizeCalls;
+    Require(PKFormatConverter_GetSize_nid_postfix(&converter, nullptr, nullptr) == getSizeResult);
+    Require(getSizeCalls == calls + 1 && observedDecoder == decoder.data());
+    Require(observedWidth == nullptr && observedHeight == nullptr);
+
+    threw = false;
+    try { PKFormatConverter_GetSize_nid_postfix(nullptr, &output.width, &output.height); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    JxrGuestFormatConverter invalidConverter{};
+    threw = false;
+    try { PKFormatConverter_GetSize_nid_postfix(&invalidConverter, &output.width, &output.height); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    invalidConverter.decoder = decoder.data();
+    std::memset(decoder.data() + 2 * sizeof(void*), 0, sizeof(getSizeCallback));
+    threw = false;
+    try { PKFormatConverter_GetSize_nid_postfix(&invalidConverter, &output.width, &output.height); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
     return 0;
