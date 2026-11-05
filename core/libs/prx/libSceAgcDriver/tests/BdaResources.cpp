@@ -632,6 +632,59 @@ void importJoinTests(const Context& context) {
     ::operator delete(block, std::align_val_t{window});
 }
 
+void importWindowKeepsJoinTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 4 * piece;
+    void* block = ::operator new(2 * window, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    std::memset(guest, 0x22, 2 * window);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto viewBegin = base + 3 * piece;
+    const auto viewBytes = piece + 32;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const std::array<std::pair<std::size_t, std::size_t>, 8> ranges{{{0, piece}, {piece, piece}, {2 * piece, piece}, {3 * piece, piece}, {4 * piece, piece}, {5 * piece, piece}, {6 * piece, piece}, {7 * piece, piece}}};
+    const auto change = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& [offset, bytes] : ranges) {
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + offset, bytes, true, false, true);
+            else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + offset);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        const auto* kept = ExistingHostImportFor(importing, viewBegin, viewBytes);
+        const auto buffer = kept != nullptr ? kept->buffer : VK_NULL_HANDLE;
+        leased.AddReadable(viewBegin, viewBytes);
+        leased.Upload(true);
+        leased.WriteBack();
+        return buffer;
+    };
+    const auto bind = [&](std::uintptr_t address) {
+        GuestBufferMemory plain(importing);
+        plain.AddReadable(address, viewBytes);
+        plain.Upload(false);
+        plain.WriteBack();
+    };
+    change(true);
+    static_cast<void>(build());
+    bind(viewBegin);
+    const auto* joined = ExistingHostImportFor(importing, viewBegin, viewBytes);
+    Require(joined != nullptr && joined->joined && joined->base == base + 3 * piece && joined->bytes == 2 * piece, "a view across a window edge was not imported as one joined block");
+    const auto joinedBuffer = joined->buffer;
+    for (int pass = 0; pass < 2; ++pass) {
+        Require(build() == joinedBuffer, "an address-based build imported a window over a joined import and retired it");
+    }
+    const auto* low = ExistingHostImportFor(importing, base, 2 * piece);
+    Require(low != nullptr && low->base + low->bytes <= base + 3 * piece, "the range below a joined import was not imported beside it");
+    change(false);
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
 class ImportBudgetRanges {
 public:
     static constexpr std::size_t piece = 65536;
@@ -4780,6 +4833,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceWriteMergedPastImportTests(context, access);
     spaceReadOverWritableImportTableTests(context);
     importJoinTests(context);
+    importWindowKeepsJoinTests(context);
     importCoverageHintBudgetTests(context, access);
     failedImportJoinProbeBudgetTests(context, access);
     failedJoinWrittenViewTests(context, access);
