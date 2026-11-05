@@ -851,6 +851,23 @@ void TestGetInfo(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestGetStatistics(std::uint32_t context) {
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    std::vector<std::uint8_t> statistics(32, 0xaa);
+    FormatSideband format{-1, -1, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau, 0xaaaaaaaau};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobGetStatistics(&info, 1.0f, statistics.data()) == 0);
+    Require(sceAjmBatchJobGetInfo(&info, instance, &format) == 0);
+    Submit(context, info);
+    Require(std::all_of(statistics.begin(), statistics.begin() + 24, [](std::uint8_t value) { return value == 0; }));
+    Require(std::all_of(statistics.begin() + 24, statistics.end(), [](std::uint8_t value) { return value == 0xaa; }));
+    Require(format.result == 1 && format.numChannels == 0xaaaaaaaau);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 void TestBatchBounds(std::uint32_t context) {
     constexpr int invalidParameter = static_cast<int>(0x80930005);
     std::vector<std::uint8_t> storage(128);
@@ -912,6 +929,19 @@ void TestBatchBounds(std::uint32_t context) {
 #else
     Require(munmap(pages, 2 * pageSize) == 0);
 #endif
+}
+
+void TestBatchJobCountRange(std::uint32_t context) {
+    (void)context;
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::vector<std::uint8_t> storage(256);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const AjmBuffer buffer{storage.data(), 16};
+    const std::size_t wrapped = (std::size_t{1} << 32) + 1;
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, wrapped, &buffer, 1, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, wrapped, nullptr, 0) == invalidParameter);
+    Require(info.offset == 0);
 }
 
 void TestBatchWaitRelease(std::uint32_t context) {
@@ -1931,6 +1961,31 @@ void TestAt9RunDecodesWholeInput(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestStrError() {
+    const char* const expected[] = {
+        "context does not exist", "instance does not exist", "batch does not exist", "invalid parameter",
+        "not enough memory", "not enough resources", "codec is not supported",
+        "codec is already registered in the context", "codec is not registered in the context",
+        "wrong revision in the flags", "flag is not supported", "busy", "priority is invalid", "in progress",
+        "operation cannot be performed at the moment", "malformed batch", "error at job creation",
+        "invalid opcode", "priority violation", "buffer is too big", "invalid address", "batch was cancelled",
+        "specified memory area is already registered", "specified memory area is not registered",
+    };
+    static_assert(sizeof(expected) / sizeof(expected[0]) == 24);
+    for (std::uint32_t i = 0; i < 24; ++i) {
+        const int code = static_cast<int>(0x80930002u + i);
+        const char* text = sceAjmStrError(code);
+        Require(text != nullptr && std::strcmp(text, expected[i]) == 0);
+        Require(sceAjmStrError(code) == text);
+    }
+    const char* ok = sceAjmStrError(0);
+    Require(ok != nullptr && std::strcmp(ok, "ok") == 0);
+    for (std::uint32_t code : {0x80930000u, 0x80930001u, 0x8093001au, 0x8093001bu, 0x8092ffffu, 1u, 0xffffffffu, 0x80020001u, 0x8a6e0001u, 0x7fffffffu}) {
+        const char* text = sceAjmStrError(static_cast<int>(code));
+        Require(text != nullptr && std::strcmp(text, "(unknown)") == 0);
+    }
+}
+
 void TestAt9FlagRules(std::uint32_t context) {
     constexpr std::uint64_t runMultipleFrames = 1ull << 12;
     constexpr std::uint64_t sidebandStream = 1ull << 47;
@@ -2587,7 +2642,9 @@ int main(int argc, char** argv) {
     TestGaplessDecode(context);
     TestCodecInfo(context);
     TestGetInfo(context);
+    TestGetStatistics(context);
     TestBatchBounds(context);
+    TestBatchJobCountRange(context);
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
@@ -2611,6 +2668,7 @@ int main(int argc, char** argv) {
     TestAt9GaplessSegments(context);
     TestAt9GaplessResetRestartsTotal(context);
     TestAt9RunDecodesWholeInput(context);
+    TestStrError();
     TestAt9FlagRules(context);
     TestPcmResample(context);
     TestConsoleBufferJobs(context);
