@@ -54,7 +54,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -64,11 +64,20 @@ std::string GzipPayload() {
     return payload;
 }
 
+std::uint32_t GzipCrc32(std::string_view payload) {
+    std::uint32_t crc = 0xffffffffu;
+    for (const unsigned char byte : payload) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
 std::string StoredGzip(const std::string& payload) {
     static const unsigned char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
     std::string body(reinterpret_cast<const char*>(header), sizeof(header));
     std::size_t offset = 0;
-    while (offset < payload.size()) {
+    do {
         const std::size_t count = std::min<std::size_t>(payload.size() - offset, 65535);
         body.push_back(static_cast<char>(offset + count == payload.size() ? 1 : 0));
         body.push_back(static_cast<char>(count & 0xff));
@@ -77,17 +86,27 @@ std::string StoredGzip(const std::string& payload) {
         body.push_back(static_cast<char>((~count >> 8) & 0xff));
         body.append(payload, offset, count);
         offset += count;
-    }
-    std::uint32_t crc = 0xffffffffu;
-    for (const unsigned char byte : payload) {
-        crc ^= byte;
-        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
-    }
-    crc = ~crc;
+    } while (offset < payload.size());
+    const auto crc = GzipCrc32(payload);
     const std::uint32_t size = static_cast<std::uint32_t>(payload.size());
     for (int shift = 0; shift < 32; shift += 8) body.push_back(static_cast<char>((crc >> shift) & 0xff));
     for (int shift = 0; shift < 32; shift += 8) body.push_back(static_cast<char>((size >> shift) & 0xff));
     return body;
+}
+
+std::string HeaderGzip(const std::string& payload, bool corrupt = false) {
+    const auto member = StoredGzip(payload);
+    auto header = member.substr(0, 10);
+    header[3] = 0x1e;
+    header.append("\x03\0abc", 5);
+    header += "part.bin";
+    header.push_back('\0');
+    header += "loopback header";
+    header.push_back('\0');
+    const auto crc = GzipCrc32(header);
+    header.push_back(static_cast<char>(crc & 0xff));
+    header.push_back(static_cast<char>(((crc >> 8) & 0xff) ^ (corrupt ? 1 : 0)));
+    return header + member.substr(10);
 }
 
 class Server {
@@ -261,6 +280,24 @@ private:
             body = StoredGzip(GzipPayload());
             length = std::to_string(body.size());
         }
+        if (mode >= Mode::GzipEmpty && mode <= Mode::GzipTrailingJunk) {
+            if (mode == Mode::GzipEmpty) body = StoredGzip("");
+            if (mode == Mode::GzipEmptyMembers) body = StoredGzip("") + StoredGzip("first") + StoredGzip("") + StoredGzip("last") + StoredGzip("");
+            if (mode == Mode::GzipLargeMembers) body = StoredGzip(GzipPayload()) + StoredGzip("tail");
+            if (mode == Mode::GzipHeaders) body = HeaderGzip("first") + HeaderGzip("last");
+            if (mode == Mode::GzipHeaderChecksum) body = HeaderGzip("first", true);
+            if (mode == Mode::GzipSecondHeaderChecksum) body = HeaderGzip("first") + HeaderGzip("last", true);
+            if (mode == Mode::GzipSecondChecksum) {
+                body = StoredGzip("first") + StoredGzip("last");
+                body[body.size() - 8] ^= 1;
+            }
+            if (mode == Mode::GzipSecondSize) {
+                body = StoredGzip("first") + StoredGzip("last");
+                body[body.size() - 4] ^= 1;
+            }
+            if (mode == Mode::GzipTrailingJunk) body = StoredGzip("first") + "trailing junk";
+            length = std::to_string(body.size());
+        }
         if (mode == Mode::Informational) {
             nghttp2_nv early{reinterpret_cast<std::uint8_t*>(const_cast<char*>(":status")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("103")), 7, 3, 0};
             Require(nghttp2_submit_headers(session, 0, stream, nullptr, &early, 1, nullptr) == 0, "server informational response");
@@ -268,7 +305,7 @@ private:
         std::vector<std::pair<std::string, std::string>> fields{{":status", status}, {"x-loopback", "yes"}};
         if (mode != Mode::NoLength) fields.emplace_back("content-length", length);
         if (redirect) fields.emplace_back("location", location);
-        if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat || mode == Mode::GzipLarge) fields.emplace_back("content-encoding", "gzip");
+        if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat || mode == Mode::GzipLarge || (mode >= Mode::GzipEmpty && mode <= Mode::GzipTrailingJunk)) fields.emplace_back("content-encoding", "gzip");
         std::vector<nghttp2_nv> response;
         for (auto& [name, value] : fields) response.push_back({reinterpret_cast<std::uint8_t*>(name.data()), reinterpret_cast<std::uint8_t*>(value.data()), name.size(), value.size(), 0});
         nghttp2_data_provider2 provider{};
@@ -1091,6 +1128,50 @@ void GzipLarge(int ssl) {
     server.Join();
 }
 
+void GzipMembers(int ssl) {
+    for (const auto mode : {Mode::GzipConcat, Mode::GzipEmpty, Mode::GzipEmptyMembers, Mode::GzipLargeMembers, Mode::GzipHeaders}) {
+        for (const int enabled : {0, 1}) {
+            for (const bool lengthFirst : {false, true}) {
+                std::fprintf(stderr, "HTTP2 gzip member scenario %d enabled %d length-first %d\n", static_cast<int>(mode), enabled, lengthFirst);
+                Server server(mode);
+                Client client(ssl);
+                Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, enabled) == 0, "gzip member option");
+                client.Create(server.Url());
+                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "gzip member send");
+                const std::string expected = mode == Mode::GzipConcat ? "response bodyresponse body" :
+                    mode == Mode::GzipLargeMembers ? GzipPayload() + "tail" : mode == Mode::GzipEmpty ? "" : "firstlast";
+                const std::string encoded = mode == Mode::GzipEmpty ? StoredGzip("") : mode == Mode::GzipEmptyMembers ?
+                        StoredGzip("") + StoredGzip("first") + StoredGzip("") + StoredGzip("last") + StoredGzip("") :
+                        mode == Mode::GzipLargeMembers ? StoredGzip(GzipPayload()) + StoredGzip("tail") :
+                        mode == Mode::GzipHeaders ? HeaderGzip("first") + HeaderGzip("last") : std::string{};
+                const auto checkLength = [&] (std::size_t bytes) {
+                    int kind = -1;
+                    std::uint64_t length = 0;
+                    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == bytes, "gzip member length");
+                };
+                if (lengthFirst) checkLength(enabled ? expected.size() : mode == Mode::GzipConcat ? 66 : encoded.size());
+                std::array<char, 317> buffer;
+                std::string body;
+                Require(sceHttp2ReadData(client.request, nullptr, 0) == 0, "gzip member zero read");
+                for (;;) {
+                    const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+                    Require(count >= 0 && count <= static_cast<int>(buffer.size()), "gzip member read count");
+                    if (!count) break;
+                    body.append(buffer.data(), static_cast<std::size_t>(count));
+                }
+                if (enabled) Require(body == expected, "gzip member decoded bytes");
+                else {
+                    if (mode == Mode::GzipConcat) Require(body.size() == 66 && static_cast<unsigned char>(body[0]) == 0x1f && body.substr(0, 33) == body.substr(33), "gzip concatenated wire bytes");
+                    else Require(body == encoded, "gzip member wire bytes");
+                }
+                checkLength(enabled ? expected.size() : body.size());
+                Require(sceHttp2ReadData(client.request, buffer.data(), 1) == 0, "gzip member repeated EOF");
+                server.Join();
+            }
+        }
+    }
+}
+
 void GzipFailure(int ssl, Mode mode, const char* message) {
     std::fprintf(stderr, "HTTP2 gzip failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -1362,6 +1443,14 @@ int main(int argc, char** argv) {
         Require(unloaded > 0, "SSL context without certificates");
         Success(unloaded, Mode::Normal);
         Require(sceSslTerm_nid_postfix(unloaded) == 0, "SSL context without certificates term");
+    } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-members") {
+        GzipMembers(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-headers") {
+        GzipFailure(ssl, Mode::GzipHeaderChecksum, "gzip header checksum mismatch throws");
+        GzipFailure(ssl, Mode::GzipSecondHeaderChecksum, "later gzip header checksum mismatch throws");
+        GzipFailure(ssl, Mode::GzipSecondChecksum, "later gzip member checksum mismatch throws");
+        GzipFailure(ssl, Mode::GzipSecondSize, "later gzip member size mismatch throws");
+        GzipFailure(ssl, Mode::GzipTrailingJunk, "gzip trailing nonmember rejected");
     } else if (argc == 2 && std::string_view(argv[1]) == "--early") {
         for (const auto mode : {Mode::EarlyFinal, Mode::EarlyReset, Mode::EarlyEmpty, Mode::EarlyLarge}) EarlyResponse(ssl, mode);
         Failure(ssl, Mode::EarlyResetIncomplete);
@@ -1396,7 +1485,6 @@ int main(int argc, char** argv) {
         GzipLarge(ssl);
         GzipFailure(ssl, Mode::GzipTruncated, "truncated gzip throws");
         GzipFailure(ssl, Mode::GzipChecksum, "gzip checksum mismatch throws");
-        GzipFailure(ssl, Mode::GzipConcat, "concatenated gzip members throw");
         for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Auth}) Failure(ssl, mode);
         Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), 0x4);
         Handshake(ssl, Mode::CloseHandshake, static_cast<int>(0x8095170d));
