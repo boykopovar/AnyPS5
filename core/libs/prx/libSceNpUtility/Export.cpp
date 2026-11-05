@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -160,6 +162,23 @@ int CheckComment(const char* comment) {
 }
 
 extern "C" {
+
+int APS5_VABI sceNpAdvppBandwidthDownloadBegin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpAdvppBandwidthDownloadEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpBandwidthTestInitStartDownloadInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpBandwidthTestInitStartUploadInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int SceNpUtilityModuleLoaded_nid_no_patch = 1;
 
@@ -566,5 +585,19 @@ int APS5_VABI sceNpWordFilterSetTimeout(int id, int resolveRetry, std::uint32_t 
 int APS5_VABI sceNpWordFilterWaitAsync(int reqId, int* result) {
     return WaitAsync(wordFilter, reqId, result, SCE_NP_COMMUNITY_ERROR_INVALID_ID);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpUtilityUnknown_3BZG8C8D62Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3BZG8C8D62Q", libSceNpUtilityUnknown_3BZG8C8D62Q_nid_no_patch);
+
+int APS5_VABI libSceNpUtilityUnknown_VVM_plus_zY9FiEU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("VVM+zY9FiEU", libSceNpUtilityUnknown_VVM_plus_zY9FiEU_nid_no_patch);
 
 }

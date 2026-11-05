@@ -73,6 +73,9 @@ include(cmake/SystemDeps.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=>)
+endif()
 
 include(CheckCXXSourceCompiles)
 function(anyps5_check_cxx_links_standard_library)
@@ -238,6 +241,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_report_inputs.py)
         add_test(NAME tools_compdb_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compile_database_inventory.py)
         set_tests_properties(tools_compdb_inventory PROPERTIES TIMEOUT 20)
+        add_test(NAME compile_slot COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compile_slot.py)
+        set_tests_properties(compile_slot PROPERTIES TIMEOUT 60)
         add_test(NAME progress_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_encoding.py)
         add_test(NAME progress_render_sliver COMMAND ${Python3_EXECUTABLE}
@@ -246,16 +251,41 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
+        add_test(NAME tools_audit_strict_partial COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_strict_partial.py)
+        set_tests_properties(tools_audit_strict_partial PROPERTIES TIMEOUT 20)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME tools_catalog_json COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_catalog_json.py)
+            set_tests_properties(tools_catalog_json PROPERTIES TIMEOUT 20)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
         endif()
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
-            set_tests_properties(annotate_module PROPERTIES TIMEOUT 20)
+            set(annotate_module_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${annotate_module_test_source}")
+            file(STRINGS "${annotate_module_test_source}" annotate_module_cases REGEX "^class |^    def test_")
+            set(annotate_module_first TRUE)
+            foreach(test_case IN LISTS annotate_module_cases)
+                if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                    set(annotate_module_class "${CMAKE_MATCH_1}")
+                else()
+                    string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                    if(annotate_module_first)
+                        set_tests_properties(annotate_module PROPERTIES
+                            ENVIRONMENT "ANNOTATE_MODULE_TEST=${annotate_module_class}.${test_case}" TIMEOUT 20)
+                        set(annotate_module_first FALSE)
+                    else()
+                        add_test(NAME annotate_module_${annotate_module_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                            "${annotate_module_test_source}" "${annotate_module_class}.${test_case}")
+                        set_tests_properties(annotate_module_${annotate_module_class}_${test_case} PROPERTIES TIMEOUT 20)
+                    endif()
+                endif()
+            endforeach()
         endif()
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
@@ -336,6 +366,9 @@ if(BUILD_TESTING)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
+        add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_seed_manifest.py)
+        set_tests_properties(relinker_seed_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME relinker_fuzz_fixture_warnings COMMAND ${Python3_EXECUTABLE}
