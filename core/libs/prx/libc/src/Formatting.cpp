@@ -462,17 +462,20 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             capped = wanted == 0 || wanted > limit;
             width = wanted == 0 ? limit : std::min(wanted, limit);
         }
+        const bool narrowInteger = !suppress && std::strchr("diouxX", conversion) != nullptr && (length.empty() || length == "h" || length == "hh");
+        std::uint64_t wideInteger = 0;
         if (width != 0) directive += std::to_string(width);
-        directive += HostLength(length, conversion);
+        directive += narrowInteger ? std::string("ll") : HostLength(length, conversion);
         directive += specifier;
         directive += "%n";
         int consumed = -1;
-        const int matched = source.Scan(directive.c_str(), suppress, target, &consumed);
+        const int matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
         if (consumed < 0 || (!suppress && matched != 1)) {
             const bool inputFailure = TSource::Contiguous ? source.Peek() == EOF : matched == EOF;
             return finish(!converted && inputFailure ? EOF : assigned);
         }
         source.Advance(consumed);
+        if (narrowInteger) std::memcpy(target, &wideInteger, length == "hh" ? 1 : length == "h" ? 2 : 4);
         if (capped && conversion != 'c') {
             const int next = source.Peek();
             bool overflow = false;
