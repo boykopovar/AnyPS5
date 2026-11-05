@@ -1,4 +1,5 @@
 #include <codegen/x86/RedZoneFramer.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -385,7 +386,7 @@ void refusesRelocatingRipRelativeBranches() {
     require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("rip-relative indirect branch") == 1, "a leaf tail-jumping through a rip-relative pointer was relocated as a direct jump to the pointer");
 }
 
-void refusesRelocatingFrameLocalsReachingTheSavedRegister() {
+void relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift() {
     const std::vector<std::uint8_t> framePrologue{0x55, 0x48, 0x89, 0xe5};
     const std::vector<std::uint8_t> leaveRet{0xc9, 0xc3};
     const std::vector<std::uint8_t> storeAtRbpMinus80{0x48, 0x89, 0x7d, 0x80};
@@ -396,7 +397,23 @@ void refusesRelocatingFrameLocalsReachingTheSavedRegister() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
-    require(sites.empty() && report.Relocated == 0 && report.NotRelocated.at("frame local reaching the saved register below the red-zone shift") == 1, "a frame-pointer leaf touching [rbp-0x80] was relocated, where the shift puts the saved register at that address");
+    require(sites.size() == 1 && report.Relocated == 1, "a frame-pointer leaf touching [rbp-0x80] was not relocated");
+    const std::vector<std::uint8_t> lowerBy0x90{0x48, 0x8d, 0xa4, 0x24, 0x70, 0xff, 0xff, 0xff};
+    require(sites[0].Body.size() >= lowerBy0x90.size() && std::equal(lowerBy0x90.begin(), lowerBy0x90.end(), sites[0].Body.begin()), "the relocated frame leaf does not lower rsp by 0x90, below its saved rbp and the red zone under it");
+}
+
+void refusesRelocatingStackReadsOfAPushedRegister() {
+    const std::vector<std::uint8_t> framePrologue{0x55, 0x48, 0x89, 0xe5};
+    const std::vector<std::uint8_t> leaveRet{0xc9, 0xc3};
+    const std::vector<std::uint8_t> spillBelowRbp{0x48, 0x89, 0x7d, 0xf0};
+    const std::vector<std::uint8_t> loadSavedRbp{0x48, 0x8b, 0x45, 0x00};
+    std::vector<std::uint8_t> body = spillBelowRbp;
+    append(body, loadSavedRbp);
+    const auto input = image({framelessLeaf(framePrologue, body, leaveRet)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(report.Relocated == 0 && report.NotRelocated.contains("stack operand reaching a pushed register"), "a frame-pointer leaf reading its saved rbp through [rbp] was relocated, where the copy keeps that register one shift lower");
 }
 
 void skipsWideningOverBranchTargets() {
@@ -925,7 +942,8 @@ int main() {
         skipsFragmentsThatPopWithoutPushing();
         refusesRelocatingSegmentOperands();
         refusesRelocatingRipRelativeBranches();
-        refusesRelocatingFrameLocalsReachingTheSavedRegister();
+        relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
+        refusesRelocatingStackReadsOfAPushedRegister();
         skipsWideningOverBranchTargets();
         skipsBranchesIntoTheInstructionsAfterAShortPrologue();
         widensAShortPrologueThatAllocates();

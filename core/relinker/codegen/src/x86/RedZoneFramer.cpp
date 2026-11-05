@@ -24,7 +24,9 @@ constexpr std::int64_t kStackAlignment = 16;
 constexpr std::uint8_t kJumpBack[] = {0xe9, 0x00, 0x00, 0x00, 0x00};
 
 std::vector<std::uint8_t> lowerRsp(const std::int64_t shift) {
-    return {0x48, 0x8d, 0x64, 0x24, static_cast<std::uint8_t>(-shift)};
+    if (shift <= -static_cast<std::int64_t>(std::numeric_limits<std::int8_t>::min())) return {0x48, 0x8d, 0x64, 0x24, static_cast<std::uint8_t>(-shift)};
+    const auto value = static_cast<std::uint32_t>(static_cast<std::int32_t>(-shift));
+    return {0x48, 0x8d, 0xa4, 0x24, static_cast<std::uint8_t>(value), static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value >> 16), static_cast<std::uint8_t>(value >> 24)};
 }
 
 std::vector<std::uint8_t> raiseRsp(const std::int64_t shift) {
@@ -83,6 +85,7 @@ struct MemoryUse {
     bool RegisterRsp = false;
     bool RbpBased = false;
     std::int64_t RbpDisp = 0;
+    bool RbpIndexed = false;
     bool RspBased = false;
     std::int64_t RspDisp = 0;
     std::uint8_t Mod = 0;
@@ -198,6 +201,7 @@ MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     if (base == kRegRbp && !baseExtended && mod != 0) {
         use.RbpBased = true;
         use.RbpDisp = disp;
+        use.RbpIndexed = indexed;
     }
     return use;
 }
@@ -320,34 +324,27 @@ std::optional<TrampolineSite> relocateLeaf(
     // A branch whose target is a rip-relative memory word (jmp/jcc qword [rip+disp]) is decoded with
     // HasBranchTarget, so the emit loop below would turn it into a direct branch to the pointer's
     // address instead of through it. Refuse it whole.
-    //
-    // The entry lowers rsp by the whole red zone and sets rbp to its original value (lea rbp,[rsp+shift]),
-    // so rbp-relative frame locals keep their addresses -- but the register pushed to make the frame now
-    // sits shift lower, at [rbp-shift]. A frame leaf that reads or writes rbp-relative at a displacement
-    // that reaches the saved register (<= -shift) would collide with it; refuse those. Shallower locals,
-    // and rbp used as an ordinary pointer without a frame, are untouched.
-    bool hasFrame = false;
-    bool deepFrameAccess = false;
     for (const auto& insn : body) {
-        const auto* code = seg.data() + insn.Offset;
         const auto& info = insn.Info;
         if ((info.FlowKind == ControlFlowKind::UnconditionalJump || info.FlowKind == ControlFlowKind::ConditionalBranch) && info.HasRipRelativeDisp) {
             refusal = "rip-relative indirect branch";
             return std::nullopt;
         }
-        const auto move = quadRegisterMove(code, insn);
-        if ((move && move->Destination == kRegRbp && move->Source == kRegRsp) || (!info.IsTwoByteOpcode && info.Opcode == 0xc9 && insn.Length == 1)) hasFrame = true;
-        const auto use = memoryUse(code, insn);
-        if (use.RbpBased && use.RbpDisp <= -kRedZoneBytes) deepFrameAccess = true;
-    }
-    if (hasFrame && deepFrameAccess) {
-        refusal = "frame local reaching the saved register below the red-zone shift";
-        return std::nullopt;
     }
 
+    // The copy keeps every explicit stack operand at its address and runs with rsp lowered by the shift,
+    // so what the leaf pushes lands one shift lower than in the original. The shift covers the deepest
+    // stack the leaf reaches plus its red zone, so the pushed registers sit below every byte the leaf
+    // addresses. An explicit operand that starts in a slot a pop later restores (a saved register read
+    // through rsp or rbp), or an indexed stack operand in a leaf that pops, would miss the moved value;
+    // refuse those. A slot an rsp adjustment frees instead (push %rax used to allocate a local) holds no
+    // value the leaf restores, so explicit accesses to it are fine.
+    std::int64_t deepest = 0;
     {
         std::vector<std::optional<std::int64_t>> depthAt(body.size());
         std::vector<std::optional<std::int64_t>> frameAt(body.size());
+        std::set<std::int64_t> poppedSlots;
+        std::vector<std::pair<std::int64_t, bool>> upperOperands;
         std::vector<std::size_t> work{0};
         depthAt[0] = 0;
         const auto reach = [&](const std::size_t k, const std::int64_t depth, const std::optional<std::int64_t> frame) {
@@ -367,6 +364,9 @@ std::optional<TrampolineSite> relocateLeaf(
             const auto& info = insn.Info;
             auto depth = *depthAt[k];
             auto frame = frameAt[k];
+            const auto use = memoryUse(code, insn);
+            if (use.RspBased && (use.Indexed || use.RspDisp >= 0)) upperOperands.emplace_back(use.RspDisp - depth, use.Indexed);
+            if (use.RbpBased && frame && (use.RbpIndexed || use.RbpDisp - *frame >= -depth)) upperOperands.emplace_back(use.RbpDisp - *frame, use.RbpIndexed);
             const auto reg = static_cast<std::uint8_t>((info.ModRmByte >> 3) & 7);
             const bool push = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x50 && info.Opcode <= 0x57) || info.Opcode == 0x68 || info.Opcode == 0x6a || info.Opcode == 0x9c || (info.Opcode == 0xff && info.HasModRm && reg == 6)) : (info.Opcode == 0xa0 || info.Opcode == 0xa8);
             const bool pop = !info.IsTwoByteOpcode ? ((info.Opcode >= 0x58 && info.Opcode <= 0x5f) || info.Opcode == 0x9d || (info.Opcode == 0x8f && info.HasModRm && reg == 0)) : (info.Opcode == 0xa1 || info.Opcode == 0xa9);
@@ -376,6 +376,7 @@ std::optional<TrampolineSite> relocateLeaf(
                     refusal = "pops a value its caller pushed";
                     return std::nullopt;
                 }
+                if (pop) poppedSlots.insert(-depth);
                 depth += push ? 8 : -8;
             } else if (const auto adjustment = rspAdjustment(code, insn)) {
                 depth -= *adjustment;
@@ -396,9 +397,11 @@ std::optional<TrampolineSite> relocateLeaf(
                     refusal = "leave without a frame";
                     return std::nullopt;
                 }
+                poppedSlots.insert(-*frame);
                 depth = *frame - 8;
                 frame.reset();
             }
+            deepest = std::max(deepest, depth);
             const auto flow = info.FlowKind;
             if (flow == ControlFlowKind::Return) {
                 if (depth != 0) {
@@ -425,9 +428,16 @@ std::optional<TrampolineSite> relocateLeaf(
                 return std::nullopt;
             }
         }
+        for (const auto& [offset, indexed] : upperOperands) {
+            const auto slot = poppedSlots.upper_bound(offset);
+            if ((indexed && !poppedSlots.empty()) || (slot != poppedSlots.begin() && offset < *std::prev(slot) + 8)) {
+                refusal = "stack operand reaching a pushed register";
+                return std::nullopt;
+            }
+        }
     }
 
-    constexpr std::int64_t shift = kRedZoneBytes;
+    const std::int64_t shift = (kRedZoneBytes + deepest + kStackAlignment - 1) / kStackAlignment * kStackAlignment;
     std::vector<std::uint8_t> out = lowerRsp(shift);
     std::vector<StubRelocation> relocations;
     struct Fixup {
