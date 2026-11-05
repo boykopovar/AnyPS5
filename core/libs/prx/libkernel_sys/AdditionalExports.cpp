@@ -1,4 +1,5 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
@@ -196,8 +197,8 @@ int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _dup2_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _dup2_nid_postfix(int from, int to) {
+    return dup2_nid_postfix(from, to);
 }
 
 int APS5_VABI _execve_nid_postfix() {
