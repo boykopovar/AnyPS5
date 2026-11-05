@@ -232,7 +232,9 @@ int APS5_VABI sceHmd2ReprojectionDisableMirroring() {
 }
 
 int APS5_VABI sceHmd2ReprojectionDisableVrMode() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(reprojectionMutex);
+    if (reprojectionState == nullptr) return Hmd2::ReprojectionNotInitialized;
+    reprojectionState->outputMode = 0;
     return 0;
 }
 
