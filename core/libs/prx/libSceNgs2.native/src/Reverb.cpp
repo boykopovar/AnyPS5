@@ -490,6 +490,10 @@ void Ngs2SetCustomReverbParams(Ngs2Reverb& reverb, const Ngs2ReverbI3DL2Param& p
 bool Ngs2ProcessCustomReverb(Ngs2Voice& voice, std::size_t module, std::uint32_t grain, std::uint32_t sampleRate) {
     auto& reverb = *voice.customReverb[module];
     const auto& info = voice.rack->customModules[module];
+    if (!voice.customBuffers.empty() && (voice.outputTransition != Ngs2VoiceTransition::None || voice.state == Ngs2PlayState::Paused ||
+        (voice.stateFlags & SCE_NGS2_VOICE_STATE_FLAG_PAUSED) != 0)) {
+        throw std::runtime_error("NGS2: custom Reverb voice transitions with multiple buffers are not verified");
+    }
     if (!reverb.active) {
         if (info.source_buffer_id != info.dest_buffer_id) throw std::runtime_error("NGS2: custom Reverb bypass between different buffers is not verified");
         return voice.hasSamples;
