@@ -18,6 +18,19 @@ The output is x86-64: Linux ELF by default, Windows PE with `--windows` or Mach-
 
 Use a separate build directory for the full build.
 
+## Comparing test results
+
+Run the same CTest selection on the same host and configuration for the baseline and the change, saving each run with `ctest --test-dir <build> --output-on-failure --output-junit <report.xml>`. Keep the two reports at separate paths, then compare them:
+
+```sh
+python3 tools/compare_test_results.py baseline.xml candidate.xml
+python3 tools/compare_test_results.py baseline.xml candidate.xml --json
+```
+
+The command matches CTest names and reports new failures, existing failures, fixes, newly skipped tests, resumed tests, additions and missing tests. A newly added failing test is a new failure. A failed test becoming skipped is newly skipped, not fixed. Exit status is 1 for any new failure, newly skipped test or missing test, 2 for invalid input, and 0 otherwise. Existing failures remain visible and do not fail the comparison. JSON (`ctest-comparison/1`) includes every test; Markdown lists changes and existing failures. Empty reports, duplicate names, unknown CTest statuses and inconsistent declared test counts are rejected. Tests that CTest could not start count as failed unless they carry its skip-return-code or skip-expression marker; disabled tests count as skipped. Explicit failure/error records take precedence over skip metadata.
+
+The comparison covers test outcomes only. It cannot establish that the hosts, builds or test selections match, detect intermittent failures from one pair of runs, or replace the required GPU validation-log comparison.
+
 ## Fuzzing
 
 `ANYPS5_BUILD_FUZZERS` builds `relinker_conversion_fuzzer`, a libFuzzer target that runs the whole conversion on its input, as the web converter does. It requires `ANYPS5_RELINKER_ONLY`, Clang on Linux and the compiler-rt sanitizer runtimes (`libclang-rt-18-dev` on Ubuntu 24.04). Every target is built with AddressSanitizer and UndefinedBehaviorSanitizer, without `-fsanitize=function`: that check reads a signature before the target of every indirect call and faults on the generated code the codegen tests call. The first input byte selects the target system (modulo 3: Linux, Windows, macOS), bit 2 `--to-intel` and the byte shifted right by 3, modulo 3, the `unused-filter` level; the remaining bytes are the executable. A conversion that throws a `std::exception` is a rejected input; a sanitizer report, an abort or a timeout is a finding.
