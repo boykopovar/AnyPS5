@@ -183,7 +183,7 @@ static void CheckConstructor() {
     LibcException::SystemErrorObject empty {};
     _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(&empty, code, "");
     const char* emptyWhat = Slot<GuestWhat>(reinterpret_cast<const void* const*>(empty.base.vtable), 2)(&empty);
-    Require(emptyWhat && std::strcmp(emptyWhat, ": Invalid argument") == 0, 53);
+    Require(emptyWhat && std::strcmp(emptyWhat, "Invalid argument") == 0, 53);
     _ZNSt12system_errorD1Ev_nid_postfix(&empty.base);
 
     bool threw = false;
