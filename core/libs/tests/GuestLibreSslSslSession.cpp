@@ -36,8 +36,8 @@ static_assert(sizeof(TestCertKey) == 24 && sizeof(TestCert) == 256);
 static_assert(sizeof(TestSession) == 232 && offsetof(TestSession, cipher) == 168);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, cert) == 80 && offsetof(TestSsl, session) == 128);
 
-static const LibreSslSessionConnection* Connection(const TestSsl* ssl) {
-    return reinterpret_cast<const LibreSslSessionConnection*>(ssl);
+static const LibreSslSsl* Connection(const TestSsl* ssl) {
+    return reinterpret_cast<const LibreSslSsl*>(ssl);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
