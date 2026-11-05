@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 #include <string>
 
 static_assert(sizeof(HmdCommandBuffer) == 16);
@@ -33,6 +34,12 @@ std::uint32_t CompiledSdkVersion() {
     std::uint32_t version;
     std::memcpy(&version, processParameters + 0x10, sizeof(version));
     return version;
+}
+
+std::int32_t QueryHandleBeforeInitialize(std::int32_t handle, const char* query) {
+    if (handle != 0) return Hmd::InvalidHandle;
+    if (CompiledSdkVersion() >= Hmd::StartupStateSdkVersion) throw std::runtime_error(std::string(query) + ": handle 0 before sceHmdInitialize from SDK 4.50 is not read");
+    return Hmd::NotInitialized;
 }
 
 std::int32_t CommandQueryHandle(std::int32_t handle, const char* query) {
@@ -114,9 +121,9 @@ std::int32_t APS5_VABI sceHmdGetDeviceInformation(Hmd::DeviceInformation* info) 
 
 std::int32_t APS5_VABI sceHmdGetDeviceInformationByHandle(std::int32_t handle,
                                                         Hmd::DeviceInformation* info) {
-    (void)handle;
-    (void)info;
-    return initialized.load() ? Hmd::InvalidHandle : Hmd::NotInitialized;
+    if (initialized.load()) return Hmd::InvalidHandle;
+    const std::int32_t result = QueryHandleBeforeInitialize(handle, __func__);
+    return result == Hmd::NotInitialized && !info ? Hmd::ParameterNull : result;
 }
 
 std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status) {
@@ -434,9 +441,9 @@ int APS5_VABI sceHmdInternalSetM2LedOn(std::int32_t handle, std::uint32_t ledMas
 }
 
 int APS5_VABI sceHmdGetFieldOfView(std::int32_t handle, HmdFieldOfView* fieldOfView) {
-    (void)handle;
     if (!fieldOfView) return Hmd::ParameterNull;
-    return initialized.load() ? Hmd::InvalidHandle : Hmd::NotInitialized;
+    if (initialized.load()) return Hmd::InvalidHandle;
+    return QueryHandleBeforeInitialize(handle, __func__);
 }
 
 int APS5_VABI sceHmdReprojectionAddDisplayBuffer(std::int32_t bufferIndex, const void* reserved) {
