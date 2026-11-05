@@ -846,8 +846,8 @@ int APS5_VABI sceHttpAddQuery(int id, const char* query) {
 }
 
 int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    return SetHttpOption(id, &HttpOptions::delayBuildRequest, enabled != 0) ? 0 : ERROR_INVALID_ID;
 }
 
 }
