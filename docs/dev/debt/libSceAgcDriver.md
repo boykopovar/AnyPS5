@@ -32,6 +32,16 @@
 | `Unknown` | `wxdcyVqXJEY` |
 
 ### Unknown function info
+- [Additional libSceAgcDriverPaDebug inventory exports](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) have unknown signatures and behavior; all 7 calls throw through `NotImplemented_nid_no_patch`. The [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceagcdriverpadebug-4b242b1b6f.jsonl) confirms only names, NIDs and logical library attribution. The parameterless `int` declarations are import placeholders, not verified ABI prototypes; no GPU behavior is implemented or console-validated.
+
+- [sceAgcDriverIsCoredumpValid (`+NIAY3DWpOw`), sceAgcDriverSetTFRingDirect (`16IjQxB-Heo`), sceAgcDriverIsSuspendPointInFlightDirect (`I6elAJxk6Jo`), sceAgcDriverReleaseRazorACQ (`TEOAw-eLjNo`)](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) - unknown signatures and behavior; every call throws.
+
+- [sceAgcDriverSdmaCopyLinearBlocking (`bQ+En9GY3PM`), sceAgcDriverRegisterCaptureInterface (`oz3Yd--lAEE`), sceAgcDriverDeregisterCaptureInterface (`qR+S4WqJvUM`)](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) - unknown signatures and behavior; every call throws.
+
+- [Additional libSceAgcDriverDebugReset_nosubmission inventory exports](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) have unknown signatures and behavior; all 3 calls throw through `NotImplemented_nid_no_patch`. The [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceagcdriverdebugreset_nosubmission-e7e6d9c26f.jsonl) confirms only names, NIDs and logical library attribution. The parameterless `int` declarations are import placeholders, not verified ABI prototypes; no GPU behavior is implemented or console-validated.
+
+- [sceAgdSetApplicationGpuDebug (`4JOwdjYqMpU`), sceAgdGetApplicationGpuDebug (`KKrEe-LWNG8`), sceAgdGetSystemGpuDebug (`qDjJ+CgiMzs`)](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) - unknown signatures and behavior; every call throws.
+
 
 - [libSceAgcDriver pending exports](../../../core/libs/prx/libSceAgcDriver/Export.cpp) - 24 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAgcDriver.c). Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
