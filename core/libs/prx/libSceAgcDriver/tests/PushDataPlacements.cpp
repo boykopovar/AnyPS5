@@ -81,34 +81,34 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
 
 int main() {
     try {
-        const auto vertexItems = bits({Item::RingAddress, Item::ShaderData, Item::FlattenedSrt});
-        const auto pixelItems = bits({Item::RingAddress, Item::ShaderData, Item::TableMap});
+        const auto vertexItems = bits({Item::PagetableAddress, Item::ShaderData, Item::FlattenedSrt});
+        const auto pixelItems = bits({Item::PagetableAddress, Item::ShaderData, Item::TableMap});
         {
             const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems, 6}, {ShaderStage::Fragment, pixelItems, 30}};
             const auto placements = place(stages);
             disjoint(stages, placements, 0, "vertex and pixel");
             require(placements[0].pushed.count == 6 && placements[1].pushed.count == 30, "stages that fit push everything they want");
             require(place({stages[1]})[0] == placements[1], "a pixel stage that fits is placed as it is alone, so its fragment library is shared");
-            require(placements[0].Item(Item::RingAddress) != placements[1].Item(Item::RingAddress), "the pre-rasterization and fragment parts hold their own globals");
+            require(placements[0].Item(Item::PagetableAddress) != placements[1].Item(Item::PagetableAddress), "the pre-rasterization and fragment parts hold their own globals");
         }
         {
             const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems, 40}, {ShaderStage::Fragment, pixelItems, 40}};
             const auto placements = place(stages);
             disjoint(stages, placements, 0, "stages that want too much");
-            require(placements[0].pushed.count == 28 && placements[1].pushed.count == 28, "stages that want too much share the room evenly");
+            require(placements[0].pushed.count == 27 && placements[1].pushed.count == 26, "stages that want too much share the room evenly");
         }
         {
-            const std::vector<Stage> stages{{ShaderStage::Local, vertexItems, 4}, {ShaderStage::TessellationControl, bits({Item::RingAddress, Item::ShaderData}), 3}, {ShaderStage::TessellationEvaluation, vertexItems, 10}, {ShaderStage::Fragment, pixelItems, 48}};
+            const std::vector<Stage> stages{{ShaderStage::Local, vertexItems, 4}, {ShaderStage::TessellationControl, bits({Item::PagetableAddress, Item::ShaderData}), 3}, {ShaderStage::TessellationEvaluation, vertexItems, 10}, {ShaderStage::Fragment, pixelItems, 48}};
             const auto placements = place(stages);
             disjoint(stages, placements, ShaderRecompiler::PushFeatureDwords(false, true, false), "a tessellation pipeline");
-            require(placements[0].Item(Item::RingAddress) == placements[1].Item(Item::RingAddress), "pre-rasterization stages share their part's globals");
+            require(placements[0].Item(Item::PagetableAddress) == placements[1].Item(Item::PagetableAddress), "pre-rasterization stages share their part's globals");
         }
         {
             const std::vector<Stage> stages{{ShaderStage::Mesh, vertexItems, 8}, {ShaderStage::Fragment, pixelItems, 20}};
             disjoint(stages, place(stages), ShaderRecompiler::PushFeatureDwords(true, false, false), "a mesh pipeline");
         }
         {
-            const std::vector<Stage> stages{{ShaderStage::Compute, bits({Item::RingAddress, Item::GdsAddress, Item::ShaderData}), 60}};
+            const std::vector<Stage> stages{{ShaderStage::Compute, bits({Item::PagetableAddress, Item::GdsAddress, Item::ShaderData}), 60}};
             const auto placements = place(stages);
             disjoint(stages, placements, ShaderRecompiler::StagePushFeatures(ShaderStage::Compute, 0u), "a compute stage");
             require(placements[0] == ShaderRecompiler::StandalonePushPlacement(ShaderStage::Compute, stages[0].items, stages[0].pushed), "the compiler's standalone compute placement is the driver's");

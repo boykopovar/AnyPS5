@@ -26,6 +26,11 @@ void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
 }
 
+BindlessHeap::DataSpan ringAllocate(BindlessHeap& heap, std::size_t words) {
+    BindlessHeap::SpanMark mark;
+    return heap.RingAllocate(words, mark);
+}
+
 struct FakeOwner : HeapSlotOwner {
     FakeOwner() = default;
 };
@@ -196,19 +201,19 @@ void ringSpans(const Context& context) {
     BindlessHeap::SpanMark unwritten;
     require(!heap.Held(unwritten), "a span never written is not held");
     BindlessHeap::SpanMark first;
-    const auto span = heap.Allocate(16u, first);
+    const auto span = heap.RingAllocate(16u, first);
     require(first.offset == span.offset && first.words == 16u && heap.Held(first), "a span written in the open chunk is held");
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
     BindlessHeap::SpanMark filler;
-    static_cast<void>(heap.Allocate(chunkWords - 1024u, filler));
+    static_cast<void>(heap.RingAllocate(chunkWords - 1024u, filler));
     BindlessHeap::SpanMark crossing;
-    static_cast<void>(heap.Allocate(4096u, crossing));
+    static_cast<void>(heap.RingAllocate(4096u, crossing));
     require(heap.Held(crossing), "a span over two chunks is kept");
     require(heap.Held(first), "a span stays held while its batch keeps the chunk open");
     const auto counts = heap.Statistics();
     require(counts.spansWritten == 3u && counts.spansKept == 3u, "three spans written and kept");
     BindlessHeap::SpanMark third;
-    static_cast<void>(heap.Allocate(chunkWords, third));
+    static_cast<void>(heap.RingAllocate(chunkWords, third));
     Recorder recorder(context);
     heap.Submitted(recorder, 0u);
     require(heap.Held(first), "a span stays held after its batch is submitted while the ring has not come back to its chunk");
@@ -216,7 +221,7 @@ void ringSpans(const Context& context) {
     const auto untilWrap = [&] {
         const auto wraps = heap.Statistics().ringWraps;
         BindlessHeap::DataSpan last{};
-        while (heap.Statistics().ringWraps == wraps) last = heap.Allocate(chunkWords, fill);
+        while (heap.Statistics().ringWraps == wraps) last = heap.RingAllocate(chunkWords, fill);
         return last.offset;
     };
     require(untilWrap() == AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips a chunk a later batch still reads kept spans from");
@@ -232,9 +237,9 @@ bool ringLargeSpans(const Context& context) {
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
     constexpr std::size_t largeWords = chunkWords * 2u + 1024u;
     BindlessHeap::SpanMark pin;
-    static_cast<void>(heap.Allocate(16u, pin));
+    static_cast<void>(heap.RingAllocate(16u, pin));
     BindlessHeap::SpanMark large;
-    const auto span = heap.Allocate(largeWords, large);
+    const auto span = heap.RingAllocate(largeWords, large);
     require(span.words.size() == largeWords && heap.Held(large), "a span over three chunks is written and held");
     Recorder recorder(context);
     BindlessHeap::SpanMark fill;
@@ -244,7 +249,7 @@ bool ringLargeSpans(const Context& context) {
         while (heap.Statistics().ringWraps == wraps) {
             heap.Submitted(recorder, 0u);
             require(heap.Held(kept), "a kept span stays held while later batches fill the ring");
-            last = heap.Allocate(chunkWords, fill);
+            last = heap.RingAllocate(chunkWords, fill);
         }
         return last.offset;
     };
@@ -254,7 +259,7 @@ bool ringLargeSpans(const Context& context) {
     require(heap.Held(pin), "the pinned span outlives the large span");
     bool refused = false;
     try {
-        static_cast<void>(heap.Allocate(heap.RingChunkCount() * AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t) / 2u + 1u));
+        static_cast<void>(ringAllocate(heap, heap.RingChunkCount() * AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t) / 2u + 1u));
     } catch (const std::runtime_error&) {
         refused = true;
     }
@@ -268,17 +273,17 @@ void ringCurrentChunk(const Context& context) {
     Recorder recorder(context);
     std::vector<BindlessHeap::SpanMark> pins(heap.RingChunkCount() - 1u);
     for (auto& pin : pins) {
-        static_cast<void>(heap.Allocate(chunkWords, pin));
+        static_cast<void>(heap.RingAllocate(chunkWords, pin));
         heap.Submitted(recorder, 0u);
         for (const auto& kept : pins) {
             if (kept.entry != 0u) require(heap.Held(kept), "every pinned chunk stays held");
         }
     }
     BindlessHeap::SpanMark live;
-    static_cast<void>(heap.Allocate(16u, live));
+    static_cast<void>(heap.RingAllocate(16u, live));
     bool refused = false;
     try {
-        static_cast<void>(heap.Allocate(chunkWords));
+        static_cast<void>(ringAllocate(heap, chunkWords));
     } catch (const std::runtime_error&) {
         refused = true;
     }
@@ -294,21 +299,72 @@ bool ringBusyChunks(const Context& context) {
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
     const auto unreached = recorder.Submissions() + (1ull << 40u);
     BindlessHeap::SpanMark busy;
-    static_cast<void>(heap.Allocate(16u, busy));
-    static_cast<void>(heap.Allocate(chunkWords));
+    static_cast<void>(heap.RingAllocate(16u, busy));
+    static_cast<void>(ringAllocate(heap, chunkWords));
     heap.Submitted(recorder, unreached);
     heap.Submitted(recorder, 0u);
     BindlessHeap::SpanMark fill;
     const auto wraps = heap.Statistics().ringWraps;
     BindlessHeap::DataSpan last{};
     while (heap.Statistics().ringWraps == wraps) {
-        last = heap.Allocate(chunkWords, fill);
+        last = heap.RingAllocate(chunkWords, fill);
         heap.Submitted(recorder, 0u);
     }
     require(last.offset >= AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips the chunk a batch still in flight reads");
     const auto counts = heap.Statistics();
     require(counts.busyChunksSkipped >= 1u && counts.ringWaits == 0u, "the busy chunk is skipped without a wait");
     require(heap.Held(busy), "a span in the skipped busy chunk is still held");
+    return true;
+}
+
+bool dataPool(const Context& context) {
+    Recorder recorder(context, true);
+    if (!recorder.HasTimeline()) return false;
+    constexpr std::size_t blockWords = AgcDriver::Graphics::BindlessHeap::PoolBlockBytes / sizeof(std::uint32_t);
+    {
+        BindlessHeap heap(context);
+        std::vector<BindlessHeap::SpanMark> marks(5);
+        for (auto& mark : marks) static_cast<void>(heap.Allocate(blockWords / 2u, mark));
+        require(heap.Statistics().poolBlocksMade == 3u, "one batch's shader data grows into new blocks instead of waiting");
+        for (const auto& mark : marks) require(heap.Held(mark), "every span of the batch is held");
+        BindlessHeap::SpanMark big;
+        const auto span = heap.Allocate(blockWords * 3u / 2u, big);
+        require(span.words.size() == blockWords * 3u / 2u && heap.Statistics().poolBlocksMade == 4u, "a span larger than a block gets a block of its own");
+        const auto [buffer, offset] = heap.DataLocation(span.address + 64u);
+        require(buffer != VK_NULL_HANDLE && offset == span.offset + 64u, "a pooled address maps back to its buffer and offset");
+        heap.Submitted(recorder, recorder.Submissions() + (1ull << 40u));
+        const auto made = heap.Statistics().poolBlocksMade;
+        BindlessHeap::SpanMark fill;
+        for (int index = 0; index < 4; ++index) static_cast<void>(heap.Allocate(blockWords / 2u + 1u, fill));
+        const auto busy = heap.Statistics();
+        require(busy.poolBlocksRecycled == 0u && busy.poolBlocksMade > made, "blocks a batch in flight still reads are not reused");
+    }
+    {
+        BindlessHeap heap(context);
+        BindlessHeap::SpanMark kept;
+        BindlessHeap::SpanMark first;
+        static_cast<void>(heap.Allocate(blockWords - 64u, kept));
+        static_cast<void>(heap.Allocate(blockWords - 64u, first));
+        static_cast<void>(heap.Allocate(blockWords - 64u));
+        heap.Submitted(recorder, 0u);
+        require(heap.Held(kept), "a span a later draw reuses stays held");
+        const auto made = heap.Statistics().poolBlocksMade;
+        BindlessHeap::SpanMark fill;
+        static_cast<void>(heap.Allocate(blockWords - 64u, fill));
+        const auto counts = heap.Statistics();
+        require(counts.poolBlocksRecycled == 1u && counts.poolBlocksMade == made, "a completed block is reused instead of making a new one");
+        require(heap.Held(kept), "the block a kept span reopened is not reused");
+        require(!heap.Held(first), "a span in a reused block has expired");
+    }
+    {
+        BindlessHeap heap(context);
+        constexpr std::size_t blocks = 2u * AgcDriver::Graphics::BindlessHeap::PoolIdleBytes / AgcDriver::Graphics::BindlessHeap::PoolBlockBytes;
+        for (std::size_t index = 0; index < blocks; ++index) static_cast<void>(heap.Allocate(blockWords - 64u));
+        heap.Submitted(recorder, 0u);
+        const auto counts = heap.Statistics();
+        require(counts.poolBlocksFreed != 0u && counts.poolBlockBytes <= AgcDriver::Graphics::BindlessHeap::PoolIdleBytes + AgcDriver::Graphics::BindlessHeap::PoolBlockBytes,
+                "idle blocks beyond the pool's budget are freed");
+    }
     return true;
 }
 
@@ -539,8 +595,13 @@ int main(int argc, char** argv) {
             const PlaceholderImages placeholders(context);
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);
-            ringSpans(context);
-            ringCurrentChunk(context);
+            if (!dataPool(context)) std::printf("the data pool tests need the recorder timeline\n");
+            if (BindlessHeap(context).RingChunkCount() != 0u) {
+                ringSpans(context);
+                ringCurrentChunk(context);
+            } else {
+                std::printf("the device's resource heap holds no descriptor ring\n");
+            }
             viewSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
             encodedViews(context);
             ownerSlots(context, placeholders.View(Abi::FirstStorageImageBinding));

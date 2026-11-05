@@ -6590,7 +6590,7 @@ void ShaderResources::RefreshMovedAddresses(DrawBindings& rewritten) const {
     if (rewritten.addressOffsets) rewritten.heapOffsets = addressedOffsets(&rewritten.addressOverrides);
 }
 
-std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderResources::addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const {
+std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderResources::addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const {
     auto offsets = heapOffsets;
     auto& heap = BindlessHeap::For(context);
     for (std::size_t stage = 0; stage < stageDataWords.size(); ++stage) {
@@ -6599,7 +6599,7 @@ std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderR
         writeBufferAddresses(words, static_cast<std::uint32_t>(stage), overrides);
         auto span = heap.Allocate(words.size());
         std::memcpy(span.words.data(), words.data(), words.size() * sizeof(std::uint32_t));
-        offsets[stageDataIndex[stage]] = span.offset;
+        offsets[stageDataIndex[stage]] = span.address;
     }
     for (std::size_t stage = 0; stage < ringDescriptorStages.size(); ++stage) {
         if (!ringDescriptorStages[stage]) continue;
@@ -6705,7 +6705,7 @@ VkDeviceAddressRangeEXT ShaderResources::srtRange(std::size_t stage) const {
         Require(empty != 0, "the empty buffer has no device address");
         return {empty, EmptyBufferBytes};
     }
-    return {BindlessHeap::For(context).RingAddress() + heapSrtOffsets[stage], bytes};
+    return {heapSrtOffsets[stage], bytes};
 }
 
 std::uint32_t ShaderResources::ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const {
@@ -6726,15 +6726,13 @@ std::uint32_t ShaderResources::ringDescriptors(std::size_t stage, const std::vec
 std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const CompiledShader& shader, const DrawBindings* rewritten) const {
     if (!heapStage || !HeapShader(shader)) return {shaderDataBuffer(shader), 0};
     const auto& offsets = rewritten != nullptr && rewritten->addressOffsets ? rewritten->heapOffsets : heapOffsets;
-    const auto& heap = BindlessHeap::For(context);
-    return {heap.RingBuffer(), heap.RingOffset() + offsets[DataOffsetIndex(HeapStageIndex(shader.stage), ShaderRecompiler::RuntimeAbi::Binding::ShaderData)]};
+    return BindlessHeap::For(context).DataLocation(offsets[DataOffsetIndex(HeapStageIndex(shader.stage), ShaderRecompiler::RuntimeAbi::Binding::ShaderData)]);
 }
 
 void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     if (!heapStage) return;
     const auto& offsets = rewritten != nullptr && rewritten->addressOffsets ? rewritten->heapOffsets : heapOffsets;
-    VkDeviceAddress ring = 0;
     VkDeviceAddress table = 0;
     VkDeviceAddress fault = 0;
     std::uint32_t tableDwords = 0;
@@ -6785,20 +6783,17 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
             put(item, 0u, static_cast<std::uint32_t>(address));
             put(item, 1u, static_cast<std::uint32_t>(address >> 32u));
         };
-        if (placement.Item(Abi::RootItem::RingAddress) != Abi::NoPushPosition) {
-            if (ring == 0) ring = BindlessHeap::For(context).RingAddress();
-            putAddress(Abi::RootItem::RingAddress, ring);
-        }
         putAddress(Abi::RootItem::PagetableAddress, table);
         putAddress(Abi::RootItem::FaultAddress, fault);
         put(Abi::RootItem::PagetableDwords, 0u, tableDwords);
         if (placement.Item(Abi::RootItem::GdsAddress) != Abi::NoPushPosition) putAddress(Abi::RootItem::GdsAddress, gdsAddress());
         if (shader.program == nullptr || !shader.program->dataAddressPush) continue;
         const auto stage = HeapStageIndex(shader.stage);
-        put(Abi::RootItem::ShaderData, 0u, offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
-        put(Abi::RootItem::FlattenedSrt, 0u, offsets[DataOffsetIndex(stage, Abi::Binding::FlattenedSrt)]);
+        putAddress(Abi::RootItem::ShaderData, offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
+        put(Abi::RootItem::FlattenedSrt, 0u, static_cast<std::uint32_t>(offsets[DataOffsetIndex(stage, Abi::Binding::FlattenedSrt)]));
+        putAddress(Abi::RootItem::SrtAddress, offsets[DataOffsetIndex(stage, Abi::Binding::FlattenedSrt)]);
         put(Abi::RootItem::SrtDwords, 0u, heapSrtDwords[stage]);
-        put(Abi::RootItem::TableMap, 0u, heapTableMapSet[stage] ? heapTableMaps[stage] : 0u);
+        putAddress(Abi::RootItem::TableMap, heapTableMapSet[stage] ? heapTableMaps[stage] : offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
         writePushedData(bytes, shader, placement.pushed);
         rooted = true;
     }
@@ -6911,13 +6906,13 @@ void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_
     heapTableMapSet[stageIndex] = true;
 }
 
-std::uint32_t ShaderResources::heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words) {
+std::uint64_t ShaderResources::heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words) {
     auto& heap = BindlessHeap::For(context);
-    if (std::ranges::equal(kept.words, words) && heap.Held(kept.mark)) return kept.mark.offset;
+    if (std::ranges::equal(kept.words, words) && heap.Held(kept.mark)) return kept.mark.address;
     auto span = heap.Allocate(words.size(), kept.mark);
     std::memcpy(span.words.data(), words.data(), words.size() * sizeof(std::uint32_t));
     kept.words.assign(words.begin(), words.end());
-    return span.offset;
+    return span.address;
 }
 
 bool ShaderResources::ownsHeapBinding(const Binding& binding, VkShaderStageFlags stageBit) const {
@@ -7192,7 +7187,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
         if (sameInput && verifySlots && heap.Held(stageState.data.mark)) inputsKept = true;
         if (sameInput && !verifySlots) {
             if (heap.Held(stageState.data.mark)) {
-                heapOffsets[dataIndex] = stageState.data.mark.offset;
+                heapOffsets[dataIndex] = stageState.data.mark.address;
                 dataKept = true;
                 continue;
             }

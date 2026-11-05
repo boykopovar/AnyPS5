@@ -113,14 +113,12 @@ std::uint32_t EmitRootAddressReadOnlyWordPointer(SpirvEmitterState& state, Runti
     return readOnlyWordPointer(state, rootAddress(state, item), index);
 }
 
-std::uint32_t EmitRingAddress(SpirvEmitterState& state) {
-    return rootAddress(state, RuntimeAbi::RootItem::RingAddress);
+std::uint32_t EmitRootAddress(SpirvEmitterState& state, RuntimeAbi::RootItem item) {
+    return rootAddress(state, item);
 }
 
 std::uint32_t EmitStageRingWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index) {
-    const auto u64 = TypeScalarU64(state);
-    const auto base = Binary(state, spv::OpIAdd, u64, rootAddress(state, RuntimeAbi::RootItem::RingAddress), Unary(state, spv::OpUConvert, u64, EmitRootItemDword(state, item, 0u)));
-    return readOnlyWordPointer(state, base, index);
+    return readOnlyWordPointer(state, rootAddress(state, item), index);
 }
 
 namespace {
@@ -166,7 +164,7 @@ std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index
         const auto inBounds = Binary(state, spv::OpULessThan, TypeBool(state), index, dwords);
         const auto last = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), dwords, ConstantU32(state, 0u)), ConstantU32(state, 0u), Binary(state, spv::OpISub, u32, dwords, ConstantU32(state, 1u)));
         const auto clamped = Select(state, u32, inBounds, index, last);
-        return Select(state, u32, inBounds, dataAddressLoad(state, RuntimeAbi::RootItem::FlattenedSrt, clamped), ConstantU32(state, 0u));
+        return Select(state, u32, inBounds, dataAddressLoad(state, RuntimeAbi::RootItem::SrtAddress, clamped), ConstantU32(state, 0u));
     }
     if (state.flattenedSrtVariable == 0) FailEmit("the flattened SRT descriptor is missing");
     const auto pointer = state.module.AllocateId();

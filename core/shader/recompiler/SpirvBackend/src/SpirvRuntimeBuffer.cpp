@@ -241,7 +241,7 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
         access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), EmitShaderDataDwordLoad(state, dword + 2u), ConstantU32(state, wide ? 3u : 2u));
         if (state.program.Metadata().bindings.UsesDataAddress()) {
             const auto empty = Binary(state, spv::OpIEqual, TypeBool(state), access.length, ConstantU32(state, 0u));
-            address = Select(state, u64, empty, EmitRingAddress(state), address);
+            address = Select(state, u64, empty, EmitRootAddress(state, RuntimeAbi::RootItem::ShaderData), address);
             access.clampedPhysical = true;
         }
         access.objectPointer = state.module.AllocateId();

@@ -153,12 +153,12 @@ void RequireHeapTable(const ShaderRecompiler::RecompileResult& result) {
     Require(has(ShaderRecompiler::DescriptorRole::ImageTable) && has(ShaderRecompiler::DescriptorRole::ImageTableMap), "heap table stage reuse: the program does not bind an image table and its map");
 }
 
-std::uint32_t TableMapRoot(const ShaderResources& resources, const CompiledShader& shader) {
+std::uint64_t TableMapRoot(const ShaderResources& resources, const CompiledShader& shader) {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> bytes{};
     const auto placements = AgcDriver::Graphics::PushDataPlacements(std::span<const CompiledShader>(&shader, 1));
     resources.PatchDataAddresses(bytes, std::span<const CompiledShader>(&shader, 1), placements, nullptr);
-    std::uint32_t value = 0;
+    std::uint64_t value = 0;
     const auto position = placements.front().Item(Abi::RootItem::TableMap);
     Require(position != Abi::NoPushPosition, "heap table stage reuse: the stage's push layout holds no table map");
     std::memcpy(&value, bytes.data() + position * sizeof(std::uint32_t), sizeof(value));

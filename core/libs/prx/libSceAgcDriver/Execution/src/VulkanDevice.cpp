@@ -2202,10 +2202,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (descriptorHeapFeatures.descriptorHeap == VK_TRUE && heapMaintenance5.maintenance5 == VK_TRUE && Graphics::BindlessHeap::Fits(state->descriptorHeapProperties)) {
             state->descriptorHeap = true;
             state->maintenance5 = true;
-            if (Graphics::BindlessHeap::RingInResourceHeap(state->descriptorHeapProperties, state->properties.limits.minUniformBufferOffsetAlignment)) {
-                state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
+            state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
+            if (Graphics::BindlessHeap::RingInResourceHeap(state->descriptorHeapProperties, state->properties.limits.minUniformBufferOffsetAlignment))
                 state->heapBufferDescriptors = state->descriptorHeapProperties.bufferDescriptorSize == Graphics::BindlessHeap::BufferSlotBytes;
-            }
             deviceExtensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
             for (const char* required : {VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME}) {
                 if (std::find_if(deviceExtensions.begin(), deviceExtensions.end(), [&](const char* name) { return std::strcmp(name, required) == 0; }) == deviceExtensions.end()) deviceExtensions.push_back(required);

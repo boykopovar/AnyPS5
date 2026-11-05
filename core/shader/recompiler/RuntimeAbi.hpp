@@ -89,10 +89,13 @@ inline constexpr std::uint32_t GpuGdsSet = 4u;
 inline constexpr std::uint32_t GdsBytes = 0x10000u;
 inline constexpr std::uint32_t PushDataDwords = 64u;
 inline constexpr std::uint32_t PushedDataWantedLimit = 48u;
-enum class RootItem : std::uint32_t { RingAddress, PagetableAddress, FaultAddress, GdsAddress, PagetableDwords, StencilReference, ShaderData, FlattenedSrt, SrtDwords, TableMap, Count };
+enum class RootItem : std::uint32_t { PagetableAddress, FaultAddress, GdsAddress, PagetableDwords, StencilReference, ShaderData, TableMap, SrtAddress, FlattenedSrt, SrtDwords, Count };
 inline constexpr std::uint32_t RootItemCount = static_cast<std::uint32_t>(RootItem::Count);
 inline constexpr std::uint32_t RootItemBit(RootItem item) { return 1u << static_cast<std::uint32_t>(item); }
-inline constexpr bool RootAddressItem(RootItem item) { return static_cast<std::uint32_t>(item) <= static_cast<std::uint32_t>(RootItem::GdsAddress); }
+inline constexpr bool RootAddressItem(RootItem item) {
+    return item == RootItem::PagetableAddress || item == RootItem::FaultAddress || item == RootItem::GdsAddress || item == RootItem::ShaderData || item == RootItem::TableMap ||
+           item == RootItem::SrtAddress;
+}
 inline constexpr std::uint32_t DepthRemapPushBit = 1u << 16u;
 inline constexpr std::uint32_t NoPushPosition = 0xffffffffu;
 struct PushedPlacement {

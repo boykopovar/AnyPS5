@@ -224,7 +224,7 @@ public:
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
         bool addressOffsets = false;
-        std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+        std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
         std::vector<VkDescriptorBufferInfo> addressOverrides;
         ~DrawBindings();
     };
@@ -669,7 +669,7 @@ private:
     };
     bool splitSets = false;
     bool heapStage = false;
-    std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+    std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const CompiledShader& shader);
     struct RingDescriptors {
         std::vector<VkDeviceAddressRangeEXT> ranges;
@@ -694,7 +694,7 @@ private:
         RingDescriptors descriptors;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
-    std::uint32_t heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
+    std::uint64_t heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
     bool ownsHeapBinding(const Binding& binding, VkShaderStageFlags stageBit) const;
     VkImageView heapPlaceholderView(std::uint32_t kind) const;
     VkImageView heapSampledView(std::size_t index) const;
@@ -732,16 +732,16 @@ private:
     std::array<std::vector<std::uint32_t>, ShaderRecompiler::RuntimeAbi::StageCount> stageDataWords;
     std::array<std::size_t, ShaderRecompiler::RuntimeAbi::StageCount> stageDataIndex{};
     std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtDwords{};
-    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
+    std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const CompiledShader& shader, std::size_t stageIndex);
     void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides,
                               std::vector<VkDeviceAddressRangeEXT>* ranges = nullptr) const;
     VkDeviceAddressRangeEXT srtRange(std::size_t stage) const;
     std::uint32_t ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const;
-    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtOffsets{};
+    std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtOffsets{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringDescriptorStages{};
-    std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const;
+    std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const;
     struct FaultDescriptor {
         std::size_t write;
         std::size_t buffer;
