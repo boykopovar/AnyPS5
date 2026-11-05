@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include "mbedtls/bignum.h"
 #include "mbedtls/ecp.h"
 
 struct NamedCurve {

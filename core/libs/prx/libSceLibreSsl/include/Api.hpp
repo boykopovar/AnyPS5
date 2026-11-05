@@ -343,6 +343,7 @@ struct LibreSslEvpCipherCtx {
 
 struct EcGroup;
 struct EcKey;
+struct EcPoint;
 
 struct LibreSslOcspResponse {
     Asn1String* responseStatus;
