@@ -921,6 +921,41 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckLogEdgeFlags() {
+    for (const double input : {-1.0, -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::quiet_NaN()}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(log_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+}
+
+static void CheckLogConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0xfff0000000000000ull, ERANGE}, {0x8000000000000000ull, 0xfff0000000000000ull, ERANGE},
+        {0x0000000000000001ull, 0xc0874385446d71c3ull, 0}, {0x000fffffffffffffull, 0xc086232bdd7abcd2ull, 0},
+        {0x0010000000000000ull, 0xc086232bdd7abcd2ull, 0}, {0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x3fefffffffffffffull, 0xbca0000000000000ull, 0}, {0x3ff0000000000001ull, 0x3cafffffffffffffull, 0},
+        {0x3ff00000fffffffeull, 0x3eaffffeffc00aafull, 0}, {0x3ff6a09e00000000ull, 0x3fd62e41dd1274ceull, 0},
+        {0x3fe6a09e00000000ull, 0xbfd62e4420e1ff10ull, 0}, {0x4000000000000000ull, 0x3fe62e42fefa39efull, 0},
+        {0x4024000000000000ull, 0x40026bb1bbb55516ull, 0}, {0x7fefffffffffffffull, 0x40862e42fefa39efull, 0},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0}, {0xbff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM}, {0xbfe0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3fcbf0cfff3ac077ull, 0xbff859e4e1f045dcull, 0}, {0x3f08b0c25bca18b0ull, 0xc023ed400c16d9eeull, 0},
+        {0x402d5e682f6c8da9ull, 0x40057e89190b1e8eull, 0}, {0x40881f30b22704c7ull, 0x401a986d082edef0ull, 0},
+        {0x4025398ccfd724ccull, 0x4002e56c809c7c6aull, 0}, {0x401231605052b9ceull, 0x3ff83c5b860d2a7eull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(log_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckPowRangeFlags() {
     constexpr int over = FE_OVERFLOW | FE_INEXACT, under = FE_UNDERFLOW | FE_INEXACT;
     constexpr struct {
@@ -1471,6 +1506,119 @@ static void CheckExpm1ScalingRounding() {
     }
     _mm_setcsr(savedCsr);
 }
+static void CheckAtanhEdgeFlags() {
+    for (const double input : {2.0, -2.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), -std::numeric_limits<double>::quiet_NaN()}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(atanh_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+}
+static void CheckAtanhConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0}, {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x3e2fffffffffffffull, 0x3e2fffffffffffffull, 0}, {0x3e30000000000000ull, 0x3e30000000000000ull, 0},
+        {0xbe30000000000000ull, 0xbe30000000000000ull, 0}, {0x3fdfffffffffffffull, 0x3fe193ea7aad030aull, 0},
+        {0x3fe0000000000000ull, 0x3fe193ea7aad030aull, 0}, {0xbfe0000000000000ull, 0xbfe193ea7aad030aull, 0},
+        {0x3fefffffffffffffull, 0x4032b708872320e2ull, 0}, {0xbfefffffffffffffull, 0xc032b708872320e2ull, 0},
+        {0x3ff0000000000000ull, 0x7ff0000000000000ull, ERANGE}, {0xbff0000000000000ull, 0xfff0000000000000ull, ERANGE},
+        {0x3ff0000000000001ull, 0xfff8000000000000ull, EDOM}, {0xc000000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff0000000000000ull, 0xfff8000000000000ull, EDOM}, {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, EDOM}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3f03a67d5567227bull, 0x3f03a67d558ea76eull, 0}, {0x3faa28c4621dd8d7ull, 0x3faa2e9a77f5a83full, 0},
+        {0x3f4742fce55398bbull, 0x3f4742fd26e249ceull, 0}, {0x3f2cf9c68a297d4aull, 0x3f2cf9c69214cc60ull, 0},
+        {0x3fc796d8c6ddd135ull, 0x3fc7dca409c1ba11ull, 0}, {0x3f73b85b718bdc38ull, 0x3f73b8656ddda145ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(atanh_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+static void CheckHypotConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+    } cases[] = {
+        {0x4008000000000000ull, 0xc010000000000000ull, 0x4014000000000000ull},
+        {0x0000000000000000ull, 0x8000000000000000ull, 0x0000000000000000ull},
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull},
+        {0x0000000000000001ull, 0x0000000000000001ull, 0x0000000000000001ull},
+        {0x000fffffffffffffull, 0x0000000000000003ull, 0x000fffffffffffffull},
+        {0x20b0000000000000ull, 0x20afffffffffffffull, 0x20b6a09e667f3bccull},
+        {0x3ff0000000000000ull, 0x3c3fffffffffffffull, 0x3ff0000000000000ull},
+        {0x3ff0000000000000ull, 0x3c40000000000001ull, 0x3ff0000000000000ull},
+        {0x5f30000000000001ull, 0x5f30000000000000ull, 0x5f36a09e667f3bcdull},
+        {0x7fe0000000000000ull, 0x7fe0000000000000ull, 0x7fe6a09e667f3bcdull},
+        {0x7fe6a09e667f3bccull, 0x7fe6a09e667f3bccull, 0x7fefffffffffffffull},
+        {0x7fe6a09e667f3bcdull, 0xffe6a09e667f3bcdull, 0x7ff0000000000000ull},
+        {0x7fefffffffffffffull, 0x7c90000000000000ull, 0x7fefffffffffffffull},
+        {0x7ff0000000000000ull, 0x7ff8000000000123ull, 0x7ff0000000000000ull},
+        {0xfff8000000000123ull, 0xfff0000000000000ull, 0x7ff0000000000000ull},
+        {0x7ff8000000000123ull, 0x3ff0000000000000ull, 0x7ff8000000000123ull},
+        {0xfff8000000000002ull, 0x7ff8000000000001ull, 0x7ff8000000000002ull},
+        {0x7ff8000000000001ull, 0xfff8000000000002ull, 0x7ff8000000000001ull},
+        {0x3f3248d38a1f56f4ull, 0x3f99e5bdab7504d1ull, 0x3f99e624f1413604ull},
+        {0xbf6255dae03360b5ull, 0xbf58dcd1c7ac8390ull, 0x3f6626fab3b5c07dull},
+        {0x3fe8e3e3428b7d2eull, 0xbfb3d190ce6b97f0ull, 0x3fe9035eec2d0175ull},
+        {0x3f01bebbf0557b6dull, 0x3fdbdb5984b3498cull, 0x3fdbdb59861d01f3ull},
+        {0x40ab31016b06c517ull, 0x3f21950db8ad595cull, 0x40ab31016b06c51cull},
+        {0x4093ddc11a2e2b93ull, 0xc0095f93495aa618ull, 0x4093ddc527348f7full},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(hypot_nid_postfix(std::bit_cast<double>(item.x), std::bit_cast<double>(item.y))) == item.expected && errno == 1234);
+        Require(std::bit_cast<std::uint64_t>(hypot_nid_postfix(std::bit_cast<double>(item.y), std::bit_cast<double>(item.x))) == item.expected || std::isnan(std::bit_cast<double>(item.expected)));
+    }
+}
+static void CheckTrigConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t sine;
+        std::uint64_t cosine;
+        std::uint64_t tangent;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0x3ff0000000000000ull, 0x8000000000000000ull, 0},
+        {0x3e3fffffffffffffull, 0x3e3fffffffffffffull, 0x3ff0000000000000ull, 0x3e3fffffffffffffull, 0},
+        {0x3fe921fb54442d18ull, 0x3fe6a09e667f3bccull, 0x3fe6a09e667f3bcdull, 0x3fefffffffffffffull, 0},
+        {0x3ff921fb54442d18ull, 0x3ff0000000000000ull, 0x3c91a62633145c07ull, 0x434d02967c31cdb5ull, 0},
+        {0x400921fb54442d18ull, 0x3ca1a62633145c07ull, 0xbff0000000000000ull, 0xbca1a62633145c07ull, 0},
+        {0xc00921fb54442d18ull, 0xbca1a62633145c07ull, 0xbff0000000000000ull, 0x3ca1a62633145c07ull, 0},
+        {0x401921fb54442d18ull, 0xbcb1a62633145c07ull, 0x3ff0000000000000ull, 0xbcb1a62633145c07ull, 0},
+        {0x4012d97c7f3321d2ull, 0xbff0000000000000ull, 0xbcaa79394c9e8a0aull, 0x4333570efd768923ull, 0},
+        {0x412e848000000000ull, 0xbfd6664b2568d867ull, 0x3fedf9df9906d32cull, 0xbfd7e9768ab734c0ull, 0},
+        {0x4139000000000000ull, 0x3fd065dff07cc910ull, 0xbfeeee8b0ce93021ull, 0xbfd0f6d7d15bc5b1ull, 0},
+        {0x7e37e43c8800759cull, 0xbfea2c16b010e385ull, 0xbfe2699022adc4c1ull, 0x3ff6be411f37ac77ull, 0},
+        {0x7fefffffffffffffull, 0x3f7452fc98b34e97ull, 0xbfefffe62ecfab75ull, 0xbf74530cfe729484ull, 0},
+        {0xffefffffffffffffull, 0xbf7452fc98b34e97ull, 0xbfefffe62ecfab75ull, 0x3f74530cfe729484ull, 0},
+        {0x7ff0000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff0000054442d18ull, 0x7ff8000054442d18ull, 0x7ff8000054442d18ull, 0x7ff8000054442d18ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, 0},
+        {0x3fdada3603b109ebull, 0x3fda124ac129e754ull, 0x3fed397712faa550ull, 0x3fdc8c2adf939d0aull, 0},
+        {0xbfba382e79c9f161ull, 0xbfba2c73e99f121cull, 0x3fefd51240491c33ull, 0xbfba4fc011ff9a31ull, 0},
+        {0x4079ab389c31a606ull, 0x3fe7fbf5be09b71cull, 0xbfe52f138550db6full, 0xbff21d74a8b63e76ull, 0},
+        {0xbfd6066a236944ecull, 0xbfd597c69592a402ull, 0x3fee1faa6b709b8bull, 0xbfd6f0152b51d55cull, 0},
+        {0xbfcdf9356ad39d8full, 0xbfcdb34648619610ull, 0x3fef206c15f26ee6ull, 0xbfce889b662f705full, 0},
+        {0x40557a01c7c97d05ull, 0xbfec45eb63779e2eull, 0xbfddf9b1098520ebull, 0x3ffe2ecb59bfb87eull, 0},
+    };
+    for (const auto& item : cases) {
+        const double x = std::bit_cast<double>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(sin_nid_postfix(x)) == item.sine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(cos_nid_postfix(x)) == item.cosine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(tan_nid_postfix(x)) == item.tangent && errno == expected);
+    }
+}
 
 
 
@@ -1915,7 +2063,21 @@ static void CheckHyperbolic() {
     Require(atanh_nid_postfix(0.) == 0. && atanh_nid_postfix(1.) == infinity && atanh_nid_postfix(-1.) == -infinity);
     Require(std::isnan(acosh_nid_postfix(0.5)) && std::isnan(acoshf_nid_postfix(0.5f)) && std::isnan(atanh_nid_postfix(2.)));
     Require(Near(sinh_nid_postfix(1.), 1.1752011936438014, 1e-15));
-    Require(Near(cosh_nid_postfix(1.), 1.5430806348152437, 1e-15));
+    for (const double x : {1., -1.}) {
+        errno = 7;
+        Require(std::bit_cast<std::uint64_t>(cosh_nid_postfix(x)) == 0x3ff8b07551d9f550ull && errno == 7);
+    }
+    for (const auto& [x, expected] : {std::pair{0x1p-56, 0x1p+0}, std::pair{0x1.3333333333333p-2, 0x1.0b9b4e0b6ec4cp+0},
+             std::pair{0x1.5e66666666666p+4, 0x1.82afcca727c18p+30}, std::pair{0x1.68p+4, 0x1.604b68cf05f66p+31},
+             std::pair{-0x1.91p+6, 0x1.8c39b9134bac4p+143}, std::pair{-0x1.63p+9, 0x1.3e21a464507fap+1023},
+             std::pair{0x1.633ce8fb9aa5dp+9, 0x1.ffffffec77d3ap+1023}}) {
+        errno = 7;
+        Require(std::bit_cast<std::uint64_t>(cosh_nid_postfix(x)) == std::bit_cast<std::uint64_t>(expected) && errno == 7);
+    }
+    errno = 7;
+    Require(std::isinf(cosh_nid_postfix(0x1.633d70a3d70a4p+9)) && errno == ERANGE);
+    errno = 7;
+    Require(std::isinf(cosh_nid_postfix(-INFINITY)) && std::isnan(cosh_nid_postfix(NAN)) && errno == 7);
     Require(Near(coshf_nid_postfix(1.f), 1.5430806348152437, 1e-6));
     Require(Near(asinh_nid_postfix(1.), 0.881373587019543, 1e-15));
     Require(Near(asinhf_nid_postfix(1.f), 0.881373587019543, 1e-6));
@@ -2969,7 +3131,31 @@ static void CheckAtanConsoleBits() {
     Require(std::isnan(atan2_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && std::isnan(atan2_nid_postfix(1.0, std::numeric_limits<double>::quiet_NaN())));
 }
 
+
+static void CheckFdimFlags() {
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const double same : {infinity, -infinity}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(same, same)) == 0 && std::fetestexcept(FE_INVALID) != 0);
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(static_cast<float>(same), static_cast<float>(same))) == 0 && std::fetestexcept(FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(fdim_nid_postfix(3.0, 1.0) == 2.0 && fdim_nid_postfix(1.0, 3.0) == 0.0 && fdim_nid_postfix(infinity, 1.0) == infinity && fdim_nid_postfix(-infinity, 1.0) == 0.0);
+    Require(fdimf_nid_postfix(3.0f, 1.0f) == 2.0f && fdimf_nid_postfix(1.0f, 3.0f) == 0.0f);
+    Require(std::isnan(fdim_nid_postfix(nan, 1.0)) && std::isnan(fdim_nid_postfix(1.0, nan)) && std::isnan(fdimf_nid_postfix(1.0f, std::numeric_limits<float>::quiet_NaN())));
+    Require(std::fetestexcept(FE_INVALID) == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(-1e308, 1e308)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(fdim_nid_postfix(1e308, -1e308) == infinity && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(-3e38f, 3e38f)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+}
+
 int main() {
+    CheckFdimFlags();
     CheckRemainderConsoleBits();
     CheckFloatClassification();
     CheckDinkumwareConstants();
@@ -3152,6 +3338,8 @@ int main() {
     CheckCbrtConsoleBits();
     CheckPowConsoleBits();
     CheckPowRangeFlags();
+    CheckLogConsoleBits();
+    CheckLogEdgeFlags();
     CheckLog10ConsoleBits();
     CheckLog10EdgeFlags();
     CheckLogbConsoleBits();
@@ -3169,6 +3357,10 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckTrigConsoleBits();
+    CheckAtanhConsoleBits();
+    CheckAtanhEdgeFlags();
+    CheckHypotConsoleBits();
     CheckPowConsoleBits();
     CheckExpConsoleBits();
     CheckLog10ConsoleBits();
