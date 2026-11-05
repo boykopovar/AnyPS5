@@ -7,6 +7,7 @@
   "PPSA97358": {"relink": ["--registry"]},
   "PPSA99004": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA99008": {"relink": ["--trap-sdk-syscall-stubs"]},
+  "PPSA99010": {"files": {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}},
   "PPSA99011": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA99169": {"executables": ["picker/picker.bin"]},
   "PPSA99203": {"relink": ["--trap-sdk-syscall-stubs"]},

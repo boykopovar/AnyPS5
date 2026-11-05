@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -21,7 +21,8 @@ import unwrap_self
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
-TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict}
+TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict}
+FILE_ROOTS = ("app0", "data", "download0")
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
@@ -38,6 +39,38 @@ def check_pad(pad):
     pad_text(pad, 1)
 
 
+def inside(path, roots=()):
+    pure = PurePosixPath(path)
+    if "\\" in path or pure.is_absolute() or not pure.parts or ".." in pure.parts or ":" in pure.parts[0]:
+        return False
+    return not roots or (len(pure.parts) > 1 and pure.parts[0] in roots)
+
+
+def check_files(files):
+    for destination, source in files.items():
+        if not inside(destination, FILE_ROOTS):
+            raise ValueError(f"files: {destination} must be a relative path under {', '.join(FILE_ROOTS)}")
+        if not isinstance(source, dict) or len(source) != 1 or next(iter(source)) not in ("text", "content") or not isinstance(next(iter(source.values())), str):
+            raise ValueError(f"files: {destination} must be {{\"text\": ...}} or {{\"content\": ...}}")
+        if "content" in source and not inside(source["content"]):
+            raise ValueError(f"files: {destination}: content must be a relative path inside --content")
+
+
+def stage_files(files, work, content):
+    missing = []
+    for destination, source in files.items():
+        target = work / destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)
+        if "text" in source:
+            target.write_text(source["text"], encoding="utf-8", newline="\n")
+        elif content and (content / source["content"]).is_file():
+            shutil.copyfile(content / source["content"], target)
+        else:
+            missing.append(source["content"])
+    return missing
+
+
 def load_titles(path):
     titles = json.loads(Path(path).read_text(encoding="utf-8"))
     for title_id, entry in titles.items():
@@ -48,9 +81,9 @@ def load_titles(path):
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
             if not isinstance(value, TITLE_FIELDS[key]):
                 raise ValueError(f"{path}: {title_id}: {key} must be {TITLE_FIELDS[key].__name__}")
-            if key == "pad":
+            if key in ("pad", "files"):
                 try:
-                    check_pad(value)
+                    check_pad(value) if key == "pad" else check_files(value)
                 except ValueError as error:
                     raise ValueError(f"{path}: {title_id}: {error}") from None
                 continue
@@ -169,6 +202,9 @@ def render_markdown(summary, previous=None):
     header += f". {known}." if known else "."
     header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
     lines = [header, ""]
+    lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
+    if lacking:
+        lines += [f"Ran without content: {'; '.join(lacking)}", ""]
     columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error"] + (["Before"] if previous else [])
     if previous:
         regressions, improvements = compare(summary, previous)
@@ -541,6 +577,7 @@ def main(argv=None):
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
     parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
+    parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
     args = parser.parse_args(argv)
     args.out = args.out or args.build / "title-runs"
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
@@ -567,12 +604,16 @@ def main(argv=None):
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
         work = args.out.resolve() / "work" / title_id
+        missing = []
         try:
             executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
+            missing = stage_files(entry.get("files", {}), work, args.content) if executable else []
         except (unwrap_self.Refused, OSError, RuntimeError, TypeError, ValueError) as error:
             work.mkdir(parents=True, exist_ok=True)
             (work / "relink.log").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
             executable = None
+        if missing:
+            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", flush=True)
         (output / title_id).mkdir(parents=True, exist_ok=True)
         shutil.copyfile(work / "relink.log", output / title_id / "relink.log")
         runs = []
@@ -589,7 +630,7 @@ def main(argv=None):
                     summary["machine"][key] = summary["machine"][key] or value
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
             print(f"{title_id} run{number}: {result['outcome']}", flush=True)
-        summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "runs": runs}
+        summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
         write_summary(output, summary)
     write_summary(output, summary)
     report = render_markdown(summary, previous)

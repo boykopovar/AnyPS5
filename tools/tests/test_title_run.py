@@ -51,6 +51,16 @@ class TitlesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 title_run.load_titles(self.write({"PPSA00001": {"pad": pad}}))
 
+    def test_files_are_checked(self):
+        files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "data/x/y.mp4": {"content": "media/y.mp4"}}
+        self.assertEqual(title_run.load_titles(self.write({"PPSA00001": {"files": files}}))["PPSA00001"]["files"], files)
+        for bad in ({"app0": {"text": ""}}, {"sce_sys/param.json": {"text": ""}}, {"/app0/x": {"text": ""}}, {"app0/../x": {"text": ""}},
+                    {"app0\\x": {"text": ""}}, {"C:/app0/x": {"text": ""}}, {"app0/x": "text"}, {"app0/x": {"text": 1}},
+                    {"app0/x": {"text": "", "content": "y"}}, {"app0/x": {"path": "y"}}, {"app0/x": {"content": "../y"}},
+                    {"app0/x": {"content": "/y"}}):
+            with self.subTest(files=bad), self.assertRaisesRegex(ValueError, "PPSA00001: files: "):
+                title_run.load_titles(self.write({"PPSA00001": {"files": bad}}))
+
     def test_bad_id_is_refused(self):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
             title_run.load_titles(self.write({"NOT-AN-ID": {}}))
@@ -206,6 +216,13 @@ class ReportTests(unittest.TestCase):
                           "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
         self.assertIn("Missing: XPSemu (PPSA97358)", title_run.render_markdown(now, before))
 
+    def test_render_markdown_lists_titles_run_without_content(self):
+        now = summary({"PPSA99010": {"name": "vkQuake", "version": "01.000.000", "missing_content": ["quake/pak0.pak"],
+                                     "runs": [run("exited"), run("exited", "warm")]}})
+        self.assertIn("\nRan without content: vkQuake (PPSA99010) quake/pak0.pak\n", title_run.render_markdown(now))
+        self.assertNotIn("Ran without", title_run.render_markdown(summary({"PPSA99010": {"name": "vkQuake", "version": "1", "missing_content": [],
+                                                                                         "runs": [run("exited")]}})))
+
 
 def package(root, title_id, version="01.000.000", name="Game"):
     (root / "sce_sys").mkdir(parents=True)
@@ -287,6 +304,24 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue((self.root / "app0/sce_sys/param.json").is_file())
         self.assertTrue((self.root / "app0/eboot.bin").is_file())
         self.assertFalse((self.root / "app0/sce_module").exists())
+
+    def test_files_are_staged_without_touching_the_package(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "id1").mkdir()
+        (source / "id1/autoexec.cfg").write_text("old\n", encoding="utf-8")
+        work = self.root / "work"
+        title_run.link_tree(source, work / "app0", {"sce_module"})
+        content = self.root / "content"
+        (content / "quake").mkdir(parents=True)
+        (content / "quake/pak0.pak").write_bytes(b"PACK")
+        files = {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "app0/id1/pak0.pak": {"content": "quake/pak0.pak"},
+                 "data/media/clip.mp4": {"content": "media/clip.mp4"}}
+        self.assertEqual(title_run.stage_files(files, work, content), ["media/clip.mp4"])
+        self.assertEqual((work / "app0/id1/autoexec.cfg").read_bytes(), b"r_rtshadows 0\n")
+        self.assertEqual((source / "id1/autoexec.cfg").read_text(encoding="utf-8"), "old\n")
+        self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
+        self.assertFalse((work / "data/media/clip.mp4").exists())
+        self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
 
 
 def wait_until(condition, seconds=10):
