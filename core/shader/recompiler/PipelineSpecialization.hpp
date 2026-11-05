@@ -49,6 +49,8 @@ inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
 inline constexpr std::uint32_t MirrorUnnormalizedBase = 57536u;
 inline constexpr std::uint32_t MinLodBase = 57600u;
+inline constexpr std::uint32_t SamplerLodBiasBase = 57728u;
+inline constexpr float SamplerLodBiasShaderThreshold = 15.0f;
 inline constexpr std::uint32_t FmaskFormatBase = 58048u;
 inline constexpr std::uint32_t VolumeGatherBase = 58176u;
 
