@@ -325,7 +325,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     auto& state = session();
     std::lock_guard lock(state.mutex);
     if (!state.started) {
-        state.window = TraceWindow::Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
+        state.window = TraceWindow::FromEnvironment();
         state.interval = TraceInterval::Parse(std::getenv("APS5_TRACE_SUMMARY_EVERY"));
         state.bench = TraceBench::Parse(std::getenv("APS5_TRACE_BENCH"), state.interval.has_value());
         state.first = now;

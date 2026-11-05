@@ -129,6 +129,15 @@ int main() {
             for (int op = 0; op < 6; ++op) CHECK(forms[op](pair.lhs, pair.rhs) == pair.expected[op]);
         }
     }
+    RtcTick parsed{1};
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T00:00:00.00Z") == 0 && parsed.tick == unixEpochTick);
+    parsed.tick = 1;
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T01:30:00.00+01:30") == 0 && parsed.tick == unixEpochTick);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-02T00:00:01.50Z") == 0 && parsed.tick == dayLater.tick);
+    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &dayLater, -300) == 0);
+    parsed.tick = 1;
+    CHECK(sceNpRtcParseRFC3339(&parsed, text) == 0 && parsed.tick == dayLater.tick);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "not a date") < 0);
     std::puts("NP common RTC tests passed");
     return 0;
 }
