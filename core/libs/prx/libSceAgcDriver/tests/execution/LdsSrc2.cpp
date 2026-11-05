@@ -153,7 +153,9 @@ void CheckFloats(AgcDriver::VulkanDevice& device) {
             }
         }
     }
+    const bool keepsDenormals = device.Target().float32DenormPreserve;
     for (std::uint32_t op = 0; op < names.size(); ++op) {
+        if (op == 2u && !keepsDenormals) continue;
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             Require(results[0][tid][op] != results[1][tid][op], std::string("lds src2: ") + names[op] + " ignores the f32 denormal mode");
         }
