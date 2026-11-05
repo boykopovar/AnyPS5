@@ -2,8 +2,6 @@
 
 ### Functional
 
-- [Module-qualified guest imports](../../../core/relinker/relinker/src/guest/GuestModuleBuilder.cpp) with duplicate guest exports still use flat symbol lookup on macOS; the requested provider is not retained. A macOS executable import with multiple needed providers still fails conversion. Linux provider aliases are tested with synthetic modules, without console module-binding measurements or a title run.
-
 - Execution of a title using [MULX lowering](../../../core/relinker/codegen/src/x86/MulxLowering.cpp) under Rosetta and precise fault delivery inside its spill sequence have not been verified. The lowering test passes under Rosetta on an M5 with macOS 26.2. The Rosetta host observations below predate this lowering for MULX. The stub uses 192 bytes below RSP, leaving the 128-byte red zone intact; direct RSP references to its spill slots throw, while aliases through other registers are not detected. A 64-bit stack-relative displacement that exceeds signed disp32 after reserving the spill frame throws.
 
 - [Packed relative relocations](../../../core/relinker/relinker/src/parsing/RelrRelocations.cpp) require the table to fit in one file-backed PT_LOAD segment and each 8-byte storage unit to fit in one load segment. Units spanning load segments, overlapping RELR units and overlaps with RELA relocations are rejected; relocation composition is not implemented.
@@ -71,3 +69,5 @@
 - [SysV and GNU dynamic symbol hash table bounds](../../../core/relinker/relinker/src/analysis/CodeInstructionCollector.cpp) - whether retail console dynamic linkers tolerate malformed bucket counts, out-of-range chain indices, or unterminated GNU hash chains remains unmeasured against console loader diagnostics. Dynamic symbol count resolution validates SysV and GNU hash headers against arithmetic overflow and segment bounds, throwing RelinkerException when bucket counts are zero, bucket indices exceed chain length, or chain traversal exceeds the mapped ELF image.
 
 - RIP-relative displacement calculation in the [control-flow graph](../../../core/relinker/relinker/src/analysis/UnusedNidFilter/ControlFlowGraph.cpp) and [strict reachability analysis](../../../core/relinker/relinker/src/analysis/UnusedNidFilter/StrictReachability.cpp) wraps modulo 2^64 for 64-bit operand sizes and modulo 2^32 under the address size override prefix (`0x67`), retaining conservative dependencies for out-of-range targets without discarding references. Console fault delivery and loader rejection for out-of-bounds RIP-relative displacements are unmeasured.
+
+- [Module-qualified guest imports](../../../core/relinker/relinker/src/guest/GuestModuleBuilder.cpp) with duplicate guest exports still use flat symbol lookup on macOS; the requested provider is not retained. A macOS executable import with multiple needed providers still fails conversion. Linux provider aliases are tested with synthetic modules, without console module-binding measurements or a title run.
