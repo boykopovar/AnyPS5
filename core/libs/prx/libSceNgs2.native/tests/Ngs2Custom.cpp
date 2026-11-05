@@ -137,6 +137,17 @@ static bool ControlThrows(uintptr_t voice, std::uint32_t id, TParam param) {
     return false;
 }
 
+template <typename TParam>
+static int ControlResult(uintptr_t voice, std::uint32_t id, TParam param) {
+    param.header = {static_cast<std::uint16_t>(sizeof(TParam)), 0, id};
+    return sceNgs2VoiceControl(voice, &param.header);
+}
+
+struct AnyModuleParam {
+    Ngs2VoiceParamHeader header;
+    std::uint8_t body[0x100];
+};
+
 static uintptr_t CustomRack(uintptr_t system, const Ngs2CustomSubmixerRackOption& option) {
     Ngs2ContextBufferInfo query{};
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
@@ -195,7 +206,10 @@ static void TestUserFxChain() {
     Require(calls.processFlags == (std::vector<std::uint32_t>{3, 2, 0}));
 
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain) - 1}));
-    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 2, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)}));
+    for (const std::uint32_t id : {SCE_NGS2_CUSTOM_VOICE_PARAM_REVERB, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN,
+                                   SCE_NGS2_CUSTOM_VOICE_PARAM_DELAY | 1, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 2}) {
+        Require(ControlResult(custom, id, AnyModuleParam{}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    }
     Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 1, 0, 0}));
     Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 1, 0}));
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 3, 3, 0, 0}));
@@ -741,11 +755,11 @@ static void TestCustomLegacyUserFx(std::uint32_t moduleIndex) {
         std::uint8_t dummy[10];
     };
     Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 0, BadSizeParam{}));
-    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 31, Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, 0, 0, 0}));
+    Require(ControlResult(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 31, Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, 0, 0, 0}) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
 
     Require(CreateThrows<std::runtime_error>(LegacyRackOption(&header, moduleIndex)));
-    Require(ControlThrows<std::runtime_error>(custom, 0x40001d00,
-                Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, reinterpret_cast<std::uintptr_t>(&state), 123, 456}));
+    Require(ControlResult(custom, 0x40001d00, Ngs2CustomVoiceUserFxParam{{}, ProcessLegacy, reinterpret_cast<std::uintptr_t>(&state), 123, 456}) ==
+            SCE_NGS2_ERROR_INVALID_PARAM_ID);
 
     state.result = -1;
     bool failed = false;
@@ -828,6 +842,10 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
     for (std::uint32_t index = 0; index < 256; ++index) {
         Ngs2CustomVoiceUserFxParam param{{sizeof(Ngs2CustomVoiceUserFxParam), 0, 0x40001d00 | index},
                                        ProcessLegacy, reinterpret_cast<std::uintptr_t>(&state), 123, 456};
+        if ((index & 0xe0u) == 0 && index >= count) {
+            Require(sceNgs2VoiceControl(custom, &param.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+            continue;
+        }
         bool rejected = false;
         try {
             sceNgs2VoiceControl(custom, &param.header);

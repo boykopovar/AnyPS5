@@ -169,10 +169,6 @@ int APS5_VABI IDPEmpty_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI InitZigzagScan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKAllocAligned_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -508,10 +504,6 @@ int APS5_VABI flushToByte_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI formatQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI freePredInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -521,10 +513,6 @@ int APS5_VABI freeQuantizer_nid_postfix() {
 }
 
 int APS5_VABI freeTileInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI getACPredMode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -593,10 +581,6 @@ int APS5_VABI putBit16z_nid_postfix() {
 }
 
 int APS5_VABI putBit32_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI remapQP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
