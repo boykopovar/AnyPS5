@@ -4,6 +4,7 @@
 #include "tests/TemporaryFile.hpp"
 #include <array>
 #include <iterator>
+#include <memory>
 #include <algorithm>
 #include <barrier>
 #include <cerrno>
@@ -133,6 +134,7 @@ static void CheckShortCharacterScanLocking(bool secure, int (APS5_VABI* scanner)
     for (const Scanner scan : {scanner}) {
         auto* native = TemporaryFile::Open();
         Require(native != nullptr);
+        const std::unique_ptr<std::FILE, int (*)(std::FILE*)> owner(native, std::fclose);
         const std::vector<char> input(bytes, 'a');
         Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
         std::rewind(native);
@@ -165,7 +167,7 @@ static void CheckShortCharacterScanLocking(bool secure, int (APS5_VABI* scanner)
         if (failure) std::rethrow_exception(failure);
         Require(ftrylockfile_nid_postfix(&stream) == 0, "Short stream character scan retained its file lock after returning");
         funlockfile_nid_postfix(&stream);
-        Require(std::fclose(native) == 0);
+        Require(std::fclose(owner.release()) == 0);
         Require(!releasedDuringField, "Short stream character scan released its file lock during a field");
         Require(result == 1 && consumed == static_cast<int>(bytes) && output.back() == 'Z');
         Require(std::memcmp(output.data(), input.data(), bytes) == 0);
