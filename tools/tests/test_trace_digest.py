@@ -60,6 +60,46 @@ def excessive_trace_json(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class TraceWaitAncestryTests(unittest.TestCase):
+    def test_wait_ancestry_survives_inner_pops_and_ends_with_parent(self):
+        events = [
+            complete(1, "wait.outer", 0, 100),
+            complete(1, "work.child", 1, 10),
+            complete(1, "work.grandchild", 2, 1),
+            complete(1, "work.sibling", 11, 10),
+            complete(1, "work.after", 100, 10),
+            complete(2, "work.other_thread", 2, 1),
+        ]
+        trace = trace_digest.Trace(list(reversed(events)))
+        self.assertEqual([(entry[2], entry[3], entry[4]) for entry in trace.slices[1]], [
+            ("wait.outer", 0, False),
+            ("work.child", 1, True),
+            ("work.grandchild", 2, True),
+            ("work.sibling", 1, True),
+            ("work.after", 0, False),
+        ])
+        self.assertEqual(trace.slices[2][0][3:], [0, False])
+
+    def test_inner_wait_does_not_leak_into_a_sibling(self):
+        events = [
+            complete(1, "work.outer", 0, 100),
+            complete(1, "wait.inner", 1, 10),
+            complete(1, "work.grandchild", 2, 1),
+            complete(1, "work.sibling", 11, 10),
+        ]
+        trace = trace_digest.Trace(events)
+        self.assertEqual([entry[4] for entry in trace.slices[1]], [False, False, True, False])
+
+    def test_non_wait_ancestry_checks_grow_linearly(self):
+        count = 512
+        events = [complete(1, "work", index, 2 * (count - index)) for index in range(count)]
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            trace = trace_digest.Trace(events)
+        self.assertLessEqual(check.call_count, count)
+        self.assertEqual([entry[3] for entry in trace.slices[1]], list(range(count)))
+        self.assertFalse(any(entry[4] for entry in trace.slices[1]))
+
+
 class GpuOccupancyTests(unittest.TestCase):
     def trace(self, ranges, begin=0, end=15000, thread="gpu"):
         events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": thread}},
