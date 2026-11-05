@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -149,9 +150,8 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
 
 int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* applicationTitle) {
     if (applicationTitle == nullptr) return ERROR_INVALID_PARAM;
-    std::size_t length = 0;
-    while (length < 5120 && applicationTitle[length] != 0) ++length;
-    if (length == 0 || length == 5120) return ERROR_INVALID_PARAM;
+    std::string title;
+    if (CopyGuestString_nid_no_patch(applicationTitle, 5120, title) != 0 || title.empty()) return ERROR_INVALID_PARAM;
     return 0;
 }
 
