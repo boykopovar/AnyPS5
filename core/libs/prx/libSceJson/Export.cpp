@@ -1,3 +1,4 @@
+#include "prx/libSceJson/include/Exports.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -130,29 +131,24 @@ int APS5_VABI sceJsonPending025_nid_no_patch() {
 }
 APS5_EXPORT("F-bQmUqmTpI", sceJsonPending025_nid_no_patch);
 
-int APS5_VABI sceJsonUnknown_Z3mrBp7y1Lc_nid_no_patch() {
+int APS5_VABI _ZN3sce4Json5Value10referValueERKSbIcSt11char_traitsIcENS0_8StlAllocIcEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Z3mrBp7y1Lc", sceJsonUnknown_Z3mrBp7y1Lc_nid_no_patch);
 
-int APS5_VABI sceJsonUnknown_bkVdWPESKhQ_nid_no_patch() {
+int APS5_VABI _ZN3sce4Json5Value18serialize_internalERSbIcSt11char_traitsIcENS0_8StlAllocIcEEEPFiS7_PvES8_PS1_() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("bkVdWPESKhQ", sceJsonUnknown_bkVdWPESKhQ_nid_no_patch);
 
-int APS5_VABI sceJsonUnknown_pcLFw6F9XHo_nid_no_patch() {
+int APS5_VABI _ZN3sce4Json5Value3setERKSbIcSt11char_traitsIcENS0_8StlAllocIcEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("pcLFw6F9XHo", sceJsonUnknown_pcLFw6F9XHo_nid_no_patch);
 
-int APS5_VABI sceJsonUnknown_kLzq1bVqeWg_nid_no_patch() {
+int APS5_VABI _ZN3sce4Json5Value3setERKSt3mapISbIcSt11char_traitsIcENS0_8StlAllocIcEEES1_St4lessIS7_ENS5_ISt4pairIS7_S1_EEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("kLzq1bVqeWg", sceJsonUnknown_kLzq1bVqeWg_nid_no_patch);
 
-int APS5_VABI sceJsonUnknown_I8H3EdOu8cw_nid_no_patch() {
+int APS5_VABI _ZN3sce4Json5Value3setERKSt4listIS1_NS0_8StlAllocIS1_EEE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("I8H3EdOu8cw", sceJsonUnknown_I8H3EdOu8cw_nid_no_patch);
 
 }
