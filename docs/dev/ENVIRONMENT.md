@@ -586,11 +586,17 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `APS5_TRACE_UDS` | presence | `core/libs/prx/libSceNpTrophy2/src/TitleTrophies.cpp` |  | prints the UDS events contexts post and the stat changes trophy rules apply, and the trophy files a lookup does not find (read in NpUniversalDataSystem/Event and NpTrophy2/TitleTrophies) |
 
+### libSceNetCtl
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `APS5_NET_DISCONNECTED` | presence | `core/libs/prx/libSceNetCtl/Export.cpp` |  | libSceNetCtl and the libSceNet route, DNS-server and interface queries report no connection; sockets are not affected |
+
 ### libScePad
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `ANYPS5_RUMBLE` | integer | `core/libs/prx/libScePad/include/PadRumbleIntensity.hpp` | 100 | host controller vibration strength as a whole percentage from 0 to 100, read once when the pad input starts and again by the audio-out controller sound card path; 100 or unset leaves vibration exactly as the title asks, 0 turns motor rumble, impulse-trigger rumble and controller-sound-card haptics off, in between scales the motor amplitudes with rounding and the haptic samples linearly; DualSense adaptive trigger effects are not scaled; any other value (empty, signed, fractional, above 100) stops the game with an error naming the variable |
+| `ANYPS5_RUMBLE` | integer | `core/libs/prx/libScePad/include/PadRumbleIntensity.hpp` | 100 | host controller vibration strength as a whole percentage from 0 to 100, read once when the pad input starts and again by the audio-out controller sound card path; 100 or unset leaves vibration exactly as the title asks, 0 turns motor rumble, impulse-trigger rumble, controller-sound-card haptics and Bluetooth DualSense haptics off, in between scales the motor amplitudes with rounding and the haptic samples linearly; DualSense adaptive trigger effects are not scaled; any other value (empty, signed, fractional, above 100) stops the game with an error naming the variable |
 | `ANYPS5_PAD_IDENTIFY` | string | `core/libs/prx/libScePad/include/PadIdentify.hpp` | off | which controller-identification pulse to send when a controller is bound to a player slot: `off` sends none, `connect` sends the pattern once per binding (player N gets N short pulses), `always` also repeats it every 30 seconds while the title is not rumbling; the pulse is scaled by `ANYPS5_RUMBLE`, never overrides a title's rumble, and any other value (empty, uppercase, a list) stops the game with an error naming the variable |
 | `APS5_PAD_INPUT_FILE` | string | `core/libs/prx/libScePad/src/PadState.cpp` |  | path of the file polled for injected pad button and stick commands |
 
@@ -628,6 +634,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_INPUT_CONFIG` | string | `core/libs/prx/libSceVideoOut/src/InputMapping.cpp` |  | path of the input mapping file that binds host keys and mouse to guest pad actions |
 | `ANYPS5_PAD_PORT0_STATE` | string | `core/libs/prx/libSceVideoOut/include/Port0Presence.hpp` | default | `default` keeps port 0 connected and user 0 logged in as before; `controller` makes port 0 and user 0 follow the controller bound to slot 0, a change committed after 500 ms, and a withdrawn port 0 reads zeroed and disconnected; any other value, including an empty one, stops the game when video output starts with an error naming the variable |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |
+| `ANYPS5_VIDEO_OUT_MAX_HEIGHT` | integer | `core/libs/prx/libSceVideoOut/src/Output.cpp` |  | host display height hint: when set to a positive integer below 2160, an unknown output mode is reported as unsupported so the title can fall back to the host resolution; a malformed or zero value makes output-mode queries throw; buffer attributes are left untouched |
+| `ANYPS5_VIDEO_OUT_MAX_WIDTH` | integer | `core/libs/prx/libSceVideoOut/src/Output.cpp` |  | host display width hint: when set to a positive integer below 3840, an unknown output mode is reported as unsupported so the title can fall back to the host resolution; a malformed or zero value makes output-mode queries throw; buffer attributes are left untouched |
 | `APS5_NO_PAD_INPUT` | presence | `core/libs/prx/libSceVideoOut/src/PadInput.cpp` |  | ignores keyboard and mouse input so a measurement run is not advanced by a stray press |
 | `APS5_NO_WGI` | presence | `core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp` |  | turns off SDL's Windows.Gaming.Input joystick backend at default hint priority, on Windows hosts where it faults a few seconds into every run |
 | `APS5_OUTPUT_RESOLUTION` | string | `core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp` |  | `<width>x<height>` in pixels that replaces the host display's size when `sceVideoOutGetOutputStatus` and `sceVideoOutGetOutputStatusWithVrr` report the output resolution: 1 for a size below 3840 wide and 2160 high, 2 otherwise, as for the display; unset or empty follows the display, and any other value makes those calls throw |
@@ -654,6 +662,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_SSE4A_EMULATION` | presence | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | disables emulation of AMD-only SSE4a instructions, making such a fault fatal |
 | `APS5_NO_WRITE_WATCH` | presence | `core/libs/prx/libc/src/GuestArena.cpp` |  | disables write watching so guest buffers are fully re-read on every use |
 | `APS5_PIN_WAIT_MS` | integer | `core/libs/prx/libc/src/GuestAllocations.cpp` | 60000 | milliseconds to wait for a pinned allocation lease before failing |
+| `APS5_REPORT` | string | `core/libs/prx/libc/src/RunReport.cpp` | 1 | `0` turns the run report (`anyps5-report.json`) off and `1` turns it on, including for a process that is not a converted game; the `--aps5-report=on\|off` launch flag wins over it; any other value is ignored with a warning |
 | `APS5_TRACE_AFFINITY` | presence | `core/libs/prx/libc/include/CpuTopology.hpp` |  | prints a line naming the role, tid and mask of every thread pinning |
 | `APS5_TRACE_CALLS` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | comma-separated libraries (or all) whose guest calls are traced; an empty import-library label uses the defining host module filename when it can be found |
 | `APS5_TRACE_CALLS_FILE` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | file rewritten every 10 seconds with each traced import called so far and its number of calls |
