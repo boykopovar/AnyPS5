@@ -135,15 +135,19 @@ void APS5_VABI getTilePos_nid_postfix(void* codec, std::size_t column, std::size
 void APS5_VABI initMRPtr_nid_postfix(void* codec);
 int APS5_VABI initPostProc_nid_postfix();
 int APS5_VABI peekBit16_nid_postfix();
-int APS5_VABI postProcBlock_nid_postfix();
-int APS5_VABI postProcMB_nid_postfix();
+void APS5_VABI postProcBlock_nid_postfix(void* table, std::int32_t* previous, std::int32_t* current, std::size_t column,
+                                         std::size_t channel, std::int32_t threshold);
+void APS5_VABI postProcMB_nid_postfix(void* table, std::int32_t* previous, std::int32_t* current, std::size_t column,
+                                      std::size_t channel, std::int32_t threshold);
 int APS5_VABI putBit16_nid_postfix();
 int APS5_VABI putBit16z_nid_postfix();
 int APS5_VABI putBit32_nid_postfix();
 int APS5_VABI setBitIOPointers_nid_postfix();
-int APS5_VABI slideOneMBRow_nid_postfix();
+void APS5_VABI slideOneMBRow_nid_postfix(void* table, std::size_t channels, std::size_t width, std::int32_t top,
+                                         std::int32_t bottom);
 void APS5_VABI swapMRPtr_nid_postfix(void* codec);
 int APS5_VABI termPostProc_nid_postfix();
-int APS5_VABI updatePostProcInfo_nid_postfix();
+void APS5_VABI updatePostProcInfo_nid_postfix(void* table, std::int32_t* macroblock, std::size_t column,
+                                              std::size_t channel);
 
 }

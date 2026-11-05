@@ -8,6 +8,7 @@ if(NOT APPLE)
     target_link_options(libSceJxr PRIVATE LINKER:--exclude-libs,ALL)
 endif()
 include(Rows.cmake)
+include(PostProc.cmake)
 target_include_directories(libSceJxr PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJxr)
 

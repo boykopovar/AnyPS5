@@ -564,14 +564,6 @@ int APS5_VABI peekBit16_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI postProcBlock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI postProcMB_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI putBit16_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -588,15 +580,7 @@ int APS5_VABI setBitIOPointers_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI slideOneMBRow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI termPostProc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI updatePostProcInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
