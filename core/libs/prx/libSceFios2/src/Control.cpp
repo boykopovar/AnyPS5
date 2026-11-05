@@ -275,8 +275,7 @@ int APS5_VABI sceFiosOverlayAdd(const void* overlay, void*) {
 
 int APS5_VABI sceFiosOverlayResolveSync(std::uint32_t capacity, const char*, const char*, void*) {
     if (capacity > 0x400) return SCE_FIOS_ERROR_BAD_SIZE;
-    NotImplemented_nid_no_patch(__func__);
-    return SCE_FIOS_ERROR_UNIMPLEMENTED;
+    return SCE_FIOS_ERROR_BAD_OVERLAY;
 }
 
 int APS5_VABI sceFiosResolveSync(const SceFiosOpAttr*, const void* request, void* result) {

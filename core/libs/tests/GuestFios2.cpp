@@ -61,6 +61,11 @@ static void CheckInitialization() {
 }
 
 static void CheckQueries(const std::string& directory, const std::string& file) {
+    char overlayResult[64]{};
+    REQUIRE(sceFiosOverlayResolveSync(0, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
+    REQUIRE(sceFiosOverlayResolveSync(1, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
+    REQUIRE(sceFiosOverlayResolveSync(64, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
+    REQUIRE(sceFiosOverlayResolveSync(0x401, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_SIZE);
     SceFiosSize mountSize = 0;
     SceFiosFH archive = 0;
     REQUIRE(sceFiosArchiveGetMountBufferSize(nullptr, file.c_str(), &mountSize) == 0);
