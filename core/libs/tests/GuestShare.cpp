@@ -98,6 +98,7 @@ int main() {
     Require(sceShareGetRunningStatus(reinterpret_cast<std::uint32_t*>(0x10)) == invalidParam);
     Require(sceShareSetContentParamForApplicationTitle("title") == 0);
     Require(sceShareSetContentParamForApplicationTitle(nullptr) == invalidParam);
+    Require(sceShareSetContentParamForApplicationTitle(reinterpret_cast<const char*>(0x10)) == invalidParam);
     Require(sceShareSetContentParamForApplicationTitle("") == invalidParam);
     std::string title(5119, 'a');
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == 0);
