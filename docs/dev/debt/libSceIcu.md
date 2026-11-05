@@ -1,25 +1,106 @@
 # libSceIcu technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+
+- [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `u_tolower` | `I7A4lT+s9h8` |
+| `u_totitle` | `f4x1+G7t6eY` |
+| `u_toupper` | `rpv+luk5Ye0` |
+| `ublock_getCode` | `Oi8niAD8r1M` |
+| `ubrk_close` | `-Hc6XkAq-eU` |
+| `ubrk_countAvailable` | `bZT8JIrrg3I` |
+| `ubrk_current` | `fsgqunLD2b8` |
+| `ubrk_first` | `cL3dlqTcRqk` |
+| `ubrk_following` | `dC+0Pz5afr0` |
+| `ubrk_getAvailable` | `+Nd4bYkEgRc` |
+| `ubrk_getRuleStatus` | `av8J5NBkbRE` |
+| `ubrk_isBoundary` | `ypOz3lP3VhE` |
+| `ubrk_last` | `n6SEUE4Txvg` |
+| `ubrk_next` | `4Uj1DZGlHTw` |
+| `ubrk_open` | `NfGO57hqUEw` |
+| `ubrk_preceding` | `9hkT1aMC0Rs` |
+| `ubrk_previous` | `tGeOQLpMGgA` |
+| `ubrk_setText` | `NtjY-lZG4ss` |
+| `ubrk_setUText` | `qQMUbG5L6oE` |
+| `ucnv_cbFromUWriteBytes` | `qjWeIkH81-Y` |
+| `ucnv_close` | `JTIHqYZFMQE` |
+| `ucnv_convertEx` | `lPKKDtEmEgM` |
+| `ucnv_fromUnicode` | `6ZIjQAWKeRs` |
+| `ucnv_getCanonicalName` | `0GnpUt-BVlE` |
+| `ucnv_getName` | `7pCOClUrUmM` |
+| `ucnv_open` | `AKenFQbXGE0` |
+| `ucnv_reset` | `5O8bmW45o0U` |
+| `ucnv_setFallback` | `iEe61PaW1pg` |
+| `ucnv_setFromUCallBack` | `E0yB1UHl4VI` |
+| `ucnv_setSubstChars` | `Ku0Rs703XaI` |
+| `ucnv_setToUCallBack` | `UIU5m-5O68c` |
+| `ucnv_toUChars` | `LvSzmTZ0Mss` |
+| `ucnv_toUnicode` | `O1eMKYxVlTs` |
+| `ucurr_getName` | `T7jc4xaLMKo` |
+| `ucurr_openISOCurrencies` | `BFt6nFM3lbc` |
+| `udata_setCommonData` | `wHZwCpZVcGI` |
+| `udata_setFileAccess` | `mCyTdtewGpk` |
+| `uloc_addLikelySubtags` | `HQ6DCQrAXD4` |
+| `uloc_canonicalize` | `G-Jl6md9fz4` |
+| `uloc_countAvailable` | `J5lZTL2H6Aw` |
+| `uloc_forLanguageTag` | `a+8yAm1ZfCE` |
+| `uloc_getAvailable` | `JnzWSfYU-xg` |
+| `uloc_getBaseName` | `CZ0z95gBgXg` |
+| `uloc_getCharacterOrientation` | `pMLs993oHk0` |
+| `uloc_getCountry` | `SIZrguvplN4` |
+| `uloc_getDefault` | `m1nD9D9LmP0` |
+| `uloc_getKeywordValue` | `QYSES3tXUHM` |
+| `uloc_getLanguage` | `dxyWDe5AwgY` |
+| `uloc_getScript` | `9lLmMrDj590` |
+| `uloc_minimizeSubtags` | `yb9tILRzD1k` |
+| `uloc_setKeywordValue` | `sw98L1MbqpM` |
+| `uloc_toLanguageTag` | `zmMWRKwedmw` |
+| `uloc_toUnicodeLocaleType` | `tRTGVdmiGzQ` |
+| `unorm2_composePair` | `e+Udsq-3S+I` |
+| `unorm2_getNFCInstance` | `ikNH4c6kdMw` |
+| `unorm2_getNFDInstance` | `Drupl3SzOhM` |
+| `unorm2_getNFKCInstance` | `u7NoGsVfzcU` |
+| `unorm2_getNFKDInstance` | `nyO3x1IgiSI` |
+| `unorm2_getRawDecomposition` | `B8jGs8D+GHY` |
+| `unorm2_isNormalized` | `7ETpt3V2fEU` |
+| `unorm2_normalize` | `eMM8e4yA3AU` |
+| `ures_close` | `--GQ9Ov+0mM` |
+| `ures_getByKey` | `8WDJjbxNvCg` |
+| `ures_getStringByKey` | `apt8-c9wFxQ` |
+| `ures_open` | `bpD6xUk4QVI` |
+| `uscript_getScript` | `fiX2RRLQhak` |
+| `uscript_getShortName` | `4cTIrOZw1-0` |
+| `uscript_hasScript` | `PWK6yVIGNuY` |
+| `utext_close` | `2NaZ-stsAv0` |
+| `utext_openConstUnicodeString` | `yc1XEzBopCw` |
+| `utext_openUChars` | `o9+yMOok2Zs` |
+| `utext_setup` | `sEKpfqARKPI` |
+
 ### Unknown function info
 
 - The 134 [recovered inventory exports](../../../core/libs/prx/libSceIcu/RecoveredInventory.cpp) have unverified parameters, return types, callback ABIs and behavior. Every entry immediately throws through `NotImplemented_nid_no_patch`; the parameterless `int` declarations are import-resolution placeholders. The [13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/226383a7fa4b1275d6cebf61eb1c1e7ca7b58bcb/data/firmware-13.60/libsceicu-9790ee85e3.jsonl) establishes only name/NID bindings. The [module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceIcu.inc) assigns all 134 NIDs to logical `libSceIcu` in `libSceIcu.sprx`. Recovered `ucfpos`, `uset` and `uiter` groups are excluded. Console ABI, behavior and title compatibility remain unverified.
 
 - [ICU export availability](../../../core/libs/prx/libSceIcu/Unescape.cpp) across firmware versions remains unproven. The [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIcu.c) includes the implemented escape, invariant-character and version helpers. [BunnyFl’s firmware 13.42 report](https://github.com/boykopovar/AnyPS5/pull/10961#issuecomment-6400071863) records `u_getVersion` returning `78.1.0.0` under an emulator, but neither escape function is in the checked native `system_ex/common_ex/lib/libSceIcu.sprx` export table. Only 104 of the 661 inventory NIDs appear among that module’s 299 exports. The exports for compatibility with older firmware are retained; availability and routing across firmware versions remain unproven.
 
-### Older dispatch exports
+### Break iterator factories
 
-- [Older dispatch exports](../../../core/libs/prx/libSceIcu/Export.cpp) - Four 3.20 callable NIDs are declared as throwing placeholders. Their signatures and behavior are unverified. The four selector wrappers have identical instruction bytes in the 3.20 and later version-labelled modules, and corresponding consumer switch cases call them. Their NIDs and internal layouts differ; no forwarding or binary compatibility is claimed. Later image version metadata does not authenticate a retail firmware release.
+- [Break iterator factories](../../../core/libs/prx/libSceIcu/Export.cpp) - Four 3.20 callable NIDs are the ICU 68 `BreakIterator::createCharacterInstance`, `createWordInstance`, `createLineInstance` and `createSentenceInstance(const Locale&, UErrorCode&)`: their `icu_68` mangled names hash to these NIDs, and the selector each wrapper passes is the `UBreakIteratorType` that ICU 68 passes to `BreakIterator::createInstance`. They are declared as throwing placeholders; their prototypes are not verified and break iteration needs ICU rule data that no host library provides. The four selector wrappers have identical instruction bytes in the 3.20 and later version-labelled modules, and corresponding consumer switch cases call them. Their NIDs and internal layouts differ, and the later NIDs match no `icu_60` to `icu_79` name of these functions; no forwarding or binary compatibility is claimed. Later image version metadata does not authenticate a retail firmware release.
 
-| 3.20 NID | Later candidate NID | Selector |
-| --- | --- | --- |
-| `BufsAiaX0+s` | `3lVihhFbXus` | 0 |
-| `xdF5zg0V5Oc` | `HFkUTLyJkZ0` | 1 |
-| `Con4H1SB3nw` | `jXOj7dZh7RQ` | 2 |
-| `lME28PLmu54` | `bxjI++g9NkE` | 3 |
+| 3.20 NID | Later candidate NID | Selector | ICU 68 function |
+| --- | --- | --- | --- |
+| `BufsAiaX0+s` | `3lVihhFbXus` | 0 | `createCharacterInstance` |
+| `xdF5zg0V5Oc` | `HFkUTLyJkZ0` | 1 | `createWordInstance` |
+| `Con4H1SB3nw` | `jXOj7dZh7RQ` | 2 | `createLineInstance` |
+| `lME28PLmu54` | `bxjI++g9NkE` | 3 | `createSentenceInstance` |
 
 ### Functional
 
-- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 2347 3.20 callable NIDs have unidentified names and are declared as throwing placeholders. Their signatures and behavior are unverified; no ICU functionality is implemented. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or compatibility is claimed.
+- [Older callable exports](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) - 1691 of the 2347 3.20 callable NIDs are declared under ICU 68 names: each NID is the `tools/nid_names.py` hash of a dynamic symbol of `libicuuc`, `libicui18n` or `libicuio` in the [ICU 68.2 Ubuntu 20.04 build](https://github.com/unicode-org/icu/releases/download/release-68-2/icu4c-68_2-Ubuntu20.04-x64.tgz), with the `_68` renaming suffix removed from C names; 1293 of them are C++ names in the `icu_68` namespace. A name match does not show that the console function has ICU 68's prototype or behavior, and none is implemented; each throws through `NotImplemented_nid_no_patch`. The other 656 keep placeholder names; 652 of them match no ICU 68.2 symbol. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or compatibility is claimed.
 
 - [UTF-8 macro helpers](../../../core/libs/prx/libSceIcu/Utf8.cpp) have no console ABI or behavior verification. Their names and NIDs are in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIcu.c); behavior follows ICU 78.1 [utf_impl.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/utf_impl.cpp). These are macro bodies, not complete UTF-8 operations: append encodes ASCII with two bytes, and null-error-pointer failures write the legacy length-dependent error characters. Null index pointers, negative positions, reversed bounds, overflowing index or capacity arithmetic, and null buffers when accessed throw instead of reproducing undefined behavior. Negative forward lengths denote NUL-terminated input. Cross-firmware export availability and native behavior outside the macros' preconditions remain unverified.
 
@@ -37,6 +118,10 @@
 
 - [Default-converter string copy helpers](../../../core/libs/prx/libSceIcu/Invariant.cpp) `u_austrcpy` and `u_austrncpy` are unverified on a console and throw `NotImplemented_nid_no_patch` on code units above `0x7f`. Their names and NIDs come from the PS5 3.20 inventory; signatures and ASCII (`0x01`–`0x7f`) behavior follow ICU 78.1's [ustr_cnv.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/ustr_cnv.cpp), unchanged since 65.1, without assuming the console's default converter for non-ASCII units. `u_austrncpy` writes a single NUL when the source ends before the count without zero-padding the remainder. Null buffers with `u_austrcpy` or a positive count throw an invalid-argument exception, whereas ICU dereferences in `u_austrcpy` and returns the destination unchanged in `u_austrncpy`. Closes when: compared with the console, including the default converter for non-ASCII units.
 
+- [UTF-16 lexical comparisons](../../../core/libs/prx/libSceIcu/Comparisons.cpp): equivalence on console hardware remains unverified. The five exports follow [ICU 78.1 ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustring.cpp) and its public UTF-16 ABI. Required null buffers throw where upstream dereferences them; nonpositive `u_strncmp`/`u_memcmp` counts and a zero code-point comparison count or identical code-point buffers read nothing. Negative `u_memcmpCodePointOrder` counts select NUL-terminated lengths, preserving the first differing code-unit result. Strings whose length cannot fit int32 throw instead of narrowing the length.
+
+- [Firmware availability](../../../core/libs/prx/libSceIcu/Comparisons.cpp): [BunnyFl’s firmware 13.42 report](https://github.com/boykopovar/AnyPS5/pull/10963#issuecomment-6400072356) records `u_getVersion` returning `78.1.0.0` with `system_ex/common_ex/lib/libSceIcu.sprx` run under an emulator. None of these five lexical APIs is in that native module’s 299 exports. The 3.20 compatibility exports are retained; availability and routing across firmware versions remain unproven.
+
 - [UTF-16 set searches and tokenization](../../../core/libs/prx/libSceIcu/Tokenize.cpp) have no console verification; ICU versions on other firmware are unverified. Signatures and behavior follow ICU 78.1's [ustring.h](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/unicode/ustring.h) and [ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustring.cpp). `u_strtok_r` preserves that source's one-code-unit delimiter overwrite, including the trailing surrogate left after splitting at a supplementary delimiter. Invalid null inputs and rejected guest-write scopes throw; an initial continuation assignment is retained if a later delimiter write is rejected. Set-search offsets beyond `INT32_MAX` throw.
 
 - [Numeric platform helpers](../../../core/libs/prx/libSceIcu/Numeric.cpp) are unverified on a console. The 24 `uprv_` IEEE 754, rounding, extreme, overflow and pointer-limit exports follow ICU 78.1 [putil.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/putil.cpp) and [umath.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/umath.cpp), unchanged since 65.1, assuming the default `IEEE_754` and `U_MAX_PTR` configuration. The 3.20 table has them; firmware 13.42 exports none ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)). The libm wrappers call the guest libc, so their precision is libc's. ICU's quirks are kept: `uprv_trunc` of negative infinity is positive infinity, NaN results are the canonical quiet NaN, `uprv_fmax(0.0, -0.0)` is `-0.0`, and `uprv_round` floors `x + 0.5`. Null `uprv_modf` and overflow result pointers throw; ICU dereferences them. Closes when: compared with the console.
@@ -44,6 +129,12 @@
 - [u_getVersion and u_errorName](../../../core/libs/prx/libSceIcu/ErrorName.cpp) follow ICU 78.1, the version firmware 13.42's module reports and exports both for ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)); only `u_getVersion`'s 78.1.0.0 was measured there. `u_errorName` returns the names in 78.1's [utypes.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/utypes.cpp), including its `U_BRK_VARIABLE_REDFINITION` spelling, and `[BOGUS UErrorCode]` for every other code; the names were not compared with the console. Both report 78.1 whatever firmware is emulated, although the 3.20 module was ICU 65 to 68 and has no names for the codes added since. Closes when: compared with the console.
 
 - [Constrained field positions](../../../core/libs/prx/libSceIcu/ConstrainedFieldPosition.cpp) are unverified on a console. The seven `ucfpos_` exports firmware 13.42 has ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)) follow ICU 78.1 [formattedvalue.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/i18n/formattedvalue.cpp) and [capi_helper.h](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/capi_helper.h). A handle is a host object whose first four bytes hold ICU's magic `0x55434600`; the rest of its layout differs from ICU's. A set error changes nothing, a null handle sets `U_ILLEGAL_ARGUMENT_ERROR` and other memory `U_INVALID_FORMAT_ERROR`; `ucfpos_open` ignores the error unless allocation fails. No export fills a position yet, so the indexes stay 0. Null error pointers and index outputs throw where ICU dereferences them. Closes when: compared with the console.
+
+- [Code point sets](../../../core/libs/prx/libSceIcu/Set.cpp) are unverified on a console. `uset_openEmpty`, `uset_close`, `uset_add`, `uset_addRange`, `uset_addAll`, `uset_contains`, `uset_getItemCount` and `uset_getItem`, which firmware 13.42 exports ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)), follow ICU 78.1 [uset.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uset.cpp) and [uniset.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uniset.cpp): code points are pinned to 0..10FFFF before adding, ranges merge, and `uset_getItem` checks a negative index before the set. Sets hold no strings, because no export here adds one (`uset_openPattern` is not implemented). Allocation failure throws instead of making the set bogus. Null or foreign sets, outputs and error pointers throw where ICU dereferences them. Closes when: compared with the console.
+
+- [Enumeration dispatch](../../../core/libs/prx/libSceIcu/Enumeration.cpp) is unverified on a console. `uenum_close`, `uenum_count`, `uenum_next` and `uenum_unext`, which firmware 13.42 exports ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)), follow ICU 78.1 [uenum.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uenum.cpp) over the 56-byte `UEnumeration` of [uenumimp.h](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uenumimp.h), calling its callbacks with the guest ABI. `uprv_free` is the guest `free`, as ICU's default allocator is `free` and 13.42 exports no `u_setMemoryFunctions`. No export here creates an enumeration yet. A null status with a nonnull enumeration throws where ICU dereferences it. Closes when: compared with the console.
+
+- [Character iterators](../../../core/libs/prx/libSceIcu/Iterator.cpp) are unverified on a console. `uiter_setString` and `uiter_setUTF8`, which firmware 13.42 exports ([#11013](https://github.com/boykopovar/AnyPS5/pull/11013#issuecomment-6401310351)), fill the 112-byte `UCharIterator` with guest-ABI callbacks ported from ICU 78.1 [uiter.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/uiter.cpp), including its lazy UTF-8 index, split supplementary characters, packed UTF-8 state, wrapping index arithmetic and its forward-move quirk that overwrites a just-known index. Ill-formed UTF-8 decodes to U+FFFD per maximal subpart as `U8_NEXT_OR_FFFD` and `U8_PREV_OR_FFFD` do. Callbacks given a null iterator, and the no-op `setState` given a null error pointer, throw where ICU dereferences them. Closes when: compared with the console.
 
 ### Known export names; ABI prototypes unverified
 
