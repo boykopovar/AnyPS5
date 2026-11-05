@@ -181,6 +181,17 @@ int main(int argc, char** argv) {
     Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 123456789 && zone.tz_dsttime == 2147483647);
     Require(sceRtcSetConf(0, 0, 42, -2147483647 - 1) == static_cast<int>(0x80020016u));
     Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 123456789 && zone.tz_dsttime == 2147483647);
+    Require(sceRtcSetConf(0, 0, -2147483647 - 1, 0) == 0);
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == -2147483647 - 1 && zone.tz_dsttime == 0);
+    for (int index = 0; index < 1000; index++) {
+        Require(sceRtcSetConf(index, -index, index - 500, index % 3) == 0);
+        Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == index - 500 && zone.tz_dsttime == index % 3);
+    }
+    for (int index = 0; index < 1000; index++) {
+        Require(sceRtcSetConf(0, 0, index, -2) == static_cast<int>(0x80020016u));
+        Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 999 - 500 && zone.tz_dsttime == 0);
+    }
+    Require(sceRtcSetConf(0, 0, 0, 0) == 0);
 
     RtcDateTime epoch{1970, 1, 1, 0, 0, 0, 0};
     std::int64_t seconds = -1;
