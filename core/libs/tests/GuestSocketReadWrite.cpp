@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -8,47 +11,6 @@
 #ifndef _WIN32
 #include <csignal>
 #endif
-
-struct PollDescriptor {
-    int descriptor;
-    short events;
-    short revents;
-};
-
-struct Iovec {
-    void* base;
-    std::size_t length;
-};
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI poll_nid_postfix(PollDescriptor*, std::uint32_t, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-std::int64_t APS5_VABI _read_nid_postfix(int, void*, std::size_t);
-std::int64_t APS5_VABI _write_nid_postfix(int, const void*, std::size_t);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-std::int64_t APS5_VABI sceKernelReadv(int, const Iovec*, int);
-std::int64_t APS5_VABI sceKernelWritev(int, const Iovec*, int);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI preadv_nid_postfix(int, const Iovec*, int, std::int64_t);
-std::int64_t APS5_VABI pwritev_nid_postfix(int, const Iovec*, int, std::int64_t);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPreadv(int, const Iovec*, int, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwritev(int, const Iovec*, int, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -65,7 +27,7 @@ constexpr int KernelBadDescriptor = static_cast<int>(0x80020009u);
 constexpr int KernelIllegalSeek = static_cast<int>(0x8002001du);
 
 static bool Readable(int descriptor, short accepted = In) {
-    PollDescriptor waited{descriptor, In, 0};
+    GuestPollDescriptor waited{descriptor, In, 0};
     return poll_nid_postfix(&waited, 1, 2000) == 1 && (waited.revents & accepted) != 0;
 }
 
@@ -105,28 +67,28 @@ int main() {
 
     const char vectorFirst[] = "vector ";
     const char vectorSecond[] = "write";
-    Iovec vectorWrite[] = {{const_cast<char*>(vectorFirst), sizeof(vectorFirst) - 1},
+    KernelIovec vectorWrite[] = {{const_cast<char*>(vectorFirst), sizeof(vectorFirst) - 1},
         {const_cast<char*>(vectorSecond), sizeof(vectorSecond)}};
     Require(sceKernelWritev(client, vectorWrite, 2) == sizeof(vectorFirst) + sizeof(vectorSecond) - 1);
     char vectorReadFirst[sizeof(vectorFirst) - 1]{};
     char vectorReadSecond[sizeof(vectorSecond)]{};
-    Iovec vectorRead[] = {{vectorReadFirst, sizeof(vectorReadFirst)}, {vectorReadSecond, sizeof(vectorReadSecond)}};
+    KernelIovec vectorRead[] = {{vectorReadFirst, sizeof(vectorReadFirst)}, {vectorReadSecond, sizeof(vectorReadSecond)}};
     Require(Readable(server) && sceKernelReadv(server, vectorRead, 2) == sizeof(vectorFirst) + sizeof(vectorSecond) - 1);
     Require(std::memcmp(vectorReadFirst, "vector ", sizeof(vectorReadFirst)) == 0 && std::strcmp(vectorReadSecond, "write") == 0);
 
     const char sceVectorFirst[] = "sceKernel";
     const char sceVectorSecond[] = "Writev";
-    Iovec sceVectorWrite[] = {{const_cast<char*>(sceVectorFirst), sizeof(sceVectorFirst) - 1},
+    KernelIovec sceVectorWrite[] = {{const_cast<char*>(sceVectorFirst), sizeof(sceVectorFirst) - 1},
         {const_cast<char*>(sceVectorSecond), sizeof(sceVectorSecond)}};
     Require(sceKernelWritev(client, sceVectorWrite, 2) == sizeof(sceVectorFirst) + sizeof(sceVectorSecond) - 1);
     char sceVectorReadFirst[sizeof(sceVectorFirst) - 1]{};
     char sceVectorReadSecond[sizeof(sceVectorSecond)]{};
-    Iovec sceVectorRead[] = {{sceVectorReadFirst, sizeof(sceVectorReadFirst)}, {sceVectorReadSecond, sizeof(sceVectorReadSecond)}};
+    KernelIovec sceVectorRead[] = {{sceVectorReadFirst, sizeof(sceVectorReadFirst)}, {sceVectorReadSecond, sizeof(sceVectorReadSecond)}};
     Require(Readable(server) && sceKernelReadv(server, sceVectorRead, 2) == sizeof(sceVectorFirst) + sizeof(sceVectorSecond) - 1);
     Require(std::memcmp(sceVectorReadFirst, "sceKernel", sizeof(sceVectorReadFirst)) == 0 && std::strcmp(sceVectorReadSecond, "Writev") == 0);
 
     const char positionedWrite[] = "positioned";
-    Iovec positionedIov[] = {{const_cast<char*>(positionedWrite), sizeof(positionedWrite)}};
+    KernelIovec positionedIov[] = {{const_cast<char*>(positionedWrite), sizeof(positionedWrite)}};
     *__error_nid_postfix() = 0;
     Require(pread_nid_postfix(server, received, 1, 0) == -1 && *__error_nid_postfix() == 29);
     Require(pwrite_nid_disambig1_nid_postfix(client, positionedWrite, 1, 0) == -1 && *__error_nid_postfix() == 29);
@@ -141,7 +103,7 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(read_nid_postfix(server, received, sizeof(received)) == -1 && *__error_nid_postfix() == 35);
     Require(sceKernelRead(server, received, sizeof(received)) == KernelAgain);
-    Iovec emptyRead[] = {{received, sizeof(received)}};
+    KernelIovec emptyRead[] = {{received, sizeof(received)}};
     Require(sceKernelReadv(server, emptyRead, 1) == KernelAgain);
 
     Require(read_nid_postfix(server, received, 0) == 0 && sceKernelRead(server, received, 0) == 0);

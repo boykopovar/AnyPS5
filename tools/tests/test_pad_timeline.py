@@ -40,6 +40,24 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pad_timeline.compile_timeline(self.document, 1)
 
+    def test_duplicate_buttons_are_rejected(self):
+        document = {
+            "version": 1,
+            "events": [
+                {"at_ms": 0, "hold_ms": 100, "buttons": ["cross", "cross"]}
+            ],
+        }
+
+        for buttons in (
+            ["cross", "cross"],
+            ["l1", "r1", "l1"],
+            ["release", "release"],
+        ):
+            with self.subTest(buttons=buttons):
+                document["events"][0]["buttons"] = buttons
+                with self.assertRaisesRegex(ValueError, "duplicate button names"):
+                    pad_timeline.compile_timeline(document, sequence=1)
+
     def test_unknown_buttons(self):
         for buttons in [["typo"], "cross", [True]]:
             with self.subTest(buttons=buttons):
@@ -155,6 +173,88 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
+    def test_invalid_existing_timeline_can_be_replaced_after_sequence_exhaustion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            for body in ["", "0 100 16384\n", "0 100 16384\n99 100 64\n",
+                         "0 100 16384\n100 100 64\nextra\n"]:
+                with self.subTest(body=body):
+                    output.write_text(f"APS5_PAD_TIMELINE 1 {2**64 - 1} 2\n{body}", encoding="utf-8")
+                    with mock.patch.object(sys, "argv", ["pad_timeline.py", str(timeline), str(output)]), \
+                            mock.patch.object(pad_input.time, "monotonic_ns", return_value=1), \
+                            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        pad_timeline.main()
+                    self.assertEqual(output.read_text(encoding="utf-8"),
+                                     "APS5_PAD_TIMELINE 1 1 2\n200 100 18432\n500 200 64\n")
+
+    def test_valid_existing_timeline_sequence_exhaustion_preserves_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            original = pad_timeline.compile_timeline(self.document, 2**64 - 1)
+            output.write_text(original, encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("sequence is exhausted", result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), original)
+
+    def test_symbolic_link_loops_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            loop = root / "loop"
+            try:
+                loop.symlink_to(loop.name)
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links are unavailable")
+            for arguments in ((timeline, loop), (loop, root / "command")):
+                with self.subTest(arguments=arguments):
+                    result = self.run_cli(*arguments)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+                    self.assertTrue(loop.is_symlink())
+                    self.assertFalse((root / "command").exists())
+
+    def test_excessively_nested_timelines_are_usage_errors(self):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("[" * (depth + 128) + "]" * (depth + 128), encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn("must contain version and events", result.stderr)
+            self.assertFalse(output.exists())
+
+    def test_output_directory_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            target_dir = root / "output_dir"
+            target_dir.mkdir()
+            result = self.run_cli(timeline, target_dir)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"{target_dir} is a directory", result.stderr)
+            nonexistent_parent = root / "missing" / "command"
+            result = self.run_cli(timeline, nonexistent_parent)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"directory does not exist: {nonexistent_parent.parent}", result.stderr)
+
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -174,6 +274,32 @@ class TimelineTests(unittest.TestCase):
                     pad_timeline.main()
             self.assertEqual(error.exception.code, 2)
             self.assertEqual(output.read_text(encoding="utf-8"), exhausted)
+
+    def test_timeline_accepts_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("\ufeff" + json.dumps(self.document), encoding="utf-8")
+            self.assertEqual(self.run_cli(timeline, output).returncode, 0)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("200 100 18432\n", output.read_text(encoding="utf-8"))
+
+    def test_unencodable_command_path_still_reports_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command\udcff"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            try:
+                output.touch()
+                output.unlink()
+            except (OSError, UnicodeError):
+                self.skipTest("the file system cannot name a file with a lone surrogate")
+            env = dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace")
+            result = subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
+                                    capture_output=True, text=True, timeout=5, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("\\udcff", result.stdout)
 
 
 if __name__ == "__main__":

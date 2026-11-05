@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
@@ -11,13 +14,6 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelClose(int d);
-int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 

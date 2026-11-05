@@ -64,6 +64,8 @@ struct PipelineTrace {
     std::mutex mutex;
     std::condition_variable released;
     bool allowOptimization = false;
+    std::uint32_t libraries = 0;
+    std::uint32_t retaining = 0;
     std::vector<VkPipeline> fast;
     std::vector<VkPipeline> optimized;
     VkCommandBuffer boundCommands = VK_NULL_HANDLE;
@@ -90,7 +92,12 @@ VKAPI_ATTR VkResult VKAPI_CALL CreatePipelines(VkDevice device, VkPipelineCache 
     const auto result = Trace->create(device, cache, count, infos, allocator, pipelines);
     std::lock_guard lock(Trace->mutex);
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (pipelines[index] == VK_NULL_HANDLE || (infos[index].flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0) continue;
+        if (pipelines[index] == VK_NULL_HANDLE) continue;
+        if ((infos[index].flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0) {
+            ++Trace->libraries;
+            if ((infos[index].flags & VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT) != 0) ++Trace->retaining;
+            continue;
+        }
         auto& handles = (infos[index].flags & VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT) != 0 ? Trace->optimized : Trace->fast;
         handles.push_back(pipelines[index]);
     }
@@ -217,12 +224,17 @@ void Run(AgcDriver::VulkanDevice& device, Context context, PipelineTrace& trace,
         CheckPixels(masked, phase);
     };
     render(false, "fast link");
+    {
+        std::lock_guard lock(trace.mutex);
+        Require(trace.libraries != 0, "the readback pipeline's libraries were not created through the traced device");
+        Require(trace.retaining == (optimize ? trace.libraries : 0u), std::to_string(trace.retaining) + " of the " + std::to_string(trace.libraries) + " libraries were created to retain link-time optimization info, expected " + (optimize ? "all of them" : "none, since no optimized link will be made"));
+    }
     trace.ReleaseOptimization();
     WaitForOptimizedPipelines(context.device);
     Require(PipelineLibraryCountersOf(context.device).linked == 1, "the readback pipeline was not linked from graphics libraries");
     Require(trace.optimized.size() == (optimize ? 1u : 0u), "the optimized pipeline creation count differs from the requested mode");
     render(optimize, "completed link");
-    std::printf("pipeline readback passed: fast draws %u, optimized draws %u, optimized creations %zu\n", optimize ? 1u : 2u, optimize ? 1u : 0u, trace.optimized.size());
+    std::printf("pipeline readback passed: fast draws %u, optimized draws %u, optimized creations %zu, libraries %u (%u retaining link-time optimization info)\n", optimize ? 1u : 2u, optimize ? 1u : 0u, trace.optimized.size(), trace.libraries, trace.retaining);
 }
 
 }

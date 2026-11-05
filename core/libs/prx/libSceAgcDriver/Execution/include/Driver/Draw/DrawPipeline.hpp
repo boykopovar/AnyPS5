@@ -24,7 +24,13 @@ class DrawPipeline {
 public:
     using Commit = std::function<void()>;
     using Range = std::pair<std::uint64_t, std::uint64_t>;
+    struct Watch {
+        std::uint64_t retired = 0;
+        std::size_t items = 0;
+        std::vector<Range> writes;
+    };
     enum class DrainReason : std::uint8_t { Packet, Flush, Labels, Capture, Indirect, Submission, Count };
+    enum class QueuedWrite : std::uint8_t { None, Stored, Unknown };
 
     static DrawPipeline& Queue0();
     static std::size_t Depth();
@@ -35,17 +41,26 @@ public:
     static unsigned Committers();
 
     void Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress = 0, std::vector<std::byte> labelBytes = {}, std::vector<Range> reads = {}, bool draw = false);
+    void EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes);
     void Drain(DrainReason reason, std::uint32_t opcode = 0x100);
     void Stop();
     void ReleaseRetired();
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
+    static std::uint64_t DrainRequestsByReason(DrainReason reason);
     bool Busy() const;
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
     bool OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    Watch WatchWrites();
+    bool WrittenSince(const Watch& watch, const std::vector<Range>& reads);
+    std::uint64_t Retired() const { return retiredItems.load(std::memory_order_acquire); }
+    void NoteDecodeDrain() { decodeDrains.fetch_add(1, std::memory_order_relaxed); }
+    std::uint64_t DecodeDrains() const { return decodeDrains.load(std::memory_order_relaxed); }
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
+    static std::uint64_t HeldReadQueries();
     void ReleaseRunningReads();
+    QueuedWrite StoredBytes(std::uint64_t address, std::size_t bytes, std::span<std::byte> out);
 
     static bool MetadataPassesPipelined();
     static void CountPipelinedMetadataPass();
@@ -58,8 +73,10 @@ private:
         std::vector<std::byte> labelBytes;
         std::vector<Range> reads;
         bool draw = false;
+        bool store = false;
     };
     DrawPipeline() = default;
+    void enqueue(Item item);
     void run();
     void rethrowFailure();
     void report(std::chrono::steady_clock::time_point now);
@@ -73,6 +90,9 @@ private:
     std::vector<Item> retired;
     std::exception_ptr failure;
     std::atomic<std::size_t> outstanding{0};
+    std::atomic<std::uint64_t> retiredItems{0};
+    std::atomic<std::uint64_t> decodeDrains{0};
+    std::uint64_t reportedDecodeDrains = 0;
     std::uint32_t idleWaiters = 0;
     std::size_t resumeAt = 0;
     bool committerWaiting = false;
@@ -90,6 +110,7 @@ private:
     std::array<std::uint64_t, static_cast<std::size_t>(DrainReason::Count)> drainWaitNs{};
     std::array<std::uint64_t, 257> drainOpcodes{};
     std::array<std::atomic<std::uint64_t>, 257> drainRequests{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrainReason::Count)> reasonRequests{};
     std::uint64_t depthSum = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };

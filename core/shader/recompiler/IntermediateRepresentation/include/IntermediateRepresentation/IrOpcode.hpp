@@ -74,6 +74,8 @@ enum class IrOpcode : std::uint16_t {
     Reference,
     ReferenceU32,
     UnlinkedCall,
+    WindowLaneGuard,
+    DescriptorFault,
     GetUserData,
     GetShaderBase,
     ShaderClock,
@@ -82,6 +84,7 @@ enum class IrOpcode : std::uint16_t {
     MeshArgument,
     MeshRestartStart,
     MeshAllocate,
+    MeshCapturedWord,
     TessellationBase,
     GetTessellationAttribute,
     SetTessellationAttribute,
@@ -146,6 +149,7 @@ enum class IrOpcode : std::uint16_t {
     PackFloat2x16Rtz,
     FPAdd16x2,
     FPMul16x2,
+    FPFma16x2,
     FPAbs32,
     FPNeg32,
     FPSaturate32,
@@ -515,6 +519,10 @@ struct PermlaneFlags {
     bool x16 = false;
     bool fetchInactive = false;
     bool boundControl = false;
+};
+
+struct FloatConvertFlags {
+    bool nanPayloadUnused = false;
 };
 
 struct MemoryFlags {

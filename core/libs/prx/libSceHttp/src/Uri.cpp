@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -9,8 +10,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
-
-extern "C" int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize);
 
 namespace {
 

@@ -57,6 +57,7 @@ struct SectionHeader {
     ByteCount SectionSize;
     std::uint32_t Link;
     std::uint32_t Info;
+    std::uint64_t Alignment;
     std::uint64_t EntrySize;
 };
 
@@ -69,6 +70,7 @@ struct NidReference {
     std::int64_t Addend;
     bool Weak = false;
     bool Function = false;
+    std::uint8_t SymbolType = 0;
 };
 
 struct CallSiteInfo {

@@ -18,5 +18,7 @@ extern "C" [[noreturn]] void LibcTerminate_nid_no_patch(int code);
 extern "C" void LibcSetEndFlush_nid_no_patch(void (*flush)());
 extern "C" void LibcRunEndFlush_nid_no_patch();
 extern "C" void LibcSetExitDrain_nid_no_patch(void (*drain)());
+extern "C" void LogFileFlush_nid_no_patch();
+extern "C" void LogFileRelease_nid_no_patch();
 
 #endif

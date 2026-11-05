@@ -1,3 +1,6 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAjm.native/include/InventoryExports.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -12,32 +15,6 @@ static void AjmStub(const char* name) {
     std::fprintf(stderr, "[ajm] unimplemented %s called\n", name);
     NotImplemented_nid_no_patch(name);
 }
-
-struct WVorbisHeaderPacketParameter {
-    std::size_t size;
-    std::int32_t channels;
-    std::uint32_t sampleRate;
-    std::int32_t bytesPerSecond;
-    std::int32_t shortBlockExponent;
-    std::int32_t longBlockExponent;
-    std::uint32_t reserved;
-    const void* setupPacket;
-    std::size_t setupPacketSize;
-    void* output;
-    std::size_t outputCapacity;
-    std::size_t outputSize;
-};
-
-struct WVorbisSetupPacketParameter {
-    std::size_t size;
-    std::int32_t channels;
-    std::uint32_t reserved;
-    const void* input;
-    std::size_t inputSize;
-    void* output;
-    std::size_t outputCapacity;
-    std::size_t outputSize;
-};
 
 static_assert(sizeof(WVorbisHeaderPacketParameter) == 72);
 static_assert(offsetof(WVorbisHeaderPacketParameter, setupPacket) == 32);
@@ -91,9 +68,36 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
 }
 
 const char* APS5_VABI sceAjmStrError(int error) {
- (void)error;
- AjmStub(__func__);
- return nullptr;
+    static const char* const messages[] = {
+        "context does not exist",
+        "instance does not exist",
+        "batch does not exist",
+        "invalid parameter",
+        "not enough memory",
+        "not enough resources",
+        "codec is not supported",
+        "codec is already registered in the context",
+        "codec is not registered in the context",
+        "wrong revision in the flags",
+        "flag is not supported",
+        "busy",
+        "priority is invalid",
+        "in progress",
+        "operation cannot be performed at the moment",
+        "malformed batch",
+        "error at job creation",
+        "invalid opcode",
+        "priority violation",
+        "buffer is too big",
+        "invalid address",
+        "batch was cancelled",
+        "specified memory area is already registered",
+        "specified memory area is not registered",
+    };
+    if (error == 0) return "ok";
+    const std::uint32_t index = static_cast<std::uint32_t>(error) - 0x80930002u;
+    if (index < sizeof(messages) / sizeof(messages[0])) return messages[index];
+    return "(unknown)";
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param) {
@@ -166,5 +170,44 @@ int APS5_VABI sceAjmInstanceSwitch(uint32_t context, uint32_t codec, uint64_t fl
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAjm_nativeUnknown_IfQ_minus_AhcmW9k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IfQ-AhcmW9k", libSceAjm_nativeUnknown_IfQ_minus_AhcmW9k_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_JAPya_minus_QyJlU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JAPya-QyJlU", libSceAjm_nativeUnknown_JAPya_minus_QyJlU_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_MgTTRx1YSFw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("MgTTRx1YSFw", libSceAjm_nativeUnknown_MgTTRx1YSFw_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_POOw6Y5luA8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("POOw6Y5luA8", libSceAjm_nativeUnknown_POOw6Y5luA8_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_mKgie3ed4ao_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mKgie3ed4ao", libSceAjm_nativeUnknown_mKgie3ed4ao_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_mwtwIZb60YM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mwtwIZb60YM", libSceAjm_nativeUnknown_mwtwIZb60YM_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qkuXdR4-Ihc", libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch);
 
 }

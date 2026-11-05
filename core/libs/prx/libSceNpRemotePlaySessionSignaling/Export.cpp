@@ -1,3 +1,4 @@
+#include "prx/libSceNpRemotePlaySessionSignaling/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -53,6 +54,22 @@ int APS5_VABI sceNpRemotePlaySessionSignalingSetCustomProperty() {
 int APS5_VABI sceNpRemotePlaySessionSignalingTerminate() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

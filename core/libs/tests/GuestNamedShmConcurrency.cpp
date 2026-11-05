@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "nid/Sha1.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -13,16 +15,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" {
-int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-int APS5_VABI fchmod_nid_postfix(int, int);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 using Unlink = int (*)(const char*);
@@ -143,9 +135,13 @@ void Run() {
 
     if (fchmod_nid_postfix(descriptor, 0400) != 0)
         throw std::runtime_error("changing shared-object permissions to read-only failed");
-    *__error_nid_postfix() = 0;
-    if (unlinkObject(object.name.c_str()) != -1 || *__error_nid_postfix() != 13)
-        throw std::runtime_error("unlink of a read-only shared object did not return EACCES");
+    if (::geteuid() != 0) {
+        *__error_nid_postfix() = 0;
+        if (unlinkObject(object.name.c_str()) != -1 || *__error_nid_postfix() != 13)
+            throw std::runtime_error("unlink of a read-only shared object did not return EACCES");
+    } else {
+        std::fprintf(stderr, "running as root, which ignores file permissions: the read-only unlink case not tested\n");
+    }
     if (fchmod_nid_postfix(descriptor, 0600) != 0)
         throw std::runtime_error("restoring shared-object permissions failed");
     if (unlinkObject(object.name.c_str()) != 0)

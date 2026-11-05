@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -7,7 +8,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -676,6 +679,71 @@ void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(image->Refresh(), "the GPU-edited image was uploaded twice");
 }
 
+void RunClearKeepsSnapshot(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0x00, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, keys);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(image != nullptr, "clear snapshot: the written surface has no pending image");
+    if (AgcDriver::GuestMemory::Watched(surface, SurfaceBytes)) {
+        std::puts("the unwatched block is write-watched: the fast-clear snapshot is not tested");
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+        device.WaitIdle();
+        return;
+    }
+    const auto writeAndSettle = [&] {
+        Dispatch(device, WriteCode, writeData);
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+        device.WaitIdle();
+        for (int settle = 0; settle < 2; ++settle) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            image->Refresh();
+        }
+    };
+    const auto clear = [&](const char* what) {
+        const std::array<std::uint32_t, 4> pattern{0u, 0u, 0u, 0u};
+        Require(StorageTexture::NoteKeysFill(AddressOf(keys), KeyBytes, 0x00) == 1, "clear snapshot: the key fill did not cover the surface");
+        if (!device.FillBuffer(AddressOf(keys), KeyBytes, pattern)) {
+            device.WaitIdle();
+            const std::vector<std::byte> filled(KeyBytes, std::byte{0});
+            AgcDriver::GuestMemory::Write(AddressOf(keys), filled);
+        }
+        AgcDriver::Graphics::NoteKeysFillOnGpu(AddressOf(keys), KeyBytes, DccKeys::Clear0000);
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+        device.WaitIdle();
+        const auto snapshots = StorageTexture::GuestSnapshots();
+        image->Refresh();
+        char message[256];
+        std::snprintf(message, sizeof(message), "clear snapshot: %s: the image was uploaded under %s keys, not cleared", what, AgcDriver::Graphics::DccKeysName(image->UploadedKeys()));
+        Require(image->UploadedKeys() == DccKeys::Clear0000, message);
+        return StorageTexture::GuestSnapshots() - snapshots;
+    };
+    writeAndSettle();
+    char message[192];
+    const auto unchanged = clear("a clear over unchanged memory");
+    std::snprintf(message, sizeof(message), "clear snapshot: a clear over unchanged unwatched memory copied its guest bytes %llu times", static_cast<unsigned long long>(unchanged));
+    Require(unchanged == 0, message);
+    Require(image->GuestSnapshotValid(), "clear snapshot: the cleared image kept no guest bytes to compare");
+    writeAndSettle();
+    texels[SurfaceBytes - 1] = 0x33;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(clear("a clear after a CPU store") == 1, "clear snapshot: a clear after a CPU store did not copy the guest bytes once");
+    Dispatch(device, WriteCode, writeData);
+    const auto version = image->Version();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(image->Refresh() && image->Version() == version, "clear snapshot: the copy taken by the clear missed the CPU store, so a refresh uploaded the image");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+    device.WaitIdle();
+}
+
 #ifndef _WIN32
 // An import window stamps the pages whose write protection it saw resolved as a possible CPU
 // store. A driver that pins imported pages for writing (NVIDIA on Linux) resolves it without
@@ -826,6 +894,45 @@ void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 
 }
 
+void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+#ifndef _WIN32
+    constexpr std::uint32_t ChainSide = 64;
+    constexpr std::uint32_t ChainLevels = 7;
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    const auto meta = AddressOf(keys);
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0x00, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(surface >> 8u);
+    cx[0x390] = static_cast<std::uint32_t>(surface >> 40u);
+    cx[0x31b] = 0;
+    cx[0x31c] = 0x10028028u;
+    cx[0x31d] = 0;
+    cx[0x3b0] = ((ChainLevels - 1u) << 28u) | ((ChainSide - 1u) << 14u) | (ChainSide - 1u);
+    cx[0x3b8] = 0x9000000u | (TileRenderTarget64KB << 14u) | (1u << 30u);
+    cx[0x325] = static_cast<std::uint32_t>(meta >> 8u);
+    cx[0x3a8] = static_cast<std::uint32_t>(meta >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    const auto resource = AgcDriver::Graphics::SurfaceForTarget(color);
+    Require(color.mipCount == ChainLevels && color.dccAddress == 0 && resource.dccAddress == meta, "the resident surface of a mipmapped DCC color target has no keys");
+    const auto bytes = AgcDriver::Graphics::DescribeSurface(resource).guestBytes;
+    Require(bytes <= SurfaceBytes, "the mip chain does not fit the test surface");
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto image = AgcDriver::Graphics::CachedStorageSurface(context, resource);
+    Require(image->UploadedKeys() == DccKeys::Clear0000, "the resident image of a 0000-cleared mipmapped target was not cleared from its keys");
+    image->MarkDirty();
+    Require(AgcDriver::Graphics::CurrentDccKeys(meta, bytes) == DccKeys::Uncompressed, "the first write into a mipmapped DCC target left its keys cleared");
+    Require(AgcDriver::Graphics::TextureClearKeys(resource, bytes) == DccKeys::Uncompressed, "a sampled view of a rendered mipmapped DCC target still reads its clear");
+#else
+    static_cast<void>(device);
+    static_cast<void>(block);
+#endif
+}
+
 int main() {
     try {
 #ifdef _WIN32
@@ -846,6 +953,9 @@ int main() {
         Run(*device, block->Data());
         untracked.emplace(false);
         RunUntrackedReuse(*device, untracked->Data());
+        std::optional<GuestBlock> cleared;
+        cleared.emplace(false);
+        RunClearKeepsSnapshot(*device, cleared->Data());
         std::optional<GuestBlock> reused;
         reused.emplace(false);
         RunReusedKeys(*device, reused->Data());
@@ -866,6 +976,9 @@ int main() {
         std::optional<GuestBlock> uniform;
         uniform.emplace(false);
         RunUniformKeysBehindKernel(*device, uniform->Data());
+        std::optional<GuestBlock> chain;
+        chain.emplace(false);
+        RunMipmappedTarget(*device, chain->Data());
 #ifdef _WIN32
         shared.emplace(true, true);
         RunSharedImport(*device, shared->Data());

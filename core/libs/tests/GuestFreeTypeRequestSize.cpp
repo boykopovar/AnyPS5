@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 
@@ -17,14 +18,6 @@
 
 using namespace FreeType;
 
-extern "C" {
-int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
-int APS5_VABI FT_Done_FreeType_nid_postfix(void*);
-int APS5_VABI FT_New_Memory_Face_nid_postfix(void*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**);
-int APS5_VABI FT_Request_Size_nid_postfix(GuestFaceRec*, const GuestSizeRequestRec*);
-int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32_t);
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "FreeType size request check failed at line %d\n", line);
@@ -37,7 +30,7 @@ struct Fixture {
     std::vector<unsigned char> bytes;
     FT_Library library = nullptr;
     FT_Face native = nullptr;
-    void* guestLibrary = nullptr;
+    FreeType::GuestLibrary* guestLibrary = nullptr;
     GuestFaceRec* guest = nullptr;
 
     explicit Fixture(std::vector<unsigned char> font, int faceIndex = 0) : bytes(std::move(font)) {
@@ -155,6 +148,7 @@ static void CheckInvalid() {
             bool threw = false;
             try {
                 FT_Request_Size_nid_postfix(fixture.guest, &request);
+
             } catch (const std::runtime_error&) {
                 threw = true;
             }

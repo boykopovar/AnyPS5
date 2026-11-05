@@ -1,14 +1,11 @@
+#include "prx/libSceFontFt/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
-
 
 #include "prx/libSceFontFt/include/FontFtDriver.hpp"
 #include "prx/libc/include/General.hpp"
 
 #pragma GCC visibility push(default)
-
-struct FontFtAliases;
-struct FontFtGlyphSelection;
 
 extern "C" {
 
