@@ -762,7 +762,149 @@ constexpr char g_sceV2MoneyPutFamily[] = "std::__sce_v2::money_put virtual";
 constexpr char g_sceV2TimeGetFamily[] = "std::__sce_v2::time_get virtual";
 constexpr char g_sceV2TimePutFamily[] = "std::__sce_v2::time_put virtual";
 
-constexpr auto g_sceV2CtypeCharVtable = MakeSceV2FacetVtable<8, g_sceV2CtypeFamily, DestroySceV2CtypeFacet_nid_no_patch>();
+struct SceV2String {
+    union {
+        char buffer[16];
+        char* pointer;
+    };
+    std::size_t size;
+    std::size_t capacity;
+};
+
+static_assert(sizeof(SceV2String) == 0x20);
+
+SceV2String* AssignSceV2String(SceV2String* result, const char* text) {
+    std::memset(result, 0, sizeof(SceV2String));
+    const std::size_t length = std::strlen(text);
+    char* data = result->buffer;
+    std::size_t capacity = GuestStringInlineCapacity;
+    if (length > GuestStringInlineCapacity) {
+        capacity = length | GuestStringCapacityMask;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
+        result->pointer = data;
+    }
+    std::memcpy(data, text, length);
+    data[length] = 0;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+struct SceV2CtypeCharVtable {
+    GuestLocale::FacetVtable facet;
+    char (APS5_VABI *toLower)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *toLowerRange)(const GuestLocale::Facet* self, char* first, const char* last);
+    char (APS5_VABI *toUpper)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *toUpperRange)(const GuestLocale::Facet* self, char* first, const char* last);
+    char (APS5_VABI *widen)(const GuestLocale::Facet* self, char character);
+    const char* (APS5_VABI *widenRange)(const GuestLocale::Facet* self, const char* first, const char* last, char* destination);
+    char (APS5_VABI *narrow)(const GuestLocale::Facet* self, char character, char fallback);
+    const char* (APS5_VABI *narrowRange)(const GuestLocale::Facet* self, const char* first, const char* last, char fallback, char* destination);
+};
+
+char APS5_VABI SceV2CtypeToLower_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return static_cast<char>(_Tolower_nid_postfix(static_cast<unsigned char>(character), nullptr));
+}
+
+const char* APS5_VABI SceV2CtypeToLowerRange_nid_no_patch(const GuestLocale::Facet*, char* first, const char* last) {
+    for (; first != last; ++first) *first = static_cast<char>(_Tolower_nid_postfix(static_cast<unsigned char>(*first), nullptr));
+    return first;
+}
+
+char APS5_VABI SceV2CtypeToUpper_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return static_cast<char>(_Toupper_nid_postfix(static_cast<unsigned char>(character), nullptr));
+}
+
+const char* APS5_VABI SceV2CtypeToUpperRange_nid_no_patch(const GuestLocale::Facet*, char* first, const char* last) {
+    for (; first != last; ++first) *first = static_cast<char>(_Toupper_nid_postfix(static_cast<unsigned char>(*first), nullptr));
+    return first;
+}
+
+char APS5_VABI SceV2CtypeWiden_nid_no_patch(const GuestLocale::Facet*, char character) {
+    return character;
+}
+
+const char* APS5_VABI SceV2CtypeWidenRange_nid_no_patch(const GuestLocale::Facet*, const char* first, const char* last, char* destination) {
+    if (first != last) std::memcpy(destination, first, static_cast<std::size_t>(last - first));
+    return last;
+}
+
+char APS5_VABI SceV2CtypeNarrow_nid_no_patch(const GuestLocale::Facet*, char character, char) {
+    return character;
+}
+
+const char* APS5_VABI SceV2CtypeNarrowRange_nid_no_patch(const GuestLocale::Facet*, const char* first, const char* last, char, char* destination) {
+    if (first != last) std::memcpy(destination, first, static_cast<std::size_t>(last - first));
+    return last;
+}
+
+struct SceV2NumpunctCharVtable {
+    GuestLocale::FacetVtable facet;
+    char (APS5_VABI *decimalPoint)(const GuestLocale::NumpunctFacet* self);
+    char (APS5_VABI *thousandsSep)(const GuestLocale::NumpunctFacet* self);
+    SceV2String* (APS5_VABI *grouping)(SceV2String* result, const GuestLocale::NumpunctFacet* self);
+    SceV2String* (APS5_VABI *falsename)(SceV2String* result, const GuestLocale::NumpunctFacet* self);
+    SceV2String* (APS5_VABI *truename)(SceV2String* result, const GuestLocale::NumpunctFacet* self);
+};
+
+char APS5_VABI SceV2NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
+    return self->decimalPoint;
+}
+
+char APS5_VABI SceV2NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
+    return self->thousandsSep;
+}
+
+SceV2String* APS5_VABI SceV2NumpunctGrouping_nid_no_patch(SceV2String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignSceV2String(result, self->grouping);
+}
+
+SceV2String* APS5_VABI SceV2NumpunctFalsename_nid_no_patch(SceV2String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignSceV2String(result, self->falsename);
+}
+
+SceV2String* APS5_VABI SceV2NumpunctTruename_nid_no_patch(SceV2String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignSceV2String(result, self->truename);
+}
+
+bool APS5_VABI SceV2CodecvtAlwaysNoconv_nid_no_patch(const GuestLocale::Facet*) {
+    return true;
+}
+
+int APS5_VABI SceV2CodecvtOne_nid_no_patch(const GuestLocale::Facet*) {
+    return 1;
+}
+
+int APS5_VABI SceV2CodecvtConvert_nid_no_patch(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char*, const char** next1, char* first3, char*, char** next3) {
+    *next1 = first1;
+    *next3 = first3;
+    return 3;
+}
+
+int APS5_VABI SceV2CodecvtUnshift_nid_no_patch(GuestLocale::Facet*, std::uint64_t*, char* first3, char*, char** next3) {
+    *next3 = first3;
+    return 3;
+}
+
+std::size_t APS5_VABI SceV2CodecvtLength_nid_no_patch(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char* last1, std::size_t count) {
+    constexpr std::int64_t Limit = std::numeric_limits<std::int32_t>::max();
+    const std::int64_t available = reinterpret_cast<std::intptr_t>(last1) - reinterpret_cast<std::intptr_t>(first1);
+    const auto limited = static_cast<std::size_t>(available < Limit ? available : Limit);
+    return limited >= count ? count : limited;
+}
+
+const SceV2CtypeCharVtable g_sceV2CtypeCharVtable{
+    {DestroySceV2CtypeFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2CtypeFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2CtypeToLower_nid_no_patch, SceV2CtypeToLowerRange_nid_no_patch, SceV2CtypeToUpper_nid_no_patch, SceV2CtypeToUpperRange_nid_no_patch,
+    SceV2CtypeWiden_nid_no_patch, SceV2CtypeWidenRange_nid_no_patch, SceV2CtypeNarrow_nid_no_patch, SceV2CtypeNarrowRange_nid_no_patch};
+const SceV2NumpunctCharVtable g_sceV2NumpunctCharVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2NumpunctDecimalPoint_nid_no_patch, SceV2NumpunctThousandsSep_nid_no_patch, SceV2NumpunctGrouping_nid_no_patch,
+    SceV2NumpunctFalsename_nid_no_patch, SceV2NumpunctTruename_nid_no_patch};
+const GuestLocale::CodecvtVtable g_sceV2CodecvtCharVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2CodecvtAlwaysNoconv_nid_no_patch, SceV2CodecvtOne_nid_no_patch, SceV2CodecvtOne_nid_no_patch, SceV2CodecvtConvert_nid_no_patch,
+    SceV2CodecvtConvert_nid_no_patch, SceV2CodecvtUnshift_nid_no_patch, SceV2CodecvtLength_nid_no_patch};
 constexpr auto g_sceV2CtypeWideVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
 constexpr auto g_sceV2CtypeUshortVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
 constexpr auto g_sceV2NumGetCharVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
@@ -771,10 +913,8 @@ constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGe
 constexpr auto g_sceV2NumPutCharVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
 constexpr auto g_sceV2NumPutWideVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
 constexpr auto g_sceV2NumPutUshortVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
-constexpr auto g_sceV2NumpunctCharVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
 constexpr auto g_sceV2NumpunctWideVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
 constexpr auto g_sceV2NumpunctUshortVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily, DestroySceV2UshortNumpunctFacet_nid_no_patch>();
-constexpr auto g_sceV2CodecvtCharVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
 constexpr auto g_sceV2CodecvtWideVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
 constexpr auto g_sceV2CodecvtUshortVtable = MakeSceV2FacetVtable<7, g_sceV2CodecvtFamily>();
 constexpr auto g_sceV2CollateCharVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
