@@ -529,6 +529,7 @@ struct VulkanDevice::State {
     bool viewportIndexLayer = false;
     bool imageFormatList = false;
     bool fmaFloat16 = false;
+    bool fmaFloat32 = false;
     bool primitiveListRestart = false;
     bool depthClipControl = false;
     bool graphicsPipelineLibrary = false;
@@ -1721,6 +1722,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     fmaFeatures.shaderFmaFloat16 = float16Fma ? VK_TRUE : VK_FALSE;
     fmaFeatures.shaderFmaFloat32 = float32Fma ? VK_TRUE : VK_FALSE;
     state->fmaFloat16 = float16Fma;
+    state->fmaFloat32 = float32Fma;
     if (float16Fma || float32Fma) {
         deviceExtensions.push_back(VK_KHR_SHADER_FMA_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityFMAKHR);
@@ -4587,6 +4589,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.demoteToHelperInvocation = state->demoteToHelperInvocation;
     context.earlyFragmentSampleMaskTestBeforeSampleCounting = state->earlyFragmentSampleMaskTestBeforeSampleCounting;
     context.fmaFloat16 = state->fmaFloat16;
+    context.fmaFloat32 = state->fmaFloat32;
     context.primitiveListRestart = state->primitiveListRestart;
     context.imageViewMinLod = state->imageViewMinLod;
     context.shaderResourceMinLod = state->shaderResourceMinLod;
