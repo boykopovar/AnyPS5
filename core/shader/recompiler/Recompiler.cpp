@@ -1994,6 +1994,10 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     }
     result->cacheHit = cacheHit;
     std::shared_ptr<const RecompileResult> shared = std::move(result);
+    if (donor != nullptr) {
+        reportResultMemo();
+        return shared;
+    }
     const auto bytes = resultBytes(*shared);
     const auto insert = [&](std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t key, std::shared_ptr<const MemoPatch> recipe, bool count) {
         if (table == nullptr) {
