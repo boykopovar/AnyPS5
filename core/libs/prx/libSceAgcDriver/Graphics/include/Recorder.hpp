@@ -121,6 +121,7 @@ public:
     void FlushDeferredReleases();
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
+    void BoundDrawBatch();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
     enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart, PaddedVertex };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{1024} << 20u;

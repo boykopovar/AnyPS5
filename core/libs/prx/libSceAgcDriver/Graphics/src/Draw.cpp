@@ -3220,7 +3220,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         recipeOut = nullptr;
     }
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
-    if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
+    if (context.recorder != nullptr) context.recorder->BoundDrawBatch();
     if (AnyHeapShader(shaders)) recipeOut = nullptr;
     auto& timing = prepared.timing.emplace("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
@@ -4141,7 +4141,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
-    if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
+    if (context.recorder != nullptr) context.recorder->BoundDrawBatch();
     static_cast<void>(snapshots);
     PerformanceTimer timing("Graphics.DrawWithRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;

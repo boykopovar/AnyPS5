@@ -653,7 +653,10 @@ bool BindlessHeap::Held(const SpanMark& mark) {
             return false;
         }
     }
-    for (auto chunk = first; chunk <= last; ++chunk) ringChunks[chunk].open = true;
+    for (auto chunk = first; chunk <= last; ++chunk) {
+        if (!ringChunks[chunk].open) ringOpenChunks.fetch_add(1u, std::memory_order_relaxed);
+        ringChunks[chunk].open = true;
+    }
     ++counts.spansKept;
     return true;
 }
@@ -747,6 +750,13 @@ void BindlessHeap::trimPoolLocked() {
     }
 }
 
+bool BindlessHeap::TakeRingPressure() {
+    if (ringChunks.empty() || ringOpenChunks.load(std::memory_order_relaxed) < std::max<std::size_t>(2u, ringChunks.size() / 2u)) return false;
+    std::lock_guard lock(mutex);
+    ++counts.ringPressureSubmits;
+    return true;
+}
+
 std::pair<VkBuffer, VkDeviceSize> BindlessHeap::DataLocation(VkDeviceAddress address) const {
     std::lock_guard lock(mutex);
     for (const auto& block : poolBlocks) {
@@ -758,7 +768,7 @@ std::pair<VkBuffer, VkDeviceSize> BindlessHeap::DataLocation(VkDeviceAddress add
 BindlessHeap::DataSpan BindlessHeap::RingAllocate(std::size_t words, SpanMark& mark) {
     Require(ringInHeap, "the GPU heap has no descriptor ring");
     const auto bytes = alignUp(words * sizeof(std::uint32_t), RingSpanAlignment);
-    if (bytes > ringBytes / 2u) throw std::runtime_error("AGC bindless heap: one draw's buffer descriptors exceed half the descriptor ring");
+    if (bytes > ringBytes / 4u) throw std::runtime_error("AGC bindless heap: one draw's buffer descriptors exceed a quarter of the descriptor ring");
     std::lock_guard lock(mutex);
     auto offset = wrapRingOffset(alignUp(ringCursor, ringAlignment), bytes);
     enum class Taken { No, Kept, Busy };
@@ -842,6 +852,7 @@ void BindlessHeap::enterRingChunk(std::size_t index) {
         chunk.serial = 0u;
     }
     chunk.open = true;
+    ringOpenChunks.fetch_add(1u, std::memory_order_relaxed);
     chunk.entered = ++ringEntries;
 }
 
@@ -1264,6 +1275,7 @@ void reportHeapStatistics() {
             totals.ringBatchPeakBytes = std::max(totals.ringBatchPeakBytes, counts.ringBatchPeakBytes);
             totals.ringSpanPeakBytes = std::max(totals.ringSpanPeakBytes, counts.ringSpanPeakBytes);
             totals.poolBytes += counts.poolBytes;
+            totals.ringPressureSubmits += counts.ringPressureSubmits;
             totals.poolBlocksMade += counts.poolBlocksMade;
             totals.poolBlocksRecycled += counts.poolBlocksRecycled;
             totals.poolBlocksFreed += counts.poolBlocksFreed;
@@ -1285,6 +1297,7 @@ void reportHeapStatistics() {
     const auto busySkips = windowDelta(totals.busyChunksSkipped, lastTotals.busyChunksSkipped);
     const auto ringMiB = windowDelta(totals.ringBytes, lastTotals.ringBytes) >> 20u;
     const auto poolMiB = windowDelta(totals.poolBytes, lastTotals.poolBytes) >> 20u;
+    const auto pressureSubmits = windowDelta(totals.ringPressureSubmits, lastTotals.ringPressureSubmits);
     const auto poolMade = windowDelta(totals.poolBlocksMade, lastTotals.poolBlocksMade);
     const auto poolRecycled = windowDelta(totals.poolBlocksRecycled, lastTotals.poolBlocksRecycled);
     const auto poolFreed = windowDelta(totals.poolBlocksFreed, lastTotals.poolBlocksFreed);
@@ -1293,10 +1306,10 @@ void reportHeapStatistics() {
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; fallbacks:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, %llu early submits, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), fallbacks.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(pressureSubmits), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {
@@ -1482,6 +1495,7 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
         ringChunks[index].serial = serial;
         ringChunks[index].open = index == ringChunk;
     }
+    ringOpenChunks.store(ringChunk < ringChunks.size() && ringChunks[ringChunk].open ? 1u : 0u, std::memory_order_relaxed);
     counts.poolBatchPeakBytes = std::max<std::uint64_t>(counts.poolBatchPeakBytes, poolBatchBytes);
     poolBatchBytes = 0;
     for (std::size_t index = 0; index < poolBlocks.size(); ++index) {

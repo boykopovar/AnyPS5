@@ -92,12 +92,14 @@ public:
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);
+    bool TakeRingPressure();
 
     struct Counts {
         std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
         std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
         std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0, ringBytes = 0, imageSlotsHeld = 0;
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, busyChunksSkipped = 0, bufferDescriptors = 0;
+        std::uint64_t ringPressureSubmits = 0;
         std::uint64_t poolBytes = 0, poolBatchPeakBytes = 0, poolBlocksMade = 0, poolBlocksRecycled = 0, poolBlocksFreed = 0, poolBlocksHeld = 0, poolBlockBytes = 0;
     };
     Counts Statistics() const;
@@ -210,6 +212,7 @@ private:
     };
     std::deque<RetiringSlot> retiring;
     std::size_t ringBatchBytes = 0;
+    std::atomic<std::uint32_t> ringOpenChunks{0};
     std::size_t retiringAssigned = 0;
     std::uint32_t evictScanEpoch = 0;
     Recorder* submitter = nullptr;

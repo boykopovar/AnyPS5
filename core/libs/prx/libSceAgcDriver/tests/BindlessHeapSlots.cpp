@@ -235,12 +235,12 @@ bool ringLargeSpans(const Context& context) {
     BindlessHeap heap(context);
     if (heap.RingChunkCount() < 5u) return false;
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    constexpr std::size_t largeWords = chunkWords * 2u + 1024u;
+    constexpr std::size_t largeWords = chunkWords + 1024u;
     BindlessHeap::SpanMark pin;
     static_cast<void>(heap.RingAllocate(16u, pin));
     BindlessHeap::SpanMark large;
     const auto span = heap.RingAllocate(largeWords, large);
-    require(span.words.size() == largeWords && heap.Held(large), "a span over three chunks is written and held");
+    require(span.words.size() == largeWords && heap.Held(large), "a span over two chunks is written and held");
     Recorder recorder(context);
     BindlessHeap::SpanMark fill;
     const auto untilWrap = [&](const BindlessHeap::SpanMark& kept) {
@@ -253,17 +253,42 @@ bool ringLargeSpans(const Context& context) {
         }
         return last.offset;
     };
-    require(untilWrap(large) == 3u * AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips every chunk a kept large span covers");
+    require(untilWrap(large) == 2u * AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips every chunk a kept large span covers");
     require(untilWrap(pin) == AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips only the pinned first chunk");
     require(!heap.Held(large), "a large span expires once the ring writes over one of its later chunks");
     require(heap.Held(pin), "the pinned span outlives the large span");
     bool refused = false;
     try {
-        static_cast<void>(ringAllocate(heap, heap.RingChunkCount() * AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t) / 2u + 1u));
+        static_cast<void>(ringAllocate(heap, heap.RingChunkCount() * AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t) / 4u + 1u));
     } catch (const std::runtime_error&) {
         refused = true;
     }
-    require(refused, "a span over half the ring is refused");
+    require(refused, "a span over a quarter of the ring is refused");
+    return true;
+}
+
+bool ringPressure(const Context& context) {
+    BindlessHeap heap(context);
+    if (heap.RingChunkCount() < 4u) return false;
+    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
+    Recorder recorder(context);
+    BindlessHeap::SpanMark fill;
+    require(!heap.TakeRingPressure(), "an empty ring is under no pressure");
+    const auto half = heap.RingChunkCount() / 2u;
+    for (std::size_t chunk = 1; chunk < half; ++chunk) static_cast<void>(heap.RingAllocate(chunkWords, fill));
+    require(!heap.TakeRingPressure(), "a batch below half the ring's chunks is under no pressure");
+    static_cast<void>(heap.RingAllocate(chunkWords, fill));
+    require(heap.TakeRingPressure() && heap.Statistics().ringPressureSubmits == 1u, "a batch holding half the ring's chunks asks for a submit");
+    heap.Submitted(recorder, 0u);
+    require(!heap.TakeRingPressure(), "a submit relieves the pressure");
+    BindlessHeap::SpanMark kept;
+    static_cast<void>(heap.RingAllocate(16u, kept));
+    for (std::size_t chunk = 1; chunk < half; ++chunk) {
+        heap.Submitted(recorder, 0u);
+        static_cast<void>(heap.RingAllocate(chunkWords, fill));
+    }
+    heap.Submitted(recorder, 0u);
+    require(heap.Held(kept) && !heap.TakeRingPressure(), "chunks of earlier batches do not count");
     return true;
 }
 
@@ -595,6 +620,7 @@ int main(int argc, char** argv) {
             const PlaceholderImages placeholders(context);
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);
+            if (!ringPressure(context)) std::printf("the ring pressure test needs at least four chunks\n");
             if (!dataPool(context)) std::printf("the data pool tests need the recorder timeline\n");
             if (BindlessHeap(context).RingChunkCount() != 0u) {
                 ringSpans(context);

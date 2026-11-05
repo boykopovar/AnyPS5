@@ -6081,7 +6081,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
             if (base != 0 && bytes != 0) static_cast<void>(Graphics::FlushDepthPlanes(base, static_cast<std::size_t>(bytes)));
         }
     }
-    state->recorder->BoundKeptBytes();
+    state->recorder->BoundDrawBatch();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.Dispatch");
     if (recipeOut != nullptr) *recipeOut = nullptr;
@@ -6421,7 +6421,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
 }
 
 RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome, const std::shared_ptr<PreparedDispatch>& verify, bool refreshByWords, const std::array<std::uint32_t, 3>& threadGroup) {
-    state->recorder->BoundKeptBytes();
+    state->recorder->BoundDrawBatch();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.DispatchRecipe");
     outcome = {0, 0};

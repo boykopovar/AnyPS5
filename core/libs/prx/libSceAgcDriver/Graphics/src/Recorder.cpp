@@ -3097,6 +3097,12 @@ void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
     if (open->keptOwners.insert(owner).second) open->keptBytes += bytes;
 }
 
+void Recorder::BoundDrawBatch() {
+    BoundKeptBytes();
+    if (open == nullptr || !DescriptorHeapEnabled() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (auto* heap = BindlessHeap::Existing(context); heap != nullptr && heap->TakeRingPressure()) Submit();
+}
+
 void Recorder::BoundKeptBytes() {
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();
