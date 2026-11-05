@@ -1,0 +1,38 @@
+cmake_policy(SET CMP0054 NEW)
+math(EXPR loaderIndex "${CMAKE_ARGC} - 1")
+math(EXPR separatorIndex "${CMAKE_ARGC} - 2")
+if(NOT CMAKE_ARGV${separatorIndex} STREQUAL "--")
+    message(FATAL_ERROR "Expected the mixed EVP loader after --")
+endif()
+set(LOADER "${CMAKE_ARGV${loaderIndex}}")
+
+file(MAKE_DIRECTORY "${WORK_DIR}")
+execute_process(COMMAND "${PATCHER}" --write-export-list "${LIBC}" "${WORK_DIR}/libc.exports"
+    RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT status STREQUAL "0")
+    message(FATAL_ERROR "libc export list failed: ${output}${error}")
+endif()
+foreach(module LIBC KERNEL INTERNAL LEGACY SSL3 CONSUMER)
+    get_filename_component(name "${${module}}" NAME)
+    get_filename_component(library "${${module}}" NAME_WE)
+    file(COPY_FILE "${${module}}" "${WORK_DIR}/${name}")
+    if(module STREQUAL "LIBC")
+        execute_process(COMMAND "${PATCHER}" "${library}" "${WORK_DIR}/${name}"
+            RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    else()
+        execute_process(COMMAND "${PATCHER}" "${library}" --preserve-export-list "${WORK_DIR}/libc.exports" "${WORK_DIR}/${name}"
+            RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    endif()
+    if(NOT status STREQUAL "0")
+        message(FATAL_ERROR "${library} patch failed: ${output}${error}")
+    endif()
+endforeach()
+foreach(order l3-first legacy-first)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${WORK_DIR}:$ENV{LD_LIBRARY_PATH}"
+        "${LOADER}" "${WORK_DIR}" "${order}"
+        RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(NOT status STREQUAL "0")
+        message(FATAL_ERROR "mixed EVP ${order} failed: ${output}${error}")
+    endif()
+    message("${output}")
+endforeach()
