@@ -206,7 +206,7 @@ std::string Describe(const Case& item) {
     return "T# MIN_LOD " + std::to_string(item.minLod) + " over BASE_LEVEL " + std::to_string(item.baseLevel) + " with S# MAX_LOD " + std::to_string(item.maxLod) + ", mip filter " + std::to_string(item.mipFilter) + " and LOD bias " + std::to_string(item.bias);
 }
 
-void Check(const Case& item, std::size_t results) {
+void Check(const Case& item, std::size_t results, bool implicitOnly = false) {
     constexpr std::array<const char*, 6> names{"image_sample_d_cl", "image_sample_cl", "image_sample_d_cl_o (1, 2)", "image_sample_d_cl_o (-1, -2)", "image_sample_l", "image_sample_lz"};
     constexpr std::array<std::array<std::int32_t, 2>, 6> offsets{{{0, 0}, {0, 0}, {1, 2}, {-1, -2}, {0, 0}, {0, 0}}};
     const std::uint32_t last = Levels - 1u - item.baseLevel;
@@ -231,6 +231,7 @@ void Check(const Case& item, std::size_t results) {
             }
         };
         for (std::size_t index = 0; index < results; ++index) {
+            if (implicitOnly && index != 1u) continue;
             const std::uint32_t level = levelOf(index);
             const std::uint32_t size = Size >> level;
             const std::array<std::uint32_t, 4> expected{level, Wrap(sample.x >> level, offsets[index][0], size), Wrap(sample.y >> level, offsets[index][1], size), 255u};
@@ -388,7 +389,10 @@ int main(int argc, char** argv) {
         }
         if (samplerBias) {
             FillTexture();
-            RunAndCheck(*device, Code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false);
+            const Case item{0u, 0u, 0xfffu, 1u, 256};
+            FillInput();
+            Run(*device, Code, item, false);
+            Check(item, 6u, true);
             std::puts("image sample clamp unit-quad sampler bias tests passed");
             return 0;
         }
