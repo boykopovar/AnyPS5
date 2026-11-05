@@ -125,9 +125,11 @@ int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtend
 }
 
 int APS5_VABI sceShareCaptureVideoClipExtended(const ShareVideoClipParamExtended* param, std::int32_t* requestId) {
-    if (param == nullptr || param->size != sizeof(*param)) return ERROR_INVALID_PARAM;
-    if (requestId != nullptr) *requestId = REQUEST_ID_INVALID;
-    if (param->reserved != 0 || (param->mode == 0 && param->value16 != 0)) return ERROR_INVALID_PARAM;
+    ShareVideoClipParamExtended copy{};
+    if (param == nullptr || !GuestCopyIn_nid_no_patch(&copy, param, sizeof(copy))) return ERROR_INVALID_PARAM;
+    if (copy.size != sizeof(copy)) return ERROR_INVALID_PARAM;
+    if (requestId != nullptr && !WriteRequestIdInvalid(requestId)) return ERROR_INVALID_PARAM;
+    if (copy.reserved != 0 || (copy.mode == 0 && copy.value16 != 0)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
 }
 
