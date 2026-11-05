@@ -2454,6 +2454,82 @@ void verifyAllocationChurnSnapshot() {
     }
 }
 
+void verifyRegisteredViewsUnderUnrelatedChurn() {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t RangeBytes = 65536u;
+    constexpr std::uint32_t Checks = 20000u;
+    alignas(4096) static std::array<std::uint8_t, RangeBytes> texels{};
+    alignas(4096) static std::array<std::uint8_t, 4096> unrelated{};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels.data(), texels.size(), true, false, true);
+    }
+    const auto view = [] {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(texels.data()), false);
+        require(range != nullptr, "registered view churn: the image range was not registered");
+        RegisteredImageView captured;
+        captured.address = reinterpret_cast<std::uintptr_t>(texels.data()) + 256u;
+        captured.hasRange = true;
+        captured.rangeAddress = range->address;
+        captured.rangeBytes = range->bytes;
+        captured.allocationAddress = range->allocationAddress;
+        captured.allocationBytes = range->allocationBytes;
+        captured.backingSerial = range->backingSerial;
+        captured.readable = range->readable;
+        captured.writable = range->writable;
+        captured.gpu = range->gpu;
+        return captured;
+    }();
+    std::array<RegisteredImageView, 3> views{view, view, view};
+    views[1].address = view.address + 4096u;
+    views[2].address = view.address + 8192u;
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> mutations{0};
+    std::thread churn([&] {
+        while (!stop.load(std::memory_order_acquire)) {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Add(unrelated.data(), unrelated.size(), true, true, true);
+            }
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(unrelated.data());
+            }
+            mutations.fetch_add(2u, std::memory_order_relaxed);
+        }
+    });
+    std::uint32_t rejected = 0u;
+    const auto generationBefore = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    while (mutations.load(std::memory_order_relaxed) < 64u) std::this_thread::yield();
+    for (std::uint32_t check = 0; check < Checks; ++check) {
+        if (!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views)) ++rejected;
+    }
+    stop.store(true, std::memory_order_release);
+    churn.join();
+    const auto generationAfter = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    require(generationAfter - generationBefore >= 64u, "registered view churn: the unrelated mappings did not move the allocation generation");
+    const auto rejectedMessage = "registered view churn: " + std::to_string(rejected) + " of " + std::to_string(Checks) + " checks rejected views whose own range never changed while only an unrelated allocation moved";
+    require(rejected == 0u, rejectedMessage.c_str());
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels.data());
+    }
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted after their range was removed");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels.data(), texels.size(), true, false, true);
+    }
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted after their range was mapped again with a new backing");
+    views[0].backingSerial = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(texels.data()), false)->backingSerial;
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted while one of them still names the old backing");
+    views[1].backingSerial = views[2].backingSerial = views[0].backingSerial;
+    require(AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views matching the new backing were rejected");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels.data());
+    }
+}
+
 void verifySnapshotAllocationMoves() {
     using namespace ShaderRecompiler;
     constexpr std::size_t RangeBytes = 65536u;
@@ -11573,6 +11649,11 @@ int main(int argc, char** argv) {
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--registered-view-churn") {
+            verifyRegisteredViewsUnderUnrelatedChurn();
+            std::cout << "Registered image views stay current while unrelated allocations change\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
