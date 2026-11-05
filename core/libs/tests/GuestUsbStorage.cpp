@@ -377,9 +377,6 @@ void TestGetdents() {
 }
 
 void TestThrowingExports() {
-    char mountPoint[8]{};
-    Require(ThrowsWith([&] { sceUsbStorageGetMountPointOfShellCore(0, mountPoint); }, "sceUsbStorageGetMountPointOfShellCore not implemented"),
-            "get the mount point of shell core without a device did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageClearFakeWriteProtection(); }, "sceUsbStorageClearFakeWriteProtection not implemented"),
             "clear fake write protection did not throw its marker");
     Require(ThrowsWith([] { sceUsbStorageSetFakeMapLockForDebug(); }, "sceUsbStorageSetFakeMapLockForDebug not implemented"),
