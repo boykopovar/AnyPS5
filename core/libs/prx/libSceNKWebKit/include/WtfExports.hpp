@@ -136,6 +136,7 @@ WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(
 void APS5_VABI _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(void* context, void (APS5_VABI *observer)(void*));
 void APS5_VABI _ZN3WTF25fastDecommitAlignedMemoryEPvm(void*, std::size_t);
 void APS5_VABI _ZN3WTF25fastMallocDumpMallocStatsEv();
+bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 void APS5_VABI _ZN3WTF27releaseFastMallocFreeMemoryEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const NKWebKit::WtfAbi::String* localeName);
 void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context);
