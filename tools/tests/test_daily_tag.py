@@ -1,6 +1,8 @@
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -124,10 +126,10 @@ class Clock extends Date {
 """
 
 
-def snapshot_script():
+def workflow_step_script(step_id, key):
     lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
-    step = next(index for index, line in enumerate(lines) if line.strip() == "id: snapshot")
-    start = next(index for index in range(step, len(lines)) if lines[index].strip() == "script: |") + 1
+    step = next(index for index, line in enumerate(lines) if line.strip() == f"id: {step_id}")
+    start = next(index for index in range(step, len(lines)) if lines[index].strip() == f"{key}: |") + 1
     indent = len(lines[start]) - len(lines[start].lstrip())
     script = []
     for line in lines[start:]:
@@ -135,6 +137,14 @@ def snapshot_script():
             break
         script.append(line[indent:])
     return "\n".join(script)
+
+
+def snapshot_script():
+    return workflow_step_script("snapshot", "script")
+
+
+def commit(sha, *parents, **changes):
+    return {"sha": sha, "parents": [{"sha": parent} for parent in parents], **changes}
 
 
 def successful_run(sha=NEW, run_id=20, **changes):
@@ -151,7 +161,7 @@ class DailySnapshotTests(unittest.TestCase):
     def setUpClass(cls):
         cls.node = shutil.which("node")
         if not cls.node:
-            raise unittest.SkipTest("the snapshot script runs in node")
+            raise RuntimeError("Node.js is required to validate the daily snapshot script")
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
         (cls.root / "harness.js").write_text(HARNESS, encoding="utf-8")
@@ -163,7 +173,7 @@ class DailySnapshotTests(unittest.TestCase):
 
     def run_snapshot(self, **changes):
         scenario = {"mainSha": MAIN, "runPages": [[successful_run()]],
-                    "commitPages": [[{"sha": MAIN}, {"sha": NEW}, {"sha": OLD}]], **changes}
+                    "commitPages": [[commit(MAIN, NEW), commit(NEW, OLD), commit(OLD)]], **changes}
         process = subprocess.run([self.node, str(self.root / "harness.js"), str(self.root / "snapshot.js")],
                                  input=json.dumps(scenario), capture_output=True, text=True,
                                  encoding="utf-8", timeout=5)
@@ -246,16 +256,69 @@ class DailySnapshotTests(unittest.TestCase):
 
     def test_runs_and_main_history_can_span_multiple_pages(self):
         runs = [[successful_run(OLD, 1)], [successful_run(NEW, 2)]]
-        commits = [[{"sha": MAIN}], [{"sha": NEW}, {"sha": OLD}]]
+        commits = [[commit(MAIN, NEW)], [commit(NEW, OLD), commit(OLD)]]
         result = self.run_snapshot(runPages=runs, commitPages=commits)
         self.require_created(result)
         self.assertEqual([call["page"] for call in self.calls(result, "commitPage")], [1, 2])
+
+    def test_ancestor_with_a_later_timestamp_cannot_win_over_its_descendant(self):
+        commits = [[commit(MAIN, NEW),
+                    commit(OLD, commit={"committer": {"date": "2026-11-05T10:00:00Z"}}),
+                    commit(NEW, OLD, commit={"committer": {"date": "2026-11-05T09:00:00Z"}})]]
+        result = self.run_snapshot(runPages=[[successful_run(OLD, 10), successful_run(NEW, 20)]],
+                                   commitPages=commits)
+        self.require_created(result)
+
+    def test_first_parent_chain_wins_over_unordered_merge_history(self):
+        side = "d" * 40
+        commits = [[commit(MAIN, NEW, side), commit(side, OLD), commit(OLD), commit(NEW, OLD)]]
+        runs = [[successful_run(side, 99), successful_run(OLD, 10), successful_run(NEW, 20)]]
+        result = self.run_snapshot(runPages=runs, commitPages=commits)
+        self.require_created(result)
+        self.assertEqual([call["params"]["run_id"] for call in self.calls(result, "getWorkflowRun")], [20])
+
+    def test_successful_non_first_parent_branch_is_not_selected(self):
+        side = "d" * 40
+        commits = [[commit(MAIN, NEW, side), commit(side, OLD), commit(NEW, OLD), commit(OLD)]]
+        runs = [[successful_run(side, 99), successful_run(OLD, 10)]]
+        result = self.run_snapshot(runPages=runs, commitPages=commits)
+        self.require_created(result, OLD)
+        self.assertEqual([call["params"]["run_id"] for call in self.calls(result, "getWorkflowRun")], [10])
+
+    def test_parent_on_later_page_wins_over_cached_older_green_ancestor(self):
+        commits = [[commit(MAIN, NEW), commit(OLD)], [commit(NEW, OLD)]]
+        runs = [[successful_run(OLD, 10), successful_run(NEW, 20)]]
+        result = self.run_snapshot(runPages=runs, commitPages=commits)
+        self.require_created(result)
+        self.assertEqual([call["page"] for call in self.calls(result, "commitPage")], [1, 2])
+
+    def test_first_parent_records_from_earlier_pages_are_cached(self):
+        commits = [[commit(NEW, OLD), commit(OLD)], [commit(MAIN, NEW)]]
+        result = self.run_snapshot(commitPages=commits)
+        self.require_created(result)
+        self.assertEqual([call["page"] for call in self.calls(result, "commitPage")], [1, 2])
+
+    def test_missing_first_parent_record_never_promotes_another_listed_commit(self):
+        result = self.run_snapshot(runPages=[[successful_run(OLD, 10)]],
+                                   commitPages=[[commit(MAIN, NEW), commit(OLD)]])
+        self.require_failed(result)
+        self.assertEqual(self.calls(result, "getWorkflowRun"), [])
+
+    def test_incomplete_parent_metadata_never_promotes_another_listed_commit(self):
+        result = self.run_snapshot(commitPages=[[{"sha": MAIN}, commit(NEW, OLD), commit(OLD)]])
+        self.require_failed(result)
+        self.assertEqual(self.calls(result, "getWorkflowRun"), [])
+
+    def test_first_parent_root_never_uses_an_unrelated_listed_commit(self):
+        result = self.run_snapshot(commitPages=[[commit(MAIN), commit(NEW, OLD), commit(OLD)]])
+        self.require_failed(result)
+        self.assertEqual(self.calls(result, "getWorkflowRun"), [])
 
     def test_main_head_itself_can_be_the_newest_green_commit(self):
         self.require_created(self.run_snapshot(runPages=[[successful_run(MAIN)]]), MAIN)
 
     def test_history_pagination_stops_after_finding_a_valid_commit(self):
-        result = self.run_snapshot(commitPages=[[{"sha": NEW}], [{"sha": OLD}]])
+        result = self.run_snapshot(commitPages=[[commit(MAIN, NEW), commit(NEW, OLD)], [commit(OLD)]])
         self.require_created(result)
         self.assertEqual(len(self.calls(result, "commitPage")), 1)
         params = self.calls(result, "iterateCommits")[0]["params"]
@@ -263,7 +326,7 @@ class DailySnapshotTests(unittest.TestCase):
 
     def test_commit_hash_comparisons_accept_uppercase_hex_and_publish_lowercase(self):
         result = self.run_snapshot(runPages=[[successful_run(NEW.upper())]],
-                                   commitPages=[[{"sha": NEW.upper()}]])
+                                   commitPages=[[commit(MAIN, NEW.upper()), commit(NEW.upper(), OLD), commit(OLD)]])
         self.require_created(result)
 
     def test_successful_run_outside_current_main_history_is_ignored(self):
@@ -291,7 +354,7 @@ class DailySnapshotTests(unittest.TestCase):
         self.require_failed(self.run_snapshot(runPages=[[]]))
 
     def test_no_successful_build_in_main_history_never_creates_a_tag(self):
-        self.require_failed(self.run_snapshot(commitPages=[[{"sha": MAIN}]]))
+        self.require_failed(self.run_snapshot(commitPages=[[commit(MAIN)]]))
 
     def test_empty_main_history_never_creates_a_tag(self):
         self.require_failed(self.run_snapshot(commitPages=[[]]))
@@ -369,8 +432,11 @@ class DailySnapshotWorkflowTests(unittest.TestCase):
         self.assertIn("permissions: {}", text)
         self.assertIn("github.repository == 'boykopovar/AnyPS5'", text)
         self.assertIn("github.ref == 'refs/heads/main'", text)
-        self.assertIn("contents: write", text)
-        self.assertIn("actions: read", text)
+        self.assertNotIn("contents: write", text)
+        self.assertNotIn("actions: read", text)
+        self.assertRegex(text, r"(?m)^\s+github-token:\s*\$\{\{\s*secrets\.DAILY_TAG_TOKEN\s*\}\}\s*$")
+        self.assertRegex(text, r"(?m)^\s+DAILY_TAG_TOKEN:\s*\$\{\{\s*secrets\.DAILY_TAG_TOKEN\s*\}\}\s*$")
+        self.assertLess(text.index("id: token-check"), text.index("id: snapshot"))
         self.assertNotIn("actions/checkout", text)
         self.assertNotIn("pull_request:", text)
 
@@ -382,6 +448,57 @@ class DailySnapshotWorkflowTests(unittest.TestCase):
         script = snapshot_script()
         self.assertNotIn("updateRef", script)
         self.assertNotIn("deleteRef", script)
+
+
+    def run_token_preflight(self, token):
+        env = os.environ.copy()
+        env["DAILY_TAG_TOKEN"] = token
+        return subprocess.run([shutil.which("bash"), "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
+                               workflow_step_script("token-check", "run")],
+                              env=env, capture_output=True, text=True, encoding="utf-8", timeout=5)
+
+    def test_token_preflight_fails_clearly_when_the_secret_is_empty(self):
+        process = self.run_token_preflight("")
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("DAILY_TAG_TOKEN", process.stdout + process.stderr)
+
+    def test_token_preflight_accepts_a_present_secret_without_logging_it(self):
+        token = "daily-tag-test-secret-51e7c4d2"
+        process = self.run_token_preflight(token)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertNotIn(token, process.stdout + process.stderr)
+
+
+class DailySnapshotDependencyTests(unittest.TestCase):
+    def require_missing_node_failure(self, workflow):
+        source = Path(__file__).resolve()
+        program = ("import importlib.util, pathlib, unittest\n"
+                   f"spec = importlib.util.spec_from_file_location('daily_tag_dependency_test', {str(source)!r})\n"
+                   "module = importlib.util.module_from_spec(spec)\n"
+                   "spec.loader.exec_module(module)\n"
+                   f"module.WORKFLOW = pathlib.Path({str(workflow)!r})\n"
+                   "unittest.main(module=module, argv=['test_daily_tag.py', "
+                   "'DailySnapshotTests.test_manual_main_run_creates_the_same_snapshot'])\n")
+        env = os.environ.copy()
+        env["PATH"] = ""
+        process = subprocess.run([sys.executable, "-c", program], env=env, capture_output=True,
+                                 text=True, encoding="utf-8", timeout=5)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("RuntimeError: Node.js is required", process.stderr)
+        self.assertNotIn("skipped", process.stderr.lower())
+        self.assertNotIn("OK", process.stderr)
+
+    def test_missing_node_fails_instead_of_skipping_the_behavioral_tests(self):
+        self.require_missing_node_failure(WORKFLOW)
+
+    def test_invalid_javascript_cannot_pass_when_node_is_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            workflow = Path(folder) / "daily-tag.yml"
+            text = WORKFLOW.read_text(encoding="utf-8")
+            self.assertIn("script: |", text)
+            workflow.write_text(text.replace("script: |", "script: |\n            const = invalid JavaScript;", 1),
+                                encoding="utf-8")
+            self.require_missing_node_failure(workflow)
 
 
 if __name__ == "__main__":

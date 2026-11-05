@@ -16,14 +16,22 @@ jobs:
     if: github.repository == 'boykopovar/AnyPS5' && !github.event.repository.fork && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
-      actions: read
     steps:
+      - name: Require the historical-tag publishing token
+        id: token-check
+        shell: bash
+        env:
+          DAILY_TAG_TOKEN: ${{ secrets.DAILY_TAG_TOKEN }}
+        run: |
+          if [ -z "$DAILY_TAG_TOKEN" ]; then
+            echo '::error::Configure DAILY_TAG_TOKEN for this repository with Actions read, Contents write and Workflows write permissions.'
+            exit 1
+          fi
       - name: Tag the newest main commit whose push Build passed
         id: snapshot
         uses: actions/github-script@v8
         with:
+          github-token: ${{ secrets.DAILY_TAG_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const repository = `${owner}/${repo}`;
@@ -64,23 +72,31 @@ jobs:
             }
             if (byCommit.size === 0) throw new Error('No successful main push Build found');
             const main = (await github.rest.git.getRef({ owner, repo, ref: 'heads/main' })).data.object.sha;
+            const history = new Map();
+            let cursor = main.toLowerCase();
             let selected;
             for await (const { data: commits } of github.paginate.iterator(github.rest.repos.listCommits, {
               owner, repo, sha: main, per_page: 100,
             })) {
-              for (const commit of commits) {
-                for (const run of byCommit.get(commit.sha.toLowerCase()) ?? []) {
+              for (const commit of commits) history.set(commit.sha.toLowerCase(), commit);
+              while (cursor && history.has(cursor)) {
+                const commit = history.get(cursor);
+                if (!Array.isArray(commit.parents) || commit.parents.some((parent) => !/^[a-f0-9]{40}$/i.test(parent.sha))) {
+                  throw new Error(`Missing or invalid parent metadata for ${cursor}`);
+                }
+                for (const run of byCommit.get(cursor) ?? []) {
                   const { data: current } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
-                  if (eligible(current) && current.id === run.id && current.head_sha.toLowerCase() === commit.sha.toLowerCase()) {
+                  if (eligible(current) && current.id === run.id && current.head_sha.toLowerCase() === cursor) {
                     selected = current;
                     break;
                   }
                 }
                 if (selected) break;
+                cursor = commit.parents.length ? commit.parents[0].sha.toLowerCase() : null;
               }
-              if (selected) break;
+              if (selected || cursor === null) break;
             }
-            if (!selected) throw new Error('No successful push Build found in current main history');
+            if (!selected) throw new Error('No successful push Build found in the resolved first-parent main history');
             const sha = selected.head_sha.toLowerCase();
             try {
               await github.rest.git.createRef({ owner, repo, ref: `refs/${ref}`, sha });
