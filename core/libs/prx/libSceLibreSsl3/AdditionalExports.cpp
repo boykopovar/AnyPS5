@@ -3,14 +3,6 @@
 
 extern "C" {
 
-int APS5_VABI BIO_clear_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_set_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI BN_clear_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -207,10 +199,6 @@ int APS5_VABI EC_KEY_set_asn1_flag_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -265,10 +253,6 @@ int APS5_VABI RSA_set0_factors_nid_postfix() {
 }
 
 int APS5_VABI X509_set_pubkey_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_get_shutdown_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -470,10 +454,6 @@ int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_get_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY2PKCS8_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -539,19 +519,11 @@ int APS5_VABI RSA_get0_crt_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI X509_ALGOR_get0_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_set_shutdown_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
