@@ -24,8 +24,19 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         if (header.Type == 7) header.Alignment = std::max<std::uint64_t>(header.Alignment, 1);
         headers.push_back(header);
     }
-    if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
+    const auto lastStack = std::find_if(headers.rbegin(), headers.rend(), [](const auto& header) { return header.Type == PT_GNU_STACK; });
+    if (lastStack == headers.rend()) {
         headers.push_back({PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
+    } else {
+        auto lastIndex = static_cast<std::size_t>(std::distance(lastStack, headers.rend()) - 1);
+        for (std::size_t i = 0; i < lastIndex; ++i) {
+            if (headers[i].Type == PT_GNU_STACK) {
+                headers.erase(headers.begin() + static_cast<std::ptrdiff_t>(i));
+                --i;
+                --lastIndex;
+            }
+        }
+    }
     std::vector<Domain::ProgramHeader> loads;
     for (const auto& header : headers)
         if (header.Type == 1) loads.push_back(header);
