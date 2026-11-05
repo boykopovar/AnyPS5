@@ -14,6 +14,8 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
+extern "C" int APS5_VABI sceKernelSettimeofday(const KernelTimeval* tv, const KernelTimezone* tz);
+
 namespace {
 
 constexpr int SCE_RTC_ERROR_INVALID_POINTER = static_cast<int>(0x80B50002);
@@ -747,10 +749,9 @@ int APS5_VABI sceRtcSetCurrentDebugNetworkTick(const RtcTick* tick) {
 int APS5_VABI sceRtcSetConf(int first, int second, int third, int fourth) {
     (void)first;
     (void)second;
-    (void)third;
-    (void)fourth;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (fourth < -1) return static_cast<int>(0x80020016u);
+    const KernelTimezone zone{third, fourth < 0 ? 0 : fourth};
+    return sceKernelSettimeofday(nullptr, &zone);
 }
 
 int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, int time_zone_minutes, int precision) {

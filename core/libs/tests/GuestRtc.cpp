@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+extern "C" int APS5_VABI sceKernelGettimezone(KernelTimezone* tz);
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -167,6 +168,19 @@ int main(int argc, char** argv) {
     Require(sceRtcGetCurrentClockLocalTime(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
     Require(sceRtcGetCurrentClockUtc(nullptr) == invalidPointer);
     Require(sceRtcGetCurrentClockUtc(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
+    Require(sceRtcSetConf(0, 0, -60, 1) == 0);
+    KernelTimezone zone{-123, -123};
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == -60 && zone.tz_dsttime == 1);
+    Require(sceRtcSetConf(123456, 789, 60, 2) == 0);
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 2);
+    Require(sceRtcSetConf(-2147483647 - 1, 2147483647, 720, -1) == 0);
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 720 && zone.tz_dsttime == 0);
+    Require(sceRtcSetConf(0, 0, 123456789, 2147483647) == 0);
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 123456789 && zone.tz_dsttime == 2147483647);
+    Require(sceRtcSetConf(0, 0, 42, -2) == static_cast<int>(0x80020016u));
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 123456789 && zone.tz_dsttime == 2147483647);
+    Require(sceRtcSetConf(0, 0, 42, -2147483647 - 1) == static_cast<int>(0x80020016u));
+    Require(sceKernelGettimezone(&zone) == 0 && zone.tz_minuteswest == 123456789 && zone.tz_dsttime == 2147483647);
 
     RtcDateTime epoch{1970, 1, 1, 0, 0, 0, 0};
     std::int64_t seconds = -1;

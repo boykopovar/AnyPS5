@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
@@ -316,9 +317,13 @@ static void RequireZone(const char* zone, std::int64_t utc, std::int64_t standar
 
 static void RequireTimezone(const char* zone, std::int32_t minutesEast, std::int32_t daylightMinutes) {
     SetTimeZone(zone);
+    KernelTimezone expected{minutesEast, RuntimeDaylight(daylightMinutes * 60) / 60};
+    Require(settimeofday_nid_postfix(nullptr, &expected) == 0);
     KernelTimezone tz{-1, -1};
     Require(sceKernelGettimezone(&tz) == SCE_OK);
-    Require(tz.tz_minuteswest == minutesEast && tz.tz_dsttime == RuntimeDaylight(daylightMinutes * 60) / 60);
+    Require(tz.tz_minuteswest == expected.tz_minuteswest && tz.tz_dsttime == expected.tz_dsttime);
+    KernelTimezone zero{0, 0};
+    Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
 }
 
 static void TimezoneReportsTheStandardOffsetAndDaylightAmount() {
@@ -344,6 +349,8 @@ static void CalendarConversionsFollowTheHostZone() {
 
 static void KernelTimezoneIsUtc() {
     SetTimeZone("UTC0");
+    KernelTimezone zero{0, 0};
+    Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
     Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
