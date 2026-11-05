@@ -221,6 +221,21 @@ static void CheckSuspension(const std::string& file) {
     sceFiosResume();
     sceFiosResume();
     REQUIRE(sceFiosGetSuspendCount() == 0);
+
+    std::atomic<bool> returned{false};
+    std::thread watchdog([&] {
+        for (int waited = 0; waited < 200 && !returned.load(); ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!returned.load()) {
+            std::fputs("guest_fios2: sceFiosFileGetSizeSync did not return while suspended\n", stderr);
+            std::_Exit(1);
+        }
+    });
+    sceFiosSuspend();
+    const SceFiosSize syncSize = sceFiosFileGetSizeSync(&attr, file.c_str());
+    sceFiosResume();
+    returned.store(true);
+    watchdog.join();
+    REQUIRE(syncSize == 10 && sceFiosGetSuspendCount() == 0 && sceFiosIsIdle());
 }
 
 static void CheckMutations(const std::string& directory) {
