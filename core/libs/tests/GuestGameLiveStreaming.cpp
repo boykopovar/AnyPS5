@@ -44,6 +44,7 @@ void CheckLifecycleFirst() {
     Require(sceGameLiveStreamingPermitLiveStreaming(true) == notInitialized);
     Require(sceGameLiveStreamingPermitServerSideRecording(false) == notInitialized);
     Require(sceGameLiveStreamingSetMaxBitrate(6000) == notInitialized);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
     Require(sceGameLiveStreamingEnableSocialFeedback(true) == notInitialized);
     Require(sceGameLiveStreamingSetMetadata(nullptr) == notInitialized);
     Require(sceGameLiveStreamingSetMetadata("metadata") == notInitialized);
@@ -200,6 +201,7 @@ int main() {
     constexpr int notInitialized = static_cast<int>(0x80A00004);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == notInitialized);
     Require(EnableThrowsNotInitialized(true));
     CheckLifecycleFirst();
     CheckSeparateModeParameter();
@@ -209,6 +211,7 @@ int main() {
     Require(sceGameLiveStreamingInitialize(0) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == alreadyInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == invalidArgument);
+    Require(sceGameLiveStreamingGetCurrentStatus(nullptr) == invalidArgument);
 
     GameLiveStreamingStatus2 status{};
     std::memset(&status, 0x7f, sizeof(status));
@@ -225,6 +228,11 @@ int main() {
     for (std::uint8_t byte : status.reserved) {
         Require(byte == 0);
     }
+
+    GameLiveStreamingStatus legacyStatus{};
+    std::memset(&legacyStatus, 0x7f, sizeof(legacyStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&legacyStatus) == 0);
+    for (const auto value : std::as_bytes(std::span(&legacyStatus, 1))) Require(value == std::byte{0});
 
     Require(sceGameLiveStreamingGetProgramInfo(nullptr) == static_cast<int>(0x80A00002));
     std::array<std::uint8_t, 0x134C + 16> programInfo{};
@@ -246,6 +254,9 @@ int main() {
     std::memset(&status, 0x7f, sizeof(status));
     Require(sceGameLiveStreamingGetCurrentStatus2(&status) == notInitialized);
     for (const auto value : std::as_bytes(std::span(&status, 1))) Require(value == std::byte{0x7f});
+    std::memset(&legacyStatus, 0x7f, sizeof(legacyStatus));
+    Require(sceGameLiveStreamingGetCurrentStatus(&legacyStatus) == notInitialized);
+    for (const auto value : std::as_bytes(std::span(&legacyStatus, 1))) Require(value == std::byte{0x7f});
     programInfo.fill(0x7f);
     Require(sceGameLiveStreamingGetProgramInfo(reinterpret_cast<GameLiveStreamingProgramInfo*>(programInfo.data())) == notInitialized);
     for (const std::uint8_t byte : programInfo) Require(byte == 0x7f);
