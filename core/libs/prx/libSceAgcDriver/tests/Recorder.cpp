@@ -5601,6 +5601,52 @@ void drawSnapshotEvictionTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
 }
 
+void paddedVertexSnapshotTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
+    constexpr std::size_t bytes = 4 * 65536;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: padded vertex snapshots not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    Recorder cache(device.GetContext());
+    auto context = device.GetContext();
+    context.recorder = &cache;
+    auto* guest = static_cast<std::byte*>(block);
+    std::memset(guest, 0x11, 4096);
+    constexpr std::size_t padded = 2 * 65536;
+    constexpr std::size_t valid = 64;
+    const auto contentIs = [&](const DrawInputCopy& copy, std::size_t readable) {
+        const auto held = copy.buffer->Bytes();
+        if (held.size() != padded) return false;
+        for (std::size_t i = 0; i < padded; ++i) {
+            if (held[i] != (i < readable ? guest[i] : std::byte{0})) return false;
+        }
+        return true;
+    };
+    const auto first = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(!first.reused && contentIs(first, valid), "the first padded vertex copy is wrong");
+    const auto again = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(again.reused && again.buffer == first.buffer, "an unchanged padded vertex input was copied again");
+    guest[65536 + 8] = std::byte{0x22};
+    const auto padding = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(padding.reused && padding.buffer == first.buffer && contentIs(padding, valid), "a store past the valid bytes discarded the padded copy");
+    guest[8] = std::byte{0x33};
+    const auto stored = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(!stored.reused && stored.buffer != first.buffer && contentIs(stored, valid), "a padded vertex copy outlived a store to its valid bytes");
+    const auto shorter = CopyZeroPaddedDrawInput(context, address, padded, valid / 2, 16);
+    Require(!shorter.reused && contentIs(shorter, valid / 2), "a padded copy was reused for fewer valid bytes");
+    const auto longer = CopyZeroPaddedDrawInput(context, address, padded * 2, valid / 2, 16);
+    Require(!longer.reused && longer.buffer->Bytes().size() == padded * 2, "a padded copy was reused for a longer fetch");
+    Require(cache.ReusableDrawSnapshot(address, padded, Recorder::SnapshotUse::Vertex) == nullptr, "a padded copy served an unpadded vertex input");
+}
+
 void containingSnapshotTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 131072;
@@ -8504,6 +8550,7 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 image->MarkDirty();
                 const auto slabRetilesBefore = StorageTexture::SlabRetiles();
                 const auto paddingSeedsBefore = StorageTexture::PaddingSeedCopies();
+                const auto importRetilesBefore = StorageTexture::LinearImportRetiles();
                 image->WriteBack();
                 recorder.Submit();
                 device.WaitQueue();
@@ -8512,6 +8559,14 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 if (test.direct && watched && UnitShadowEnabled() && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
                 const auto paddingSeeded = StorageTexture::PaddingSeedCopies() - paddingSeedsBefore;
                 if (test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && paddingSeeded != 0) failures += what + ": the write-back copied " + std::to_string(paddingSeeded) + " pieces of row padding from the import through its scratch\n";
+                const auto importRetiled = StorageTexture::LinearImportRetiles() - importRetilesBefore;
+                static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
+                const auto* surfaceImport = watched ? HostImportFor(context, address, surfaceBytes) : nullptr;
+                const bool deviceLocalImport = surfaceImport != nullptr && HostImportDeviceLocal(context, *surfaceImport);
+                const bool expectImportRetile = importRetile && deviceLocalImport && test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes);
+                if (expectImportRetile && importRetiled == 0) failures += what + ": the linear write-back went through its scratch instead of retiling into the import\n";
+                if (!importRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into the import with APS5_NO_LINEAR_IMPORT_RETILE set\n";
+                if (watched && !deviceLocalImport && importRetiled != 0) failures += what + ": the linear write-back retiled into an import outside a device-local heap\n";
                 std::vector<std::byte> read(bytes);
                 if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
                 else std::memcpy(read.data(), memory, bytes);
@@ -8526,6 +8581,22 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                     }
                     if (isTexel) ++texels;
                     else if (!isPattern) ++(inside ? garbage : outside);
+                }
+                if (test.tileMode == TextureTileMode::kLinear) {
+                    std::vector<bool> texelByte(surfaceBytes, false);
+                    for (const auto& mip : geometry.mips) {
+                        for (std::uint32_t y = 0; y < mip.height; ++y) {
+                            const auto row = static_cast<std::size_t>(mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes);
+                            std::fill(texelByte.begin() + static_cast<std::ptrdiff_t>(row), texelByte.begin() + static_cast<std::ptrdiff_t>(row + mip.width * 4u), true);
+                        }
+                    }
+                    std::size_t misplaced = 0;
+                    for (std::size_t i = 0; i < surfaceBytes; ++i) {
+                        const auto at = static_cast<std::size_t>(test.offset) + i;
+                        const auto byte = std::to_integer<std::uint8_t>(read[at]);
+                        if (byte != (texelByte[i] ? colour[i % 4] : pattern(at))) ++misplaced;
+                    }
+                    if (misplaced != 0) failures += what + ", write-back " + std::to_string(pass + 1) + ": " + std::to_string(misplaced) + " bytes differ from the texels at their rows' places and the untouched pitch padding\n";
                 }
                 if (garbage != 0 || outside != 0 || texels != texelCount) {
                     failures += what + ", write-back " + std::to_string(pass + 1) + ": stored " + std::to_string(texels) + " texels of " + std::to_string(texelCount) + " and changed " + std::to_string(garbage) + " words no texel holds (" + std::to_string(outside) + " past the surface)\n";
@@ -15313,6 +15384,7 @@ int main(int argc, char** argv) {
         imageTableFirstLayerRevalidateTests(device, recorder);
         drawSnapshotCapTests(device, recorder);
         drawSnapshotEvictionTests(device);
+        paddedVertexSnapshotTests(device);
         containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
