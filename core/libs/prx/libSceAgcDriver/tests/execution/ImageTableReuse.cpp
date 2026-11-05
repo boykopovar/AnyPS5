@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -250,6 +251,43 @@ void RunImageStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Require(Row(block.Texels(23)) == Row(stored.data()), "image table reuse: the image store wrote the wrong values");
 }
 
+void RunPendingWriteBack(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) return;
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.875f);
+        SetRecord(block, texture, texture);
+    }
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    std::copy(keys.begin(), keys.end(), Srt.begin() + 4);
+    SetOutput(Output.data());
+    const auto result = Compile(device, block);
+    SetOutput(block.Texels(13));
+    const auto writer = Compile(device, block);
+    SetOutput(Output.data());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    const auto old = Row(block.Texels(13));
+    Require(Dispatch(device, result, 25) == Row(block.Texels(25)), "image table reuse: the table before a write-back was left pending sampled the wrong entry");
+    Require(Dispatch(device, result, 13) == old, "image table reuse: the table reused before a write-back was left pending sampled the wrong entry");
+    Expect(before, 2 - CpuWriteResolutions, CpuWriteResolutions, "two dispatches of a table before a write-back is left pending");
+    Keys[0] = 13;
+    device.Dispatch(writer, 1, 1, 1, {}, AddressOf(TableCode.data()));
+    const auto& context = device.graphicsContext();
+    if (AgcDriver::Graphics::HostImportCovers(context, AddressOf(block.Texels(13)), TextureBytes) || !AgcDriver::Graphics::AnyPendingCpuWrites(context) || Row(block.Texels(13)) != old) {
+        device.WaitIdle();
+        std::puts("a dispatch's write-back over a table entry was not left pending: a table used over a pending write-back is not tested");
+        return;
+    }
+    const auto sampled = Dispatch(device, result, 13);
+    const auto written = Row(block.Texels(13));
+    Require(written != old && written[4] == old[1], "image table reuse: the dispatch writing into an entry's texels with its write-back left pending stored the wrong values");
+    const auto step = Since(before);
+    Require(sampled == written, std::string("image table reuse: a table used while a dispatch's write-back was pending over an entry sampled ") + (sampled == old ? "the entry's old texels" : "neither the entry's old texels nor the written ones") + " (" + std::to_string(step.reused) + " reused and " + std::to_string(step.resolved) + " resolved tables in the step)");
+    Expect(before, 3 - CpuWriteResolutions, CpuWriteResolutions + 1, "a write-back pending over an entry when its table is used again");
+}
+
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& stores) {
     for (std::uint32_t texture = 0; texture < Records; ++texture) {
         Fill(block, texture, 0.25f);
@@ -362,9 +400,11 @@ int main() {
     try {
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
+        GuestBlock pending(UnimportableBytes);
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         RunTests(*device, block, stores);
+        RunPendingWriteBack(*device, pending);
         std::puts("image table reuse tests passed");
         return 0;
     } catch (const std::exception& error) {
