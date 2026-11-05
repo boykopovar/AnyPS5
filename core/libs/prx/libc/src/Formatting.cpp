@@ -368,8 +368,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
-            if (TSource::Contiguous && secure) converted = true;
-            if (!secure) converted = true;
+            if (TSource::Contiguous || !secure) converted = true;
             continue;
         }
         if (IsWideScan(length, conversion)) {
@@ -526,13 +525,11 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         }
         if (conversion == 'c' && length != "l" && (!TSource::Contiguous || !secure)) {
             const auto narrowWidth = static_cast<std::uint32_t>(width);
-            const unsigned long wanted = secure ? (width == 0 ? 1 : width) : (narrowWidth == 0 || narrowWidth > INT_MAX ? 1 : narrowWidth);
+            unsigned long wanted = narrowWidth == 0 || narrowWidth > INT_MAX ? 1 : narrowWidth;
             if (secure && !suppress) {
                 const auto capacity = static_cast<unsigned long>(nextCapacity());
-                if (capacity == 0 || wanted > capacity) {
-                    if (capacity != 0) static_cast<char*>(target)[0] = '\0';
-                    return finish(assigned);
-                }
+                if (capacity == 0) return finish(assigned);
+                wanted = std::min(wanted, capacity);
             }
             unsigned long taken = 0;
             while (taken < wanted) {
