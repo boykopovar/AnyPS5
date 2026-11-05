@@ -80,8 +80,23 @@ class TitleRunPathsTests(unittest.TestCase):
             arguments.extend(("--games", str(package)))
         return arguments + list(extra) + list(ids)
 
-    def run_cli(self, ids=(TITLE,), *, default_out=False, extra=()):
-        return subprocess.run(self.command(ids, default_out=default_out, extra=extra), cwd=self.root, capture_output=True, text=True, timeout=15)
+    def run_cli(self, ids=(TITLE,), *, default_out=False, extra=(), frozen_time=None):
+        command = self.command(ids, default_out=default_out, extra=extra)
+        if frozen_time is not None:
+            bootstrap = """import datetime
+import runpy
+import sys
+frozen = datetime.datetime.fromisoformat(sys.argv.pop(1))
+class FrozenDateTime(datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fromtimestamp(frozen.timestamp(), tz)
+datetime.datetime = FrozenDateTime
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+            command = [command[0], "-c", bootstrap, frozen_time.isoformat(), *command[1:]]
+        return subprocess.run(command, cwd=self.root, capture_output=True, text=True, timeout=15)
 
     def refuse(self, ids=(TITLE,), *, extra=()):
         before = snapshot(self.root)
@@ -145,6 +160,55 @@ class TitleRunPathsTests(unittest.TestCase):
         package = self.package(self.root / "games" / TITLE)
         self.symlink(package / "assets.bin", self.out / "work" / f"{TITLE}.lock")
         self.refuse()
+
+    def test_nested_asset_directory_alias_target_is_protected(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        target = self.stale_work() / "original-assets"
+        target.mkdir()
+        (target / "asset.bin").write_bytes(b"original nested alias-backed title assets")
+        assets = self.root / "external-assets"
+        self.symlink(target, assets / "nested", directory=True)
+        self.symlink(assets, package / "assets", directory=True)
+        self.refuse()
+
+    def test_disjoint_asset_directory_aliases_are_safe(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        work = self.stale_work()
+        assets, library = self.root / "external-assets", self.root / "external-library"
+        library.mkdir()
+        (library / "texture.bin").write_bytes(b"external texture bytes")
+        self.symlink(library, assets / "nested", directory=True)
+        self.symlink(assets, package / "assets", directory=True)
+        inputs = [(path, snapshot(path)) for path in (package, assets, library)]
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, before in inputs:
+            self.assertEqual(snapshot(path), before)
+        self.assertFalse((work / "previous-run.bin").exists())
+        self.assertTrue((work / "input/eboot.elf").is_file())
+        reports = self.reports()
+        self.assertEqual(len(reports), 1)
+        report = json.loads((reports[0] / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["titles"][TITLE]["runs"][0]["outcome"], "relink-failed")
+
+    def test_disjoint_asset_directory_alias_cycle_is_safe(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        assets = self.root / "external-assets"
+        self.symlink(assets, package / "assets", directory=True)
+        self.symlink(package / "assets", assets / "back", directory=True)
+        (assets / "asset.bin").write_bytes(b"assets behind a directory alias cycle")
+        before_package, before_assets = snapshot(package), snapshot(assets)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(snapshot(package), before_package)
+        self.assertEqual(snapshot(assets), before_assets)
+        reports = self.reports()
+        self.assertEqual(len(reports), 1)
+        report = json.loads((reports[0] / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["titles"][TITLE]["runs"][0]["outcome"], "relink-failed")
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-only")
     def test_asset_directory_junction_target_is_protected(self):
@@ -294,6 +358,48 @@ class TitleRunPathsTests(unittest.TestCase):
         report = json.loads((reports[0] / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual(report["titles"][TITLE]["runs"][0]["outcome"], "relink-failed")
 
+    def test_cleanup_unlinks_stale_app0_file_hardlinks(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        work = self.stale_work()
+        stale = work / "app0/assets.bin"
+        stale.parent.mkdir()
+        try:
+            os.link(package / "assets.bin", stale)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"hardlinks unavailable: {error}")
+        self.assertTrue(stale.samefile(package / "assets.bin"))
+        before = snapshot(package)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(snapshot(package), before)
+        self.assertFalse(stale.exists())
+        self.assertFalse((work / "previous-run.bin").exists())
+        self.assertTrue((work / "input/eboot.elf").is_file())
+        reports = self.reports()
+        self.assertEqual(len(reports), 1)
+        report = json.loads((reports[0] / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["titles"][TITLE]["runs"][0]["outcome"], "relink-failed")
+
+    def test_cleanup_unlinks_stale_app0_directory_symlink(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        work = self.stale_work()
+        stale = work / "app0"
+        self.symlink(package, stale, directory=True)
+        before = snapshot(package)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(snapshot(package), before)
+        self.assertFalse(stale.exists())
+        self.assertFalse(stale.is_symlink())
+        self.assertFalse((work / "previous-run.bin").exists())
+        self.assertTrue((work / "input/eboot.elf").is_file())
+        reports = self.reports()
+        self.assertEqual(len(reports), 1)
+        report = json.loads((reports[0] / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["titles"][TITLE]["runs"][0]["outcome"], "relink-failed")
+
     def test_default_output_under_build_is_safe(self):
         package = self.package(self.root / "games" / TITLE)
         relinker = self.fake_relinker()
@@ -381,22 +487,23 @@ class TitleRunPathsTests(unittest.TestCase):
         self.assertIn("cannot reset", errors.getvalue().lower())
         prepare.assert_not_called()
 
-    def report_names(self):
+    def report_name(self, instant):
         result = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
-        now = datetime.datetime.now()
-        return [f"{result.stdout.strip()}-{now + datetime.timedelta(seconds=delta):%Y%m%d-%H%M%S}" for delta in range(-2, 13)]
+        return f"{result.stdout.strip()}-{instant:%Y%m%d-%H%M%S}"
 
     def test_old_report_directory_symlinks_are_not_followed(self):
         package = self.package(self.root / "games" / TITLE)
         self.fake_relinker()
         self.out.mkdir()
-        for name in self.report_names():
-            self.symlink(package, self.out / name, directory=True)
+        instant = datetime.datetime(2001, 2, 3, 4, 5, 6)
+        old = self.report_name(instant)
+        self.symlink(package, self.out / old, directory=True)
         before = snapshot(package)
-        result = self.run_cli()
+        result = self.run_cli(frozen_time=instant)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(snapshot(package), before)
         self.assertEqual(len(self.reports()), 1)
+        self.assertTrue(self.reports()[0].name.startswith(old + "-"))
 
     def test_old_report_file_symlinks_are_not_followed(self):
         package = self.package(self.root / "games" / TITLE)
@@ -404,18 +511,19 @@ class TitleRunPathsTests(unittest.TestCase):
         protected = self.root / "original-summary.json"
         protected.write_bytes(b"preserve the input behind a stale report link")
         self.out.mkdir()
-        old = set(self.report_names())
-        for name in old:
-            report = self.out / name
-            report.mkdir()
-            self.symlink(protected, report / "summary.json")
+        instant = datetime.datetime(2001, 2, 3, 4, 5, 6)
+        old = self.report_name(instant)
+        report = self.out / old
+        report.mkdir()
+        self.symlink(protected, report / "summary.json")
         before_package, before_protected = snapshot(package), protected.read_bytes()
-        result = self.run_cli()
+        result = self.run_cli(frozen_time=instant)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(snapshot(package), before_package)
         self.assertEqual(protected.read_bytes(), before_protected)
-        fresh = [report for report in self.reports() if report.name not in old]
+        fresh = [report for report in self.reports() if report.name != old]
         self.assertEqual(len(fresh), 1)
+        self.assertTrue(fresh[0].name.startswith(old + "-"))
         self.assertFalse((fresh[0] / "summary.json").is_symlink())
 
 
