@@ -42,9 +42,7 @@ int APS5_VABI sceShareCaptureScreenshot(const void* param, int32_t* req_id) {
 
 int APS5_VABI sceShareCaptureVideoClip(const void* param, int32_t* req_id) {
     (void)param;
-    if (req_id != nullptr) {
-        *req_id = REQUEST_ID_INVALID;
-    }
+    if (req_id != nullptr && !WriteRequestIdInvalid(req_id)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
 }
 
