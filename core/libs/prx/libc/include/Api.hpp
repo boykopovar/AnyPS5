@@ -293,6 +293,8 @@ void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignmen
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size);
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size);
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
+void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
+void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
@@ -630,6 +632,14 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
 void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet);
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(const GuestLocale::Implementation* source);
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id);
+GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale7classicEv_nid_postfix();
+GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale5emptyEv_nid_postfix(GuestLocaleFacade* result);
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpEb_nid_postfix(bool transparent);
+void APS5_VABI _ZNSt8__sce_v26locale16_SetgloballocaleEPv_nid_postfix(void* locale);
+GuestLocaleFacade* APS5_VABI _ZNSt8__sce_v26locale6globalERKS0__nid_postfix(GuestLocaleFacade* result, const GuestLocaleFacade* locale);
+void APS5_VABI _ZNSt8__sce_v215_sceLibcLocinfoEPKc_nid_postfix(const char* localeName);
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_iPKc_nid_postfix(GuestLocale::SceV2Locinfo* self, int category, const char* localeName);
+GuestLocale::SceV2Locinfo* APS5_VABI _ZNSt8__sce_v28_Locinfo16_Locinfo_AddcatsEPS0_iPKc_nid_postfix(GuestLocale::SceV2Locinfo* self, int category, const char* localeName);
 void APS5_VABI _init_env_nid_postfix();
 void APS5_VABI init_env_nid_postfix(const InitEnvParams* params);
 SonyLconv* APS5_VABI localeconv_nid_postfix(void);
@@ -1205,7 +1215,7 @@ int APS5_VABI _WStopfx_nid_postfix(const char16_t** cursor, char16_t** end);
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second);
 size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count);
 size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size_t count);
-char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context);
+char* APS5_VABI strtok_s_nid_postfix(char* str, std::size_t* remaining, const char* delimiters, char** context);
 int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count);
 int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count);
 int APS5_VABI wcsncpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count);
@@ -1304,6 +1314,7 @@ char* APS5_VABI ctime_nid_postfix(const int64_t* timer);
 size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr);
 int64_t APS5_VABI clock_nid_postfix();
+int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base);
 int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time);
 int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const GuestTm* time);
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result);
@@ -1554,7 +1565,7 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 [[noreturn]] void APS5_VABI _Exit_nid_postfix(int code);
 [[noreturn]] void APS5_VABI catchReturnFromMain_nid_postfix(int status);
 [[noreturn]] void APS5_VABI quick_exit_nid_postfix(int status);
-[[noreturn]] void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
+void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] char* APS5_VABI fgetln_nid_postfix(FileStream*, std::size_t*);
 [[noreturn]] void APS5_VABI _Assert_nid_postfix(const char* message, const char* location);
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code);
@@ -1680,6 +1691,5 @@ extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
-int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);
 
 }

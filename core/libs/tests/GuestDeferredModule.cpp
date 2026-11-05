@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <future>
+#include <string>
 
 static void Require(bool value, const char* what) {
     if (!value) {
@@ -58,8 +59,29 @@ static void APS5_VABI Reenter(const char* path) {
     Require(dlclose_nid_postfix(nested) == 0, "recursive module close");
 }
 
+static int NativeCounter(HMODULE module, const char* name) {
+    using Value = int (APS5_VABI*)();
+    const auto function = reinterpret_cast<Value>(GetProcAddress(module, name));
+    Require(function != nullptr, "find fixture counter");
+    return function();
+}
+
+static void APS5_VABI ProviderStartedFirst(const char* path) {
+    const auto provider = GetModuleHandleW(std::filesystem::absolute(path).c_str());
+    Require(provider != nullptr, "the provider is mapped");
+    Require(NativeCounter(provider, "DeferredStarts_nid_no_patch") == 1 && NativeCounter(provider, "DeferredConstructors_nid_no_patch") == 1,
+        "the dependency was started before the module that needs it");
+}
+
+static void APS5_VABI NestedLoad(const char* path) {
+    int result = -1;
+    const int id = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, &result);
+    Require(id >= 0, "nested load from a dependency");
+    Require(sceKernelStopUnloadModule(id, 0, nullptr, 0, nullptr, nullptr) == 0, "nested close");
+}
+
 int main(int argc, char** argv) {
-    Require(argc == 3, "fixture and mode required");
+    Require(argc == 3 || (argc == 4 && (std::string(argv[2]).starts_with("dependency") || std::string(argv[2]) == "sweep")) || (argc == 5 && std::string(argv[2]) == "sweep-failed"), "fixture and mode required");
     const auto file = std::filesystem::absolute(argv[1]);
     const auto path = file.string();
     const std::string mode = argv[2];
@@ -130,5 +152,31 @@ int main(int argc, char** argv) {
         Counts(id, 1, 1);
         MetadataProtected(id);
         Close(id);
+    } else if (mode == "dependency" || mode == "dependency-nested" || mode == "sweep" || mode == "sweep-failed") {
+        const auto provider = std::filesystem::absolute(argv[3]);
+        const auto providerPath = provider.string();
+        HMODULE mapped = LoadLibraryW(provider.c_str());
+        if (mode == "sweep-failed") {
+            const auto failed = std::filesystem::absolute(argv[4]);
+            Require(LoadLibraryW(failed.c_str()) != nullptr, "map the module whose start fails");
+        }
+        Require(mapped != nullptr, "map the provider without starting it");
+        Require(NativeCounter(mapped, "DeferredStarts_nid_no_patch") == 0, "the provider is not started by mapping it");
+        GuestDeferredModuleArgs args;
+        args.Mode = mode == "dependency-nested" ? 4 : 3;
+        args.Reenter = mode == "dependency-nested" ? NestedLoad : ProviderStartedFirst;
+        args.Path = providerPath.c_str();
+        const int dependent = Open(path, &args);
+        Counts(dependent, 1, 1);
+        Require(NativeCounter(mapped, "DeferredStarts_nid_no_patch") == 1 && NativeCounter(mapped, "DeferredConstructors_nid_no_patch") == 1, "the dependency started once");
+        Require(NativeCounter(mapped, "DeferredLastArgumentBytes_nid_no_patch") == static_cast<int>(sizeof(args)), "the dependency received the title's start arguments");
+        const auto native = Native(dependent);
+        Require(NativeCounter(native, "DeferredLastArgumentBytes_nid_no_patch") == static_cast<int>(sizeof(args)), "the module received its start arguments after its dependency");
+        const int again = Open(providerPath, nullptr, false);
+        Counts(again, 1, 1);
+        MetadataProtected(again);
+        Close(again);
+        Close(dependent);
+        Require(FreeLibrary(mapped), "release the provider");
     } else Require(false, "unknown fixture mode");
 }

@@ -181,6 +181,8 @@ struct RefreshBlock;
 static thread_local GuestBufferMemory* buildingBufferMemory = nullptr;
 static thread_local std::vector<RefreshBlock>* buildingBlocks = nullptr;
 
+std::atomic<std::uint64_t> importSetGeneration{1};
+
 struct RetiredImport;
 
 struct AddressSpaceCache {
@@ -440,6 +442,15 @@ void rememberImport(HostImports& state, const HostImport* entry) {
     state.recentImports[state.recentNext++ % state.recentImports.size()] = entry;
 }
 
+void importSetChanged() {
+    importSetGeneration.fetch_add(1, std::memory_order_release);
+}
+
+void bumpEpoch(HostImports& state) {
+    ++state.epoch;
+    importSetChanged();
+}
+
 #ifdef _WIN32
 void waitSettleBatch(const ImportSettle& settle, VkDevice device, const SettleBatch& batch) {
     if (batch.busy && settle.waitForFences != nullptr) Check(settle.waitForFences(device, 1, &batch.fence, VK_TRUE, 60'000'000'000ull), "vkWaitForFences (settle batch)");
@@ -540,7 +551,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     // readable registered range (the import retires because its registration vanished or changed
     // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)); });
-    ++state.epoch;
+    bumpEpoch(state);
     state.liveBytes -= it->second.pinnedBytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
@@ -2401,6 +2412,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         const bool exhausted = result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
         if (std::string_view(step) == "vkAllocateMemory") {
             state.allocationFailed = true;
+            if (!exhausted) state.allocationFailures = 0;
             if (exhausted && (++state.allocationFailures >= 3 || state.liveBytes + bytes + budget / 8 >= budget)) {
                 state.ceiling = std::max<std::uint64_t>(state.liveBytes, 1);
                 std::fprintf(stderr, "[gpu] host import budget lowered to the %.1f MiB live after vkAllocateMemory failed %s\n", state.liveBytes / 1048576.0, state.allocationFailures >= 3 ? "3 times in a row" : "within an eighth of the budget");
@@ -2455,7 +2467,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
 #endif
     const auto [placed, added] = state.imports.emplace(base, entry);
-    if (added) ++state.inserted;
+    if (added) {
+        ++state.inserted;
+        importSetChanged();
+    }
     owner.armed = false;
     return &placed->second;
 }
@@ -2541,7 +2556,7 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         state.refreshedWindow = 0;
         state.pendingImports.clear();
         state.refreshedGeneration = 0;
-        ++state.epoch;
+        bumpEpoch(state);
     }
     if (state.destroyBuffer == nullptr) state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
     if (state.freeMemory == nullptr) state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
@@ -4040,7 +4055,7 @@ void ClearHostImports(VkDevice device) {
     state.reportNoted = 0;
     state.device = VK_NULL_HANDLE;
     state.refreshedGeneration = 0;
-    ++state.epoch;
+    bumpEpoch(state);
 }
 
 namespace {
@@ -4662,6 +4677,10 @@ std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
     const auto lease = GuestAllocations::GuestAllocationsAcquireRegistered_nid_postfix();
     const auto* range = containingRange(lease, address, address + 1);
     return range != nullptr ? range->address + range->bytes : 0;
+}
+
+std::uint64_t HostImportSetGeneration() {
+    return importSetGeneration.load(std::memory_order_acquire);
 }
 
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -5628,8 +5647,10 @@ VkBufferUsageFlags gpuCopyUsage(const Context& context, bool addressable) {
 // byte the shader leaves alone must hold the import's bytes), bound in the import's place, and
 // copied back by RecordCopyBacks after the work, with the pending-write note and the direct-write
 // marks of an in-place write. Only builds whose every use records the work and calls
-// RecordCopyBacks take it (dispatches, see AllowDeviceStaging; a synchronous draw would store the
-// staging bytes from the CPU, which a device-local buffer cannot serve). In an address-based build
+// RecordCopyBacks take it (dispatches and recorded draws without BDA page tables, see
+// AllowDeviceStaging; a synchronous draw would store the staging bytes from the CPU, which a
+// device-local buffer cannot serve, so a draw that ends up synchronous is rebuilt unstaged).
+// APS5_NO_DRAW_STAGING=1 keeps draws' elements in place. In an address-based build
 // a written element inside one direct import region of the space becomes an overlay region
 // (resolveOverlays), and AddressRanges cuts the import's range around it so that its pointers reach
 // the shadow as its descriptor does. The
@@ -7225,6 +7246,14 @@ std::optional<GuestBufferMemory::SplitReads> GuestBufferMemory::SplitInPlaceRead
         if (region.direct != nullptr) split.own.emplace_back(region.begin, region.end);
     }
     return split;
+}
+
+bool GuestBufferMemory::InPlaceReadsOverlap(std::uint64_t address, std::size_t bytes) const {
+    if (!uploaded || committed) return false;
+    const auto end = address + bytes;
+    const auto overlaps = [&](const auto& region, std::uint64_t regionEnd) { return region.direct != nullptr && address < regionEnd && region.begin < end; };
+    if (space != nullptr && std::any_of(space->base.begin(), space->base.end(), [&](const auto& region) { return overlaps(region, region.end); })) return true;
+    return std::any_of(regions.begin(), regions.end(), [&](const auto& region) { return overlaps(region, inPlaceEnd(region)); });
 }
 
 void GuestBufferMemory::DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& result) const {
