@@ -730,7 +730,7 @@ const char* APS5_VABI SSL_CIPHER_get_name_nid_postfix(const void* cipher);
 char* APS5_VABI SSL_CIPHER_get_version_nid_postfix(const void* cipher);
 int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(void);
 std::int64_t APS5_VABI SSL_CTX_callback_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, void* callback);
-int APS5_VABI SSL_CTX_check_private_key_nid_postfix(void);
+int APS5_VABI SSL_CTX_check_private_key_nid_postfix(const LibreSslCtx* ctx);
 std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::int64_t larg, void* parg);
 int APS5_VABI SSL_CTX_free_nid_postfix(void);
 void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx);
