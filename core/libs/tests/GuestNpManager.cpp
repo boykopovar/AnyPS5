@@ -356,6 +356,34 @@ void CheckManagerIntProfileGetters() {
     Require(sceNpManagerIntGetAccountCountryA(-1, out.bytes) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetAccountCountryA must refuse user id -1");
     Require(sceNpManagerIntGetAccountCountryA(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountCountryA must refuse a null output");
     Require(sceNpManagerIntGetAccountCountryA(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetAccountCountryA must report NP as signed out and write nothing");
+    std::uint64_t accountId = 0x5a5a5a5a5a5a5a5a;
+    Require(sceNpManagerIntGetAccountId(-1, &accountId) == InvalidArgument && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountId must refuse user id -1");
+    Require(sceNpManagerIntGetAccountId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountId must refuse a null output");
+    Require(sceNpManagerIntGetAccountId(InitialUserId, &accountId) == SignedOut && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetAccountIdSdk(-1, &accountId) == InvalidArgument && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetAccountIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetAccountIdSdk(InitialUserId, &accountId) == SignedOut && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountIdSdk must report NP as signed out and write nothing");
+    for (const auto getter : {sceNpManagerIntGetAccountCountrySdk, sceNpManagerIntGetAccountDateOfBirthSdk, sceNpManagerIntGetAccountNpEnv, sceNpManagerIntGetActiveSigninState, sceNpManagerIntGetAuthServerErrorFlag, sceNpManagerIntGetOnlineIdChangeFlag, sceNpManagerIntGetPlusMemberTypeNB, sceNpManagerIntGetServerError, sceNpManagerIntGetSigninState, sceNpManagerIntGetUserNum}) {
+        Require(getter(-1, out.bytes) == InvalidArgument && out.Untouched(), "an NpManagerInt profile getter must refuse user id -1");
+        Require(getter(InitialUserId, nullptr) == InvalidArgument, "an NpManagerInt profile getter must refuse a null output");
+        Require(getter(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "an NpManagerInt profile getter must report NP as signed out and write nothing");
+    }
+    std::int32_t accountType = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetAccountType(-1, &accountType) == InvalidArgument && accountType == 0x5a5a5a5a, "sceNpManagerIntGetAccountType must refuse user id -1");
+    Require(sceNpManagerIntGetAccountType(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountType must refuse a null output");
+    Require(sceNpManagerIntGetAccountType(InitialUserId, &accountType) == SignedOut && accountType == 0, "sceNpManagerIntGetAccountType must zero the account type");
+    SentinelBuffer npEnv;
+    Require(sceNpManagerIntGetNpEnv(nullptr) == InvalidArgument, "sceNpManagerIntGetNpEnv must refuse a null output");
+    Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
+    for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
+    for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
+    Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
+    std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
+    bool offlineFlag = true;
+    Require(sceNpManagerIntGetOfflineAccountId(-1, &offlineAccountId, &offlineFlag) == InvalidArgument && offlineAccountId == 0x5a5a5a5a5a5a5a5a && offlineFlag, "sceNpManagerIntGetOfflineAccountId must refuse user id -1");
+    Require(sceNpManagerIntGetOfflineAccountId(InitialUserId, &offlineAccountId, &offlineFlag) == SignedOut && offlineAccountId == 0x5a5a5a5a5a5a5a5a && offlineFlag, "sceNpManagerIntGetOfflineAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetOfflineAccountId(InitialUserId, nullptr, nullptr) == SignedOut, "sceNpManagerIntGetOfflineAccountId must accept null outputs");
     NpId* npId = reinterpret_cast<NpId*>(out.bytes);
     Require(sceNpManagerIntGetNpId(-1, npId) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetNpId must refuse user id -1");
     Require(sceNpManagerIntGetNpId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpId must refuse a null output");

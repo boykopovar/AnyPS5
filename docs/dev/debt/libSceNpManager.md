@@ -2,6 +2,10 @@
 
 - [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
 
+### ManagerInt profile getters
+
+- [The account and sign-in profile getters](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) follow the firmware 11.00 register layout: the `Sdk` variants and `GetAccountId`/`GetAccountType`/`GetAccountNpEnv`/`GetActiveSigninState`/`GetAuthServerErrorFlag`/`GetOnlineIdChangeFlag`/`GetPlusMemberTypeNB`/`GetServerError`/`GetSigninState`/`GetUserNum` take `(int userId, output)`, `GetNpEnv` and `GetVshClientId` take the output only, and `GetOfflineAccountId` takes `(int userId, accountId, flag)` with both outputs optional. The getters reject `-1` and a null required output with `0x80550003`, then report `0x80550006` because AnyPS5 keeps NP signed out; firmware returns `0x80550002` when the manager object is absent. `GetAccountType` zeroes its output before the query and `GetNpEnv` zeroes 0x18 bytes, both as firmware does.
+
 ### Silent stubs
 
 - [sceNpUnregisterPlusEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 whether or not a callback was registered, as `sceNpUnregisterPremiumEventCallback` does: `sceNpRegisterPlusEventCallback` keeps no callback, and a signed-out user gets no plus events
