@@ -428,9 +428,9 @@ int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
 
 void APS5_VABI PKCS12_PBE_add_nid_postfix(void) {}
 
-int APS5_VABI PKCS12_free_nid_postfix(void) {
+void APS5_VABI PKCS12_free_nid_postfix(void* pkcs12) {
+    if (pkcs12 == nullptr) return;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI PKCS12_parse_nid_postfix(void) {

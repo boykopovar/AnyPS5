@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <thread>
 #include <type_traits>
 
@@ -69,12 +70,25 @@ int main() {
     static_assert(std::is_void_v<decltype(PKCS12_PBE_add_nid_postfix())>);
     static_assert(std::is_void_v<decltype(OBJ_cleanup_nid_postfix())>);
     static_assert(std::is_void_v<decltype(SSL_load_error_strings_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(PKCS12_free_nid_postfix(nullptr))>);
     PKCS12_PBE_add_nid_postfix();
     OBJ_cleanup_nid_postfix();
     SSL_load_error_strings_nid_postfix();
     SSL_load_error_strings_nid_postfix();
     OBJ_cleanup_nid_postfix();
     Require(ERR_peek_error_nid_postfix() == 0, "PKCS12_PBE_add, OBJ_cleanup and SSL_load_error_strings queue no error");
+
+    LibreSslPutError_nid_no_patch(11, 12, 13);
+    PKCS12_free_nid_postfix(nullptr);
+    Require(ERR_peek_error_nid_postfix() == Pack(11, 12, 13), "PKCS12_free null preserves the error queue");
+    Require(ERR_get_error_nid_postfix() == Pack(11, 12, 13), "PKCS12_free null does not consume the error");
+    bool nonnullThrew = false;
+    try {
+        PKCS12_free_nid_postfix(reinterpret_cast<void*>(1));
+    } catch (const std::exception&) {
+        nonnullThrew = true;
+    }
+    Require(nonnullThrew, "PKCS12_free nonnull remains unimplemented without dereferencing the pointer");
 
     std::puts("guest_libressl_error: ok");
     return 0;
