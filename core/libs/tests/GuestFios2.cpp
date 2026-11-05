@@ -61,6 +61,16 @@ static void CheckInitialization() {
 }
 
 static void CheckQueries(const std::string& directory, const std::string& file) {
+    SceFiosSize mountSize = 0;
+    SceFiosFH archive = 0;
+    REQUIRE(sceFiosArchiveGetMountBufferSize(nullptr, file.c_str(), &mountSize) == 0);
+    REQUIRE(sceFiosArchiveGetMountBufferSizeSync(nullptr, file.c_str(), &mountSize) == SCE_FIOS_ERROR_UNIMPLEMENTED);
+    REQUIRE(sceFiosArchiveMount(nullptr, &archive, file.c_str(), directory.c_str(), nullptr, 0, nullptr) == 0);
+    REQUIRE(sceFiosArchiveMountSync(nullptr, &archive, file.c_str(), directory.c_str(), nullptr, 0, nullptr) == SCE_FIOS_ERROR_UNIMPLEMENTED);
+    REQUIRE(sceFiosArchiveMountWithOrder(nullptr, &archive, file.c_str(), directory.c_str(), nullptr, 0, nullptr, 0) == 0);
+    REQUIRE(sceFiosArchiveMountWithOrderSync(nullptr, &archive, file.c_str(), directory.c_str(), nullptr, 0, nullptr, 0) == SCE_FIOS_ERROR_UNIMPLEMENTED);
+    REQUIRE(sceFiosArchiveUnmount(nullptr, INT32_MAX) == 0);
+    REQUIRE(sceFiosArchiveUnmountSync(nullptr, INT32_MAX) == SCE_FIOS_ERROR_UNIMPLEMENTED);
     sceFiosCacheFlushSync();
     sceFiosCacheFlushFileSync(file.c_str());
     sceFiosCacheFlushFileRangeSync(file.c_str(), 0, 10);

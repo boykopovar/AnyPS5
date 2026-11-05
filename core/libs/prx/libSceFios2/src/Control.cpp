@@ -26,42 +26,34 @@ int APS5_VABI sceFiosArchiveSetDecompressorThreadCount(std::uint8_t count) {
 }
 
 SceFiosOp APS5_VABI sceFiosArchiveGetMountBufferSize(const SceFiosOpAttr*, const char*, SceFiosSize*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 SceFiosSize APS5_VABI sceFiosArchiveGetMountBufferSizeSync(const SceFiosOpAttr*, const char*, SceFiosSize*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
 
 SceFiosOp APS5_VABI sceFiosArchiveMount(const SceFiosOpAttr*, SceFiosFH*, const char*, const char*, const void*, std::uint64_t, const void*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFiosArchiveMountSync(const SceFiosOpAttr*, SceFiosFH*, const char*, const char*, const void*, std::uint64_t, const void*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
 
 SceFiosOp APS5_VABI sceFiosArchiveMountWithOrder(const SceFiosOpAttr*, SceFiosFH*, const char*, const char*, const void*, std::uint64_t, const void*, std::uint32_t) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFiosArchiveMountWithOrderSync(const SceFiosOpAttr*, SceFiosFH*, const char*, const char*, const void*, std::uint64_t, const void*, std::uint32_t) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
 
 SceFiosOp APS5_VABI sceFiosArchiveUnmount(const SceFiosOpAttr*, SceFiosFH) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFiosArchiveUnmountSync(const SceFiosOpAttr*, SceFiosFH) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
 
