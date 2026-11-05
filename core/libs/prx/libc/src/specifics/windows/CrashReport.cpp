@@ -76,6 +76,7 @@ bool IsFatal(DWORD code) {
     case EXCEPTION_PRIV_INSTRUCTION:
     case EXCEPTION_STACK_OVERFLOW:
     case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_INT_OVERFLOW:
     case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
     case EXCEPTION_IN_PAGE_ERROR:
         return true;
@@ -352,6 +353,7 @@ bool HandleSse4a(EXCEPTION_POINTERS* info) {
 
 LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     static std::atomic<bool> reported{false};
+    if (GuestArena::GuestArenaRecoverRead_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* fault = info->ExceptionRecord;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
@@ -372,7 +374,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     char line[MAX_PATH + 64];
     char threadName[128] = "";
     if (PWSTR description = ThreadDescription(GetCurrentThread())) {
-        WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName), nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName) - 1, nullptr, nullptr);
         LocalFree(description);
     }
     Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
@@ -590,7 +592,7 @@ void ReportAllThreads() {
             ResumeThread(thread);
             char name[128] = "";
             if (PWSTR description = ThreadDescription(thread)) {
-                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name) - 1, nullptr, nullptr);
                 LocalFree(description);
             }
             CloseHandle(thread);
