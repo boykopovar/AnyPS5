@@ -78,6 +78,7 @@ public:
     std::pair<std::uint64_t, std::uint64_t> SerialProgress();
     std::uint64_t FlipSubmissions() const;
     std::vector<AwaitedWait> AwaitedWaits();
+    void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
@@ -269,7 +270,8 @@ private:
     static IndirectSource& indirectSource();
     static std::string describeIndirectSource();
     std::array<std::uint32_t, 5> readDispatchArguments(std::uint32_t queue, std::uint64_t arguments, std::uint32_t initiator);
-    static bool& sampledRead();
+    static bool sampledRead();
+    static void setSampledRead(bool sampled);
     static bool writeEvidenceEnabled();
     static bool writerKeyedEvidence();
     static bool foreignWriters();
@@ -469,7 +471,7 @@ private:
     std::map<std::uint32_t, QueueState> queues;
     std::map<std::uint32_t, std::shared_ptr<IVideoOutput>> outputs;
     struct EopFlip {
-        std::uint32_t handle;
+        FlipInfo info;
         std::shared_ptr<IFlipRequest> request;
     };
     std::map<std::uint32_t, EopFlip> eopFlips;
