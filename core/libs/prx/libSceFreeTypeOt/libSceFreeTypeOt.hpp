@@ -5,3 +5,4 @@
 #include "prx/libSceFreeTypeOt/include/AdditionalExports.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
+#include "prx/libSceFreeTypeOt/include/Raccess.hpp"
