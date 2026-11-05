@@ -305,7 +305,6 @@ void PlanMeshWindowBuffer(SpirvEmitterState& state) {
             liveBefore(*inst, live);
         }
     }
-    state.meshWindowEntryLive = order.empty() ? Slots(slots, true) : liveIn.at(order.front());
 }
 
 bool WritesGuestMemory(const IrProgram& program) {
