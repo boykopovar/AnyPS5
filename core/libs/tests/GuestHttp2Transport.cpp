@@ -1585,8 +1585,8 @@ void HostAuthority(int ssl) {
     Require(headers.count("host") == 0, "host header is not sent");
 }
 
-void AuthenticationStatus(int ssl, int version, ResponseSpec response, bool authEnabled, bool refuses) {
-    std::fprintf(stderr, "HTTP2 authentication status scenario version=%d status=%d enabled=%d refuses=%d\n", version, response.status, authEnabled, refuses);
+void AuthenticationStatus(int ssl, int version, ResponseSpec response, bool authEnabled) {
+    std::fprintf(stderr, "HTTP2 authentication status scenario version=%d status=%d enabled=%d\n", version, response.status, authEnabled);
     const int expected = response.status;
     Server server(version == 1 ? Mode::Http10 : version == 2 ? Mode::Http11 : Mode::Normal);
     server.SetResponse(std::move(response));
@@ -1595,25 +1595,21 @@ void AuthenticationStatus(int ssl, int version, ResponseSpec response, bool auth
     Require(sceHttp2GetAuthEnabled(client.tmpl, &enabled) == 0 && enabled == 1, "authentication remains enabled by default");
     if (!authEnabled) Require(sceHttp2SetAuthEnabled(client.tmpl, 0) == 0, "disable automatic authentication");
     client.Create(server.Url());
-    if (refuses) {
-        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "actual authentication challenge remains unsupported");
-    } else {
-        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "receive response without negotiating authentication");
-        int status = 0;
-        Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == expected, "preserve authentication response status");
-        int kind = -1;
-        std::uint64_t length = 0;
-        Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13, "preserve authentication response length");
-        std::string body;
-        std::array<char, 32> buffer{};
-        for (;;) {
-            const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
-            Require(count >= 0 && count <= static_cast<int>(buffer.size()), "read authentication response body");
-            if (count == 0) break;
-            body.append(buffer.data(), static_cast<std::size_t>(count));
-        }
-        Require(body == "response body", "preserve authentication response body");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "receive response without negotiating authentication");
+    int status = 0;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == expected, "preserve authentication response status");
+    int kind = -1;
+    std::uint64_t length = 0;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13, "preserve authentication response length");
+    std::string body;
+    std::array<char, 32> buffer{};
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0 && count <= static_cast<int>(buffer.size()), "read authentication response body");
+        if (count == 0) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
     }
+    Require(body == "response body", "preserve authentication response body");
     server.Join();
 }
 
@@ -1625,13 +1621,12 @@ void AuthenticationStatuses(int ssl) {
         for (const int status : {401, 407}) {
             const auto& matching = status == 401 ? origin : proxy;
             const auto& other = status == 401 ? proxy : origin;
-            AuthenticationStatus(ssl, version, {status, {}, {}}, true, false);
-            AuthenticationStatus(ssl, version, {status, {{other, challenge}}, {}}, true, false);
-            AuthenticationStatus(ssl, version, {status, {{matching, challenge}}, {}}, true, true);
-            AuthenticationStatus(ssl, version, {status, {{matching, challenge}}, {}}, false, false);
-            if (version != 1) AuthenticationStatus(ssl, version, {status, {}, {{matching, challenge}}}, true, false);
+            AuthenticationStatus(ssl, version, {status, {}, {}}, true);
+            AuthenticationStatus(ssl, version, {status, {{other, challenge}}, {}}, true);
+            AuthenticationStatus(ssl, version, {status, {{matching, challenge}}, {}}, false);
+            if (version != 1) AuthenticationStatus(ssl, version, {status, {}, {{matching, challenge}}}, true);
         }
-        AuthenticationStatus(ssl, version, {200, {{origin, challenge}, {proxy, challenge}}, {}}, true, false);
+        AuthenticationStatus(ssl, version, {200, {{origin, challenge}, {proxy, challenge}}, {}}, true);
     }
 }
 
