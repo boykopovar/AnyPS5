@@ -8539,6 +8539,7 @@ VKAPI_ATTR void VKAPI_CALL sampleLocationDestroyRenderPass(VkDevice, VkRenderPas
 VKAPI_ATTR void VKAPI_CALL sampleLocationDestroyFramebuffer(VkDevice, VkFramebuffer, const VkAllocationCallbacks*) { --mock.live; }
 VKAPI_ATTR void VKAPI_CALL sampleLocationSetViewport(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkViewport*) {}
 VKAPI_ATTR void VKAPI_CALL sampleLocationSetScissor(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkRect2D*) {}
+VKAPI_ATTR void VKAPI_CALL sampleLocationEndRenderPass(VkCommandBuffer) {}
 
 VKAPI_ATTR void VKAPI_CALL sampleLocationBeginRenderPass(VkCommandBuffer, const VkRenderPassBeginInfo* begin, VkSubpassContents) {
     const auto* locations = static_cast<const VkRenderPassSampleLocationsBeginInfoEXT*>(begin->pNext);
@@ -8556,6 +8557,7 @@ PFN_vkVoidFunction VKAPI_CALL sampleLocationProc(VkDevice device, const char* na
         {"vkDestroyFramebuffer", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationDestroyFramebuffer)},
         {"vkCmdBeginRenderPass", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationBeginRenderPass)},
         {"vkCmdSetViewport", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationSetViewport)},
+        {"vkCmdEndRenderPass", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationEndRenderPass)},
         {"vkCmdSetScissor", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationSetScissor)}
     };
     const auto it = table.find(name);
@@ -13529,6 +13531,14 @@ void commandStateTests() {
     const auto fixed = CommandState::DynamicSlots(viewportScissor);
     Require(library == (1u << CommandState::SlotCount) - 1u, "the pipeline library's dynamic states do not cover every tracked slot");
     Require(fixed == (CommandState::Mask(Slot::Viewport) | CommandState::Mask(Slot::Scissor)), "the viewport and scissor dynamic states mapped to other slots");
+    const std::array<VkDynamicState, 2> unmodelled{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH};
+    bool rejected = false;
+    try {
+        CommandState::DynamicSlots(unmodelled);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected, "a dynamic state the tracker does not follow was accepted");
     const auto pipelineA = pipeline(0);
     const auto pipelineB = pipeline(1);
     const auto pipelineC = pipeline(2);
@@ -13742,6 +13752,23 @@ void commandStateTests() {
             expectStateLog({stateLine("bind", 0u, next)}, "a second pipeline with the same dynamic state");
             first.Continue(tracker, moved);
             expectStateLog({stateLine("bind", 0u, bound)}, "the first pipeline again");
+            const std::array<VkImageView, 1> passView{makeHandle<VkImageView>()};
+            const auto passFramebuffer = first.AcquireFramebuffer(passView, {}, {64, 64});
+            CommandState passes;
+            passes.Begin(commands);
+            stateLog.clear();
+            first.Begin(passes, *passFramebuffer, {64, 64}, state);
+            const auto firstPass = stateLog;
+            Require(firstPass.size() == 5, "the first render pass of a batch did not bind and set every dynamic state");
+            expectStateLog(firstPass, "the first render pass of a batch");
+            EndRenderPass(pipelineContext, commands);
+            first.Begin(passes, *passFramebuffer, {64, 64}, state);
+            expectStateLog({}, "a second render pass of the same batch with an identical draw");
+            auto resized = state;
+            resized.viewport.width = 32.0f;
+            EndRenderPass(pipelineContext, commands);
+            first.Begin(passes, *passFramebuffer, {64, 64}, resized);
+            expectStateLog({stateLine("viewport", 0.0f, 0.0f, 32.0f, 64.0f, 0.0f, 1.0f)}, "a third render pass of the same batch that changes the viewport");
             CommandState unsuppressed;
             unsuppressed.Begin(commands, false);
             first.Continue(unsuppressed, state);
