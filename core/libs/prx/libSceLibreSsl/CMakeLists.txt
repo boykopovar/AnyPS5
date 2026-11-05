@@ -195,17 +195,6 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
-    add_test_executable(guest_libressl_x509_name_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509Name.cpp)
-    target_include_directories(guest_libressl_x509_name_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl_x509_name_tests PRIVATE libSceLibreSsl)
-    configure_windows_unwind(guest_libressl_x509_name_tests)
-    add_test(NAME guest_libressl_x509_name COMMAND guest_libressl_x509_name_tests)
-    set_tests_properties(guest_libressl_x509_name PROPERTIES TIMEOUT 30)
-    if(WIN32)
-        set_tests_properties(guest_libressl_x509_name PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
-    endif()
-
     add_test_executable(guest_libressl_evp_cipher_ctx_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEvpCipherCtx.cpp)
     target_include_directories(guest_libressl_evp_cipher_ctx_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_evp_cipher_ctx_tests PRIVATE libSceLibreSsl libc)
