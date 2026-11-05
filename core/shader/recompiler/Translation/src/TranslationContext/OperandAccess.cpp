@@ -444,6 +444,17 @@ IrF32 TranslationContext::applyF16ResultModifiers(const RdnaOperand& operand, Ir
     if (operand.omod != 0u && outputModifierApplies(6u)) {
         value = scaleF16Result(operand.omod, value);
     }
+    return clampF16Result(operand, value);
+}
+
+IrF32 TranslationContext::applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources) {
+    if (operand.omod != 0u && outputModifierApplies(6u)) {
+        value = scaleF16Result(operand.omod, value);
+    }
+    return clampF16Result(operand, clampF16Overflow(value, overflowSources));
+}
+
+IrF32 TranslationContext::clampF16Result(const RdnaOperand& operand, IrF32 value) {
     if (!operand.clamp) {
         return value;
     }

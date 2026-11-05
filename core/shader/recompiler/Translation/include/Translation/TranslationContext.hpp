@@ -63,6 +63,8 @@ private:
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources);
+    IrF32 clampF16Result(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF16Result(std::uint32_t omod, IrF32 value);
     IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits);
     IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
