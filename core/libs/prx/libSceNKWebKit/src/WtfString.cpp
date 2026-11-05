@@ -1,3 +1,29 @@
+/*
+ * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2012 Research In Motion Limited. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
@@ -10,6 +36,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -912,6 +939,12 @@ unsigned HostStart(const URL& url) {
     return url.passwordEnd == url.userStart ? url.passwordEnd : url.passwordEnd + 1;
 }
 
+unsigned CredentialsEnd(const URL& url, StringView view) {
+    unsigned end = url.passwordEnd;
+    if (end != url.hostEnd && end < view.length && Unit(view, end) == '@') ++end;
+    return end;
+}
+
 unsigned PathStart(const URL& url) {
     unsigned start = url.hostEnd + ((url.bits >> 3) & 7);
     auto view = View(url.impl);
@@ -986,9 +1019,57 @@ String ConcatViews(const StringView* parts, unsigned count) {
     return String(impl);
 }
 
+bool IsUnicodeCompatibleASCIIWhitespace(char32_t c) {
+    return c <= ' ' && (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f');
+}
+
+std::optional<std::uint16_t> URLPort(const URL& url) {
+    unsigned portLength = (url.bits >> 3) & 7;
+    if (portLength <= 1) return std::nullopt;
+    auto view = View(url.impl);
+    if (url.hostEnd > view.length || portLength > view.length - url.hostEnd) return std::nullopt;
+    auto portView = Slice(view, url.hostEnd + 1, portLength - 1);
+    if (!portView.length) return std::nullopt;
+    unsigned i = 0;
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i < portView.length && Unit(portView, i) == '+') ++i;
+    if (i == portView.length) return std::nullopt;
+    auto firstChar = Unit(portView, i);
+    if (firstChar < '0' || firstChar > '9') return std::nullopt;
+    std::uint32_t val = 0;
+    while (i < portView.length) {
+        auto ch = Unit(portView, i);
+        if (ch < '0' || ch > '9') break;
+        val = val * 10 + (ch - '0');
+        if (val > 65535) return std::nullopt;
+        ++i;
+    }
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i != portView.length) return std::nullopt;
+    return static_cast<std::uint16_t>(val);
+}
+
 }  // namespace
 
 extern "C" {
+bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const URL* urlPtr) {
+    const auto& url = Checked(urlPtr);
+    auto port = URLPort(url);
+    if (!port) return true;
+    static constexpr std::uint16_t blockedPortList[] = {
+        1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69,
+        77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123,
+        135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530,
+        531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719,
+        1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666,
+        6667, 6668, 6669, 6679, 6697, 10080
+    };
+    if (!std::binary_search(std::begin(blockedPortList), std::end(blockedPortList), *port)) return true;
+    if ((*port == 21 || *port == 22) && URLProtocol(url, {"ftp", 3, true})) return true;
+    if (URLProtocol(url, {"file", 4, true})) return true;
+    return false;
+}
+
 bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL* a, const URL* b) {
     const auto& first = Checked(a);
     const auto& second = Checked(b);
@@ -1023,6 +1104,46 @@ StringView APS5_VABI _ZNK3WTF3URL4pathEv(const URL* self) {
     if (!(url.bits & 1)) return {nullptr, 0, true};
     unsigned start = PathStart(url);
     return Slice(View(url.impl), start, url.pathEnd - start);
+}
+
+StringView APS5_VABI _ZNK3WTF3URL17lastPathComponentEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (url.pathEnd <= PathStart(url)) return {nullptr, 0, true};
+    auto view = View(url.impl);
+    if (url.pathEnd > view.length) throw std::out_of_range("invalid WTF URL path boundary");
+    unsigned end = url.pathEnd - 1;
+    if (Unit(view, end) == '/') --end;
+    std::size_t start = NotFound;
+    for (std::size_t i = std::min<std::size_t>(end, view.length - 1) + 1; i--;) {
+        if (Unit(view, static_cast<unsigned>(i)) == '/') {
+            start = i;
+            break;
+        }
+    }
+    if (start < PathStart(url)) return {nullptr, 0, true};
+    ++start;
+    return Slice(view, static_cast<unsigned>(start), end - static_cast<unsigned>(start) + 1);
+}
+
+String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const URL* self) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (!(url.bits & 1)) return String(Retain(url.impl));
+    if (url.userStart > url.passwordEnd || url.queryEnd > view.length) throw std::out_of_range("invalid WTF URL credential boundary");
+    unsigned end = CredentialsEnd(url, view);
+    if (url.userStart == end && url.queryEnd == view.length) return String(Retain(url.impl));
+    if (end > url.queryEnd) throw std::out_of_range("invalid WTF URL query boundary");
+    unsigned length = url.userStart + (url.queryEnd - end);
+    void* output;
+    auto* impl = NewImpl(length, view.is8Bit, output);
+    String result(impl);
+    if (!length) return result;
+    unsigned width = view.is8Bit ? 1 : 2;
+    auto* source = static_cast<const unsigned char*>(view.data);
+    auto* target = static_cast<unsigned char*>(output);
+    std::memcpy(target, source, std::size_t(url.userStart) * width);
+    std::memcpy(target + std::size_t(url.userStart) * width, source + std::size_t(end) * width, std::size_t(url.queryEnd - end) * width);
+    return result;
 }
 
 StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const URL* self) {
