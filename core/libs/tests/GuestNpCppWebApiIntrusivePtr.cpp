@@ -692,13 +692,18 @@ static void TestResidualAccessors() {
     Require(_ZN3sce2Np9CppWebApi11UserProfile2V124GetBlockingUsersResponse9getBlocksEv(response) == response + 0x30);
     Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead14getCustomData1Ev(response) == response + 0x1c8);
     Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead14getCustomData2Ev(response) == response + 0x1e8);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead16customData1IsSetEv(response));
     Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead16customData2IsSetEv(response));
+    response[0x1e0] = 0;
+    Require(!_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead16customData1IsSetEv(response));
+    response[0x1e0] = 0x11;
     Require(_ZNK3sce2Np9CppWebApi14SessionManager2V127ResponsePlayerSessionPlayer11getPlatformEv(response) == response + 0x18);
     Require(_ZNK3sce2Np9CppWebApi15ProfanityFilter2V223FilterProfanityResponse10getMessageEv(response) == response + 0x38);
     Require(_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail14getDisplayNameEv(response) == response + 0x88);
     const std::uint64_t playerAccount = 0xfeed1234;
     std::memcpy(response + 0x10, &playerAccount, sizeof(playerAccount));
     Require(_ZNK3sce2Np9CppWebApi14SessionManager2V127ResponsePlayerSessionPlayer12getAccountIdEv(response) == playerAccount);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv(response) == playerAccount);
 
     std::memset(response, 0, sizeof(response));
     IntrusivePtr headerOut{};
