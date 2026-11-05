@@ -341,7 +341,9 @@ void Driver::execute(Submission& submission) {
                 cursor = nextCursor;
                 continue;
             }
-            if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet) && !OwnStoreRejects(packet, awaited, awaitedBytes, submission.queue)) {
+            const bool queuedWrite = DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes);
+            if (!queuedWrite) GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
+            if (!queuedWrite && Pm4::WaitSatisfiedUnchecked(packet) && !OwnStoreRejects(packet, awaited, awaitedBytes, submission.queue)) {
                 bumpWaitEpoch(awaited, awaitedBytes, storeOrderingSince(packet, awaited, awaitedBytes, submission.received, submission.queue));
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;
