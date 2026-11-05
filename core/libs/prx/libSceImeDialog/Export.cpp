@@ -282,13 +282,18 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     if (extended != nullptr && !GuestCopyIn_nid_no_patch(&localExtended, extended, sizeof(localExtended))) return ErrorInvalidAddress;
     if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
     if (localParam.input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    std::u16string initialText;
+    for (std::uint32_t i = 0; i < localParam.max_text_length; ++i) {
+        char16_t unit = u'\0';
+        if (!GuestCopyIn_nid_no_patch(&unit, localParam.input_text_buffer + i, sizeof(unit))) return ErrorInvalidInputTextBuffer;
+        if (unit == u'\0') break;
+        initialText.push_back(unit);
+    }
     g_dialog = Dialog{};
     g_dialog.buffer = localParam.input_text_buffer;
     g_dialog.maxLength = localParam.max_text_length;
-    std::size_t length = 0;
-    while (length < localParam.max_text_length && localParam.input_text_buffer[length] != u'\0') ++length;
-    g_dialog.text.assign(localParam.input_text_buffer, length);
-    g_dialog.caret = length;
+    g_dialog.text = initialText;
+    g_dialog.caret = initialText.size();
     g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended != nullptr ? &localExtended : nullptr));
     g_dialog.status = StatusRunning;
     ImeSetHostTextSink_nid_no_patch(&Receive);
