@@ -248,6 +248,13 @@ struct ActiveRecorder {
     }
 };
 
+void PromoteThroughBuild(const Context& context) {
+    GuestBufferMemory promoting(context);
+    promoting.AcquireRegistered();
+    promoting.Upload(true);
+    promoting.WriteBack();
+}
+
 void WindowPromotionOutlivesTheHold() {
     struct RestoreWindow {
         ~RestoreWindow() { SetHostImportRangeWindow(std::uint64_t{64} << 20u); }
@@ -297,8 +304,9 @@ void IdleRetireOutlivesTheHold() {
         retired = taken->buffer;
         Expect(recorder.Idle(), "the recorder is not idle before the drop");
         heap.Grow();
+        PromoteThroughBuild(context);
         const auto* grown = HostImportFor(context, heap.Address(RangeBytes), 4096);
-        Expect(grown != nullptr && grown->buffer != retired && grown->base == heap.Address() && grown->bytes == 2 * RangeBytes, "the grown run was not imported as one import replacing the first");
+        Expect(grown != nullptr && grown->buffer != retired && grown->base == heap.Address() && grown->bytes == 2 * RangeBytes, "the next build did not import the grown run as one import replacing the first");
         Expect(Live(retired), "an import dropped with the recorder idle was destroyed at once, while the hold that took it can still record with it");
         if (!Live(retired)) return;
         Expect(taken->buffer == retired && taken->base == heap.Address(), "the dropped import's entry changed under the hold that took it");
@@ -335,7 +343,8 @@ void BusyRetireOutlivesALaterBatch() {
         if (taken == nullptr) return;
         retired = taken->buffer;
         heap.Grow();
-        Expect(HostImportFor(context, heap.Address(RangeBytes), 4096) != nullptr, "the grown run was not imported");
+        PromoteThroughBuild(context);
+        Expect(HostImportFor(context, heap.Address(RangeBytes), 4096) != nullptr, "the next build did not import the grown run");
         mock.submitted.clear();
         recorder.Submit();
         recorder.Commands();
@@ -371,8 +380,9 @@ void RecentImportFollowsReplacement() {
     Expect(HostImportFor(context, heap.Address(), 4096) == first, "a repeated lookup did not find the same import");
     const auto retired = first->buffer;
     heap.Grow();
+    PromoteThroughBuild(context);
     const auto* grown = HostImportFor(context, heap.Address(RangeBytes), 4096);
-    Expect(grown != nullptr && grown->buffer != retired, "the grown run was not imported as a new import");
+    Expect(grown != nullptr && grown->buffer != retired, "the next build did not import the grown run as a new import");
     if (grown == nullptr) return;
     Expect(HostImportFor(context, heap.Address(), 4096) == grown, "a lookup after the replacement served the retired import instead of the one that replaced it");
 }
