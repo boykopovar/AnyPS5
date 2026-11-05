@@ -1019,7 +1019,15 @@ int runLargeFileWrite() {
         std::cerr.flush();
         std::_Exit(1);
     }
-    require(result.get(), "cannot write a cache file of more than 2 GiB");
+    if (!result.get()) {
+        std::error_code spaceError;
+        const auto after = std::filesystem::space(directory, spaceError);
+        if (!spaceError && after.available < size) {
+            std::cout << "skipped, the disk filled up while the file was written: " << after.available << " bytes free afterwards, " << space.available << " before\n";
+            return 77;
+        }
+        require(false, "cannot write a cache file of more than 2 GiB (" + std::to_string(space.available) + " bytes free before, " + (spaceError ? spaceError.message() : std::to_string(after.available) + " bytes free after") + ")");
+    }
     require(std::filesystem::file_size(path) == size, "the cache file of more than 2 GiB has the wrong size");
     {
         std::ifstream file(path, std::ios::binary);
