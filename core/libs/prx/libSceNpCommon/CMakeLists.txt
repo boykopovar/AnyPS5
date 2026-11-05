@@ -2,7 +2,7 @@ add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExp
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp")
     target_sources(libSceNpCommon PRIVATE Export.cpp)
 endif()
-target_sources(libSceNpCommon PRIVATE Json.cpp Runtime.cpp Strings.cpp)
+target_sources(libSceNpCommon PRIVATE Json.cpp RingBuf.cpp Runtime.cpp Strings.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_np_integer_radices_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpIntegerRadices.cpp)
     target_include_directories(guest_np_integer_radices_tests PRIVATE ${LIBS_INCLUDE_DIR})
