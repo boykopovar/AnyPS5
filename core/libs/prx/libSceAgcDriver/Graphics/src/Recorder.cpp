@@ -2231,7 +2231,8 @@ void Recorder::AddGpuTiming(CommandClass which, double nanoseconds, std::uint64_
 
 std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
     if (!GpuTimingEnabled()) return NoTiming;
-    Commands();
+    ensureOpen();
+    if (open->queries == VK_NULL_HANDLE && open->renderPass.open) return NoTiming;
     return beginTiming(key);
 }
 
