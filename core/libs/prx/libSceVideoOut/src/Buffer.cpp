@@ -137,7 +137,7 @@ void APS5_VABI sceVideoOutRemoveBufferAttributeOption(VideoOutBufferAttribute2* 
 int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const VideoOutBufferAttribute2* attribute, int category, void* option) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+        return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
     if (buffers == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
@@ -252,9 +252,12 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
 int APS5_VABI sceVideoOutUnregisterBuffers(int handle, int setIndex) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+        return VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
-    if (setIndex < 0 || setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX) {
+    if (setIndex < 0) {
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
+    }
+    if (setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
     }
     std::unique_lock lock(cfg->mutex);
@@ -263,7 +266,7 @@ int APS5_VABI sceVideoOutUnregisterBuffers(int handle, int setIndex) try {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
     if (!cfg->groups[setIndex].occupied) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     const auto shown = cfg->flipStatus.currentBuffer;
     if (cfg->busType == VIDEO_OUT_BUS_TYPE_MAIN && shown >= 0 && shown < VIDEO_OUT_BUFFER_NUM_MAX && cfg->buffers[shown].groupIndex == setIndex) return VIDEO_OUT_ERROR_RESOURCE_BUSY;
