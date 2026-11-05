@@ -15,8 +15,8 @@ namespace {
 
 QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass& copy) {
     const bool multisampled = copy.source.samples != 1u;
-    const auto address = DepthCopyPixelProgramAddress(multisampled);
-    const auto words = Graphics::DepthCopySourceWords(copy.source);
+    const auto address = copy.stencil ? StencilCopyPixelProgramAddress(multisampled) : DepthCopyPixelProgramAddress(multisampled);
+    const auto words = Graphics::DepthCopySourceWords(copy.source, copy.stencil);
     QueueState draw = queue;
     draw.context.insert_or_assign(0x000u, 0u);
     draw.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(address >> 8u));
@@ -29,8 +29,8 @@ QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass&
     draw.context.insert_or_assign(0x1b4u, 0x8002u);
     draw.context.insert_or_assign(0x1b6u, 0u);
     draw.context.insert_or_assign(0x1c4u, 0u);
-    draw.context.insert_or_assign(0x1c5u, 1u);
-    draw.context.insert_or_assign(0x08fu, 1u);
+    draw.context.insert_or_assign(0x1c5u, copy.stencil ? 2u : 1u);
+    draw.context.insert_or_assign(0x08fu, copy.stencil ? 3u : 1u);
     draw.context.insert_or_assign(0x203u, 0u);
     if (const auto alpha = draw.context.find(0x2dcu); alpha != draw.context.end()) draw.context.insert_or_assign(0x2dcu, alpha->second & ~1u);
     return draw;
