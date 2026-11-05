@@ -33290,14 +33290,6 @@ int APS5_VABI _ZN9Inspector17BackendDispatcherD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector18IdentifiersFactory16createIdentifierEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector18IdentifiersFactory9requestIdEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector18InjectedScriptBaseC1ERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }

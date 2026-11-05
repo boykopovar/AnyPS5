@@ -193,6 +193,8 @@ void* APS5_VABI _ZN8Gigacage29tryAllocateZeroedVirtualPagesENS_4KindEm(std::uint
 void APS5_VABI _ZN8Gigacage4freeENS_4KindEPv(std::uint32_t, void* ptr);
 void* APS5_VABI _ZN8Gigacage6mallocENS_4KindEm(std::uint32_t, std::size_t size);
 void* APS5_VABI _ZN8Gigacage9tryMallocENS_4KindEm(std::uint32_t, std::size_t size);
+NKWebKit::WtfAbi::String APS5_VABI _ZN9Inspector18IdentifiersFactory16createIdentifierEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN9Inspector18IdentifiersFactory9requestIdEm(std::uint64_t identifier);
 bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEDs(const NKWebKit::WtfAbi::StringImpl* self, char16_t value);
 bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEPKcj(const NKWebKit::WtfAbi::StringImpl* self, const char* data, unsigned length);
 std::size_t APS5_VABI _ZNK3WTF10StringImpl11sizeInBytesEv(const NKWebKit::WtfAbi::StringImpl* self);
