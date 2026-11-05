@@ -193,11 +193,10 @@ int APS5_VABI __sys_workaround8849_nid_disambig1_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI sceKernelWebUnknown_038_nid_no_patch() {
+int APS5_VABI _dup2_nid_disambig1_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-APS5_EXPORT("W8f1adVl+48", sceKernelWebUnknown_038_nid_no_patch);
 
 int APS5_VABI _execve_nid_disambig1_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
