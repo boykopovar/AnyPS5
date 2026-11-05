@@ -61,6 +61,16 @@ def excessive_trace_json(opening, closing):
 
 
 class TraceWaitAncestryTests(unittest.TestCase):
+    def test_digest_classifies_each_slice_once(self):
+        events = [complete(1, "Worker.wait" if index % 3 == 0 else "work",
+                           index * 2, 1) for index in range(128)]
+        trace = trace_digest.Trace(events)
+        expected = trace_digest.digest(trace)
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            actual = trace_digest.digest(trace)
+        self.assertEqual(actual, expected)
+        self.assertEqual(check.call_count, len(events))
+
     def test_wait_ancestry_survives_inner_pops_and_ends_with_parent(self):
         events = [
             complete(1, "wait.outer", 0, 100),
