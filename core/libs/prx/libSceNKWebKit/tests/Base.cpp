@@ -351,6 +351,84 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestHitTestResult() {
+    Require(WKHitTestResultGetTypeID() == 63);
+    auto hit = NKWebKit::Make<NKWebKit::HitTestResult>();
+    hit->absoluteImageURL = "https://example.com/img.png";
+    hit->absoluteLinkURL = "https://example.com/link";
+    hit->absoluteMediaURL = "https://example.com/media.mp4";
+    hit->absolutePDFURL = "https://example.com/doc.pdf";
+    hit->linkLabel = u"Click here";
+    hit->linkTitle = u"Title";
+    hit->lookupText = u"Search text";
+    hit->elementBoundingBox = WKRect{{1.0, 2.0}, {30.0, 40.0}};
+    hit->isContentEditable = true;
+
+    const void* ref = NKWebKit::ToRef(hit);
+    auto* imgUrl = WKHitTestResultCopyAbsoluteImageURL(ref);
+    Require(imgUrl != nullptr);
+    auto* imgUrlStr = WKURLCopyString(imgUrl);
+    Require(WKStringIsEqualToUTF8CString(imgUrlStr, "https://example.com/img.png"));
+    WKRelease(imgUrlStr);
+    WKRelease(imgUrl);
+
+    auto* linkUrl = WKHitTestResultCopyAbsoluteLinkURL(ref);
+    Require(linkUrl != nullptr);
+    auto* linkUrlStr = WKURLCopyString(linkUrl);
+    Require(WKStringIsEqualToUTF8CString(linkUrlStr, "https://example.com/link"));
+    WKRelease(linkUrlStr);
+    WKRelease(linkUrl);
+
+    auto* mediaUrl = WKHitTestResultCopyAbsoluteMediaURL(ref);
+    Require(mediaUrl != nullptr);
+    auto* mediaUrlStr = WKURLCopyString(mediaUrl);
+    Require(WKStringIsEqualToUTF8CString(mediaUrlStr, "https://example.com/media.mp4"));
+    WKRelease(mediaUrlStr);
+    WKRelease(mediaUrl);
+
+    auto* pdfUrl = WKHitTestResultCopyAbsolutePDFURL(ref);
+    Require(pdfUrl != nullptr);
+    auto* pdfUrlStr = WKURLCopyString(pdfUrl);
+    Require(WKStringIsEqualToUTF8CString(pdfUrlStr, "https://example.com/doc.pdf"));
+    WKRelease(pdfUrlStr);
+    WKRelease(pdfUrl);
+
+    auto* label = WKHitTestResultCopyLinkLabel(ref);
+    Require(WKStringIsEqualToUTF8CString(label, "Click here"));
+    WKRelease(label);
+
+    auto* title = WKHitTestResultCopyLinkTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Title"));
+    WKRelease(title);
+
+    auto* lookup = WKHitTestResultCopyLookupText(ref);
+    Require(WKStringIsEqualToUTF8CString(lookup, "Search text"));
+    WKRelease(lookup);
+
+    WKRect box = WKHitTestResultGetElementBoundingBox(ref);
+    Require(box.origin.x == 1.0 && box.origin.y == 2.0);
+    Require(box.size.width == 30.0 && box.size.height == 40.0);
+    Require(WKHitTestResultIsContentEditable(ref));
+
+    auto unset = NKWebKit::Make<NKWebKit::HitTestResult>();
+    const void* unsetRef = NKWebKit::ToRef(unset);
+    Require(WKHitTestResultCopyAbsoluteImageURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteLinkURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteMediaURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsolutePDFURL(unsetRef) == nullptr);
+    WKRelease(unsetRef);
+
+    bool threw = false;
+    try {
+        WKHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +451,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestHitTestResult();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
