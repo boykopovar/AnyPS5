@@ -99,10 +99,18 @@ static int CheckNoPlayGoFile(const char* root) {
     constexpr int badPointer = static_cast<int>(0x80B2000A);
     constexpr int badSize = static_cast<int>(0x80B2000B);
     constexpr int badLocus = static_cast<int>(0x80B20010);
+    constexpr int invalidArgument = static_cast<int>(0x80B20004);
+    constexpr int notInitialized = static_cast<int>(0x80B20005);
+    constexpr int badSpeed = static_cast<int>(0x80B2000D);
+    constexpr int notPermitted = static_cast<int>(0x80B2000F);
+    constexpr int badOptionalType = static_cast<int>(0x80B20024);
+    constexpr int badScenarioConfiguration = static_cast<int>(0x80B20026);
 
     PlayGoInitParams init{};
     int handle = 0;
+    Require(scePlayGoSetInstallSpeed2(0, 2) == notInitialized);
     Require(scePlayGoInitialize(nullptr) == badPointer);
+    Require(scePlayGoSetInstallSpeed2(0, 2) == notInitialized);
     Require(scePlayGoInitialize(&init) == 0);
     Require(scePlayGoOpen(nullptr, nullptr) == badPointer);
     Require(scePlayGoOpen(&handle, nullptr) == 0);
@@ -118,11 +126,19 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoSetLanguageMask(handle, ~0ull) == 0);
     Require(scePlayGoGetLanguageMask(handle, &mask) == 0 && mask == ~0ull);
 
+    std::uint32_t requiredDisc = 0;
     for (const auto getOptionalChunk : {scePlayGoGetSupportedOptionalChunk, scePlayGoGetOptionalChunk}) {
         PlayGoOptionalChunk option{};
         Require(getOptionalChunk(handle + 1, 0, &option) == badHandle);
         Require(getOptionalChunk(handle, 0, nullptr) == badPointer);
         Require(getOptionalChunk(handle, 0, &option) == 0 && option.bitmask == ~0ull);
+        Require(getOptionalChunk(handle, 1, &option) == 0 && option.bitmask == 0x1F);
+        Require(getOptionalChunk(handle, 2, &option) == 0 && option.bitmask == ~0ull);
+        for (const std::uint32_t type : {0u, 1u, 2u}) {
+            Require(getOptionalChunk(handle, type, &option) == 0);
+            Require(scePlayGoRequestOptionalChunk(handle, type, &option) == 0);
+            Require(scePlayGoGetRequiredDisc(handle, type, &option, &requiredDisc) == 0);
+        }
         Require(getOptionalChunk(handle, 3, &option) == static_cast<int>(0x80B20024));
         Require(getOptionalChunk(handle, 0xFFFFFFFF, &option) == static_cast<int>(0x80B20024));
         Require(getOptionalChunk(handle, 3, nullptr) == badPointer);
@@ -167,11 +183,65 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetProgress(handle, &chunk, 1, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
     Require(scePlayGoSetInstallSpeed(handle + 1, 2) == badHandle);
     Require(scePlayGoSetInstallSpeed(handle, 2) == 0);
+    std::int32_t speed = 0;
+    Require(scePlayGoGetInstallSpeed(handle + 1, &speed) == badHandle);
+    Require(scePlayGoGetInstallSpeed(handle, nullptr) == badPointer);
+    Require(scePlayGoGetInstallSpeed(handle, &speed) == 0 && speed == 2);
+    Require(scePlayGoSetInstallSpeed2(1, 1) == invalidArgument);
+    Require(scePlayGoSetInstallSpeed2(-1, 3) == invalidArgument);
+    Require(scePlayGoSetInstallSpeed2(0, 3) == badSpeed);
+    Require(scePlayGoSetInstallSpeed2(0, 0xFFFFFFFF) == badSpeed);
+    Require(scePlayGoSetInstallSpeed2(0, 0) == notPermitted);
+    Require(scePlayGoGetInstallSpeed(handle, &speed) == 0 && speed == 2);
+    Require(scePlayGoSetInstallSpeed2(0, 1) == 0);
+    Require(scePlayGoGetInstallSpeed(handle, &speed) == 0 && speed == 1);
+    Require(scePlayGoSetInstallSpeed2(0, 2) == 0);
+    Require(scePlayGoGetInstallSpeed(handle, &speed) == 0 && speed == 2);
+    Require(scePlayGoRequestNextChunk(handle + 1, nullptr) == badHandle);
+    Require(scePlayGoRequestNextChunk(handle + 1, &speed) == badHandle);
+    Require(scePlayGoRequestNextChunk(handle, &speed) == invalidArgument);
+    Require(scePlayGoRequestNextChunk(handle, nullptr) == 0);
+    PlayGoOptionalChunk request{};
+    request.bitmask = ~0ull;
+    Require(scePlayGoRequestOptionalChunk(handle + 1, 0, &request) == badHandle);
+    Require(scePlayGoRequestOptionalChunk(handle + 1, 3, nullptr) == badHandle);
+    Require(scePlayGoRequestOptionalChunk(handle, 0, nullptr) == badPointer);
+    Require(scePlayGoRequestOptionalChunk(handle, 3, nullptr) == badPointer);
+    Require(scePlayGoRequestOptionalChunk(handle, 3, &request) == badOptionalType);
+    Require(scePlayGoRequestOptionalChunk(handle, 0xFFFFFFFF, &request) == badOptionalType);
+    Require(scePlayGoRequestOptionalChunk(handle, 0, &request) == 0);
+    Require(scePlayGoRequestOptionalChunk(handle, 2, &request) == 0);
+    Require(scePlayGoRequestOptionalChunk(handle, 1, &request) == badScenarioConfiguration);
+    request.scenarios = 0x20;
+    Require(scePlayGoRequestOptionalChunk(handle, 1, &request) == badScenarioConfiguration);
+    request.scenarios = 0x1F;
+    Require(scePlayGoRequestOptionalChunk(handle, 1, &request) == 0);
+    request.scenarios = 0;
+    Require(scePlayGoRequestOptionalChunk(handle, 1, &request) == 0);
+    std::uint32_t disc = 7;
+    Require(scePlayGoGetRequiredDisc(handle + 1, 0, &request, &disc) == badHandle && disc == 7);
+    Require(scePlayGoGetRequiredDisc(handle, 0, &request, nullptr) == badPointer);
+    Require(scePlayGoGetRequiredDisc(handle, 0, nullptr, &disc) == badPointer && disc == 7);
+    Require(scePlayGoGetRequiredDisc(handle, 3, nullptr, &disc) == badPointer && disc == 7);
+    Require(scePlayGoGetRequiredDisc(handle, 3, &request, &disc) == badOptionalType && disc == 7);
+    request.scenarios = 0x21;
+    Require(scePlayGoGetRequiredDisc(handle, 1, &request, &disc) == badScenarioConfiguration && disc == 7);
+    Require(scePlayGoGetRequiredDisc(handle, 0, &request, &disc) == 0 && disc == 0);
+    disc = 7;
+    request.scenarios = 0x1F;
+    Require(scePlayGoGetRequiredDisc(handle, 1, &request, &disc) == 0 && disc == 0);
+    int64_t eta = -1;
+    Require(scePlayGoGetEta(handle + 1, &chunk, 1, &eta) == badHandle);
+    Require(scePlayGoGetEta(handle, &chunk, 1, nullptr) == badPointer);
+    Require(scePlayGoGetEta(handle, nullptr, 1, &eta) == badPointer);
+    Require(scePlayGoGetEta(handle, &chunk, 0, &eta) == badSize);
+    Require(scePlayGoGetEta(handle, &chunk, 1, &eta) == 0 && eta == 0);
     Require(scePlayGoPrefetchOptionalChunk(handle + 1, 0, nullptr) == badHandle);
     Require(scePlayGoPrefetchOptionalChunk(handle, 0, nullptr) == 0);
     Require(scePlayGoClose(handle + 1) == badHandle);
     Require(scePlayGoClose(handle) == 0);
     Require(scePlayGoTerminate() == 0);
+    Require(scePlayGoSetInstallSpeed2(0, 2) == notInitialized);
     return 0;
 }
 
@@ -221,6 +291,79 @@ static int CheckNoPlayGoFileAnswered(const char* root, const char* answer) {
     return 0;
 }
 
+static int CheckNoPlayGoFileExplicit(const char* root, const char* value) {
+    constexpr int badChunkId = static_cast<int>(0x80B2000C);
+    SetUnlistedChunks(value);
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t listed[2] = {0, 1};
+    std::int8_t loci[2] = {0, 0};
+    Require(scePlayGoGetLocus(handle, listed, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
+    const std::uint16_t unlisted[2] = {2, 999};
+    Require(scePlayGoGetLocus(handle, unlisted, 2, loci) == badChunkId);
+    std::uint32_t chunkCount = 0;
+    Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 2);
+    std::uint16_t ids[2] = {0xFFFF, 0xFFFF};
+    Require(scePlayGoGetChunkId(handle, ids, 2, &chunkCount) == 0 && chunkCount == 2 && ids[0] == 0 && ids[1] == 1);
+    PlayGoProgress progress{};
+    Require(scePlayGoGetProgress(handle, listed, 2, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
+    Require(scePlayGoGetProgress(handle, unlisted, 2, &progress) == badChunkId);
+    Require(scePlayGoClose(handle) == 0);
+    return 0;
+}
+
+static int CheckNoPlayGoFileExplicitInvalid(const char* root, const char* value) {
+    SetUnlistedChunks(value);
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t chunk = 0;
+    std::int8_t locus = 0;
+    bool threw = false;
+    try {
+        scePlayGoGetLocus(handle, &chunk, 1, &locus);
+    } catch (const std::runtime_error& error) {
+        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed, absent, or a comma-separated list") != std::string_view::npos;
+    }
+    Require(threw);
+    return 0;
+}
+
+static int CheckPackageChunkTableExplicit(const char* root) {
+    SetUnlistedChunks("0,1");
+    return CheckPackageChunkTable(root);
+}
+
+static int CheckScenarioWithoutChunkTableExplicit(const char* root) {
+    constexpr int badChunkId = static_cast<int>(0x80B2000C);
+    SetUnlistedChunks("0,1");
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t listed[2] = {0, 999};
+    std::int8_t loci[2] = {0, 0};
+    Require(scePlayGoGetLocus(handle, listed, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
+    std::uint32_t chunkCount = 0;
+    Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 1000);
+    const std::uint16_t unlisted = 1000;
+    bool threw = false;
+    try {
+        scePlayGoGetLocus(handle, &unlisted, 1, loci);
+    } catch (const std::runtime_error& error) {
+        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent") != std::string_view::npos;
+    }
+    Require(threw);
+    Require(scePlayGoClose(handle) == 0);
+    return 0;
+}
+
 static int CheckScenarioWithoutChunkTableAnswered(const char* root, const char* answer) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     SetUnlistedChunks(answer);
@@ -256,7 +399,7 @@ static int CheckUnknownUnlistedChunkAnswer(const char* root) {
         scePlayGoGetLocus(handle, &unlisted, 1, &locus);
 
     } catch (const std::runtime_error& error) {
-        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed or absent") != std::string_view::npos;
+        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed, absent, or a comma-separated list") != std::string_view::npos;
     }
     Require(threw);
     return 0;
@@ -292,7 +435,14 @@ int main(int argc, char** argv) {
         if (mode == "--no-file-installed") return CheckNoPlayGoFileAnswered(argv[2], "installed");
         if (mode == "--no-file-absent") return CheckNoPlayGoFileAnswered(argv[2], "absent");
         if (mode == "--no-file-unknown-answer") return CheckUnknownUnlistedChunkAnswer(argv[2]);
+        if (mode == "--no-file-explicit") return CheckNoPlayGoFileExplicit(argv[2], "0,1");
+        if (mode == "--no-file-explicit-one") return CheckNoPlayGoFileExplicit(argv[2], "1");
+        if (mode == "--no-file-explicit-empty") return CheckNoPlayGoFileExplicitInvalid(argv[2], "0,");
+        if (mode == "--no-file-explicit-range") return CheckNoPlayGoFileExplicitInvalid(argv[2], "65536");
+        if (mode == "--no-file-explicit-text") return CheckNoPlayGoFileExplicitInvalid(argv[2], "0,x");
         if (mode == "--package-chunk-table" || mode == "--scenario-with-chunk-table") return CheckPackageChunkTable(argv[2]);
+        if (mode == "--package-chunk-table-explicit") return CheckPackageChunkTableExplicit(argv[2]);
+        if (mode == "--scenario-only-explicit") return CheckScenarioWithoutChunkTableExplicit(argv[2]);
         if (mode == "--scenario-only") return CheckScenarioWithoutChunkTable(argv[2]);
         if (mode == "--scenario-only-installed") return CheckScenarioWithoutChunkTableAnswered(argv[2], "installed");
         if (mode == "--scenario-only-absent") return CheckScenarioWithoutChunkTableAnswered(argv[2], "absent");
@@ -304,7 +454,14 @@ int main(int argc, char** argv) {
     RunLayout(argv[0], "--no-file-installed", {});
     RunLayout(argv[0], "--no-file-absent", {});
     RunLayout(argv[0], "--no-file-unknown-answer", {});
+    RunLayout(argv[0], "--no-file-explicit", {});
+    RunLayout(argv[0], "--no-file-explicit-one", {});
+    RunLayout(argv[0], "--no-file-explicit-empty", {});
+    RunLayout(argv[0], "--no-file-explicit-range", {});
+    RunLayout(argv[0], "--no-file-explicit-text", {});
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}});
+    RunLayout(argv[0], "--package-chunk-table-explicit", {{"playgo-chunk.dat", ChunkTableFile()}});
+    RunLayout(argv[0], "--scenario-only-explicit", {{"playgo-scenario.json", "{}"}});
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo")}});
     RunLayout(argv[0], "--scenario-with-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}, {"playgo-scenario.json", "{}"}});
     std::int64_t eta = -1;

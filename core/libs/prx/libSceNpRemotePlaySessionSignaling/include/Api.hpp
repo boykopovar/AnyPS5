@@ -14,5 +14,9 @@ int APS5_VABI sceNpRemotePlaySessionSignalingJoinSession();
 int APS5_VABI sceNpRemotePlaySessionSignalingLeaveSession();
 int APS5_VABI sceNpRemotePlaySessionSignalingSetCustomProperty();
 int APS5_VABI sceNpRemotePlaySessionSignalingTerminate();
+int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection();
+int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection();
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession();
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession();
 
 }

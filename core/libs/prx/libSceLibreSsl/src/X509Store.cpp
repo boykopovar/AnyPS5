@@ -5,7 +5,10 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
+#include <stdexcept>
+#include <string>
 
 static_assert(sizeof(LibreSslX509VerifyParamId) == 56);
 static_assert(offsetof(LibreSslX509VerifyParamId, hostFlags) == 8);
@@ -150,7 +153,7 @@ void FreeVerifyParam(LibreSslX509VerifyParam* param, const char* function) {
     if (HoldsElements(policies, function)) NotImplemented_nid_no_patch("X509_VERIFY_PARAM policy objects");
     FreeStack(policies);
     auto* id = param->id;
-    if (!id) NotImplemented_nid_no_patch(function);
+    if (!id) throw std::invalid_argument(std::string(function) + ": missing verify parameter identity");
     FreeStrings(static_cast<Stack*>(id->hosts), function);
     free_nid_postfix(id->peerName);
     free_nid_postfix(id->email);
@@ -214,17 +217,17 @@ LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void) {
 }
 
 LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method) {
-    if (!store) NotImplemented_nid_no_patch(__func__);
+    if (!store) throw std::invalid_argument(std::string(__func__) + ": null store");
     auto* lookupMethods = static_cast<Stack*>(store->lookupMethods);
     if (lookupMethods && lookupMethods->num > 0) {
         char** const lookups = Elements(lookupMethods, __func__);
         for (int index = 0; index < lookupMethods->num; ++index) {
             auto* lookup = reinterpret_cast<LibreSslX509Lookup*>(lookups[index]);
-            if (!lookup) NotImplemented_nid_no_patch(__func__);
+            if (!lookup) throw std::invalid_argument(std::string(__func__) + ": listed lookup is null");
             if (lookup->method == method) return lookup;
         }
     }
-    if (!method) NotImplemented_nid_no_patch(__func__);
+    if (!method) throw std::invalid_argument(std::string(__func__) + ": null method");
     if (method->newItem) NotImplemented_nid_no_patch("X509_LOOKUP new_item callback");
     auto* lookup = static_cast<LibreSslX509Lookup*>(malloc_nid_postfix(sizeof(LibreSslX509Lookup)));
     if (!lookup) return nullptr;
@@ -236,6 +239,34 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
     if (Push(lookupMethods, lookup, __func__)) return lookup;
     FreeLookup(lookup, false, __func__);
     return nullptr;
+}
+
+int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length) {
+    if (!param || !param->id) NotImplemented_nid_no_patch(__func__);
+    auto* id = param->id;
+    if (name && length == 0) length = std::strlen(name);
+    if (name && std::memchr(name, '\0', length)) return 0;
+    if (id->hosts) {
+        FreeStrings(static_cast<Stack*>(id->hosts), __func__);
+        id->hosts = nullptr;
+    }
+    if (!name || length == 0) return 1;
+    char* copy = strndup_nid_postfix(name, length);
+    if (!copy) return 0;
+    if (!id->hosts && !(id->hosts = NewStack(nullptr))) {
+        free_nid_postfix(copy);
+        return 0;
+    }
+    auto* hosts = static_cast<Stack*>(id->hosts);
+    if (!Push(hosts, copy, __func__)) {
+        free_nid_postfix(copy);
+        if (hosts->num == 0) {
+            FreeStack(hosts);
+            id->hosts = nullptr;
+        }
+        return 0;
+    }
+    return 1;
 }
 
 }
