@@ -159,6 +159,28 @@ int main() {
     CheckFrames();
     CheckClose();
     RequireNotImplemented([] { sceCameraSetVideoSync(); }, "sceCameraSetVideoSync");
-    RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
+
+    Require(sceCameraGetCalibData(1, nullptr, nullptr) == ErrorParam, "null output with id 1 must return PARAM");
+
+    std::uint8_t buffer[256];
+    for (int i = 0; i < 256; ++i) buffer[i] = 0xA5;
+
+    Require(sceCameraGetCalibData(0, buffer, nullptr) == 0, "id 0 must return 0");
+    for (int i = 0; i < 256; ++i) {
+        Require(buffer[i] == 0xA5, "id 0 must not write to buffer");
+    }
+
+    for (int i = 0; i < 256; ++i) buffer[i] = 0xA5;
+    Require(sceCameraGetCalibData(3, buffer, nullptr) == 0, "id 3 must return 0");
+    for (int i = 0; i < 256; ++i) {
+        Require(buffer[i] == 0xA5, "id 3 must not write to buffer");
+    }
+
+    for (int i = 0; i < 256; ++i) buffer[i] = 0xA5;
+    Require(sceCameraGetCalibData(-1, buffer, nullptr) == 0, "id -1 must return 0");
+    for (int i = 0; i < 256; ++i) {
+        Require(buffer[i] == 0xA5, "id -1 must not write to buffer");
+    }
+
     return 0;
 }
