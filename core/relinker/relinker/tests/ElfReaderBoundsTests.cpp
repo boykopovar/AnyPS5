@@ -169,7 +169,9 @@ int main() {
                     Write<std::uint32_t>(bytes, 64, type);
                     Write<std::uint64_t>(bytes, 112, alignment);
                     const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-                    Require(headers.size() == 1 && headers[0].Type == 1 && headers[0].Alignment == alignment);
+                    const bool isUncoveredRelro = type == 0x61000010u;
+                    Require(headers.size() == (isUncoveredRelro ? 2u : 1u) && headers[0].Type == 1 && headers[0].Alignment == alignment);
+                    if (isUncoveredRelro) Require(headers[1].Type == 0x6474e552 && headers[1].Flags == 4 && headers[1].Alignment == alignment);
                 }
             }
         }},
