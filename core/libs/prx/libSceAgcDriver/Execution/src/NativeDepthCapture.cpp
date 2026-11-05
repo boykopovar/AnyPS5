@@ -94,11 +94,14 @@ std::uint64_t ValidateNativeDepthSnapshots(std::span<const NativeDepthSnapshot> 
     Require(snapshots.size() <= 65536u, "too many native surface records");
     std::uint64_t bytes = 0;
     std::set<std::pair<std::uint64_t, unsigned>> owners;
+    std::set<std::uint64_t> orders;
     for (const auto& snapshot : snapshots) {
         const auto [depthBytes, stencilBytes] = Sizes(snapshot, !snapshot.depth.empty(), !snapshot.stencil.empty());
         Require(snapshot.depth.size() == depthBytes && snapshot.stencil.size() == stencilBytes, "plane size does not match its extent");
         Require(depthBytes == 0u || owners.emplace(snapshot.target.address, 0u).second, "duplicate depth owner");
         Require(stencilBytes == 0u || owners.emplace(snapshot.target.stencilAddress, 1u).second, "duplicate stencil owner");
+        Require(depthBytes == 0u ? snapshot.depthOrder == 0u : snapshot.depthOrder != 0u && orders.insert(snapshot.depthOrder).second, "invalid or duplicate depth owner order");
+        Require(stencilBytes == 0u ? snapshot.stencilOrder == 0u : snapshot.stencilOrder != 0u && orders.insert(snapshot.stencilOrder).second, "invalid or duplicate stencil owner order");
         const auto added = depthBytes + stencilBytes;
         Require(added <= NativeDepthCaptureLimit - bytes, "capture exceeds the decoded size limit");
         bytes += added;
@@ -118,6 +121,7 @@ void WriteNativeDepthCapture(const std::filesystem::path& path, std::span<const 
         const std::uint32_t flags = static_cast<std::uint32_t>(t.htileStencil) | (static_cast<std::uint32_t>(t.iterate256) << 1u) | (static_cast<std::uint32_t>(t.htilePipeAligned) << 2u) | (static_cast<std::uint32_t>(t.htileDepthOnly) << 3u) | (static_cast<std::uint32_t>(t.gcn) << 4u);
         out.Value(flags);
         out.Value(static_cast<std::uint32_t>(!snapshot.depth.empty()) | (static_cast<std::uint32_t>(!snapshot.stencil.empty()) << 1u));
+        out.Value(snapshot.depthOrder); out.Value(snapshot.stencilOrder);
         out.Value(static_cast<std::uint64_t>(snapshot.depth.size())); out.Value(static_cast<std::uint64_t>(snapshot.stencil.size()));
         std::vector<std::byte> payload = snapshot.depth;
         payload.insert(payload.end(), snapshot.stencil.begin(), snapshot.stencil.end());
@@ -136,7 +140,7 @@ std::vector<NativeDepthSnapshot> ReadNativeDepthCapture(const std::filesystem::p
     const auto magic = in.Bytes(NativeDepthCaptureMagic.size());
     Require(std::memcmp(magic.data(), NativeDepthCaptureMagic.data(), magic.size()) == 0, "unknown depth file format");
     const auto count = in.Value<std::uint32_t>();
-    Require(count <= 65536u && count <= in.Remaining() / 104u, "invalid native surface count");
+    Require(count <= 65536u && count <= in.Remaining() / 120u, "invalid native surface count");
     std::vector<NativeDepthSnapshot> snapshots;
     snapshots.reserve(count);
     std::uint64_t total = 0;
@@ -157,6 +161,7 @@ std::vector<NativeDepthSnapshot> ReadNativeDepthCapture(const std::filesystem::p
         t.htileStencil = (flags & 1u) != 0u; t.iterate256 = (flags & 2u) != 0u; t.htilePipeAligned = (flags & 4u) != 0u; t.htileDepthOnly = (flags & 8u) != 0u; t.gcn = (flags & 16u) != 0u;
         const auto aspects = in.Value<std::uint32_t>();
         Require(aspects != 0u && (aspects & ~3u) == 0u, "unknown owner aspects");
+        snapshot.depthOrder = in.Value<std::uint64_t>(); snapshot.stencilOrder = in.Value<std::uint64_t>();
         const auto [depthBytes, stencilBytes] = Sizes(snapshot, (aspects & 1u) != 0u, (aspects & 2u) != 0u);
         Require(in.Value<std::uint64_t>() == depthBytes && in.Value<std::uint64_t>() == stencilBytes, "plane size does not match its extent");
         const auto bytes = depthBytes + stencilBytes;
