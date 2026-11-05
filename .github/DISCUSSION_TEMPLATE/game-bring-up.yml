@@ -75,6 +75,12 @@ body:
       label: Current blocker
       description: The line where it stops, the issue that tracks it, and the open pull requests and local changes the title still needs.
   - type: textarea
+    id: report
+    attributes:
+      label: Run report
+      description: The contents of `anyps5-report.json`, which the runtime writes next to the executable at the end of a run (see the usage guide). The runtime filters user names, home folders, host names and addresses out of it, which is a filter and not a guarantee, so read it first. Reports can be up to 64 KiB and a discussion field takes 65,536 characters, so if yours is longer than about 60,000 characters, attach the file to the thread instead of pasting it. Leave this empty if the report was turned off.
+      render: json
+  - type: textarea
     id: steps
     attributes:
       label: How it was run

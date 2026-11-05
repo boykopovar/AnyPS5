@@ -4,5 +4,8 @@
 #include <filesystem>
 
 extern "C" bool LoadConvertedExecutable_nid_no_patch(const std::filesystem::path& target, const char* const* arguments);
+#if defined(__linux__)
+extern "C" bool LoadExecIsolateDescriptors_nid_no_patch(int keep, bool reportFinalized);
+#endif
 
 #endif

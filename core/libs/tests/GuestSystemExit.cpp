@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/LoadExec.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -226,10 +228,42 @@ int DriveExitDrain() {
     std::puts("Host exit drain completed before immediate termination and stayed bounded");
     return 0;
 }
+
+#if defined(__linux__)
+// LoadExec's descriptor isolation must not depend on the diagnostic report: with the report finalized every unrelated descriptor is closed; with a report that could not
+// finish (a checkpoint writer may still use descriptors) they are only marked close-on-exec, so the replacement program cannot inherit them either way.
+int DriveFdIsolation() {
+    for (const bool finalized : {true, false}) {
+        const pid_t child = fork();
+        if (child < 0) return 1;
+        if (child == 0) {
+            const int unrelated = open("/dev/null", O_RDONLY);
+            const int keep = open("/dev/null", O_RDONLY | O_CLOEXEC);
+            if (unrelated < 3 || keep < 3 || !LoadExecIsolateDescriptors_nid_no_patch(keep, finalized)) _exit(10);
+            if (fcntl(keep, F_GETFD) < 0 || !(fcntl(keep, F_GETFD) & FD_CLOEXEC)) _exit(11);
+            if (finalized) { if (fcntl(unrelated, F_GETFD) != -1) _exit(12); }
+            else if (fcntl(unrelated, F_GETFD) < 0 || !(fcntl(unrelated, F_GETFD) & FD_CLOEXEC)) _exit(13);
+            const std::string script = "test ! -e /proc/self/fd/" + std::to_string(unrelated) + " && test ! -e /proc/self/fd/" + std::to_string(keep);
+            execl("/bin/sh", "sh", "-c", script.c_str(), static_cast<char*>(nullptr));
+            _exit(14);
+        }
+        int status = 0;
+        if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            std::printf("LoadExec descriptor isolation failed (report %s): status %d\n", finalized ? "finalized" : "unfinished", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+            return 1;
+        }
+    }
+    std::puts("LoadExec descriptor isolation completed");
+    return 0;
+}
+#endif
 }
 int main(int argc, char** argv) {
     const int firstArgument = argc > 0 && std::strncmp(argv[0], "--", 2) == 0 ? 0 : 1;
     if (argc > firstArgument && std::strcmp(argv[firstArgument], "--exit-drain-driver") == 0) return DriveExitDrain();
+#if defined(__linux__)
+    if (argc > firstArgument && std::strcmp(argv[firstArgument], "--fd-isolation") == 0) return DriveFdIsolation();
+#endif
     if (argc > firstArgument && std::strncmp(argv[firstArgument], "--exit-drain", 12) == 0) {
         LibcRegisterShutdown_nid_postfix(UnexpectedCleanup);
         Require(std::atexit(UnexpectedCleanup) == 0);

@@ -16,6 +16,9 @@ def rows(text):
     return table
 
 
+TEMPLATE = ROOT / ".github/DISCUSSION_TEMPLATE/game-bring-up.yml"
+
+
 class DocsTests(unittest.TestCase):
     def test_every_system_has_a_row_in_both_docs(self):
         for path in (RUN_REPORT, USAGE):
@@ -40,16 +43,37 @@ class DocsTests(unittest.TestCase):
         text = USAGE.read_text(encoding="utf-8")
         self.assertRegex(text, r"either one the run did not reach or one this system does not record")
 
+    def test_recovery_is_documented_as_strict(self):
+        text = RUN_REPORT.read_text(encoding="utf-8")
+        self.assertRegex(text, r"dropped whole")
+
+    def test_usage_says_what_a_recovered_report_says(self):
+        text = USAGE.read_text(encoding="utf-8")
+        self.assertIn("`kind: other`, `reason: unclean-unknown`", text)
+
+    def test_template_has_the_report_field(self):
+        text = TEMPLATE.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^    id: report$")
+        self.assertIn("anyps5-report.json", text)
+
+    def test_template_is_valid_yaml_when_a_parser_is_available(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        document = yaml.safe_load(TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("report", [block.get("id") for block in document["body"]])
+
     def test_the_switch_is_documented_in_both_docs(self):
         for path in (RUN_REPORT, USAGE):
             text = path.read_text(encoding="utf-8")
             self.assertIn("--aps5-report=off", text, path.name)
             self.assertIn("APS5_REPORT=0", text, path.name)
 
-    def test_usage_says_where_the_report_goes_and_that_a_killed_run_has_none(self):
+    def test_usage_says_where_the_report_goes_and_that_a_killed_run_is_recovered(self):
         text = USAGE.read_text(encoding="utf-8")
         self.assertIn("reports/<run id>/anyps5-report.json", text)
-        self.assertRegex(text, r"A run that is killed, crashes or aborts writes no report")
+        self.assertRegex(text, r"A run that ends without writing its report is recovered at the next start")
 
     def test_privacy_is_described_as_a_filter(self):
         text = USAGE.read_text(encoding="utf-8")
