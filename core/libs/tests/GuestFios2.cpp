@@ -103,7 +103,7 @@ static void CheckOperationLifecycle(const std::string& file) {
     REQUIRE(sceFiosOpGetAttr(op) != nullptr && !sceFiosOpIsCancelled(op));
     REQUIRE(sceFiosOpGetOffset(op) == 0);
     std::vector<SceFiosOp> listed(8);
-    REQUIRE(sceFiosGetAllOps(listed.data(), static_cast<std::uint32_t>(listed.size())) >= 1);
+    REQUIRE(sceFiosGetAllOps(listed.data(), UINT32_MAX) >= 1);
     REQUIRE(listed[0] == op);
     REQUIRE(sceFiosOpSyncWaitForIO(op) == 10);
     REQUIRE(!sceFiosIsValidHandle(op));

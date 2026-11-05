@@ -98,6 +98,8 @@ void* APS5_VABI sceFiosDLLInitialize() {
 }
 
 std::int64_t APS5_VABI sceFiosDLLTerminate() {
+    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
+    g_dllOverlayCount = 0;
     return 0;
 }
 

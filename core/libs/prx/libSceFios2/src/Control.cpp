@@ -155,11 +155,12 @@ bool APS5_VABI sceFiosIsIdle() {
 }
 
 static std::uint32_t CopyHandles(std::uint32_t (*list)(SceFiosHandle*, std::uint32_t), SceFiosHandle* out, std::uint32_t capacity) {
-    std::vector<SceFiosHandle> handles(capacity);
-    const std::uint32_t total = list(handles.data(), capacity);
-    const std::uint32_t count = std::min(total, capacity);
+    const std::uint32_t total = list(nullptr, 0);
+    std::vector<SceFiosHandle> handles(std::min(total, capacity));
+    const std::uint32_t listed = list(handles.data(), static_cast<std::uint32_t>(handles.size()));
+    const std::uint32_t count = std::min(listed, static_cast<std::uint32_t>(handles.size()));
     if (out != nullptr && count != 0) Fios::CopyOut(out, handles.data(), count * sizeof(SceFiosHandle));
-    return total;
+    return listed;
 }
 
 std::uint32_t APS5_VABI sceFiosGetAllFHs(SceFiosFH* outArray, std::uint32_t arraySize) {
@@ -190,12 +191,15 @@ void APS5_VABI sceFiosOpReschedule(SceFiosOp op, const void* scheduler) {
 }
 
 void APS5_VABI sceFiosCacheFlushSync() {
+    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI sceFiosCacheFlushFileSync() {
+    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI sceFiosCacheFlushFileRangeSync() {
+    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI sceFiosCacheContainsFileRangeSync(const char*, std::uint64_t, std::uint64_t) {
