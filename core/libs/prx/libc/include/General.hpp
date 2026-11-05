@@ -29,6 +29,7 @@ extern "C" std::FILE* HostStandardErrorFile_nid_no_patch();
 #endif
 
 extern "C" bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value);
+extern "C" void LibcRegisterProgramName_nid_no_patch(const char* const* name);
 extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maximum, std::string& destination);
 extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 
@@ -58,6 +59,10 @@ extern "C" int WindowsOpenError_nid_no_patch(unsigned long error);
 extern "C" void* HostStandardHandle_nid_no_patch(int descriptor);
 extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
 #endif
+
+struct KernelTimespec;
+using ClockGetresFn_nid_no_patch = int (APS5_VABI*)(std::int32_t, KernelTimespec*);
+extern "C" void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn);
 
 using PthreadCreateFn_nid_no_patch = int (APS5_VABI*)(void**, const void*, void* (APS5_VABI*)(void*), void*);
 using PthreadJoinFn_nid_no_patch = int (APS5_VABI*)(void*, void**);
@@ -94,14 +99,20 @@ struct PthreadSyncForwards_nid_no_patch {
     int (APS5_VABI* condWait)(void**, void**);
     int (APS5_VABI* condSignal)(void**);
     int (APS5_VABI* condBroadcast)(void**);
+    int (APS5_VABI* rwlockInit)(void**, void* const*, const char*);
+    int (APS5_VABI* rwlockDestroy)(void**);
+    int (APS5_VABI* rwlockRdlock)(void**);
+    int (APS5_VABI* rwlockWrlock)(void**);
+    int (APS5_VABI* rwlockTryrdlock)(void**);
+    int (APS5_VABI* rwlockTrywrlock)(void**);
+    int (APS5_VABI* rwlockTimedrdlock)(void**, unsigned int);
+    int (APS5_VABI* rwlockTimedwrlock)(void**, unsigned int);
+    int (APS5_VABI* rwlockUnlock)(void**);
     int (APS5_VABI* detach)(void*);
     int (APS5_VABI* join)(void*, void**);
     void (APS5_VABI* yield)();
 };
 extern "C" void RegisterPthreadSyncForwards_nid_no_patch(const PthreadSyncForwards_nid_no_patch* forwards);
-
-using SigactionFn_nid_no_patch = int (APS5_VABI*)(int, const void*, void*);
-extern "C" void RegisterSigaction_nid_no_patch(SigactionFn_nid_no_patch fn, std::uint32_t* interruptSet);
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 
