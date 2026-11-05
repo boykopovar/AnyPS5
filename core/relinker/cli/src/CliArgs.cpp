@@ -25,6 +25,8 @@ const char* Usage() {
            "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
            "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
+           "  --omit-unavailable-dependencies Linux: leave out a module dependency that no module provides, no import uses\n"
+           "                                 and no run path directory holds at conversion time.\n"
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
            "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
@@ -59,6 +61,7 @@ const char* Usage() {
            "Other:\n"
            "  --help                         Print this help and exit with code 0.\n"
            "  --version                      Print the build revision and exit with code 0.\n"
+           "  --                             Treat all remaining arguments as paths.\n"
            "  Exit codes: 0 success, help or version, 1 invalid arguments or a patch mismatch, 2 conversion failed.\n"
            "Example: relinker input.elf output.elf";
 }
@@ -69,7 +72,7 @@ constexpr std::string_view kVerifyRejectedOptions[] = {
     "--dry-run",
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
-    "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
+    "--rpath", "--registry", "--omit-unavailable-dependencies", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 
 constexpr std::string_view kModuleDiscoveryOptions[] = {"--sce-module-path", "--module-dir", "--exclude-sce-module", "--skip-sce-module"};
@@ -98,10 +101,25 @@ Args ParseArgs(int argc, char* argv[]) {
     bool unusedFilterSpecified = false;
     bool runPathSpecified = false;
     bool sceModulePathSpecified = false;
+    bool optionsEnded = false;
     std::vector<std::string> givenOptions;
+    const auto addPositional = [&](const std::string& path) {
+        if (path.empty()) throw std::runtime_error("input and output paths must be nonempty");
+        if (args.inputPath.empty()) args.inputPath = path;
+        else if (args.outputPath.empty()) args.outputPath = path;
+        else throw std::runtime_error("unexpected argument: " + path);
+    };
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (optionsEnded) {
+            addPositional(arg);
+            continue;
+        }
+        if (arg == "--") {
+            optionsEnded = true;
+            continue;
+        }
         if (arg.rfind("--", 0) == 0) givenOptions.push_back(arg);
         else if (arg.rfind("unused-filter=", 0) == 0) givenOptions.push_back("unused-filter=");
         if (arg == "--help") {
@@ -184,6 +202,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.toMacos = true;
         } else if (arg == "--lazy-binding") {
             args.lazyBinding = true;
+        } else if (arg == "--omit-unavailable-dependencies") {
+            args.omitUnavailableDependencies = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
         } else if (arg == "--dry-run") {
@@ -196,14 +216,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.traceImports = true;
         } else if (arg.rfind("--", 0) == 0 || arg == "unused-filter") {
             throw std::runtime_error("unknown option: " + arg);
-        } else if (arg.empty()) {
-            throw std::runtime_error("input and output paths must be nonempty");
-        } else if (args.inputPath.empty()) {
-            args.inputPath = arg;
-        } else if (args.outputPath.empty()) {
-            args.outputPath = arg;
         } else {
-            throw std::runtime_error("unexpected argument: " + arg);
+            addPositional(arg);
         }
     }
 
