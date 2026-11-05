@@ -87,6 +87,8 @@ public:
     void ReleaseSettled();
     bool SettledHeld();
     bool Settled();
+    std::vector<NativeDepthSnapshot> CaptureNativeDepth();
+    void RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);

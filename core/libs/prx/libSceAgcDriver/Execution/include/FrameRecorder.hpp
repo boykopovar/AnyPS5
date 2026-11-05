@@ -110,6 +110,8 @@ private:
     std::uint64_t deltaGroups = 0;
     std::uint64_t deltaBytes = 0;
     std::uint64_t snapshotBytes = 0;
+    std::uint64_t nativeDepthSurfaces = 0;
+    std::uint64_t nativeDepthBytes = 0;
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
     std::uint64_t unreadableBytes = 0;

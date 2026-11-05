@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/NativeDepthCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
@@ -277,6 +278,23 @@ void Driver::WaitIdle() {
 
 void Driver::WaitDeviceIdle() {
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
+std::vector<NativeDepthSnapshot> Driver::CaptureNativeDepth() {
+    std::shared_lock replacing(deviceReplacement);
+    WaitIdle();
+    const auto localDevice = device.Load();
+    return localDevice != nullptr ? localDevice->CaptureNativeDepth() : std::vector<NativeDepthSnapshot>{};
+}
+
+void Driver::RestoreNativeDepth(std::span<const NativeDepthSnapshot> snapshots) {
+    static_cast<void>(ValidateNativeDepthSnapshots(snapshots));
+    if (snapshots.empty()) return;
+    std::shared_lock replacing(deviceReplacement);
+    WaitIdle();
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    if (device == nullptr) device = std::make_shared<VulkanDevice>();
+    device->RestoreNativeDepth(snapshots);
 }
 
 bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
