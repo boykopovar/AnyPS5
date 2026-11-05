@@ -114,9 +114,29 @@ static void CheckStrings() {
     Require(wcstombs_nid_postfix(nullptr, source, 0) == 6, "wcstombs counts bytes");
 }
 
+static void CheckMbrlen() {
+    unsigned char state[16]{};
+    Require(mbrlen_nid_postfix("A", 1, state) == 1, "mbrlen counts an ASCII byte");
+    Require(mbrlen_nid_postfix("\xc3\xa9", 2, state) == 2, "mbrlen counts a two-byte form");
+    Require(mbrlen_nid_postfix("\xe2\x82\xac" "A", 4, state) == 3 && mbsinit_nid_postfix(state), "mbrlen counts one three-byte form");
+    Require(mbrlen_nid_postfix("", 1, state) == 0 && mbsinit_nid_postfix(state), "mbrlen returns 0 for a NUL byte");
+    Require(mbrlen_nid_postfix("A", 0, state) == Incomplete && mbsinit_nid_postfix(state), "mbrlen of no bytes is incomplete");
+    Require(mbrlen_nid_postfix("\xe2\x82", 2, state) == Incomplete && !mbsinit_nid_postfix(state), "mbrlen keeps a partial form pending");
+    Require(mbrlen_nid_postfix("\xac", 1, state) == 1 && mbsinit_nid_postfix(state), "mbrlen counts only the byte that completes the form");
+    *__error_nid_postfix() = 0;
+    Require(mbrlen_nid_postfix("\x80", 1, state) == Invalid && *__error_nid_postfix() == 86, "mbrlen rejects a lone continuation byte with EILSEQ");
+    Require(mbrlen_nid_postfix(nullptr, 0, state) == 0 && mbsinit_nid_postfix(state), "mbrlen with a null string resets the state");
+
+    std::uint16_t value = 0;
+    Require(mbrlen_nid_postfix("\xe2", 1, nullptr) == Incomplete, "mbrlen keeps a partial form in its own internal state");
+    Require(mbrtowc_nid_postfix(&value, "A", 1, nullptr) == 1 && value == 'A', "mbrtowc does not share mbrlen's internal state");
+    Require(mbrlen_nid_postfix("\x82\xac", 2, nullptr) == 2, "mbrlen completes the form from its internal state");
+}
+
 int main() {
     CheckDecoding();
     CheckState();
+    CheckMbrlen();
     CheckEncoding();
     CheckStrings();
     return 0;

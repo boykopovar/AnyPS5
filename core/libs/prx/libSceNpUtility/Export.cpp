@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -52,13 +54,17 @@ struct Service {
 Service lookup(1, 1);
 Service wordFilter(WORD_FILTER_TITLE_CTX_ID_OFFSET + 1, WORD_FILTER_REQUEST_ID_OFFSET + 1);
 
-int CreateTitleContext(Service& service, const void* selfNpId) {
-    if (!selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+int AddTitleContext(Service& service) {
     std::lock_guard lock(service.mutex);
     if (service.titleContexts.size() >= MAX_TITLE_CONTEXTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
     const int titleCtxId = service.nextTitleContext++;
     service.titleContexts.insert(titleCtxId);
     return titleCtxId;
+}
+
+int CreateTitleContext(Service& service, const void* selfNpId) {
+    if (!selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return AddTitleContext(service);
 }
 
 int DeleteTitleContext(Service& service, int titleCtxId) {
@@ -156,6 +162,23 @@ int CheckComment(const char* comment) {
 }
 
 extern "C" {
+
+int APS5_VABI sceNpAdvppBandwidthDownloadBegin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpAdvppBandwidthDownloadEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpBandwidthTestInitStartDownloadInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpBandwidthTestInitStartUploadInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int SceNpUtilityModuleLoaded_nid_no_patch = 1;
 
@@ -298,8 +321,8 @@ int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo() {
     return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
 int APS5_VABI sceNpLookupCreateTitleCtxA(int userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)userId;
+    return AddTitleContext(lookup);
 }
 int APS5_VABI sceNpLookupNetAbortRequest() {
     NotImplemented_nid_no_patch(__func__);
@@ -458,8 +481,8 @@ int APS5_VABI sceNpUtilityTerm() {
     return 0;
 }
 int APS5_VABI sceNpWordFilterCreateTitleCtxA(int userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)userId;
+    return AddTitleContext(wordFilter);
 }
 }
 
@@ -562,5 +585,19 @@ int APS5_VABI sceNpWordFilterSetTimeout(int id, int resolveRetry, std::uint32_t 
 int APS5_VABI sceNpWordFilterWaitAsync(int reqId, int* result) {
     return WaitAsync(wordFilter, reqId, result, SCE_NP_COMMUNITY_ERROR_INVALID_ID);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpUtilityUnknown_3BZG8C8D62Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3BZG8C8D62Q", libSceNpUtilityUnknown_3BZG8C8D62Q_nid_no_patch);
+
+int APS5_VABI libSceNpUtilityUnknown_VVM_plus_zY9FiEU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("VVM+zY9FiEU", libSceNpUtilityUnknown_VVM_plus_zY9FiEU_nid_no_patch);
 
 }
