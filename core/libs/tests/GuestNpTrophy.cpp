@@ -22,6 +22,7 @@ constexpr int AlreadyUnlocked = static_cast<int>(0x8055160cu);
 constexpr int NotRegistered = static_cast<int>(0x8055160fu);
 constexpr int AlreadyRegistered = static_cast<int>(0x80551610u);
 constexpr int ContextAlreadyExists = static_cast<int>(0x80551613u);
+constexpr int InvalidTrpFileFormat = static_cast<int>(0x80551616u);
 constexpr int TitleConfNotInstalled = static_cast<int>(0x80551626u);
 constexpr int TrophyNotUnlocked = static_cast<int>(0x8055161au);
 
@@ -51,6 +52,62 @@ void WritePackage(const std::filesystem::path& path, const std::vector<std::pair
     }
     std::filesystem::create_directories(path.parent_path());
     std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+void PatchPackage(const std::filesystem::path& path, std::size_t at, std::uint64_t value, int width) {
+    std::vector<std::uint8_t> bytes(width);
+    PutBigEndian(bytes, 0, value, width);
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(static_cast<std::streamoff>(at));
+    file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    Require(static_cast<bool>(file), "patch the trophy package");
+}
+
+void TestPackageBounds() {
+    const std::filesystem::path path("app0/sce_sys/trophy/trophy02.trp");
+    const std::vector<std::pair<std::string, std::string>> files{{"TROPCONF.ESFM", "conf"}, {"ICON0.PNG", "game-icon"}, {"TROP000.PNG", "first"}, {"TROP001.PNG", "second"}};
+    WritePackage(path, files);
+    const auto fileSize = std::filesystem::file_size(path);
+    int handle = 0;
+    Require(sceNpTrophyCreateHandle(&handle) == 0, "create a package bounds handle");
+    for (const auto& [offset, size] : std::vector<std::pair<std::uint64_t, std::uint64_t>>{
+             {fileSize + 1, 0}, {fileSize + 1, 1}, {fileSize, 1}, {fileSize - 1, 2}, {UINT64_MAX, 1}, {1, UINT64_MAX}, {fileSize - 1, UINT64_MAX}}) {
+        for (const std::size_t index : {0u, 1u, 3u}) {
+            WritePackage(path, files);
+            PatchPackage(path, 0x60 + index * 0x40 + 32, offset, 8);
+            PatchPackage(path, 0x60 + index * 0x40 + 40, size, 8);
+            int context = 0;
+            Require(sceNpTrophyCreateContext(&context, 1, 2, 0) == 0, "create a package bounds context");
+            Require(sceNpTrophyRegisterContext(context, handle, 0) == InvalidTrpFileFormat, "register a package whose entry extends past the file");
+            TrophyFlagArray flags{};
+            std::uint32_t count = 0;
+            Require(sceNpTrophyGetTrophyUnlockState(context, handle, &flags, &count) == NotRegistered, "a rejected package registered its context");
+            WritePackage(path, files);
+            Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "retry registration after repairing the package");
+            std::uint64_t iconSize = 0;
+            Require(sceNpTrophyGetGameIcon(context, handle, nullptr, &iconSize) == 0 && iconSize == 9, "a rejected package left stale icon metadata");
+            Require(sceNpTrophyDestroyContext(context) == 0, "destroy a package bounds context");
+        }
+    }
+    for (const std::uint64_t size : {0u, 4u}) {
+        WritePackage(path, files);
+        PatchPackage(path, 0x60 + 0x40 + 32, fileSize - size, 8);
+        PatchPackage(path, 0x60 + 0x40 + 40, size, 8);
+        int context = 0;
+        Require(sceNpTrophyCreateContext(&context, 1, 2, 0) == 0 && sceNpTrophyRegisterContext(context, handle, 0) == 0, "an entry ending exactly at EOF was rejected");
+        std::uint64_t iconSize = 0;
+        Require(sceNpTrophyGetGameIcon(context, handle, nullptr, &iconSize) == 0 && iconSize == size, "the EOF entry has the wrong size");
+        if (size != 0) {
+            char bytes[4]{};
+            Require(sceNpTrophyGetGameIcon(context, handle, bytes, &iconSize) == 0 && std::memcmp(bytes, "cond", 4) == 0, "the EOF entry has the wrong bytes");
+        }
+        Require(sceNpTrophyDestroyContext(context) == 0, "destroy the EOF entry context");
+    }
+    WritePackage(path, files);
+    PatchPackage(path, 0x10, UINT32_MAX, 4);
+    int context = 0;
+    Require(sceNpTrophyCreateContext(&context, 1, 2, 0) == 0 && sceNpTrophyRegisterContext(context, handle, 0) == InvalidTrpFileFormat, "a table extending past the file was accepted");
+    Require(sceNpTrophyDestroyContext(context) == 0 && sceNpTrophyDestroyHandle(handle) == 0, "destroy the package bounds context and handle");
 }
 
 }
@@ -145,6 +202,8 @@ int main() {
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
     Require(sceNpTrophyAbortHandle(handle) == InvalidHandle, "abort a destroyed handle");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");
+
+    TestPackageBounds();
 
     std::filesystem::current_path(root.parent_path());
     std::error_code error;

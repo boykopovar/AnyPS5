@@ -124,10 +124,6 @@ int APS5_VABI PKAllocAligned_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKAlloc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKCodecFactory_CreateCodec_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
