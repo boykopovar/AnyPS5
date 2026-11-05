@@ -1099,6 +1099,50 @@ StringView APS5_VABI _ZNK3WTF3URL4hostEv(const URL* self) {
     return url.bits & 1 ? Slice(View(url.impl), start, url.hostEnd - start) : StringView{nullptr, 0, true};
 }
 
+String APS5_VABI _ZNK3WTF3URL11hostAndPortEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!(url.bits & 1)) return String();
+    unsigned start = HostStart(url);
+    if (url.hostEnd < start) throw std::out_of_range("invalid WTF URL host boundary");
+    auto view = View(url.impl);
+    if (url.hostEnd > view.length) throw std::out_of_range("invalid WTF URL host boundary");
+    auto hostView = Slice(view, start, url.hostEnd - start);
+    auto port = URLPort(url);
+    if (!port) {
+        StringView parts[] = {hostView};
+        return ConcatViews(parts, 1);
+    }
+    char portBuf[16];
+    portBuf[0] = ':';
+    auto [ptr, ec] = std::to_chars(portBuf + 1, portBuf + sizeof(portBuf), *port);
+    unsigned portLen = static_cast<unsigned>(ptr - portBuf);
+    StringView portView{portBuf, portLen, true};
+    StringView parts[] = {hostView, portView};
+    return ConcatViews(parts, 2);
+}
+
+String APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!(url.bits & 1)) return String();
+    auto view = View(url.impl);
+    unsigned pathStart = PathStart(url);
+    if (pathStart > view.length) throw std::out_of_range("invalid WTF URL path boundary");
+    bool hasCredentials = url.passwordEnd > url.userStart;
+    if (!hasCredentials) {
+        StringView parts[] = {Slice(view, 0, pathStart)};
+        return ConcatViews(parts, 1);
+    }
+    unsigned hostStart = HostStart(url);
+    if (url.userStart > view.length || hostStart > view.length || pathStart < hostStart) {
+        throw std::out_of_range("invalid WTF URL credential boundary");
+    }
+    StringView parts[] = {
+        Slice(view, 0, url.userStart),
+        Slice(view, hostStart, pathStart - hostStart)
+    };
+    return ConcatViews(parts, 2);
+}
+
 StringView APS5_VABI _ZNK3WTF3URL4pathEv(const URL* self) {
     const auto& url = Checked(self);
     if (!(url.bits & 1)) return {nullptr, 0, true};

@@ -779,9 +779,9 @@ void Run() {
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestURLHostAndPort(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestURLHostAndPort(); }
 
 namespace Wtf2Tests {
 
@@ -809,6 +809,8 @@ const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
 const auto URLLastPathComponent = &_ZNK3WTF3URL17lastPathComponentEv;
 const auto URLStrippedForReferrer = &_ZNK3WTF3URL24strippedForUseAsReferrerEv;
+const auto URLHostAndPort = &_ZNK3WTF3URL11hostAndPortEv;
+const auto URLProtocolHostAndPort = &_ZNK3WTF3URL19protocolHostAndPortEv;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
 
@@ -1306,6 +1308,65 @@ void TestURLLastPathComponentAndReferrer() {
     queryBeforeCredentials.queryEnd = 8;
     Throws([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
     Throws([&] { URLStrippedForReferrer(nullptr); });
+}
+
+
+void TestURLHostAndPort() {
+    auto httpBits = [](unsigned schemeEnd, unsigned portLength) { return 1U | 2U | (portLength << 3) | (schemeEnd << 6); };
+
+    auto withPortStr = FromUTF8Z(U8("http://example.com:8080/path"));
+    URL withPort{withPortStr.impl, httpBits(4, 5), 7, 7, 7, 18, 24, 29, 29};
+    Text(URLHostAndPort(&withPort), "example.com:8080");
+    Text(URLProtocolHostAndPort(&withPort), "http://example.com:8080");
+
+    auto noPortStr = FromUTF8Z(U8("http://example.com/path"));
+    URL noPort{noPortStr.impl, httpBits(4, 0), 7, 7, 7, 18, 24, 24, 24};
+    Text(URLHostAndPort(&noPort), "example.com");
+    Text(URLProtocolHostAndPort(&noPort), "http://example.com");
+
+    auto fullCredsStr = FromUTF8Z(U8("https://user:pass@example.com:8080/path?q#f"));
+    URL fullCreds{fullCredsStr.impl, httpBits(5, 5), 8, 12, 17, 29, 35, 39, 41};
+    Text(URLHostAndPort(&fullCreds), "example.com:8080");
+    Text(URLProtocolHostAndPort(&fullCreds), "https://example.com:8080");
+
+    auto userOnlyStr = FromUTF8Z(U8("http://u@h/a"));
+    URL userOnly{userOnlyStr.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    Text(URLHostAndPort(&userOnly), "h");
+    Text(URLProtocolHostAndPort(&userOnly), "http://h");
+
+    auto passwordOnlyStr = FromUTF8Z(U8("http://:p@h:80/"));
+    URL passwordOnly{passwordOnlyStr.impl, httpBits(4, 3), 7, 7, 9, 11, 15, 15, 15};
+    Text(URLHostAndPort(&passwordOnly), "h:80");
+    Text(URLProtocolHostAndPort(&passwordOnly), "http://h:80");
+
+    auto wideStr = Create16(u"https://user:pass@example.com:8080/path", 39);
+    URL wideUrl{wideStr.impl, httpBits(5, 5), 8, 12, 17, 29, 35, 39, 39};
+    auto wideHostPort = URLHostAndPort(&wideUrl);
+    Check(!(wideHostPort.impl->hashAndFlags & 4));
+    Text(wideHostPort, "example.com:8080");
+    auto wideProtoHostPort = URLProtocolHostAndPort(&wideUrl);
+    Check(!(wideProtoHostPort.impl->hashAndFlags & 4));
+    Text(wideProtoHostPort, "https://example.com:8080");
+
+    URL invalid{withPortStr.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(!URLHostAndPort(&invalid).impl);
+    Check(!URLProtocolHostAndPort(&invalid).impl);
+
+    Throws([&] { URLHostAndPort(nullptr); });
+    Throws([&] { URLProtocolHostAndPort(nullptr); });
+
+    URL badHost = withPort;
+    badHost.hostEnd = 999;
+    Throws([&] { URLHostAndPort(&badHost); });
+
+    URL badPath = withPort;
+    badPath.pathEnd = 999;
+    badPath.bits = httpBits(4, 50);
+    Throws([&] { URLProtocolHostAndPort(&badPath); });
+
+    URL badCreds = fullCreds;
+    badCreds.userStart = 999;
+    Throws([&] { URLProtocolHostAndPort(&badCreds); });
 }
 
 }  // namespace Wtf2Tests

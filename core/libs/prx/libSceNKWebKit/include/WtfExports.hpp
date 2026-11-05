@@ -254,12 +254,14 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const NKWebKit::WtfAbi::URL* self, unsigned length);
 bool APS5_VABI _ZNK3WTF3URL10protocolIsENS_10StringViewE(const NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView protocol);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const NKWebKit::WtfAbi::URL* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL11hostAndPortEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL12isAboutBlankEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL13isAboutSrcDocEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL14isHierarchicalEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL15encodedPasswordEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL17lastPathComponentEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL18fragmentIdentifierEv(const NKWebKit::WtfAbi::URL* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL20protocolIsJavaScriptEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL28queryWithLeadingQuestionMarkEv(const NKWebKit::WtfAbi::URL* self);
