@@ -9045,11 +9045,20 @@ void sampleOrderTests() {
             const auto drawLines = CommandStateLog::stateTrackedDrawLines(drawPipeline);
             CommandStateLog::expectStateLog(drawLines, "the draw before recording the sample order");
             RecordSampleOrder(context, tracker, pass, std::span(&target, 1u), false, kept);
-            Require(!tracker.Known(CommandState::Viewport) && tracker.BoundPipeline() == VK_NULL_HANDLE, "recording the sample order left the graphics state known");
-            Require(!CommandStateLog::stateLog.empty(), "recording the sample order recorded no graphics commands the tracker could have missed");
-            CommandStateLog::stateLog.clear();
-            CommandStateLog::stateTrackedDraw(tracker, context, drawPipeline);
-            CommandStateLog::expectStateLog(drawLines, "an identical draw after recording the sample order");
+            const auto reorderPipeline = tracker.BoundPipeline();
+            Require(reorderPipeline != VK_NULL_HANDLE && reorderPipeline != drawPipeline, "recording the sample order did not leave its pipeline bound in the tracker");
+            Require(tracker.Known(CommandState::Viewport) && tracker.Known(CommandState::Scissor) && tracker.Known(CommandState::WriteMaskFront) && tracker.Known(CommandState::WriteMaskBack) && tracker.Known(CommandState::ReferenceFront) && tracker.Known(CommandState::ReferenceBack), "recording the sample order left a dynamic state it set unknown");
+            Require(!tracker.Known(CommandState::DepthBias) && !tracker.Known(CommandState::CullMode) && !tracker.Known(CommandState::StencilOpFront), "recording the sample order kept dynamic state its pipeline does not declare");
+            CommandStateLog::expectStateLog({CommandStateLog::stateLine("viewport", 0.0f, 0.0f, 16.0f, 8.0f, 0.0f, 1.0f), CommandStateLog::stateLine("scissor", 0, 0, 16u, 8u), CommandStateLog::stateLine("bind", 0u, reorderPipeline), CommandStateLog::stateLine("writemask", 3u, 0xffu), CommandStateLog::stateLine("reference", 3u, 0u)}, "the sample order pass");
+            const auto library = CommandState::DynamicSlots(PipelineLibraryDynamicStates());
+            tracker.BindPipeline(context, drawPipeline, library);
+            tracker.SetViewport(context, VkViewport{0.0f, 0.0f, 16.0f, 8.0f, 0.0f, 1.0f});
+            tracker.SetScissor(context, VkRect2D{{0, 0}, {16, 8}});
+            tracker.SetStencilWriteMask(context, VK_STENCIL_FACE_FRONT_AND_BACK, 0xffu);
+            tracker.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, 0u);
+            CommandStateLog::expectStateLog({CommandStateLog::stateLine("bind", 0u, drawPipeline)}, "a draw repeating the state the sample order pass left");
+            tracker.SetViewport(context, VkViewport{0.0f, 0.0f, 64.0f, 32.0f, 0.0f, 1.0f});
+            CommandStateLog::expectStateLog({CommandStateLog::stateLine("viewport", 0.0f, 0.0f, 64.0f, 32.0f, 0.0f, 1.0f)}, "a draw changing only the viewport after the sample order pass");
             const auto events = onTarget();
             if (standIn) {
                 Require(events.size() == 3 && located(events[0], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, depthStencil, {1, 1}, pixelZero) && events[1].copy && events[1].from == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && located(events[2], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, depthStencil, {1, 1}, pixelZero), "the depth swap did not copy its target between transitions that name the stand-in sample locations it was rendered with");
