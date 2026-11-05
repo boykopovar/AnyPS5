@@ -22,6 +22,12 @@ bool Throws(TAction action) {
 int allocator = 0;
 char path[1024]{};
 
+void* APS5_VABI MockMalloc(std::size_t, void*) {
+    return nullptr;
+}
+
+void APS5_VABI MockFree(void*, void*) {}
+
 void Export(std::int32_t expId) {
     ContentExportParam param{};
     ContentExportCallbackParam content{};
@@ -47,7 +53,21 @@ void ExportFileWithThumbnail(std::int32_t expId) {
 }
 
 int main() {
+    ContentExportInitParam initParam{&MockMalloc, &MockFree, nullptr};
+    Require(Throws([] { sceContentExportInit(nullptr); }));
+    ContentExportInitParam missingMalloc = initParam;
+    missingMalloc.mallocFunc = nullptr;
+    Require(Throws([&] { sceContentExportInit(&missingMalloc); }));
+    ContentExportInitParam missingFree = initParam;
+    missingFree.freeFunc = nullptr;
+    Require(Throws([&] { sceContentExportInit(&missingFree); }));
+    Require(sceContentExportInit(&initParam) == 0);
+    Require(Throws([&] { sceContentExportInit(&initParam); }));
     ContentExportInitParam2 param{&allocator, &allocator, nullptr, 0x10000, 0, 0};
+    Require(Throws([&] { sceContentExportInit2(&param); }));
+    Require(sceContentExportTerm() == 0);
+    Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
+
     Require(Throws([] { sceContentExportInit2(nullptr); }));
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
@@ -63,6 +83,7 @@ int main() {
     Require(Throws([&] { sceContentExportInit2(&reserved); }));
     Require(sceContentExportInit2(&param) == 0);
     Require(Throws([&] { sceContentExportInit2(&param); }));
+    Require(Throws([&] { sceContentExportInit(&initParam); }));
     Require(sceContentExportTerm() == 0);
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportInit2(&param) == 0);
