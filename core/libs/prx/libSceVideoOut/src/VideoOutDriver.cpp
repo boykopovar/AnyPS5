@@ -38,6 +38,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
+
+APS5_RUN_REPORT_COMPONENT("libSceVideoOut")
 
 namespace {
 
@@ -805,6 +809,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
+                LibcRunReportQuitRequested_nid_no_patch();
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }
