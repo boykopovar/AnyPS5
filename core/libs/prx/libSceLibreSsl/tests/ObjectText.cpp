@@ -125,6 +125,56 @@ void Errors() {
     RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(nullptr, 8, &gap.object); }, "a null buffer with a length");
 }
 
+constexpr std::uint64_t Asn1Error(int reason) {
+    return (13ull << 24) | (0xfffull << 12) | static_cast<std::uint64_t>(reason);
+}
+
+void Rejects(const char* oid, std::uint64_t error, const char* message) {
+    ERR_clear_error_nid_postfix();
+    Require(OBJ_create_nid_postfix(oid, "x", "y") == 0, message);
+    Require(ERR_get_error_nid_postfix() == error && ERR_get_error_nid_postfix() == 0, message);
+}
+
+void Created() {
+    Encoded added{0x2a, 0x03, 0x04}, commonName{0x55, 0x04, 0x03};
+    Encoded big{0x2a, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x05};
+    Rejects("3.1", Asn1Error(122), "a first arc above 2");
+    Rejects("1", Asn1Error(138), "a missing second arc");
+    Rejects("12.3", Asn1Error(131), "a missing separator");
+    Rejects("1.2x", Asn1Error(130), "a non-digit");
+    Rejects("1.40", Asn1Error(147), "a second arc of 40 under 0 or 1");
+    Rejects("", Asn1Error(122), "an empty text reads its terminator as the first arc");
+    Rejects("1.", 0, "a text without a second arc value adds nothing and queues nothing");
+    RequireThrows([] { OBJ_create_nid_postfix(nullptr, "x", "y"); }, "a null OID text");
+    Require(OBJ_create_nid_postfix("1.2.3.4", "addedShort", "addedLong") == LibreSslObjectCount, "the first added object takes NID 956");
+    RequireText(added.object, 64, 9, "addedLong", "an added object prints its long name");
+    Require(LibreSslObjectNid_nid_no_patch(&added.object) == LibreSslObjectCount, "an added encoding resolves to its NID");
+    Require(OBJ_create_nid_postfix("1 2 3 4", "secondShort", nullptr) == LibreSslObjectCount + 1, "spaces separate arcs and each object takes the next NID");
+    RequireText(added.object, 64, 11, "secondShort", "the latest object with an encoding wins, and a missing long name falls back to the short name");
+    Require(OBJ_create_nid_postfix("2.5.4.3", nullptr, nullptr) == LibreSslObjectCount + 2, "an added object may repeat a built-in OID");
+    RequireText(commonName.object, 64, 7, "2.5.4.3", "added encodings are searched before the table, and a nameless one prints in dotted form");
+    Require(OBJ_create_nid_postfix("1.2.18446744073709551616.5", "big", "bigLong") == LibreSslObjectCount + 3, "an arc past 64 bits");
+    RequireText(big.object, 64, 7, "bigLong", "an arc past 64 bits is encoded exactly");
+    Require(OBJ_create_nid_postfix("2.999..", "trailing", nullptr) == LibreSslObjectCount + 4, "empty arcs count as zero");
+    Encoded trailing{0x88, 0x37, 0x00};
+    RequireText(trailing.object, 64, 8, "trailing", "empty arcs count as zero");
+    Encoded unknown{0x2a, 0x05};
+    unknown.object.nid = 5000;
+    ERR_clear_error_nid_postfix();
+    RequireText(unknown.object, 64, 5, "1.2.5", "a NID past the table that was not added prints the encoding");
+    Require(ERR_get_error_nid_postfix() == UnknownNidError && ERR_get_error_nid_postfix() == UnknownNidError && ERR_get_error_nid_postfix() == 0,
+        "once objects were added, an unknown NID past the table reports OBJ_R_UNKNOWN_NID for each name");
+    OBJ_cleanup_nid_postfix();
+    RequireText(added.object, 64, 7, "1.2.3.4", "OBJ_cleanup removes added objects");
+    RequireText(commonName.object, 64, 10, "commonName", "OBJ_cleanup restores the built-in names");
+    RequireText(unknown.object, 64, 5, "1.2.5", "after OBJ_cleanup an unknown NID past the table reports no error");
+    Require(ERR_get_error_nid_postfix() == 0, "after OBJ_cleanup an unknown NID past the table reports no error");
+    OBJ_cleanup_nid_postfix();
+    Require(OBJ_create_nid_postfix("1.2.3.4", "again", nullptr) == LibreSslObjectCount + 5, "NIDs keep counting after OBJ_cleanup");
+    RequireText(added.object, 64, 5, "again", "objects can be added again after OBJ_cleanup");
+    OBJ_cleanup_nid_postfix();
+}
+
 } // namespace
 
 int main() {
@@ -135,4 +185,5 @@ int main() {
     Names();
     Numbers();
     Errors();
+    Created();
 }

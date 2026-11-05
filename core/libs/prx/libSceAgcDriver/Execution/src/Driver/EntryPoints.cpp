@@ -6,7 +6,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <mutex>
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver {
 
@@ -91,6 +93,15 @@ extern "C" void AgcDriverWaitIdle_nid_postfix() try {
     LibcAwaitExit_nid_postfix();
 }
 
+extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords) {
+    const Packet packet{commands, dwords, 0, {}};
+    AgcDriver::Submit(&packet, 0);
+}
+
+extern "C" void AgcDriverUseGcnShaders_nid_postfix() {
+    ShaderRecompiler::SetGcnGuestShaders(true);
+}
+
 static std::mutex& VulkanLoaderMutex() {
     static std::mutex mutex;
     return mutex;
@@ -116,6 +127,15 @@ extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     AgcDriver::RegisterShader(shader);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+extern "C" std::uint32_t AgcDriverInstructionWords_nid_postfix(std::span<const std::uint32_t> code, std::uint32_t index) {
+    try {
+        return ShaderRecompiler::DecodeRdnaInstruction(index * 4u, code, index).wordCount;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[agc] instruction at word %u of a fused front half cannot be decoded: %s\n", index, error.what());
+        return 0;
+    }
 }
 
 extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
