@@ -1,4 +1,5 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
@@ -225,6 +226,17 @@ void TestHeaps() {
     Require(heap.mspace == nullptr, "destroying clears the heap");
     Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
     Require(sceNpFreeKernelMemory(nullptr) == NpNullObject, "freeing needs an object");
+
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", &address, nullptr) == NpNullObject,
+        "unaligned kernel memory allocation needs an object");
+    address = nullptr;
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", &address, &memory) == 0
+            && address != nullptr && address == memory.address && memory.size == 0x4000,
+        "kernel memory allocation writes the mapped address");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", nullptr, &memory) == 0 && memory.address != nullptr,
+        "kernel memory allocation accepts a null address output");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
 
     Require(sceNpArchInit() == 0 && sceNpArchInit() == 0, "the library initialises more than once");
     NpAllocatorEx* global = sceNpGlobalHeapGetAllocatorExPtr();
@@ -606,7 +618,7 @@ void TestTitleSecretObjects() {
     auto* owned = static_cast<NpTitleSecretObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleSecretObject), &allocator));
     _ZN3sce2np13NpTitleSecretC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleSecretObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -706,6 +718,20 @@ void TestCalloutSelfTermination() {
 
 bool Equals(const char* actual, const char* expected) {
     return std::strcmp(actual, expected) == 0;
+}
+
+void TestUserIdList() {
+    std::array<int, 20> users;
+    users.fill(0x5A5A);
+    int count = 0x5A5A;
+    for (std::size_t capacity = 0; capacity < users.size(); ++capacity) {
+        Require(sceNpUserGetUserIdList(users.data(), capacity, &count) == NpInvalidArgument,
+            "a short user id list is refused");
+        Require(count == 0x5A5A, "a short user id list leaves the count unchanged");
+        for (const int user : users) Require(user == 0x5A5A, "a short user id list leaves the users unchanged");
+    }
+    Require(sceNpUserGetUserIdList(users.data(), users.size(), &count) == 0, "the registered user ids are read");
+    Require(count == 1 && users[0] == USER_SERVICE_INITIAL_USER_ID, "the initial user is the only registered user");
 }
 
 void TestIds() {
@@ -1563,5 +1589,6 @@ int main() {
     TestXmlText();
     TestJsonParser();
     TestTitleIds();
+    TestUserIdList();
     std::puts("guest np common runtime: PASS");
 }
