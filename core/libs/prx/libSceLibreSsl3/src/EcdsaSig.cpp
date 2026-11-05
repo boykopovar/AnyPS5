@@ -16,6 +16,7 @@ constexpr std::int64_t NoFreeFlag = 0x10;
 constexpr std::int32_t ObjectType = 6;
 constexpr std::int32_t BooleanType = 1;
 constexpr std::int32_t NullType = 5;
+constexpr std::int32_t AnyType = -4;
 
 void PutError(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
@@ -66,6 +67,8 @@ void APS5_VABI ASN1_TYPE_free_nid_postfix(Asn1Type* value) {
     if (element) {
         if (value->type == ObjectType) {
             FreeObject(static_cast<LibreSslAsn1Object*>(element));
+        } else if (value->type == AnyType) {
+            ASN1_TYPE_free_nid_postfix(static_cast<Asn1Type*>(element));
         } else if (value->type != BooleanType && value->type != NullType) {
             FreeString(static_cast<Asn1String*>(element));
         }

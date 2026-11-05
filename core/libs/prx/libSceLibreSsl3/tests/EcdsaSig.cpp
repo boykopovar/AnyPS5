@@ -180,6 +180,18 @@ void TypeFree() {
     ASN1_TYPE_free_nid_postfix(objectType);
     Require(allocations.empty());
 
+    auto* innerType = static_cast<Asn1Type*>(Allocate_nid_no_patch(sizeof(Asn1Type)));
+    *innerType = {};
+    innerType->type = 2;
+    innerType->value.pointer = OwnedString(9);
+    zeroed.emplace(static_cast<String*>(innerType->value.pointer)->data, 1);
+    auto* anyType = static_cast<Asn1Type*>(Allocate_nid_no_patch(sizeof(Asn1Type)));
+    *anyType = {};
+    anyType->type = -4;
+    anyType->value.pointer = innerType;
+    ASN1_TYPE_free_nid_postfix(anyType);
+    Require(allocations.empty());
+
     auto* booleanType = static_cast<Asn1Type*>(Allocate_nid_no_patch(sizeof(Asn1Type)));
     *booleanType = {};
     booleanType->type = 1;
