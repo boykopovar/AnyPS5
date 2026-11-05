@@ -88,6 +88,18 @@ def tls_module(value=None, owner=None):
     return image
 
 
+def host_module():
+    image = module(33, symbol="shared")
+    strings = b"\0shared\0host.prx\0"
+    image[0x2200:0x2200 + len(strings)] = strings
+    struct.pack_into("<IIIII", image, 0x2240, 1, 2, 1, 0, 0)
+    dynamic(image, 0x2000, 176, [(5, 0x2200), (10, len(strings)), (6, 0x2280),
+                                (11, 24), (4, 0x2240), (14, 8)])
+    struct.pack_into("<H", image, 56, 4)
+    struct.pack_into("<IIQQQQQQ", image, 232, 0x6474e551, 6, 0, 0, 0, 0, 0, 16)
+    return image
+
+
 def call_and_exit(image, slots):
     struct.pack_into("<I", image, 68, 7)
     code = bytearray(b"\x53")
@@ -109,8 +121,22 @@ def relocation_bindings(image):
         for position in range(table, table + tags[size], 24):
             target, info = struct.unpack_from("<QQ", image, position)
             if info >> 32:
-                bindings.append((target, symbol_name(image, tags, info >> 32)))
+                bindings.append((target, symbol_name(image, tags, info >> 32), info & 0xffffffff))
     return sorted(bindings)
+
+
+def defined_symbols(image):
+    tags = dynamic_tags(image)
+    table = file_offset(image, tags[6])
+    count, = struct.unpack_from("<I", image, file_offset(image, tags[4]) + 4)
+    symbols = {}
+    for index in range(1, count):
+        fields = struct.unpack_from("<BBHQQ", image, table + index * 24 + 4)
+        if fields[2] != 0:
+            name = symbol_name(image, tags, index)
+            assert name not in symbols, name
+            symbols[name] = fields
+    return symbols
 
 
 def convert(relinker, case, modules, source=None, options=()):
@@ -157,18 +183,21 @@ def main():
     runnable = sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64")
     with tempfile.TemporaryDirectory(prefix="anyps5-linux-qualified-imports-") as temporary:
         work = Path(temporary)
-        for label, weak, weak_definition, data, zero, tls in (
-                ("function", False, False, False, False, False),
-                ("weak-import", True, False, False, False, False),
-                ("weak-definition", False, True, False, False, False),
-                ("data", False, False, True, False, False),
-                ("zero-address", False, False, False, True, False),
-                ("tls", False, False, True, False, True)):
+        for label, weak, weak_definition, data, zero, tls, protected in (
+                ("function", False, False, False, False, False, False),
+                ("weak-import", True, False, False, False, False, False),
+                ("weak-definition", False, True, False, False, False, False),
+                ("data", False, False, True, False, False, False),
+                ("zero-address", False, False, False, True, False, False),
+                ("tls", False, False, True, False, True, False),
+                ("protected-definition", False, False, False, False, False, True)):
             first = tls_module(11) if tls else module(11, data=data)
             second = tls_module(22) if tls else module(22, weak=weak_definition, data=data)
             consumer = tls_module(owner="b.prx") if tls else module(owner="b.prx", weak=weak, data=data)
             if zero:
                 second = at_zero(second)
+            if protected:
+                second[0x2298 + 5] = 3
             result, output = convert(relinker, work / label, {
                 "a.prx": first,
                 "b.prx": second,
@@ -176,8 +205,21 @@ def main():
             })
             assert result.returncode == 0, (label, result.stdout, result.stderr)
             directory = output.parent / "app0/sce_module"
+            if label == "function":
+                artifacts = {path: path.read_bytes() for path in [output, *sorted(directory.glob("*.guest.prx"))]}
+                result = subprocess.run([str(relinker), str(output.parent / "input.elf"), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                assert set(artifacts) == {output, *directory.glob("*.guest.prx")}
+                for path, image in artifacts.items():
+                    assert path.read_bytes() == image, ("Repeated conversion changed output", path.name)
             for name in ("a", "b"):
-                assert "shared#guest" in module_symbols((directory / f"{name}.prx.guest.prx").read_bytes())
+                symbols = defined_symbols((directory / f"{name}.prx.guest.prx").read_bytes())
+                assert "shared#guest" in symbols, symbols
+                aliases = set(symbols) - {"shared#guest"}
+                assert len(aliases) == 1, symbols
+                alias = aliases.pop()
+                assert symbols[alias] == symbols["shared#guest"], (label, name, symbols)
             consumer = (directory / "consumer.prx.guest.prx").read_bytes()
             expected = ["$ORIGIN/b.prx.guest.prx"] + (["ld-linux-x86-64.so.2"] if tls else [])
             assert needed_libraries(consumer) == expected, needed_libraries(consumer)
@@ -263,10 +305,19 @@ def main():
         case = work / "multiple-executables"
         case.mkdir()
         secondary = case / "second.elf"
-        secondary.write_bytes(executable("b.prx"))
-        result, output = convert(relinker, case, twins, options=["--executable", secondary.name])
+        secondary.write_bytes(call_and_exit(executable("b.prx"), [0x4a20]))
+        result, output = convert(relinker, case, twins, options=["--skip-syscall-check", "--executable", secondary.name])
         assert result.returncode == 0, (result.stdout, result.stderr)
-        assert (output.parent / "second.elf.elf").is_file()
+        secondary_output = output.parent / "second.elf.elf"
+        bindings = relocation_bindings(secondary_output.read_bytes())
+        assert len(bindings) == 1 and bindings[0][0] == 0x404a20 and bindings[0][2] == 6, bindings
+        directory = output.parent / "app0/sce_module"
+        assert bindings[0][1] in defined_symbols((directory / "b.prx.guest.prx").read_bytes()), bindings
+        assert bindings[0][1] not in defined_symbols((directory / "a.prx.guest.prx").read_bytes()), bindings
+        if runnable:
+            secondary_output.chmod(0o755)
+            run = subprocess.run([str(secondary_output)], capture_output=True, text=True, timeout=20)
+            assert run.returncode == 22, (run.returncode, run.stdout, run.stderr)
 
         for label, second, info, error in (
                 ("type-mismatch", module(22, data=True), 0x12, "Guest import/export type mismatch: shared"),
@@ -294,9 +345,29 @@ def main():
                 **modules, "consumer.prx": module(owner=owner),
             })
             assert result.returncode == 0, (owner, result.stdout, result.stderr)
-            consumer = (output.parent / "app0/sce_module/consumer.prx.guest.prx").read_bytes()
+            directory = output.parent / "app0/sce_module"
+            consumer = (directory / "consumer.prx.guest.prx").read_bytes()
             assert "shared" in imported_symbols(consumer), imported_symbols(consumer)
             assert "shared#guest" not in imported_symbols(consumer), imported_symbols(consumer)
+            assert relocation_bindings(consumer) == [(0x2380, "shared", 6)], relocation_bindings(consumer)
+            if runnable:
+                host = output.parent / "host.prx"
+                host.write_bytes(host_module())
+                code = (
+                    "import ctypes, os, sys\n"
+                    "from pathlib import Path\n"
+                    "host = ctypes.CDLL(sys.argv[1], mode=os.RTLD_NOW | os.RTLD_GLOBAL)\n"
+                    "root = Path(sys.argv[2])\n"
+                    "a = ctypes.CDLL(str(root / 'a.prx.guest.prx'), mode=os.RTLD_NOW | os.RTLD_GLOBAL)\n"
+                    "b = ctypes.CDLL(str(root / 'b.prx.guest.prx'), mode=os.RTLD_NOW | os.RTLD_GLOBAL)\n"
+                    "consumer = ctypes.CDLL(str(root / 'consumer.prx.guest.prx'), mode=os.RTLD_NOW)\n"
+                    "read = getattr(consumer, 'read#guest')\n"
+                    "read.restype = ctypes.c_int\n"
+                    "assert read() == 33\n"
+                )
+                run = subprocess.run([sys.executable, "-c", code, str(host), str(directory)],
+                                     capture_output=True, text=True, timeout=20)
+                assert run.returncode == 0, (owner, run.returncode, run.stdout, run.stderr)
     print("Linux qualified guest import tests passed")
 
 
