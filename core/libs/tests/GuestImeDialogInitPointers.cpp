@@ -24,5 +24,11 @@ int main() {
         Require(sceImeDialogInit(badParam, nullptr) == ErrorInvalidAddress, "an unmapped param returns ErrorInvalidAddress");
         Require(sceImeDialogGetStatus() == StatusNone, "a rejected param leaves no dialog open");
     }
+    const Param valid{};
+    for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
+        const auto* badExtended = reinterpret_cast<const ExtendedParam*>(address);
+        Require(sceImeDialogInit(&valid, badExtended) == ErrorInvalidAddress, "an unmapped extended param returns ErrorInvalidAddress");
+        Require(sceImeDialogGetStatus() == StatusNone, "a rejected extended param leaves no dialog open");
+    }
     return 0;
 }
