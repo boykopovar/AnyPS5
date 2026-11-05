@@ -65,7 +65,6 @@ constexpr std::size_t PixelCodeOffset = 256;
 constexpr std::size_t IndirectCodeOffset = 512;
 constexpr std::size_t PointerSlots = 1024;
 constexpr std::size_t MovedVerticesOffset = 32768;
-// Inside the space, but off the alignment the build's view of the vertices was cut at.
 constexpr std::size_t ShiftedVerticesOffset = MovedVerticesOffset + 4100;
 constexpr std::size_t RingSlotBytes = 256;
 constexpr std::size_t RingSlots = 8;
@@ -381,7 +380,6 @@ struct Scene {
         shaders[0] = {ShaderStage::Vertex, &vertexResults.back(), 0};
     }
 
-    // --heap-stages builds both stages as heap stages, as the driver does with the descriptor heap on.
     ShaderRecompiler::SpirvTarget Target() const {
         auto target = device.Target();
         target.gpuResolvedImages = HeapStages;
@@ -1041,7 +1039,6 @@ constexpr std::array<NamedCase, 3> TransitionCases{{
 
 int main(int argc, char** argv) {
     try {
-        // --heap-stages [--case <name>] builds both stages as heap stages.
         HeapStages = argc > 1 && std::string_view(argv[1]) == "--heap-stages";
         const int first = HeapStages ? 2 : 1;
         const std::string mode = argc > first ? argv[first] : HeapStages ? "--heap-stages" : "";
@@ -1072,7 +1069,6 @@ int main(int argc, char** argv) {
                 bool ran = false;
                 for (const auto& entry : cases) {
                     if (!only.empty() && only != entry.name) continue;
-                    // Heap stages do not report BDA faults per use yet.
                     if (HeapStages && std::string_view(entry.name) == "fault-per-use") continue;
                     entry.run(scene);
                     ran = true;

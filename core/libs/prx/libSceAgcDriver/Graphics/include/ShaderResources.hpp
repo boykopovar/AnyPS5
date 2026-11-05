@@ -170,7 +170,6 @@ ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
 std::uint64_t SampledLookupKeyProofs();
-// Copies of guest memory taken for draws to read instead of the memory itself (all time).
 std::uint64_t DrawInputCopies();
 
 struct PresyncSurface {

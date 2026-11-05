@@ -6206,8 +6206,6 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
                 if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
                 if (usesBda && heapStage) {
-                    // Heap stages of an address draw read a moved buffer in place, as the build does;
-                    // where the build's memory cannot view it that way, the draw is built again.
                     std::uint32_t adjustment = 0;
                     const auto inPlace = guestMemory.TryDescriptor(address, static_cast<std::size_t>(size), adjustment);
                     const bool classic = std::any_of(bindings.begin(), bindings.end(), [&](const Binding& other) { return !(other.heap && other.addressed) && std::find(other.allocations.begin(), other.allocations.end(), index) != other.allocations.end(); });
@@ -6296,9 +6294,6 @@ std::size_t ShaderResources::DrawUploadLimit() {
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly, const BdaResources* faultRecord) const {
     requireGuestBuffers(moved);
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE && !heapStage) || (usesBda && !spaceReuse)) return {};
-    // Heap stages of an address draw read guest memory in place, at execution, as the BDA table
-    // and the hardware do: nothing is snapshotted, and a buffer that moved is viewed at its new
-    // address (MovedReadOnlyBuffers checked that the build's memory holds that view).
     const bool readsInPlace = usesBda && heapStage;
     movedOnly = movedOnly || readsInPlace;
     thread_local std::vector<std::pair<std::size_t, VkDescriptorBufferInfo>>* inPlaceSlot = nullptr;
