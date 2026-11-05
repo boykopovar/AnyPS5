@@ -95,6 +95,8 @@ static void RequireP256(const EcKey* key, const char* message) {
 static void CheckEcLifetime(bool named) {
     EcKey* key = named ? EC_KEY_new_by_curve_name_nid_postfix(415) : EC_KEY_new_nid_postfix();
     Require(key && key->references == 1, "new EC key reference count");
+    Require(key->version == 1 && key->conversionForm == 4, "new EC key version or conversion form");
+    Require(!key->method && !key->publicKey && !key->privateKey && key->encodingFlags == 0 && key->flags == 0 && !key->extraData, "new EC key fields");
     if (!named) {
         Require(EC_KEY_get0_group_nid_postfix(key) == nullptr, "new EC key has a group");
         EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(415);

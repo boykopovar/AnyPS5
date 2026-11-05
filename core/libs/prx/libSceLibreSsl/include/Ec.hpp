@@ -42,12 +42,12 @@ struct EcKey {
     EcKey& operator=(const EcKey&) = delete;
 
     const void* method = nullptr;
-    std::int32_t version = 0;
+    std::int32_t version = 1;
     EcGroup* group = nullptr;
     EcPoint* publicKey = nullptr;
     EcBignum* privateKey = nullptr;
     std::uint32_t encodingFlags = 0;
-    std::int32_t conversionForm = 0;
+    std::int32_t conversionForm = 4;
     std::int32_t references = 1;
     std::int32_t flags = 0;
     void* extraData = nullptr;
