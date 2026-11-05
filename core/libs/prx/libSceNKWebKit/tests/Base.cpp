@@ -330,8 +330,11 @@ static void TestURL() {
     Require(WKStringIsEqualToUTF8CString(upperHost, "example.com"));
     WKRelease(upperHost);
     auto* upperStr = WKURLCopyString(upperUrl);
-    Require(WKStringIsEqualToUTF8CString(upperStr, "http://example.com/a"));
+    Require(WKStringIsEqualToUTF8CString(upperStr, "HTTP://Example.COM/a"));
     WKRelease(upperStr);
+    auto* lowerUrl = WKURLCreateWithUTF8CString("http://example.com/a");
+    Require(WKURLIsEqual(upperUrl, lowerUrl));
+    WKRelease(lowerUrl);
     WKRelease(upperUrl);
 
     auto* bslashUrl = WKURLCreateWithUTF8CString("   https://example.com/dir\\file.txt   ");
@@ -342,7 +345,7 @@ static void TestURL() {
     Require(WKStringIsEqualToUTF8CString(bslashLast, "file.txt"));
     WKRelease(bslashLast);
     auto* bslashStr = WKURLCopyString(bslashUrl);
-    Require(WKStringIsEqualToUTF8CString(bslashStr, "https://example.com/dir/file.txt"));
+    Require(WKStringIsEqualToUTF8CString(bslashStr, "   https://example.com/dir\\file.txt   "));
     WKRelease(bslashStr);
     WKRelease(bslashUrl);
 

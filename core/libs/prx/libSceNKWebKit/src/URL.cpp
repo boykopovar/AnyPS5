@@ -260,7 +260,7 @@ const void* MakeWKString(std::string_view text) {
 extern "C" {
 const void* APS5_VABI WKURLCreateWithUTF8CString(const char* string) {
     if (!string) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(""));
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(CanonicalizeURL(string)));
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(std::string(string)));
 }
 
 const void* APS5_VABI WKURLCopyString(const void* urlRef) {
@@ -270,22 +270,22 @@ const void* APS5_VABI WKURLCopyString(const void* urlRef) {
 
 const void* APS5_VABI WKURLCopyScheme(const void* urlRef) {
     const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
-    return MakeWKString(ExtractScheme(url->text));
+    return MakeWKString(ExtractScheme(CanonicalizeURL(url->text)));
 }
 
 const void* APS5_VABI WKURLCopyHostName(const void* urlRef) {
     const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
-    return MakeWKString(ExtractHost(url->text));
+    return MakeWKString(ExtractHost(CanonicalizeURL(url->text)));
 }
 
 const void* APS5_VABI WKURLCopyPath(const void* urlRef) {
     const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
-    return MakeWKString(ExtractPath(url->text));
+    return MakeWKString(ExtractPath(CanonicalizeURL(url->text)));
 }
 
 const void* APS5_VABI WKURLCopyLastPathComponent(const void* urlRef) {
     const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
-    return MakeWKString(ExtractLastPathComponent(ExtractPath(url->text)));
+    return MakeWKString(ExtractLastPathComponent(ExtractPath(CanonicalizeURL(url->text))));
 }
 
 bool APS5_VABI WKURLIsEqual(const void* aRef, const void* bRef) {
@@ -293,7 +293,7 @@ bool APS5_VABI WKURLIsEqual(const void* aRef, const void* bRef) {
     if (!aRef || !bRef) return false;
     const auto* a = NKWebKit::Cast<NKWebKit::URL>(aRef, __func__);
     const auto* b = NKWebKit::Cast<NKWebKit::URL>(bRef, __func__);
-    return a->text == b->text;
+    return CanonicalizeURL(a->text) == CanonicalizeURL(b->text);
 }
 
 const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char* relativeURL) {
