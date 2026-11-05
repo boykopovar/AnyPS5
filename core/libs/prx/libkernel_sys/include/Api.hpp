@@ -291,7 +291,6 @@ int APS5_VABI sceKernelGetQafGenerationForRcmgr(void);
 int APS5_VABI sceKernelGetQafNameForRcmgr(void);
 int APS5_VABI sceKernelGetRenderingMode(void);
 int APS5_VABI sceKernelGetResidentCount(void);
-int APS5_VABI sceKernelGetResidentFmemCount(void);
 int APS5_VABI sceKernelGetResource(void);
 int APS5_VABI sceKernelGetResourceLimit(void);
 int APS5_VABI sceKernelGetResourceOne(void);
