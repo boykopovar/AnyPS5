@@ -13,6 +13,9 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <cstddef>
@@ -110,8 +113,14 @@ int APS5_VABI __sys_namedobj_delete_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_nanosleep_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    int oldCancelState = 0;
+    scePthreadSetcancelstate(1, &oldCancelState);
+    const int result = sceKernelNanosleep(rqtp, rmtp);
+    scePthreadSetcancelstate(oldCancelState, nullptr);
+    if (result == 0) return 0;
+    *__error_nid_postfix() = result & 0xFFFF;
+    return -1;
 }
 
 int APS5_VABI __sys_netabort_nid_postfix() {
@@ -450,8 +459,26 @@ int APS5_VABI _wait4_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI adjtime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta) {
+    constexpr int GuestEperm = 1;
+    constexpr int GuestEfault = 14;
+    KernelTimeval adjustment{};
+    if (delta != nullptr && !GuestCopyIn_nid_no_patch(&adjustment, delta, sizeof(adjustment))) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    if (delta != nullptr) {
+        *__error_nid_postfix() = GuestEperm;
+        return -1;
+    }
+    if (oldDelta != nullptr) {
+        const KernelTimeval pending{};
+        if (!GuestCopyOut_nid_no_patch(oldDelta, &pending, sizeof(pending))) {
+            *__error_nid_postfix() = GuestEfault;
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch() {
