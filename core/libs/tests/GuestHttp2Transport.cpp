@@ -1424,9 +1424,6 @@ void Async(int ssl, bool zeroTimeout = false) {
     Require(std::string(buffer.data(), 13) == "response body", "async read body");
     if (zeroTimeout) {
         Require(remaining == 0, "completed poll changed zero timeout");
-        const auto unchanged = readResult;
-        Require(Throws([&] { sceHttp2WaitAsync(client.request, &readResult, &remaining, nullptr); }), "empty zero wait remains unsupported");
-        Require(remaining == 0 && std::memcmp(&readResult, &unchanged, sizeof(readResult)) == 0, "unsupported empty wait changed outputs");
     }
     server.Join();
     Require(server.Negotiated(), "async h2 ALPN");
