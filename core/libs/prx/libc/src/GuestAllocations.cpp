@@ -71,6 +71,21 @@ void renewBacking(std::uintptr_t address, std::size_t bytes) {
     }
 }
 
+std::shared_ptr<const Range> lookupLocked(std::uintptr_t address, bool next) {
+    const auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) {
+        const auto& previous = std::prev(it)->second;
+        if (previous->bytes != 0 && address < previous->address + previous->bytes) return previous;
+    }
+    if (next) {
+        for (; it != ranges.end(); ++it) {
+            if (it->second->bytes != 0) return it->second;
+        }
+    }
+    return nullptr;
+}
+
 bool isRetiring(const Range& range) {
     for (const auto& [begin, end] : registry().retiring) {
         if (range.address < end && begin < range.address + range.bytes) return true;
@@ -837,20 +852,14 @@ Lease GuestAllocationsAcquireRegistered_nid_postfix() {
     return Lease(std::move(ranges));
 }
 
+void GuestAllocationsLookupEach_nid_postfix(const std::uintptr_t* addresses, std::size_t count, std::shared_ptr<const Range>* ranges) {
+    std::lock_guard lock(registry().mutex);
+    for (std::size_t index = 0; index < count; ++index) ranges[index] = lookupLocked(addresses[index], false);
+}
+
 std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t address, bool next) {
     std::lock_guard lock(registry().mutex);
-    const auto& ranges = registry().ranges;
-    auto it = ranges.upper_bound(address);
-    if (it != ranges.begin()) {
-        const auto& previous = std::prev(it)->second;
-        if (previous->bytes != 0 && address < previous->address + previous->bytes) return previous;
-    }
-    if (next) {
-        for (; it != ranges.end(); ++it) {
-            if (it->second->bytes != 0) return it->second;
-        }
-    }
-    return nullptr;
+    return lookupLocked(address, next);
 }
 
 Lease GuestAllocationsAcquireAll_nid_postfix() {

@@ -223,13 +223,15 @@ int APS5_VABI sceVoiceQoSGetRemoteEndpoint(int32_t connectionId, int32_t* remote
 }
 
 int APS5_VABI sceVoiceQoSEnableChat() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Locked([](QoS&) -> int {
+        throw std::runtime_error("sceVoiceQoSEnableChat: audio chat backend is not implemented");
+    });
 }
 
 int APS5_VABI sceVoiceQoSDisableChat() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Locked([](QoS&) -> int {
+        throw std::runtime_error("sceVoiceQoSDisableChat: audio chat backend is not implemented");
+    });
 }
 
 int APS5_VABI sceVoiceQoSGetStatus(int32_t connectionId, int32_t statusId, void* value, int32_t size) {
@@ -247,8 +249,7 @@ int APS5_VABI sceVoiceQoSDebugGetStatus(std::int32_t connectionId, std::int32_t 
 }
 
 int APS5_VABI sceVoiceQoSInitHQ(void* memory, std::uint32_t memorySize, std::int32_t appType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceVoiceQoSInit(memory, memorySize, appType);
 }
 
 int APS5_VABI sceVoiceQoSSetMode() {
