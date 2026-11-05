@@ -1,10 +1,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs/libSceFontGs.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace {
 
@@ -319,6 +323,166 @@ void GnmSequences() {
     }
 }
 
+constexpr int SurfaceConfigInvalid = static_cast<int>(0x8046005c);
+
+struct SurfaceCase {
+    const char* name;
+    std::uint64_t base;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t tileMode;
+    std::uint32_t format[6];
+    std::uint8_t configTag;
+    std::uint8_t surfaceTag;
+    int result;
+    std::uint32_t texture[2][16];
+};
+
+const SurfaceCase SurfaceCases[] = {
+    {"8-bit alpha, linear aligned", 0x100000, 64, 32, 8, {1, 0, 0, 0, 0, 4}, 0x44, 0x10, 0,
+     {{0x00001000, 0x00700007, 0x0000001f, 0, 0x00009804, 0x00000108, 0, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x00200040},
+      {0x00001000, 0x00700007, 0x0000001f, 0, 0x80009804, 0x00000108, 8, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x00200040}}},
+    {"RGBA8, 1D thin", 0x2345600, 100, 50, 0xd, {10, 0, 4, 5, 6, 7}, 0x44, 0x40, 0,
+     {{0x00023456, 0x00c0000c, 0x0000005a, 0, 0x00008028, 0x000001ad, 0, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x00320064},
+      {0x00023456, 0x00c0000c, 0x0000005a, 0, 0x80008028, 0x000001ad, 8, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x00320064}}},
+    {"RGBA32F, 2D thin", 0x7fffabcd00, 1920, 1080, 0xa, {14, 7, 4, 5, 6, 7}, 0x44, 0x4f, 0,
+     {{0x7fffabc5, 0x0ef000ef, 0x00007f7f, 0, 0x00040738, 0x0000014a, 0, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x04380780},
+      {0x7fffab8d, 0x0ef000ef, 0x00007f7f, 0, 0x80040738, 0x0000014a, 8, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x04380780}}},
+    {"RG8 sRGB, 2D depth mode", 0x40000fff00, 300, 200, 2, {3, 9, 4, 1, 2, 5}, 0x44, 0x20, 0,
+     {{0x40000f87, 0x02f0002f, 0x000005ff, 0, 0x0000980c, 0x00000042, 0, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x00c8012c},
+      {0x40000f8f, 0x03f0003f, 0x000007ff, 0, 0x8000980c, 0x00000042, 8, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x00c8012c}}},
+    {"RGBA16, PRT, config tag 0x40", 0x1234567800, 512, 512, 0x16, {12, 0, 6, 5, 4, 7}, 0x40, 0x4e, 0,
+     {{0x12345600, 0x03f0003f, 0x00000fff, 0, 0x00008830, 0x00000210, 0, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x02000200},
+      {0x12345608, 0x03f0003f, 0x00000fff, 0, 0x80008830, 0x00000210, 8, 0x01234567, 0, 0x09876543, 0, 0x55667788, 0x11223344, 0, 0, 0x02000200}}},
+    {"tile mode out of range", 0x100000, 64, 64, 0x20, {9, 0, 4, 5, 6, 7}, 0x44, 0, SurfaceConfigInvalid,
+     {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0}}},
+};
+
+std::uint32_t Get32(const std::uint8_t* bytes, std::size_t offset) {
+    std::uint32_t value;
+    std::memcpy(&value, bytes + offset, sizeof(value));
+    return value;
+}
+
+void Put(std::uint8_t* bytes, std::size_t offset, const void* value, std::size_t size) { std::memcpy(bytes + offset, value, size); }
+
+void Put32(std::uint8_t* bytes, std::size_t offset, std::uint32_t value) { Put(bytes, offset, &value, 4); }
+
+void Put64(std::uint8_t* bytes, std::size_t offset, std::uint64_t value) { Put(bytes, offset, &value, 8); }
+
+void SurfaceConfig(std::uint8_t* config, const SurfaceCase& test) {
+    std::memset(config, 0, 0x100);
+    Put64(config, 0x00, test.base);
+    Put32(config, 0x08, 0x40);
+    config[0x0c] = 3;
+    config[0x0d] = test.configTag;
+    Put32(config, 0x10, test.width);
+    Put32(config, 0x14, test.height);
+    Put32(config, 0x20, test.tileMode);
+    Put32(config, 0x24, 1);
+    Put32(config, 0x30, 0x1234);
+    Put32(config, 0x34, 0x55667788);
+    Put(config, 0x40, test.format, sizeof(test.format));
+    Put64(config, 0x58, 0xabcdef0123456700ULL);
+    Put64(config, 0x68, 0x1122334455667788ULL);
+    Put64(config, 0x78, 0x0000000987654300ULL);
+}
+
+void GnmSurfaceValidation() {
+    std::uint8_t config[0x100];
+    std::uint8_t surface[0x100];
+    SurfaceConfig(config, SurfaceCases[0]);
+    Require(sceFontGraphicsGnmSurfaceInit(nullptr, config) == InvalidParameter);
+    const auto expectFailure = [&](std::size_t offset, std::uint32_t value, int result, bool cleared) {
+        std::uint8_t changed[0x100];
+        std::memcpy(changed, config, sizeof(changed));
+        Put32(changed, offset, value);
+        std::memset(surface, 0xcc, sizeof(surface));
+        Require(sceFontGraphicsGnmSurfaceInit(surface, changed) == result);
+        for (std::size_t i = 0; i < sizeof(surface); ++i)
+            Require(surface[i] == (cleared || i == 0x0e || i == 0x0f ? 0 : 0xcc));
+    };
+    expectFailure(0x0c, 0x4103, InvalidParameter, false);
+    expectFailure(0x0c, 0x0003, InvalidParameter, false);
+    expectFailure(0x24, 0, SurfaceConfigInvalid, true);
+    expectFailure(0x18, 1, SurfaceConfigInvalid, true);
+    expectFailure(0x1c, 1, SurfaceConfigInvalid, true);
+    expectFailure(0x08, 0x80000000, SurfaceConfigInvalid, true);
+    expectFailure(0x10, 0x80000000, SurfaceConfigInvalid, true);
+    expectFailure(0x14, 0xffffffff, SurfaceConfigInvalid, true);
+    expectFailure(0x40, 2, SurfaceConfigInvalid, true);
+    expectFailure(0x40, 0, SurfaceConfigInvalid, true);
+    expectFailure(0x44, 1, SurfaceConfigInvalid, true);
+    expectFailure(0x54, 5, SurfaceConfigInvalid, true);
+    std::uint8_t tagged[0x100];
+    std::memcpy(tagged, config, sizeof(tagged));
+    tagged[0x0d] = 0x40;
+    Put32(tagged, 0x24, 2);
+    std::memset(surface, 0xcc, sizeof(surface));
+    Require(sceFontGraphicsGnmSurfaceInit(surface, tagged) == SurfaceConfigInvalid);
+    for (std::size_t i = 0; i < sizeof(surface); ++i) Require(surface[i] == (i == 0x0e || i == 0x0f ? 0 : 0xcc));
+}
+
+void GnmSurfaceInitCases(bool neo) {
+    for (const auto& test : SurfaceCases) {
+        std::uint8_t config[0x100];
+        std::uint8_t surface[0x100];
+        SurfaceConfig(config, test);
+        std::memset(surface, 0xcc, sizeof(surface));
+        Require(sceFontGraphicsGnmSurfaceInit(surface, config) == test.result);
+        for (std::size_t i = 0; i < 16; ++i) Require(Get32(surface, 0x40 + 4 * i) == test.texture[neo][i]);
+        const std::uint8_t rest = test.configTag == 0x44 ? 0 : 0xcc;
+        for (std::size_t i = 0x80; i < sizeof(surface); ++i) Require(surface[i] == rest);
+        if (test.result != 0) {
+            for (std::size_t i = 0; i < 0x40; ++i) Require(surface[i] == 0);
+            continue;
+        }
+        const std::uint32_t header[16] = {static_cast<std::uint32_t>(test.base), static_cast<std::uint32_t>(test.base >> 32), 0x40,
+                                          0x47e00003u | static_cast<std::uint32_t>(test.surfaceTag) << 8, test.width, test.height, 0, 0,
+                                          test.width, test.height, 0x55667788, 0x00011234, 0, 0x00440100, 0, test.height << 16 | test.width};
+        for (std::size_t i = 0; i < 16; ++i) Require(Get32(surface, 4 * i) == header[i]);
+    }
+}
+
+void WriteParamSfo(const std::filesystem::path& directory, std::uint32_t attribute) {
+    const auto metadata = directory / "app0" / "sce_sys";
+    std::filesystem::create_directories(metadata);
+    std::uint8_t sfo[112] = {};
+    std::memcpy(sfo, "\0PSF", 4);
+    Put32(sfo, 4, 0x0101);
+    Put32(sfo, 8, 68);
+    Put32(sfo, 12, 96);
+    Put32(sfo, 16, 3);
+    const std::uint32_t entries[3][4] = {{0x04040000, 4, 4, 0}, {0x0204000a, 2, 2, 4}, {0x02040010, 10, 10, 6}};
+    Put(sfo, 20, entries, sizeof(entries));
+    std::memcpy(sfo + 68, "ATTRIBUTE\0TITLE\0TITLE_ID", 25);
+    Put32(sfo, 96, attribute);
+    std::memcpy(sfo + 100, "T\0CUSA00000", 11);
+    std::ofstream file(metadata / "param.sfo", std::ios::binary);
+    file.write(reinterpret_cast<const char*>(sfo), sizeof(sfo));
+    Require(static_cast<bool>(file));
+}
+
+int RunSelf(const char* program, const char* mode, const std::filesystem::path& directory) {
+    const std::string arguments = "\"" + std::string(program) + "\" " + mode + " \"" + directory.string() + "\"";
+#ifdef _WIN32
+    return std::system(("\"" + arguments + "\"").c_str());
+#else
+    return std::system(arguments.c_str());
+#endif
+}
+
+void GnmSurfaceModes(const char* program) {
+    const auto root = std::filesystem::temp_directory_path() / ("guest_font_gs_gnm_" + std::to_string(getpid_nid_postfix()));
+    std::filesystem::remove_all(root);
+    WriteParamSfo(root / "base", 0);
+    WriteParamSfo(root / "neo", 0x00800000);
+    const int base = RunSelf(program, "--surface-base", root / "base");
+    const int neo = RunSelf(program, "--surface-neo", root / "neo");
+    std::filesystem::remove_all(root);
+    Require(base == 0 && neo == 0);
+}
+
 }
 
 void ReportError() {
@@ -330,11 +494,18 @@ void ReportError() {
     Require(g_errorCount == before + 1 && g_lastError == SequenceLocked);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3) {
+        std::filesystem::current_path(argv[2]);
+        GnmSurfaceInitCases(std::string(argv[1]) == "--surface-neo");
+        return 0;
+    }
     ReportError();
     GnmSelect();
     GnmDrawupImage();
     GnmDrawupPattern();
     GnmSequences();
+    GnmSurfaceValidation();
+    GnmSurfaceModes(argv[0]);
     sceFontSetGraphicsErrorCallback(nullptr);
 }
