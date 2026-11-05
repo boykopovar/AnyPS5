@@ -1,6 +1,7 @@
 #ifdef __APPLE__
 
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <CoreFoundation/CoreFoundation.h>
 #include <crt_externs.h>
 #include <dispatch/dispatch.h>
@@ -38,6 +39,7 @@ std::size_t guestStackBytes = 0;
 
 void* RunGuest(void* argument) {
     const auto start = *static_cast<const GuestStart*>(argument);
+    LibcRunReportMilestone_nid_no_patch(1);
     start.entry(start.block, nullptr);
     std::fprintf(stderr, "guest entry returned\n");
     std::abort();
@@ -161,6 +163,7 @@ extern "C" {
 
 [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, void*), void* block) {
     guestStart = {entry, block};
+    LibcRunReportMilestone_nid_no_patch(0);
     guestStackBytes = std::max<std::size_t>(pthread_get_stacksize_np(pthread_self()), 8u << 20);
     MoveHostStack();
     ServeMainQueue(nullptr);

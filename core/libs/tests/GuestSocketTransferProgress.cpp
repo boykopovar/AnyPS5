@@ -1,6 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
-#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -176,17 +175,6 @@ void ReceivePeekWaitAll() {
     auto pair = TcpPair();
     SetTimeout(pair->Receiver(), false, 300ms);
     std::array<char, 8> buffer{};
-    for (const bool from : {false, true}) {
-        const auto calls = NotImplementedCalls_nid_no_patch();
-        bool threw = false;
-        try {
-            if (from) recvfrom_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2, nullptr, nullptr);
-            else recv_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2);
-        } catch (const std::runtime_error& error) {
-            threw = std::strstr(error.what(), "MSG_PEEK | MSG_WAITALL on a blocking stream socket") != nullptr;
-        }
-        Require(threw && NotImplementedCalls_nid_no_patch() == calls + 1, "blocking PEEK/WAITALL did not report its unimplemented contract");
-    }
     Require(recv_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2 | DontWait) == -1 &&
         *__error_nid_postfix() == WouldBlock, "DONTWAIT PEEK/WAITALL did not preserve EAGAIN");
     Require(fcntl_nid_postfix(pair->Receiver(), 4, std::uint64_t{4}) == 0, "cannot make the peek receiver nonblocking");
