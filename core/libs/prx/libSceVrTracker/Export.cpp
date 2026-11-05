@@ -173,7 +173,11 @@ int APS5_VABI sceVrTrackerResetAll() {
     return 0;
 }
 int APS5_VABI sceVrTrackerResetOrientationRelative(int device_type, int handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!g_initialized.load()) return NotInit;
+    const auto type = static_cast<std::uint32_t>(device_type);
+    if (type > DeviceGun || handle < 0) return ArgumentInvalid;
+    std::lock_guard lock(g_devicesMutex);
+    if (g_deviceHandles[type] != handle) return DeviceNotRegistered;
     return 0;
 }
 int APS5_VABI sceVrTrackerSaveInternalBuffers() {
