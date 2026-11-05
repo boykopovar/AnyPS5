@@ -1,5 +1,11 @@
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cstdint>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 extern "C" {
 
@@ -91,8 +97,18 @@ int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_atomic_wait_get_remaining_timeout_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint32_t APS5_VABI __std_atomic_wait_get_remaining_timeout_nid_postfix(std::uint64_t deadline) {
+    if (deadline == UINT64_MAX) return UINT32_MAX;
+#ifdef _WIN32
+    const std::uint64_t now = GetTickCount64();
+#else
+    struct timespec sample{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &sample) != 0) NotImplemented_nid_no_patch(__func__);
+    const std::uint64_t now = static_cast<std::uint64_t>(sample.tv_sec) * 1000ULL + static_cast<std::uint64_t>(sample.tv_nsec) / 1000000ULL;
+#endif
+    if (now >= deadline) return 0;
+    constexpr std::uint64_t maxTimeout = 864'000'000;
+    return static_cast<std::uint32_t>(deadline - now > maxTimeout ? maxTimeout : deadline - now);
 }
 
 int APS5_VABI __std_atomic_wait_direct_8_nid_postfix() {

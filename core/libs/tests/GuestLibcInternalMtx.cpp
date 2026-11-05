@@ -1,10 +1,16 @@
-#include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 namespace {
 
@@ -33,9 +39,30 @@ int LockAndUnlock(PthreadMutex* mutex) {
     return _Mtxunlock_nid_postfix(mutex);
 }
 
+std::uint64_t RemainingMilliseconds() {
+#ifdef _WIN32
+    return GetTickCount64();
+#else
+    struct timespec sample{};
+    Require(::clock_gettime(CLOCK_MONOTONIC, &sample) == 0, "CLOCK_MONOTONIC sample succeeds");
+    return static_cast<std::uint64_t>(sample.tv_sec) * 1000ULL + static_cast<std::uint64_t>(sample.tv_nsec) / 1000000ULL;
+#endif
+}
+
 }
 
 int main() {
+    Require(__std_atomic_wait_get_remaining_timeout_nid_postfix(UINT64_MAX) == UINT32_MAX, "infinite deadline returns the no-timeout sentinel");
+    const std::uint64_t before = RemainingMilliseconds();
+    Require(__std_atomic_wait_get_remaining_timeout_nid_postfix(before) == 0, "expired deadline returns zero");
+    Require(__std_atomic_wait_get_remaining_timeout_nid_postfix(UINT64_MAX - 1) == 864'000'000, "long deadline is capped at ten days");
+    const std::uint64_t beforeSample = RemainingMilliseconds();
+    const std::uint64_t deadline = beforeSample + 60'000;
+    const std::uint32_t remaining = __std_atomic_wait_get_remaining_timeout_nid_postfix(deadline);
+    const std::uint64_t afterSample = RemainingMilliseconds();
+    const std::uint64_t lower = afterSample < deadline ? deadline - afterSample : 0;
+    Require(remaining <= 60'000 && remaining >= lower, "future deadline is bounded by independent monotonic samples");
+
     PthreadMutex mutex = nullptr;
     Require(_Mtxinit_nid_postfix(&mutex, "File") == 0, "init with a name succeeds");
     Require(mutex != nullptr, "init stores a mutex");
