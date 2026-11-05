@@ -5,6 +5,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <stdexcept>
+#include <string_view>
 
 static constexpr std::uint32_t RenderGrain = 256;
 
@@ -210,10 +211,13 @@ struct RoutingSignal {
     std::uint32_t frame = 0;
     bool constant = false;
     bool muted = false;
+    std::uint32_t activeChannels = 0xFFFFFFFFu;
+    std::uintptr_t eventVoice = 0;
+    std::vector<std::uint32_t> events;
 };
 
 static float RoutingSample(const RoutingSignal& signal, std::uint32_t frame, std::uint32_t channel) {
-    if (signal.muted) return 0.0f;
+    if (signal.muted || (signal.activeChannels & (1u << channel)) == 0) return 0.0f;
     const float amplitude = static_cast<float>((signal.id + 1) * (channel + 1)) / 128.0f;
     if (signal.constant) return (channel & 1) != 0 ? -amplitude : amplitude;
     if (frame == 3 || frame == RenderGrain * 3 + 17) return amplitude;
@@ -226,6 +230,8 @@ static int APS5_VABI GenerateRoutingSignal(Ngs2UserFxProcessContext* context) {
         for (std::uint32_t frame = 0; frame < context->num_grain_samples; ++frame)
             context->channel_data[channel][frame] = RoutingSample(signal, signal.frame + frame, channel);
     signal.frame += context->num_grain_samples;
+    for (const auto event : signal.events) Event(signal.eventVoice, event);
+    signal.events.clear();
     return SCE_NGS2_OK;
 }
 
@@ -532,29 +538,93 @@ static void TestUnconfiguredReverbAlias() {
         ExpectSignal(actual[buffer], graph.Signal(buffer), 0, 2);
 }
 
-static void TestRoutedReverbEvents() {
-    ReverbRoutingGraph reference(2, 1, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 0, 0}});
-    ReverbRoutingGraph routed(2, 3, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 1, 2}});
-    reference.signals[0][0].id = 1;
-    reference.signals[0][0].constant = true;
-    routed.signals[0][1].constant = true;
-    reference.SetReverb(RoutingReverb());
-    routed.SetReverb(RoutingReverb());
-    for (std::uint32_t grain = 0; grain < 30; ++grain) {
-        std::uint32_t event = 0;
-        if (grain == 4) event = SCE_NGS2_VOICE_EVENT_PAUSE;
-        if (grain == 7) event = SCE_NGS2_VOICE_EVENT_RESUME;
-        if (grain == 12) event = SCE_NGS2_VOICE_EVENT_STOP;
-        if (grain == 16 || grain == 24) event = SCE_NGS2_VOICE_EVENT_PLAY;
-        if (grain == 20) event = SCE_NGS2_VOICE_EVENT_KILL;
-        if (event != 0) {
-            Event(reference.voices[0], event);
-            Event(routed.voices[0], event);
+static void TestRoutedReverbMasks() {
+    for (const auto size : {0u, 1u}) {
+        for (const bool maskedInputOnly : {false, true}) {
+            ReverbRoutingGraph graph(2, 4, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 1, 3, 2, size}});
+            graph.Signal(1).activeChannels = maskedInputOnly ? 2u : 3u;
+            auto param = RoutingReverb(1, 0);
+            param.reserved[0] = 2;
+            graph.SetReverb(param);
+            float energy = 0;
+            for (std::uint32_t grain = 0; grain < 80; ++grain) {
+                const auto actual = graph.Render();
+                for (std::uint32_t frame = 0; frame < RenderGrain; ++frame) {
+                    Require(actual[3][frame * 2 + 1] == 0.0f);
+                    if (maskedInputOnly) Require(actual[3][frame * 2] == 0.0f);
+                    energy += std::abs(actual[3][frame * 2]);
+                }
+                ExpectSignal(actual[1], graph.Signal(1), grain * RenderGrain, 2);
+            }
+            if (!maskedInputOnly) Require(energy > 1e-5f);
         }
-        const auto actual = routed.Render();
-        ExpectSame(actual[2], reference.Render()[0]);
-        if ((grain > 4 && grain < 7) || (grain > 12 && grain < 16) || (grain > 20 && grain < 24))
-            for (float sample : actual[2]) Require(sample == 0);
+    }
+}
+
+static void ExpectTransitionRefused(ReverbRoutingGraph& graph) {
+    bool threw = false;
+    try {
+        graph.Render();
+    } catch (const std::runtime_error& error) {
+        threw = std::string_view(error.what()).find("custom Reverb voice transitions with multiple buffers") != std::string_view::npos;
+    }
+    Require(threw);
+}
+
+static void TestRoutedReverbTransitions() {
+    for (const auto event : {SCE_NGS2_VOICE_EVENT_PAUSE, SCE_NGS2_VOICE_EVENT_RESUME, SCE_NGS2_VOICE_EVENT_STOP}) {
+        ReverbRoutingGraph reference(2, 1, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 0, 0}});
+        ReverbRoutingGraph routed(2, 4, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 1, 2}});
+        reference.Signal(0).id = 1;
+        reference.Signal(0).constant = true;
+        routed.Signal(0).constant = true;
+        routed.Signal(1).constant = true;
+        reference.SetReverb(RoutingReverb());
+        routed.SetReverb(RoutingReverb());
+        ExpectSame(routed.Render()[2], reference.Render()[0]);
+        if (event == SCE_NGS2_VOICE_EVENT_RESUME) {
+            Event(routed.voices[0], SCE_NGS2_VOICE_EVENT_PAUSE);
+            ExpectTransitionRefused(routed);
+        }
+        Event(routed.voices[0], event);
+        ExpectTransitionRefused(routed);
+        for (const auto voice : {reference.voices[0], routed.voices[0]}) {
+            Event(voice, SCE_NGS2_VOICE_EVENT_STOP_IMM);
+            Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+        }
+        ExpectSame(routed.Render()[2], reference.Render()[0]);
+    }
+}
+
+static void TestDeferredReverbTransitions() {
+    for (const bool playPause : {false, true}) {
+        ReverbRoutingGraph routed(2, 4, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 1, 2}});
+        routed.Signal(0).constant = true;
+        routed.Signal(1).constant = true;
+        routed.SetReverb(RoutingReverb());
+        routed.Render();
+        auto& signal = routed.Signal(0);
+        signal.eventVoice = routed.voices[0];
+        if (playPause) signal.events = {SCE_NGS2_VOICE_EVENT_PLAY, SCE_NGS2_VOICE_EVENT_PAUSE};
+        else signal.events = {SCE_NGS2_VOICE_EVENT_KILL};
+        routed.Render();
+        Require(signal.events.empty());
+        ExpectTransitionRefused(routed);
+        if (playPause) {
+            Require((Flags(routed.voices[0]) & SCE_NGS2_VOICE_STATE_FLAG_PAUSED) != 0);
+            Event(routed.voices[0], SCE_NGS2_VOICE_EVENT_STOP_IMM);
+            Event(routed.voices[0], SCE_NGS2_VOICE_EVENT_PLAY);
+            ExpectTransitionRefused(routed);
+        }
+        Event(routed.voices[0], SCE_NGS2_VOICE_EVENT_STOP_IMM);
+        for (const auto& buffer : routed.Render()) for (const auto sample : buffer) Require(sample == 0.0f);
+        Require(Flags(routed.voices[0]) == 0);
+        Event(routed.voices[0], SCE_NGS2_VOICE_EVENT_PLAY);
+        ReverbRoutingGraph reference(2, 1, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 0, 0}});
+        reference.Signal(0).id = routed.Signal(1).id;
+        reference.Signal(0).constant = true;
+        reference.SetReverb(RoutingReverb());
+        ExpectSame(routed.Render()[2], reference.Render()[0]);
     }
 }
 
@@ -578,6 +648,8 @@ int main() {
     TestGainReverbGainOrder();
     TestUnconfiguredReverbRouting();
     TestUnconfiguredReverbAlias();
-    TestRoutedReverbEvents();
+    TestRoutedReverbMasks();
+    TestRoutedReverbTransitions();
+    TestDeferredReverbTransitions();
     return 0;
 }
