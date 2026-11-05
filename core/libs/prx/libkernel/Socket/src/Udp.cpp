@@ -130,6 +130,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool receiveShut = false;
     bool sendShut = false;
     bool localAddressCleared = false;
+    bool peerResetTaken = false;
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
@@ -900,6 +901,32 @@ bool ReceiveShut(Socket& socket) {
     std::lock_guard lock(socket.modeMutex);
     return socket.receiveShut;
 }
+bool PairPeerClosed(const Socket& socket) {
+#ifdef _WIN32
+    return socket.family == GuestUnix && socket.peer.expired();
+#else
+    static_cast<void>(socket);
+    return false;
+#endif
+}
+int PendingPeerReset(Socket& socket, int flags) {
+    if (socket.type != 2 || !PairPeerClosed(socket) || ReadableNow(socket)) return 0;
+    std::lock_guard lock(socket.modeMutex);
+    if (socket.peerResetTaken) return 0;
+    if ((flags & GuestPeek) == 0) socket.peerResetTaken = true;
+    return 54;
+}
+int ClosedPeerSendError(Socket& socket, bool addressed) {
+    if (!PairPeerClosed(socket)) return 0;
+    if (socket.type == 1) return 32;
+    std::lock_guard lock(socket.modeMutex);
+    if (socket.sendShut) return 32;
+    if (!socket.peerResetTaken) {
+        socket.peerResetTaken = true;
+        return 54;
+    }
+    return addressed ? 0 : 39;
+}
 int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
     if (ReceiveShut(socket)) return 0;
     if (length != 0) return -1;
@@ -995,6 +1022,12 @@ int NativePair(int type, NativeSocket (&pair)[2]) {
     if (!LoopbackName(second.value, secondName)) return NativeError();
     if (connect(first.value, reinterpret_cast<sockaddr*>(&secondName), sizeof(secondName))) return NativeError();
     if (connect(second.value, reinterpret_cast<sockaddr*>(&firstName), sizeof(firstName))) return NativeError();
+    for (const NativeSocket end : {first.value, second.value}) {
+        BOOL reportUnreachable = FALSE;
+        DWORD returned = 0;
+        if (WSAIoctl(end, SIO_UDP_CONNRESET, &reportUnreachable, sizeof(reportUnreachable), nullptr, 0, &returned, nullptr, nullptr) != 0)
+            return NativeError();
+    }
     pair[0] = first.value;
     pair[1] = second.value;
     first.value = Invalid;
@@ -1558,6 +1591,7 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if (!socket) return -1;
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
+    if (const int closed = ClosedPeerSendError(*socket, false)) return Fail(closed);
     if (!buffer && length) return Fail(14);
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
@@ -1568,6 +1602,7 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
+    if (const int reset = PendingPeerReset(*socket, flags)) return Fail(reset);
     if (!buffer && length) return Fail(14);
     const GuestArena::HostWrite destination(length == 0 ? nullptr : buffer, static_cast<std::size_t>(length));
     if (!destination.Open()) return Fail(14);
@@ -1746,6 +1781,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if (!socket) return -1;
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
+    if (const int closed = ClosedPeerSendError(*socket, address != nullptr)) return Fail(closed);
     if (!buffer && length) return Fail(14);
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     int result;
@@ -1791,6 +1827,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
+    if (const int reset = PendingPeerReset(*socket, flags)) return Fail(reset);
     if ((!buffer && length) || (address && !addressLength)) return Fail(14);
     const GuestArena::HostWrite destination(length == 0 ? nullptr : buffer, static_cast<std::size_t>(length));
     if (!destination.Open()) return Fail(14);
@@ -2113,6 +2150,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     const bool passing = socket->family == GuestUnix && header.control && header.controlLength && (flags & GuestPeek) == 0;
 #endif
     if ((flags & ~(GuestReceiveFlags | (passing ? GuestControlCloseOnExec : 0))) != 0) return Fail(45);
+    if (const int reset = PendingPeerReset(*socket, flags)) return Fail(reset);
     const bool records = socket->type == 2 || socket->type == 5;
     std::vector<char> buffer;
     try {
