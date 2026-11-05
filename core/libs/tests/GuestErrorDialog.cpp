@@ -1,6 +1,7 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <chrono>
 #include <cstdlib>
@@ -143,7 +144,15 @@ int main() {
 
     Require(sceErrorDialogClose() == kErrInvalidState);
 
+    errno = 0;
+    Require(sceErrorDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrParam);
+    Require(errno == 0);
+    errno = 42;
+    Require(sceErrorDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrParam);
+    Require(errno == 42);
+    errno = 0;
     Require(sceErrorDialogOpen(nullptr) == kErrParam);
+    Require(errno == 0);
     ErrorDialogParam bad{8, 0, 0, 0};
     Require(sceErrorDialogOpen(&bad) == kErrParam);
     ErrorDialogParam badZero{0, 0, 0, 0};

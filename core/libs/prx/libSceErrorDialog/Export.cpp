@@ -1,6 +1,7 @@
 #include "prx/libSceErrorDialog/include/Api.hpp"
 #include "prx/libSceErrorDialog/include/ErrorDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -9,10 +10,6 @@
 #include "SceTypes.hpp"
 #include "HitLog.hpp"
 #include "prx/libc/include/General.hpp"
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace {
 constexpr int kStatusNone = 0;
@@ -33,19 +30,6 @@ std::mutex g_lock;
 int g_status = kStatusNone;
 bool g_presented = false;
 
-bool Readable(const void* p, std::size_t n) {
-#ifdef _WIN32
-    if (p == nullptr) return false;
-    MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0 || mbi.State != MEM_COMMIT) return false;
-    if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return false;
-    const auto end = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
-    return reinterpret_cast<std::uintptr_t>(p) + n <= end;
-#else
-    return p != nullptr;
-#endif
-}
-
 void Refresh() {
     if (g_status != kStatusRunning || !g_presented) return;
     std::size_t chosen = 0;
@@ -65,14 +49,18 @@ int APS5_VABI sceErrorDialogInitialize(void) {
 int APS5_VABI sceErrorDialogOpen(const void* param) {
  std::lock_guard g(g_lock);
  if (g_status != kStatusInitialized && g_status != kStatusFinished) return kErrInvalidState;
- if (!Readable(param, kParamSize)) return kErrParam;
+ alignas(4) std::uint8_t buffer[kParamSize] = {};
+ const int savedErrno = errno;
+ const bool copied = param != nullptr && GuestCopyIn_nid_no_patch(buffer, param, kParamSize);
+ errno = savedErrno;
+ if (!copied) return kErrParam;
  std::int32_t size = 0;
- std::memcpy(&size, param, sizeof(size));
+ std::memcpy(&size, buffer, sizeof(size));
  if (static_cast<std::size_t>(size) != kParamSize) return kErrParam;
  std::int32_t errorCode = 0;
  std::int32_t userId = 0;
- std::memcpy(&errorCode, static_cast<const std::uint8_t*>(param) + 4, sizeof(errorCode));
- std::memcpy(&userId, static_cast<const std::uint8_t*>(param) + 8, sizeof(userId));
+ std::memcpy(&errorCode, buffer + 4, sizeof(errorCode));
+ std::memcpy(&userId, buffer + 8, sizeof(userId));
  ModalDialogRequest request = ErrorDialog::BuildRequest(errorCode);
  request.owner = ModalDialogOwnerErrorDialog;
  g_presented = ModalDialogOpen_nid_postfix(request);

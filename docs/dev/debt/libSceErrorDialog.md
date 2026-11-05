@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [libSceErrorDialog](../../../core/libs/prx/libSceErrorDialog/Export.cpp) - the error dialog shows UI only while the video output has a window to draw it and no other dialog is shown and a flip draws it within three seconds; otherwise it runs the state machine, finishes on the first `sceErrorDialogUpdateStatus` call and the error code passed to `sceErrorDialogOpen` is only logged
+- [libSceErrorDialog, sceErrorDialogOpen](../../../core/libs/prx/libSceErrorDialog/Export.cpp) - the error dialog shows UI only while the video output has a window to draw it and no other dialog is shown and a flip draws it within three seconds; otherwise it runs the state machine, finishes on the first `sceErrorDialogUpdateStatus` call and the error code passed to `sceErrorDialogOpen` is only logged; returning `kErrParam` (`0x80ED0003`) when `sceErrorDialogOpen` receives an inaccessible or null parameter pointer is a host-safety fallback with console behavior unmeasured
 
 ### Unknown function info
 
