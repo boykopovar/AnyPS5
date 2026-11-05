@@ -687,5 +687,34 @@ int main() {
         return repeated == 0u;
     });
 
+    passed &= run("normal-factor result NaN queries reuse their input predicate without replacing payloads", [] {
+        struct Case { std::uint32_t factor; bool reusable; bool mismatched; bool quiet; std::uint64_t flags; };
+        constexpr std::array<Case, 8> cases{{
+            {0x4019999au, true, false, false, 0u}, {0xbf000000u, true, false, true, 0u},
+            {0u, false, false, false, 0u}, {1u, false, false, false, 0u},
+            {0x7f800000u, false, false, false, 0u}, {0x7fc12345u, false, false, false, 0u},
+            {0x4019999au, false, true, false, 0u}, {0x4019999au, false, false, false, 1u},
+        }};
+        bool valid = true;
+        for (const auto& test : cases) {
+            Builder b;
+            auto& source = b.unknown();
+            const auto isNan = [&](IrValue& bits, std::uint64_t flags = 0u) -> IrValue& { return b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}), &b.constant(0x7f800000u)}, flags); };
+            auto& predicate = isNan(source);
+            auto& input = test.mismatched ? b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&source, &b.constant(1u)}) : source;
+            auto& argument = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&input});
+            auto& product = b.emit(IrOpcode::FPMul32, IrType::F32, {&b.floatConstant(test.factor), &argument});
+            auto& selected = test.quiet ? b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&source, &b.constant(0x00400000u)}) : source;
+            auto& repaired = b.emit(IrOpcode::SelectU32, IrType::U32, {&predicate, &selected, &b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&product})});
+            auto& query = isNan(repaired, test.flags);
+            auto& observer = b.emit(IrOpcode::ReferenceU32, IrType::Void, {&query});
+            b.keep(repaired);
+            b.eliminate();
+            valid &= test.reusable ? !query.HasUses() && observer.Argument(0)->Resolve() == predicate.Resolve() : query.HasUses();
+            valid &= repaired.HasUses();
+        }
+        return valid;
+    });
+
     return passed ? 0 : 1;
 }
