@@ -1154,6 +1154,9 @@ void testAcquireMem() {
     Storage encodable;
     sceAgcDcbAcquireMem(&encodable.buffer, 0, 0, 0, nullptr, (1ull << 40u) - 0x100u, 0);
     check(encodable.words[2] == 0xffffffffu && encodable.words[4] == 0, "an acquire just below 1 TiB was not encoded as its exact size");
+    Storage roundedUp;
+    sceAgcDcbAcquireMem(&roundedUp.buffer, 0, 0, 0, reinterpret_cast<const volatile void*>(0x1ull), (1ull << 40u) - 0xffu, 0);
+    check(roundedUp.words[2] == 0 && roundedUp.words[4] == 0, "an acquire rounded up to 1 TiB did not cover the whole address space");
     Storage asynchronous;
     sceAgcAcbAcquireMem(&asynchronous.buffer, 0x55u, base, 0x100, 80);
     const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 2, 0x55u};
