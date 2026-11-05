@@ -1,6 +1,7 @@
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 
@@ -73,6 +74,15 @@ int main() {
         sceGnmPaHeartbeat,
         sceGnmRaiseUserExceptionEvent,
         sceGnmValidateGetVersion,
+        sceGnmGetCoredumpProtectionFaultTimestamp,
+        sceGnmGetGpuBlockStatus,
+        sceGnmGetGpuInfoStatus,
+        sceGnmGetLastWaitedAddress,
+        sceGnmGetProtectionFaultTimeStamp,
+        sceGnmGetShaderProgramBaseAddress,
+        sceGnmGetShaderStatus,
+        sceGnmInsertThreadTraceMarker,
+        sceGnmIsCoredumpValid,
         libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch,
         libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch,
         libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch,
@@ -93,6 +103,23 @@ int main() {
     });
     libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch();
     libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch();
+    sceGnmGpuPaDebugEnter();
+    sceGnmGpuPaDebugLeave();
+    sceGnmRegisterGnmLiveCallbackConfig();
+    std::uint32_t mode = 7;
+    if (sceGnmGetCoredumpMode(&mode) != 0 || mode != 0) std::abort();
+    if (sceGnmGetCoredumpMode(nullptr) != 1) std::abort();
+    if (sceGnmDestroyWorkloadStream(1) != 0 || sceGnmDestroyWorkloadStream(15) != 0) std::abort();
+    if (sceGnmDestroyWorkloadStream(0) != 1 || sceGnmDestroyWorkloadStream(16) != 1) std::abort();
+    if (sceGnmGetNumTcaUnits() != 2) std::abort();
+    if (sceGnmLogicalTcaUnitToPhysical(0) != 0 || sceGnmLogicalTcaUnitToPhysical(1) != 1) std::abort();
+    const std::uint8_t multipliers[8] = {};
+    if (sceGnmSetWaveLimitMultiplier(0, 1) != 1 || sceGnmSetWaveLimitMultipliers(0, multipliers) != 1) std::abort();
+    if (libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch() != 0) std::abort();
+    if (libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch() != 0) std::abort();
+    if (libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch() != 1) std::abort();
+    if (libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch() != 0) std::abort();
+    if (libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch() != 0) std::abort();
     RequireAll(-1, {
         sceGnmGetDbgGcHandle,
     });
