@@ -531,8 +531,6 @@ int APS5_VABI WKOpenPanelParametersCopySelectedFileNames();
 int APS5_VABI WKOpenPanelParametersGetAllowsDirectories();
 int APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles();
 int APS5_VABI WKOpenPanelParametersGetMediaCaptureType();
-int APS5_VABI WKOpenPanelResultListenerCancel();
-int APS5_VABI WKOpenPanelResultListenerChooseFiles();
 int APS5_VABI WKPageAreScrollbarAnimationsSuppressed();
 int APS5_VABI WKPageBackgroundExtendsBeyondPage();
 int APS5_VABI WKPageBeginPrinting();
