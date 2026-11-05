@@ -1,9 +1,34 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "EvpDigest.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
+
+struct LibreSsl3Asn1String {
+    int length;
+    int type;
+    unsigned char* data;
+    std::int64_t flags;
+};
+
+struct LibreSsl3X509Algor {
+    void* algorithm;
+    void* parameter;
+};
+
+struct LibreSsl3X509Pubkey {
+    LibreSsl3X509Algor* algor;
+    LibreSsl3Asn1String* publicKey;
+    void* pkey;
+};
+
+static_assert(sizeof(LibreSsl3Asn1String) == 24);
+static_assert(offsetof(LibreSsl3Asn1String, data) == 8);
+static_assert(sizeof(LibreSsl3X509Algor) == 16);
+static_assert(sizeof(LibreSsl3X509Pubkey) == 24);
+static_assert(offsetof(LibreSsl3X509Pubkey, publicKey) == 8);
 
 extern "C" {
 
@@ -22,12 +47,12 @@ void APS5_VABI ERR_load_crypto_strings_nid_postfix();
 std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix();
 int APS5_VABI ERR_print_errors_cb_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void);
-int APS5_VABI EVP_DigestInit_nid_postfix(void);
+int APS5_VABI EVP_DigestInit_nid_postfix(LibreSsl3::DigestContext* context, const LibreSsl3::DigestMethod* digest);
 int APS5_VABI EVP_DigestSignFinal_nid_postfix(void);
 int APS5_VABI EVP_DigestSignInit_nid_postfix(void);
 int APS5_VABI EVP_EncryptInit_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_free_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_new_nid_postfix(void);
+void APS5_VABI EVP_MD_CTX_free_nid_postfix(LibreSsl3::DigestContext* context);
+LibreSsl3::DigestContext* APS5_VABI EVP_MD_CTX_new_nid_postfix();
 int APS5_VABI EVP_PKCS82PKEY_nid_postfix(void);
 int APS5_VABI EVP_PKEY_CTX_ctrl_nid_postfix(void);
 int APS5_VABI EVP_PKEY_CTX_new_nid_postfix(void);
@@ -47,9 +72,9 @@ int APS5_VABI EVP_VerifyFinal_nid_postfix(void);
 int APS5_VABI EVP_aes_128_wrap_nid_postfix(void);
 int APS5_VABI EVP_aes_192_wrap_nid_postfix(void);
 int APS5_VABI EVP_aes_256_wrap_nid_postfix(void);
-int APS5_VABI EVP_sha1_nid_postfix(void);
-int APS5_VABI EVP_sha224_nid_postfix(void);
-int APS5_VABI OBJ_cmp_nid_postfix(void);
+const LibreSsl3::DigestMethod* APS5_VABI EVP_sha1_nid_postfix();
+const LibreSsl3::DigestMethod* APS5_VABI EVP_sha224_nid_postfix();
+int APS5_VABI OBJ_cmp_nid_postfix(const void* first, const void* second);
 int APS5_VABI OBJ_txt2obj_nid_postfix(void);
 int APS5_VABI OCSP_CERTID_free_nid_postfix(void);
 int APS5_VABI OCSP_cert_to_id_nid_postfix(void);
@@ -69,7 +94,7 @@ int APS5_VABI SSL_CTX_up_ref_nid_postfix(void);
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(void);
 int APS5_VABI SSL_get_client_random_nid_postfix(void);
 int APS5_VABI SSL_up_ref_nid_postfix(void);
-int APS5_VABI X509_PUBKEY_get0_param_nid_postfix(void);
+int APS5_VABI X509_PUBKEY_get0_param_nid_postfix(void** publicKeyAlgorithm, const unsigned char** publicKey, int* publicKeyLength, void** algorithm, const void* pub);
 int APS5_VABI X509_STORE_CTX_free_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_init_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_new_nid_postfix(void);
@@ -196,7 +221,7 @@ int APS5_VABI OpenSSL_add_all_digests_nid_postfix();
 int APS5_VABI EVP_PKEY_base_id_nid_postfix();
 int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch();
 int APS5_VABI X509_new_nid_postfix();
-int APS5_VABI RSA_get0_factors_nid_postfix();
+void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q);
 int APS5_VABI SSL_get0_verified_chain_nid_postfix();
 int APS5_VABI RSA_set0_crt_params_nid_postfix();
 int APS5_VABI EVP_PKEY_derive_nid_postfix();
@@ -222,7 +247,7 @@ int APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_nid_postfix();
 int APS5_VABI ECDSA_do_sign_nid_postfix();
 int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix();
 int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix();
-int APS5_VABI RSA_get0_crt_params_nid_postfix();
+void APS5_VABI RSA_get0_crt_params_nid_postfix(const LibreSsl3Rsa* rsa, const void** dmp1, const void** dmq1, const void** iqmp);
 int APS5_VABI BIO_set_data_nid_postfix();
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix();
 int APS5_VABI X509_ALGOR_get0_nid_postfix();

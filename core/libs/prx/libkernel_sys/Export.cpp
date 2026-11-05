@@ -10,12 +10,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <vector>
 #include <sys/stat.h>
 #include <cerrno>
 #include <ctime>
@@ -36,6 +34,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -144,24 +143,6 @@ constexpr int KenvSet = 1;
 constexpr int KenvUnset = 2;
 constexpr int KenvDump = 3;
 constexpr std::size_t KenvNameLength = 128;
-constexpr std::size_t KenvValueLength = 128;
-constexpr std::size_t KenvEntries = 512;
-
-struct KernelEnvironment {
-    std::mutex mutex;
-    std::vector<std::string> entries;
-};
-
-KernelEnvironment& KernelEnv() {
-    static auto* environment = new KernelEnvironment;
-    return *environment;
-}
-
-std::vector<std::string>::iterator FindKernelEnv(std::vector<std::string>& entries, const std::string& name) {
-    return std::find_if(entries.begin(), entries.end(), [&](const std::string& entry) {
-        return entry.size() > name.size() && entry.compare(0, name.size(), name) == 0 && entry[name.size()] == '=';
-    });
-}
 
 int CopyKernelEnvString(const char* source, std::size_t limit, std::string& destination) {
     if (const int error = CopyGuestPath_nid_no_patch(source, destination)) return error;
@@ -214,8 +195,7 @@ int GuestError(const std::error_code& error) {
 
 std::int64_t CopyLinkTarget(const std::string& target, char* buffer, std::size_t size) {
     const auto count = std::min(size, target.size());
-    if (count != 0 && buffer == nullptr) return Fail(GuestEfault);
-    if (count != 0) std::memcpy(buffer, target.data(), count);
+    if (count != 0 && (buffer == nullptr || !GuestCopyOut_nid_no_patch(buffer, target.data(), count))) return Fail(GuestEfault);
     return static_cast<std::int64_t>(count);
 }
 
@@ -466,6 +446,10 @@ std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
 
+std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset) {
+    return PosixPwrite_nid_no_patch(d, buf, nbytes, offset);
+}
+
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
     if (id == nullptr) return GuestEinval;
     return sceKernelGetOpenPsId(id);
@@ -556,58 +540,14 @@ int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
 }
 
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len) {
-    auto& environment = KernelEnv();
-    if (what == KenvDump) {
-        std::size_t capacity = len > 0 ? static_cast<std::size_t>(len) : 0;
-        if (capacity > KenvEntries * (KenvNameLength + KenvValueLength + 2)) capacity = KenvEntries * (KenvNameLength + KenvValueLength + 2);
-        const bool copy = len > 0 && value != nullptr;
-        std::string buffer;
-        std::size_t needed = 0;
-        {
-            const std::lock_guard lock(environment.mutex);
-            for (const auto& entry : environment.entries) {
-                const std::size_t size = entry.size() + 1;
-                needed += size;
-                if (copy) {
-                    const std::size_t taken = std::min(size, capacity - buffer.size());
-                    buffer.append(entry.c_str(), taken);
-                }
-            }
-        }
-        if (copy && !GuestCopyOut_nid_no_patch(value, buffer.data(), buffer.size())) return static_cast<int>(Fail(GuestEfault));
-        return buffer.size() == needed ? 0 : static_cast<int>(needed);
-    }
+    static_cast<void>(value);
+    static_cast<void>(len);
+    if (what == KenvDump) return 0;
+    if (what == KenvSet || what == KenvUnset) return static_cast<int>(Fail(GuestEperm));
     std::string key;
     if (const int error = CopyKernelEnvString(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
-    const std::lock_guard lock(environment.mutex);
-    auto& entries = environment.entries;
-    switch (what) {
-    case KenvGet: {
-        const auto found = FindKernelEnv(entries, key);
-        if (found == entries.end()) return static_cast<int>(Fail(GuestEnoent));
-        const std::size_t size = found->size() - key.size();
-        const std::size_t limit = static_cast<std::size_t>(static_cast<std::int64_t>(len));
-        const std::size_t taken = std::min(size, limit);
-        if (!GuestCopyOut_nid_no_patch(value, found->c_str() + key.size() + 1, taken)) return static_cast<int>(Fail(GuestEfault));
-        return static_cast<int>(taken);
-    }
-    case KenvSet: {
-        if (len == 0) return static_cast<int>(Fail(GuestEinval));
-        std::string text;
-        if (const int error = CopyKernelEnvString(value, std::min<std::size_t>(len, KenvValueLength + 1), text)) return static_cast<int>(Fail(error));
-        const auto found = FindKernelEnv(entries, key);
-        if (found != entries.end()) *found = key + "=" + text;
-        else if (entries.size() < KenvEntries) entries.push_back(key + "=" + text);
-        return 0;
-    }
-    case KenvUnset: {
-        const auto found = FindKernelEnv(entries, key);
-        if (found == entries.end()) return static_cast<int>(Fail(GuestEnoent));
-        entries.erase(found);
-        return 0;
-    }
-    default: return static_cast<int>(Fail(GuestEinval));
-    }
+    if (what == KenvGet) return static_cast<int>(Fail(GuestEnoent));
+    return static_cast<int>(Fail(GuestEinval));
 }
 
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info);
@@ -835,6 +775,11 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     error = SetWorkingDirectory_nid_no_patch(path);
     if (error != 0) return static_cast<int>(Fail(error));
     return 0;
+}
+
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
+    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
+    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
