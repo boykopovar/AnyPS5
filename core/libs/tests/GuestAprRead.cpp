@@ -4,6 +4,9 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +17,8 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 
 namespace {
@@ -176,6 +181,7 @@ void TestStreams(const Fixture& fixture) {
 void TestQueries() {
     constexpr int GuestEinval = 22;
     constexpr int GuestEnoent = 2;
+    constexpr int GuestEfault = 14;
     const char* names[] = {"generated.bin", "missing.bin"};
     std::array<std::uint32_t, 2> ids{0, 0};
     std::array<std::uint64_t, 2> sizes{1, 1};
@@ -193,6 +199,28 @@ void TestQueries() {
     FileStat stat{};
     Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
     Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    for (const bool readable : {true, false}) {
+#ifdef _WIN32
+        void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
+        Require(page != nullptr, "cannot map an unwritable APR destination");
+#else
+        void* page = mmap(nullptr, 4096, readable ? PROT_READ : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED, "cannot map an unwritable APR destination");
+#endif
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(id, static_cast<std::uint64_t*>(page)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable file size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(id, static_cast<FileStat*>(page)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable file stat");
+        if (readable) {
+            const auto* bytes = static_cast<const std::uint8_t*>(page);
+            Require(std::all_of(bytes, bytes + 4096, [](std::uint8_t byte) { return byte == 0; }), "APR wrote into an unwritable destination");
+        }
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, 4096);
+#endif
+    }
     std::vector<std::uint8_t> data(4096, 0xCC);
     const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, id, 0, reinterpret_cast<std::uint64_t>(data.data()), data.size(), 100};
     alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
@@ -210,6 +238,63 @@ void TestQueries() {
     std::uint32_t second = 0;
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 1, &result, &second) == 0 && second == first + 1, "APR submission ids did not count up");
     Require(sceKernelAprWaitCommandBuffer(second) == 0, "APR did not wait for the second submission");
+}
+
+template<class TCommand>
+void Append(std::vector<std::uint8_t>& memory, const TCommand& command) {
+    const auto at = memory.size();
+    memory.resize(at + sizeof(command));
+    std::memcpy(memory.data() + at, &command, sizeof(command));
+}
+
+Apr::WaitCommand WaitAtLeast(const std::uint64_t* address, std::uint64_t reference) {
+    Apr::WaitCommand command{};
+    command.header = {Apr::Opcode::WaitOnAddress, sizeof(Apr::WaitCommand)};
+    command.address = reinterpret_cast<std::uint64_t>(address);
+    command.reference = reference;
+    command.mask = ~std::uint64_t{0};
+    command.compare = 4;
+    return command;
+}
+
+Apr::WriteAddressCommand WriteValue(std::uint64_t* address, std::uint64_t value) {
+    return {{Apr::Opcode::WriteAddress, sizeof(Apr::WriteAddressCommand)}, reinterpret_cast<std::uint64_t>(address), value, 0, 0};
+}
+
+std::uint64_t LoadValue(std::uint64_t* address) {
+    return std::atomic_ref<std::uint64_t>(*address).load(std::memory_order_acquire);
+}
+
+void TestPriorities() {
+    alignas(8) static std::uint64_t release = 0;
+    alignas(8) static std::uint64_t waiterDone = 0;
+    alignas(8) static std::uint64_t releaserDone = 0;
+    alignas(8) static std::uint64_t behindDone = 0;
+    std::vector<std::uint8_t> waiter;
+    Append(waiter, WaitAtLeast(&release, 1));
+    Append(waiter, WriteValue(&waiterDone, 1));
+    std::vector<std::uint8_t> behind;
+    Append(behind, WriteValue(&behindDone, 1));
+    std::vector<std::uint8_t> releaser;
+    Append(releaser, WriteValue(&release, 1));
+    Append(releaser, WriteValue(&releaserDone, 1));
+    const auto object = [](std::vector<std::uint8_t>& memory) {
+        return Apr::CommandBufferObject{Apr::BufferType::Generic, 0, static_cast<std::uint32_t>(memory.size()), 2, static_cast<std::uint32_t>(memory.size()), memory.data()};
+    };
+    auto waiterBuffer = object(waiter);
+    auto behindBuffer = object(behind);
+    auto releaserBuffer = object(releaser);
+    std::uint32_t waiterId = 0, behindId = 0, releaserId = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&waiterBuffer, 5, &waiterId) == 0, "the waiting APR buffer was not submitted");
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&behindBuffer, 5, &behindId) == 0, "the APR buffer behind the wait was not submitted");
+    Require(behindId == waiterId + 1, "APR submission ids did not count up across one priority");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(LoadValue(&waiterDone) == 0 && LoadValue(&behindDone) == 0, "an APR buffer ran past an unsatisfied wait of its own priority");
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&releaserBuffer, 1, &releaserId) == 0 && releaserId == behindId + 1, "APR submission ids did not count up across priorities");
+    for (int poll = 0; poll < 5000 && LoadValue(&releaserDone) == 0; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&releaserDone) == 1, "an APR buffer at another priority stayed behind a waiting buffer");
+    Require(sceKernelAprWaitCommandBuffer(releaserId) == 0 && sceKernelAprWaitCommandBuffer(waiterId) == 0 && sceKernelAprWaitCommandBuffer(behindId) == 0, "APR did not wait for the buffers by id");
+    Require(LoadValue(&waiterDone) == 1 && LoadValue(&behindDone) == 1, "the released APR buffers did not finish in order");
 }
 
 #ifdef _WIN32
@@ -308,6 +393,8 @@ int main(int argc, char** argv) {
             TestErrors(fixture);
         } else if (mode == "streams") {
             TestStreams(fixture);
+        } else if (mode == "priorities") {
+            TestPriorities();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;
