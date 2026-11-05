@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include "Stream.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
@@ -217,8 +218,16 @@ int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat) {
+    if (!converter || !pixelFormat) APS5_INVALID_ARG_EX;
+    constexpr auto pixelFormatOffset = offsetof(JxrGuestFormatConverter, pixelFormat);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - pixelFormatOffset) APS5_INVALID_ARG_EX;
+    const auto* sourcePixelFormat = reinterpret_cast<const JxrGuestGuid*>(converterAddress + pixelFormatOffset);
+    JxrGuestGuid copy{};
+    if (!GuestCopyIn_nid_no_patch(&copy, sourcePixelFormat, sizeof(copy))) APS5_INVALID_ARG_EX;
+    if (!GuestCopyOut_nid_no_patch(pixelFormat, &copy, sizeof(copy))) APS5_INVALID_ARG_EX;
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKFormatConverter_GetResolution_nid_postfix() {

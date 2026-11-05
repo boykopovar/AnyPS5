@@ -111,5 +111,37 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    JxrGuestFormatConverter converter{};
+    std::memset(&converter, 0x5a, sizeof(converter));
+    const JxrGuestGuid pixelFormat{0x12345678, 0x9abc, 0xdef0, {1, 2, 3, 4, 5, 6, 7, 8}};
+    converter.pixelFormat = pixelFormat;
+    const auto converterBefore = converter;
+    struct GuardedGuid {
+        std::uint8_t before[8];
+        JxrGuestGuid value;
+        std::uint8_t after[8];
+    } output;
+    std::memset(&output, 0xa5, sizeof(output));
+    Require(PKFormatConverter_GetPixelFormat_nid_postfix(&converter, &output.value) == 0);
+    Require(std::memcmp(&output.value, &pixelFormat, sizeof(pixelFormat)) == 0);
+    for (const auto value : output.before) Require(value == 0xa5);
+    for (const auto value : output.after) Require(value == 0xa5);
+    Require(std::memcmp(&converter, &converterBefore, sizeof(converter)) == 0);
+    threw = false;
+    try { PKFormatConverter_GetPixelFormat_nid_postfix(nullptr, &output.value); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { PKFormatConverter_GetPixelFormat_nid_postfix(&converter, nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { PKFormatConverter_GetPixelFormat_nid_postfix(reinterpret_cast<JxrGuestFormatConverter*>(1), &output.value); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { PKFormatConverter_GetPixelFormat_nid_postfix(&converter, reinterpret_cast<JxrGuestGuid*>(1)); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
     return 0;
 }
