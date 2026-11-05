@@ -403,7 +403,7 @@ struct HttpClientState : Aps5HttpClient {
                 const auto& range = headers.at("content-range");
                 const auto dash = range.find('-');
                 const auto slash = range.find('/');
-                if (!range.starts_with("bytes ") || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
+                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
                 first = Number(std::string_view(range).substr(6, dash - 6));
                 const auto last = Number(std::string_view(range).substr(dash + 1, slash - dash - 1));
                 total = Number(std::string_view(range).substr(slash + 1));

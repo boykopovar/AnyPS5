@@ -69,7 +69,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(206)
             end = min(end, start + 511, len(content) - 1)
             first = start + 1 if path.startswith("/bad/") or path.startswith("/bad-late/") and start else start
-            self.send_header("Content-Range", f"bytes {first}-{end}/{len(content)}")
+            unit = path.split("/")[2] if path.startswith("/unit/") else "BYTES" if path.startswith(("/bad/", "/range-number/")) else "bytes"
+            first = "invalid" if path.startswith("/range-number/") else first
+            self.send_header("Content-Range", f"{unit} {first}-{end}/{len(content)}")
         if start:
             expected = "Wed, 01 Jan 2020 00:00:00 GMT" if path.startswith("/modified/") else '"fixture-v1"'
             assert self.headers.get("If-Range") == expected
@@ -117,3 +119,7 @@ with Server(("127.0.0.1", 0), Handler) as server:
         assert any(target == "/range/payload.bin?redirected=1" for target in targets)
         assert any(target == "/range/payload.bin?token=direct" for target in targets)
         assert all("#" not in target for target in targets)
+        for unit in ("bytes", "Bytes", "BYTES", "bYtEs"):
+            path = f"/unit/{unit}/payload.bin"
+            assert (path, "bytes=0-65535") in requests
+            assert (path, "bytes=90000-99999") in requests
