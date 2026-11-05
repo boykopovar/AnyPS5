@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -23,7 +24,7 @@ int APS5_VABI __std_min_f_nid_postfix();
 int APS5_VABI __std_minmax_1u_nid_postfix();
 int APS5_VABI __truncdfhf2_nid_postfix();
 int APS5_VABI __std_minmax_4i_nid_postfix();
-int APS5_VABI __std_atomic_wait_get_deadline_nid_postfix();
+std::uint64_t APS5_VABI __std_atomic_wait_get_deadline_nid_postfix(std::uint64_t timeout);
 int APS5_VABI __std_max_2i_nid_postfix();
 int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix();
 int APS5_VABI __std_atomic_wait_get_remaining_timeout_nid_postfix();

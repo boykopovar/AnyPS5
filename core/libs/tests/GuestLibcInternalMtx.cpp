@@ -1,10 +1,16 @@
-#include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include <cstdint>
+#ifndef _WIN32
+#include <time.h>
+#else
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -22,6 +28,31 @@ int OnOtherThread(TCall call, PthreadMutex* mutex) {
     return result;
 }
 
+std::uint64_t DeadlineMilliseconds() {
+#ifdef _WIN32
+    return ::GetTickCount64();
+#else
+    struct timespec now{};
+    Require(::clock_gettime(CLOCK_MONOTONIC, &now) == 0, "CLOCK_MONOTONIC sample succeeds");
+    return static_cast<std::uint64_t>(now.tv_sec) * 1000ULL + static_cast<std::uint64_t>(now.tv_nsec) / 1000000ULL;
+#endif
+}
+
+void CheckAtomicWaitDeadline() {
+    Require(__std_atomic_wait_get_deadline_nid_postfix(UINT64_MAX) == UINT64_MAX, "no-deadline sentinel passes through");
+    const std::uint64_t timeouts[] = {0, 1, 25, UINT64_MAX - 1};
+    for (const auto timeout : timeouts) {
+        const auto before = DeadlineMilliseconds();
+        const auto deadline = __std_atomic_wait_get_deadline_nid_postfix(timeout);
+        const auto after = DeadlineMilliseconds();
+        const auto sampledAt = deadline - timeout;
+        Require(sampledAt - before <= after - before, "deadline uses a monotonic millisecond sample and unsigned addition");
+    }
+    const auto first = __std_atomic_wait_get_deadline_nid_postfix(0);
+    const auto second = __std_atomic_wait_get_deadline_nid_postfix(0);
+    Require(second >= first, "zero-timeout deadlines are monotonic");
+}
+
 int TryLock(PthreadMutex* mutex) {
     const int result = pthread_mutex_trylock_nid_postfix(mutex);
     if (result == 0) pthread_mutex_unlock_nid_postfix(mutex);
@@ -36,6 +67,7 @@ int LockAndUnlock(PthreadMutex* mutex) {
 }
 
 int main() {
+    CheckAtomicWaitDeadline();
     PthreadMutex mutex = nullptr;
     Require(_Mtxinit_nid_postfix(&mutex, "File") == 0, "init with a name succeeds");
     Require(mutex != nullptr, "init stores a mutex");

@@ -1,5 +1,26 @@
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cstdint>
+#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
+
+namespace {
+
+std::uint64_t DeadlineMilliseconds() {
+#ifdef _WIN32
+    return ::GetTickCount64();
+#else
+    struct timespec now{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &now) != 0) throw std::runtime_error("atomic wait deadline: reading CLOCK_MONOTONIC failed");
+    return static_cast<std::uint64_t>(now.tv_sec) * 1000ULL + static_cast<std::uint64_t>(now.tv_nsec) / 1000000ULL;
+#endif
+}
+
+}
 
 extern "C" {
 
@@ -79,8 +100,9 @@ int APS5_VABI __std_minmax_4i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_atomic_wait_get_deadline_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI __std_atomic_wait_get_deadline_nid_postfix(std::uint64_t timeout) {
+    if (timeout == UINT64_MAX) return UINT64_MAX;
+    return DeadlineMilliseconds() + timeout;
 }
 
 int APS5_VABI __std_max_2i_nid_postfix() {
