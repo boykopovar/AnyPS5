@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
@@ -40,6 +41,15 @@ class TitlesTests(unittest.TestCase):
             title_run.load_titles(self.write({"PPSA00001": {"env": {"APS5_X": 1}}}))
         with self.assertRaisesRegex(ValueError, "PPSA00001: relink must hold strings"):
             title_run.load_titles(self.write({"PPSA00001": {"relink": [1]}}))
+
+    def test_pad_timeline_is_checked(self):
+        events = [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 400, "hold_ms": 300, "buttons": ["right", "cross"]}]
+        titles = title_run.load_titles(self.write({"PPSA00001": {"pad": {"after_s": 3, "repeat": 2, "events": events}}}))
+        self.assertEqual(titles["PPSA00001"]["pad"]["repeat"], 2)
+        for pad in ({"after_s": 3}, {"events": events, "delay": 3}, {"events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["jump"]}]},
+                    {"events": events, "after_s": 3601}, {"events": events, "repeat": 0}):
+            with self.assertRaises(ValueError):
+                title_run.load_titles(self.write({"PPSA00001": {"pad": pad}}))
 
     def test_bad_id_is_refused(self):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
@@ -286,6 +296,61 @@ def wait_until(condition, seconds=10):
             return True
         time.sleep(0.1)
     return False
+
+
+class PadTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.work = Path(directory.name) / "work"
+        self.work.mkdir()
+
+    def run_with(self, pad, seconds=1):
+        seen = {}
+
+        class FakeSession:
+            def __init__(self, command, cwd, env, stdout, stderr, owned=None):
+                seen["env"] = env
+
+            def alive(self):
+                return True
+
+            def send_new_windows_to_back(self):
+                pass
+
+            def exit_code(self):
+                return None
+
+            def close(self):
+                seen["closed"] = True
+
+            def kill(self):
+                pass
+
+        with unittest.mock.patch.object(title_run, "Session", FakeSession), unittest.mock.patch.object(title_run, "CLOSE_SECONDS", 0):
+            result = title_run.run_title(self.work / "eboot.exe", self.work, self.work.parent / "run1", seconds, {}, pad)
+        return result, seen["env"]
+
+    def test_timeline_is_queued_after_the_delay(self):
+        stale = self.work / "pad-input.txt"
+        stale.write_text("cross\n", encoding="utf-8")
+        result, env = self.run_with({"after_s": 0, "repeat": 2, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["right", "cross"]}]})
+        self.assertEqual(env["APS5_PAD_INPUT_FILE"], str(stale))
+        lines = stale.read_text(encoding="utf-8").splitlines()
+        self.assertRegex(lines[0], r"^APS5_PAD_TIMELINE 1 [0-9]+ 2$")
+        self.assertEqual(lines[1:], [f"0 200 {0x20 | 0x4000}", f"400 200 {0x20 | 0x4000}"])
+        self.assertIsNotNone(result["pad_queued_s"])
+
+    def test_no_pad_leaves_the_input_file_alone(self):
+        with unittest.mock.patch.dict(os.environ, {"APS5_PAD_INPUT_FILE": str(self.work / "outside.txt")}):
+            result, env = self.run_with(None)
+        self.assertNotIn("APS5_PAD_INPUT_FILE", env)
+        self.assertNotIn("pad_queued_s", result)
+
+    def test_a_late_delay_queues_nothing(self):
+        result, _ = self.run_with({"after_s": 30, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["cross"]}]})
+        self.assertIsNone(result["pad_queued_s"])
+        self.assertFalse((self.work / "pad-input.txt").exists())
 
 
 class SessionTests(unittest.TestCase):
