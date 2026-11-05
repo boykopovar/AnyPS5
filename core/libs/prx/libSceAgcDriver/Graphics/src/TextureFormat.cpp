@@ -221,6 +221,21 @@ std::uint32_t RepackTextureWord(std::uint32_t word) {
     return ((word >> 21u) & 0x7ffu) | (((word >> 10u) & 0x7ffu) << 11u) | ((word & 0x3ffu) << 22u);
 }
 
+VkFormat Uint16ExportAlias(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16_SNORM:
+        case VK_FORMAT_R16_SFLOAT: return VK_FORMAT_R16_UINT;
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16_SNORM:
+        case VK_FORMAT_R16G16_SFLOAT: return VK_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R16G16B16A16_SNORM:
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return VK_FORMAT_R16G16B16A16_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes) {
     switch (format) {
         case VK_FORMAT_B8G8R8A8_UNORM: format = VK_FORMAT_R8G8B8A8_UNORM; break;
