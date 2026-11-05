@@ -122,8 +122,6 @@ Float16NanProbeResult ProbeFloat16HostNans(VulkanDevice& device, const ShaderRec
     for (const auto& mode : modes) {
         const auto packedSelected = Compile(target, false, mode, PackedCode);
         const auto packedHost = Compile(target, true, mode, PackedCode);
-        const auto scalarSelected = Compile(target, false, mode, ScalarCode);
-        const auto scalarHost = Compile(target, true, mode, ScalarCode);
         for (std::uint32_t first = 0; first < Combinations; first += Threads) {
             const auto selected = Run(device, packedSelected, PackedCode, first);
             const auto host = Run(device, packedHost, PackedCode, first);
@@ -133,6 +131,11 @@ Float16NanProbeResult ProbeFloat16HostNans(VulkanDevice& device, const ShaderRec
                     if (selected[tid * PackedResults + index] != host[tid * PackedResults + index]) ++result.mismatches;
                 }
             }
+            if (result.mismatches != 0u) return result;
+        }
+        const auto scalarSelected = Compile(target, false, mode, ScalarCode);
+        const auto scalarHost = Compile(target, true, mode, ScalarCode);
+        for (std::uint32_t first = 0; first < Combinations; first += Threads) {
             const auto scalarExact = Run(device, scalarSelected, ScalarCode, first);
             const auto scalar = Run(device, scalarHost, ScalarCode, first);
             for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -147,6 +150,7 @@ Float16NanProbeResult ProbeFloat16HostNans(VulkanDevice& device, const ShaderRec
                     }
                 }
             }
+            if (result.mismatches != 0u) return result;
         }
     }
     return result;
