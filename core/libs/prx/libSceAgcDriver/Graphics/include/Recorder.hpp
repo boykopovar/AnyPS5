@@ -932,6 +932,7 @@ private:
         std::list<DrawSnapshotKey>::iterator recent;
         std::shared_ptr<Buffer> buffer;
         std::uint32_t derived;
+        std::vector<std::byte> shadow;
     };
     struct DrawSnapshotPool {
         std::list<DrawSnapshotKey> recency;
