@@ -180,6 +180,15 @@ void TypeFree() {
     ASN1_TYPE_free_nid_postfix(objectType);
     Require(allocations.empty());
 
+    auto* nullDataObjectType = static_cast<Asn1Type*>(Allocate_nid_no_patch(sizeof(Asn1Type)));
+    *nullDataObjectType = {};
+    nullDataObjectType->type = 6;
+    auto* nullDataObject = static_cast<LibreSslAsn1Object*>(Allocate_nid_no_patch(sizeof(LibreSslAsn1Object)));
+    *nullDataObject = {nullptr, nullptr, 1, 4, nullptr, 0x01 | 0x08};
+    nullDataObjectType->value.pointer = nullDataObject;
+    ASN1_TYPE_free_nid_postfix(nullDataObjectType);
+    Require(allocations.empty());
+
     auto* innerType = static_cast<Asn1Type*>(Allocate_nid_no_patch(sizeof(Asn1Type)));
     *innerType = {};
     innerType->type = 2;

@@ -23,6 +23,7 @@ void PutError(int reason) {
 }
 
 void ClearAndFree(void* data, std::size_t size) {
+    if (!data) return;
     auto* bytes = static_cast<volatile unsigned char*>(data);
     for (std::size_t index = 0; index < size; ++index) bytes[index] = 0;
     free_nid_postfix(data);
@@ -49,7 +50,7 @@ void FreeObject(LibreSslAsn1Object* object) {
         object->longName = nullptr;
     }
     if (object->flags & 0x08) {
-        if (object->length < 0) NotImplemented_nid_no_patch(__func__);
+        if (object->data && object->length < 0) NotImplemented_nid_no_patch(__func__);
         ClearAndFree(const_cast<unsigned char*>(object->data), static_cast<std::size_t>(object->length));
         object->data = nullptr;
         object->length = 0;
