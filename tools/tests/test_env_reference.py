@@ -38,6 +38,15 @@ static std::uint64_t v = MyEnvironmentNumber("APS5_NOT_A_NUMBER_READ");
 
 
 class EnvReferenceTests(unittest.TestCase):
+    def test_reader_identifiers_require_a_token_boundary(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = custom_getenv("APS5_FAKE");\n'
+                          'auto b = reEnvInt("APS5_FAKE2", 1);\n'
+                          'auto c = std::getenv("APS5_REAL");\n'
+                          'auto d = os.getenv("APS5_PYTHON");\n', encoding="utf-8")
+        self.assertEqual(set(env_reference.reads([root / "core"])), {"APS5_REAL", "APS5_PYTHON"})
+
     def fixture(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -330,6 +339,27 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(env_reference.check(found, doc, env_reference.PREFIXES, out), 1)
         self.assertIn("APS5_REMOVED", out.getvalue())
         self.assertIn("no longer reads", out.getvalue())
+
+    def test_check_counts_only_the_first_cell_of_a_row_as_documented(self):
+        root = self.fixture()
+        found = env_reference.reads([root / "core"])
+        rows = ["| `%s` | presence | `core/Sample.cpp` |  | see `APS5_OLD_NAME` |" % name
+                for name in sorted(found) if name != "APS5_TRACE_GPU"]
+        rows.append("| `APS5_GONE` | presence | `core/Gone.cpp` |  | like `APS5_TRACE_GPU` |")
+        doc = root / "ENVIRONMENT.md"
+        doc.write_text("Set `APS5_INTRO` first.\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
+        out = io.StringIO()
+        self.assertEqual(env_reference.check(found, doc, env_reference.PREFIXES, out), 1)
+        self.assertEqual(out.getvalue().splitlines()[:-1], [
+            "error: APS5_TRACE_GPU is read at %s but has no row in %s" % (
+                ":".join(map(str, found["APS5_TRACE_GPU"][0][:2])), doc),
+            "error: APS5_GONE has a row in %s but the code no longer reads it" % doc,
+        ])
+
+    def test_a_name_followed_by_a_line_break_is_not_a_row(self):
+        pattern = env_reference.documented_pattern(env_reference.PREFIXES)
+        self.assertEqual(pattern.findall("| `APS5_A` |\n|\t`APS5_B`\t| x |\n| `APS5_C`\n| x |\n|\n`APS5_D` |\n"),
+                         ["APS5_A", "APS5_B"])
 
     def test_reads_resolve_a_string_constant_passed_to_a_reader(self):
         root = self.fixture()
