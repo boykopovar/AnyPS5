@@ -5321,8 +5321,6 @@ int APS5_VABI _ZN9Inspector17BackendDispatcher27registerDispatcherForDomainERKN3
 int APS5_VABI _ZN9Inspector17BackendDispatcher8dispatchERKN3WTF6StringE();
 int APS5_VABI _ZN9Inspector17BackendDispatcherD1Ev();
 int APS5_VABI _ZN9Inspector17BackendDispatcherD2Ev();
-int APS5_VABI _ZN9Inspector18IdentifiersFactory16createIdentifierEv();
-int APS5_VABI _ZN9Inspector18IdentifiersFactory9requestIdEm();
 int APS5_VABI _ZN9Inspector18InjectedScriptBaseC1ERKN3WTF6StringE();
 int APS5_VABI _ZN9Inspector18InjectedScriptBaseC1ERKS0_();
 int APS5_VABI _ZN9Inspector18InjectedScriptBaseC2ERKN3WTF6StringE();
