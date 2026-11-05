@@ -135,9 +135,10 @@ void APS5_VABI sceVideoOutRemoveBufferAttributeOption(VideoOutBufferAttribute2* 
 }
 
 int APS5_VABI sceVideoOutRegisterBuffers2(int handle, int setIndex, int bufferIndexStart, const VideoOutBuffers* buffers, int bufferNum, const VideoOutBufferAttribute2* attribute, int category, void* option) try {
+    if (handle <= 0 || handle >= VIDEO_OUT_NUM_MAX) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
-        return VIDEO_OUT_ERROR_INVALID_HANDLE;
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
     if (buffers == nullptr) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
@@ -250,9 +251,10 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
 }
 
 int APS5_VABI sceVideoOutUnregisterBuffers(int handle, int setIndex) try {
+    if (handle <= 0 || handle >= VIDEO_OUT_NUM_MAX) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
-        return VIDEO_OUT_ERROR_INVALID_HANDLE;
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
     }
     if (setIndex < 0) {
         return VIDEO_OUT_ERROR_INVALID_VALUE;
