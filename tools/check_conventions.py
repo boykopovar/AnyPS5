@@ -817,7 +817,7 @@ if __name__ == "__main__":
     if args.event:
         try:
             event = json.loads(Path(args.event).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, RecursionError) as error:
             parser.error(f"--event {args.event}: {error}")
         if not isinstance(event, dict):
             parser.error(f"--event {args.event}: not a JSON object")
