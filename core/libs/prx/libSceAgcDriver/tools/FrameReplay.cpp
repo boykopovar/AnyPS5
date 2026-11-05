@@ -880,6 +880,46 @@ FrameCheck compareFrames(const FrameCaptureReader& reader, const Options& option
     return check;
 }
 
+#ifdef _WIN32
+constexpr int RelaunchAttempts = 8;
+
+int relaunchAttempt() {
+    const char* const text = std::getenv("APS5_FRAME_REPLAY_ATTEMPT");
+    if (text == nullptr) return 0;
+    const std::string_view value = text;
+    int attempt = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), attempt);
+    if (error != std::errc{} || end != value.data() + value.size() || attempt < 0 || attempt > RelaunchAttempts)
+        throw std::runtime_error("frame replay: APS5_FRAME_REPLAY_ATTEMPT must be a whole number from 0 to " + std::to_string(RelaunchAttempts) + ", not '" + std::string(value) + "'");
+    return attempt;
+}
+
+void relaunchIfHostRegionBlocks(const FrameCaptureReader& reader) {
+    const int attempt = relaunchAttempt() + 1;
+    const auto& chunks = reader.Chunks();
+    const auto blocked = std::find_if(chunks.begin(), chunks.end(), [](const FrameMemoryChunk& chunk) {
+        return chunk.kind == FrameMemoryKind::Range && chunk.rangeKind != FrameRangeKind::Host && (chunk.access & FrameRangeAccess::Gpu) != 0 &&
+               GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(chunk.address), static_cast<std::size_t>(chunk.bytes));
+    });
+    if (blocked == chunks.end()) return;
+    if (attempt > RelaunchAttempts) return;
+    std::fprintf(stderr, "[frame-replay] a host region sits in the captured GPU range 0x%llx+0x%llx; relaunching (%d of %d)\n", static_cast<unsigned long long>(blocked->address),
+                 static_cast<unsigned long long>(blocked->bytes), attempt, RelaunchAttempts);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    if (_putenv_s("APS5_FRAME_REPLAY_ATTEMPT", std::to_string(attempt).c_str()) != 0) throw std::runtime_error("frame replay: cannot pass the relaunch count to the next process");
+    std::wstring commandLine = GetCommandLineW();
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process)) throw std::runtime_error("frame replay: cannot relaunch, error " + std::to_string(GetLastError()));
+    CloseHandle(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD code = 2;
+    GetExitCodeProcess(process.hProcess, &code);
+    std::_Exit(static_cast<int>(code));
+}
+#endif
 std::uint64_t contentHash(const std::byte* bytes, std::size_t size) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     for (std::size_t index = 0; index < size; ++index) {
@@ -1121,6 +1161,9 @@ double percentile(std::vector<double> values, double fraction) {
 int run(const Options& options) {
     const auto loadStart = Clock::now();
     const FrameCaptureReader reader(options.directory);
+#ifdef _WIN32
+    relaunchIfHostRegionBlocks(reader);
+#endif
     if (reader.Truncated()) std::fprintf(stderr, "[frame-replay] the capture is truncated; replaying the complete records\n");
     auto skipped = restoreMemory(reader);
     const auto loaded = Clock::now();

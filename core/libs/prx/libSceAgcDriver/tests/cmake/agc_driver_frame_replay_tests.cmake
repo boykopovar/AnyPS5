@@ -1,7 +1,13 @@
 if(BUILD_TESTING)
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(agc_driver_frame_replay_tests tests/FrameReplay.cpp Execution/src/FrameCapture.cpp)
-        target_include_directories(agc_driver_frame_replay_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR} ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR} $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+        target_include_directories(agc_driver_frame_replay_tests PRIVATE
+                ${LIBS_INCLUDE_DIR}
+                ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+                ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
+                $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+        )
         target_link_libraries(agc_driver_frame_replay_tests PRIVATE libSceAgc libSceAgcDriver libkernel libc libzstd_static)
         set_target_properties(agc_driver_frame_replay_tests PROPERTIES CXX_EXTENSIONS OFF)
         configure_windows_unwind(agc_driver_frame_replay_tests)
