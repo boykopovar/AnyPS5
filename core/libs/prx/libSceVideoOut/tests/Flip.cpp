@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <string>
 #include <limits>
@@ -102,9 +103,33 @@ void testLifetime(bool reopen) {
     check(expectFailure([&] { sceVideoOutUnregisterBuffers(handle, 0); }).find("pending flip") != std::string::npos, "pending buffer was unregistered");
     check(sceVideoOutWaitVblank(handle) == 0 && sceVideoOutWaitVblank(handle) == 0, "vblank stalled behind the GPU queue");
     std::shared_ptr<VideoOutConfig> replacement;
+    if (reopen) {
+        const auto label = reinterpret_cast<std::uintptr_t>(&cfg->bufferLabels[1]);
+        std::array<uint32_t, 5> store{0xc0033700u, 0x00100200u, static_cast<uint32_t>(label), static_cast<uint32_t>(static_cast<std::uint64_t>(label) >> 32u), 1u};
+        Packet storePacket{store.data(), static_cast<uint32_t>(store.size()), 0, {}};
+        sceAgcDriverSubmitDcb(&storePacket);
+    }
     sceVideoOutClose(handle);
     if (reopen) {
-        check(sceVideoOutOpen(255, 0, 0, nullptr) == handle, "reopen changed handle");
+        std::atomic<bool> returned{false};
+        int reopened = -1;
+        std::exception_ptr openFailure;
+        std::thread opener([&] {
+            try {
+                reopened = sceVideoOutOpen(255, 0, 0, nullptr);
+            } catch (...) {
+                openFailure = std::current_exception();
+            }
+            returned.store(true, std::memory_order_release);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const bool early = returned.load(std::memory_order_acquire);
+        gate->Release();
+        opener.join();
+        if (openFailure) std::rethrow_exception(openFailure);
+        check(!early, "reopen replaced the port's configuration while a flip and a label store of the previous one were in flight");
+        check(reopened == handle, "reopen changed handle");
+        check(std::atomic_ref(cfg->bufferLabels[1]).load(std::memory_order_acquire) == 1, "reopen returned before the label store into the previous configuration landed");
         replacement = VideoOutDriver::Get().GetConfig(handle);
         check(replacement != cfg && replacement->generation > cfg->generation, "reopen reused old port state");
     }
@@ -121,7 +146,6 @@ void testLifetime(bool reopen) {
     } else {
         check(expectFailure([&] { sceVideoOutWaitVblank(handle); }).find("closed") != std::string::npos, "closed port accepted a vblank wait");
     }
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     if (reopen) sceVideoOutClose(handle);
     LibcRunShutdown_nid_postfix();
 }
@@ -198,13 +222,12 @@ void testPs4Buffers() {
 void testDeferredBuffer() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
-    auto gate = std::make_shared<Gate>();
-    AgcDriverRegisterVideoOutput_nid_postfix(7, gate);
-    std::array<uint32_t, 6> held{0xc004105c, 7, 0xfffffffeu, 1, 0, 0};
-    Packet heldPacket{held.data(), 6, 0, {}};
-    check(sceAgcDriverSubmitDcb(&heldPacket) == 0, "the gated flip was not accepted");
-    std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 3, 0};
-    Packet flipPacket{flip.data(), 6, 0, {}};
+    alignas(8) static std::uint32_t reached = 0;
+    reached = 0;
+    const auto label = reinterpret_cast<std::uintptr_t>(&reached);
+    std::array<uint32_t, 13> flip{0xc0053c00u, 0x13u, static_cast<uint32_t>(label), static_cast<uint32_t>(label >> 32u), 1u, 0xffffffffu, 0u,
+                                  0xc004105c, static_cast<uint32_t>(handle), 0, 1, 3, 0};
+    Packet flipPacket{flip.data(), 13, 0, {}};
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "a GPU flip of a buffer registered before the GPU reaches it was rejected at submit");
     std::vector<std::byte> allocation(65536 + 65535);
     const auto storage = alignedBuffer(allocation);
@@ -212,7 +235,7 @@ void testDeferredBuffer() {
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
-    gate->Release();
+    std::atomic_ref<std::uint32_t>(reached).store(1u, std::memory_order_release);
     {
         std::unique_lock lock(cfg->mutex);
         const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(30), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
@@ -223,7 +246,6 @@ void testDeferredBuffer() {
     AgcDriverWaitIdle_nid_postfix();
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     LibcRunShutdown_nid_postfix();
 }
 
