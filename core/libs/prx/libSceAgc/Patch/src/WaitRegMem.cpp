@@ -71,7 +71,8 @@ int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint32_t mask) 
 
 int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction) {
     auto* wait = Agc::Command::ValidateWait(cmd, __func__);
-    wait[1] = (wait[1] & ~7u) | (compareFunction & 7u);
+    Agc::Command::Require(compareFunction <= 6, __func__, "invalid wait comparison");
+    wait[1] = (wait[1] & ~7u) | compareFunction;
     return 0;
 }
 
