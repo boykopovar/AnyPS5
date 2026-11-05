@@ -842,6 +842,10 @@ static void TestCustomDelay(std::uint32_t count, const DelayOption& delay) {
     for (std::uint32_t index = 0; index < 256; ++index) {
         Ngs2CustomVoiceUserFxParam param{{sizeof(Ngs2CustomVoiceUserFxParam), 0, 0x40001d00 | index},
                                        ProcessLegacy, reinterpret_cast<std::uintptr_t>(&state), 123, 456};
+        if ((index & 0xe0u) == 0 && index >= count) {
+            Require(sceNgs2VoiceControl(custom, &param.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+            continue;
+        }
         bool rejected = false;
         try {
             sceNgs2VoiceControl(custom, &param.header);
