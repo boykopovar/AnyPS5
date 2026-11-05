@@ -19,6 +19,10 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* function) {
     throw UnsupportedPath{function};
 }
 
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* function, const char*, int) {
+    throw UnsupportedPath{function};
+}
+
 int main() {
     for (const auto query : {&sceKernelGetModuleInfoForUnwind, &sceSysmoduleGetModuleInfoForUnwind}) {
         for (const auto address : {std::uint64_t{0}, std::uint64_t{0x10000}, std::numeric_limits<std::uint64_t>::max()}) {
