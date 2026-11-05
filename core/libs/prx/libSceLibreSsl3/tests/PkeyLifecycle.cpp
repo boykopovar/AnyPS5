@@ -53,6 +53,11 @@ void* AllocateZeroed(std::size_t count, std::size_t bytes) {
     return result;
 }
 
+void* Reallocate(void*, std::size_t) { Require(false); return nullptr; }
+void* Align(std::size_t, std::size_t) { Require(false); return nullptr; }
+void* Realign(void*, std::size_t, std::size_t) { Require(false); return nullptr; }
+int PosixAlign(void**, std::size_t, std::size_t) { Require(false); return 0; }
+
 void Release(void* pointer) {
     if (!pointer) return;
     Require(pointer == live);
@@ -86,11 +91,14 @@ int main(int argc, char** argv) {
     Require(module != nullptr);
     auto registerHeap = reinterpret_cast<void (*)(void* const*)>(dlsym(module, "ApplicationHeapRegister_nid_no_patch"));
     Require(registerHeap != nullptr);
-    void* const heap[10] {reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release), reinterpret_cast<void*>(AllocateZeroed)};
+    void* const heap[10] {reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release), reinterpret_cast<void*>(AllocateZeroed),
+                         reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align), reinterpret_cast<void*>(Realign),
+                         reinterpret_cast<void*>(PosixAlign)};
     registerHeap(heap);
     auto create = Resolve<Pkey* (*)()>(module, "LiZK5PkEeMY", !constructorOnly);
     Pkey* key = create();
     Require(key != nullptr && live == key);
+    if (allocated != 32) std::fprintf(stderr, "constructor allocation: expected 32, got %zu\n", allocated);
     Require(allocated == 32);
     const std::array<unsigned char, 32> initial = {0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                                 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0};
