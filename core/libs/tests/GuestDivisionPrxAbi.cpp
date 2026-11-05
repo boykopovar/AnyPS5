@@ -89,7 +89,11 @@ static constexpr Answer small[] = {
         {-2147483648LL, 1LL, -2147483648LL, 0LL},
         {-2147483648LL, 2LL, -1073741824LL, 0LL},
         {-2147483648LL, -3LL, 715827882LL, -2LL},
-        {-2147483648LL, 17LL, -126322567LL, -9LL}
+        {-2147483648LL, 17LL, -126322567LL, -9LL},
+        {1LL, -1LL, -1LL, 0LL},
+        {-7LL, -1LL, 7LL, 0LL},
+        {2147483647LL, -1LL, -2147483647LL, 0LL},
+        {-2147483648LL, -1LL, -2147483648LL, 0LL}
 };
 static constexpr Answer wide[] = {
         {0LL, 1LL, 0LL, 0LL},
