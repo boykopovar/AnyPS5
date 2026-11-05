@@ -78,7 +78,7 @@ struct PsarcDescriptor {
 
 static_assert(sizeof(PsarcDescriptor) == 0x38);
 
-constexpr std::int32_t kPsarcBadMode = static_cast<std::int32_t>(0x8082001Du);
+constexpr std::int32_t kFilterNotHandled = static_cast<std::int32_t>(0x8082001Du);
 constexpr char kPsarcDescription[] = "description not implemented";
 std::mutex g_psarcMutex;
 std::int32_t g_psarcUsers = 0;
@@ -160,12 +160,23 @@ int APS5_VABI sceFiosArchiveUnmountSync(const SceFiosOpAttr*, SceFiosFH) {
 int APS5_VABI sceFiosIOFilterAdd(std::int32_t index, SceFiosIOFilterCallback callback, void* context) {
     if (callback == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
     if (index < 0 || index >= 256) return SCE_FIOS_ERROR_BAD_INDEX;
-    const std::lock_guard lock(g_ioFiltersMutex);
     IOFilter& filter = g_ioFilters[static_cast<std::size_t>(index)];
-    if (filter.callback != nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
-    filter.callback = callback;
-    filter.context = context;
-    return SCE_FIOS_OK;
+    {
+        const std::lock_guard lock(g_ioFiltersMutex);
+        if (filter.callback != nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
+    }
+    const int started = callback(context, 0, nullptr);
+    if (started != SCE_FIOS_OK && started != kFilterNotHandled) return started;
+    {
+        const std::lock_guard lock(g_ioFiltersMutex);
+        if (filter.callback == nullptr) {
+            filter.callback = callback;
+            filter.context = context;
+            return SCE_FIOS_OK;
+        }
+    }
+    callback(context, 1, nullptr);
+    return SCE_FIOS_ERROR_BAD_INDEX;
 }
 
 int APS5_VABI sceFiosIOFilterPsarcDearchiver(void* descriptor, std::int32_t mode, void* data) {
@@ -182,10 +193,9 @@ int APS5_VABI sceFiosIOFilterPsarcDearchiver(void* descriptor, std::int32_t mode
             return SCE_FIOS_OK;
         }
     }
-    if (data == nullptr || (mode != 2 && mode != -1)) return kPsarcBadMode;
+    if (data == nullptr || (mode != 2 && mode != -1)) return kFilterNotHandled;
     if (mode == 2) return Fios::CopyOut(data, kPsarcDescription, sizeof(kPsarcDescription)) ? SCE_FIOS_OK : SCE_FIOS_ERROR_BAD_PTR;
-    NotImplemented_nid_no_patch(__func__);
-    return SCE_FIOS_ERROR_UNIMPLEMENTED;
+    return SCE_FIOS_OK;
 }
 
 int APS5_VABI sceFiosInitialize(const SceFiosParams* params) {
@@ -323,10 +333,15 @@ int APS5_VABI sceFiosIOFilterGetInfo(std::int32_t index, void** callback, void**
 
 int APS5_VABI sceFiosIOFilterRemove(std::int32_t index) {
     if (index < 0 || index >= 256) return SCE_FIOS_ERROR_BAD_INDEX;
-    const std::lock_guard lock(g_ioFiltersMutex);
-    IOFilter& filter = g_ioFilters[static_cast<std::size_t>(index)];
-    if (filter.callback == nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
-    filter = {};
+    IOFilter removed{};
+    {
+        const std::lock_guard lock(g_ioFiltersMutex);
+        IOFilter& filter = g_ioFilters[static_cast<std::size_t>(index)];
+        if (filter.callback == nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
+        removed = filter;
+        filter = {};
+    }
+    removed.callback(removed.context, 1, nullptr);
     return SCE_FIOS_OK;
 }
 

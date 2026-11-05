@@ -38,7 +38,12 @@ static int APS5_VABI CountEvents(void* context, SceFiosOp op, SceFiosOpEvent eve
     return 0;
 }
 
-static int APS5_VABI FilterCallback(void*, std::int32_t, void*) {
+static std::int32_t g_filterModes[8]{};
+static int g_filterCalls = 0;
+
+static int APS5_VABI FilterCallback(void*, std::int32_t mode, void*) {
+    if (g_filterCalls < 8) g_filterModes[g_filterCalls] = mode;
+    ++g_filterCalls;
     return 0;
 }
 
@@ -109,7 +114,11 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(sceFiosIOFilterAdd(-1, FilterCallback, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     REQUIRE(sceFiosIOFilterAdd(256, FilterCallback, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     REQUIRE(sceFiosIOFilterAdd(0, FilterCallback, reinterpret_cast<void*>(0x1234)) == SCE_FIOS_OK);
+    REQUIRE(g_filterCalls == 1 && g_filterModes[0] == 0);
     REQUIRE(sceFiosIOFilterAdd(0, FilterCallback, reinterpret_cast<void*>(0x5678)) == SCE_FIOS_ERROR_BAD_INDEX);
+    REQUIRE(g_filterCalls == 1);
+    REQUIRE(sceFiosIOFilterRemove(0) == SCE_FIOS_OK && g_filterCalls == 2 && g_filterModes[1] == 1);
+    REQUIRE(sceFiosIOFilterAdd(0, FilterCallback, reinterpret_cast<void*>(0x1234)) == SCE_FIOS_OK && g_filterModes[2] == 0);
     void* filterCallback = nullptr;
     void* filterContext = nullptr;
     REQUIRE(sceFiosIOFilterGetInfo(0, &filterCallback, &filterContext) == SCE_FIOS_OK);
@@ -153,6 +162,10 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     REQUIRE(std::strcmp(psarcText, "description not implemented") == 0);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 2, nullptr) == static_cast<std::int32_t>(0x8082001Du));
     REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, -1, nullptr) == static_cast<std::int32_t>(0x8082001Du));
+    std::uint16_t psarcSlot = 7;
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, -1, &psarcSlot) == SCE_FIOS_OK && psarcSlot == 7);
+    REQUIRE(sceFiosIOFilterAdd(1, reinterpret_cast<SceFiosIOFilterCallback>(sceFiosIOFilterPsarcDearchiver), psarc) == SCE_FIOS_OK);
+    REQUIRE(sceFiosIOFilterRemove(1) == SCE_FIOS_OK);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 3, psarcText) == static_cast<std::int32_t>(0x8082001Du));
     REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 1, nullptr) == SCE_FIOS_OK);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 0, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
