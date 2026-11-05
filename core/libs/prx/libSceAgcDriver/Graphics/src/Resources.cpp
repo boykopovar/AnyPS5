@@ -3,9 +3,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestWorkMark.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
@@ -176,12 +179,21 @@ void Buffer::Invalidate() {
 DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
     Require(size != 0, "zero-sized device buffer");
     cache = GetBufferPool(context);
-    if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer")) {
-        buffer = allocation->buffer;
-        memory = allocation->memory;
-        allocationBytes = allocation->allocationBytes;
-        capacity = allocation->bytes;
-        if (allocation->bufferBytes == size) {
+    auto pooled = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer");
+    if (!pooled) {
+        pooled = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer", true);
+        if (pooled && context.DeviceLocalFits(~0u, capacity)) {
+            cache->Put(*pooled);
+            pooled.reset();
+        }
+    }
+    if (pooled) {
+        hostPlaced = pooled->hostPlaced;
+        buffer = pooled->buffer;
+        memory = pooled->memory;
+        allocationBytes = pooled->allocationBytes;
+        capacity = pooled->bytes;
+        if (pooled->bufferBytes == size) {
             ready = true;
             return;
         }
@@ -225,8 +237,10 @@ DeviceBuffer::~DeviceBuffer() {
 }
 
 void DeviceBuffer::release() noexcept {
-    if (ready && buffer && memory && cache && !hostPlaced) {
-        cache->Put({buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size});
+    if (ready && buffer && memory && cache) {
+        BufferAllocation allocation{buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size};
+        allocation.hostPlaced = hostPlaced;
+        cache->Put(allocation);
         return;
     }
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
@@ -357,6 +371,10 @@ VkImageView RenderTarget::View() const {
     return view;
 }
 
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands) {
+    GuestWorkMark::Note(commands);
+}
+
 CommandBatch::CommandBatch(const Context& context) : context(context) {
     // Records into the device's one command pool and submits to its queue: device-lock work only.
     GuestMemory::AssertGpuLockHeld("CommandBatch");
@@ -386,6 +404,7 @@ CommandBatch::~CommandBatch() {
 }
 
 void CommandBatch::release() noexcept {
+    GuestWorkMark::Forget(commands);
     if (pending) {
         auto result = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, fence);
         if (result == VK_NOT_READY) result = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
@@ -417,6 +436,7 @@ void CommandBatch::Submit() {
     pending = true;
     submitted = true;
     timing.Mark("queue_submit");
+    if (GuestWorkMark::Take(commands)) LibcRunReportMilestone_nid_no_patch(2);
 }
 
 void CommandBatch::Wait() {
