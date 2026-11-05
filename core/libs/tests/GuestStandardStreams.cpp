@@ -463,10 +463,12 @@ static void CheckGetdelimAndGetline() {
     errStream.Close();
 
     const auto readErrFile = "anyps5-getdelim-readerr-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    { std::ofstream out(readErrFile); out << "partial"; }
+    { std::ofstream out(readErrFile); out << "abpartial"; }
     FileStream* midReadStream = fopen_nid_postfix(readErrFile.c_str(), "rb");
     Require(midReadStream != nullptr);
     setvbuf_nid_postfix(midReadStream, nullptr, 2, 0);
+    Require(fgetc_nid_postfix(midReadStream) == 'a');
+    Require(fgetc_nid_postfix(midReadStream) == 'b');
     Require(ungetc_nid_postfix('b', midReadStream) == 'b');
     Require(ungetc_nid_postfix('a', midReadStream) == 'a');
 #ifdef _WIN32
