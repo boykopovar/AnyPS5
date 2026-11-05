@@ -648,9 +648,9 @@ int APS5_VABI SSL_get_peer_cert_chain_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_get_peer_certificate_nid_postfix(void) {
+LibreSslX509* APS5_VABI SSL_get_peer_certificate_nid_postfix(const LibreSslSsl* ssl) {
+    if (!ssl || !ssl->session) return nullptr;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI SSL_get_privatekey_nid_postfix(void) {
