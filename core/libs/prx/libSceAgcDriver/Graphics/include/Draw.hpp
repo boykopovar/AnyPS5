@@ -7,6 +7,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -165,6 +167,14 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
 std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
 bool DrawPipelineEnabled();
 bool CommitTrims();
+enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
+using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
+AddressDrawReuseCounts AddressDrawReuseCounters();
+const char* AddressDrawReuseName(AddressDrawReuse outcome);
+std::uint64_t AddressDrawReuseVerifications();
+enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
+void SetSpaceKeepFailuresForTest(std::uint32_t count);
+void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
 
 }
 
