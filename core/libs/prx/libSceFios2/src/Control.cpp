@@ -201,7 +201,8 @@ int APS5_VABI sceFiosIOFilterRemove(std::int32_t) {
 }
 
 int APS5_VABI sceFiosIOFilterCache(const void* config, std::int32_t, const void* context) {
-    if (config == nullptr || context == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    if (config == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    if (context == nullptr) return SCE_FIOS_ERROR_BAD_OVERLAY;
     NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
