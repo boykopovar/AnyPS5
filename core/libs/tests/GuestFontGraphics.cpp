@@ -838,6 +838,236 @@ void DrawupGradientSegments() {
     }
 }
 
+
+constexpr int AllocationFailed = static_cast<int>(0x80460010);
+constexpr int InvalidService = static_cast<int>(0x80460080);
+constexpr std::uint32_t TestInstanceSize = 0x1000;
+
+struct ServiceAllocations {
+    int live = 0;
+    bool fail = false;
+};
+
+void* APS5_VABI ServiceAllocate(void* object, std::uint32_t size) {
+    auto& state = *static_cast<ServiceAllocations*>(object);
+    if (state.fail) return nullptr;
+    ++state.live;
+    void* allocation = std::malloc(size);
+    std::memset(allocation, 0xcd, size);
+    return allocation;
+}
+
+void APS5_VABI ServiceDeallocate(void* object, void* allocation) {
+    --static_cast<ServiceAllocations*>(object)->live;
+    std::free(allocation);
+}
+
+struct BackendCalls {
+    int inits = 0;
+    int terminates = 0;
+    int initResult = 0;
+    void* instance = nullptr;
+    void* data = nullptr;
+    std::uint64_t size = 0;
+    void* terminated = nullptr;
+    void* dispatch = nullptr;
+    FontGraphicsBackendSink sink = nullptr;
+};
+
+BackendCalls g_backend;
+void* g_backendSlot = nullptr;
+
+int APS5_VABI BackendInit(void* instance, void* data, std::uint64_t size) {
+    ++g_backend.inits;
+    g_backend.instance = instance;
+    g_backend.data = data;
+    g_backend.size = size;
+    return g_backend.initResult;
+}
+
+void APS5_VABI BackendTerminate(void* instance) {
+    ++g_backend.terminates;
+    g_backend.terminated = instance;
+}
+
+const FontGraphicsBackendEntry BackendEntries[] = {
+    {0x47000099, 0, 1},
+    {0x470000c0, 0, 0},
+    {0x47000002, 0, reinterpret_cast<std::uint64_t>(&BackendTerminate)},
+    {0x47000004, 0, 0x1111222233334444},
+    {0x470000f0, 0, 0x55},
+    {0x47000001, 0, reinterpret_cast<std::uint64_t>(&BackendInit)},
+};
+
+const FontGraphicsBackendList BackendList = {0, 6, BackendEntries};
+
+int APS5_VABI BackendEnumerate(void* dispatch, FontGraphicsBackendSink sink) {
+    g_backend.dispatch = dispatch;
+    g_backend.sink = sink;
+    sink(dispatch, &BackendList);
+    return 0x400;
+}
+
+std::uint64_t Read64At(const void* base, std::size_t offset) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value));
+    return value;
+}
+
+std::uint32_t Read32At(const void* base, std::size_t offset) {
+    std::uint32_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value));
+    return value;
+}
+
+struct ServiceFixture {
+    ServiceAllocations allocations;
+    FontMemoryInterface iface{ServiceAllocate, ServiceDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    FontGraphicsServiceParam param{0x0e08, 4, 0x200, &g_backendSlot, TestInstanceSize, 0, BackendEnumerate};
+
+    ServiceFixture() {
+        Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == SCE_FONT_OK);
+        g_backend = {};
+        g_backendSlot = nullptr;
+    }
+};
+
+void GraphicsServiceValidation() {
+    ServiceFixture f;
+    FontGraphicsService* service = reinterpret_cast<FontGraphicsService*>(0x1);
+    RequireError(sceFontCreateGraphicsService(nullptr, &f.param, &service), InvalidParameter);
+    Require(service == nullptr);
+    FontMemory badMemory = f.memory;
+    badMemory.mem_kind = 0;
+    RequireError(sceFontCreateGraphicsService(&badMemory, &f.param, &service), InvalidParameter);
+    FontMemoryInterface noFree{ServiceAllocate, nullptr, nullptr, nullptr, nullptr, nullptr};
+    badMemory = f.memory;
+    badMemory.iface = &noFree;
+    RequireError(sceFontCreateGraphicsService(&badMemory, &f.param, &service), InvalidParameter);
+    RequireError(sceFontCreateGraphicsService(&f.memory, nullptr, &service), InvalidParameter);
+    FontGraphicsServiceParam param = f.param;
+    param.tag = 0x0e09;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, nullptr), InvalidParameter);
+    param = f.param;
+    param.level = 0xff;
+    RequireError(sceFontCreateGraphicsServiceWithEdition(&f.memory, &param, 0, &service), Uninitialized);
+    f.allocations.fail = true;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, &service), AllocationFailed);
+    f.allocations.fail = false;
+    param = f.param;
+    param.instanceSlot = nullptr;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
+    param = f.param;
+    param.instanceSize = 0x118;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
+    Require(f.allocations.live == 0 && g_backend.inits == 0 && service == nullptr);
+
+    RequireError(sceFontDestroyGraphicsService(nullptr), InvalidParameter);
+    service = nullptr;
+    RequireError(sceFontDestroyGraphicsService(&service), InvalidService);
+    std::uint8_t fake[0x100] = {};
+    service = reinterpret_cast<FontGraphicsService*>(fake);
+    RequireError(sceFontDestroyGraphicsService(&service), InvalidService);
+    Require(service == reinterpret_cast<FontGraphicsService*>(fake));
+}
+
+void GraphicsServiceLifecycle() {
+    ServiceFixture f;
+    FontGraphicsService* first = nullptr;
+    Require(sceFontCreateGraphicsServiceWithEdition(&f.memory, &f.param, 0, &first) == SCE_FONT_OK);
+    Require(f.allocations.live == 1 && g_backend.inits == 1);
+    auto* const instance = static_cast<std::uint8_t*>(g_backendSlot);
+    Require(instance != nullptr && g_backend.instance == instance);
+    Require(g_backend.data == instance + 0x118 && g_backend.size == TestInstanceSize - 0x118);
+    Require(g_backend.dispatch == instance + 0x38);
+    Require(Read32At(instance, 0) == 0 && Read32At(instance, 4) == 1 && instance[0x14] == 1);
+    Require(Read64At(instance, 0x18) == reinterpret_cast<std::uint64_t>(instance) && Read64At(instance, 0x20) == 0x10000);
+    Require(Read64At(instance, 0x38) == reinterpret_cast<std::uint64_t>(&BackendInit));
+    Require(Read64At(instance, 0x40) == reinterpret_cast<std::uint64_t>(&BackendTerminate));
+    Require(Read64At(instance, 0x50) == 0x3333444411112222 && Read64At(instance, 0xd8) == 0x55);
+    for (std::size_t offset = 0x48; offset < 0x118; offset += 8)
+        if (offset != 0x50 && offset != 0xd8) Require(Read64At(instance, offset) == 0);
+    const auto* const bytes = reinterpret_cast<const std::uint8_t*>(first);
+    Require(Read32At(bytes, 0) == 0x00040f0e && Read64At(bytes, 4) == 0 && Read32At(bytes, 0xc) == 0);
+    Require(std::memcmp(bytes + 0x10, &f.memory, 0x18) == 0 && std::memcmp(bytes + 0x30, reinterpret_cast<const std::uint8_t*>(&f.memory) + 0x20, 0x20) == 0);
+    Require(Read64At(bytes, 0x28) == reinterpret_cast<std::uint64_t>(bytes + 0x50));
+    Require(std::memcmp(bytes + 0x50, &f.iface, sizeof(f.iface)) == 0);
+    Require(Read64At(bytes, 0x80) == reinterpret_cast<std::uint64_t>(&g_backendSlot));
+    Require(std::all_of(bytes + 0x88, bytes + 0x100, [](std::uint8_t v) { return v == 0; }));
+
+    FontGraphicsService* second = nullptr;
+    Require(sceFontCreateGraphicsService(&f.memory, &f.param, &second) == SCE_FONT_OK);
+    Require(g_backend.inits == 1 && g_backendSlot == instance && Read32At(instance, 4) == 2);
+    Require(sceFontDestroyGraphicsService(&first) == SCE_FONT_OK);
+    Require(first == nullptr && Read32At(instance, 4) == 1 && g_backend.terminates == 0 && g_backendSlot == nullptr);
+    Require(sceFontDestroyGraphicsService(&second) == SCE_FONT_OK);
+    Require(second == nullptr && Read32At(instance, 4) == 1 && f.allocations.live == 0);
+
+    FontGraphicsService* third = nullptr;
+    Require(sceFontCreateGraphicsService(&f.memory, &f.param, &third) == SCE_FONT_OK);
+    void* const replacement = g_backendSlot;
+    Require(g_backend.inits == 2 && replacement != nullptr && replacement != instance);
+    Require(sceFontDestroyGraphicsService(&third) == SCE_FONT_OK);
+    Require(g_backend.terminates == 1 && g_backend.terminated == replacement && g_backendSlot == nullptr && f.allocations.live == 0);
+}
+
+void GraphicsServiceInstanceStates() {
+    ServiceFixture f;
+    FontGraphicsService* service = nullptr;
+    g_backend.initResult = 1;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, &service), Uninitialized);
+    Require(g_backend.inits == 1 && g_backendSlot == nullptr && f.allocations.live == 0 && service == nullptr);
+
+    std::uint8_t instance[0x118] = {};
+    std::uint32_t references = 0xffffffff;
+    std::memcpy(instance + 4, &references, sizeof(references));
+    g_backendSlot = instance;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, &service), Uninitialized);
+    Require(g_backendSlot == instance && f.allocations.live == 0 && g_backend.inits == 1);
+
+    references = 0;
+    std::memcpy(instance + 4, &references, sizeof(references));
+    auto* const data = static_cast<std::uint8_t*>(ServiceAllocate(&f.allocations, 0x100));
+    std::memset(data, 0, 0x100);
+    std::memcpy(data + 0x10, &f.memory, sizeof(f.memory));
+    void** const slot = &g_backendSlot;
+    std::memcpy(data + 0x80, &slot, sizeof(slot));
+    service = reinterpret_cast<FontGraphicsService*>(data);
+    Require(sceFontDestroyGraphicsService(&service) == SCE_FONT_OK);
+    Require(service == nullptr && g_backendSlot == instance && g_backend.terminates == 0 && f.allocations.live == 0);
+    g_backendSlot = nullptr;
+}
+
+void GraphicsServiceDispatchFill() {
+    ServiceFixture f;
+    FontGraphicsService* service = nullptr;
+    Require(sceFontCreateGraphicsService(&f.memory, &f.param, &service) == SCE_FONT_OK);
+    const FontGraphicsBackendSink sink = g_backend.sink;
+    Require(sink != nullptr);
+    std::uint64_t dispatch[0x1d];
+    std::memset(dispatch, 0xee, sizeof(dispatch));
+    const FontGraphicsBackendList empty = {0, 0, nullptr};
+    Require(sink(dispatch, &empty) == Uninitialized);
+    Require(std::all_of(dispatch, dispatch + 0x1c, [](std::uint64_t v) { return v == 0; }) && dispatch[0x1c] == 0xeeeeeeeeeeeeeeee);
+    const FontGraphicsBackendEntry onlyInit[] = {{0x47000001, 0, 7}, {0x47000002, 0, 0}};
+    const FontGraphicsBackendList partial = {0, 2, onlyInit};
+    Require(sink(dispatch, &partial) == Uninitialized && dispatch[0] == 7 && dispatch[1] == 0);
+    const FontGraphicsBackendEntry all[] = {
+        {0x47000001, 0, 1}, {0x47000002, 0, 2}, {0x47000003, 0, 3}, {0x47000004, 0, 4}, {0x47000005, 0, 5}, {0x4700000b, 0, 6},
+        {0x4700002d, 0, 7}, {0x4700002e, 0, 8}, {0x470000c0, 0, 9}, {0x470000cb, 0, 10}, {0x470000ce, 0, 11}, {0x470000d1, 0, 12},
+        {0x470000d2, 0, 13}, {0x470000d4, 0, 14}, {0x470000e0, 0, 15}, {0x470000e1, 0, 16}, {0x470000e2, 0, 17}, {0x470000ec, 0, 18},
+        {0x470000d0, 0, 19}, {0x470000e3, 0, 20}, {0x470000f0, 0, 21}, {0x47000006, 0, 22}, {0x470000ff, 0, 23}};
+    const FontGraphicsBackendList full = {0, 23, all};
+    Require(sink(dispatch, &full) == SCE_FONT_OK);
+    for (std::uint64_t i = 0; i < 21; ++i) Require(dispatch[i] == (i == 3 ? std::uint64_t{4} << 32 : i + 1));
+    Require(std::all_of(dispatch + 21, dispatch + 0x1c, [](std::uint64_t v) { return v == 0; }));
+    const FontGraphicsBackendList negative = {0, -1, all};
+    Require(sink(dispatch, &negative) == Uninitialized && dispatch[0] == 0);
+    Require(sceFontDestroyGraphicsService(&service) == SCE_FONT_OK && g_backend.terminates == 1 && g_backendSlot == nullptr);
+}
+
 }
 
 int main() {
@@ -849,6 +1079,10 @@ int main() {
     DrawupTextureRecords();
     DrawupFillRecords();
     DrawupGradientSegments();
+    GraphicsServiceValidation();
+    GraphicsServiceLifecycle();
+    GraphicsServiceInstanceStates();
+    GraphicsServiceDispatchFill();
     Require(g_errorCount == g_expectedErrors);
     sceFontSetGraphicsErrorCallback(nullptr);
     const int before = g_errorCount;

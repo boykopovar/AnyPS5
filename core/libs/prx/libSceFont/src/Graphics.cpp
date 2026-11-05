@@ -1,8 +1,11 @@
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceFont/include/FontGraphics.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 
@@ -788,6 +791,228 @@ int GraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradi
             sizeof(stop), &first))
         return DrawupRecordError(frame, FONT_GRAPHICS_ERROR_NO_SEGMENT_SPACE);
     previous->next = reinterpret_cast<FontSegmentLink*>(first);
+    return SCE_FONT_OK;
+}
+
+}
+
+namespace {
+
+constexpr int FONT_GRAPHICS_ERROR_INVALID_PARAMETER = static_cast<int>(0x80460002);
+constexpr int FONT_GRAPHICS_ERROR_ALLOCATION_FAILED = static_cast<int>(0x80460010);
+constexpr int FONT_GRAPHICS_ERROR_INVALID_SERVICE = static_cast<int>(0x80460080);
+constexpr std::uint16_t ServiceMemoryTag = 0xf00;
+constexpr std::uint16_t ServiceTag = 0xf0e;
+constexpr std::uint16_t BackendTag = 0xe08;
+constexpr std::uint32_t BackendLevel = 0x100;
+constexpr std::uint32_t BackendRotatedOpcode = 0x47000004;
+constexpr std::uint32_t InstanceReferencesExhausted = 0xffffffff;
+constexpr std::uint64_t BlockLargeAlignment = 0x200000;
+constexpr std::uint64_t BlockSmallAlignment = 0x10000;
+constexpr std::uintptr_t BlockAddressHint = 0x200000000;
+constexpr int BlockProtection = 0x33;
+constexpr KernelUseconds SlotRetryMicroseconds = 30;
+
+struct FontGraphicsBlock {
+    void* address;
+    std::uint64_t size;
+    std::int64_t physical;
+    PthreadMutex mutex;
+};
+
+struct FontGraphicsInstance {
+    std::uint32_t reserved0;
+    std::uint32_t references;
+    std::uint8_t reserved8[0xc];
+    std::uint8_t active;
+    std::uint8_t reserved15[3];
+    FontGraphicsBlock block;
+    std::uint64_t dispatch[0x1c];
+};
+
+static_assert(offsetof(FontGraphicsInstance, references) == 0x04);
+static_assert(offsetof(FontGraphicsInstance, active) == 0x14);
+static_assert(offsetof(FontGraphicsInstance, block) == 0x18);
+static_assert(offsetof(FontGraphicsInstance, dispatch) == 0x38);
+static_assert(sizeof(FontGraphicsInstance) == 0x118);
+
+struct FontGraphicsServiceData {
+    std::uint16_t tag;
+    std::uint16_t revision;
+    std::uint8_t reserved4[0xc];
+    FontMemory memory;
+    FontMemoryInterface iface;
+    void** instanceSlot;
+    std::uint8_t reserved88[0x78];
+};
+
+static_assert(offsetof(FontGraphicsServiceData, memory) == 0x10);
+static_assert(offsetof(FontGraphicsServiceData, iface) == 0x50);
+static_assert(offsetof(FontGraphicsServiceData, instanceSlot) == 0x80);
+static_assert(sizeof(FontGraphicsServiceData) == 0x100);
+
+using BackendInitFunction = int (APS5_VABI*)(void* instance, void* data, std::uint64_t size);
+using BackendTerminateFunction = void (APS5_VABI*)(void* instance);
+
+struct BackendDispatchSlot {
+    std::uint32_t opcode;
+    std::uint32_t index;
+};
+
+constexpr BackendDispatchSlot BackendDispatchSlots[] = {
+    {0x47000001, 0}, {0x47000002, 1}, {0x47000003, 2}, {0x47000004, 3}, {0x47000005, 4}, {0x4700000b, 5}, {0x4700002d, 6},
+    {0x4700002e, 7}, {0x470000c0, 8}, {0x470000cb, 9}, {0x470000ce, 10}, {0x470000d1, 11}, {0x470000d2, 12}, {0x470000d4, 13},
+    {0x470000e0, 14}, {0x470000e1, 15}, {0x470000e2, 16}, {0x470000ec, 17}, {0x470000d0, 18}, {0x470000e3, 19}, {0x470000f0, 20}};
+
+int APS5_VABI FillBackendDispatch(void* dispatch, const FontGraphicsBackendList* list) {
+    auto* const slots = static_cast<std::uint64_t*>(dispatch);
+    std::memset(slots, 0, sizeof(FontGraphicsInstance::dispatch));
+    for (std::int32_t i = 0; i < list->count; ++i) {
+        const FontGraphicsBackendEntry& entry = list->entries[i];
+        if (entry.value == 0) continue;
+        for (const BackendDispatchSlot& slot : BackendDispatchSlots)
+            if (slot.opcode == entry.opcode)
+                slots[slot.index] = entry.opcode == BackendRotatedOpcode ? std::rotr(entry.value, 32) : entry.value;
+    }
+    return slots[0] != 0 && slots[1] != 0 ? SCE_FONT_OK : FONT_GRAPHICS_ERROR_UNINITIALIZED;
+}
+
+FontGraphicsInstance* LockInstanceSlot(void** slot) {
+    void* const locked = reinterpret_cast<void*>(~std::uintptr_t{0});
+    std::atomic_ref<void*> value(*slot);
+    for (;;) {
+        void* current = value.load();
+        if (current != locked && value.compare_exchange_strong(current, locked)) return static_cast<FontGraphicsInstance*>(current);
+        sceKernelUsleep_nid_postfix(SlotRetryMicroseconds);
+    }
+}
+
+void UnlockInstanceSlot(void** slot, FontGraphicsInstance* instance) {
+    std::atomic_ref<void*>(*slot).store(instance);
+}
+
+PthreadMutex CreateBlockMutex() {
+    PthreadMutexattr attr = nullptr;
+    if (scePthreadMutexattrInit(&attr) != 0) return nullptr;
+    PthreadMutex mutex = nullptr;
+    int error = scePthreadMutexattrSetprotocol(&attr, 1);
+    if (error == 0) error = scePthreadMutexattrSettype(&attr, 2);
+    if (error == 0) error = scePthreadMutexInit(&mutex, &attr, "SceFontMutex");
+    scePthreadMutexattrDestroy(&attr);
+    return error == 0 ? mutex : nullptr;
+}
+
+int AllocateBlock(FontGraphicsBlock& block, std::uint32_t size) {
+    const std::uint64_t alignment =
+        (size & (BlockLargeAlignment - 1)) == 0 && size >= BlockLargeAlignment ? BlockLargeAlignment : BlockSmallAlignment;
+    const std::uint64_t length = (size + alignment - 1) & ~(alignment - 1);
+    std::int64_t physical = 0;
+    if (sceKernelAllocateDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), length, alignment, 0, &physical) != 0)
+        return FONT_GRAPHICS_ERROR_ALLOCATION_FAILED;
+    void* address = reinterpret_cast<void*>(BlockAddressHint);
+    if (sceKernelMapDirectMemory(&address, length, BlockProtection, 0, physical, alignment) != 0) {
+        if (length != 0) sceKernelReleaseDirectMemory(physical, length);
+        return FONT_GRAPHICS_ERROR_ALLOCATION_FAILED;
+    }
+    if (address == nullptr) return FONT_GRAPHICS_ERROR_ALLOCATION_FAILED;
+    block = {address, length, physical, CreateBlockMutex()};
+    return SCE_FONT_OK;
+}
+
+void FreeBlock(FontGraphicsBlock& block) {
+    scePthreadMutexLock(&block.mutex);
+    if (block.size != 0) {
+        sceKernelReleaseDirectMemory(block.physical, block.size);
+        block.address = nullptr;
+        block.physical = 0;
+    }
+    block.size = 0;
+    scePthreadMutexUnlock(&block.mutex);
+    scePthreadMutexDestroy(&block.mutex);
+    block.mutex = nullptr;
+}
+
+int CreateInstance(const FontGraphicsServiceParam* param, FontGraphicsInstance*& instance) {
+    FontGraphicsBlock block{};
+    if (const int error = AllocateBlock(block, param->instanceSize); error != SCE_FONT_OK) return error;
+    auto* const created = static_cast<FontGraphicsInstance*>(block.address);
+    std::memset(created, 0, sizeof(*created));
+    created->active = 1;
+    created->block = block;
+    param->enumerate(created->dispatch, FillBackendDispatch);
+    const auto init = reinterpret_cast<BackendInitFunction>(created->dispatch[0]);
+    if (init(created, created + 1, param->instanceSize - sizeof(FontGraphicsInstance)) != 0) {
+        FreeBlock(block);
+        return FONT_GRAPHICS_ERROR_UNINITIALIZED;
+    }
+    ++created->references;
+    instance = created;
+    return SCE_FONT_OK;
+}
+
+int AttachInstance(const FontGraphicsServiceParam* param) {
+    void** const slot = param->instanceSlot;
+    if (slot == nullptr || param->instanceSize <= sizeof(FontGraphicsInstance)) return FONT_GRAPHICS_ERROR_INVALID_PARAMETER;
+    FontGraphicsInstance* instance = LockInstanceSlot(slot);
+    int error = SCE_FONT_OK;
+    if (instance == nullptr) error = CreateInstance(param, instance);
+    else if (instance->references == InstanceReferencesExhausted) error = FONT_GRAPHICS_ERROR_UNINITIALIZED;
+    else ++instance->references;
+    UnlockInstanceSlot(slot, instance);
+    return error;
+}
+
+void DetachInstance(void** slot) {
+    FontGraphicsInstance* instance = LockInstanceSlot(slot);
+    if (instance != nullptr && instance->references != 0) {
+        if (--instance->references == 0) {
+            FontGraphicsBlock block = instance->block;
+            reinterpret_cast<BackendTerminateFunction>(instance->dispatch[1])(instance);
+            FreeBlock(block);
+        }
+        instance = nullptr;
+    }
+    UnlockInstanceSlot(slot, instance);
+}
+
+bool IsUsableMemory(const FontMemory* memory) {
+    return memory != nullptr && memory->mem_kind == ServiceMemoryTag && memory->iface != nullptr && memory->iface->alloc != nullptr &&
+           memory->iface->dealloc != nullptr;
+}
+
+}
+
+namespace Font {
+
+int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServiceParam* param, FontGraphicsService** service) {
+    if (service != nullptr) *service = nullptr;
+    if (!IsUsableMemory(memory) || param == nullptr || param->tag != BackendTag || service == nullptr)
+        return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    if (param->level < BackendLevel) return Fail(FONT_GRAPHICS_ERROR_UNINITIALIZED);
+    auto* const data = static_cast<FontGraphicsServiceData*>(memory->iface->alloc(memory->mspace_handle, sizeof(FontGraphicsServiceData)));
+    if (data == nullptr) return Fail(FONT_GRAPHICS_ERROR_ALLOCATION_FAILED);
+    std::memset(data, 0, sizeof(*data));
+    if (const int error = AttachInstance(param); error != SCE_FONT_OK) {
+        memory->iface->dealloc(memory->mspace_handle, data);
+        return Fail(error);
+    }
+    data->tag = ServiceTag;
+    data->revision = param->revision;
+    data->memory = *memory;
+    data->iface = *memory->iface;
+    data->memory.iface = &data->iface;
+    data->instanceSlot = param->instanceSlot;
+    *service = reinterpret_cast<FontGraphicsService*>(data);
+    return SCE_FONT_OK;
+}
+
+int DestroyGraphicsService(FontGraphicsService** service) {
+    if (service == nullptr) return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    auto* const data = reinterpret_cast<FontGraphicsServiceData*>(*service);
+    if (data == nullptr || !IsUsableMemory(&data->memory)) return Fail(FONT_GRAPHICS_ERROR_INVALID_SERVICE);
+    if (data->instanceSlot != nullptr) DetachInstance(data->instanceSlot);
+    data->memory.iface->dealloc(data->memory.mspace_handle, data);
+    *service = nullptr;
     return SCE_FONT_OK;
 }
 

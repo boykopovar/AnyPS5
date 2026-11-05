@@ -1,8 +1,8 @@
 # libSceFontGs technical debt
 
-### Unknown function info
+### Functional
 
-- [sceFontSelectGraphicsGnm](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - throws for index 0 and returns `nullptr` for other indices. The PS4 10.71 body (offset 0x4090) returns a static backend table for index 0; its entries are not mapped, and the host `libSceFont` graphics device does not consume it.
+- [sceFontSelectGraphicsGnm](../../../core/libs/prx/libSceFontGs/Export.cpp) (libSceFontGs) - index 0 returns the Gnm backend table laid out as in the PS4 10.71 module (0x34040: header, 21 opcode entries, list descriptor), with a process-global instance slot (0x3ed60) and the enumerate function (0x47c0); other indices return `nullptr`. Only opcode 0x47000002 (terminate, 0x5ec0, a bare `ret`) is ported, and 0x47000003 and 0x47000004 hold the module's constants. The other 18 handlers, 0x47000001 init (0x47e0) included, throw `sceFontSelectGraphicsGnm_backend_<opcode>` through `NotImplemented_nid_no_patch`, so creating a graphics service with this backend throws at init. Off-console, the table matched the decrypted module except for its pointers, and the module's enumerate with libSceFont's fill (0x2c5c0) fills the same dispatch slots from both tables. Not checked on a console.
 
 ### Not console-verified
 

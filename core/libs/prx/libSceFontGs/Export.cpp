@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -464,13 +465,70 @@ const FontGnmCommands* CheckSequence(const FontGraphicsCanvasSequence* sequence,
     return nullptr;
 }
 
+template <std::uint32_t Opcode>
+void APS5_VABI GnmBackendUnported() {
+    char name[48];
+    std::snprintf(name, sizeof(name), "sceFontSelectGraphicsGnm_backend_%08x", Opcode);
+    NotImplemented_nid_no_patch(name);
+}
+
+void APS5_VABI GnmBackendTerminate(void*) {}
+
+template <std::uint32_t Opcode>
+FontGraphicsBackendEntry GnmUnportedEntry() {
+    return {Opcode, 0, reinterpret_cast<std::uint64_t>(&GnmBackendUnported<Opcode>)};
+}
+
+struct GnmBackend {
+    FontGraphicsServiceParam header;
+    FontGraphicsBackendEntry entries[21];
+    FontGraphicsBackendList list;
+};
+
+static_assert(offsetof(GnmBackend, entries) == 0x20);
+static_assert(offsetof(GnmBackend, list) == 0x170);
+
+void* g_gnmInstance = nullptr;
+
+int APS5_VABI GnmBackendEnumerate(void* dispatch, FontGraphicsBackendSink sink);
+
+const GnmBackend g_gnmBackend = {
+    {0x0e08, 4, 0x200, &g_gnmInstance, 0x20000, 0, GnmBackendEnumerate},
+    {GnmUnportedEntry<0x47000001>(),
+     {0x47000002, 0, reinterpret_cast<std::uint64_t>(&GnmBackendTerminate)},
+     GnmUnportedEntry<0x4700002d>(),
+     GnmUnportedEntry<0x4700002e>(),
+     GnmUnportedEntry<0x470000c0>(),
+     GnmUnportedEntry<0x470000cb>(),
+     GnmUnportedEntry<0x470000ce>(),
+     GnmUnportedEntry<0x470000d1>(),
+     GnmUnportedEntry<0x470000d2>(),
+     GnmUnportedEntry<0x470000d4>(),
+     GnmUnportedEntry<0x470000e0>(),
+     GnmUnportedEntry<0x470000e1>(),
+     GnmUnportedEntry<0x470000ec>(),
+     GnmUnportedEntry<0x470000d0>(),
+     GnmUnportedEntry<0x470000e2>(),
+     GnmUnportedEntry<0x470000e3>(),
+     GnmUnportedEntry<0x470000f0>(),
+     {0x47000003, 0, 0x1000000040},
+     {0x47000004, 0, 0x4000000020},
+     GnmUnportedEntry<0x4700000b>(),
+     GnmUnportedEntry<0x47000005>()},
+    {0, 21, g_gnmBackend.entries}};
+
+int APS5_VABI GnmBackendEnumerate(void* dispatch, FontGraphicsBackendSink sink) {
+    if (dispatch == nullptr) return 0;
+    sink(dispatch, &g_gnmBackend.list);
+    return 0x400;
+}
+
 }
 
 extern "C" {
 
 void* APS5_VABI sceFontSelectGraphicsGnm(std::uint32_t index) {
-    if (index == 0) NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return index == 0 ? const_cast<GnmBackend*>(&g_gnmBackend) : nullptr;
 }
 
 int APS5_VABI sceFontGraphicsGnmSurfaceInit(void* surface, const void* config) {

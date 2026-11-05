@@ -73,13 +73,11 @@ int APS5_VABI sceFontCreateGraphicsDevice(const FontMemory* memory, const FontGr
 }
 
 int APS5_VABI sceFontCreateGraphicsService(const FontMemory* memory, const FontGraphicsServiceParam* param, FontGraphicsService** service) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateGraphicsService(memory, param, service);
 }
 
 int APS5_VABI sceFontCreateGraphicsServiceWithEdition(const FontMemory* memory, const FontGraphicsServiceParam* param, std::uint64_t unusedSlot, FontGraphicsService** service) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateGraphicsService(memory, param, service);
 }
 
 int APS5_VABI sceFontCreateWords(const FontMemory* memory, FontTextSource* source, std::uint64_t unusedSlot, FontWords** words) {
@@ -92,8 +90,7 @@ int APS5_VABI sceFontDestroyGraphicsDevice(FontGraphicsDevice** device) {
 }
 
 int APS5_VABI sceFontDestroyGraphicsService(FontGraphicsService** service) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::DestroyGraphicsService(service);
 }
 
 int APS5_VABI sceFontDestroyWords(FontWords** words) {

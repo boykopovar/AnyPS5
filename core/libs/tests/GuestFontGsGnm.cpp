@@ -4,10 +4,12 @@
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs/libSceFontGs.hpp"
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -170,9 +172,95 @@ struct DrawupFixture {
     ~DrawupFixture() { scePthreadMutexDestroy(&mutex); }
 };
 
+constexpr std::uint32_t GnmBackendOpcodes[21] = {
+    0x47000001, 0x47000002, 0x4700002d, 0x4700002e, 0x470000c0, 0x470000cb, 0x470000ce, 0x470000d1, 0x470000d2, 0x470000d4, 0x470000e0,
+    0x470000e1, 0x470000ec, 0x470000d0, 0x470000e2, 0x470000e3, 0x470000f0, 0x47000003, 0x47000004, 0x4700000b, 0x47000005};
+
+const FontGraphicsBackendList* g_enumeratedList = nullptr;
+void* g_enumeratedDispatch = nullptr;
+
+int APS5_VABI RecordBackendList(void* dispatch, const FontGraphicsBackendList* list) {
+    g_enumeratedDispatch = dispatch;
+    g_enumeratedList = list;
+    return 0x1234;
+}
+
+template <typename TCall>
+void RequireNotImplemented(TCall call, const std::string& name) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == name + " not implemented");
+        return;
+    }
+    Require(false);
+}
+
+std::string GnmHandlerName(std::uint32_t opcode) {
+    char name[48];
+    std::snprintf(name, sizeof(name), "sceFontSelectGraphicsGnm_backend_%08x", opcode);
+    return name;
+}
+
+const FontGraphicsServiceParam* GnmBackend() {
+    return static_cast<const FontGraphicsServiceParam*>(sceFontSelectGraphicsGnm(0));
+}
+
 void GnmSelect() {
     Require(sceFontSelectGraphicsGnm(1) == nullptr);
     Require(sceFontSelectGraphicsGnm(0xffffffff) == nullptr);
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    Require(backend != nullptr && sceFontSelectGraphicsGnm(0) == backend);
+    Require(backend->tag == 0x0e08 && backend->revision == 4 && backend->level == 0x200);
+    Require(backend->instanceSlot != nullptr && *backend->instanceSlot == nullptr);
+    Require(backend->instanceSize == 0x20000 && backend->reserved14 == 0 && backend->enumerate != nullptr);
+    Require(backend->enumerate(nullptr, RecordBackendList) == 0 && g_enumeratedList == nullptr);
+    std::uint64_t dispatch[0x1c] = {};
+    Require(backend->enumerate(dispatch, RecordBackendList) == 0x400 && g_enumeratedDispatch == dispatch);
+    const auto* const base = reinterpret_cast<const std::uint8_t*>(backend);
+    const FontGraphicsBackendList* const list = g_enumeratedList;
+    Require(reinterpret_cast<const std::uint8_t*>(list) == base + 0x170);
+    Require(list->reserved == 0 && list->count == 21 && reinterpret_cast<const std::uint8_t*>(list->entries) == base + 0x20);
+    for (std::size_t i = 0; i < 21; ++i) {
+        const FontGraphicsBackendEntry& entry = list->entries[i];
+        Require(entry.opcode == GnmBackendOpcodes[i] && entry.reserved == 0 && entry.value != 0);
+        if (entry.opcode == 0x47000003) Require(entry.value == 0x1000000040);
+        else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
+        else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
+        else RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
+    }
+}
+
+struct GnmAllocations {
+    bool fail = true;
+    int live = 0;
+};
+
+void* APS5_VABI GnmAllocate(void* object, std::uint32_t size) {
+    auto& state = *static_cast<GnmAllocations*>(object);
+    if (state.fail) return nullptr;
+    ++state.live;
+    return std::malloc(size);
+}
+
+void APS5_VABI GnmDeallocate(void* object, void* p) {
+    --static_cast<GnmAllocations*>(object)->live;
+    std::free(p);
+}
+
+void GnmService() {
+    const FontGraphicsServiceParam* const backend = GnmBackend();
+    GnmAllocations allocations;
+    const FontMemoryInterface iface{GnmAllocate, GnmDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == 0);
+    FontGraphicsService* service = nullptr;
+    const int before = g_errorCount;
+    Require(sceFontCreateGraphicsService(&memory, backend, &service) == static_cast<int>(0x80460010));
+    Require(g_errorCount == before + 1 && g_lastError == static_cast<int>(0x80460010) && *backend->instanceSlot == nullptr);
+    allocations.fail = false;
+    RequireNotImplemented([&] { sceFontCreateGraphicsService(&memory, backend, &service); }, GnmHandlerName(0x47000001));
+    Require(service == nullptr && *backend->instanceSlot == reinterpret_cast<void*>(~std::uintptr_t{0}) && allocations.live == 1);
 }
 
 void GnmDrawupImage() {
@@ -507,5 +595,6 @@ int main(int argc, char** argv) {
     GnmSequences();
     GnmSurfaceValidation();
     GnmSurfaceModes(argv[0]);
+    GnmService();
     sceFontSetGraphicsErrorCallback(nullptr);
 }
