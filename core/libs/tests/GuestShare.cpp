@@ -57,6 +57,12 @@ int main() {
     Require(sceShareCaptureScreenshotExtended(reinterpret_cast<const ShareScreenshotParamExtended*>(0x10), &reqId) == invalidParam && reqId == 7);
     Require(sceShareCaptureScreenshotExtended(&screenshot, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
 
+    ShareVideoClipParamExtended clip{};
+    clip.size = sizeof(clip);
+    reqId = 7;
+    Require(sceShareCaptureVideoClipExtended(reinterpret_cast<const ShareVideoClipParamExtended*>(0x10), &reqId) == invalidParam && reqId == 7);
+    Require(sceShareCaptureVideoClipExtended(&clip, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
+
     Require(sceShareCaptureScreenshot(param, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
     Require(sceShareCaptureVideoClip(param, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
 
