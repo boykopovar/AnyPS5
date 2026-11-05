@@ -495,12 +495,14 @@ public:
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
     static std::uint64_t PaddingSeedCopies();
+    static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t GuestSnapshots();
     static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
@@ -538,6 +540,7 @@ private:
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
+    bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block

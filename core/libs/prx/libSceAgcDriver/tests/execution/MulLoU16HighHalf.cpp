@@ -56,6 +56,18 @@ alignas(256) constexpr std::array<std::uint32_t, 18> PackedHighLaneCode{
     0x80010a03, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 18> PackedNegatedLowLaneCode{
+    0x34020082, 0x34060080, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
+    0xbf8c3f70, 0x360808ff, 0x0000ffff, 0x360a0aff, 0x0000ffff, 0xcc01400a, 0x38020b04, 0xe0702000,
+    0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 18> PackedNegatedHighLaneCode{
+    0x34020082, 0x34060080, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
+    0xbf8c3f70, 0x360808ff, 0xffff0000, 0x360a0aff, 0xffff0000, 0xcc01410a, 0x18020b04, 0xe0702000,
+    0x80010a03, 0xbf810000,
+};
+
 constexpr std::array<std::array<std::uint32_t, 3>, 8> Edges{{
     {0xffffffffu, 0xffffffffu, 0x00000000u}, {0x0000ffffu, 0x0000ffffu, 0xabcd1234u}, {0xffff0000u, 0xffff0000u, 0xffffffffu},
     {0x8000ffffu, 0x7fff8000u, 0x12345678u}, {0x12345678u, 0x9abcdef0u, 0x80000000u}, {0x00010001u, 0x00010001u, 0x0000ffffu},
@@ -136,6 +148,10 @@ int main() {
         Check("v_pk_mul_lo_u16 of factors whose high halves are zero", [](std::uint32_t a, std::uint32_t b, std::uint32_t) { return Low16Product(a, b); });
         Run(*device, PackedHighLaneCode);
         Check("v_pk_mul_lo_u16 of factors whose low halves are zero", [](std::uint32_t a, std::uint32_t b, std::uint32_t) { return Low16Product(a >> 16u, b >> 16u) << 16u; });
+        Run(*device, PackedNegatedLowLaneCode);
+        Check("v_pk_mul_lo_u16 neg_lo:[1,0] of factors whose high halves are zero", [](std::uint32_t a, std::uint32_t b, std::uint32_t) { return Low16Product(a ^ 0x8000u, b); });
+        Run(*device, PackedNegatedHighLaneCode);
+        Check("v_pk_mul_lo_u16 neg_hi:[1,0] of factors whose low halves are zero", [](std::uint32_t a, std::uint32_t b, std::uint32_t) { return Low16Product((a >> 16u) ^ 0x8000u, b >> 16u) << 16u; });
         std::puts("mul lo u16 high half tests passed");
         return 0;
     } catch (const std::exception& error) {
