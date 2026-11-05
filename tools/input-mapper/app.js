@@ -7,7 +7,9 @@ import {createDropdown} from './dropdown.js';
 
 const byId = id => document.getElementById(id);
 let entries = [];
-let savedConfiguration = '[]';
+let settings = [];
+const snapshot = () => JSON.stringify([entries, settings]);
+let savedConfiguration = snapshot();
 let captureTarget;
 let captureButton;
 let selectedGroup = groups[0].name;
@@ -111,7 +113,7 @@ function element(tag, text, className) {
 }
 
 function isDirty() {
-    return JSON.stringify(entries) !== savedConfiguration;
+    return snapshot() !== savedConfiguration;
 }
 
 async function confirmReplacement() {
@@ -285,7 +287,7 @@ function filterActions() {
 function updateOutput() {
     const result = validate(entries);
     const valid = result.errors.length === 0;
-    byId('preview').value = valid ? serialize(entries) : '';
+    byId('preview').value = valid ? serialize(entries, settings) : '';
     byId('count').textContent = `${new Set(result.bindings.map(binding => binding.action)).size} / ${actions.length}`;
     byId('download').disabled = !valid;
     byId('copy').disabled = !valid;
@@ -346,7 +348,8 @@ byId('search').addEventListener('input', filterActions);
 byId('reset').addEventListener('click', async () => {
     if (!await confirmReplacement()) return;
     entries = [];
-    savedConfiguration = '[]';
+    settings = [];
+    savedConfiguration = snapshot();
     importReport = undefined;
     byId('import-report').hidden = true;
     render();
@@ -370,7 +373,8 @@ byId('file').addEventListener('change', async event => {
         }
         if (!await confirmReplacement()) return;
         entries = result.entries;
-        savedConfiguration = JSON.stringify(entries);
+        settings = result.settings;
+        savedConfiguration = snapshot();
         render();
         setStatus('imported', {name: file.name});
     } catch (error) {
@@ -378,7 +382,7 @@ byId('file').addEventListener('change', async event => {
     }
 });
 byId('download').addEventListener('click', () => {
-    const content = serialize(entries);
+    const content = serialize(entries, settings);
     const url = URL.createObjectURL(new Blob([content], {type: 'text/plain;charset=utf-8'}));
     const link = element('a');
     link.href = url;
@@ -387,13 +391,13 @@ byId('download').addEventListener('click', () => {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    savedConfiguration = JSON.stringify(entries);
+    savedConfiguration = snapshot();
     setStatus('downloaded');
 });
 byId('copy').addEventListener('click', async () => {
     try {
-        const content = serialize(entries);
-        const copiedConfiguration = JSON.stringify(entries);
+        const content = serialize(entries, settings);
+        const copiedConfiguration = snapshot();
         await navigator.clipboard.writeText(content);
         savedConfiguration = copiedConfiguration;
         setStatus('copied');
