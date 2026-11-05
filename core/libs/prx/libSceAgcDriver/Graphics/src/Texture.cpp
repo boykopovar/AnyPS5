@@ -1180,9 +1180,9 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     }
 }
 
-Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer, std::shared_ptr<OwnedImage> owner, VkImageUsageFlags usage, std::uint32_t layerCount, VkImageLayout imageLayout) : context(context), owned(std::move(owner)) {
+Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer, std::shared_ptr<OwnedImage> owner, VkImageUsageFlags usage, std::uint32_t layerCount) : context(context), owned(std::move(owner)) {
     Require(owned == nullptr || (owned->image == depthImage && owned->context.device == context.device), "a depth sampled view must retain its own device and image");
-    layout = imageLayout;
+    layout = VK_IMAGE_LAYOUT_GENERAL;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     viewUsage.usage = usage;
@@ -3193,9 +3193,9 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
-            APS5_LOG_CHARS_OUT("StorageTexture upload submit");
+            APS5_LOG_CHARS_OUT_DEBUG("StorageTexture upload submit");
             batch.SubmitAndWait();
-            APS5_LOG_CHARS_OUT("StorageTexture upload done");
+            APS5_LOG_CHARS_OUT_DEBUG("StorageTexture upload done");
     }
     countStorageUpload(2, uploadedBytes);
     ++version;
