@@ -1,6 +1,8 @@
 /*
  * Copyright (C) 2005, 2006, 2008, 2011, 2014 Apple Inc. All rights reserved.
  *
+ * Derived from Source/WebCore/history/HistoryItem.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:

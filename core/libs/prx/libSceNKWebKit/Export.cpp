@@ -69,27 +69,7 @@ int APS5_VABI WKURLResponseGetExpectedContentLength() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKSecurityOriginCopyProtocol() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginCopyHost() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginGetPort() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginCopyToString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKSecurityOriginCopyDatabaseIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -18344,18 +18324,6 @@ int APS5_VABI _ZN3PAL8KillRing7prependERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3PAL9SessionID26enableGenerationProtectionEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3PAL9SessionID26generateEphemeralSessionIDEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3PAL9SessionID27generatePersistentSessionIDEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19136,10 +19104,6 @@ int APS5_VABI _ZN3WTF14dupCloseOnExecEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14isVersion4UUIDENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF15AtomStringTableD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19621,10 +19585,6 @@ int APS5_VABI _ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE() {
 }
 
 int APS5_VABI _ZN3WTF24currentTextBreakLocaleIDEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF24isDefaultPortForProtocolEtNS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
