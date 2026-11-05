@@ -80,6 +80,45 @@ std::uint64_t RegisterStateKey(const QueueState& queue, bool allUserWords, bool 
     words(0x082u, 2, auxiliary);
     words(0x102u, 2, auxiliary);
     if (parts != nullptr) *parts = {shape, userData, auxiliary};
+    // APS5_TRACE_DRAW_KEY_WORDS: report which user-data words change between two draws of the same
+    // shape (same context/shader/user-config registers), to tell per-object pointers or offsets from
+    // scalars. Bounded output; diagnostic only.
+    static const bool traceWords = std::getenv("APS5_TRACE_DRAW_KEY_WORDS") != nullptr;
+    if (traceWords) {
+        struct Snapshot { std::vector<std::pair<std::uint32_t, std::uint32_t>> words; };
+        struct Storage {};
+        static std::atomic<int> budget{200};
+        auto& seen = HostThreadLocal<std::unordered_map<std::uint64_t, Snapshot>, Storage>();
+        if (seen.size() > 4096) seen.clear();
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> current;
+        const auto collect = [&](std::uint32_t base, std::uint32_t count) {
+            for (auto it = queue.shader.lower_bound(base); it != queue.shader.end() && it->first < base + count; ++it) current.push_back({it->first, it->second});
+        };
+        for (const auto base : {0x00cu, 0x04cu, 0x08cu, 0x10cu}) {
+            const auto limit = base == 0x04cu ? 16u : 32u;
+            const auto resources = queue.shader.find(base - 1);
+            const auto count = resources == queue.shader.end() ? 0u : ((resources->second >> 1u) & 0x1fu) | (((resources->second >> 27u) & 1u) << 5u);
+            collect(base, allUserWords ? limit : std::min(count, limit));
+        }
+        auto& entry = seen[shape];
+        if (!entry.words.empty() && budget.load(std::memory_order_relaxed) > 0) {
+            std::string line;
+            char buffer[64];
+            std::size_t changed = 0;
+            for (const auto& [offset, value] : current) {
+                auto previous = entry.words.end();
+                for (auto it = entry.words.begin(); it != entry.words.end(); ++it) if (it->first == offset) { previous = it; break; }
+                const auto old = previous == entry.words.end() ? 0u : previous->second;
+                if (previous != entry.words.end() && old == value) continue;
+                if (++changed > 12) break;
+                std::snprintf(buffer, sizeof(buffer), " %x:%08x>%08x", offset, old, value);
+                line += buffer;
+            }
+            if (changed != 0 && budget.fetch_sub(1, std::memory_order_relaxed) > 0)
+                std::fprintf(stderr, "[draw-key-words] shape=%llx words=%zu changed=%zu%s\n", static_cast<unsigned long long>(shape), current.size(), changed, line.c_str());
+        }
+        entry.words = std::move(current);
+    }
     return exact;
 }
 
