@@ -317,6 +317,34 @@ std::optional<TrampolineSite> relocateLeaf(
         return std::nullopt;
     }
 
+    // A branch whose target is a rip-relative memory word (jmp/jcc qword [rip+disp]) is decoded with
+    // HasBranchTarget, so the emit loop below would turn it into a direct branch to the pointer's
+    // address instead of through it. Refuse it whole.
+    //
+    // The entry lowers rsp by the whole red zone and sets rbp to its original value (lea rbp,[rsp+shift]),
+    // so rbp-relative frame locals keep their addresses -- but the register pushed to make the frame now
+    // sits shift lower, at [rbp-shift]. A frame leaf that reads or writes rbp-relative at a displacement
+    // that reaches the saved register (<= -shift) would collide with it; refuse those. Shallower locals,
+    // and rbp used as an ordinary pointer without a frame, are untouched.
+    bool hasFrame = false;
+    bool deepFrameAccess = false;
+    for (const auto& insn : body) {
+        const auto* code = seg.data() + insn.Offset;
+        const auto& info = insn.Info;
+        if ((info.FlowKind == ControlFlowKind::UnconditionalJump || info.FlowKind == ControlFlowKind::ConditionalBranch) && info.HasRipRelativeDisp) {
+            refusal = "rip-relative indirect branch";
+            return std::nullopt;
+        }
+        const auto move = quadRegisterMove(code, insn);
+        if ((move && move->Destination == kRegRbp && move->Source == kRegRsp) || (!info.IsTwoByteOpcode && info.Opcode == 0xc9 && insn.Length == 1)) hasFrame = true;
+        const auto use = memoryUse(code, insn);
+        if (use.RbpBased && use.RbpDisp <= -kRedZoneBytes) deepFrameAccess = true;
+    }
+    if (hasFrame && deepFrameAccess) {
+        refusal = "frame local reaching the saved register below the red-zone shift";
+        return std::nullopt;
+    }
+
     {
         std::vector<std::optional<std::int64_t>> depthAt(body.size());
         std::vector<std::optional<std::int64_t>> frameAt(body.size());
