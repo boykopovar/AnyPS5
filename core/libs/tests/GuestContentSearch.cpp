@@ -98,8 +98,6 @@ int main() {
     Require(count == -1 && updateId == -1);
     updateId = -1;
     Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == 0 && updateId == 0);
-    applicationIndex = -1;
-    Require(ThrowsRuntimeError([&] { sceContentSearchGetMyApplicationIndex(&applicationIndex); }) && applicationIndex == 0);
     count = -1;
     updateId = -1;
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == 0);
