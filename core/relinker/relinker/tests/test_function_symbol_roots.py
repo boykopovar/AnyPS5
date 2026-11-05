@@ -14,6 +14,7 @@ from test_macos_executable_exports import executable as exported_executable, exp
 from test_macos_tls_exports import guest as tls_export
 from test_tls_function_coverage import TLS_LOAD, add_alias, make_image, pe_bytes_at
 from test_windows_tls_protected_entries import make_image as entry_image
+from test_windows_executable_exports import fixture as windows_exported_executable, exports as windows_exports
 
 
 RUNNER = Path(__file__).with_name("windows_image_runner.py")
@@ -154,6 +155,23 @@ def executable_cases(relinker, work, baseline):
         data = succeeded(run, artifact, "macos")
         base = MachO(data).segment("__ELF0")["vmaddr"]
         assert exports(data)["_FixtureExport"] == (0, base + 0x210 - 0x140000000)
+    image = windows_exported_executable((("FixtureExport#A#B", 0x12, 0, 1, 0x4000, 0x10000),))
+    strict, artifact = convert(relinker, work, "export", "windows", image, roots=False)
+    assert strict.returncode == 2, (strict.returncode, strict.stderr)
+    assert not artifact.exists(), artifact
+    if not baseline:
+        run, artifact = convert(relinker, work, "export", "windows", image)
+        data = succeeded(run, artifact, "windows")
+        assert windows_exports(data) == {"FixtureExport": 0x10000}
+        assert pe_bytes_at(data, 0x10000, 6) == bytes.fromhex("b8 2a 00 00 00 c3")
+        for name, symbols, tls in (
+                ("export-data-range", (("FixtureData", 0x11, 0, 1, 0x4f00, 0x10000),), False),
+                ("export-tls-range", (("FixtureTls", 0x16, 0, 1, 60, 8),), True)):
+            image = windows_exported_executable(symbols, tls)
+            for roots in (False, True):
+                run, artifact = convert(relinker, work, name, "windows", image, roots=roots)
+                assert run.returncode == 2, (name, roots, run.returncode, run.stderr)
+                assert not artifact.exists(), artifact
         image = make_image("register", "symbol", extent=0x1000,
                            body=b"\xff\x25" + struct.pack("<i", 0x780 - 0x1246))
         struct.pack_into("<Q", image, 0x780, 0x3000)
