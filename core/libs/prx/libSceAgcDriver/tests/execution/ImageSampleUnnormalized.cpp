@@ -336,9 +336,25 @@ void ExpectFailure(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spir
 
 int main(int argc, char** argv) {
     try {
-        const bool forced = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
-        const bool implicitComputedOffset = argc == 2 && std::string_view(argv[1]) == "--implicit-computed-offset";
-        Require(argc == 1 || forced || implicitComputedOffset, "image sample unnormalized: unexpected arguments");
+        bool forced = false;
+        std::string_view coverage = "bilinear";
+        bool selected = false;
+        bool implicitComputedOffset = false;
+        for (int index = 1; index < argc; ++index) {
+            const std::string_view argument(argv[index]);
+            if (argument == "--without-compute-derivatives") {
+                forced = true;
+            } else {
+                Require(!selected, "image sample unnormalized: multiple coverage modes");
+                selected = true;
+                if (argument == "--implicit-computed-offset") implicitComputedOffset = true;
+                else if (argument == "--point") coverage = "point";
+                else if (argument == "--mirrored") coverage = "mirrored";
+                else if (argument == "--descriptor-controls") coverage = "descriptor-controls";
+                else Require(false, "image sample unnormalized: unexpected argument");
+            }
+        }
+        Require(!implicitComputedOffset || !forced, "image sample unnormalized: implicit offsets require the device target");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         auto target = device->Target();
@@ -357,7 +373,7 @@ int main(int argc, char** argv) {
             const auto texture = TextureDescriptor(SingleLevel.data(), 0u, 0u);
             if (!HasComputeDerivatives(target)) {
                 ExpectFailure(*device, target, ImplicitOffsets, texture, Samplers[0].words, "require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives", "an implicit computed-offset sample without compute derivatives");
-                std::puts("skipped unnormalized implicit computed offsets, compute derivatives are unavailable");
+                std::puts("skipped, the device lacks compute derivatives for unnormalized implicit computed offsets");
                 return VulkanTestSkipped;
             }
             const auto coordinates = OffsetCoordinates();
@@ -379,7 +395,9 @@ int main(int argc, char** argv) {
         fromLevelOne[3] |= 1u << 12u;
         const bool driverSamplesUnnormalizedAboveMipZero = device->DeviceName().find("llvmpipe") == std::string::npos;
         const auto offsetCoordinates = OffsetCoordinates();
-        for (const auto& sampler : Samplers) {
+        if (coverage != "descriptor-controls") for (const auto& sampler : Samplers) {
+            const bool mirrored = sampler.mirrorX || sampler.mirrorY;
+            if (coverage == "mirrored" ? !mirrored : mirrored || sampler.linear != (coverage == "bilinear")) continue;
             const auto singleSamples = Run(*device, target, plain, single, sampler.words, coordinates);
             Check(plain, sampler, 0u, "1-level image", coordinates, singleSamples);
             const auto multiSamples = Run(*device, target, plain, multi, sampler.words, coordinates);
@@ -395,67 +413,70 @@ int main(int argc, char** argv) {
             Require(levelZeroChain == levelZeroSingle, std::string(sampler.name) + ": a 4-level view read by image_sample_lz does not sample its base level like a 1-level image");
             if (driverSamplesUnnormalizedAboveMipZero) Check(LevelZero, sampler, 1u, "3-level view starting at mip 1", levelOneCoordinates, Run(*device, target, LevelZero, fromLevelOne, sampler.words, levelOneCoordinates));
         }
-        ExpectFailure(*device, target, plain, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view read by a selected LOD");
-        ExpectFailure(*device, target, plain, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_l and image_sample");
-        ExpectFailure(*device, target, plain, fromLevelOne, Samplers[0].words, "single-level", "a view starting at mip 1 read by image_sample_l and image_sample");
-        ExpectFailure(*device, target, Offsets, chain, Samplers[0].words, "single-level", "a 4-level view read with texel offsets");
-        ExpectFailure(*device, target, Gradient, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_d");
-        ExpectFailure(*device, target, LevelZero, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with a minimum LOD and a LOD bias");
-        const auto magFilterReference = Run(*device, target, plain, single, {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
-        const auto unequalFilterSamples = Run(*device, target, plain, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, coordinates);
-        Require(unequalFilterSamples == magFilterReference, "unnormalized sampler with unequal filters does not sample with its magnification filter");
-        const auto clampModeZeroSamples = Run(*device, target, plain, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
-        Require(clampModeZeroSamples == magFilterReference, "unnormalized sampler with clamp mode 0 does not sample with clamp mode 2");
-        for (const std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{4}}) {
-            auto truncated = Samplers[index].words;
-            truncated[0] |= 1u << 27u;
-            const auto truncatedSamples = Run(*device, target, plain, single, truncated, coordinates);
-            Check(plain, Samplers[index], 0u, "1-level image through an S# with TRUNC_COORD", coordinates, truncatedSamples);
-            Require(truncatedSamples == Run(*device, target, plain, single, Samplers[index].words, coordinates), std::string(Samplers[index].name) + ": TRUNC_COORD changed the samples");
-        }
-        const auto constantView = [&](std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {
-            auto descriptor = TextureDescriptor(SingleLevel.data(), 0u, 0u);
-            descriptor[1] = (descriptor[1] & ~(0x1ffu << 20u)) | (format << 20u);
-            descriptor[3] = swizzle | (type << 28u);
-            return descriptor;
-        };
-        for (const auto& sampler : Samplers) {
-            for (const auto& sample : Run(*device, target, plain, constantView(Type3D, Format8888UNorm, OneZeroOneZero), sampler.words, coordinates)) {
-                for (std::uint32_t index = 0; index < plain.count * 4u; ++index) {
-                    const std::uint32_t expected = index % 2u == 0u ? 0x3f800000u : 0u;
-                    Require(sample[index] == expected, std::string(sampler.name) + ": a 3D view whose channels select (1, 0, 1, 0) returned " + Hex(sample[index]) + " for result " + std::to_string(index));
+        if (coverage == "descriptor-controls") {
+            ExpectFailure(*device, target, plain, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view read by a selected LOD");
+            ExpectFailure(*device, target, plain, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_l and image_sample");
+            ExpectFailure(*device, target, plain, fromLevelOne, Samplers[0].words, "single-level", "a view starting at mip 1 read by image_sample_l and image_sample");
+            ExpectFailure(*device, target, Offsets, chain, Samplers[0].words, "single-level", "a 4-level view read with texel offsets");
+            ExpectFailure(*device, target, Gradient, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_d");
+            ExpectFailure(*device, target, LevelZero, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with a minimum LOD and a LOD bias");
+            const auto magFilterReference = Run(*device, target, plain, single, {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
+            const auto unequalFilterSamples = Run(*device, target, plain, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, coordinates);
+            Require(unequalFilterSamples == magFilterReference, "unnormalized sampler with unequal filters does not sample with its magnification filter");
+            const auto clampModeZeroSamples = Run(*device, target, plain, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
+            Require(clampModeZeroSamples == magFilterReference, "unnormalized sampler with clamp mode 0 does not sample with clamp mode 2");
+            for (const std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{4}}) {
+                auto truncated = Samplers[index].words;
+                truncated[0] |= 1u << 27u;
+                const auto truncatedSamples = Run(*device, target, plain, single, truncated, coordinates);
+                Check(plain, Samplers[index], 0u, "1-level image through an S# with TRUNC_COORD", coordinates, truncatedSamples);
+                Require(truncatedSamples == Run(*device, target, plain, single, Samplers[index].words, coordinates), std::string(Samplers[index].name) + ": TRUNC_COORD changed the samples");
+            }
+            const auto constantView = [&](std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {
+                auto descriptor = TextureDescriptor(SingleLevel.data(), 0u, 0u);
+                descriptor[1] = (descriptor[1] & ~(0x1ffu << 20u)) | (format << 20u);
+                descriptor[3] = swizzle | (type << 28u);
+                return descriptor;
+            };
+            for (const auto& sampler : Samplers) {
+                for (const auto& sample : Run(*device, target, plain, constantView(Type3D, Format8888UNorm, OneZeroOneZero), sampler.words, coordinates)) {
+                    for (std::uint32_t index = 0; index < plain.count * 4u; ++index) {
+                        const std::uint32_t expected = index % 2u == 0u ? 0x3f800000u : 0u;
+                        Require(sample[index] == expected, std::string(sampler.name) + ": a 3D view whose channels select (1, 0, 1, 0) returned " + Hex(sample[index]) + " for result " + std::to_string(index));
+                    }
                 }
             }
-        }
-        struct ConstantCase {
-            const char* name;
-            std::array<std::uint32_t, 8> texture;
-            std::uint32_t one;
-        };
-        const std::array<ConstantCase, 4> constants{{
-            {"a 3D UNORM view selecting (1, 0, 1, 0)", constantView(Type3D, Format8888UNorm, OneZeroOneZero), 0x3f800000u},
-            {"a 32_UINT view selecting (1, 0, 1, 0)", constantView(Type2D, Format32UInt, OneZeroOneZero), 1u},
-            {"a 32_SINT view selecting (1, 0, 1, 0)", constantView(Type2D, Format32SInt, OneZeroOneZero), 1u},
-            {"a 1D view selecting (0, 0, 0, 0)", constantView(Type1D, Format8888UNorm, 0u), 0u},
-        }};
-        const std::array<const char*, 3> constantInstructions{"image_sample_lz dmask 0x6", "image_gather4_lz dmask 0x2", "image_gather4_lz dmask 0x4"};
-        const Program constantProgram{ConstantCode, constantInstructions, Plain.offsets};
-        for (const auto& constant : constants) {
-            auto normalized = Samplers[0].words;
-            normalized[0] &= ~0x8000u;
-            for (const auto& sample : Run(*device, target, constantProgram, constant.texture, normalized, coordinates)) {
-                const std::array<std::uint32_t, 10> expected{0u, constant.one, 0u, 0u, 0u, 0u, constant.one, constant.one, constant.one, constant.one};
-                for (std::uint32_t index = 0; index < expected.size(); ++index) {
-                    const auto instruction = constantInstructions[index < 2u ? 0u : index < 6u ? 1u : 2u];
-                    Require(sample[index] == expected[index], std::string(instruction) + ", " + constant.name + ": result " + std::to_string(index) + " is " + Hex(sample[index]) + ", expected " + Hex(expected[index]));
+            struct ConstantCase {
+                const char* name;
+                std::array<std::uint32_t, 8> texture;
+                std::uint32_t one;
+            };
+            const std::array<ConstantCase, 4> constants{{
+                {"a 3D UNORM view selecting (1, 0, 1, 0)", constantView(Type3D, Format8888UNorm, OneZeroOneZero), 0x3f800000u},
+                {"a 32_UINT view selecting (1, 0, 1, 0)", constantView(Type2D, Format32UInt, OneZeroOneZero), 1u},
+                {"a 32_SINT view selecting (1, 0, 1, 0)", constantView(Type2D, Format32SInt, OneZeroOneZero), 1u},
+                {"a 1D view selecting (0, 0, 0, 0)", constantView(Type1D, Format8888UNorm, 0u), 0u},
+            }};
+            const std::array<const char*, 3> constantInstructions{"image_sample_lz dmask 0x6", "image_gather4_lz dmask 0x2", "image_gather4_lz dmask 0x4"};
+            const Program constantProgram{ConstantCode, constantInstructions, Plain.offsets};
+            for (const auto& constant : constants) {
+                auto normalized = Samplers[0].words;
+                normalized[0] &= ~0x8000u;
+                for (const auto& sample : Run(*device, target, constantProgram, constant.texture, normalized, coordinates)) {
+                    const std::array<std::uint32_t, 10> expected{0u, constant.one, 0u, 0u, 0u, 0u, constant.one, constant.one, constant.one, constant.one};
+                    for (std::uint32_t index = 0; index < expected.size(); ++index) {
+                        const auto instruction = constantInstructions[index < 2u ? 0u : index < 6u ? 1u : 2u];
+                        Require(sample[index] == expected[index], std::string(instruction) + ", " + constant.name + ": result " + std::to_string(index) + " is " + Hex(sample[index]) + ", expected " + Hex(expected[index]));
+                    }
                 }
             }
         }
         if (!HasComputeDerivatives(target)) {
             std::puts("image sample unnormalized explicit samples and descriptor refusals passed; implicit sample refused without compute derivatives");
+            if (!forced) std::puts("skipped, the device lacks compute derivatives for implicit unnormalized samples");
             return forced ? 0 : VulkanTestSkipped;
         }
-        std::puts("image sample unnormalized tests passed");
+        std::printf("image sample unnormalized %.*s tests passed\n", static_cast<int>(coverage.size()), coverage.data());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

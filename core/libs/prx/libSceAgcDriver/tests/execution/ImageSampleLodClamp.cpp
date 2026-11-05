@@ -97,7 +97,7 @@ struct Sample {
 };
 
 Sample SampleOf(std::uint32_t tid) {
-    return {tid % Levels, (tid / Levels) % Gradients, (tid / 3u) % Clamps, ((tid / 4u) * 7u + 3u) % Size, ((tid / 4u) * 5u + 1u) % Size, static_cast<std::int32_t>((tid / 4u) % Levels) - 1};
+    return {tid % Levels, (tid / Levels) % Gradients, (tid / 3u) % Clamps, ((tid / 4u) * 7u + 3u) % (Size - 1u) + (tid & 1u), ((tid / 4u) * 5u + 1u) % (Size - 1u) + ((tid >> 1u) & 1u), static_cast<std::int32_t>((tid / 4u) % Levels) - 1};
 }
 
 std::uint32_t Bits(float value) {
@@ -378,12 +378,19 @@ namespace ComputeImplicitClamp { int Run(int argc, char** argv); }
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]).starts_with("--implicit-")) return ComputeImplicitClamp::Run(argc, argv);
     try {
+        const bool samplerBias = argc == 2 && std::string_view(argv[1]) == "--sampler-bias";
         const bool shaderLane = argc > 1 && std::strcmp(argv[1], "--shader-lane") == 0;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
             std::puts("skipped, the device has no shaderResourceMinLod");
             return VulkanTestSkipped;
+        }
+        if (samplerBias) {
+            FillTexture();
+            RunAndCheck(*device, Code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false);
+            std::puts("image sample clamp unit-quad sampler bias tests passed");
+            return 0;
         }
         const bool shaderClamp = device->Target().shaderImageMinLod;
         if (shaderLane && !shaderClamp) {

@@ -289,7 +289,7 @@ int main(int argc, char** argv) {
                 requested.spannedWaves = true;
                 if (!Run(*device, 64, 64, requested, false, false, true)) return VulkanTestSkipped;
             } else {
-                std::puts("skipped masked-quad wave64 dual-half cases, a 32-lane compute subgroup is unavailable");
+                std::puts("skipped, a 32-lane compute subgroup is unavailable for the masked-quad wave64 dual-half cases");
                 return VulkanTestSkipped;
             }
             return 0;
@@ -303,7 +303,7 @@ int main(int argc, char** argv) {
             requested.spannedWaves = true;
             if (!Run(*device, 64, 64, requested)) return VulkanTestSkipped;
         } else {
-            std::puts("skipped wave64 spanned-request case, a 32-lane compute subgroup is unavailable");
+            std::puts("skipped, a 32-lane compute subgroup is unavailable for the wave64 spanned-request case");
         }
         if (!Run(*device, 32, 4, wave32, true)) return VulkanTestSkipped;
         CheckRefusals(wave32);
