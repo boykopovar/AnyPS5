@@ -134,13 +134,36 @@ int main() {
     Require(sceNpSessionSignalingActivateSession(contextId, nullptr, 0, &sessionParam, &activatedGroup) == InvalidArgument, "activate with a null session id");
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, nullptr, &activatedGroup) == InvalidArgument, "activate with a null session param");
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &sessionParam, nullptr) == InvalidArgument, "activate with a null group id");
+    Require(sceNpSessionSignalingActivateSession(firstId, nullptr, 0, &sessionParam, &activatedGroup) == InvalidArgument, "activation argument precedence");
     Require(sceNpSessionSignalingActivateSession(firstId, activateSessionId, 0, &sessionParam, &activatedGroup) == ContextNotFound, "activate on a stale context");
     const SessionSignalingSessionParam modeOneWithOption{1, 1};
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &modeOneWithOption, &activatedGroup) == InvalidArgument, "mode 1 with an option");
     const SessionSignalingSessionParam modeTwoWithoutOption{2, 0};
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &modeTwoWithoutOption, &activatedGroup) == InvalidArgument, "mode 2 without an option");
+    const SessionSignalingSessionParam modeTwoWithOption{2, 1};
+    Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &modeTwoWithOption, &activatedGroup) == Unavailable, "activate mode 2 session without network");
+    Require(activatedGroup == 0xa5a5a5a5u, "failed mode 2 activation wrote a group id");
     Require(sceNpSessionSignalingActivateSession(contextId, activateSessionId, 0, &sessionParam, &activatedGroup) == Unavailable, "activate without network");
     Require(activatedGroup == 0xa5a5a5a5u, "a failed activation wrote a group id");
+
+    const auto* peerAddressParam = reinterpret_cast<const SessionSignalingPeerAddress*>(peer);
+    std::uint32_t connectionId = 0xa5a5a5a5u;
+    Require(sceNpSessionSignalingActivateUser(contextId, nullptr, &connectionId) == InvalidArgument, "null activation peer address");
+    Require(sceNpSessionSignalingActivateUser(contextId, peerAddressParam, nullptr) == InvalidArgument, "null activation connection id");
+    Require(sceNpSessionSignalingActivateUser(firstId, nullptr, &connectionId) == InvalidArgument, "user activation argument precedence");
+    Require(sceNpSessionSignalingActivateUser(firstId, peerAddressParam, &connectionId) == ContextNotFound, "activate user stale context");
+    Require(sceNpSessionSignalingActivateUser(contextId, peerAddressParam, &connectionId) == Unavailable, "activate user without network");
+    Require(connectionId == 0xa5a5a5a5u, "failed user activation wrote a connection id");
+
+    SessionSignalingConnectionInfo connectionInfo;
+    std::memset(&connectionInfo, 0xa5, sizeof(connectionInfo));
+    unsigned char untouchedConnectionInfo[sizeof(connectionInfo)];
+    std::memcpy(untouchedConnectionInfo, &connectionInfo, sizeof(connectionInfo));
+    Require(sceNpSessionSignalingGetConnectionInfo(contextId, 1, 1, nullptr) == InvalidArgument, "null connection info");
+    Require(sceNpSessionSignalingGetConnectionInfo(firstId, 1, 1, nullptr) == InvalidArgument, "connection info argument precedence");
+    Require(sceNpSessionSignalingGetConnectionInfo(firstId, 1, 1, &connectionInfo) == ContextNotFound, "connection info stale context");
+    Require(sceNpSessionSignalingGetConnectionInfo(contextId, 1, 1, &connectionInfo) == ConnectionNotFound, "connection info without network");
+    Require(std::memcmp(&connectionInfo, untouchedConnectionInfo, sizeof(connectionInfo)) == 0, "failed connection info query modified the info");
 
     Require(sceNpSessionSignalingTerminate() == 0, "terminate failed");
     Require(sceNpSessionSignalingDestroyContext(contextId) == NotInitialized, "destroy after terminate");
