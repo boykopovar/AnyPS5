@@ -4,7 +4,9 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -18,7 +20,12 @@
 #include <unistd.h>
 #endif
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Check(bool value, int line) {
+    if (value) return;
+    std::fprintf(stderr, "UDP check failed at line %d, guest errno %d\n", line, *__error_nid_postfix());
+    std::abort();
+}
+#define Require(value) Check((value), __LINE__)
 
 static void CheckUnreachablePortIgnored() {
     const int closing = socket_nid_postfix(2, 2, 0);
@@ -381,6 +388,67 @@ private:
     char* memory = nullptr;
 };
 
+static void CheckDelayedPartialReceive() {
+    using namespace std::chrono_literals;
+    const int receiver = socket_nid_postfix(2, 2, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t addressSize = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &addressSize) == 0);
+    GuardedPage page;
+    const char payload[] = "abcdefgh";
+    for (const bool timed : {false, true}) {
+        const std::array<std::int64_t, 2> timeout{timed ? 2 : 0, 0};
+        Require(setsockopt_nid_postfix(receiver, 0xffff, 0x1006, timeout.data(), sizeof(timeout)) == 0);
+        for (const int flags : {0, 2}) {
+            for (const std::size_t bytes : {3u, 8u}) {
+                std::memset(page.Crossing(), '?', 4);
+                std::atomic<bool> entered{false}, finished{false};
+                std::int64_t result = -2;
+                int error = -1;
+                std::thread call([&] {
+                    entered.store(true, std::memory_order_release);
+                    result = recvfrom_nid_postfix(receiver, page.Crossing(), 8, flags, nullptr, nullptr);
+                    error = *__error_nid_postfix();
+                    finished.store(true, std::memory_order_release);
+                });
+                const auto deadline = std::chrono::steady_clock::now() + 2s;
+                while (!entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::yield();
+                Require(entered.load(std::memory_order_acquire));
+                std::this_thread::sleep_for(100ms);
+                Require(!finished.load(std::memory_order_acquire));
+                Require(sendto_nid_postfix(sender, payload, bytes, 0, address.data(), address.size()) == static_cast<std::int64_t>(bytes));
+                call.join();
+                if (bytes <= 4) {
+                    Require(result == static_cast<std::int64_t>(bytes));
+                    Require(std::memcmp(page.Crossing(), payload, bytes) == 0 && page.Crossing()[3] == '?');
+                } else Require(result == -1 && error == 14);
+                char remaining[8]{};
+                if (flags == 2) {
+                    Require(recvfrom_nid_postfix(receiver, remaining, sizeof(remaining), 0x80, nullptr, nullptr) == static_cast<std::int64_t>(bytes));
+                    Require(std::memcmp(remaining, payload, bytes) == 0);
+                }
+                Require(recvfrom_nid_postfix(receiver, remaining, sizeof(remaining), 0x80, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+            }
+        }
+    }
+    const std::array<std::int64_t, 2> timeout{0, 300000};
+    Require(setsockopt_nid_postfix(receiver, 0xffff, 0x1006, timeout.data(), sizeof(timeout)) == 0);
+    auto start = std::chrono::steady_clock::now();
+    Require(recvfrom_nid_postfix(receiver, page.Crossing(), 8, 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+    Require(std::chrono::steady_clock::now() - start >= 250ms);
+    for (const bool nonblocking : {false, true}) {
+        Require(fcntl_nid_postfix(receiver, 4, std::uint64_t{nonblocking ? 4u : 0u}) == 0);
+        start = std::chrono::steady_clock::now();
+        Require(recvfrom_nid_postfix(receiver, page.Crossing(), 8, nonblocking ? 0 : 0x80, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+        Require(std::chrono::steady_clock::now() - start < 250ms);
+    }
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+}
+
 static void CheckPointerFaults() {
     constexpr int Fault = 14;
     GuardedPage page;
@@ -491,6 +559,7 @@ static void CheckPointerFaults() {
 }
 
 int main() {
+    CheckDelayedPartialReceive();
     CheckPointerFaults();
     CheckAddressLengths(2);
     CheckAddressLengths(28);
