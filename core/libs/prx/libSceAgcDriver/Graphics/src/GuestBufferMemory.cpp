@@ -1439,11 +1439,13 @@ void settleImportsNow(const Context& context, HostImports& state, std::uint64_t 
 }
 #endif
 std::atomic<std::uint64_t> importWindow{0};
+std::atomic<bool> importWindowExplicit{false};
 
 void shrinkImportWindow() {
     constexpr std::uint64_t allocation = 65536;
+    if (importWindowExplicit.load(std::memory_order_relaxed)) return;
     const auto current = importWindow.load(std::memory_order_relaxed);
-    if (current == 0 || current > allocation) importWindow.store(allocation, std::memory_order_relaxed);
+    if (current > allocation) importWindow.store(allocation, std::memory_order_relaxed);
 }
 
 void decideImportWatch(const Context& context, HostImports& state) {
@@ -4311,7 +4313,13 @@ void SetImportWatch(const Context& context, ImportWatch watch, bool probed) {
     if (state.unwatchProbed) shrinkImportWindow();
 }
 
+void SetHostImportWindowDefault(std::uint64_t bytes) {
+    importWindowExplicit.store(false, std::memory_order_relaxed);
+    importWindow.store(bytes, std::memory_order_relaxed);
+}
+
 void SetHostImportWindow(std::uint64_t bytes) {
+    importWindowExplicit.store(true, std::memory_order_relaxed);
     importWindow.store(bytes, std::memory_order_relaxed);
 }
 

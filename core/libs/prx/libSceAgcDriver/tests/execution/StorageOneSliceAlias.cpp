@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -177,7 +178,10 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, bool watched) {
     Require(written != nullptr && written->Descriptor().dimension == AgcDriver::Graphics::TextureDimension::k2D, "the second 2D store left no pending 2D image");
     LoadArray(device, texels);
     RequireOutput(0x22222222u, "the second load through the one-slice array");
-    if (watched && AgcDriver::GuestMemory::Watched(surface, SurfaceBytes)) {
+    AgcDriver::Graphics::Context probe{};
+    probe.device = device.Device();
+    probe.hostImportAlignment = 1;
+    if (watched && AgcDriver::GuestMemory::Watched(surface, SurfaceBytes) && !AgcDriver::Graphics::HostImportsUnwatch(probe)) {
         Require(StorageTexture::FindPending(surface, SurfaceBytes) == written, "the array image's refresh wrote the 2D image's results back instead of taking them on the device");
     } else {
         std::puts("the imported block is compared, not watched: taking the results on the device is not checked");

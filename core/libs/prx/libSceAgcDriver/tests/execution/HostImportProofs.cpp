@@ -125,6 +125,7 @@ Outcome ProofsFollowTheRuns() {
     GuestBlock guest(ImportWindowBytes - OtherBytes, ImportWindowBytes);
     auto device = OpenVulkanTestDevice();
     if (!device) return Outcome::NoDevice;
+    Graphics::SetHostImportWindow(ImportWindowBytes);
     const auto probe = Probe(*device);
     if (!Fill(*device, guest.Address())) return Outcome::NoImport;
     Require(Graphics::HostImportSerial(probe, guest.Address(), ProbeBytes, false) != 0, "host import proofs: the range at " + Hex(guest.Address()) + " is not imported");

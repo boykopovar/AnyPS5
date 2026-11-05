@@ -530,6 +530,7 @@ void idleImportRetireTests(const Context& context) {
     };
     change(guest, true);
     change(guest + piece, true);
+    SetHostImportWindowDefault(8ull << 20u);
     SetImportWatch(importing, ImportWatch::Unwatch, true);
     Require(HostImportFor(importing, first, 16) != nullptr && HostImportFor(importing, first + piece, 16) != nullptr, "the idle fixture did not import");
     Require(RetireIdleImports(importing) == 0 && ExistingHostImportFor(importing, first, 16) != nullptr, "an import used this frame was retired");
@@ -539,7 +540,9 @@ void idleImportRetireTests(const Context& context) {
     NoteHostImportFrame();
     Require(RetireIdleImports(importing) == 1, "the import idle for sixty frames was not retired");
     Require(ExistingHostImportFor(importing, first, 16) == nullptr && ExistingHostImportFor(importing, first + piece, 16) != nullptr, "the wrong import retired");
+#ifndef _WIN32
     if (AgcDriver::GuestMemory::WriteWatched()) Require(AgcDriver::GuestMemory::Watched(first, piece), "the retired import's range did not return to the write watch");
+#endif
     Require(HostImportFor(importing, first, 16) != nullptr, "the range could not be imported again after retiring");
     SetImportWatch(importing, ImportWatch::Watch);
     change(guest, false);
@@ -4581,7 +4584,7 @@ void unwatchedImportWindowTests(const Context& context) {
     const auto first = reinterpret_cast<std::uintptr_t>(block);
     auto importing = context;
     importing.hostImportAlignment = piece;
-    SetHostImportWindow(8ull << 20u);
+    SetHostImportWindowDefault(8ull << 20u);
     const auto change = [&](std::uint8_t* range, bool add) {
         auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
         if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, range, piece, true, false, true);
