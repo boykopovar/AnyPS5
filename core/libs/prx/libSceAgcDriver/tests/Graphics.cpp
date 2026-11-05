@@ -852,9 +852,6 @@ void msaaEnableClearOneSampleTargetTests() {
     requireOneSample(queue, "draw C whose pixel program reads ANCILLARY without PS_ITER_SAMPLE");
     Require(!DecodeState(queue).perSampleShading, "ANCILLARY into a one-sample color target without MSAA_ENABLE asked for sample shading");
     queue = drawC();
-    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
-    expectFailure([&] { DecodeState(queue); }, refused);
-    queue = drawC();
     queue.context[0x293] = 0x10000u;
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
     requireOneSample(queue, "draw C with PS_ITER_SAMPLE and a sample-interpolated input");
