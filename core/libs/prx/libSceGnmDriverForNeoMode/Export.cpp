@@ -75,6 +75,24 @@ constexpr int TcaUnits = 2;
 constexpr std::uint32_t TcaUnitMap = 0x10;
 std::atomic<bool> NextFlipOption = false;
 
+constexpr int SubmitInvalid = static_cast<int>(0x80D11000u);
+constexpr int FlipCommandTooSmall = static_cast<int>(0x80D11001u);
+constexpr int GpuUnavailable = static_cast<int>(0x80D110FFu);
+constexpr int ComputeQueueInvalid = static_cast<int>(0x80D17000u);
+constexpr int ComputeQueueUnavailable = static_cast<int>(0x80D170FFu);
+constexpr std::uint32_t FlipCommandWords = 0x100;
+constexpr std::uint32_t MaxCommandBufferBytes = 0x3ffffd;
+
+bool ValidSubmit(std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes) {
+    if (count == 0) return true;
+    if (!dcbAddresses || !dcbSizes || (ccbSizes && !ccbAddresses)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (dcbSizes[i] == 0 || dcbSizes[i] >= MaxCommandBufferBytes) return false;
+        if (ccbSizes && ccbSizes[i] >= MaxCommandBufferBytes) return false;
+    }
+    return true;
+}
+
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords, bool compute = false, bool predicated = false) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8) | (compute ? 2u : 0u) | (predicated ? 1u : 0u);
 }
@@ -176,8 +194,7 @@ int APS5_VABI sceGnmDestroyWorkloadStream(std::uint32_t stream) {
     return stream - 1 >= 0xf ? 1 : 0;
 }
 
-int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t workloadId) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t, std::uint32_t, std::uint64_t) {
     return 0;
 }
 
@@ -532,9 +549,13 @@ int APS5_VABI sceGnmLogicalTcaUnitToPhysical(std::uint32_t unit) {
     return static_cast<int>((TcaUnitMap >> ((unit * 4) & 31)) & 0xf);
 }
 
-int APS5_VABI sceGnmMapComputeQueueWithPriority(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmMapComputeQueueWithPriority(std::uint32_t pipeId, std::uint32_t queueId, std::uint64_t ringBase, std::uint32_t ringSizeDw, std::uint64_t readPointer, std::uint32_t priority) {
+    if (pipeId > 6) return ComputeQueueInvalid;
+    if (queueId > 7) return ComputeQueueInvalid + 1;
+    if ((ringSizeDw & (ringSizeDw - 1)) != 0) return ComputeQueueInvalid + 2;
+    if ((ringBase & 0xff) != 0) return ComputeQueueInvalid + 3;
+    if ((readPointer & 3) != 0 || priority > 1) return ComputeQueueInvalid + 4;
+    return ComputeQueueUnavailable;
 }
 
 int APS5_VABI sceGnmPaDisableFlipCallbacks(void) {
@@ -575,9 +596,8 @@ int APS5_VABI sceGnmRegisterResource(void) {
     return Failure;
 }
 
-int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(std::uint64_t, std::uint32_t*, std::uint32_t size, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return size < FlipCommandWords ? FlipCommandTooSmall : GpuUnavailable;
 }
 
 int APS5_VABI sceGnmResetVgtControl(std::uint32_t* cmdbuf, std::uint32_t size) {
@@ -719,14 +739,12 @@ int APS5_VABI sceGnmSetWaveLimitMultipliers(std::uint32_t, const std::uint8_t*) 
     return 1;
 }
 
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffersForWorkload(std::uint64_t, std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes, std::uint32_t, std::uint32_t, std::uint32_t, std::int64_t) {
+    return ValidSubmit(count, dcbAddresses, dcbSizes, ccbAddresses, ccbSizes) ? GpuUnavailable : SubmitInvalid;
 }
 
-int APS5_VABI sceGnmSubmitCommandBuffersForWorkload(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceGnmSubmitCommandBuffersForWorkload(std::uint64_t, std::uint32_t count, void** dcbAddresses, const std::uint32_t* dcbSizes, void** ccbAddresses, const std::uint32_t* ccbSizes) {
+    return ValidSubmit(count, dcbAddresses, dcbSizes, ccbAddresses, ccbSizes) ? GpuUnavailable : SubmitInvalid;
 }
 
 int APS5_VABI sceGnmUnregisterAllResourcesForOwner(void) {

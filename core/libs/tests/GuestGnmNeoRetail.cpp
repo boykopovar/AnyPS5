@@ -133,4 +133,32 @@ int main() {
         sceGnmValidateResetState,
         sceGnmValidationRegisterMemoryCheckCallback,
     });
+
+    constexpr int SubmitInvalid = static_cast<int>(0x80D11000u);
+    constexpr int GpuUnavailable = static_cast<int>(0x80D110FFu);
+    void* dcb[2] = {};
+    std::uint32_t sizes[2] = {0x100, 0x200};
+    std::uint32_t bad[2] = {0x100, 0};
+    std::uint32_t big[2] = {0x100, 0x3ffffd};
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, dcb, sizes, nullptr, nullptr) != GpuUnavailable) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 0, nullptr, nullptr, nullptr, nullptr) != GpuUnavailable) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, nullptr, sizes, nullptr, nullptr) != SubmitInvalid) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, dcb, nullptr, nullptr, nullptr) != SubmitInvalid) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, dcb, sizes, nullptr, sizes) != SubmitInvalid) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, dcb, bad, nullptr, nullptr) != SubmitInvalid) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, dcb, big, nullptr, nullptr) != SubmitInvalid) std::abort();
+    if (sceGnmSubmitCommandBuffersForWorkload(1, 2, dcb, sizes, dcb, big) != SubmitInvalid) std::abort();
+    if (sceGnmSubmitAndFlipCommandBuffersForWorkload(1, 2, dcb, sizes, dcb, sizes, 1, 0, 1, 0) != GpuUnavailable) std::abort();
+    if (sceGnmSubmitAndFlipCommandBuffersForWorkload(1, 2, dcb, bad, nullptr, nullptr, 1, 0, 1, 0) != SubmitInvalid) std::abort();
+    static std::uint32_t flip[0x100] = {};
+    if (sceGnmRequestFlipAndSubmitDoneForWorkload(1, flip, 0x100, 1, 0, 1, 0) != GpuUnavailable || flip[0] != 0) std::abort();
+    if (sceGnmRequestFlipAndSubmitDoneForWorkload(1, flip, 0xff, 1, 0, 1, 0) != static_cast<int>(0x80D11001u)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(0, 0, 0x1000, 0x400, 0x2000, 1) != static_cast<int>(0x80D170FFu)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(7, 0, 0x1000, 0x400, 0x2000, 0) != static_cast<int>(0x80D17000u)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(0, 8, 0x1000, 0x400, 0x2000, 0) != static_cast<int>(0x80D17001u)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(0, 0, 0x1000, 0x300, 0x2000, 0) != static_cast<int>(0x80D17002u)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(0, 0, 0x1010, 0x400, 0x2000, 0) != static_cast<int>(0x80D17003u)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(0, 0, 0x1000, 0x400, 0x2002, 0) != static_cast<int>(0x80D17004u)) std::abort();
+    if (sceGnmMapComputeQueueWithPriority(0, 0, 0x1000, 0x400, 0x2000, 2) != static_cast<int>(0x80D17004u)) std::abort();
+    if (sceGnmDingDongForWorkload(1, 0x40, 1) != 0) std::abort();
 }
