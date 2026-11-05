@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -352,6 +353,60 @@ static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, s
     }
 }
 
+static float CompressorCoefficient(float seconds, std::uint32_t sampleRate) {
+    const auto samples = static_cast<std::int32_t>(seconds * static_cast<float>(sampleRate));
+    return samples == 0 ? 0.0f : std::exp(-1.0f / static_cast<float>(samples));
+}
+
+static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
+    auto& compressor = voice.compressor;
+    if (!compressor.configured) return;
+    const auto& param = compressor.param;
+    if ((param.flags & 1u) != 0) {
+        compressor.gain.fill(1.0f);
+        return;
+    }
+    if (voice.userFxHandler != nullptr) throw std::runtime_error("NGS2: a submixer compressor on a voice with a UserFx handler is not implemented");
+    const auto channels = std::min<std::uint32_t>(voice.channels, NGS2_MAX_CHANNELS);
+    const float attack = CompressorCoefficient(param.attack_time, sampleRate);
+    const float release = CompressorCoefficient(param.release_time, sampleRate);
+    std::array<float, NGS2_MAX_CHANNELS> level{};
+    for (std::uint32_t start = 0; start < grain; start += 32) {
+        const auto count = std::min<std::uint32_t>(32, grain - start);
+        for (std::uint32_t channel = 0; channel < channels; channel++) {
+            const float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain + start;
+            float value = 0.0f;
+            if ((param.flags & 2u) != 0) {
+                for (std::uint32_t i = 0; i < count; i++) value += samples[i] * samples[i];
+                value = std::sqrt(value / static_cast<float>(count));
+            } else {
+                for (std::uint32_t i = 0; i < count; i++) value = std::max(value, std::abs(samples[i]));
+            }
+            level[channel] = value;
+        }
+        if ((param.flags & 0x20u) == 0) {
+            const bool lfeApart = (param.flags & 0x10u) != 0;
+            float loudest = 0.0f;
+            for (std::uint32_t channel = 0; channel < channels; channel++) {
+                if (!lfeApart || channel != 3) loudest = std::max(loudest, level[channel]);
+            }
+            for (std::uint32_t channel = 0; channel < channels; channel++) {
+                if (!lfeApart || channel != 3) level[channel] = loudest;
+            }
+        }
+        for (std::uint32_t channel = 0; channel < channels; channel++) {
+            const float x = level[channel];
+            const float target = x > param.threshold ? (param.threshold + (x - param.threshold) * param.ratio) / x : 1.0f;
+            float& gain = compressor.gain[channel];
+            float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain + start;
+            for (std::uint32_t i = 0; i < count; i++) {
+                gain = target + (gain - target) * (target < gain ? attack : release);
+                samples[i] *= gain * param.level;
+            }
+        }
+    }
+}
+
 void Ngs2UpdatePeakMeter(Ngs2Voice& voice, std::uint32_t grain) {
     if (voice.peakMeterMode == 0 || voice.channels == 0) {
         voice.peakHeight = 0.0f;
@@ -416,6 +471,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
             else if (voice.outputTransition != Ngs2VoiceTransition::Kill) RenderSampler(voice, grain, systemRate);
         } else {
             MixInputs(voice, voices, grain, systemRate);
+            if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER) ProcessCompressor(voice, grain, systemRate);
         }
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB && voice.reverb) voice.hasSamples = Ngs2ProcessReverb(voice, grain, systemRate);
         Ngs2ProcessLegacyUserFx(voice, grain, systemRate);
