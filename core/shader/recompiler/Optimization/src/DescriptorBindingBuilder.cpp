@@ -26,7 +26,8 @@ static_assert(PipelineSpecialization::CompareBase + ShaderInfo::MaxImages * Pipe
 static_assert(PipelineSpecialization::FoldOffsetBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::UnnormalizedBaseLevelBase);
 static_assert(PipelineSpecialization::UnnormalizedBaseLevelBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MirrorUnnormalizedBase);
 static_assert(PipelineSpecialization::MirrorUnnormalizedBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::MinLodBase);
-static_assert(PipelineSpecialization::MinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::FmaskFormatBase);
+static_assert(PipelineSpecialization::MinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::SamplerLodBiasBase);
+static_assert(PipelineSpecialization::SamplerLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::FmaskFormatBase);
 static_assert(PipelineSpecialization::FmaskFormatBase + ShaderInfo::MaxImages <= PipelineSpecialization::VolumeGatherBase);
 static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
 
