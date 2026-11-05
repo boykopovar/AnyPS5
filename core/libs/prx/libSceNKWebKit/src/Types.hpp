@@ -101,12 +101,17 @@ public:
     bool valid = false;
 };
 
-class FrameHandle final : public ObjectOf<ObjectType::FrameHandle> {
+class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
-    FrameHandle() = default;
-    explicit FrameHandle(std::uint64_t frameID) : frameID(frameID) {}
-
-    std::uint64_t frameID = 0;
+    std::string absoluteImageURL;
+    std::string absoluteLinkURL;
+    std::string absoluteMediaURL;
+    std::string absolutePDFURL;
+    std::u16string linkLabel;
+    std::u16string linkTitle;
+    std::u16string lookupText;
+    RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
+    bool isContentEditable = false;
 };
 
 }  // namespace NKWebKit
