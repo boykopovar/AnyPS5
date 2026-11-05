@@ -8,17 +8,7 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI ASN1_INTEGER_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ASN1_OBJECT_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ASN1_STRING_get0_data_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -79,11 +69,6 @@ int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_DigestInit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_DigestSignFinal_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -95,16 +80,6 @@ int APS5_VABI EVP_DigestSignInit_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_EncryptInit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_MD_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_MD_CTX_new_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -180,21 +155,6 @@ int APS5_VABI EVP_aes_192_wrap_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_aes_256_wrap_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_sha1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_sha224_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OBJ_cmp_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -316,11 +276,6 @@ int APS5_VABI X509_STORE_up_ref_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_get0_extensions_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_get0_notAfter_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -332,16 +287,6 @@ int APS5_VABI X509_get0_notBefore_nid_postfix(void) {
 }
 
 int APS5_VABI X509_get0_signature_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get_ext_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get_ext_count_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -37,7 +37,7 @@ int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const
 int APS5_VABI sceAppContentAppParamGetString(uint32_t paramId, char* value, size_t valueSize);
 int APS5_VABI sceAppContentDownload0Expand(void);
 int APS5_VABI sceAppContentDownload0Shrink(void);
-int APS5_VABI sceAppContentDownload1Expand(void);
+int APS5_VABI sceAppContentDownload1Expand(size_t size);
 int APS5_VABI sceAppContentDownload1Shrink(void);
 int APS5_VABI sceAppContentDownload2Expand(size_t size);
 int APS5_VABI sceAppContentDownload2Shrink(void);
