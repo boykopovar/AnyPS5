@@ -192,12 +192,11 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
 }
 
 int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
- // System-wide game presets (difficulty, view inversion, subtitles, audio language) of the user's
- // profile. A fresh console has none set: every field is 0, "not specified", and the title falls
- // back to its own defaults. this_size is the caller's.
- const int index = UserIndex(user_id);
- if (presets == nullptr || index < 0) {
+ if (presets == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  presets->difficulty = 0;
  presets->priority = 0;
@@ -354,11 +353,11 @@ int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t*
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
- if (!IsUserLoggedIn(user_id)) {
-  return USER_SERVICE_ERROR_UNKNOWN_USER;
- }
  if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  *account_id = 0;
  return USER_SERVICE_OK;
@@ -2034,9 +2033,8 @@ int APS5_VABI sceUserServiceSetPbtcWednesdayDuration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsGuestUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsGuestUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xe0000000u) == 0x20000000u ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetPadProfileDataHuntList(void) {
@@ -2514,9 +2512,8 @@ int APS5_VABI sceUserServiceSetPbtcAdditionalTime(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsSharePlayClientUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsSharePlayClientUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xf0000000u) == 0x30000000u ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetMonoOutput(void) {
@@ -2934,9 +2931,10 @@ int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetIsSpartacusEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
+    if (enabled == nullptr) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    *enabled = true;
+    return USER_SERVICE_OK;
 }
 
 }
