@@ -199,6 +199,26 @@ static void CheckClassification() {
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
 }
 
+static void CheckRoundHalfwayAwayFromZero() {
+    const double doubleCases[][2] = {{0.5, 1.0}, {-0.5, -1.0}, {1.5, 2.0}, {2.5, 3.0}, {-1.5, -2.0}, {-2.5, -3.0}, {0.4, 0.0}, {-0.6, -1.0}, {4503599627370495.5, 4503599627370496.0}, {-4503599627370495.5, -4503599627370496.0}};
+    for (const auto& item : doubleCases) Require(round_nid_postfix(item[0]) == item[1]);
+    Require(round_nid_postfix(0.49999999999999994) == 0.0 && !std::signbit(round_nid_postfix(0.49999999999999994)));
+    Require(std::signbit(round_nid_postfix(-0.4)) && round_nid_postfix(-0.4) == 0.0);
+    Require(!std::signbit(round_nid_postfix(0.0)) && std::signbit(round_nid_postfix(-0.0)));
+    Require(round_nid_postfix(INFINITY) == INFINITY && round_nid_postfix(-INFINITY) == -INFINITY);
+    Require(std::isnan(round_nid_postfix(NAN)));
+    Require(round_nid_postfix(4503599627370497.0) == 4503599627370497.0 && round_nid_postfix(1e300) == 1e300);
+
+    const float floatCases[][2] = {{0.5f, 1.0f}, {-0.5f, -1.0f}, {1.5f, 2.0f}, {2.5f, 3.0f}, {-1.5f, -2.0f}, {-2.5f, -3.0f}, {0.4f, 0.0f}, {-0.6f, -1.0f}, {8388607.5f, 8388608.0f}, {-8388607.5f, -8388608.0f}};
+    for (const auto& item : floatCases) Require(roundf_nid_postfix(item[0]) == item[1]);
+    Require(roundf_nid_postfix(0.49999997f) == 0.0f && !std::signbit(roundf_nid_postfix(0.49999997f)));
+    Require(std::signbit(roundf_nid_postfix(-0.4f)) && roundf_nid_postfix(-0.4f) == 0.0f);
+    Require(!std::signbit(roundf_nid_postfix(0.0f)) && std::signbit(roundf_nid_postfix(-0.0f)));
+    Require(roundf_nid_postfix(INFINITY) == INFINITY && roundf_nid_postfix(-INFINITY) == -INFINITY);
+    Require(std::isnan(roundf_nid_postfix(NAN)));
+    Require(roundf_nid_postfix(8388609.0f) == 8388609.0f && roundf_nid_postfix(1e38f) == 1e38f);
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -209,5 +229,6 @@ int main() {
     CheckRoundingModes();
     CheckRintTiesToEven();
     CheckClassification();
+    CheckRoundHalfwayAwayFromZero();
     return 0;
 }

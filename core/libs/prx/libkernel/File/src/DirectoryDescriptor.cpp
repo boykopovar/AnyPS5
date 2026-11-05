@@ -24,6 +24,7 @@
 #ifdef _WIN32
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
@@ -203,7 +204,10 @@ void Load(DirectoryState& state, int fd) {
             const auto utf8Name = it->path().filename().u8string();
             const std::string name(reinterpret_cast<const char*>(utf8Name.data()), utf8Name.size());
             FileStat entryStatus{};
-            if (!File::FillLinkStat(it->path(), &entryStatus)) throw std::system_error(errno, std::generic_category(), "stat directory entry");
+            if (!File::FillLinkStat(it->path(), &entryStatus)) {
+                if (errno == ENOENT) continue;
+                throw std::system_error(errno, std::generic_category(), "stat directory entry");
+            }
 #ifdef _WIN32
             Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), EntryType(it->path(), followLinks));
 #else
@@ -227,9 +231,11 @@ void Load(DirectoryState& state, int fd) {
 #ifdef _WIN32
 int OpenPlaceholder(const std::filesystem::path& path) {
     std::error_code error;
-    if (std::filesystem::is_directory(path, error)) {
+    const auto verbatimPath = NativeVerbatimPath_nid_no_patch(path, error, WindowsMaxDirectoryPathLength);
+    const auto& openPath = error ? path : verbatimPath;
+    if (std::filesystem::is_directory(openPath, error)) {
         SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-        const auto handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        const auto handle = CreateFileW(openPath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             &security, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (handle == INVALID_HANDLE_VALUE) {
             errno = WindowsOpenError_nid_no_patch(GetLastError());
