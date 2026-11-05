@@ -481,6 +481,18 @@ std::int64_t APS5_VABI imaxabs_nid_postfix(std::int64_t x) {
 }
 
 float APS5_VABI fmodf_nid_postfix(float x, float y) {
+    const std::uint32_t ix = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    const std::uint32_t iy = std::bit_cast<std::uint32_t>(y) & 0x7fffffffu;
+    if (iy == 0 || ix >= 0x7f800000u || iy > 0x7f800000u) {
+        _Feraise_nid_postfix(0x01);
+        if (iy > 0x7f800000u) {
+            return y + y;
+        }
+        if (ix > 0x7f800000u) {
+            return x + x;
+        }
+        return (x * y) / (x * y);
+    }
     const int saved_errno = errno;
     const float result = std::fmod(x, y);
     errno = saved_errno;
@@ -541,7 +553,85 @@ float APS5_VABI acosf_nid_postfix(float x) {
     const float correction = (z - high * high) / (s + high);
     return 2.0f * (high + (AcosfRational(z) * s + correction));
 }
-float APS5_VABI hypotf_nid_postfix(float x, float y) { return static_cast<float>(std::hypot(static_cast<double>(x), static_cast<double>(y))); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_hypotf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_hypotf.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+float APS5_VABI hypotf_nid_postfix(float x, float y) {
+    const auto word = [](float value) { return static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(value)); };
+    const auto fromWord = [](std::int32_t value) { return std::bit_cast<float>(static_cast<std::uint32_t>(value)); };
+    std::int32_t ha = word(x) & 0x7fffffff;
+    std::int32_t hb = word(y) & 0x7fffffff;
+    float a = x;
+    float b = y;
+    if (hb > ha) {
+        std::swap(a, b);
+        std::swap(ha, hb);
+    }
+    a = std::fabs(a);
+    b = std::fabs(b);
+    if (ha - hb > 0xf000000) {
+        return a + b;
+    }
+    int k = 0;
+    if (ha > 0x58800000) {
+        if (ha >= 0x7f800000) {
+            float w = std::fabs(x + 0.0f) - std::fabs(y + 0.0f);
+            if (ha == 0x7f800000) {
+                w = a;
+            }
+            if (hb == 0x7f800000) {
+                w = b;
+            }
+            return w;
+        }
+        ha -= 0x22000000;
+        hb -= 0x22000000;
+        k += 68;
+        a = fromWord(ha);
+        b = fromWord(hb);
+    }
+    if (hb < 0x26800000) {
+        if (hb <= 0x007fffff) {
+            if (hb == 0) {
+                return a;
+            }
+            b *= 0x1p126f;
+            a *= 0x1p126f;
+            k -= 126;
+        } else {
+            ha += 0x22000000;
+            hb += 0x22000000;
+            k -= 68;
+            a = fromWord(ha);
+            b = fromWord(hb);
+        }
+    }
+    float w = a - b;
+    if (w > b) {
+        const float t1 = fromWord(ha & static_cast<std::int32_t>(0xfffff000));
+        const float t2 = a - t1;
+        w = std::sqrt(t1 * t1 - (b * (-b) - t2 * (a + t1)));
+    } else {
+        a = a + a;
+        const float y1 = fromWord(hb & static_cast<std::int32_t>(0xfffff000));
+        const float y2 = b - y1;
+        const float t1 = fromWord((ha + 0x00800000) & static_cast<std::int32_t>(0xfffff000));
+        const float t2 = a - t1;
+        w = std::sqrt(t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b)));
+    }
+    if (k != 0) {
+        return fromWord((127 + k) << 23) * w;
+    }
+    return w;
+}
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_hypot.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_hypot.c */
 /*
  * ====================================================
@@ -1160,7 +1250,93 @@ double APS5_VABI atan_nid_postfix(double x) {
     z = atanhi[id] - ((x * (s1 + s2) - atanlo[id]) - x);
     return hx < 0 ? -z : z;
 }
-double APS5_VABI log_nid_postfix(double x) { return std::log(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_log.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_log.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+double APS5_VABI log_nid_postfix(double x) {
+    const double ln2_hi = 6.93147180369123816490e-01;
+    const double ln2_lo = 1.90821492927058770002e-10;
+    const double two54 = 1.80143985094819840000e+16;
+    const double Lg1 = 6.666666666666735130e-01;
+    const double Lg2 = 3.999999999940941908e-01;
+    const double Lg3 = 2.857142874366239149e-01;
+    const double Lg4 = 2.222219843214978396e-01;
+    const double Lg5 = 1.818357216161805012e-01;
+    const double Lg6 = 1.531383769920937332e-01;
+    const double Lg7 = 1.479819860511658591e-01;
+    static volatile double vzero = 0.0;
+    std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    std::int32_t k = 0;
+    if (hx < 0x00100000) {
+        if (((hx & 0x7fffffff) | lx) == 0) {
+            errno = ERANGE;
+            return -two54 / vzero;
+        }
+        if (hx < 0) {
+            _Feraise_nid_postfix(0x01);
+            return (x - x) / 0.0;
+        }
+        k -= 54;
+        x *= two54;
+        bits = std::bit_cast<std::uint64_t>(x);
+        hx = static_cast<std::int32_t>(bits >> 32);
+    }
+    if (hx >= 0x7ff00000) {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    hx &= 0x000fffff;
+    std::int32_t i = (hx + 0x95f64) & 0x100000;
+    x = std::bit_cast<double>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(hx | (i ^ 0x3ff00000))) << 32) | (bits & 0xffffffffu));
+    k += i >> 20;
+    const double f = x - 1.0;
+    if ((0x000fffff & (2 + hx)) < 3) {
+        if (f == 0.0) {
+            if (k == 0) {
+                return 0.0;
+            }
+            const double dk = k;
+            return dk * ln2_hi + dk * ln2_lo;
+        }
+        const double R = f * f * (0.5 - 0.33333333333333333 * f);
+        if (k == 0) {
+            return f - R;
+        }
+        const double dk = k;
+        return dk * ln2_hi - ((R - dk * ln2_lo) - f);
+    }
+    const double s = f / (2.0 + f);
+    const double dk = k;
+    const double z = s * s;
+    i = hx - 0x6147a;
+    const double w = z * z;
+    const std::int32_t j = 0x6b851 - hx;
+    const double t1 = w * (Lg2 + w * (Lg4 + w * Lg6));
+    const double t2 = z * (Lg1 + w * (Lg3 + w * (Lg5 + w * Lg7)));
+    i |= j;
+    const double R = t2 + t1;
+    if (i > 0) {
+        const double hfsq = 0.5 * f * f;
+        if (k == 0) {
+            return f - (hfsq - s * (hfsq + R));
+        }
+        return dk * ln2_hi - ((hfsq - (s * (hfsq + R) + dk * ln2_lo)) - f);
+    }
+    if (k == 0) {
+        return f - s * (f - R);
+    }
+    return dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
+}
 double APS5_VABI log1p_nid_postfix(double x) {
     const double ln2_hi = 6.93147180369123816490e-01;
     const double ln2_lo = 1.90821492927058770002e-10;
@@ -2396,9 +2572,11 @@ double APS5_VABI atanh_nid_postfix(double x) {
     const std::int32_t ix = hx & 0x7fffffff;
     if ((static_cast<std::uint32_t>(ix) | ((lx | (0u - lx)) >> 31)) > 0x3ff00000u) {
         _Feraise_nid_postfix(0x01);
+        errno = EDOM;
         return (x - x) / (x - x);
     }
     if (ix == 0x3ff00000) {
+        _Feraise_nid_postfix(0x04);
         errno = ERANGE;
         return x / zero;
     }
@@ -3227,9 +3405,32 @@ float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
     errno = saved_errno;
     return result;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_fmod.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_fmod.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI fmod_nid_postfix(double x, double y) {
-    int saved_errno = errno;
-    double result = std::fmod(x, y);
+    const std::uint64_t ix = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    const std::uint64_t iy = std::bit_cast<std::uint64_t>(y) & 0x7fffffffffffffffull;
+    if (iy == 0 || ix >= 0x7ff0000000000000ull || iy > 0x7ff0000000000000ull) {
+        _Feraise_nid_postfix(0x01);
+        if (iy > 0x7ff0000000000000ull) {
+            return y + y;
+        }
+        if (ix > 0x7ff0000000000000ull) {
+            return x + x;
+        }
+        return (x * y) / (x * y);
+    }
+    const int saved_errno = errno;
+    const double result = std::fmod(x, y);
     errno = saved_errno;
     return result;
 }
