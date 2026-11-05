@@ -65,6 +65,19 @@ class TitlesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
             title_run.load_titles(self.write({"NOT-AN-ID": {}}))
 
+    def test_files_refuse_colons_in_every_path_component(self):
+        cases = [{f"{root}/asset.bin:note": {"text": ""}} for root in ("app0", "data", "download0")]
+        cases += [
+            {"app0/nested/asset.bin:note:$DATA": {"text": ""}},
+            {"app0/nested/C:asset.bin": {"text": ""}},
+            {"app0/nested:note/asset.bin": {"text": ""}},
+            {"app0/asset.bin": {"content": "nested/asset.bin:note"}},
+            {"app0/asset.bin": {"content": "nested/asset.bin:note:$DATA"}},
+        ]
+        for files in cases:
+            with self.subTest(files=files), self.assertRaisesRegex(ValueError, "PPSA00001: files: "):
+                title_run.load_titles(self.write({"PPSA00001": {"files": files}}))
+
     def test_name_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field name"):
             title_run.load_titles(self.write({"PPSA00001": {"name": "Light"}}))

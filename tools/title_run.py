@@ -41,7 +41,7 @@ def check_pad(pad):
 
 def inside(path, roots=()):
     pure = PurePosixPath(path)
-    if "\\" in path or pure.is_absolute() or not pure.parts or ".." in pure.parts or ":" in pure.parts[0]:
+    if "\\" in path or ":" in path or pure.is_absolute() or not pure.parts or ".." in pure.parts:
         return False
     return not roots or (len(pure.parts) > 1 and pure.parts[0] in roots)
 
