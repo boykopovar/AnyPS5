@@ -750,7 +750,7 @@ int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_client_cert_cb_nid_postfix(void);
 void APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(LibreSslCtx* ctx, void* callback);
 void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(LibreSslCtx* ctx, void* userdata);
-int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(void);
+int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(LibreSslCtx* ctx, int index, void* value);
 int APS5_VABI SSL_CTX_set_info_callback_nid_postfix(void);
 void APS5_VABI SSL_CTX_set_msg_callback_nid_postfix(LibreSslCtx* ctx, void* callback);
 int APS5_VABI SSL_CTX_set_next_proto_select_cb_nid_postfix(void);
