@@ -39,8 +39,6 @@ git submodule update --init --recursive
 
 ## Requirements
 
-With `BUILD_TESTING=ON` and Python available, the daily-tag workflow tests require Node.js. CI uses Node.js 24 to match `actions/github-script`; a missing Node executable fails these tests instead of silently skipping their JavaScript checks.
-
 - x86-64, Git, CMake 3.21 or newer (the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
 - Linux display refresh queries require SDL's XRandR support (`libxrandr-dev` on Debian/Ubuntu; `libXrandr-devel` on Fedora). Bundled SDL configuration fails without it. Keep `SDL_X11_XRANDR` enabled.
 - Linux: GCC, G++, binutils. SDL's X11 backend requires X11 and Xext development headers (`libx11-dev` and `libxext-dev` on Debian/Ubuntu). SDL's Wayland backend requires the Wayland, xkbcommon and EGL development files (`libwayland-dev`, `libxkbcommon-dev` and `libegl-dev` on Debian/Ubuntu; `wayland-devel`, `libxkbcommon-devel` and `mesa-libEGL-devel` on Fedora), and `libdecor-0-dev` (`libdecor-devel`) for window decorations on GNOME. SDL loads both backends at run time and prefers Wayland when `WAYLAND_DISPLAY` is set; `SDL_VIDEODRIVER=x11` selects X11 (XWayland). Titles that bundle their own SDL read `SDL_VIDEODRIVER` too, and some of them fail to start with `x11`. Without the Wayland files configuration still succeeds, and the build uses X11 only. Audio output needs SDL's PipeWire, PulseAudio or ALSA backend, built from their development files (`libpipewire-0.3-dev`, `libpulse-dev` and `libasound2-dev` on Debian/Ubuntu; `pipewire-devel`, `pulseaudio-libs-devel` and `alsa-lib-devel` on Fedora). SDL loads them at run time. Without any of them SDL keeps only its silent dummy and disk drivers, so configuration fails.
@@ -54,6 +52,8 @@ With `BUILD_TESTING=ON` and Python available, the daily-tag workflow tests requi
   ```bat
   @"C:\Program Files\Git\bin\bash.exe" "%~dpn5.sh" %6 %7
   ```
+
+With `BUILD_TESTING=ON` and Python available, the daily-tag workflow tests require Node.js. The self-hosted Linux Build job installs Node.js 24, matching `actions/github-script`; a missing Node executable fails these tests instead of silently skipping their JavaScript checks.
 
 ## Web converter releases
 

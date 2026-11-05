@@ -19,14 +19,14 @@ jobs:
     steps:
       - name: Require the historical-tag publishing token
         id: token-check
-        shell: bash
+        uses: actions/github-script@v8
         env:
           DAILY_TAG_TOKEN: ${{ secrets.DAILY_TAG_TOKEN }}
-        run: |
-          if [ -z "$DAILY_TAG_TOKEN" ]; then
-            echo '::error::Configure DAILY_TAG_TOKEN for this repository with Actions read, Contents write and Workflows write permissions.'
-            exit 1
-          fi
+        with:
+          script: |
+            if (!process.env.DAILY_TAG_TOKEN) {
+              throw new Error('Configure DAILY_TAG_TOKEN for this repository with Actions read, Contents write and Workflows write permissions.');
+            }
       - name: Tag the newest main commit whose push Build passed
         id: snapshot
         uses: actions/github-script@v8

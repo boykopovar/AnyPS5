@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/daily-tag.yml"
@@ -126,6 +127,35 @@ class Clock extends Date {
 """
 
 
+PREFLIGHT_HARNESS = r"""
+const fs = require('fs');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const messages = [];
+const record = (...values) => messages.push(values.map(String).join(' '));
+const logger = {log: record, info: record, warning: record, warn: record, error: record, debug: record};
+const sandboxProcess = {env: input.token === null ? {} : {DAILY_TAG_TOKEN: input.token}};
+const github = new Proxy({}, {get: () => {throw new Error('The token preflight must not access the GitHub API');}});
+(async () => {
+  let error;
+  try {
+    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+    await new AsyncFunction('process', 'console', 'github', 'core', script)(sandboxProcess, logger, github, logger);
+  } catch (caught) {
+    error = {message: String(caught.message ?? caught)};
+  }
+  process.stdout.write(JSON.stringify({messages, error}));
+})().catch((error) => {process.stderr.write(String(error)); process.exitCode = 1;});
+"""
+
+
+def node_executable():
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("Node.js is required to validate the daily snapshot script")
+    return str(Path(node).resolve())
+
+
 def workflow_step_script(step_id, key):
     lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
     step = next(index for index, line in enumerate(lines) if line.strip() == f"id: {step_id}")
@@ -159,9 +189,7 @@ def reference(sha=OLD, name=TAG, kind="commit"):
 class DailySnapshotTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.node = shutil.which("node")
-        if not cls.node:
-            raise RuntimeError("Node.js is required to validate the daily snapshot script")
+        cls.node = node_executable()
         cls.temp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temp.name)
         (cls.root / "harness.js").write_text(HARNESS, encoding="utf-8")
@@ -451,34 +479,60 @@ class DailySnapshotWorkflowTests(unittest.TestCase):
 
 
     def run_token_preflight(self, token):
+        node = node_executable()
         env = os.environ.copy()
-        env["DAILY_TAG_TOKEN"] = token
-        return subprocess.run([shutil.which("bash"), "--noprofile", "--norc", "-e", "-o", "pipefail", "-c",
-                               workflow_step_script("token-check", "run")],
-                              env=env, capture_output=True, text=True, encoding="utf-8", timeout=5)
+        env.pop("DAILY_TAG_TOKEN", None)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "harness.js").write_text(PREFLIGHT_HARNESS, encoding="utf-8")
+            (root / "preflight.js").write_text(workflow_step_script("token-check", "script"), encoding="utf-8")
+            process = subprocess.run([node, str(root / "harness.js"), str(root / "preflight.js")],
+                                     input=json.dumps({"token": token}), env=env, capture_output=True,
+                                     text=True, encoding="utf-8", timeout=5)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        return json.loads(process.stdout)
 
     def test_token_preflight_fails_clearly_when_the_secret_is_empty(self):
-        process = self.run_token_preflight("")
-        self.assertNotEqual(process.returncode, 0)
-        self.assertIn("DAILY_TAG_TOKEN", process.stdout + process.stderr)
+        for token in ("", None):
+            with self.subTest(token=token):
+                result = self.run_token_preflight(token)
+                self.assertIn("error", result)
+                self.assertIn("DAILY_TAG_TOKEN", result["error"]["message"])
 
     def test_token_preflight_accepts_a_present_secret_without_logging_it(self):
         token = "daily-tag-test-secret-51e7c4d2"
-        process = self.run_token_preflight(token)
-        self.assertEqual(process.returncode, 0, process.stderr)
-        self.assertNotIn(token, process.stdout + process.stderr)
+        result = self.run_token_preflight(token)
+        self.assertNotIn("error", result)
+        self.assertNotIn(token, json.dumps(result))
+
+    def test_token_preflight_requires_node_but_no_bash_or_other_path_tools(self):
+        node = node_executable()
+        self.assertTrue(Path(node).is_absolute())
+        for token in ("", "daily-tag-test-secret-without-bash"):
+            with self.subTest(secret_present=bool(token)):
+                with mock.patch.object(shutil, "which", side_effect=lambda name: node if name == "node" else None) as lookup:
+                    with mock.patch.object(subprocess, "run", wraps=subprocess.run) as run:
+                        result = self.run_token_preflight(token)
+                self.assertEqual(lookup.call_args_list, [mock.call("node")])
+                self.assertEqual(run.call_args.args[0][0], node)
+                self.assertFalse(run.call_args.kwargs.get("shell", False))
+                self.assertNotIn("DAILY_TAG_TOKEN", run.call_args.kwargs["env"])
+                if token:
+                    self.assertNotIn("error", result)
+                    self.assertNotIn(token, json.dumps(result))
+                else:
+                    self.assertIn("DAILY_TAG_TOKEN", result["error"]["message"])
 
 
 class DailySnapshotDependencyTests(unittest.TestCase):
-    def require_missing_node_failure(self, workflow):
+    def require_missing_node_failure(self, workflow, test_name="DailySnapshotTests.test_manual_main_run_creates_the_same_snapshot"):
         source = Path(__file__).resolve()
         program = ("import importlib.util, pathlib, unittest\n"
                    f"spec = importlib.util.spec_from_file_location('daily_tag_dependency_test', {str(source)!r})\n"
                    "module = importlib.util.module_from_spec(spec)\n"
                    "spec.loader.exec_module(module)\n"
                    f"module.WORKFLOW = pathlib.Path({str(workflow)!r})\n"
-                   "unittest.main(module=module, argv=['test_daily_tag.py', "
-                   "'DailySnapshotTests.test_manual_main_run_creates_the_same_snapshot'])\n")
+                   f"unittest.main(module=module, argv=['test_daily_tag.py', {test_name!r}])\n")
         env = os.environ.copy()
         env["PATH"] = ""
         process = subprocess.run([sys.executable, "-c", program], env=env, capture_output=True,
@@ -491,12 +545,17 @@ class DailySnapshotDependencyTests(unittest.TestCase):
     def test_missing_node_fails_instead_of_skipping_the_behavioral_tests(self):
         self.require_missing_node_failure(WORKFLOW)
 
+    def test_missing_node_fails_for_the_token_preflight(self):
+        self.require_missing_node_failure(WORKFLOW, "DailySnapshotWorkflowTests.test_token_preflight_accepts_a_present_secret_without_logging_it")
+
     def test_invalid_javascript_cannot_pass_when_node_is_missing(self):
         with tempfile.TemporaryDirectory() as folder:
             workflow = Path(folder) / "daily-tag.yml"
             text = WORKFLOW.read_text(encoding="utf-8")
-            self.assertIn("script: |", text)
-            workflow.write_text(text.replace("script: |", "script: |\n            const = invalid JavaScript;", 1),
+            step = text.index("id: snapshot")
+            start = text.index("script: |", step)
+            line_end = text.index("\n", start)
+            workflow.write_text(text[:line_end] + "\n            const = invalid JavaScript;" + text[line_end:],
                                 encoding="utf-8")
             self.require_missing_node_failure(workflow)
 
