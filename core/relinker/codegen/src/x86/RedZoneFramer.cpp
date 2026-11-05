@@ -706,6 +706,7 @@ void frameSegment(
                 continue;
             }
             ++report.NotRelocated[refusal];
+            if (std::getenv("APS5_RELINK_REDZONE_SKIPS") != nullptr) std::fprintf(stderr, "red-zone not relocated 0x%llx-0x%llx (%zu instructions): %s\n", static_cast<unsigned long long>(ph.MappedAddress + start), static_cast<unsigned long long>(ph.MappedAddress + limit), body.size(), refusal);
             skip(reason);
             continue;
         }
