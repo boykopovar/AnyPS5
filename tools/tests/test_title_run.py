@@ -377,15 +377,23 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
+    WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
+              "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
+              "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
+
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):
-        window = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
-                  "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
-                  "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
+        self.assert_new_windows_go_behind_the_others(self.WINDOW)
+
+    @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
+    def test_windows_of_later_processes_go_behind_the_others_without_polling(self):
+        self.assert_new_windows_go_behind_the_others(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {self.WINDOW!r}])")
+
+    def assert_new_windows_go_behind_the_others(self, code):
         user32 = title_run.user32
         if not user32.FindWindowW("Progman", None):
             self.skipTest("no desktop shell in this session")
-        session = self.start(window)
+        session = self.start(code)
         user32.GetWindow.restype = title_run.wintypes.HWND
         user32.GetWindow.argtypes = (title_run.wintypes.HWND, title_run.wintypes.UINT)
         name = title_run.ctypes.create_unicode_buffer(256)

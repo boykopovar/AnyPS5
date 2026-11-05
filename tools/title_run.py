@@ -345,10 +345,13 @@ class Session:
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
-    def process_ids(self):
+    def job_process_ids(self):
         listing = ProcessIdList()
         kernel32.QueryInformationJobObject(self.job, 3, ctypes.byref(listing), ctypes.sizeof(listing), None)
-        ids = set(listing.ids[:listing.listed])
+        return set(listing.ids[:listing.listed])
+
+    def process_ids(self):
+        ids = self.job_process_ids()
         for pid in ids - self.handles.keys():
             self.handles[pid] = kernel32.OpenProcess(0x1000, False, pid)
             self.images[pid] = self.image_path(self.handles[pid]) if self.handles[pid] else ""
@@ -369,11 +372,13 @@ class Session:
 
     def watch_windows(self, ready):
         def created(hook, event, window, kind, child, thread, at):
-            if kind == 0 and child == 0 and user32.GetAncestor(window, 2) == window:
+            owner = wintypes.DWORD()
+            if (kind == 0 and child == 0 and user32.GetAncestor(window, 2) == window
+                    and user32.GetWindowThreadProcessId(window, ctypes.byref(owner)) and owner.value in self.job_process_ids()):
                 send_to_back(window)
 
         callback = WinEventCallback(created)
-        hook = user32.SetWinEventHook(0x8000, 0x8002, None, callback, self.process.pid, 0, 0)
+        hook = user32.SetWinEventHook(0x8000, 0x8002, None, callback, 0, 0, 2)
         self.watcher = kernel32.GetCurrentThreadId()
         ready.set()
         message = wintypes.MSG()
