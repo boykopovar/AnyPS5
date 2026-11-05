@@ -36317,19 +36317,11 @@ int APS5_VABI _ZNK3WTF3URL14fileSystemPathEv() {
 }
 
 
-int APS5_VABI _ZNK3WTF3URL17lastPathComponentEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

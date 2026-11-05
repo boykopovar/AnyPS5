@@ -777,91 +777,11 @@ void Run() {
     TestIntegersAndConstructors();
 }
 
-
-void TestURLDomainAndIPHelpers() {
-    auto v4Valid1 = FromUTF8Z(U8("127.0.0.1"));
-    auto v4Valid2 = FromUTF8Z(U8("0.0.0.0"));
-    auto v4Valid3 = FromUTF8Z(U8("255.255.255.255"));
-    auto v4Valid4 = FromUTF8Z(U8("192.168.1.1"));
-    auto v4Valid5 = FromUTF8Z(U8("10.0.0.1"));
-    Check(HostIsIPAddress(ViewOf(v4Valid1)));
-    Check(HostIsIPAddress(ViewOf(v4Valid2)));
-    Check(HostIsIPAddress(ViewOf(v4Valid3)));
-    Check(HostIsIPAddress(ViewOf(v4Valid4)));
-    Check(HostIsIPAddress(ViewOf(v4Valid5)));
-
-    Check(!HostIsIPAddress(Literal("256.0.0.1")));
-    Check(!HostIsIPAddress(Literal("1.2.3")));
-    Check(!HostIsIPAddress(Literal("1.2.3.4.5")));
-    Check(!HostIsIPAddress(Literal("01.1.1.1")));
-    Check(!HostIsIPAddress(Literal("1.2..3")));
-    Check(!HostIsIPAddress(Literal(".1.2.3")));
-    Check(!HostIsIPAddress(Literal("1.2.3.")));
-    Check(!HostIsIPAddress(Literal("1.2.3.a")));
-    Check(!HostIsIPAddress(Literal("example.com")));
-    Check(!HostIsIPAddress(Literal("")));
-
-    Check(HostIsIPAddress(Literal("::1")));
-    Check(HostIsIPAddress(Literal("::")));
-    Check(HostIsIPAddress(Literal("2001:db8::1")));
-    Check(HostIsIPAddress(Literal("fe80::1")));
-    Check(HostIsIPAddress(Literal("1:2:3:4:5:6:7:8")));
-    Check(HostIsIPAddress(Literal("2001:0db8:85a3:0000:0000:8a2e:0370:7334")));
-
-    Check(!HostIsIPAddress(Literal("1::2::3")));
-    Check(!HostIsIPAddress(Literal("1:2:3:4:5:6:7:8:9")));
-    Check(!HostIsIPAddress(Literal("12345::1")));
-    Check(!HostIsIPAddress(Literal("gggg::1")));
-    Check(!HostIsIPAddress(Literal(":::")));
-
-    auto v4Wide = Create16(u"192.168.1.1", 11);
-    auto v6Wide = Create16(u"::1", 3);
-    Check(HostIsIPAddress(ViewOf(v4Wide)));
-    Check(HostIsIPAddress(ViewOf(v6Wide)));
-
-    auto httpUrlStr = FromUTF8Z(U8("http://sub.example.com/path"));
-    URL httpUrl{httpUrlStr.impl, 1U | (4U << 6), 7, 7, 7, 22, 22, 27, 27};
-    Check(IsMatchingDomain(&httpUrl, Literal("sub.example.com")));
-    Check(IsMatchingDomain(&httpUrl, Literal("example.com")));
-    Check(IsMatchingDomain(&httpUrl, Literal("EXAMPLE.COM")));
-    Check(IsMatchingDomain(&httpUrl, Literal("")));
-    Check(!IsMatchingDomain(&httpUrl, Literal("other.com")));
-    Check(!IsMatchingDomain(&httpUrl, Literal("evil-example.com")));
-    Check(!IsMatchingDomain(&httpUrl, Literal("xample.com")));
-
-    auto httpsUrlStr = FromUTF8Z(U8("https://sub.example.com/path"));
-    URL httpsUrl{httpsUrlStr.impl, 1U | (5U << 6), 8, 8, 8, 23, 23, 28, 28};
-    Check(IsMatchingDomain(&httpsUrl, Literal("example.com")));
-
-    auto ftpUrlStr = FromUTF8Z(U8("ftp://sub.example.com/path"));
-    URL ftpUrl{ftpUrlStr.impl, 1U | (3U << 6), 6, 6, 6, 21, 21, 26, 26};
-    Check(!IsMatchingDomain(&ftpUrl, Literal("example.com")));
-
-    URL invalidUrl{httpUrlStr.impl, 0, 7, 7, 7, 22, 22, 27, 27};
-    Check(!IsMatchingDomain(&invalidUrl, Literal("example.com")));
-    Throws([&] { IsMatchingDomain(nullptr, Literal("example.com")); });
-
-    Check(ProtocolIs(&httpUrl, "http"));
-    Check(ProtocolIs(&httpUrl, "HTTP"));
-    Check(ProtocolIs(&httpUrl, "Http"));
-    Check(!ProtocolIs(&httpUrl, "https"));
-    Check(!ProtocolIs(&httpUrl, "ftp"));
-    Check(!ProtocolIs(&httpUrl, "htt"));
-    Check(!ProtocolIs(&httpUrl, "http_extra"));
-    Check(!ProtocolIs(&httpUrl, nullptr));
-    Check(!ProtocolIs(&invalidUrl, "http"));
-    Throws([&] { ProtocolIs(nullptr, "http"); });
-
-    Check(ProtocolIs(&httpsUrl, "https"));
-    Check(ProtocolIs(&httpsUrl, "HTTPS"));
-    Check(!ProtocolIs(&httpsUrl, "http"));
-}
-
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); }
 
 namespace Wtf2Tests {
 
@@ -890,6 +810,8 @@ const auto URLPortAllowed = &_ZN3WTF11portAllowedERKNS_3URLE;
 const auto IsJavaScript = &_ZN3WTF20protocolIsJavaScriptENS_10StringViewE;
 const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
+const auto URLLastPathComponent = &_ZNK3WTF3URL17lastPathComponentEv;
+const auto URLStrippedForReferrer = &_ZNK3WTF3URL24strippedForUseAsReferrerEv;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
 
@@ -1377,6 +1299,97 @@ void TestURLDomainAndIPHelpers() {
     Check(ProtocolIs(&httpsUrl, "https"));
     Check(ProtocolIs(&httpsUrl, "HTTPS"));
     Check(!ProtocolIs(&httpsUrl, "http"));
+}
+
+void TestURLLastPathComponentAndReferrer() {
+    auto httpBits = [](unsigned schemeEnd, unsigned portLength) { return 1U | 2U | (portLength << 3) | (schemeEnd << 6); };
+    auto simple = FromUTF8Z(U8("http://h/a/b"));
+    URL url{simple.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    Check(ViewText(URLLastPathComponent(&url)) == "b");
+    auto trailing = FromUTF8Z(U8("http://h/a/b/"));
+    URL slashed{trailing.impl, httpBits(4, 0), 7, 7, 7, 8, 13, 13, 13};
+    Check(ViewText(URLLastPathComponent(&slashed)) == "b");
+    auto root = FromUTF8Z(U8("http://h/"));
+    URL rootUrl{root.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 9, 9};
+    Check(!URLLastPathComponent(&rootUrl).data);
+    auto hostOnly = FromUTF8Z(U8("http://h"));
+    URL noPath{hostOnly.impl, httpBits(4, 0), 7, 7, 7, 8, 8, 8, 8};
+    Check(!URLLastPathComponent(&noPath).data);
+    auto opaque = FromUTF8Z(U8("mailto:abc"));
+    URL mailto{opaque.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 10, 10};
+    Check(ViewText(URLLastPathComponent(&mailto)) == "mailto:abc");
+    auto wide = Create16(u"http://h/a/b", 12);
+    URL wideUrl{wide.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    auto wideResult = URLLastPathComponent(&wideUrl);
+    Check(!wideResult.is8Bit && wideResult.length == 1 && ViewText(wideResult) == "b");
+    auto port = FromUTF8Z(U8("http://h:80/dir/file.txt?q"));
+    URL withPort{port.impl, httpBits(4, 3), 7, 7, 7, 8, 16, 24, 26};
+    Check(ViewText(URLLastPathComponent(&withPort)) == "file.txt");
+    auto slashDot = FromUTF8Z(U8("foo:/.//a"));
+    URL dotted{slashDot.impl, 1U | (3U << 6), 4, 4, 4, 4, 8, 9, 9};
+    Check(ViewText(URLLastPathComponent(&dotted)) == "a");
+    auto beforePath = FromUTF8Z(U8("foo:/.a"));
+    URL guarded{beforePath.impl, 1U | (3U << 6), 4, 4, 4, 4, 5, 7, 7};
+    Check(!URLLastPathComponent(&guarded).data);
+    auto emptyComponent = FromUTF8Z(U8("http://h//"));
+    URL doubled{emptyComponent.impl, httpBits(4, 0), 7, 7, 7, 8, 10, 10, 10};
+    auto emptyResult = URLLastPathComponent(&doubled);
+    Check(emptyResult.data && emptyResult.length == 0);
+    URL absent{};
+    Check(!URLLastPathComponent(&absent).data);
+    URL pastEnd = url;
+    pastEnd.pathEnd = 50;
+    Throws([&] { URLLastPathComponent(&pastEnd); });
+    Throws([&] { URLLastPathComponent(nullptr); });
+
+    auto full = FromUTF8Z(U8("https://u:p@h:80/a?q#f"));
+    URL credentialed{full.impl, httpBits(5, 3), 8, 9, 11, 13, 17, 18, 20};
+    auto stripped = URLStrippedForReferrer(&credentialed);
+    Check(Bytes(UTF8(&stripped, 1)) == "https://h:80/a?q" && stripped.impl != full.impl && stripped.impl->length == 16);
+    auto plain = FromUTF8Z(U8("http://h/a?q"));
+    URL untouched{plain.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 12};
+    auto same = URLStrippedForReferrer(&untouched);
+    Check(same.impl == plain.impl && plain.impl->refCount == 4);
+    auto fragment = FromUTF8Z(U8("http://h/a#f"));
+    URL fragmentOnly{fragment.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 10};
+    auto noFragment = URLStrippedForReferrer(&fragmentOnly);
+    Check(Bytes(UTF8(&noFragment, 1)) == "http://h/a");
+    auto userOnly = FromUTF8Z(U8("http://u@h/a"));
+    URL userUrl{userOnly.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto noUser = URLStrippedForReferrer(&userUrl);
+    Check(Bytes(UTF8(&noUser, 1)) == "http://h/a");
+    auto wideFull = Create16(u"http://u@h/a#f", 14);
+    URL wideCredentialed{wideFull.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto wideStripped = URLStrippedForReferrer(&wideCredentialed);
+    Check(!(wideStripped.impl->hashAndFlags & 4) && wideStripped.impl->length == 10 && Bytes(UTF8(&wideStripped, 1)) == "http://h/a");
+    URL invalid{plain.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    {
+        const unsigned before = plain.impl->refCount;
+        auto kept = URLStrippedForReferrer(&invalid);
+        Check(kept.impl == plain.impl && plain.impl->refCount == before + 2);
+    }
+    Check(plain.impl->refCount == 4);
+    URL badBounds = untouched;
+    badBounds.queryEnd = 99;
+    Throws([&] { URLStrippedForReferrer(&badBounds); });
+    auto passwordOnly = FromUTF8Z(U8("http://:p@h/"));
+    URL passwordUrl{passwordOnly.impl, httpBits(4, 0), 7, 7, 9, 11, 12, 12, 12};
+    auto noPassword = URLStrippedForReferrer(&passwordUrl);
+    Check(Bytes(UTF8(&noPassword, 1)) == "http://h/");
+    URL reversedCredentials = userUrl;
+    reversedCredentials.userStart = 200;
+    Throws([&] { URLStrippedForReferrer(&reversedCredentials); });
+    auto hostless = FromUTF8Z(U8("mailto:@x"));
+    URL atSign{hostless.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 9, 9};
+    Check(URLStrippedForReferrer(&atSign).impl == hostless.impl);
+    auto allCredentials = FromUTF8Z(U8("ab"));
+    URL consumed{allCredentials.impl, 1U, 0, 0, 0, 0, 0, 0, 0};
+    auto vanished = URLStrippedForReferrer(&consumed);
+    Check(vanished.impl && vanished.impl->length == 0 && vanished.impl != allCredentials.impl);
+    URL queryBeforeCredentials = userUrl;
+    queryBeforeCredentials.queryEnd = 8;
+    Throws([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
+    Throws([&] { URLStrippedForReferrer(nullptr); });
 }
 
 }  // namespace Wtf2Tests
