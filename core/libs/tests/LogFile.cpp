@@ -15,14 +15,22 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#include <process.h>
+#include <tlhelp32.h>
+#else
 #include <fcntl.h>
 #include <poll.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
 extern char** environ;
+#endif
 
 namespace {
 
@@ -227,10 +235,17 @@ void UnopenablePath() {
     Require(StartFromValue(path.c_str(), SystemFactory(), error) == nullptr, "an unopenable path started a session");
     Require(error.find("ANYPS5_LOG_FILE") != std::string::npos, "the error does not name ANYPS5_LOG_FILE");
     Require(error.find(path) != std::string::npos, "the error does not name the path");
+#ifdef _WIN32
+    Require(error.find("Windows error 3") != std::string::npos, "the error does not carry the operating system error");
+    error.clear();
+    const std::string directory = g_directory.string();
+    Require(StartFromValue(directory.c_str(), SystemFactory(), error) == nullptr && error.find("Windows error ") != std::string::npos, "a directory was accepted as the log file");
+#else
     Require(error.find("No such file or directory") != std::string::npos && error.find("errno 2") != std::string::npos, "the error does not carry the operating system error");
     const std::string directory = g_directory.string();
     error.clear();
     Require(StartFromValue(directory.c_str(), SystemFactory(), error) == nullptr && error.find("Is a directory") != std::string::npos, "a directory was accepted as the log file");
+#endif
 }
 
 class CountingFactory final : public Factory {
@@ -245,7 +260,13 @@ public:
 
 int OpenDescriptors() {
     int count = 0;
-    for (int descriptor = 0; descriptor < 1024; ++descriptor) count += ::fcntl(descriptor, F_GETFD) != -1;
+    for (int descriptor = 0; descriptor < 1024; ++descriptor) {
+#ifdef _WIN32
+        count += ::_get_osfhandle(descriptor) != -1;
+#else
+        count += ::fcntl(descriptor, F_GETFD) != -1;
+#endif
+    }
     return count;
 }
 
@@ -261,7 +282,9 @@ void UnsetCreatesNothing() {
 }
 
 void BrokenTerminalKeepsFile() {
+#ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
+#endif
     Rig rig("terminal-closed.log");
     Close(rig.terminalOutput.read);
     rig.terminalOutput.read = NoHandle;
@@ -279,6 +302,7 @@ void MissingTerminalKeepsFile() {
     Require(Slurp(rig.path) == "file only\nalso file only\n", "an absent terminal stopped the file");
 }
 
+#ifndef _WIN32
 void FullDiskKeepsTerminal() {
     Pipe output;
     Pipe errors;
@@ -302,12 +326,103 @@ void FullDiskKeepsTerminal() {
     for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write}) Close(handle);
     ::close(full);
 }
+#endif
 
 struct Result {
     std::string out;
     std::string err;
-    int status = -1;
+    int code = -1;
 };
+
+#ifdef _WIN32
+
+std::wstring Widen(const std::string& text) {
+    if (text.empty()) return {};
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), length);
+    return wide;
+}
+
+Result Run(const std::string& role, const std::string& variable, bool set = true) {
+    Pipe out;
+    Pipe err;
+    std::string error;
+    Require(MakePipe(out, error) && MakePipe(err, error), "child pipes");
+    const HANDLE output = reinterpret_cast<HANDLE>(out.write);
+    const HANDLE errors = reinterpret_cast<HANDLE>(err.write);
+    Require(SetHandleInformation(output, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) != 0, "inherit the child output");
+    Require(SetHandleInformation(errors, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) != 0, "inherit the child error");
+    std::string previous;
+    const bool had = ReadVariable(previous);
+    SetEnvironmentVariableW(L"ANYPS5_LOG_FILE", set ? Widen(variable).c_str() : nullptr);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = output;
+    startup.hStdError = errors;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION process{};
+    std::wstring command = L"\"" + Widen(g_self) + L"\" --child " + Widen(role);
+    const bool created = CreateProcessW(Widen(g_self).c_str(), command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process) != 0;
+    SetEnvironmentVariableW(L"ANYPS5_LOG_FILE", had ? Widen(previous).c_str() : nullptr);
+    Require(created, "start the child");
+    CloseHandle(process.hThread);
+    Close(out.write);
+    Close(err.write);
+    Result result;
+    bool open[2] = {true, true};
+    const Handle reads[2] = {out.read, err.read};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while ((open[0] || open[1]) && std::chrono::steady_clock::now() < deadline) {
+        bool progressed = false;
+        for (int index = 0; index < 2; ++index) {
+            if (!open[index]) continue;
+            const long pending = Pending(reads[index]);
+            if (pending < 0) {
+                open[index] = false;
+                continue;
+            }
+            if (pending == 0) continue;
+            char buffer[4096];
+            const long count = ReadAvailable(reads[index], buffer, sizeof(buffer));
+            if (count > 0) {
+                (index == 0 ? result.out : result.err).append(buffer, static_cast<std::size_t>(count));
+                progressed = true;
+            } else if (count < 0) {
+                open[index] = false;
+            }
+        }
+        if (!progressed) Sleep(2);
+    }
+    Require(!open[0] && !open[1], "the child kept its streams open");
+    WaitForSingleObject(process.hProcess, 20000);
+    DWORD code = 1;
+    GetExitCodeProcess(process.hProcess, &code);
+    CloseHandle(process.hProcess);
+    Close(out.read);
+    Close(err.read);
+    result.code = static_cast<int>(code);
+    return result;
+}
+
+int ThreadCount() {
+    int count = 0;
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return count;
+    const DWORD self = GetCurrentProcessId();
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    if (Thread32First(snapshot, &entry)) {
+        do {
+            if (entry.th32OwnerProcessID == self) ++count;
+        } while (Thread32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return count;
+}
+
+#else
 
 Result Run(const std::string& role, const std::string& variable, bool set = true) {
     Pipe out;
@@ -352,9 +467,11 @@ Result Run(const std::string& role, const std::string& variable, bool set = true
     }
     if (open[0] || open[1]) std::fprintf(stderr, "role %s open %d %d\n", role.c_str(), open[0], open[1]);
     Require(!open[0] && !open[1], "the child kept its streams open");
-    ::waitpid(child, &result.status, 0);
+    int status = 0;
+    ::waitpid(child, &status, 0);
     Close(out.read);
     Close(err.read);
+    result.code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     return result;
 }
 
@@ -368,7 +485,13 @@ int ThreadCount() {
     return count;
 }
 
+#endif
+
 int ChildMain(const std::string& role) {
+#ifdef _WIN32
+    ::_setmode(1, _O_BINARY);
+    ::_setmode(2, _O_BINARY);
+#endif
     if (role == "threads") {
         std::printf("threads=%d\n", ThreadCount());
         return 0;
@@ -386,20 +509,22 @@ int ChildMain(const std::string& role) {
     if (role == "hard") {
         std::fprintf(stderr, "written just before the end\n");
         LogFileFlush_nid_no_patch();
-        _exit(3);
+        std::_Exit(3);
     }
     if (role == "crash") {
         std::fprintf(stderr, "line before the crash\n");
         const char report[] = "FATAL: simulated crash report\n";
         log_file::CrashWrite(StandardError, report, sizeof(report) - 1);
-        _exit(4);
+        std::_Exit(4);
     }
+#ifndef _WIN32
     if (role == "exec") {
         std::fprintf(stderr, "line before the exec\n");
         LogFileRelease_nid_no_patch();
         execl("/bin/sh", "sh", "-c", "echo from the replacement; echo from the replacement on stderr >&2", static_cast<char*>(nullptr));
         return 9;
     }
+#endif
     return 2;
 }
 
@@ -409,38 +534,43 @@ void ChildProcesses() {
 
     clear();
     Result plain = Run("plain", path.string());
-    Require(plain.status == 0, "the child failed");
+    Require(plain.code == 0, "the child failed");
     Require(plain.out == "stdout line\n" && plain.err == "stderr line\n", "the terminal output of a child changed");
     const std::string logged = Slurp(path);
     Require(logged.find("stdout line\n") != std::string::npos && logged.find("stderr line\n") != std::string::npos, "the child's lines are not in the file");
 
     clear();
     Result partial = Run("partial", path.string());
-    Require(partial.status == 0 && partial.out == "stdout without a newline", "the partial line changed on the terminal");
+    Require(partial.code == 0 && partial.out == "stdout without a newline", "the partial line changed on the terminal");
     Require(Slurp(path).find("stdout without a newline\n") != std::string::npos, "a partial line was lost at a normal exit");
 
     clear();
     Result hard = Run("hard", path.string());
-    Require(WIFEXITED(hard.status) && WEXITSTATUS(hard.status) == 3 && hard.err == "written just before the end\n", "the abrupt child differs");
-    Require(Slurp(path).find("written just before the end\n") != std::string::npos, "a line written before _exit is not in the file");
+    Require(hard.code == 3 && hard.err == "written just before the end\n", "the abrupt child differs");
+    Require(Slurp(path).find("written just before the end\n") != std::string::npos, "a line written before the exit is not in the file");
 
     clear();
     Result crash = Run("crash", path.string());
-    Require(WIFEXITED(crash.status) && WEXITSTATUS(crash.status) == 4, "the crashing child differs");
+    Require(crash.code == 4, "the crashing child differs");
     Require(crash.err == "line before the crash\nFATAL: simulated crash report\n", "the crash text did not reach the terminal in order");
     Require(Slurp(path).find("line before the crash\nFATAL: simulated crash report\n") != std::string::npos, "the crash text did not reach the file in order");
 
+#ifndef _WIN32
     clear();
     Result replaced = Run("exec", path.string());
-    Require(replaced.status == 0, "the replacement failed or was killed by a broken pipe");
+    Require(replaced.code == 0, "the replacement failed or was killed by a broken pipe");
     Require(replaced.out == "from the replacement\n" && replaced.err == "line before the exec\nfrom the replacement on stderr\n", "the output around the replacement did not reach the terminal");
     const std::string execLog = Slurp(path);
     Require(execLog.find("line before the exec\n") != std::string::npos && execLog.find("from the replacement") == std::string::npos, "the file holds the replacement's output or lacks the earlier line");
+#endif
 
     clear();
     Result bad = Run("plain", (g_directory / "no-such-directory" / "x.log").string());
-    Require(WIFEXITED(bad.status) && WEXITSTATUS(bad.status) == 1, "an unopenable path did not stop the process");
-    Require(bad.err.find("ANYPS5_LOG_FILE") != std::string::npos && bad.err.find("No such file or directory") != std::string::npos && bad.out.empty(), "the startup error differs");
+    Require(bad.code == 1, "an unopenable path did not stop the process");
+    Require(bad.err.find("ANYPS5_LOG_FILE") != std::string::npos && bad.out.empty(), "the startup error differs");
+#ifndef _WIN32
+    Require(bad.err.find("No such file or directory") != std::string::npos, "the startup error lacks the operating system error");
+#endif
 
     clear();
     Result unset = Run("plain", "", false);
@@ -448,6 +578,20 @@ void ChildProcesses() {
     Result emptied = Run("plain", "", true);
     Require(emptied.out == "stdout line\n" && emptied.err == "stderr line\n", "an empty variable changed the output");
 
+#ifdef _WIN32
+    {
+        const auto count = [&](bool set) {
+            const Result result = Run("threads", path.string(), set);
+            int threads = -1;
+            Require(std::sscanf(result.out.c_str(), "threads=%d", &threads) == 1, "the thread count line");
+            return threads;
+        };
+        const int without = count(false);
+        const int with = count(true);
+        Require(with == without + 2, "enabling the log did not add exactly the two copy threads");
+        clear();
+    }
+#else
     if (std::filesystem::exists("/proc/self/task")) {
         const auto count = [&](bool set) {
             const Result result = Run("threads", path.string(), set);
@@ -460,6 +604,7 @@ void ChildProcesses() {
         Require(with == without + 2, "enabling the log did not add exactly the two copy threads");
         clear();
     }
+#endif
 }
 
 }
@@ -468,9 +613,22 @@ int main(int argc, char** argv) {
     g_self = argv[0];
     if (argc == 3 && std::string(argv[1]) == "--child") return ChildMain(argv[2]);
     Require(argc == 1, "unexpected argument");
+#ifdef _WIN32
+    wchar_t module[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, module, MAX_PATH);
+    Require(length != 0 && length < MAX_PATH, "the executable path");
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, module, static_cast<int>(length), nullptr, 0, nullptr, nullptr);
+    g_self.assign(static_cast<std::size_t>(bytes), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, module, static_cast<int>(length), g_self.data(), bytes, nullptr, nullptr);
+    g_directory = std::filesystem::temp_directory_path() / ("anyps5-log-file-" + std::to_string(GetCurrentProcessId()));
+    std::error_code removed;
+    std::filesystem::remove_all(g_directory, removed);
+    Require(std::filesystem::create_directories(g_directory), "temporary directory");
+#else
     char pattern[] = "/tmp/anyps5-log-file-XXXXXX";
     Require(::mkdtemp(pattern) != nullptr, "temporary directory");
     g_directory = pattern;
+#endif
     OrderAndTerminal();
     BothStreams();
     LinesStayWholeAcrossStreams();
@@ -485,7 +643,9 @@ int main(int argc, char** argv) {
     UnsetCreatesNothing();
     BrokenTerminalKeepsFile();
     MissingTerminalKeepsFile();
+#ifndef _WIN32
     FullDiskKeepsTerminal();
+#endif
     ChildProcesses();
     std::error_code ignored;
     std::filesystem::remove_all(g_directory, ignored);
