@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include "tests/ExportLookup.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
@@ -9,6 +10,38 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI OnUnlock(int, int, void*) {}
+
+static void ResolvePendingExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNpTrophy2SystemAbortHandle, "sceNpTrophy2SystemAbortHandle"},
+        {sceNpTrophy2SystemBuildGroupIconUri, "sceNpTrophy2SystemBuildGroupIconUri"},
+        {sceNpTrophy2SystemBuildRewardIconUri, "sceNpTrophy2SystemBuildRewardIconUri"},
+        {sceNpTrophy2SystemBuildTrophyIconUri, "sceNpTrophy2SystemBuildTrophyIconUri"},
+        {sceNpTrophy2SystemCheckCallback, "sceNpTrophy2SystemCheckCallback"},
+        {sceNpTrophy2SystemCheckNetSyncTitles, "sceNpTrophy2SystemCheckNetSyncTitles"},
+        {sceNpTrophy2SystemCreateHandle, "sceNpTrophy2SystemCreateHandle"},
+        {sceNpTrophy2SystemDebugLockTrophy, "sceNpTrophy2SystemDebugLockTrophy"},
+        {sceNpTrophy2SystemDebugUnlockTrophy, "sceNpTrophy2SystemDebugUnlockTrophy"},
+        {sceNpTrophy2SystemDestroyContext, "sceNpTrophy2SystemDestroyContext"},
+        {sceNpTrophy2SystemGetTrophyDetails, "sceNpTrophy2SystemGetTrophyDetails"},
+        {sceNpTrophy2SystemGetTrophyGroupConf, "sceNpTrophy2SystemGetTrophyGroupConf"},
+        {sceNpTrophy2SystemGetTrophySetArray, "sceNpTrophy2SystemGetTrophySetArray"},
+        {sceNpTrophy2SystemGetTrophyTitleConf, "sceNpTrophy2SystemGetTrophyTitleConf"},
+        {sceNpTrophy2SystemGetTrophyTitleDetails, "sceNpTrophy2SystemGetTrophyTitleDetails"},
+        {sceNpTrophy2SystemGetTrpIconByUri, "sceNpTrophy2SystemGetTrpIconByUri"},
+        {sceNpTrophy2SystemIsServerAvailable, "sceNpTrophy2SystemIsServerAvailable"},
+        {sceNpTrophy2SystemRegisterTitleSyncedCallback, "sceNpTrophy2SystemRegisterTitleSyncedCallback"},
+        {sceNpTrophy2SystemRegisterTitleUpdateCallback, "sceNpTrophy2SystemRegisterTitleUpdateCallback"},
+        {sceNpTrophy2SystemRemoveAll, "sceNpTrophy2SystemRemoveAll"},
+        {sceNpTrophy2SystemRemoveTitleData, "sceNpTrophy2SystemRemoveTitleData"},
+        {sceNpTrophy2SystemRemoveUserData, "sceNpTrophy2SystemRemoveUserData"},
+    };
+    Require(ExportsResolveByName(path, exports, "sceNpTrophy2SystemNotExported"));
+}
 
 template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     try {
@@ -19,7 +52,7 @@ template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     return false;
 }
 
-int main() {
+int main(int argc, char** argv) {
     int userdata = 0;
     Require(sceNpTrophy2UnregisterUnlockCallback() == 0);
     Require(sceNpTrophy2RegisterUnlockCallback(reinterpret_cast<void*>(&OnUnlock), &userdata) == 0);
@@ -31,6 +64,7 @@ int main() {
 
     auto* volatile linked = &sceNpTrophy2SystemCreateContext;
     Require(linked != nullptr);
+    ResolvePendingExports(argc > 1 ? argv[1] : nullptr);
 
     NpTrophy2GameDetails details{};
     NpTrophy2GameData data{};
