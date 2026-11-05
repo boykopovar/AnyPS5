@@ -274,7 +274,7 @@ def main(argv=None):
     parser.add_argument("--release", "--libraries", dest="release", action="store_true",
                         help="Download the matching converter and libraries from the latest release")
     args = parser.parse_args(argv)
-    output = args.build.resolve() / "web"
+    output = Path(os.path.realpath(args.build)) / "web"
     try:
         if args.release:
             publish_release(output)
