@@ -87,8 +87,8 @@ VKAPI_ATTR void VKAPI_CALL SetScissor(VkCommandBuffer commands, std::uint32_t fi
 
 AgcDriver::Graphics::Context TracedContext(const AgcDriver::VulkanDevice& device) {
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    Trace.viewport = context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport");
-    Trace.scissor = context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor");
+    Trace.viewport = reinterpret_cast<PFN_vkCmdSetViewport>(context.deviceProc(context.device, "vkCmdSetViewport"));
+    Trace.scissor = reinterpret_cast<PFN_vkCmdSetScissor>(context.deviceProc(context.device, "vkCmdSetScissor"));
     Trace.functions = context.functions != nullptr ? *context.functions : AgcDriver::Graphics::DeviceFunctions{};
     Trace.functions.cmdSetViewport = SetViewport;
     Trace.functions.cmdSetScissor = SetScissor;

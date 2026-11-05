@@ -410,7 +410,7 @@
 
 - [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
 
-- [Graphics state suppression ownership](../../../core/libs/prx/libSceAgcDriver/Graphics/include/Recorder.hpp) (libSceAgcDriver) - `CommandState` records every graphics pipeline bind and tracked dynamic state command of a recorder batch. The raw `VkCommandBuffer` from `Recorder::Commands()` and `DrawPassStart` is still reachable, and `DeviceFunctions` or `Context::Function` can record a graphics bind or tracked dynamic state on it outside the tracker; no such site exists, but nothing rejects one at compile time.
+- [Graphics state suppression ownership](../../../core/libs/prx/libSceAgcDriver/Graphics/include/Context.hpp) (libSceAgcDriver) - `Context::Function`, `Context::Resolved` and the device setup lookup reject a graphics pipeline bind, a tracked dynamic state command, `vkCmdBindShadersEXT` or `vkCmdExecuteCommands` by name at compile time, and the device table hands those entry points only to `CommandState` and `Context::BindComputePipeline`. Two routes stay open because the type system cannot see them: a raw `deviceProc` lookup cast to the function type, and a second `CommandState` begun on a recorder batch's command buffer (`Begin` is public for presentation, the overlay and tests, which record their own command buffers).
 
 ### Opt-in draw paths
 

@@ -265,7 +265,7 @@ public:
         context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, stages, 0u, pushBytes, push);
     }
     void Dispatch(VkCommandBuffer commands, const void* push, VkExtent2D extent) const {
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, push);
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (extent.width + 7u) / 8u, (extent.height + 7u) / 8u, 1u);
     }
@@ -400,7 +400,9 @@ public:
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        AgcDriver::Graphics::CommandState state;
+        state.Begin(commands, false);
+        state.BindPipeline(context, pipeline, 0);
         const std::array<std::uint32_t, 2> push{extent.width, samples};
         program->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, push.data());
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
