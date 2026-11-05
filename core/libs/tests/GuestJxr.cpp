@@ -17,6 +17,7 @@ void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.
 
 void* lastFreed = nullptr;
 int frees = 0;
+int freeCalls = 0;
 bool failAllocation = false;
 std::size_t lastCount = 0;
 std::size_t lastSize = 0;
@@ -25,6 +26,7 @@ int callocCalls = 0;
 
 void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free(void* pointer) {
+    ++freeCalls;
     if (pointer != nullptr) {
         lastFreed = pointer;
         ++frees;
@@ -85,6 +87,22 @@ int main() {
     Require(frees == 1);
     Require(PKFree_nid_postfix(nullptr) == 0);
     Require(frees == 1);
+    const auto nullReleaseCalls = freeCalls;
+    Require(PKFormatConverter_Release_nid_postfix(nullptr) == 0);
+    Require(freeCalls == nullReleaseCalls);
+    void* converter = malloc_nid_postfix(32);
+    Require(converter != nullptr);
+    void* const allocatedConverter = converter;
+    const auto releaseCalls = freeCalls;
+    const auto previousFrees = frees;
+    Require(PKFormatConverter_Release_nid_postfix(&converter) == 0);
+    Require(converter == nullptr && freeCalls == releaseCalls + 1);
+    Require(frees == previousFrees + 1 && lastFreed == allocatedConverter);
+    const auto freedConverters = frees;
+    const auto releaseCallsWithNullValue = freeCalls;
+    Require(PKFormatConverter_Release_nid_postfix(&converter) == 0);
+    Require(converter == nullptr && freeCalls == releaseCallsWithNullValue);
+    Require(frees == freedConverters);
     for (const auto size : {std::size_t{1}, std::size_t{257}, std::size_t{4097}, std::size_t{0}}) {
         memory = &memory;
         const auto calls = callocCalls;

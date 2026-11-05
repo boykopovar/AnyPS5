@@ -241,8 +241,8 @@ int APS5_VABI PKFormatConverter_Initialize_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_Release_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Release_nid_postfix(void** converter) {
+    return PKFree_nid_postfix(converter);
 }
 
 int APS5_VABI PKFreeAligned_nid_postfix() {

@@ -50,7 +50,7 @@ int APS5_VABI PKFormatConverter_GetSize_nid_postfix();
 int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix();
 int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix();
 int APS5_VABI PKFormatConverter_Initialize_nid_postfix();
-int APS5_VABI PKFormatConverter_Release_nid_postfix();
+std::int64_t APS5_VABI PKFormatConverter_Release_nid_postfix(void** converter);
 int APS5_VABI PKFreeAligned_nid_postfix();
 int APS5_VABI PKImageDecode_Copy_nid_postfix();
 int APS5_VABI PKImageDecode_Create_WMP_nid_postfix();
