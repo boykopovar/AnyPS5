@@ -225,7 +225,29 @@ int main() {
         }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
-            Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].EntrySize == 24);
+            Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].Alignment == 8 && sections[1].EntrySize == 24);
+        }},
+        {"section header alignment is not a power of two", [] {
+            for (const std::uint64_t align : {3ULL, 5ULL, 7ULL, 0x3000ULL, 0xfffffffffffffffbULL}) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 240, align);
+                RejectSections(std::move(bytes));
+            }
+        }},
+        {"section header alignment zero and one", [] {
+            for (const std::uint64_t align : {0ULL, 1ULL}) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 240, align);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[1].Alignment == align);
+            }
+        }},
+        {"non-first SHT_NULL section header odd alignment accepted", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 0);
+            Write<std::uint64_t>(bytes, 240, 3);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Type == 0 && sections[1].Alignment == 3);
         }},
         {"SHT_SYMTAB section entry size mismatch", [] {
             for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL, 0xffffffffffffffffULL}) {
