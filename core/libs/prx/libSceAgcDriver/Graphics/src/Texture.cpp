@@ -4568,6 +4568,7 @@ bool LabelTrapsEnabled() {
 
 void waitForIdlePublish(const char* reason) {
     if (reason == nullptr || std::strcmp(reason, "idle") != 0 || Recorder::InCompletion()) return;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     if (auto* recorder = Recorder::Active()) {
         Recorder::CountSync(0);
         recorder->Sync();
@@ -4577,10 +4578,7 @@ void waitForIdlePublish(const char* reason) {
 }
 
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
-    if (!FlushDepthPlanes(address, bytes).empty()) {
-        std::lock_guard gpu(GuestMemory::GpuMutex());
-        waitForIdlePublish(reason);
-    }
+    if (!FlushDepthPlanes(address, bytes).empty()) waitForIdlePublish(reason);
     if (published != nullptr) *published = false;
     const auto nothingToStore = [&] {
         auto& pending = Pending();
