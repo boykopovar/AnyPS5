@@ -303,12 +303,8 @@ static void CheckFgetsSize() {
         std::memset(buffer, '!', sizeof(buffer));
         *__error_nid_postfix() = 0;
         Require(fgets_nid_postfix(buffer, size, &stream) == nullptr);
-        Require(*__error_nid_postfix() == 22 && ferror_nid_postfix(&stream) != 0 && feof_nid_postfix(&stream) == 0);
+        Require(*__error_nid_postfix() == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
         Require(buffer[0] == '!' && ftello_nid_postfix(&stream) == 0);
-        Require(ferror_nid_postfix(&stream) != 0);
-        clearerr_nid_postfix(&stream);
-
-        Require(ferror_nid_postfix(&stream) == 0);
     }
     char line[8]{};
     Require(fgets_nid_postfix(line, sizeof(line), &stream) == line && std::strcmp(line, "line\n") == 0);
@@ -322,9 +318,15 @@ static void CheckFgetsSizeOne() {
     rewind_nid_postfix(&stream);
     char buffer[8];
     std::memset(buffer, '!', sizeof(buffer));
-    Require(fgets_nid_postfix(buffer, 1, &stream) == buffer && buffer[0] == '\0' && buffer[1] == '!');
+    *__error_nid_postfix() = 0;
+    Require(fgets_nid_postfix(buffer, 1, &stream) == nullptr && buffer[0] == '!' && *__error_nid_postfix() == 0);
     Require(ftello_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
     Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == buffer && std::strcmp(buffer, "line\n") == 0);
+    Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == nullptr && feof_nid_postfix(&stream) != 0);
+    std::memset(buffer, '!', sizeof(buffer));
+    *__error_nid_postfix() = 0;
+    Require(fgets_nid_postfix(buffer, 1, &stream) == nullptr && buffer[0] == '!' && *__error_nid_postfix() == 0);
+    Require(ftello_nid_postfix(&stream) == 5 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) != 0);
     stream.Close();
 }
 
@@ -963,6 +965,10 @@ int main(int argc, char** argv) {
     clearerr_nid_postfix(&wideIo);
 
     Require(fgetws_nid_postfix(wideBuf, 16, nullptr) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(u't', nullptr) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x100, nullptr) == -1 && *__error_nid_postfix() == 22);
     wideBuf[0] = u'X';
     wideBuf[1] = u'Y';
     std::rewind(wideIo.GetHandle());
