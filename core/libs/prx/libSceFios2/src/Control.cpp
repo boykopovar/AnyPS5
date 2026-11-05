@@ -215,42 +215,34 @@ int APS5_VABI sceFiosIOFilterCache(const void* config, std::int32_t, const void*
 }
 
 SceFiosOp APS5_VABI sceFiosCachePrefetchFH(const SceFiosOpAttr*, SceFiosFH) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 SceFiosOp APS5_VABI sceFiosCachePrefetchFHRange(const SceFiosOpAttr*, SceFiosFH, SceFiosOffset, SceFiosSize) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFiosCachePrefetchFHRangeSync(const SceFiosOpAttr*, SceFiosFH, SceFiosOffset, SceFiosSize) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_OK;
 }
 
 int APS5_VABI sceFiosCachePrefetchFHSync(const SceFiosOpAttr*, SceFiosFH) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_OK;
 }
 
 SceFiosOp APS5_VABI sceFiosCachePrefetchFile(const SceFiosOpAttr*, const char*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 SceFiosOp APS5_VABI sceFiosCachePrefetchFileRange(const SceFiosOpAttr*, const char*, SceFiosOffset, SceFiosSize) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFiosCachePrefetchFileRangeSync(const SceFiosOpAttr*, const char*, SceFiosOffset, SceFiosSize) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_OK;
 }
 
 int APS5_VABI sceFiosCachePrefetchFileSync(const SceFiosOpAttr*, const char*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
 

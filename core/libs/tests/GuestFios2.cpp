@@ -64,6 +64,10 @@ static void CheckQueries(const std::string& directory, const std::string& file) 
     sceFiosCacheFlushSync();
     sceFiosCacheFlushFileSync(file.c_str());
     sceFiosCacheFlushFileRangeSync(file.c_str(), 0, 10);
+    REQUIRE(sceFiosCachePrefetchFileSync(nullptr, file.c_str()) == SCE_FIOS_ERROR_UNIMPLEMENTED);
+    REQUIRE(sceFiosCachePrefetchFileRangeSync(nullptr, file.c_str(), 0, 10) == SCE_FIOS_OK);
+    REQUIRE(sceFiosCachePrefetchFile(nullptr, file.c_str()) == 0);
+    REQUIRE(sceFiosCachePrefetchFileRange(nullptr, file.c_str(), 0, 10) == 0);
     REQUIRE(sceFiosExistsSync(nullptr, file.c_str()));
     REQUIRE(sceFiosExistsSync(nullptr, directory.c_str()));
     REQUIRE(!sceFiosExistsSync(nullptr, (directory + "/missing").c_str()));
@@ -305,6 +309,10 @@ static void CheckFileHandles(const std::string& directory) {
     REQUIRE(sceFiosFHOpenSync(nullptr, &fh, directory.c_str(), nullptr) == SCE_FIOS_ERROR_NOT_A_FILE);
     REQUIRE(sceFiosFHOpenSync(nullptr, &fh, path.c_str(), &writer) == SCE_FIOS_OK);
     REQUIRE(fh > 0 && sceFiosIsValidHandle(fh));
+    REQUIRE(sceFiosCachePrefetchFHSync(nullptr, fh) == SCE_FIOS_OK);
+    REQUIRE(sceFiosCachePrefetchFHRangeSync(nullptr, fh, 0, 6) == SCE_FIOS_OK);
+    REQUIRE(sceFiosCachePrefetchFH(nullptr, fh) == 0);
+    REQUIRE(sceFiosCachePrefetchFHRange(nullptr, fh, 0, 6) == 0);
     REQUIRE(path == sceFiosFHGetPath(fh) && sceFiosFHGetOpenParams(fh)->openFlags == writer.openFlags);
     REQUIRE(sceFiosFHGetSize(fh) == 0);
     std::uint32_t listed[4] = {};
