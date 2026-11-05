@@ -3,8 +3,9 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -175,6 +176,83 @@ class TitleRunIdentityTests(unittest.TestCase):
         assets.mkdir(parents=True)
         (assets / "original.bin").write_bytes(b"original mounted title asset bytes")
         self.refuse_alias(mounted, assets, {mounted: -1} if sys.platform == "linux" else {})
+
+    def test_output_bind_view_of_package_assets_is_refused_before_first_run(self):
+        package = self.package(self.root / "games" / TITLE)
+        assets = package / "ordinary-assets"
+        assets.mkdir()
+        (assets / "original.bin").write_bytes(b"original package assets")
+        self.out = self.root / "bound-output"
+        self.refuse_alias(self.out, assets, {self.out: -1} if sys.platform == "linux" else {})
+
+    def test_missing_output_below_package_asset_bind_view_is_refused_before_first_run(self):
+        package = self.package(self.root / "games" / TITLE)
+        assets = package / "ordinary-assets"
+        assets.mkdir()
+        (assets / "original.bin").write_bytes(b"original package assets")
+        alias = self.root / "bound-assets"
+        self.out = alias / "missing-reports"
+        self.refuse_alias(alias, assets, {alias: -1} if sys.platform == "linux" else {})
+
+    def test_windows_case_sensitive_paths_and_identity_caches_remain_distinct(self):
+        directories = {}
+
+        class WindowsDirectory(PureWindowsPath):
+            def stat(self):
+                if self.parts not in directories:
+                    raise FileNotFoundError(str(self))
+                return os.stat_result((stat.S_IFDIR, directories[self.parts], 1, 1, 0, 0, 0, 0, 0, 0))
+
+        first = WindowsDirectory("C:/review/TitleRuns/work/PPSA00001")
+        second = WindowsDirectory("C:/review/titleruns/work/PPSA00001")
+        for second_inode in (200, 100):
+            directories.update({first.parts: 100, second.parts: second_inode})
+            with self.subTest(second_inode=second_inode), mock.patch.object(self.runner.sys, "platform", "darwin"):
+                checks = self.runner.PathChecks()
+                self.assertEqual(checks.identity(first), (1, 100))
+                self.assertEqual(checks.identity(second), (1, second_inode))
+                self.assertEqual(checks.directory(first), ((1, 100), None))
+                self.assertEqual(checks.directory(second), ((1, second_inode), None))
+                self.assertEqual(checks.same(first, second), second_inode == 100)
+                self.assertEqual(checks.contains(first, second), second_inode == 100)
+                self.assertEqual(checks.contains(first, second / "missing"), second_inode == 100)
+                self.assertEqual(checks.contains(second, first / "missing"), second_inode == 100)
+                self.assertTrue(checks.contains(first, first / "missing"))
+
+    def test_windows_path_locations_preserve_case_distinct_spellings(self):
+        first = PureWindowsPath("C:/review/TitleRuns")
+        second = PureWindowsPath("C:/review/titleruns")
+        with mock.patch.object(self.runner, "Path", PureWindowsPath), \
+                mock.patch.object(os.path, "abspath", return_value=str(first)), \
+                mock.patch.object(self.runner, "comparison_path", return_value=second):
+            locations = self.runner.path_locations(first)
+        self.assertEqual([path.parts for path in locations], [first.parts, second.parts])
+
+    def test_windows_case_sensitive_symlink_chain_distinguishes_a_real_cycle(self):
+        links = {}
+
+        class WindowsLink(PureWindowsPath):
+            def is_symlink(self):
+                return self.parts in links
+
+            def readlink(self):
+                return WindowsLink(links[self.parts])
+
+            def resolve(self):
+                return self
+
+        first = WindowsLink("C:/review/link")
+        second = WindowsLink("C:/review/Link")
+        target = WindowsLink("C:/physical")
+        links.update({first.parts: second, second.parts: target})
+        try:
+            resolved = self.runner.comparison_path(first / "asset.bin")
+        except RuntimeError as error:
+            self.fail(f"valid case-sensitive symlink chain was refused: {error}")
+        self.assertEqual(resolved.parts, (target / "asset.bin").parts)
+        links[second.parts] = first
+        with self.assertRaisesRegex(RuntimeError, "symbolic link cycle"):
+            self.runner.comparison_path(first / "asset.bin")
 
     @unittest.skipUnless(sys.platform == "linux", "mount IDs are Linux-specific")
     def test_work_root_bind_mount_is_refused_before_cleanup(self):

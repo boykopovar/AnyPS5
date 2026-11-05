@@ -498,7 +498,7 @@ def stage_inputs(package, entry, source):
         unwrap_or_copy(package / executable, source / executable)
 
 def path_locations(path):
-    return {Path(os.path.abspath(path)), comparison_path(path)}
+    return (Path(os.path.abspath(path)), comparison_path(path))
 
 
 def linked_path(path):
@@ -513,17 +513,19 @@ class PathChecks:
         self.directories = {}
 
     def identity(self, path):
-        if path not in self.identities:
+        key = path.parts
+        if key not in self.identities:
             try:
                 info = path.stat()
             except (FileNotFoundError, NotADirectoryError):
-                self.identities[path] = None
+                self.identities[key] = None
             else:
-                self.identities[path] = (info.st_dev, info.st_ino)
-        return self.identities[path]
+                self.identities[key] = (info.st_dev, info.st_ino)
+        return self.identities[key]
 
     def directory(self, path):
-        if path not in self.directories:
+        key = path.parts
+        if key not in self.directories:
             try:
                 if sys.platform == "linux":
                     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
@@ -547,26 +549,27 @@ class PathChecks:
             except (FileNotFoundError, NotADirectoryError):
                 if path.is_dir():
                     raise ValueError(f"cannot inspect directory {path}; readable /proc/self/fdinfo is required")
-                self.directories[path] = None
+                self.directories[key] = None
             else:
                 identity = (info.st_dev, info.st_ino)
-                self.identities[path] = identity
-                self.directories[path] = (identity, mount)
-        return self.directories[path]
+                self.identities[key] = identity
+                self.directories[key] = (identity, mount)
+        return self.directories[key]
 
     def contains(self, directory, path):
-        if path.is_relative_to(directory):
+        if path.parts[:len(directory.parts)] == directory.parts:
             return True
         identity = self.identity(directory)
         if identity is None:
             return False
-        if path not in self.ancestors:
-            self.ancestors[path] = {self.identity(parent) for parent in (path, *path.parents)}
-        return identity in self.ancestors[path]
+        key = path.parts
+        if key not in self.ancestors:
+            self.ancestors[key] = {self.identity(parent) for parent in (path, *path.parents)}
+        return identity in self.ancestors[key]
 
     def same(self, first, second):
         identity = self.identity(first)
-        return first == second or (identity is not None and identity == self.identity(second))
+        return first.parts == second.parts or (identity is not None and identity == self.identity(second))
 
 
 def check_work_directories(work, output, protected, checks):
@@ -594,7 +597,7 @@ def check_work_directories(work, output, protected, checks):
         if identity in protected:
             raise ValueError(f"work directory {work} overlaps an input directory at {path}")
         if directory in visited:
-            if mount is None and comparison_path(path) != comparison_path(visited[directory]):
+            if mount is None and comparison_path(path).parts != comparison_path(visited[directory]).parts:
                 raise ValueError(f"ambiguous directory aliases in work directory {work}: {path}")
             continue
         visited[directory] = path
@@ -626,6 +629,7 @@ def validate_layout(args, found, ids, titles, source, platform):
     pending = [(tree, True) for tree in trees] + [(tree, False) for tree in build_trees]
     visited = {}
     protected_directories = set()
+    package_directories = set()
     while pending:
         tree, package = pending.pop()
         directory = checks.directory(tree)
@@ -634,11 +638,13 @@ def validate_layout(args, found, ids, titles, source, platform):
         identity, mount = directory
         key = (directory, package)
         if key in visited:
-            if mount is None and comparison_path(tree) != comparison_path(visited[key]):
+            if mount is None and comparison_path(tree).parts != comparison_path(visited[key]).parts:
                 raise ValueError(f"ambiguous input directory aliases: {tree}")
             continue
         visited[key] = tree
         protected_directories.add(identity)
+        if package:
+            package_directories.add(identity)
         with os.scandir(tree) as entries:
             for entry in entries:
                 path = tree / entry.name
@@ -665,6 +671,8 @@ def validate_layout(args, found, ids, titles, source, platform):
         if identity is not None:
             protected_directories.add(identity)
     output = path_locations(args.out)
+    if any(checks.identity(parent) in package_directories for destination in output for parent in (destination, *destination.parents)):
+        raise ValueError(f"output directory {args.out} overlaps an input package directory")
     for path in package_trees:
         locations = path_locations(path)
         if any(checks.contains(origin, destination) for destination in output for origin in locations):
