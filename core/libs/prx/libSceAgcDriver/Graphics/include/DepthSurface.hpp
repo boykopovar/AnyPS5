@@ -88,6 +88,7 @@ bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resou
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 void NoteDepthRenderControl(const DepthRenderControl& draw);
+bool DepthRenderControlDrains(const DepthRenderControl& draw);
 VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile);
 std::uint64_t HtileMetadataBytes(VkExtent2D extent);
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes);

@@ -3877,6 +3877,13 @@ void NoteDepthRenderControl(const DepthRenderControl& draw) {
     }
 }
 
+bool DepthRenderControlDrains(const DepthRenderControl& draw) {
+    if (draw.samples == 1u) return false;
+    if ((draw.control & 0x60u) != 0u) return true;
+    std::lock_guard lock(surfacesMutex());
+    return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && surface->target.samples == draw.samples && surface->target.address == draw.address; });
+}
+
 bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource) {
     std::lock_guard lock(surfacesMutex());
     const auto* found = planeSurface(context.device, resource.baseAddress);

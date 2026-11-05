@@ -2741,6 +2741,11 @@ void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane
     bareWords[7] = 0u;
     const auto refused = [&] { TargetRefuses([&] { CachedSampledTexture(context, bareWords); }, "native multisample depth sampled metadata or XOR mismatch"); };
     const std::uint32_t expand = stencilPlane ? 0x60u : 0x40u;
+    Require(DepthRenderControlDrains({target.address, target.samples, 1u}), "a depth clear over the native multisample target does not drain");
+    Require(DepthRenderControlDrains({target.address + 65536u, target.samples, expand}), "an expand without a registered surface does not drain");
+    Require(!DepthRenderControlDrains({target.address, 1u, 1u}), "a single-sample depth clear at the native target's address drains");
+    Require(!DepthRenderControlDrains({target.address, 1u, 0x60u}), "a single-sample expand drains");
+    Require(!DepthRenderControlDrains({target.address + 65536u, target.samples, 1u}), "a depth clear at another address drains");
     refused();
     if (stencilPlane) {
         NoteRenderControl(target, 0x40u);
