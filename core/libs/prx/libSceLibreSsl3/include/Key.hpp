@@ -53,3 +53,8 @@ static_assert(sizeof(LibreSsl3EcKey) == 64);
 static_assert(offsetof(LibreSsl3EcKey, references) == 48);
 static_assert(sizeof(LibreSsl3Rsa) == 152);
 static_assert(offsetof(LibreSsl3Rsa, references) == 104);
+static_assert(offsetof(LibreSsl3Rsa, p) == 48);
+static_assert(offsetof(LibreSsl3Rsa, q) == 56);
+static_assert(offsetof(LibreSsl3Rsa, dmp1) == 64);
+static_assert(offsetof(LibreSsl3Rsa, dmq1) == 72);
+static_assert(offsetof(LibreSsl3Rsa, iqmp) == 80);
