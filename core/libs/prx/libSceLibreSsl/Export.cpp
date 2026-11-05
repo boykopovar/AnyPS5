@@ -413,21 +413,6 @@ int APS5_VABI RSA_padding_add_PKCS1_PSS_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI RSA_private_decrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_private_encrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_sign_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI RSA_verify_PKCS1_PSS_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
