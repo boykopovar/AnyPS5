@@ -66,7 +66,7 @@ VkFormat SampleOrderStorageFormat(const Context& context, VkFormat format, std::
 std::string SampleOrderRefusal(const Context& context, const State& state);
 std::vector<SampleOrderStep> PlanSampleOrder(const Context& context, const State& state, const SampleOrder& order, VkAttachmentLoadOp load = VK_ATTACHMENT_LOAD_OP_LOAD, VkAttachmentStoreOp store = VK_ATTACHMENT_STORE_OP_STORE);
 SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, const SampleOrder& order);
-void RecordSampleOrder(const Context& context, VkCommandBuffer commands, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept, CommandState* tracker = nullptr);
+void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept);
 void RecordDepthSampleLocations(const Context& context, VkCommandBuffer commands, const DepthSampleLocations& depth);
 std::array<std::span<const std::uint32_t>, 9> SampleOrderShaderModules();
 void ClearSampleOrders(VkDevice device);

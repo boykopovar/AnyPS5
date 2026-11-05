@@ -11226,18 +11226,18 @@ void uncountedPassTests(const Device& device) {
     Require(!recorder.QueuesSampleDumps(), "a recorder without buffer device addresses counted samples in segments");
     const auto base = recorder.SamplesTotal();
     cover.Draw(recorder);
+    const bool suppressing = std::getenv("APS5_NO_STATE_SUPPRESSION") == nullptr;
     const VkRect2D area{{0, 0}, {8, 8}};
-    auto* tracked = recorder.GraphicsState();
-    if (tracked != nullptr) CommandState::SetScissor(tracked, context, recorder.Commands(), area);
+    recorder.Commands();
+    auto& tracked = recorder.GraphicsState();
+    tracked.SetScissor(context, area);
+    Require(tracked.Known(CommandState::Scissor) == suppressing, "the recorder's graphics state does not follow APS5_NO_STATE_SUPPRESSION");
     recorder.RecordUncounted([&](VkCommandBuffer commands) {
-        if (tracked != nullptr) {
-            Require(!tracked->Known(CommandState::Scissor), "the graphics state stayed known entering an uncounted recording");
-            CommandState::SetScissor(tracked, context, commands, area);
-            Require(tracked->Known(CommandState::Scissor), "the uncounted recording could not set the scissor");
-        }
+        Require(!tracked.Known(CommandState::Scissor), "the graphics state stayed known entering an uncounted recording");
+        Require(commands == tracked.Commands(), "the uncounted recording got another command buffer than the recorder's graphics state");
         cover.Record(commands);
     });
-    if (tracked != nullptr) Require(!tracked->Known(CommandState::Scissor), "the graphics state stayed known after an uncounted recording");
+    Require(!tracked.Known(CommandState::Scissor), "the graphics state stayed known after an uncounted recording");
     cover.Draw(recorder);
     recorder.Submit();
     recorder.Sync();
@@ -11245,19 +11245,18 @@ void uncountedPassTests(const Device& device) {
     Require(counted != 0, "the draws around an uncounted pass were not counted");
     if (context.occlusionQueryPrecise) Require(counted == 2 * CoverPass::Samples, "the batch-wide occlusion query counted " + std::to_string(counted) + " samples, not the " + std::to_string(2 * CoverPass::Samples) + " of the two draws around an uncounted pass");
     Recorder plain(context);
-    const auto plainCommands = plain.Commands();
-    if (auto* state = plain.GraphicsState(); state != nullptr) {
-        CommandState::SetScissor(state, context, plainCommands, area);
-        Require(state->Known(CommandState::Scissor), "the plain recorder could not set the scissor");
-        try {
-            plain.RecordUncounted([&](VkCommandBuffer commands) {
-                CommandState::SetScissor(state, context, commands, VkRect2D{{0, 0}, {4, 4}});
-                throw std::runtime_error("uncounted recording failed");
-            });
-        } catch (const std::runtime_error&) {
-        }
-        Require(!state->Known(CommandState::Scissor), "the graphics state stayed known after an uncounted recording threw");
+    plain.Commands();
+    auto& state = plain.GraphicsState();
+    state.SetScissor(context, area);
+    Require(state.Known(CommandState::Scissor) == suppressing, "the plain recorder could not set the scissor");
+    try {
+        plain.RecordUncounted([&](VkCommandBuffer) {
+            state.SetScissor(context, VkRect2D{{0, 0}, {4, 4}});
+            throw std::runtime_error("uncounted recording failed");
+        });
+    } catch (const std::runtime_error&) {
     }
+    Require(!state.Known(CommandState::Scissor), "the graphics state stayed known after an uncounted recording threw");
     plain.Submit();
     plain.Sync();
 }
@@ -11314,8 +11313,8 @@ void graphicsStateTests(const Device& device) {
     statePipelines.clear();
     stateLog.clear();
     const auto drawn = [&](Recorder& recorder, VkPipeline pipeline) {
-        const auto commands = recorder.Commands();
-        stateTrackedDraw(recorder.GraphicsState(), context, commands, pipeline);
+        recorder.Commands();
+        stateTrackedDraw(recorder.GraphicsState(), context, pipeline);
     };
     const auto first = stateFakePipeline(0);
     const auto second = stateFakePipeline(1);
@@ -11328,7 +11327,7 @@ void graphicsStateTests(const Device& device) {
         for (std::uint32_t round = 0; round < 3; ++round) {
             drawn(recorder, first);
             const auto commands = recorder.Commands();
-            Require((recorder.GraphicsState() != nullptr) == suppressing, "the recorder's graphics state does not follow APS5_NO_STATE_SUPPRESSION");
+            Require(recorder.GraphicsState().Commands() == commands, "the recorder's graphics state records into another command buffer");
             if (round != 0) Require(commands == previous && reuse.Reused() == round, "the reopened batch did not reuse its command buffer handle");
             previous = commands;
             expectStateLog(full, "the first draw of batch " + std::to_string(round));
@@ -11345,7 +11344,7 @@ void graphicsStateTests(const Device& device) {
         expectStateLog(full, "the first recorder's first draw");
         drawn(other, first);
         expectStateLog(full, "the second recorder's first draw after the first recorder's");
-        Require(!suppressing || one.GraphicsState() != other.GraphicsState(), "two recorders share one graphics state");
+        Require(&one.GraphicsState() != &other.GraphicsState(), "two recorders share one graphics state");
         drawn(one, first);
         expectStateLog(none(first), "the first recorder's repeated draw after the second recorder's first");
         drawn(other, second);
@@ -11358,6 +11357,21 @@ void graphicsStateTests(const Device& device) {
         other.Submit();
         one.Sync();
         other.Sync();
+    }
+    {
+        Recorder recorder(context);
+        drawn(recorder, first);
+        expectStateLog(full, "the draw before raw state commands");
+        const VkViewport moved{0.0f, 0.0f, 8.0f, 8.0f, 0.0f, 1.0f};
+        recorder.RecordUncounted([&](VkCommandBuffer commands) {
+            context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, second);
+            context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &moved);
+        });
+        expectStateLog({stateLine("bind", 0u, second), stateLine("viewport", 0.0f, 0.0f, 8.0f, 8.0f, 0.0f, 1.0f)}, "raw state commands in an uncounted recording");
+        drawn(recorder, first);
+        expectStateLog(full, "the same draw after raw commands rebound the pipeline and moved the viewport");
+        recorder.Submit();
+        recorder.Sync();
     }
     {
         Recorder recorder(context);

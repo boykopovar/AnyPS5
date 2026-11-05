@@ -638,13 +638,10 @@ SampleOrderPass SampleOrderPassFor(const Context& context, const State& state, c
     return {order, state.renderExtent, SampleLocations(state), ReordersSamples(order) && ValidateSampleLocations(context, state)};
 }
 
-void RecordSampleOrder(const Context& context, VkCommandBuffer commands, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept, CommandState* tracker) {
+void RecordSampleOrder(const Context& context, CommandState& recording, const SampleOrderPass& pass, std::span<const SampleOrderTarget> targets, bool toHost, std::vector<std::shared_ptr<void>>& kept) {
     if (targets.empty() || !ReordersSamples(pass.order)) return;
-    struct Unknown {
-        CommandState* state;
-        explicit Unknown(CommandState* tracked) : state(tracked) { if (state != nullptr) state->Invalidate(); }
-        ~Unknown() { if (state != nullptr) state->Invalidate(); }
-    } unknown(tracker);
+    const CommandState::Untracked untracked(recording);
+    const auto commands = untracked.Commands();
     auto& reorder = ordersFor(context);
     const auto map = mapFor(pass.order, toHost);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, reorderStages, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);

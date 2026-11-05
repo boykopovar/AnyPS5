@@ -1543,9 +1543,10 @@ std::uint32_t CommandState::DynamicSlots(std::span<const VkDynamicState> states)
     return slots;
 }
 
-void CommandState::Begin(VkCommandBuffer recording) {
+void CommandState::Begin(VkCommandBuffer recording, bool suppress) {
     commands = recording;
     ++generation;
+    trackable = suppress ? ~0u : 0u;
     Invalidate();
 }
 
@@ -1557,124 +1558,106 @@ void CommandState::Invalidate() noexcept {
     pipelineKnown = false;
 }
 
-void CommandState::attach(VkCommandBuffer recording) {
-    if (commands != recording) Begin(recording);
-}
-
 template<typename TValue, typename TEqual, typename TEmit>
-void CommandState::apply(CommandState* tracker, VkCommandBuffer commands, Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit) {
-    if (tracker == nullptr) {
-        emit();
-        return;
-    }
-    tracker->attach(commands);
-    if (tracker->Known(slot) && equal(tracker->*field, value)) return;
+void CommandState::apply(Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit) {
+    if (Known(slot) && equal(this->*field, value)) return;
     emit();
-    tracker->*field = value;
-    tracker->wrote(Mask(slot));
+    this->*field = value;
+    wrote(Mask(slot));
 }
 
 template<typename TValue, typename TEmit>
-void CommandState::applyFaces(CommandState* tracker, VkCommandBuffer commands, Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit) {
-    if (tracker == nullptr) {
-        emit(faces);
-        return;
-    }
-    tracker->attach(commands);
+void CommandState::applyFaces(Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit) {
     VkStencilFaceFlags needed = 0;
     for (std::uint32_t face = 0; face < 2; ++face) {
         const VkStencilFaceFlags bit = 1u << face;
         if ((faces & bit) == 0) continue;
-        if (!tracker->Known(static_cast<Slot>(first + face)) || !((tracker->*field)[face] == value)) needed |= bit;
+        if (!Known(static_cast<Slot>(first + face)) || !((this->*field)[face] == value)) needed |= bit;
     }
     if (needed == 0) return;
     emit(needed);
     for (std::uint32_t face = 0; face < 2; ++face) {
         if ((needed & (1u << face)) == 0) continue;
-        (tracker->*field)[face] = value;
-        tracker->wrote(Mask(static_cast<Slot>(first + face)));
+        (this->*field)[face] = value;
+        wrote(Mask(static_cast<Slot>(first + face)));
     }
 }
 
-void CommandState::BindPipeline(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkPipeline pipeline, std::uint32_t dynamicSlots) {
-    if (tracker != nullptr) {
-        tracker->attach(commands);
-        if (tracker->pipelineKnown && tracker->pipeline == pipeline && tracker->dynamicSlots == dynamicSlots && (tracker->overwritten & ~dynamicSlots) == 0) return;
-    }
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    if (tracker == nullptr) return;
-    tracker->pipeline = pipeline;
-    tracker->pipelineKnown = pipeline != VK_NULL_HANDLE;
-    tracker->dynamicSlots = dynamicSlots;
-    tracker->valid &= dynamicSlots;
-    tracker->overwritten = 0;
+void CommandState::BindPipeline(const Context& context, VkPipeline bound, std::uint32_t slots) {
+    if (pipelineKnown && pipeline == bound && dynamicSlots == slots && (overwritten & ~slots) == 0) return;
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+    pipeline = bound;
+    pipelineKnown = trackable != 0 && bound != VK_NULL_HANDLE;
+    dynamicSlots = slots;
+    valid &= slots;
+    overwritten = 0;
 }
 
-void CommandState::SetViewport(CommandState* tracker, const Context& context, VkCommandBuffer commands, const VkViewport& viewport) {
-    apply(tracker, commands, Viewport, &CommandState::viewport, viewport, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport); });
+void CommandState::SetViewport(const Context& context, const VkViewport& value) {
+    apply(Viewport, &CommandState::viewport, value, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &value); });
 }
 
-void CommandState::SetScissor(CommandState* tracker, const Context& context, VkCommandBuffer commands, const VkRect2D& scissor) {
-    apply(tracker, commands, Scissor, &CommandState::scissor, scissor, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &scissor); });
+void CommandState::SetScissor(const Context& context, const VkRect2D& value) {
+    apply(Scissor, &CommandState::scissor, value, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &value); });
 }
 
-void CommandState::SetDepthBias(CommandState* tracker, const Context& context, VkCommandBuffer commands, float constant, float clamp, float slope) {
+void CommandState::SetDepthBias(const Context& context, float constant, float clamp, float slope) {
     const std::array<float, 3> bias{constant, clamp, slope};
-    apply(tracker, commands, DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope); });
+    apply(DepthBias, &CommandState::depthBias, bias, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, constant, clamp, slope); });
 }
 
-void CommandState::SetDepthBounds(CommandState* tracker, const Context& context, VkCommandBuffer commands, float minimum, float maximum) {
+void CommandState::SetDepthBounds(const Context& context, float minimum, float maximum) {
     const std::array<float, 2> bounds{minimum, maximum};
-    apply(tracker, commands, DepthBounds, &CommandState::depthBounds, bounds, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minimum, maximum); });
+    apply(DepthBounds, &CommandState::depthBounds, bounds, [](const auto& left, const auto& right) { return sameBits(left, right); }, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, minimum, maximum); });
 }
 
-void CommandState::SetCullMode(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkCullModeFlags mode) {
-    apply(tracker, commands, CullMode, &CommandState::cullMode, mode, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, mode); });
+void CommandState::SetCullMode(const Context& context, VkCullModeFlags mode) {
+    apply(CullMode, &CommandState::cullMode, mode, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, mode); });
 }
 
-void CommandState::SetFrontFace(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkFrontFace face) {
-    apply(tracker, commands, FrontFace, &CommandState::frontFace, face, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, face); });
+void CommandState::SetFrontFace(const Context& context, VkFrontFace face) {
+    apply(FrontFace, &CommandState::frontFace, face, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, face); });
 }
 
-void CommandState::SetDepthTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable) {
-    apply(tracker, commands, DepthTest, &CommandState::depthTest, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, enable); });
+void CommandState::SetDepthTestEnable(const Context& context, VkBool32 enable) {
+    apply(DepthTest, &CommandState::depthTest, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, enable); });
 }
 
-void CommandState::SetDepthWriteEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable) {
-    apply(tracker, commands, DepthWrite, &CommandState::depthWrite, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, enable); });
+void CommandState::SetDepthWriteEnable(const Context& context, VkBool32 enable) {
+    apply(DepthWrite, &CommandState::depthWrite, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, enable); });
 }
 
-void CommandState::SetDepthCompareOp(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkCompareOp compare) {
-    apply(tracker, commands, DepthCompare, &CommandState::depthCompare, compare, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, compare); });
+void CommandState::SetDepthCompareOp(const Context& context, VkCompareOp compare) {
+    apply(DepthCompare, &CommandState::depthCompare, compare, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, compare); });
 }
 
-void CommandState::SetDepthBoundsTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable) {
-    apply(tracker, commands, DepthBoundsTest, &CommandState::depthBoundsTest, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT")(commands, enable); });
+void CommandState::SetDepthBoundsTestEnable(const Context& context, VkBool32 enable) {
+    apply(DepthBoundsTest, &CommandState::depthBoundsTest, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT")(commands, enable); });
 }
 
-void CommandState::SetStencilTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable) {
-    apply(tracker, commands, StencilTest, &CommandState::stencilTest, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT")(commands, enable); });
+void CommandState::SetStencilTestEnable(const Context& context, VkBool32 enable) {
+    apply(StencilTest, &CommandState::stencilTest, enable, std::equal_to<>{}, [&] { context.Resolved(&DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT")(commands, enable); });
 }
 
-void CommandState::SetStencilOp(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) {
-    applyFaces(tracker, commands, StencilOpFront, faces, &CommandState::stencilOps, StencilOps{failOp, passOp, depthFailOp, compareOp}, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT")(commands, needed, failOp, passOp, depthFailOp, compareOp); });
+void CommandState::SetStencilOp(const Context& context, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) {
+    applyFaces(StencilOpFront, faces, &CommandState::stencilOps, StencilOps{failOp, passOp, depthFailOp, compareOp}, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT")(commands, needed, failOp, passOp, depthFailOp, compareOp); });
 }
 
-void CommandState::SetStencilCompareMask(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t mask) {
-    applyFaces(tracker, commands, CompareMaskFront, faces, &CommandState::compareMasks, mask, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask")(commands, needed, mask); });
+void CommandState::SetStencilCompareMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask) {
+    applyFaces(CompareMaskFront, faces, &CommandState::compareMasks, mask, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask")(commands, needed, mask); });
 }
 
-void CommandState::SetStencilWriteMask(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t mask) {
-    applyFaces(tracker, commands, WriteMaskFront, faces, &CommandState::writeMasks, mask, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, needed, mask); });
+void CommandState::SetStencilWriteMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask) {
+    applyFaces(WriteMaskFront, faces, &CommandState::writeMasks, mask, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, needed, mask); });
 }
 
-void CommandState::SetStencilReference(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t reference) {
-    applyFaces(tracker, commands, ReferenceFront, faces, &CommandState::references, reference, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, needed, reference); });
+void CommandState::SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference) {
+    applyFaces(ReferenceFront, faces, &CommandState::references, reference, [&](VkStencilFaceFlags needed) { context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, needed, reference); });
 }
 
-CommandState* Recorder::GraphicsState() {
-    static const bool enabled = std::getenv("APS5_NO_STATE_SUPPRESSION") == nullptr;
-    return enabled && open != nullptr ? &open->graphicsState : nullptr;
+CommandState& Recorder::GraphicsState() {
+    Require(open != nullptr, "no batch is open for graphics state");
+    return open->graphicsState;
 }
 
 Recorder* Recorder::Active() {
@@ -2040,7 +2023,7 @@ Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, 
     return {commands, false, !elide, reason};
 }
 
-void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass) {
+void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass) {
     Require(open != nullptr, "no batch is open for the render pass");
     auto& pass = open->renderPass;
     if (!pass.open) {
@@ -2067,7 +2050,7 @@ void Recorder::endOpenRenderPass(PassBreak by, bool barrier) {
         recordBarrier(open->commands, PassEndBarrier.srcStage, PassEndBarrier.dstStage, PassEndBarrier.srcAccess, PassEndBarrier.dstAccess);
         CountBarriers(CommandClass::Draw);
     }
-    if (pass.afterPass) pass.afterPass(open->commands);
+    if (pass.afterPass) pass.afterPass(open->graphicsState);
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
     open->hostReadOwed = true;
@@ -2162,7 +2145,8 @@ void Recorder::ensureOpen() {
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             Check(function(beginCommandBuffer, "vkBeginCommandBuffer")(batch->commands, &begin), "vkBeginCommandBuffer recorder");
-            batch->graphicsState.Begin(batch->commands);
+            static const bool suppress = std::getenv("APS5_NO_STATE_SUPPRESSION") == nullptr;
+            batch->graphicsState.Begin(batch->commands, suppress);
         } catch (...) {
             release(*batch);
             throw;
@@ -2920,15 +2904,7 @@ void Recorder::EndPassSamples() {
 }
 
 void Recorder::RecordUncounted(const std::function<void(VkCommandBuffer)>& record) {
-    const auto commands = Commands();
-    struct Unknown {
-        Recorder& recorder;
-        void Invalidate() const {
-            if (auto* state = recorder.GraphicsState(); state != nullptr) state->Invalidate();
-        }
-        explicit Unknown(Recorder& owner) : recorder(owner) { Invalidate(); }
-        ~Unknown() { Invalidate(); }
-    } unknown(*this);
+    Commands();
     if (open->segmentActive) endSegment(*open);
     const bool counted = open->sampleActive;
     if (counted) {
@@ -2937,7 +2913,8 @@ void Recorder::RecordUncounted(const std::function<void(VkCommandBuffer)>& recor
         open->endedSamples.push_back(open->samples);
         open->samples = VK_NULL_HANDLE;
     }
-    record(commands);
+    const CommandState::Untracked untracked(open->graphicsState);
+    record(untracked.Commands());
     if (counted) beginSamples(*open);
 }
 

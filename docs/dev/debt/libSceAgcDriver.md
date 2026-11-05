@@ -410,6 +410,8 @@
 
 - [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
 
+- [Graphics state suppression ownership](../../../core/libs/prx/libSceAgcDriver/Graphics/include/Recorder.hpp) (libSceAgcDriver) - `CommandState` records every graphics pipeline bind and tracked dynamic state command of a recorder batch, and `CommandState::Untracked` (used by `Recorder::RecordUncounted` and `RecordSampleOrder`) forgets the tracked state around raw recording. The raw `VkCommandBuffer` from `Recorder::Commands()` and `DrawPassStart` is still reachable, and `DeviceFunctions` or `Context::Function` can record a graphics bind or tracked dynamic state on it outside both; no such site exists, but nothing rejects one at compile time. Sample order passes record untracked, so the draw after one records its whole state again.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.

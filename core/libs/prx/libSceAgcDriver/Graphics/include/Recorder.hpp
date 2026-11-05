@@ -58,29 +58,40 @@ public:
     static constexpr std::uint32_t Mask(Slot slot) { return 1u << slot; }
     static std::uint32_t DynamicSlots(std::span<const VkDynamicState> states);
 
-    void Begin(VkCommandBuffer commands);
+    void Begin(VkCommandBuffer commands, bool suppress = true);
     void Invalidate() noexcept;
     VkCommandBuffer Commands() const { return commands; }
     std::uint64_t Generation() const { return generation; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
+    class Untracked {
+    public:
+        explicit Untracked(CommandState& owner) : state(owner) { state.Invalidate(); }
+        ~Untracked() { state.Invalidate(); }
+        Untracked(const Untracked&) = delete;
+        Untracked& operator=(const Untracked&) = delete;
+        VkCommandBuffer Commands() const { return state.commands; }
 
-    static void BindPipeline(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkPipeline pipeline, std::uint32_t dynamicSlots);
-    static void SetViewport(CommandState* tracker, const Context& context, VkCommandBuffer commands, const VkViewport& viewport);
-    static void SetScissor(CommandState* tracker, const Context& context, VkCommandBuffer commands, const VkRect2D& scissor);
-    static void SetDepthBias(CommandState* tracker, const Context& context, VkCommandBuffer commands, float constant, float clamp, float slope);
-    static void SetDepthBounds(CommandState* tracker, const Context& context, VkCommandBuffer commands, float minimum, float maximum);
-    static void SetCullMode(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkCullModeFlags mode);
-    static void SetFrontFace(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkFrontFace face);
-    static void SetDepthTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
-    static void SetDepthWriteEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
-    static void SetDepthCompareOp(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkCompareOp compare);
-    static void SetDepthBoundsTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
-    static void SetStencilTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
-    static void SetStencilOp(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp);
-    static void SetStencilCompareMask(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t mask);
-    static void SetStencilWriteMask(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t mask);
-    static void SetStencilReference(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t reference);
+    private:
+        CommandState& state;
+    };
+
+    void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
+    void SetViewport(const Context& context, const VkViewport& viewport);
+    void SetScissor(const Context& context, const VkRect2D& scissor);
+    void SetDepthBias(const Context& context, float constant, float clamp, float slope);
+    void SetDepthBounds(const Context& context, float minimum, float maximum);
+    void SetCullMode(const Context& context, VkCullModeFlags mode);
+    void SetFrontFace(const Context& context, VkFrontFace face);
+    void SetDepthTestEnable(const Context& context, VkBool32 enable);
+    void SetDepthWriteEnable(const Context& context, VkBool32 enable);
+    void SetDepthCompareOp(const Context& context, VkCompareOp compare);
+    void SetDepthBoundsTestEnable(const Context& context, VkBool32 enable);
+    void SetStencilTestEnable(const Context& context, VkBool32 enable);
+    void SetStencilOp(const Context& context, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp);
+    void SetStencilCompareMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask);
+    void SetStencilWriteMask(const Context& context, VkStencilFaceFlags faces, std::uint32_t mask);
+    void SetStencilReference(const Context& context, VkStencilFaceFlags faces, std::uint32_t reference);
 
 private:
     struct StencilOps {
@@ -90,15 +101,15 @@ private:
         VkCompareOp compareOp;
         bool operator==(const StencilOps&) const = default;
     };
-    void attach(VkCommandBuffer recording);
-    void wrote(std::uint32_t slots) { valid |= slots; overwritten |= slots; }
+    void wrote(std::uint32_t slots) { valid |= slots & trackable; overwritten |= slots; }
     template<typename TValue, typename TEqual, typename TEmit>
-    static void apply(CommandState* tracker, VkCommandBuffer commands, Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit);
+    void apply(Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit);
     template<typename TValue, typename TEmit>
-    static void applyFaces(CommandState* tracker, VkCommandBuffer commands, Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
+    void applyFaces(Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
 
     VkCommandBuffer commands = VK_NULL_HANDLE;
     std::uint64_t generation = 0;
+    std::uint32_t trackable = 0;
     std::uint32_t valid = 0;
     std::uint32_t overwritten = 0;
     std::uint32_t dynamicSlots = 0;
@@ -180,7 +191,7 @@ public:
         PassBreak reason = PassBreak::Continued;
     };
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
@@ -345,7 +356,7 @@ public:
     void PrepareSampleSlot();
     void EndPassSamples();
     void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
-    CommandState* GraphicsState();
+    CommandState& GraphicsState();
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -821,7 +832,7 @@ private:
             bool fenced = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
-            std::function<void(VkCommandBuffer)> afterPass;
+            std::function<void(CommandState&)> afterPass;
             PassBreak closedBy = PassBreak::NewBatch;
         } renderPass;
         PassHazards passHazards;

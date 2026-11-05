@@ -98,24 +98,24 @@ inline DeviceFunctions stateFunctions() {
     return functions;
 }
 
-inline void stateTrackedDraw(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkPipeline pipeline) {
-    CommandState::BindPipeline(tracker, context, commands, pipeline, CommandState::DynamicSlots(PipelineLibraryDynamicStates()));
-    CommandState::SetViewport(tracker, context, commands, VkViewport{0.0f, 0.0f, 64.0f, 32.0f, 0.0f, 1.0f});
-    CommandState::SetScissor(tracker, context, commands, VkRect2D{{1, 2}, {30, 20}});
-    CommandState::SetDepthBias(tracker, context, commands, 2.0f, 0.0f, 1.0f);
-    CommandState::SetDepthBounds(tracker, context, commands, 0.25f, 0.75f);
-    CommandState::SetCullMode(tracker, context, commands, VK_CULL_MODE_BACK_BIT);
-    CommandState::SetFrontFace(tracker, context, commands, VK_FRONT_FACE_CLOCKWISE);
-    CommandState::SetDepthTestEnable(tracker, context, commands, VK_TRUE);
-    CommandState::SetDepthWriteEnable(tracker, context, commands, VK_TRUE);
-    CommandState::SetDepthCompareOp(tracker, context, commands, VK_COMPARE_OP_LESS);
-    CommandState::SetDepthBoundsTestEnable(tracker, context, commands, VK_TRUE);
-    CommandState::SetStencilTestEnable(tracker, context, commands, VK_TRUE);
+inline void stateTrackedDraw(CommandState& recording, const Context& context, VkPipeline pipeline) {
+    recording.BindPipeline(context, pipeline, CommandState::DynamicSlots(PipelineLibraryDynamicStates()));
+    recording.SetViewport(context, VkViewport{0.0f, 0.0f, 64.0f, 32.0f, 0.0f, 1.0f});
+    recording.SetScissor(context, VkRect2D{{1, 2}, {30, 20}});
+    recording.SetDepthBias(context, 2.0f, 0.0f, 1.0f);
+    recording.SetDepthBounds(context, 0.25f, 0.75f);
+    recording.SetCullMode(context, VK_CULL_MODE_BACK_BIT);
+    recording.SetFrontFace(context, VK_FRONT_FACE_CLOCKWISE);
+    recording.SetDepthTestEnable(context, VK_TRUE);
+    recording.SetDepthWriteEnable(context, VK_TRUE);
+    recording.SetDepthCompareOp(context, VK_COMPARE_OP_LESS);
+    recording.SetDepthBoundsTestEnable(context, VK_TRUE);
+    recording.SetStencilTestEnable(context, VK_TRUE);
     for (const VkStencilFaceFlags face : {VK_STENCIL_FACE_FRONT_BIT, VK_STENCIL_FACE_BACK_BIT}) {
-        CommandState::SetStencilOp(tracker, context, commands, face, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS);
-        CommandState::SetStencilCompareMask(tracker, context, commands, face, 0xffu);
-        CommandState::SetStencilWriteMask(tracker, context, commands, face, 0x0fu);
-        CommandState::SetStencilReference(tracker, context, commands, face, 3u);
+        recording.SetStencilOp(context, face, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS);
+        recording.SetStencilCompareMask(context, face, 0xffu);
+        recording.SetStencilWriteMask(context, face, 0x0fu);
+        recording.SetStencilReference(context, face, 3u);
     }
 }
 
