@@ -51,6 +51,8 @@ int main() {
     checkExtended(sceShareCaptureScreenshotExtended, 24);
     checkExtended(sceShareCaptureVideoClipExtended, 40);
 
+    Require(sceShareCaptureScreenshot(param, reinterpret_cast<std::int32_t*>(0x10)) == invalidParam);
+
     for (Capture capture : {sceShareCaptureScreenshot, sceShareCaptureVideoClip}) {
         reqId = 7;
         Require(capture(param, &reqId) == notSupported);
