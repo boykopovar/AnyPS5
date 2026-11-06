@@ -184,7 +184,6 @@ std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::spa
         timing.Mark("detile_convert");
         return pixels;
     }
-    const auto blocksPerRow = (buffer.width + 127u) / 128u;
     const bool rgba = DisplayRedLow(buffer.pixelFormat);
     const bool pq = DisplayPq(buffer.pixelFormat);
     const float whiteNits = pq ? PqToSdrWhiteNits(AgcDriver::CurrentHostHdr()) : 0.0f;
@@ -194,9 +193,7 @@ std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::spa
     timing.Mark("validate_allocate");
     for (std::uint32_t y = 0; y < buffer.height; ++y) {
         for (std::uint32_t x = 0; x < buffer.width; ++x) {
-            const auto pitch = buffer.pitchInPixel == 0 ? buffer.width : buffer.pitchInPixel;
-            const auto tiled = buffer.tilingMode == 1 ? (static_cast<std::size_t>(y) * pitch + x) * 4u
-                : (static_cast<std::size_t>(y / 128u) * blocksPerRow + x / 128u) * 65536u + tileOffset(x, y);
+            const auto tiled = texelOffset(buffer, x, y, 4u);
             const auto linear = (static_cast<std::size_t>(y) * buffer.width + x) * 4;
             decodeTexel(source.data() + tiled, pixels.data() + linear, rgba, tenBit, pq, whiteNits);
         }
@@ -289,17 +286,6 @@ std::vector<std::byte> ReadDisplayBufferTexels(const DisplayBuffer& buffer) {
     GuestMemory::FlushGpuWrites(buffer.address, size);
     GuestMemory::CheckRange(reinterpret_cast<const void*>(buffer.address), size, buffer.alignment);
     return DisplayBufferTexels(buffer, {reinterpret_cast<const std::byte*>(buffer.address), size});
-}
-
-bool ResidentServesDisplay(std::uint64_t residentBase, std::uint64_t residentDcc, Graphics::DccKeys uploadedKeys, Graphics::DccKeys filledKeys, bool hasWritesSinceFill, const std::function<Graphics::DccKeys()>& residentKeys, const DisplayBuffer& buffer) {
-    const auto keys = DisplayBufferKeys(buffer);
-    if (keys == Graphics::DccKeys::ClearRegister) {
-        char message[320];
-        std::snprintf(message, sizeof(message), "VideoOut: display buffer 0x%llx reads register-clear DCC keys at 0x%llx over the pending image 0x%llx (DCC 0x%llx, filled keys %s): whether its results precede the clear is not modeled", static_cast<unsigned long long>(buffer.address), static_cast<unsigned long long>(buffer.dccAddress), static_cast<unsigned long long>(residentBase), static_cast<unsigned long long>(residentDcc), Graphics::DccKeysName(filledKeys));
-        throw std::runtime_error(message);
-    }
-    if (Graphics::IsDccClear(filledKeys) && filledKeys == keys && !hasWritesSinceFill) return false;
-    return Graphics::KeysServeSurface(residentDcc, uploadedKeys, filledKeys, buffer.dccAddress, residentKeys, [&] { return keys; });
 }
 
 }

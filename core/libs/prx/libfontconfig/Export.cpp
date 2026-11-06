@@ -1,4 +1,6 @@
 #include "prx/libfontconfig/include/InventoryExports.hpp"
+#include "prx/libfontconfig/include/Sets.hpp"
+#include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <array>
@@ -85,7 +87,7 @@ int APS5_VABI FcPatternAddDouble() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternDuplicate() {
+FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern*) {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -171,10 +173,6 @@ int APS5_VABI FcPatternReference() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcObjectSetDestroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcPatternGet() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -184,10 +182,6 @@ int APS5_VABI FcPatternAddMatrix() {
 }
 
 int APS5_VABI FcPatternAddString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcFontSetCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -207,11 +201,7 @@ int APS5_VABI FcFreeTypeCharIndex() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcFontSetAdd() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternDestroy() {
+void APS5_VABI FcPatternDestroy(FcPattern*) {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -246,15 +236,7 @@ int APS5_VABI FcDefaultSubstitute() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcObjectSetBuild() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcPatternAddLangSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcFontSetDestroy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
