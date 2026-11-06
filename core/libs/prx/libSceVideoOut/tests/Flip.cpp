@@ -852,6 +852,9 @@ void testFrameLimit() {
     const auto elapsed = std::chrono::steady_clock::now() - begin;
     lock.unlock();
     check(elapsed >= std::chrono::milliseconds(245), "six flips under ANYPS5_FPS_LIMIT=20 completed in under five periods of 50 ms");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
 }
 
 unsigned displayWindowId() {
