@@ -154,16 +154,19 @@ int APS5_VABI sceWebBrowserDialogResetCookie(const WebBrowserDialogResetCookiePa
 }
 
 int APS5_VABI sceWebBrowserDialogGetEvent() {
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWebBrowserDialogNavigate() {
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceWebBrowserDialogSetZoom() {
+    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
