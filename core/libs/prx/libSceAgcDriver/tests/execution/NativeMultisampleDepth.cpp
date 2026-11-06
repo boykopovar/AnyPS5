@@ -413,6 +413,24 @@ void QueueTargetWordFill(const Context& context, Recorder& recorder, std::uint64
     AgcDriver::GuestMemory::MarkWritten(address, bytes);
 }
 
+std::uint32_t FetchGroupIndex(ShaderRecompiler::SpirvModule& module, std::uint32_t u32, std::uint32_t v3, std::uint32_t group) {
+    const auto block = module.Type(spv::OpTypeStruct, u32);
+    module.AddAnnotation(spv::OpDecorate, block, spv::DecorationBlock);
+    module.AddAnnotation(spv::OpMemberDecorate, block, 0u, spv::DecorationOffset, 0u);
+    const auto push = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassPushConstant, block), spv::StorageClassPushConstant);
+    const auto loaded = module.AllocateId();
+    module.AddFunction(spv::OpLoad, v3, loaded, group);
+    const auto groupX = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, groupX, loaded, 0u);
+    const auto pointer = module.AllocateId();
+    module.AddFunction(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassPushConstant, u32), pointer, push, module.Constant(spv::OpConstant, u32, 0u));
+    const auto base = module.AllocateId();
+    module.AddFunction(spv::OpLoad, u32, base, pointer);
+    const auto index = module.AllocateId();
+    module.AddFunction(spv::OpIAdd, u32, index, base, groupX);
+    return index;
+}
+
 std::vector<std::uint32_t> FetchShader(std::uint32_t width, std::uint32_t height, std::uint32_t fragments, bool arrayed, bool floating) {
     ShaderRecompiler::SpirvModule module;
     module.EmitCapability(spv::CapabilityShader);
@@ -442,10 +460,7 @@ std::vector<std::uint32_t> FetchShader(std::uint32_t width, std::uint32_t height
     const auto main = module.AllocateId();
     module.AddFunction(spv::OpFunction, voidType, main, spv::FunctionControlMaskNone, module.Type(spv::OpTypeFunction, voidType));
     module.AddFunction(spv::OpLabel, module.AllocateId());
-    const auto loaded = module.AllocateId();
-    module.AddFunction(spv::OpLoad, v3, loaded, group);
-    const auto index = module.AllocateId();
-    module.AddFunction(spv::OpCompositeExtract, u32, index, loaded, 0u);
+    const auto index = FetchGroupIndex(module, u32, v3, group);
     const auto binary = [&](spv::Op op, std::uint32_t a, std::uint32_t b) {
         const auto result = module.AllocateId();
         module.AddFunction(op, u32, result, a, b);
@@ -501,9 +516,12 @@ public:
             std::vector<VkWriteDescriptorSet> writes{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer, nullptr}};
             for (std::size_t index = 0u; index < images.size(); ++index) writes.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, imageBinding(index), 0u, 1u, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[index], nullptr, nullptr});
             context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0u, nullptr);
+            const VkPushConstantRange base{VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(std::uint32_t)};
             VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
             layoutInfo.setLayoutCount = 1u;
             layoutInfo.pSetLayouts = &setLayout;
+            layoutInfo.pushConstantRangeCount = 1u;
+            layoutInfo.pPushConstantRanges = &base;
             Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "fetch pipeline layout");
             VkShaderModuleCreateInfo shaderInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
             shaderInfo.codeSize = code.size_bytes();
@@ -519,7 +537,15 @@ public:
     void Run(VkCommandBuffer commands, std::uint32_t groups) const {
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0u, 1u, &set, 0u, nullptr);
-        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groups, 1u, 1u);
+        const auto push = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
+        const auto dispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
+        const auto limit = context.limits.maxComputeWorkGroupCount[0];
+        for (std::uint32_t base = 0u; base < groups;) {
+            const auto count = std::min(limit, groups - base);
+            push(commands, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0u, sizeof(base), &base);
+            dispatch(commands, count, 1u, 1u);
+            base += count;
+        }
     }
 private:
     void release() noexcept {
@@ -572,10 +598,7 @@ std::vector<std::uint32_t> DepthStencilFetchShader(std::uint32_t width, std::uin
     const auto main = module.AllocateId();
     module.AddFunction(spv::OpFunction, voidType, main, spv::FunctionControlMaskNone, module.Type(spv::OpTypeFunction, voidType));
     module.AddFunction(spv::OpLabel, module.AllocateId());
-    const auto loaded = module.AllocateId();
-    module.AddFunction(spv::OpLoad, v3, loaded, group);
-    const auto index = module.AllocateId();
-    module.AddFunction(spv::OpCompositeExtract, u32, index, loaded, 0u);
+    const auto index = FetchGroupIndex(module, u32, v3, group);
     const auto operation = [&](spv::Op op, std::uint32_t type, auto... operands) {
         const auto result = module.AllocateId();
         module.AddFunction(op, type, result, operands...);
