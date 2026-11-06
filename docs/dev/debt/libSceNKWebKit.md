@@ -55,7 +55,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6828 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6787 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1823,28 +1823,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF9BitVector7setSlowERKS0_` | `MCCQhElIfYo` |
 | `_ZN3WTF9BitVector8clearAllEv` | `vhJR0H0Mb9Q` |
 | `_ZN3WTF9BitVector9mergeSlowERKS0_` | `rrhx6wXU41g` |
-| `_ZN3WTF9MediaTime11invalidTimeEv` | `NqV8zMoVdAs` |
-| `_ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE` | `HW0dx8g3GnU` |
-| `_ZN3WTF9MediaTime14indefiniteTimeEv` | `nsc5rBVPrJ8` |
-| `_ZN3WTF9MediaTime15createWithFloatEf` | `223yzNUMJKw` |
-| `_ZN3WTF9MediaTime15createWithFloatEfj` | `mezh2RA6bAM` |
-| `_ZN3WTF9MediaTime16createWithDoubleEdj` | `cfsLfZLMLVw` |
-| `_ZN3WTF9MediaTime16createWithDoubleEd` | `rRgC2-nilx8` |
-| `_ZN3WTF9MediaTime20negativeInfiniteTimeEv` | `xziWz-gUiXs` |
-| `_ZN3WTF9MediaTime20positiveInfiniteTimeEv` | `EbaxxSIUfsk` |
-| `_ZN3WTF9MediaTime8zeroTimeEv` | `QKN0Iu6Ujgg` |
-| `_ZN3WTF9MediaTimeC1ERKS0_` | `ms8kCVrvykA` |
-| `_ZN3WTF9MediaTimeC1Eljh` | `Sf6u84e0Qw4` |
-| `_ZN3WTF9MediaTimeC1Ev` | `h1v6F8shCaM` |
-| `_ZN3WTF9MediaTimeC2ERKS0_` | `hHLR+tB3U7Y` |
-| `_ZN3WTF9MediaTimeC2Eljh` | `ZHUzIIIwj1c` |
-| `_ZN3WTF9MediaTimeC2Ev` | `dacK3EAK3-0` |
-| `_ZN3WTF9MediaTimeaSERKS0_` | `gR8P+QJ3YlQ` |
-| `_ZN3WTF9MediaTimemIERKS0_` | `N+upxnXuFPs` |
-| `_ZN3WTF9MediaTimenaEmPv` | `p8WqfV5JBM4` |
-| `_ZN3WTF9MediaTimenwEm10NotNullTagPv` | `emSpWE2Ps5k` |
-| `_ZN3WTF9MediaTimenwEmPv` | `4Fp5Pq1VTWs` |
-| `_ZN3WTF9MediaTimepLERKS0_` | `S2G9jJwRMqs` |
 | `_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_` | `MlSHagwBWI4` |
 | `_ZN3WTF9URLParser19parseURLEncodedFormENS_10StringViewE` | `Ev+2GetBNwE` |
 | `_ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE` | `jKPJKar5yGY` |
@@ -3194,25 +3172,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18PlatformPasteboardC1Ev` | `knX2cGAmdW8` |
 | `_ZN7WebCore18PlatformPasteboardC2ERKN3WTF6StringE` | `HjhPNUX3UO8` |
 | `_ZN7WebCore18PlatformPasteboardC2Ev` | `kxvsg8MG-r8` |
-| `_ZN7WebCore18PlatformTimeRanges13intersectWithERKS0_` | `FOX5cdgzoRA` |
-| `_ZN7WebCore18PlatformTimeRanges3addERKN3WTF9MediaTimeES4_` | `adCAikkTibw` |
-| `_ZN7WebCore18PlatformTimeRanges5clearEv` | `8-bkqei4PMY` |
-| `_ZN7WebCore18PlatformTimeRanges6invertEv` | `mj8JPPMIzYQ` |
-| `_ZN7WebCore18PlatformTimeRanges9unionWithERKS0_` | `IrAYtHdJ2HA` |
-| `_ZN7WebCore18PlatformTimeRangesC1EON3WTF6VectorINS0_5RangeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE` | `6iAhwmHrW1g` |
-| `_ZN7WebCore18PlatformTimeRangesC1ERKN3WTF9MediaTimeES4_` | `CBMBWsSrlq8` |
-| `_ZN7WebCore18PlatformTimeRangesC1ERKS0_` | `wQgEa1jmctg` |
-| `_ZN7WebCore18PlatformTimeRangesC1Ev` | `cL58Z6yRYDk` |
-| `_ZN7WebCore18PlatformTimeRangesC2EON3WTF6VectorINS0_5RangeELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE` | `owVFGNaLz6g` |
-| `_ZN7WebCore18PlatformTimeRangesC2ERKN3WTF9MediaTimeES4_` | `Xt2cS8a6Xj4` |
-| `_ZN7WebCore18PlatformTimeRangesC2ERKS0_` | `8CZkNnI1+r8` |
-| `_ZN7WebCore18PlatformTimeRangesC2Ev` | `G-6N-vLNZ10` |
-| `_ZN7WebCore18PlatformTimeRangesD1Ev` | `Bzvv4mzBISM` |
-| `_ZN7WebCore18PlatformTimeRangesD2Ev` | `PcT-A0bz7N8` |
-| `_ZN7WebCore18PlatformTimeRangesaSERKS0_` | `mOJJLx3R04I` |
-| `_ZN7WebCore18PlatformTimeRangesnaEmPv` | `yAx+ucBv8Ks` |
-| `_ZN7WebCore18PlatformTimeRangesnwEm10NotNullTagPv` | `EO7L0IQDZlE` |
-| `_ZN7WebCore18PlatformTimeRangesnwEmPv` | `vuNSwp-c4Aw` |
 | `_ZN7WebCore18PluginInfoProvider10removePageERNS_4PageE` | `YcA1SgtiPb4` |
 | `_ZN7WebCore18PluginInfoProvider20clearPagesPluginDataEv` | `hSNXnh4fS6w` |
 | `_ZN7WebCore18PluginInfoProvider7addPageERNS_4PageE` | `soxJ6tUOKC0` |
