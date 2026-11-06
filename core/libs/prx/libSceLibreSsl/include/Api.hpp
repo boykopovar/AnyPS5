@@ -877,7 +877,7 @@ void* APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(const LibreSslX509NameEntry
 LibreSslX509NameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const LibreSslX509Name* name, int loc);
 int APS5_VABI X509_NAME_get_index_by_NID_nid_postfix(const LibreSslX509Name* name, int nid, int lastpos);
 int APS5_VABI X509_NAME_get_text_by_NID_nid_postfix(const LibreSslX509Name* name, int nid, char* buf, int len);
-int APS5_VABI X509_NAME_oneline_nid_postfix(void);
+char* APS5_VABI X509_NAME_oneline_nid_postfix(const void* name, char* buffer, int length);
 int APS5_VABI X509_NAME_print_ex_nid_postfix(void);
 LibreSslStack* APS5_VABI X509_STORE_CTX_get1_chain_nid_postfix(LibreSslX509StoreContext* context);
 void* APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(LibreSslX509StoreContext* context);
