@@ -234,10 +234,6 @@ int APS5_VABI PKImageDecode_Create_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageDecode_Create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKImageDecode_GetColorContext_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
