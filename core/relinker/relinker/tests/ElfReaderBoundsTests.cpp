@@ -131,7 +131,9 @@ int main() {
                 Write<std::uint64_t>(bytes, 96, 0xc0);
                 Write<std::uint64_t>(bytes, 104, 0xc0);
                 const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-                Require(headers.size() == 1 && headers[0].Offset + headers[0].FileSize == 0x300);
+                const bool isUncoveredRelro = type == 0x61000010u;
+                Require(headers.size() == (isUncoveredRelro ? 2u : 1u) && headers[0].Offset + headers[0].FileSize == 0x300);
+                if (isUncoveredRelro) Require(headers[1].Type == 0x6474e552 && headers[1].Flags == 4);
             }
         }},
         {"uncovered SCE RELRO file size exceeds memory size", [] {
@@ -158,7 +160,7 @@ int main() {
             auto bytes = TlsFixture(0x1008, 8, 16, 8);
             Write<std::uint32_t>(bytes, 0x260, 0x61000010);
             const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-            Require(headers.size() == 2 && headers[0].Type == 1 && headers[1].Type == 7 && headers[1].MappedAddress == 0x1008);
+            Require(headers.size() == 3 && headers[0].Type == 1 && headers[1].Type == 7 && headers[1].MappedAddress == 0x1008 && headers[2].Type == 0x6474e552);
         }},
         {"TLS image ending at end of file", [] {
             auto bytes = TlsFixture(0x1008, 8, 16, 8);
@@ -223,7 +225,29 @@ int main() {
         }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
-            Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].EntrySize == 24);
+            Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].Alignment == 8 && sections[1].EntrySize == 24);
+        }},
+        {"section header alignment is not a power of two", [] {
+            for (const std::uint64_t align : {3ULL, 5ULL, 7ULL, 0x3000ULL, 0xfffffffffffffffbULL}) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 240, align);
+                RejectSections(std::move(bytes));
+            }
+        }},
+        {"section header alignment zero and one", [] {
+            for (const std::uint64_t align : {0ULL, 1ULL}) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 240, align);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[1].Alignment == align);
+            }
+        }},
+        {"non-first SHT_NULL section header odd alignment accepted", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 0);
+            Write<std::uint64_t>(bytes, 240, 3);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Type == 0 && sections[1].Alignment == 3);
         }},
         {"SHT_SYMTAB section entry size mismatch", [] {
             for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL, 0xffffffffffffffffULL}) {

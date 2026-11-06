@@ -201,6 +201,13 @@ void CheckAbi() {
     }
     Require(BindingNumber(Stage::Main, Binding::ShaderData) == 62u && BindingNumber(Stage::Fragment, Binding::ShaderData) == 127u, "runtime ABI binding numbers changed");
     Require(BindingNumber(Stage::Main, Binding::ImageTable) == ShaderRecompiler::RuntimeAbi::ImageTableBinding && BindingNumber(Stage::TessellationEvaluation, Binding::ImageTable) == ShaderRecompiler::RuntimeAbi::ImageTableBinding && !bindings.contains(ShaderRecompiler::RuntimeAbi::ImageTableBinding), "the shared image table binding overlaps a stage binding");
+    for (std::uint32_t stage = 0u; stage < ShaderRecompiler::RuntimeAbi::StageCount; ++stage) {
+        for (std::uint32_t binding = 0u; binding < static_cast<std::uint32_t>(Binding::Count); ++binding) {
+            const bool uint = binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u;
+            Require(ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(BindingNumber(static_cast<Stage>(stage), static_cast<Binding>(binding))) == uint, "stage " + std::to_string(stage) + " binding " + std::to_string(binding) + " is not classified by its stage-local uint storage image slot");
+        }
+    }
+    Require(!ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding) && !ShaderRecompiler::RuntimeAbi::UintStorageImageBinding(ShaderRecompiler::RuntimeAbi::ImageTableBinding), "an image table binding is classified as a uint storage image slot");
     Reject([] { BindingNumber(static_cast<Stage>(4u), Binding::Buffers); }, "invalid stage or binding");
     Reject([] { BindingNumber(Stage::Main, Binding::Count); }, "invalid stage or binding");
     Reject([] { ShaderRecompiler::RuntimeAbi::RequireVersion(0u); }, "incompatible version");

@@ -40,7 +40,7 @@ struct Base64Block {
 
 int DecodeLastBlock(const char* src, std::size_t length, const char* alphabet, Base64Block* block) {
     char c[4] = {BASE64_PAD, BASE64_PAD, BASE64_PAD, BASE64_PAD};
-    std::memcpy(c, src, length);
+    if (length != 0) std::memcpy(c, src, length);
     const int v0 = Base64Value(c[0], alphabet);
     const int v1 = Base64Value(c[1], alphabet);
     if (v0 < 0 || v1 < 0) return NP_ERROR_INVALID_CHARACTER;
@@ -474,7 +474,7 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
 }
 
 int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase) {
-    if (size <= length * 2) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (size == 0 || length > (size - 1) / 2) return NP_ERROR_BUFFER_TOO_SMALL;
     const auto* bytes = static_cast<const std::uint8_t*>(src);
     for (std::size_t i = 0; i < length; ++i) {
         dst[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
@@ -497,6 +497,7 @@ int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
+    if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
     return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
 }
 
