@@ -55,6 +55,12 @@ def main():
         needed = convert(relinker, work / "without-internal", ("libkernel.prx", "libc.prx"), ["libc.prx"])
         assert needed == ["$ORIGIN/app0/sce_module/libc.prx.guest.prx", "libkernel.prx"], needed
 
+        case = work / "kernel-sys-provider"
+        (case / "libs").mkdir(parents=True)
+        (case / "libs" / "libkernel_sys.prx").write_bytes(b"provider")
+        needed = convert(relinker, case, ("libkernel.prx",), ["other.prx"])
+        assert needed == ["$ORIGIN/app0/sce_module/other.prx.guest.prx", "libkernel.prx", "libkernel_sys.prx"], needed
+
         needed = convert(relinker, work / "not-bundled", imports, ["other.prx"])
         assert needed == ["$ORIGIN/app0/sce_module/other.prx.guest.prx", *imports], needed
 

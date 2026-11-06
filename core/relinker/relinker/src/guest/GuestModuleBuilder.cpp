@@ -421,6 +421,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             std::find(hosts.begin(), hosts.end(), "libc.prx") == hosts.end()) hosts.push_back("libc.prx");
     }
     if (uniqueHosts.contains("libSceLibcInternal.prx") && uniqueHosts.insert("libc.prx").second) hostLibraries.push_back("libc.prx");
+    if (uniqueHosts.contains("libkernel.prx")) {
+        const std::string provider = "libkernel_sys.prx";
+        const bool available = std::any_of(runDirectories.begin(), runDirectories.end(), [&](const auto& directory) {
+            std::error_code error;
+            return std::filesystem::exists(directory / provider, error) && !error;
+        });
+        if (available && uniqueHosts.insert(provider).second) hostLibraries.push_back(provider);
+    }
     dynamic.NeededLibraries = hostLibraries;
     dynamic.DynamicSegmentData.clear();
     const auto addNeeded = [&](const std::string& name) {
