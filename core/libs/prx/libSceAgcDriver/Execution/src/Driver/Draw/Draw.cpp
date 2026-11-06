@@ -919,7 +919,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& program = programs[i];
         pushCursorBytes = Graphics::StagePushOffset(pushCursorBytes, program.binary.stage, fixedSlots);
         require(pushCursorBytes <= Graphics::PushBlockBytes(fixedSlots), "stage push constant offset exceeds the pipeline push constant block");
-        const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushCursorBytes, graphics.depthRemap.mode != 0u), pushCursorBytes, fixedSlots, hasFragment && program.binary.stage != ShaderRecompiler::ShaderStage::Fragment);
+        const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushCursorBytes, graphics.depthRemap.mode != 0u), pushCursorBytes, program.binary.stage, fixedSlots, hasFragment);
         pushOffsets[i] = pushCursorBytes;
         if (drawHit) {
 

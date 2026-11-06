@@ -50,6 +50,11 @@ target_link_libraries(agc_driver_graphics_tests PRIVATE
 )
 
 if(BUILD_TESTING)
+    add_test(NAME agc_driver_stencil_ref_export_push_budget COMMAND agc_driver_graphics_tests --stencil-ref-export)
+    set_tests_properties(agc_driver_stencil_ref_export_push_budget PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_stencil_ref_export_push_budget PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_command_batch_fence_failure COMMAND agc_driver_graphics_tests --command-batch-fence-failure)
     set_tests_properties(agc_command_batch_fence_failure PROPERTIES TIMEOUT 20)
     add_test(NAME agc_graphics_profile_draw COMMAND agc_driver_graphics_tests)

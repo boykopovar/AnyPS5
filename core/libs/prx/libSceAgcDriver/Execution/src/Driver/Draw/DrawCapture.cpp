@@ -68,8 +68,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     const auto waveSize = Graphics::StageWaveSize(graphics.stages, program.binary.stage);
     const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
     require(pushOffset <= Graphics::PushBlockBytes(fixedSlots), "stage push constant offset exceeds the pipeline push constant block");
-    const bool reserveFragment = program.binary.stage != Stage::Fragment && std::ranges::any_of(programs, [](const DrawProgram& value) { return value.binary.stage == Stage::Fragment; });
-    const auto pushBytes = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushOffset, graphics.depthRemap.mode != 0u), pushOffset, fixedSlots, reserveFragment);
+    const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& value) { return value.binary.stage == Stage::Fragment; });
+    const auto pushBytes = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, pushOffset, graphics.depthRemap.mode != 0u), pushOffset, program.binary.stage, fixedSlots, hasFragment);
     ShaderRecompiler::RecompileRequest request{
         program.binary,
         {waveSize, program.firstUserSgpr, program.userData, std::nullopt, program.binary.stage == Stage::Fragment ? std::optional(pixel) : std::nullopt, vertexInfos[i], memory, RegisteredFloatMode(*program.snapshot)},
@@ -77,9 +77,6 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         {0, 0, pushOffset, pushBytes},
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(graphics.stages, program.binary.stage), graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}, program.binary.stage == Stage::Mesh ? meshBarycentrics : std::nullopt}
     };
-    if (graphics.depthRemap.mode != 0u && pushOffset < Graphics::PipelinePushSlotBytes) {
-        request.layout.pushConstantSizeBytes = std::min(request.layout.pushConstantSizeBytes, pushOffset < ShaderRecompiler::DepthRemapPushOffsetBytes ? ShaderRecompiler::DepthRemapPushOffsetBytes - pushOffset : 0u);
-    }
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     auto invocation = [&] {
         try {

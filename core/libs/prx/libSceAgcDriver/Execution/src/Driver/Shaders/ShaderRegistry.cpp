@@ -1948,7 +1948,6 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     std::vector<PreparedGraphicsStage> prepared;
     std::uint32_t pushOffset = 0;
     const bool fixedSlots = target.fixedPushSlots;
-    const auto capacity = Graphics::StagePushLimit(decoded.state.stages, 0, decoded.state.depthRemap.mode != 0u);
     const bool hasFragment = !decoded.roles.empty() && decoded.roles.back() == ShaderRecompiler::ProgramRole::Fragment;
     for (std::size_t index = 0; index < decoded.programs.size(); ++index) {
         if (decoded.roles[index] == ShaderRecompiler::ProgramRole::GeometryBack) continue;
@@ -1958,10 +1957,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         pushOffset = Graphics::StagePushOffset(pushOffset, program.binary.stage, fixedSlots);
         const auto offset = pushOffset;
         require(pushOffset <= Graphics::PushBlockBytes(fixedSlots), "prepared stage push constant offset exceeds the pipeline push constant block");
-        auto room = Graphics::StagePushBudget(fixedSlots && fragment ? Graphics::PipelinePushSlotBytes : capacity, pushOffset, fixedSlots, hasFragment && !fragment);
-        if (decoded.state.depthRemap.mode != 0u && offset < Graphics::PipelinePushSlotBytes) {
-            room = std::min(room, offset < ShaderRecompiler::DepthRemapPushOffsetBytes ? ShaderRecompiler::DepthRemapPushOffsetBytes - offset : 0u);
-        }
+        const auto room = Graphics::StagePushBudget(Graphics::StagePushLimit(decoded.state.stages, pushOffset, decoded.state.depthRemap.mode != 0u), pushOffset, program.binary.stage, fixedSlots, hasFragment);
         if (deferUnprepared && DeferFailedRegistration(*program.snapshot)) {
             prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
             continue;

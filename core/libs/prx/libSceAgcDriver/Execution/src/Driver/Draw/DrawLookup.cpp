@@ -140,7 +140,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     ++stageValidations;
                     cursor = Graphics::StagePushOffset(cursor, programs[i].binary.stage, fixedSlots);
                     if (cursor > Graphics::PushBlockBytes(fixedSlots)) { miss = DrawMiss::Layout; break; }
-                    const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, cursor, graphics.depthRemap.mode != 0u), cursor, fixedSlots, hasFragment && programs[i].binary.stage != ShaderRecompiler::ShaderStage::Fragment);
+                    const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, cursor, graphics.depthRemap.mode != 0u), cursor, programs[i].binary.stage, fixedSlots, hasFragment);
                     const auto& variants = entry->stages[i];
                     auto outcome = EntryOutcome::Differing;
                     bool anyLayout = false;
