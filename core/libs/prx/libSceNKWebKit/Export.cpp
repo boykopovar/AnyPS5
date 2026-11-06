@@ -13915,17 +13915,6 @@ int APS5_VABI WKCookieManagerStopObservingCookieChanges() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKDownloadCopyRequest() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKDownloadGetOriginatingPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKDownloadGetWasUserInitiated() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKFormSubmissionListenerContinue() {
     NotImplemented_nid_no_patch(__func__);

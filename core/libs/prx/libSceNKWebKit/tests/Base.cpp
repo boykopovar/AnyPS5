@@ -622,6 +622,34 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestDownload() {
+    Require(WKDownloadGetTypeID() == 52);
+    auto download = NKWebKit::Make<NKWebKit::Download>();
+    const void* ref = download.Get();
+
+    Require(!WKDownloadGetWasUserInitiated(ref));
+    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+
+    download->wasUserInitiated = true;
+    Require(WKDownloadGetWasUserInitiated(ref));
+
+    auto dummyReq = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    download->request = std::move(dummyReq);
+    auto* req = WKDownloadCopyRequest(ref);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKDataGetTypeID());
+    WKRelease(req);
+
+    bool threw = false;
+    try {
+        WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestAXObject() {
     Require(WKAXObjectGetTypeID() == 132);
     auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
@@ -774,6 +802,7 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestDownload();
     TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
