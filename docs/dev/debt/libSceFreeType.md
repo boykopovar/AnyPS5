@@ -104,3 +104,7 @@
 - [FT_Get_Gasp](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console FreeType version and query-result compatibility are unverified. The guest face adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftgasp.c) and its existing LP64 face bridge.
 
 - [FT_Get_CID_Registry_Ordering_Supplement, FT_Get_CID_Is_Internally_CID_Keyed and FT_Get_CID_From_Glyph_Index](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console ABI/version and CID metadata equivalence are unverified. The adapters follow bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftcid.c) through the existing face bridge; returned registry/ordering strings have the native face's lifetime.
+
+### Stroker count outputs
+
+- Read-only-output handling in [FT_Stroker_GetCounts and FT_Stroker_GetBorderCounts](../../../core/libs/prx/libSceFreeType/src/Stroker.cpp) is not measured on a console. After the native query, a refused `GuestArena::HostWrite` leaves both outputs unchanged and returns the native error if one occurred, otherwise `FT_Err_Invalid_Argument`; the native query still updates private border validity. Writable outputs retain native zero-on-error and points-before-contours alias behavior.

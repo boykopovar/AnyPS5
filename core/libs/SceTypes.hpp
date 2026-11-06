@@ -2027,6 +2027,32 @@ struct PngDecImageInfo {
     std::uint32_t image_flag;
 };
 
+struct PngDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using PngDecInputCallback = std::int32_t (APS5_VABI *)(PngDecInputChunk*, void*);
+
+struct PngDecInputControlParam {
+    PngDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint16_t operation;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint16_t reserved;
+    std::uint32_t image_pitch;
+};
+
+struct SystemLoggerLogData {
+    std::uint8_t data[0x40];
+    std::uint32_t size;
+    std::uint8_t reserved[0x20];
+};
+
 struct JpegEncCreateParam {
     std::uint32_t size;
     std::uint32_t attr;
