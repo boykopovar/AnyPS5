@@ -6,7 +6,9 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/6bd58c3d7a0fa933dd4b524754c43265/e4e5dbc43890a24e35dc1c656135000210e28390) records module, library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp); it is a metadata summary rather than independent verification. One entry belongs to the logical library `libSceLibcInternalExt` within this module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 288 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 282 match the public 3.20 catalogue and 6 do not. These are declarations only; neither image label authenticates a retail firmware version. Signatures and behavior are unverified; parameterless `int` declarations are placeholders. Every entry throws through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 288 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 282 match the public 3.20 catalogue and 6 do not. Apart from the two `showmanyc` exports below, these remain import-resolution declarations: signatures and behavior are unverified, parameterless `int` declarations are placeholders, and their bodies throw through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No other runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+- [showmanyc](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) has no console-runtime validation. Firmware 13.60 libSceLibcInternal.sprx (SHA-256 a2d70cc64c3abc3927662cbe0c3765b74b2385b4b2ad80eb7b942a891f9259fb) contains bytes 31 c0 c3 (xor eax,eax; ret) at 0x92b30 for IAEl1Ta7yVU and 0xc2c80 for olsoiZsezkk. These static observations establish a zero result without buffer access. The Itanium names identify narrow/wide std::basic_streambuf specializations; std::streamsize follows the standard-library declaration and the [base showmanyc contract](https://eel.is/c++draft/streambuf.virt.get). No console measurement or other firmware equivalence is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -55,10 +57,8 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_ZNSt13basic_ostreamIwSt11char_traitsIwEED1Ev` | `EYZJsnX58DE` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsgetnEPci` | `VpwymQiS4ck` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKci` | `sXaxl1QGorg` |
-| `_ZNSt15basic_streambufIcSt11char_traitsIcEE9showmanycEv` | `IAEl1Ta7yVU` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsgetnEPwi` | `lZVehk7yFok` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsputnEPKwi` | `041c37QfoUc` |
-| `_ZNSt15basic_streambufIwSt11char_traitsIwEE9showmanycEv` | `olsoiZsezkk` |
 | `_ZNSt16nested_exceptionD1Ev` | `+qKS53qzWdA` |
 | `_ZNSt16nested_exceptionD2Ev` | `8R00hgzXQDY` |
 | `_ZNSt22_Future_error_categoryD0Ev` | `WDKzMM-uuLE` |
@@ -273,7 +273,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `__kernel_cosdf` | `7ruwcMCJVGI` |
 | `__kernel_sindf` | `2Lvc7KWtErs` |
 | `__longjmp` | `9mKjVppFsL0` |
-| `__vfprintf` | `yAZ5vOpmBus` |
 | `_init_tls` | `6NCOqr3cD74` |
 | `_malloc_finalize_lv2` | `RnqlvEmvkdw` |
 | `_malloc_fini` | `21KFhEQDJ3s` |
@@ -535,6 +534,8 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [_ZNSt12future_errorD2Ev, _ZNSt14overflow_errorD2Ev and _ZNSt15underflow_errorD2Ev](../../../core/libs/prx/libSceLibcInternal/ExceptionDestructors.cpp) (libSceLibcInternal, NIDs `XFh0C66aEms`, `OypvNf3Uq3c` and `xiqd+QkuYXc`) are the base-object destructors of classes without virtual bases, which the [Itanium C++ ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#definitions) makes do the same work as the complete-object `D1` destructors, so they run the `libc` exports of those `D1` names. The console's `libSceLibcInternal.sprx` was not read and no title was seen calling them, so whether it frees the message from the same heap as `libc.prx` is unverified
 - [_Mtxinit, _Mtxlock, _Mtxunlock, _Mtxdst](../../../core/libs/prx/libSceLibcInternal/Mutex.cpp) (libSceLibcInternal) follow the PS4 code of [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/860d73b7e99559106a3ffa3d3d69f0f9237e115e/src/core/libraries/libc_internal/libc_internal_threads.cpp#L10-L62) and [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/libcinternal/ps4_mtx_internal.pas#L47-L99): the argument points to a pointer-sized libkernel mutex handle, `_Mtxinit` creates it recursive, a zeroed handle becomes an error-checking mutex on its first lock as with the POSIX calls, and each returns 0 on success and 1 on any failure. A null handle pointer throws in libkernel. The `SceLibcI_` name goes to `scePthreadMutexInit`, which drops it. For PS5 only the names are known (NID hashes, ps5sdk stubs); layout, signatures, mutex type and results are not verified on a PS5
 
+- [__vfprintf](../../../core/libs/prx/libSceLibcInternal/Format.cpp) (libSceLibcInternal, NID `yAZ5vOpmBus`) takes three arguments (`stream, format, args`) and reuses the public `vfprintf` implementation (`vfprintf_nid_postfix`), acquiring stream locks and returning -1 with `EBADF` (9) for a closed or null stream. This differs from FreeBSD 11.4 libc ([vfprintf.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdio/vfprintf.c)), where `__vfprintf` is a 4-argument unlocked helper (`fp, locale, fmt0, ap`) without null checking. Console signature, locking and null handling are unverified.
+
 ### Additional PS5 3.20 imports (xdCloudy #9498)
 
 - [3.20 pending imports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following PS5 3.20 inventory names are declared for import resolution only; their prototypes and behavior are unverified, and each call throws through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
@@ -543,7 +544,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fac_tidy`, `_Fail_s`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - 
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fgpos`, `_Fofind`, `_Fofree`, `_Fopen`, `_Foprep`, `_Frprep`, `_Fspos`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fwprep`, `_Genld`, `_Gentime`, `_Getcloc`, `_Getctyptab`, `_Getdst`, `_Geterrno`, `_Getfld`, `_Getfloat`, `_Getgloballocale`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getpcostate`, `_Getpwcostate`, `_Getpwctrtab`, `_Getpwctytab`, `_Getstr`, `_Gettime`, `_Getzone`, `_Hypot`
