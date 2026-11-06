@@ -51,10 +51,6 @@ int APS5_VABI EVP_PKEY_verify_init_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_get_digestbyname_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_sha512_256_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
