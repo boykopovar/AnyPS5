@@ -73,6 +73,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
+    add_test_executable(guest_libressl_rsa_pss_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsaPss.cpp)
+    target_include_directories(guest_libressl_rsa_pss_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_rsa_pss_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_rsa_pss_tests)
+    add_test(NAME guest_libressl_rsa_pss COMMAND guest_libressl_rsa_pss_tests)
+    set_tests_properties(guest_libressl_rsa_pss PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_rsa_pss PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_digest_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslDigest.cpp)
     target_include_directories(guest_libressl_digest_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_digest_tests PRIVATE libSceLibreSsl libc)
