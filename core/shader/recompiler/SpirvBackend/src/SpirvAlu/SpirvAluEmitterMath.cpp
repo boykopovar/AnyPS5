@@ -1357,11 +1357,24 @@ std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto distance = ExactSub(state, ConstantF32(state, 0x3e800000u), absolute);
     const auto pastEighth = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e000000u));
     const auto pastThreeEighths = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3ec00000u));
+    const auto middleRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), pastEighth, Unary(state, spv::OpLogicalNot, TypeBool(state), pastThreeEighths));
+    const auto sineLabel = state.module.AllocateId();
+    const auto cosineLabel = state.module.AllocateId();
+    const auto mergeLabel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, middleRange, sineLabel, cosineLabel);
+    EmitLabel(state, sineLabel);
+    const auto middle = SinTurnSeries(state, distance);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, cosineLabel);
     const auto turns = Select(state, TypeF32(state), pastThreeEighths, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute), absolute);
     const auto low = CosTurnSeries(state, turns);
-    const auto middle = SinTurnSeries(state, distance);
     const auto high = Unary(state, spv::OpFNegate, TypeF32(state), low);
-    const auto series = Select(state, TypeF32(state), pastThreeEighths, high, Select(state, TypeF32(state), pastEighth, middle, low));
+    const auto cosine = Select(state, TypeF32(state), pastThreeEighths, high, low);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, mergeLabel);
+    const auto series = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeF32(state), series, middle, sineLabel, cosine, cosineLabel);
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Cos, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
     return TrigLinearNearZero(state, value, distance, ConstantF32(state, 0x40c90fdbu), ConstantU32(state, 0x39800000u));
 }
