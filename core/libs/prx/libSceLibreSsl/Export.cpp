@@ -295,11 +295,6 @@ int APS5_VABI EVP_PKEY_get1_RSA_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_id_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_PKEY_set1_RSA_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
