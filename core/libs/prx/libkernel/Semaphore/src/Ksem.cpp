@@ -116,6 +116,15 @@ bool IsKsemDescriptor(int descriptor) {
     return g_ksems.count(descriptor) != 0;
 }
 
+#ifdef ANYPS5_KSEM_TESTING
+extern "C" unsigned KsemWaiterCountForTests_nid_no_patch(std::intptr_t id) {
+    const auto ksem = Find(id);
+    if (!ksem) return 0;
+    std::lock_guard lock(ksem->lock);
+    return ksem->waiters;
+}
+#endif
+
 extern "C" {
 
 int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
