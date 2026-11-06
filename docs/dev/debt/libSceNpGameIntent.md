@@ -7,6 +7,18 @@
 
 ### Unknown function info
 
+- [libSceNpGameIntent additional exports](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) - these name/NID pairs are present in the inspected export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+The inventory label is not authenticated retail-firmware provenance. The inspected image contains raw module-parameter words `0x13590001` at +0x10 and `0x13600007` at +0x14. Using the [published static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298), its 20 unique function NIDs have sorted-LF SHA-256 `04952ce9705980433d9f6f51c9e20d2f6b354a102c085dd3b545ed0b96f5b6f7`; all 5 entries below are present. This digest identifies the function-NID set, not the whole binary or its ABI. An independent review on [this PR](https://github.com/boykopovar/AnyPS5/pull/11956#pullrequestreview) corroborated these identities using a separately reported 13.42 reference; that does not establish matching binaries, prototypes or behavior.
+
+| Name | NID |
+| --- | --- |
+| `sceNpGameIntentGetPermittedIntentTypes` | `+u0P5feg100` |
+| `sceNpGameIntentLaunchAppForPinvoke` | `4hjt8Rxl9CY` |
+| `sceNpGameIntentLaunchAppRequestToGkp` | `hSVuTA3vJuQ` |
+| `sceNpGameIntentRemoveLaunchCallback` | `RQPgtaOJdTk` |
+| `sceNpGameIntentRequest` | `aScB-WDl+L0` |
+
 - [sceNpGameIntentReceiveIntent, sceNpGameIntentGetPropertyValueString](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent) - firmware 13.42 traces report `0x80553802` before `sceNpGameIntentInitialize` (precedence over argument validity), and `0x80553804` for invalid arguments (null pointer, empty key, or zero buffer size); `sceNpGameIntentTerminate` resetting initialized state is modeled lifecycle behavior rather than hardware-verified. `sceNpGameIntentReceiveIntent` reportedly requires `info->size == 0x4140` on firmware 13.42, while AnyPS5 `NpGameIntentInfo` is `0x560` bytes (matching fpPS4) and set by `sceNpGameIntentInfoInit`, so initialized objects are rejected by the receiver's measured size guard. Complete retail layout, output field offsets, and retail behavior of `sceNpGameIntentInfoInit` are unverified; expanding the type with unverified reserved bytes is not an evidence-backed solution.
 - [sceNpAppLauncherLaunchApp](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent, NID `GbayQ7DO8jA`) - its recovered signature is `(int32_t, const char*, const char*)`: an unhandled first argument, a required non-empty string and an optional string rejected past 0x2000 bytes, returning `0x80553A02` before `sceNpAppLauncherInitialize` and `0x80553A04` on invalid arguments. The launch itself is not implemented and throws; the firmware tail calls an internal launch through an extra library context and remaps its `0x805538xx` errors into `0x80553Axx`
 - [sceNpGameIntentGetUdsNpComId, sceNpGameIntentLaunchApp, sceNpGameIntentLaunchApp2, sceNpGameIntentNotifyAppLaunched, sceNpSessionServiceGetJoinedPartySession, sceNpSessionServiceGetRunningGamePlayerSession and sceNpSessionServiceSendPlayerSessionInvitations](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpGameIntent.c). They are declared without parameters solely to resolve known imports and make no ABI claim.

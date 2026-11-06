@@ -75,6 +75,8 @@ struct KernelEqueueEvent {
 
 class KernelEqueuePrivate {
 public:
+    static constexpr std::size_t kMaxPendingEvents = 64;
+
     explicit KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait = false);
     ~KernelEqueuePrivate();
 

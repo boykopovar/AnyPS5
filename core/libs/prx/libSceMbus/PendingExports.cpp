@@ -335,7 +335,7 @@ int APS5_VABI sceMbusEventBusStatusChangeUnsubscribe(std::uint64_t unusedSlot, s
 }
 
 void APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size) {
-    if (size != 0) std::memset(callbacks, 0, size);
+    if (callbacks != nullptr) std::memset(callbacks, 0, size);
 }
 
 int APS5_VABI sceMbusEventCreate_(std::uint32_t flags, MbusEvent* buffer, std::uint32_t capacity, const MbusEventCallbacks* callbacks, void* userData) {

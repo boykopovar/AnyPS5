@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -257,6 +258,27 @@ void TestKernelEventQueue() {
     Require(sceKernelGetEventId(&event) == 7 && sceKernelGetEventData(&event) == 0x1234 && sceKernelGetEventUserData(&event) == &userData);
     Require(sceKernelDeleteAmprEvent(eq, 7) == 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
+}
+
+void TestMeasuredWaitsAndBufferSize() {
+    Recorder recorder(2048);
+    Require(sceAmprCommandBufferGetSize(&recorder.buffer) == 2048);
+    alignas(8) std::uint64_t value = 0;
+    Require(sceAmprCommandBufferWaitOnAddress(&recorder.buffer, &value, 0, 0, 0) == 0);
+    RequireAppended(recorder, 0, 0, Apr::Opcode::WaitOnAddress, sceAmprMeasureCommandSizeWaitOnAddress());
+    const std::uint32_t offset = recorder.Offset();
+    Require(sceAmprCommandBufferWaitOnCounter(&recorder.buffer, 3, 1, 0, 0) == 0);
+    RequireAppended(recorder, offset, 1, Apr::Opcode::WaitOnCounter, sceAmprMeasureCommandSizeWaitOnCounter());
+    Require(sceAmprCommandBufferGetSize(&recorder.buffer) == 2048);
+}
+
+void TestUdivti3() {
+    const unsigned __int128 high = (static_cast<unsigned __int128>(1) << 100) + 12345u;
+    const unsigned __int128 wide = (static_cast<unsigned __int128>(0x123456789ABCDEFull) << 64) | 0xFEDCBA9876543210ull;
+    for (const auto& [dividend, divisor] : {std::pair{high, static_cast<unsigned __int128>(3)}, std::pair{wide, static_cast<unsigned __int128>(0x10000000000ull)},
+                                            std::pair{wide, high}, std::pair{high, wide}, std::pair{~static_cast<unsigned __int128>(0), ~static_cast<unsigned __int128>(0)},
+                                            std::pair{static_cast<unsigned __int128>(41), static_cast<unsigned __int128>(7)}})
+        Require(sceAmprUdivti3(dividend, divisor) == dividend / divisor);
 }
 
 void TestWaits() {
@@ -1457,6 +1479,50 @@ void TestAmmRemapAndProtect() {
     ReleaseRecorderBuffer(exact);
 }
 
+struct ObservedMapping {
+    std::uintptr_t address = 0;
+    std::size_t bytes = 0;
+    std::uint64_t generation = 0;
+};
+
+std::vector<ObservedMapping> observedMappings;
+
+void ObserveMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation) {
+    observedMappings.push_back({address, bytes, generation});
+}
+
+void RequireZeroMappingObserved(std::uint64_t address, std::uint64_t size, std::uint64_t before) {
+#ifdef _WIN32
+    bool found = false;
+    for (const auto& mapping : observedMappings) {
+        if (mapping.address <= address && mapping.address + mapping.bytes >= address + size && mapping.generation > before) found = true;
+    }
+    Require(found);
+    Require(GuestArena::GuestArenaCommitGeneration_nid_postfix() > before);
+#else
+    (void)address;
+    (void)size;
+    (void)before;
+#endif
+}
+
+void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
+#ifdef _WIN32
+    for (std::uint64_t offset = 0; offset < size; offset += page) {
+        auto* pointer = reinterpret_cast<void*>(address + offset);
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(pointer, &info, sizeof(info)) == sizeof(info));
+        Require(info.Type == MEM_MAPPED && info.AllocationProtect == PAGE_READONLY && info.Protect == PAGE_READONLY);
+        DWORD previous = 0;
+        Require(!VirtualProtect(pointer, page, PAGE_READWRITE, &previous));
+        Require(At(address + offset) == 0);
+    }
+#else
+    (void)address;
+    (void)size;
+#endif
+}
+
 void TestAmmPrt() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1478,6 +1544,7 @@ void TestAmmPrt() {
     SubmitAmm(reserve);
     Require(Protection(prt) == 0x10 && Protection(prt + 3 * page) == 0x10);
     Require(At(prt) == 0 && At(prt + 4 * page - 8) == 0);
+    RequireReadOnlyZeroPages(prt, 4 * page);
     At(source) = 0x88;
 
     Recorder back;
@@ -1498,8 +1565,20 @@ void TestAmmPrt() {
     commands = release.Commands();
     Require(sceAmprAmmCommandBufferUnmapToPrt(&release.buffer, prt + page, 2 * page) == 0);
     RequireAppended(release, offset, commands, Apr::Opcode::AmmUnmapToPrt, sceAmprAmmMeasureAmmCommandSizeUnmap(prt + page, 2 * page));
+#ifdef _WIN32
+    const auto beforeRelease = GuestArena::GuestArenaCommitGeneration_nid_postfix();
+    observedMappings.clear();
+    GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&ObserveMapping);
+#else
+    const std::uint64_t beforeRelease = 0;
+#endif
     SubmitAmm(release);
+#ifdef _WIN32
+    GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(nullptr);
+#endif
+    RequireZeroMappingObserved(prt + page, 2 * page, beforeRelease);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
+    RequireReadOnlyZeroPages(prt + page, 2 * page);
 
     Recorder rebuild;
     Require(sceAmprAmmCommandBufferAllocatePaForPrt(&rebuild.buffer, prt, 3 * page, 0, cpuReadWrite) == 0);
@@ -1797,6 +1876,8 @@ int main() {
     TestSubmission();
     TestWriteAddressCommand();
     TestKernelEventQueue();
+    TestMeasuredWaitsAndBufferSize();
+    TestUdivti3();
     TestWaits();
     TestWaitSatisfiedAfterSubmission();
     TestAmmNotBehindAprWait();

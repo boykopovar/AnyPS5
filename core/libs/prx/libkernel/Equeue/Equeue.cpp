@@ -514,6 +514,21 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         for (auto& pending : it->pendingEvents) {
             pending.udata = event.event.udata;
         }
+        if (it->pendingEvents.size() > kMaxPendingEvents) {
+            it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - kMaxPendingEvents));
+        }
+    } else if (event.pendingEvents.size() > kMaxPendingEvents) {
+        KernelEqueueEvent truncated;
+        truncated.triggered = event.triggered;
+        truncated.enabled = event.enabled;
+        truncated.deadlineNs = event.deadlineNs;
+        truncated.intervalNs = event.intervalNs;
+        truncated.lowWater = event.lowWater;
+        truncated.event = event.event;
+        truncated.filter = event.filter;
+        truncated.pendingEvents.assign(event.pendingEvents.end() - static_cast<std::deque<KernelEvent>::difference_type>(kMaxPendingEvents), event.pendingEvents.end());
+        m_events.push_back(std::move(truncated));
+        if (event.triggered) ++m_activations;
     } else {
         m_events.push_back(event);
         if (event.triggered) ++m_activations;
@@ -542,6 +557,9 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             it->filter.triggerFunc(&*it, triggerData);
         } else {
             it->triggered = true;
+        }
+        if (it->pendingEvents.size() > KernelEqueuePrivate::kMaxPendingEvents) {
+            it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
         if (!was && it->triggered) ++m_activations;
     }

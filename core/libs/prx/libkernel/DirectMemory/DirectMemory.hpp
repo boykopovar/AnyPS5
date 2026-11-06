@@ -8,6 +8,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 
 static constexpr size_t DIRECT_MEMORY_SIZE = 13824ULL * 1024 * 1024;
+static constexpr size_t GAME_MEMORY_SIZE = 12736ULL * 1024 * 1024;
 static constexpr size_t PS5_PAGE_SIZE = 0x4000;
 
 #ifdef _WIN32
@@ -16,6 +17,7 @@ using HostSharedMemory = void*;
 using HostSharedMemory = int;
 #endif
 
+size_t DirectMemorySize();
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut);
 void DirectMemoryFree(int64_t start, size_t len);
 bool DirectMemoryCheckedFree(int64_t start, size_t len);
@@ -40,11 +42,12 @@ int DirectMemoryLargestFree(int64_t searchStart, int64_t searchEnd, size_t align
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit);
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment);
 int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment = PS5_PAGE_SIZE, bool exclusive = false, bool allowStackReplacement = false);
+int DoMapZero(void** addr, size_t len, int prot, int flags);
 int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, int descriptor, std::uint64_t offset, size_t alignment);
 void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len);
 int DoMapShared(void** addr, size_t len, int prot, HostSharedMemory object);
-int DoMprotect(const void* addr, size_t len, int prot);
-int DoMtypeprotect(const void* addr, size_t len, int type, int prot);
+int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart = true);
+int DoMtypeprotect(const void* addr, size_t len, int type, int prot, bool requireMappedStart = true);
 int DoMunmap(void* addr, size_t len);
 int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment);
 bool GuestProtection(uintptr_t addr, int* prot);
@@ -52,6 +55,7 @@ bool GuestReservation(std::uintptr_t addr, std::uintptr_t* start, std::uintptr_t
 bool GuestRangeMapped(std::uintptr_t start, std::uintptr_t end);
 void ForgetJitSharedMemory(int descriptor);
 void DuplicateJitSharedMemory(int from, int to);
+bool IsJitSharedMemory(int descriptor);
 void GuestPageTableUsage(std::uint64_t granularity, std::uint64_t* cpu_entries, std::uint64_t* gpu_entries);
 
 #endif

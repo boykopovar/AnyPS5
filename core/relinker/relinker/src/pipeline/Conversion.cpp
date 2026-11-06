@@ -147,7 +147,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     std::vector<Relinker::GuestArtifact> guestArtifacts;
     if (!input.Modules.empty()) {
-        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, options.ToRosetta, *syscallScanner, options.LazyBinding, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress);
+        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, options.ToRosetta, *syscallScanner, options.LazyBinding, options.OmitUnavailableDependencies, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress);
     }
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();
@@ -161,7 +161,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (macos) {
         patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase, [&](std::string_view text) { inputProgress.Message(text); }, options.TraceImports);
     } else if (windows) {
-        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); });
+        patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports, [&](std::string_view text) { inputProgress.Message(text); }, Io::Utf8Path(input.OutputPath.filename()));
     } else {
         patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
             std::make_shared<Elfpatcher::EntryStubBuilder>(),

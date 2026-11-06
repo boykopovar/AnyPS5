@@ -106,7 +106,7 @@ static void CheckThrowers() {
         {"_Xoverflow_error", AsThrower(_ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix), nullptr, exception, &logicError, 2,
             "NSt8__sce_v214overflow_errorE|"},
         {"_Xbad_alloc", AsThrower(_ZNSt8__sce_v211_Xbad_allocEv_nid_postfix), nullptr, &_ZTISt9bad_alloc_nid_postfix, errorException, 2,
-            "St9bad_alloc|std::bad_alloc"},
+            "St9bad_alloc|bad allocation"},
         {"_Xbad_function_call", AsThrower(_ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix), nullptr, exception, errorException, 2,
             "NSt8__sce_v217bad_function_callE|bad function call"},
         {"_Throw(bad_optional_access)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix), nullptr, exception, errorException, 2,

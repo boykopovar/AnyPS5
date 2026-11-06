@@ -9,7 +9,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -170,6 +169,9 @@ int NativeSignal(int guest) {
         case 6: return SIGABRT;
         case 8: return SIGFPE;
         case 11: return SIGSEGV;
+#ifndef _WIN32
+        case 13: return SIGPIPE;
+#endif
         case 15: return SIGTERM;
         default: return 0;
     }
@@ -211,7 +213,7 @@ void RunHandler(int guest, GuestHandler handler) {
 }
 void Dispatch(int native) {
     int guest = 0;
-    for (int candidate : {2, 4, 6, 8, 11, 15})
+    for (int candidate : {2, 4, 6, 8, 11, 13, 15})
         if (NativeSignal(candidate) == native) { guest = candidate; break; }
     if (!guest) return;
 #ifdef _WIN32
@@ -363,7 +365,7 @@ namespace {
 constexpr std::int64_t MaxItimerSeconds = 0x7fffffff / 2;
 struct AlarmState {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     std::optional<std::chrono::steady_clock::time_point> deadline;
     std::chrono::microseconds interval{0};
     bool threadStarted = false;
@@ -411,18 +413,19 @@ void RunAlarms() {
     std::unique_lock lock(alarms.lock);
     for (;;) {
         if (!alarms.deadline) {
-            alarms.changed.wait(lock);
+            alarms.changed.Wait(lock);
             continue;
         }
         const auto deadline = *alarms.deadline;
-        if (alarms.changed.wait_until(lock, deadline) != std::cv_status::timeout || alarms.deadline != deadline) continue;
+        const auto now = std::chrono::steady_clock::now();
+        if (now < deadline) {
+            const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now).count();
+            alarms.changed.WaitUntil(lock, TimedWait::NowNanos() + static_cast<std::uint64_t>(remaining));
+            continue;
+        }
         const auto interval = alarms.interval;
         if (interval.count() == 0) alarms.deadline.reset();
-        else {
-            const auto now = std::chrono::steady_clock::now();
-            const auto periods = now < deadline ? 1 : (now - deadline) / interval + 1;
-            alarms.deadline = deadline + periods * interval;
-        }
+        else alarms.deadline = deadline + ((now - deadline) / interval + 1) * interval;
         lock.unlock();
         ExpireAlarm(interval);
         lock.lock();
@@ -439,7 +442,7 @@ void NotifyAlarms(AlarmState& alarms) {
         std::thread(RunAlarms).detach();
         alarms.threadStarted = true;
     }
-    alarms.changed.notify_all();
+    alarms.changed.NotifyAll();
 }
 }
 
@@ -854,11 +857,4 @@ namespace {
     JumpBuffer::GuestSigprocmaskRegister_nid_no_patch(sigprocmask_nid_postfix);
     return true;
 }();
-
-struct RegisterSignalsOnLoad {
-    RegisterSignalsOnLoad() {
-        RegisterSigaction_nid_no_patch(reinterpret_cast<SigactionFn_nid_no_patch>(sigaction_nid_postfix), _sigintr_nid_postfix.bits);
-    }
-};
-const RegisterSignalsOnLoad gRegisterSignals;
 }

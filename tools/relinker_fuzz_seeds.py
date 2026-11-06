@@ -24,7 +24,8 @@ def images():
     for path in sorted(TESTS.glob("test_*.py")):
         try:
             module = importlib.import_module(path.stem)
-        except Exception:
+        except Exception as error:
+            print(f"warning: no seeds from {path.name}: it cannot be imported: {error}", file=sys.stderr)
             continue
         for name in BUILDERS:
             function = getattr(module, name, None)
@@ -32,7 +33,8 @@ def images():
                 continue
             try:
                 data = function()
-            except Exception:
+            except Exception as error:
+                print(f"warning: no seed from {path.stem}.{name}: {error}", file=sys.stderr)
                 continue
             if isinstance(data, (bytes, bytearray)) and len(data) >= 64:
                 yield f"{path.stem}-{name}", bytes(data)
