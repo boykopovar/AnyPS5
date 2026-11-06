@@ -45,30 +45,6 @@ int APS5_VABI WKURLRequestCopySettingHTTPBody() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKURLResponseCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseCopyMIMEType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseHTTPStatusCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseCopySuggestedFilename() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseIsAttachment() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseGetExpectedContentLength() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKSecurityOriginCopyDatabaseIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -78,10 +54,6 @@ int APS5_VABI WKSecurityOriginCreateFromString() {
 }
 
 int APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKUserContentURLPatternMatchesURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -12586,21 +12558,6 @@ int APS5_VABI WKAXObjectButtonState() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKAXObjectCopyDescription() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyHelpText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyTitle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKAXObjectFrame() {
     NotImplemented_nid_no_patch(__func__);
@@ -14378,13 +14335,7 @@ int APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKOpenPanelResultListenerCancel() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI WKOpenPanelResultListenerChooseFiles() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageAreScrollbarAnimationsSuppressed() {
     NotImplemented_nid_no_patch(__func__);
@@ -15130,21 +15081,6 @@ int APS5_VABI WKPageWillHandleHorizontalScrollEvents() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPopupMenuItemCopyText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPopupMenuItemIsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPopupMenuItemIsItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPopupMenuItemIsSeparator() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
     NotImplemented_nid_no_patch(__func__);
