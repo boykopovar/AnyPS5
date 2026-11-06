@@ -254,4 +254,11 @@ public:
     bool isVisible = false;
 };
 
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
 }  // namespace NKWebKit

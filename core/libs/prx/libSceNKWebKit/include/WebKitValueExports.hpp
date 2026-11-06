@@ -246,4 +246,7 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+void APS5_VABI WKConnectionPostMessage(const void* connectionRef, const void* messageNameRef, const void* messageBodyRef);
+void APS5_VABI WKConnectionSetConnectionClient(const void* connectionRef, const void* client);
+
 }

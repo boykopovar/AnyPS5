@@ -277,8 +277,6 @@ int APS5_VABI WKBundleSetServiceWorkerProxyCreationCallback();
 int APS5_VABI WKBundleSetTabKeyCyclesThroughElements();
 int APS5_VABI WKBundleSetWebNotificationPermission();
 int APS5_VABI WKClearMockMediaDevices();
-int APS5_VABI WKConnectionPostMessage();
-int APS5_VABI WKConnectionSetConnectionClient();
 int APS5_VABI WKContextAddVisitedLink();
 int APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost();
 int APS5_VABI WKContextClearCurrentModifierStateForTesting();

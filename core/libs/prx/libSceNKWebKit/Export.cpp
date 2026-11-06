@@ -11250,14 +11250,6 @@ int APS5_VABI WKClearMockMediaDevices() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKConnectionPostMessage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKConnectionSetConnectionClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextAddVisitedLink() {
     NotImplemented_nid_no_patch(__func__);
 }
