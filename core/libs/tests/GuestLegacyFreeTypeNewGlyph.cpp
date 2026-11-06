@@ -155,7 +155,7 @@ void SvgClass(NewGlyph call, GuestLibrary* library, FT_Library host) {
         try {
             call(library, FT_GLYPH_FORMAT_SVG, &output.glyph);
         } catch (const std::runtime_error& error) {
-            threw = std::string_view(error.what()).find("NewGlyph_nid_no_patch") != std::string_view::npos;
+            threw = std::string_view(error.what()).find("FreeTypeNewGlyph_nid_no_patch") != std::string_view::npos;
         }
         Require(threw, "unsupported guest SVG layout throws");
     }

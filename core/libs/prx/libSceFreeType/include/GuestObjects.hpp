@@ -19,7 +19,7 @@ struct GuestLibrary {
     std::list<std::unique_ptr<GuestFace>> faces;
 };
 
-void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
+extern "C" void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap);
 
 struct GuestSize {
     GuestSizeRec rec{};
@@ -46,7 +46,7 @@ struct GuestFace {
 };
 
 void RegisterBitmap_nid_no_patch(GuestFace& face);
-int NewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
+extern "C" int FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);

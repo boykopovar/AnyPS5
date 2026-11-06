@@ -121,7 +121,7 @@ int APS5_VABI freetypeLegacyGzipUncompress_nid_no_patch() {
 APS5_EXPORT("hKvvpNeUdKo", freetypeLegacyGzipUncompress_nid_no_patch);
 
 int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t format, FreeType::GuestGlyphRec** target) {
-    return FreeType::NewGlyph_nid_no_patch(library, format, target);
+    return FreeType::FreeTypeNewGlyph_nid_no_patch(library, format, target);
 }
 APS5_EXPORT("sZq9oSwMGSs", freetypeLegacyNewGlyph_nid_no_patch);
 
