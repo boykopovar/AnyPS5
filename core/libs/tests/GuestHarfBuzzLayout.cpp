@@ -296,11 +296,11 @@ int main(int argc, char** argv) {
 #undef LoadExport
 #ifdef _WIN32
     const FreeTypeTest::KernelApi kernelApi{
-        Import<decltype(FreeTypeTest::KernelApi::allocate)>(kernel, "sceKernelAllocateDirectMemory"),
-        Import<decltype(FreeTypeTest::KernelApi::map)>(kernel, "sceKernelMapDirectMemory"),
-        Import<decltype(FreeTypeTest::KernelApi::protect)>(kernel, "sceKernelMprotect"),
-        Import<decltype(FreeTypeTest::KernelApi::unmap)>(kernel, "sceKernelMunmap"),
-        Import<decltype(FreeTypeTest::KernelApi::release)>(kernel, "sceKernelReleaseDirectMemory")
+        Import<decltype(FreeTypeTest::KernelApi::allocate)>(kernel, patched ? "rTXw65xmLIA" : "sceKernelAllocateDirectMemory"),
+        Import<decltype(FreeTypeTest::KernelApi::map)>(kernel, patched ? "L-Q3LEjIbgA" : "sceKernelMapDirectMemory"),
+        Import<decltype(FreeTypeTest::KernelApi::protect)>(kernel, patched ? "vSMAm3cxYTY" : "sceKernelMprotect"),
+        Import<decltype(FreeTypeTest::KernelApi::unmap)>(kernel, patched ? "cQke9UuBQOk" : "sceKernelMunmap"),
+        Import<decltype(FreeTypeTest::KernelApi::release)>(kernel, patched ? "MBuItvba6z8" : "sceKernelReleaseDirectMemory")
     };
 #endif
     try {
