@@ -1356,43 +1356,77 @@ export function translate(locale, key, values = {}) {
     return text.replace(/\{(\w+)\}/gu, (match, name) => String(values[name] ?? match));
 }
 
+const diagnostics = {
+    'ar-EG': [
+        [/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم من $2 لـ $3.'],
+        [/(\w+): unknown input setting\./gu, 'الإعداد $1 مش معروف.'],
+        ['Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.'],
+        ['Unknown or empty action.', 'الحركة مش معروفة أو فاضية.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 مينفعش يستخدم $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'قيمة $1 مش معروفة أو فاضية.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'اسم الزرار ده مينفعش يتحفظ بالصيغة الحالية لملف INI.'],
+        [/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.'],
+        [' controls ', ' بيشغّل '],
+        [' (built-in)', ' (افتراضي)', true],
+        [' and ', ' و ', true],
+        ['Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.'],
+    ],
+    'sv': [
+        ['Configuration must be a list of bindings.', 'Konfigurationen måste vara en lista med bindningar.'],
+        ['Unknown or empty action.', 'Okänd eller tom åtgärd.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'Indatatypen måste vara KEY, MOUSE eller WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 kan inte använda $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Okänt eller tomt $1-värde.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Det här SDL-tangentnamnet kan inte representeras med den aktuella INI-kommentarsyntaxen.'],
+        [/duplicate (.+) will be omitted\./gu, 'den dubbla bindningen $1 utelämnas.'],
+        [' controls ', ' styr '],
+        [' (built-in)', ' (inbyggd)', true],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.'],
+        [' and ', ' och ', true],
+        ['Expected Action = TYPE:VALUE.', 'Förväntat format: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Dubblettbindning ignorerades.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.'],
+    ],
+    'pt-BR': [
+        [/(\w+) is set more than once\./gu, '$1 está definido mais de uma vez.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 deve ser uma porcentagem inteira de 0 a 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 deve ser um número maior que 0 e no máximo 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 deve ser um número de $2 a $3.'],
+        [/(\w+) must be LEFT or RIGHT\./gu, '$1 deve ser LEFT ou RIGHT.'],
+        [/(\w+): unknown input setting\./gu, '$1: configuração de entrada desconhecida.'],
+        ['Configuration must be a list of bindings.', 'A configuração deve ser uma lista de atribuições.'],
+        ['Unknown or empty action.', 'Ação desconhecida ou vazia.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'O tipo de entrada deve ser KEY, MOUSE ou WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 não pode usar $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Valor $1 desconhecido ou vazio.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Este nome de tecla SDL não pode ser representado na sintaxe de comentário INI atual.'],
+        [/duplicate (.+) will be omitted\./gu, 'duplicado $1 será omitido.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'A composição e as teclas mortas são ambíguas. Escolha uma tecla SDL na lista.'],
+        [' controls ', ' controla '],
+        [' (built-in)', ' (padrão)', true],
+        [' and ', ' e ', true],
+        ['Binding: ', 'Atribuição: '],
+        ['Expected Action = TYPE:VALUE.', 'Formato esperado: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Atribuição duplicada ignorada.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Esta tecla física não pode ser capturada no formato INI atual. Escolha uma tecla SDL na lista.'],
+    ]
+};
+
+function applyDiagnostic(message, [find, replace, all]) {
+    if (typeof find !== 'string') return message.replace(find, replace);
+    return all ? message.replaceAll(find, replace) : message.replace(find, replace);
+}
+
 export function diagnostic(locale, message) {
-    if (locale === 'sv') return message
-        .replace('Configuration must be a list of bindings.', 'Konfigurationen måste vara en lista med bindningar.')
-        .replace('Unknown or empty action.', 'Okänd eller tom åtgärd.')
-        .replace('Input type must be KEY, MOUSE or WHEEL.', 'Indatatypen måste vara KEY, MOUSE eller WHEEL.')
-        .replace(/(\w+) cannot use (\w+)\./gu, '$1 kan inte använda $2.')
-        .replace(/Unknown or empty (\w+) value\./gu, 'Okänt eller tomt $1-värde.')
-        .replace('This SDL key name cannot be represented in the current INI comment syntax.', 'Det här SDL-tangentnamnet kan inte representeras med den aktuella INI-kommentarsyntaxen.')
-        .replace(/duplicate (.+) will be omitted\./gu, 'den dubbla bindningen $1 utelämnas.')
-        .replace(' controls ', ' styr ')
-        .replaceAll(' (built-in)', ' (inbyggd)')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.')
-        .replaceAll(' and ', ' och ')
-        .replace('Expected Action = TYPE:VALUE.', 'Förväntat format: Action = TYPE:VALUE.')
-        .replace('Duplicate binding ignored.', 'Dubblettbindning ignorerades.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.');
-    if (locale !== 'ar-EG') return message;
-    return message
-        .replace(/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.')
-        .replace(/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.')
-        .replace(/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.')
-        .replace(/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم من $2 لـ $3.')
-        .replace(/(\w+): unknown input setting\./gu, 'الإعداد $1 مش معروف.')
-        .replace('Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.')
-        .replace('Unknown or empty action.', 'الحركة مش معروفة أو فاضية.')
-        .replace('Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.')
-        .replace(/(\w+) cannot use (\w+)\./gu, '$1 مينفعش يستخدم $2.')
-        .replace(/Unknown or empty (\w+) value\./gu, 'قيمة $1 مش معروفة أو فاضية.')
-        .replace('This SDL key name cannot be represented in the current INI comment syntax.', 'اسم الزرار ده مينفعش يتحفظ بالصيغة الحالية لملف INI.')
-        .replace(/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.')
-        .replace(' controls ', ' بيشغّل ')
-        .replaceAll(' (built-in)', ' (افتراضي)')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.')
-        .replaceAll(' and ', ' و ')
-        .replace('Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.')
-        .replace('Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.');
+    const entries = Object.hasOwn(diagnostics, locale) ? diagnostics[locale] : [];
+    return entries.reduce(applyDiagnostic, message);
 }
 
 export function initialLocale(savedLocale) {
