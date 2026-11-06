@@ -1,5 +1,9 @@
 # libSceUlt technical debt
 
+### Silent stubs
+
+- [sceUltInitialize](../../../core/libs/prx/libSceUlt/Export.cpp) (libSceUlt) - returns ULT_OK without worker pool initialization: AnyPS5 schedules userland threads across host threads.
+
 ### Unknown function info
 
 - [Bound condition variables](../../../core/libs/prx/libSceUlt/Export.cpp) use the creation-time mutex, inferred from PPSA28061 callers of `_sceUltConditionVariableCreate`; the wait caller reloads only the condition argument. Error precedence, busy/state errors, FIFO signal selection and unsupported recursive waits have not been measured on PS5 hardware; only `sceUltConditionVariableSignal`'s null (`0x80810001`), then 8-byte alignment (`0x80810002`) checks ran, on firmware 13.42's module ([BunnyFl](https://github.com/boykopovar/AnyPS5/pull/8644#issuecomment-6417724166)), as here; an aligned, never-created object traps there. Non-null options and waits at recursion depth above one throw. A live condition prevents destroying its bound mutex. Finalization follows the existing host mutex lifecycle: it invalidates conditions and wakes queued or reacquiring waiters with a state error. Scheduling priority and build-version validation are not implemented.
