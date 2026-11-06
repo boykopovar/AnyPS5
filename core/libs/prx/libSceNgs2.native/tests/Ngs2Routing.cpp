@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <stdexcept>
 #include <vector>
 
 static Ngs2CustomSubmixerRackOption RackOption(std::uint32_t count, std::uint32_t channels = 2) {
@@ -273,7 +274,16 @@ static void TestSubmixerFilterOff() {
         filter.level = 1.0f;
         Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER, filter);
     }
-    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, 0, 1.0f, 0.01f, 0.0f, 0.001f, 0.01f, 1.0f, 0});
+    Ngs2SubmixerVoiceCompressorParam enabled{{}, 0, 0.1f, 0.01f, 0.0f, 0.001f, 0.01f, 1.0f, 0};
+    enabled.header = {static_cast<std::uint16_t>(sizeof(enabled)), 0, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR};
+    bool refused = false;
+    try {
+        sceNgs2VoiceControl(submixer, &enabled.header);
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, 1, 0.1f, 0.01f, 0.0f, 0.0f, 0.0f, 1.0f, 0});
     Render(system, {0.25f}, 2, Grain, true);
     Render(system, {0.25f});
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);

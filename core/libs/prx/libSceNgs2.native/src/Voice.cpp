@@ -548,7 +548,7 @@ static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFi
 }
 
 static void CheckSubmixerCompressor(const Ngs2SubmixerVoiceCompressorParam& param) {
-    if (param.flags != 0) throw std::runtime_error("NGS2: submixer compressor flags " + Ngs2Hex(param.flags) + " are not implemented");
+    if ((param.flags & 0x1u) == 0) throw std::runtime_error("NGS2: an enabled submixer compressor (flags " + Ngs2Hex(param.flags) + ") is not implemented");
 }
 
 static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
