@@ -1,11 +1,17 @@
 # libSceContentSearch technical debt
 
-### Silent stubs
+### Unknown function info
 
-- [Empty results](../../../core/libs/prx/libSceContentSearch/Export.cpp) - titles query the service without failing when zero items are returned. The search operations emulate an empty content database rather than throwing unimplemented stubs.
-- [sceContentSearchTerm](../../../core/libs/prx/libSceContentSearch/Export.cpp) (libSceContentSearch) - does not release backend resources; unverified on real hardware.
-- [Error precedence](../../../core/libs/prx/libSceContentSearch/Export.cpp) (libSceContentSearch) - the precedence of `ErrorNotInitialized` (0x80810001) over argument errors in `sceContentSearchInit` and `sceContentSearchTerm` is unverified on real hardware.
-- [sceContentSearchSearchContent](../../../core/libs/prx/libSceContentSearch/Export.cpp) (libSceContentSearch) - accepts all well-formed queries and reports zero results; filter and sort parameters are validated but not evaluated.
+- [libSceContentSearch additional exports](../../../core/libs/prx/libSceContentSearch/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceContentSearchAddAvContentCreatedEventCondition` | `HzLPPnuWTek` |
+| `sceContentSearchDisableAvContentCreatedEvent` | `cb8Dl69jk7A` |
+| `sceContentSearchEnableAvContentCreatedEvent` | `vlOqhFPOLDs` |
+| `sceContentSearchGetContentIdByAvContentCreatedEvent` | `2Dj56xvkS5M` |
+
+- [sceContentBinderEnd, sceContentBinderGetNumOfDifference, sceContentBinderInitialize, sceContentBinderIsUpdated, sceContentBinderReset, sceContentBinderSearchDifference, sceContentBinderStart, sceContentBinderTerminate and sceContentSearchSearchApplication](../../../core/libs/prx/libSceContentSearch/Export.cpp) (libSceContentSearch) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceContentSearch.c), but no credible prototypes were found in the cited sources. They are declared without parameters solely to resolve known imports and make no ABI claim.
 
 ### Functional
 
@@ -19,5 +25,5 @@
 
 | Name | NID |
 | --- | --- |
-| `sceContentSearchSearchContentWithLimit` | `eSj9V3Z-rP8` |
-| `sceContentSearchTermWithLimit` | `48+e5XjQYFc` |
+| `Unknown` | `Np8cEpyDFRE` |
+| `Unknown` | `X9e+hZfue0U` |
