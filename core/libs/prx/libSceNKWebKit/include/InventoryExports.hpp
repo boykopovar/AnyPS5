@@ -126,14 +126,8 @@ int APS5_VABI WKBundleGarbageCollectJavaScriptObjectsOnAlternateThreadForDebuggi
 int APS5_VABI WKBundleGarbageCollectJavaScriptObjects();
 int APS5_VABI WKBundleGetApplicationConnection();
 int APS5_VABI WKBundleGetJavaScriptObjectsCount();
-int APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL();
-int APS5_VABI WKBundleHitTestResultCopyAbsoluteLinkURL();
-int APS5_VABI WKBundleHitTestResultCopyAbsoluteMediaURL();
-int APS5_VABI WKBundleHitTestResultCopyAbsolutePDFURL();
 int APS5_VABI WKBundleHitTestResultCopyImage();
-int APS5_VABI WKBundleHitTestResultCopyLinkLabel();
 int APS5_VABI WKBundleHitTestResultCopyLinkSuggestedFilename();
-int APS5_VABI WKBundleHitTestResultCopyLinkTitle();
 int APS5_VABI WKBundleHitTestResultCopyNodeHandle();
 int APS5_VABI WKBundleHitTestResultCopyURLElementHandle();
 int APS5_VABI WKBundleHitTestResultGetFrame();
