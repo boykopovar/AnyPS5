@@ -24,7 +24,7 @@ if(BUILD_TESTING)
             ARGS ring-large-spans ENV ANYPS5_NO_SHADER_CACHE=1)
     agc_add_env_test(agc_driver_heap_slots_ring_busy_chunks agc_driver_heap_slots_tests
             ARGS ring-busy-chunks ENV ANYPS5_NO_SHADER_CACHE=1 TIMEOUT 60)
-    foreach(agcHeapSlotsMode IN ITEMS comes-back storage-comes-back storage-views-come-back mixed-comes-back views-come-back two-heaps-come-back owner-views-release shared-owner-release idle-slots-evicted)
+    foreach(agcHeapSlotsMode IN ITEMS comes-back storage-comes-back storage-views-come-back mixed-comes-back views-come-back two-heaps-come-back owner-views-release shared-owner-release idle-slots-evicted pressure-submit samplers-evicted no-timeline-refuses)
         string(REPLACE "-" "_" agcHeapSlotsName "${agcHeapSlotsMode}")
         agc_add_env_test(agc_driver_heap_slots_${agcHeapSlotsName} agc_driver_heap_slots_tests
                 ARGS ${agcHeapSlotsMode} ENV ANYPS5_NO_SHADER_CACHE=1)

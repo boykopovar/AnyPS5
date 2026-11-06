@@ -82,6 +82,8 @@ std::atomic<bool> descriptorHeapDevice{false};
 std::atomic<std::uint64_t> imageTableBuilds{0};
 std::atomic<std::uint64_t> dataAddressPushes{0};
 std::atomic<std::uint64_t> embeddedSamplerMappings{0};
+std::atomic<std::uint64_t> slotPressureSubmits{0};
+std::atomic<std::uint64_t> heapSlotEvictions{0};
 std::atomic<std::uint64_t> emptyResourceSets{0};
 
 }
@@ -109,6 +111,14 @@ std::uint64_t DataAddressPushes() {
 
 std::uint64_t EmbeddedSamplerMappings() {
     return embeddedSamplerMappings.load(std::memory_order_relaxed);
+}
+
+std::uint64_t SlotPressureSubmits() {
+    return slotPressureSubmits.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HeapSlotEvictions() {
+    return heapSlotEvictions.load(std::memory_order_relaxed);
 }
 
 void NoteEmptyResourceSet() {
@@ -285,6 +295,7 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     imagePool.next = SamplerKind;
     imagePool.limit = slotCap;
     samplerPool.limit = Abi::GpuSamplerHeapSlots;
+    samplerUses = std::make_unique<std::atomic<std::uint32_t>[]>(Abi::GpuSamplerHeapSlots);
 }
 
 namespace {
@@ -293,11 +304,18 @@ constexpr std::uint32_t ImageSlotMargin = 1024u;
 constexpr std::uint32_t EvictIdleSubmissions = 2u;
 constexpr std::uint32_t SamplerSlotMargin = Abi::GpuSamplerHeapSlots / 4u;
 std::atomic<std::uint32_t> refusedHeaps{0};
+std::atomic<std::uint32_t> refusingHeaps{0};
+
+bool waitsWhenFull() {
+    static const bool waits = std::getenv("APS5_NO_HEAP_EVICTION") == nullptr;
+    return waits;
+}
 
 }
 
 BindlessHeap::~BindlessHeap() {
     if (refused) refusedHeaps.fetch_sub(1, std::memory_order_relaxed);
+    if (refusing) refusingHeaps.fetch_sub(1, std::memory_order_relaxed);
 }
 
 namespace {
@@ -400,6 +418,8 @@ void BindlessHeap::ReleaseSlots(const HeapSlotOwner* owner) {
         released = true;
     }
     if (const auto found = samplerSlots.find(owner); found != samplerSlots.end()) {
+        samplerOwners[found->second] = nullptr;
+        samplerPinned[found->second] = false;
         samplerPool.Free(found->second);
         samplerSlots.erase(found);
         ++counts.slotsFreed;
@@ -462,6 +482,16 @@ bool BindlessHeap::NearlyFull() {
     return refusedHeaps.load(std::memory_order_relaxed) != 0u;
 }
 
+bool BindlessHeap::WaitsWhenFull() {
+    return waitsWhenFull();
+}
+
+bool BindlessHeap::RefusesDraws() {
+    return refusingHeaps.load(std::memory_order_relaxed) != 0u;
+}
+
+
+
 std::uint32_t BindlessHeap::ImageSlotCapacity() {
     return deviceImageSlots.load(std::memory_order_relaxed) - SamplerKind;
 }
@@ -472,20 +502,27 @@ std::uint32_t BindlessHeap::imageMargin() const {
 
 bool BindlessHeap::roomLocked() const {
     if (imagePool.Unused() + retiringAssigned < 2u * static_cast<std::size_t>(imageMargin())) return false;
-    return samplerPool.Unused() >= 2u * SamplerSlotMargin;
+    return samplerPool.Unused() + samplerRetiringAssigned >= 2u * SamplerSlotMargin;
 }
 
 void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
     if (refused) return;
     refused = true;
     refusedHeaps.fetch_add(1, std::memory_order_relaxed);
+    if (waitsWhenFull() && (submitter == nullptr || submitter->HasTimeline())) {
+        pressured.store(true, std::memory_order_relaxed);
+        std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; the next draw or dispatch submits its batch so idle slots can be evicted\n", margin, what);
+        return;
+    }
+    refusing = true;
+    refusingHeaps.fetch_add(1, std::memory_order_relaxed);
     std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; draws and dispatches take the per-draw path until released slots leave twice that many free\n", margin, what);
 }
 
 void BindlessHeap::noteTakenLocked() {
     const auto margin = imageMargin();
     if (imagePool.Unused() >= 2u * static_cast<std::size_t>(margin)) return;
-    if (imagePool.Unused() + retiring.size() < 2u * static_cast<std::size_t>(margin)) evictLocked();
+    if (imagePool.Unused() + imageRetiring() < 2u * static_cast<std::size_t>(margin)) evictLocked(EvictIdleSubmissions);
     if (!refused && imagePool.Unused() + retiringAssigned < margin) noteRefusedLocked("image", margin);
 }
 
@@ -493,7 +530,11 @@ void BindlessHeap::touchLocked(std::uint32_t slot) const {
     if (slot < slotCap) slotUses[slot].store(useEpoch.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
 
-std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::uint32_t touched) const {
+void BindlessHeap::touchSamplerLocked(std::uint32_t slot) const {
+    if (slot < Abi::GpuSamplerHeapSlots) samplerUses[slot].store(useEpoch.load(std::memory_order_relaxed), std::memory_order_relaxed);
+}
+
+std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const {
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
     if (touched == epoch) return epoch;
     for (const auto& kindSlots : slots) {
@@ -501,20 +542,23 @@ std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t
             if (slot < slotCap) slotUses[slot].store(epoch, std::memory_order_relaxed);
         }
     }
+    for (const auto slot : samplerSlots) {
+        if (slot < Abi::GpuSamplerHeapSlots) samplerUses[slot].store(epoch, std::memory_order_relaxed);
+    }
     return epoch;
 }
 
-void BindlessHeap::evictLocked() {
+void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
     static const bool disabled = std::getenv("APS5_NO_HEAP_EVICTION") != nullptr;
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
-    if (disabled || submitter == nullptr || !submitter->HasTimeline() || evictScanEpoch == epoch) return;
-    GuestMemory::AssertGpuLockHeld("BindlessHeap::evictLocked");
-    evictScanEpoch = epoch;
+    if (disabled || submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (idleSubmissions != 0u && evictScanEpoch == epoch) return;
+    if (idleSubmissions != 0u) evictScanEpoch = epoch;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
     for (std::uint32_t slot = SamplerKind; slot < imagePool.next && slot < owners.size(); ++slot) {
         if (owners[slot].key.owner == nullptr) continue;
         const auto use = slotUses[slot].load(std::memory_order_relaxed);
-        if (use + EvictIdleSubmissions <= epoch) idle.emplace_back(use, slot);
+        if (use + idleSubmissions <= epoch) idle.emplace_back(use, slot);
     }
     const auto wanted = std::min<std::size_t>(idle.size(), 4u * static_cast<std::size_t>(imageMargin()));
     if (wanted == 0u) return;
@@ -533,6 +577,35 @@ void BindlessHeap::evictLocked() {
         ++imagePool.generations[slot];
         retiring.push_back({slot, 0u});
         ++counts.slotsEvicted;
+        heapSlotEvictions.fetch_add(1, std::memory_order_relaxed);
+    }
+    slotSerial.fetch_add(1, std::memory_order_release);
+}
+
+void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
+    static const bool disabled = std::getenv("APS5_NO_HEAP_EVICTION") != nullptr;
+    const auto epoch = useEpoch.load(std::memory_order_relaxed);
+    if (disabled || submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (idleSubmissions != 0u && samplerEvictScanEpoch == epoch) return;
+    if (idleSubmissions != 0u) samplerEvictScanEpoch = epoch;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
+    for (std::uint32_t slot = 0; slot < samplerPool.next && slot < samplerOwners.size(); ++slot) {
+        if (samplerOwners[slot] == nullptr || samplerPinned[slot]) continue;
+        const auto use = samplerUses[slot].load(std::memory_order_relaxed);
+        if (use + idleSubmissions <= epoch) idle.emplace_back(use, slot);
+    }
+    const auto wanted = std::min<std::size_t>(idle.size(), 2u * static_cast<std::size_t>(SamplerSlotMargin));
+    if (wanted == 0u) return;
+    std::nth_element(idle.begin(), idle.begin() + static_cast<std::ptrdiff_t>(wanted - 1u), idle.end());
+    for (std::size_t index = 0; index < wanted; ++index) {
+        const auto slot = idle[index].second;
+        samplerSlots.erase(samplerOwners[slot]);
+        samplerOwners[slot] = nullptr;
+        ++samplerPool.generations[slot];
+        retiring.push_back({slot, 0u, true});
+        ++retiringSamplers;
+        ++counts.samplersEvicted;
+        heapSlotEvictions.fetch_add(1, std::memory_order_relaxed);
     }
     slotSerial.fetch_add(1, std::memory_order_release);
 }
@@ -547,9 +620,16 @@ bool BindlessHeap::reclaimLocked(bool wait) {
             ++counts.evictionWaits;
         }
         while (!retiring.empty() && retiring.front().serial != 0u && retiring.front().serial <= serial) {
-            imagePool.free.push_back(retiring.front().slot);
+            const auto entry = retiring.front();
             retiring.pop_front();
-            --retiringAssigned;
+            if (entry.sampler) {
+                samplerPool.free.push_back(entry.slot);
+                --retiringSamplers;
+                --samplerRetiringAssigned;
+            } else {
+                imagePool.free.push_back(entry.slot);
+                --retiringAssigned;
+            }
             reclaimed = true;
         }
     }
@@ -558,13 +638,23 @@ bool BindlessHeap::reclaimLocked(bool wait) {
 }
 
 void BindlessHeap::noteSamplerTakenLocked() {
-    if (!refused && samplerPool.Unused() < SamplerSlotMargin) noteRefusedLocked("sampler", SamplerSlotMargin);
+    if (samplerPool.Unused() >= 2u * SamplerSlotMargin) return;
+    if (samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(EvictIdleSubmissions);
+    if (!refused && samplerPool.Unused() + samplerRetiringAssigned < SamplerSlotMargin) noteRefusedLocked("sampler", SamplerSlotMargin);
+}
+
+std::optional<std::uint32_t> BindlessHeap::PinnedSamplerSlot(const std::shared_ptr<Sampler>& sampler) {
+    return samplerSlot(sampler, true);
 }
 
 void BindlessHeap::noteReleasedLocked() {
     if (!refused || !roomLocked()) return;
     refused = false;
     refusedHeaps.fetch_sub(1, std::memory_order_relaxed);
+    pressured.store(false, std::memory_order_relaxed);
+    if (!refusing) return;
+    refusing = false;
+    refusingHeaps.fetch_sub(1, std::memory_order_relaxed);
     std::fprintf(stderr, "[gpu-heap] released slots left twice the margin free; draws take the heap again\n");
 }
 
@@ -618,16 +708,32 @@ std::uint32_t BindlessHeap::AbsentSlot(std::uint32_t kind, VkImageView view) {
 }
 
 std::optional<std::uint32_t> BindlessHeap::SamplerSlot(const std::shared_ptr<Sampler>& sampler) {
+    return samplerSlot(sampler, false);
+}
+
+std::optional<std::uint32_t> BindlessHeap::samplerSlot(const std::shared_ptr<Sampler>& sampler, bool pin) {
     Require(sampler != nullptr, "bindless heap: invalid sampler slot request");
     std::lock_guard lock(mutex);
-    if (const auto found = samplerSlots.find(static_cast<const HeapSlotOwner*>(sampler.get())); found != samplerSlots.end()) return found->second;
+    if (const auto found = samplerSlots.find(static_cast<const HeapSlotOwner*>(sampler.get())); found != samplerSlots.end()) {
+        touchSamplerLocked(found->second);
+        if (pin) samplerPinned[found->second] = true;
+        return found->second;
+    }
     bool reused = false;
-    const auto slot = samplerPool.Take(reused);
+    auto slot = samplerPool.Take(reused);
+    if (!slot && reclaimLocked(true)) slot = samplerPool.Take(reused);
     if (!slot) return std::nullopt;
     if (reused) ++counts.slotsReused;
     writeSamplerSlot(*slot, sampler->Handle());
     const HeapSlotOwner* owner = sampler.get();
     samplerSlots.emplace(owner, *slot);
+    if (samplerOwners.size() <= *slot) {
+        samplerOwners.resize(*slot + 1u, nullptr);
+        samplerPinned.resize(*slot + 1u, false);
+    }
+    samplerOwners[*slot] = owner;
+    samplerPinned[*slot] = pin;
+    touchSamplerLocked(*slot);
     owner->heapSlotted.store(true, std::memory_order_release);
     noteSamplerTakenLocked();
     return slot;
@@ -755,6 +861,17 @@ void BindlessHeap::trimPoolLocked() {
         ++block.generation;
         ++counts.poolBlocksFreed;
     }
+}
+
+bool BindlessHeap::TakeSlotPressure() {
+    if (!pressured.load(std::memory_order_relaxed)) return false;
+    std::lock_guard lock(mutex);
+    if (!refused) return false;
+    if (imagePool.Unused() + imageRetiring() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked(0u);
+    if (samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(0u);
+    ++counts.slotPressureSubmits;
+    slotPressureSubmits.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 bool BindlessHeap::TakeRingPressure() {
@@ -1141,7 +1258,7 @@ std::optional<VkDescriptorSetAndBindingMappingEXT> BindlessHeap::embeddedSampler
         return mapping;
     }
     if (entry.slot == ~0u) {
-        const auto slot = const_cast<BindlessHeap*>(this)->SamplerSlot(entry.heapSampler);
+        const auto slot = const_cast<BindlessHeap*>(this)->PinnedSamplerSlot(entry.heapSampler);
         Require(slot.has_value(), "the global sampler heap is full");
         entry.slot = *slot;
     }
@@ -1365,6 +1482,8 @@ void reportHeapStatistics() {
             totals.ringSpanPeakBytes = std::max(totals.ringSpanPeakBytes, counts.ringSpanPeakBytes);
             totals.poolBytes += counts.poolBytes;
             totals.ringPressureSubmits += counts.ringPressureSubmits;
+            totals.slotPressureSubmits += counts.slotPressureSubmits;
+            totals.samplersEvicted += counts.samplersEvicted;
             totals.poolBlocksMade += counts.poolBlocksMade;
             totals.poolBlocksRecycled += counts.poolBlocksRecycled;
             totals.poolBlocksFreed += counts.poolBlocksFreed;
@@ -1387,6 +1506,8 @@ void reportHeapStatistics() {
     const auto ringMiB = windowDelta(totals.ringBytes, lastTotals.ringBytes) >> 20u;
     const auto poolMiB = windowDelta(totals.poolBytes, lastTotals.poolBytes) >> 20u;
     const auto pressureSubmits = windowDelta(totals.ringPressureSubmits, lastTotals.ringPressureSubmits);
+    const auto slotPressureSubmits = windowDelta(totals.slotPressureSubmits, lastTotals.slotPressureSubmits);
+    const auto samplersEvicted = windowDelta(totals.samplersEvicted, lastTotals.samplersEvicted);
     const auto poolMade = windowDelta(totals.poolBlocksMade, lastTotals.poolBlocksMade);
     const auto poolRecycled = windowDelta(totals.poolBlocksRecycled, lastTotals.poolBlocksRecycled);
     const auto poolFreed = windowDelta(totals.poolBlocksFreed, lastTotals.poolBlocksFreed);
@@ -1395,10 +1516,10 @@ void reportHeapStatistics() {
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; fallbacks:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, %llu early submits, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, %llu early submits, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), fallbacks.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(pressureSubmits), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(pressureSubmits), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {
@@ -1571,10 +1692,12 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
     useEpoch.fetch_add(1, std::memory_order_relaxed);
     counts.ringBatchPeakBytes = std::max<std::uint64_t>(counts.ringBatchPeakBytes, ringBatchBytes);
     ringBatchBytes = 0;
-    if (refused && imagePool.Unused() + retiring.size() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked();
+    if (refused && imagePool.Unused() + imageRetiring() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked(EvictIdleSubmissions);
+    if (refused && samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(EvictIdleSubmissions);
     for (auto entry = retiring.rbegin(); entry != retiring.rend() && entry->serial == 0u; ++entry) {
         entry->serial = serial;
-        ++retiringAssigned;
+        if (entry->sampler) ++samplerRetiringAssigned;
+        else ++retiringAssigned;
     }
     if (!retiring.empty()) reclaimLocked(false);
     noteReleasedLocked();
@@ -1605,7 +1728,7 @@ BindlessHeap::Counts BindlessHeap::Statistics() const {
         ++snapshot.poolBlocksHeld;
         snapshot.poolBlockBytes += block.bytes;
     }
-    snapshot.imageSlotsHeld = imagePool.next - std::min<std::size_t>(imagePool.next, SamplerKind + imagePool.free.size() + retiring.size());
+    snapshot.imageSlotsHeld = imagePool.next - std::min<std::size_t>(imagePool.next, SamplerKind + imagePool.free.size() + imageRetiring());
     return snapshot;
 }
 

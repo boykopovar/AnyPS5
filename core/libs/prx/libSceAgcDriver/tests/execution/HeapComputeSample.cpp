@@ -91,12 +91,19 @@ void DriverSample(bool heap) {
 
 void FullHeapSample() {
     Outputs[0].fill(-1.0f);
+    const auto stagesBefore = AgcDriver::Graphics::HeapComputeStages();
+    const auto submitsBefore = AgcDriver::Graphics::SlotPressureSubmits();
     std::vector<std::uint32_t> words;
     for (std::size_t index = 0; index < FullHeapTextures; ++index) Sample(words, ManyTextures[index].data(), Outputs[0].data() + 4u * index);
     Submit(words);
     for (std::size_t index = 0; index < FullHeapTextures; ++index)
         RequireSampled(Outputs[0].data() + 4u * index, SampleTexel, "texture " + std::to_string(index) + " of a heap with too few image slots", true);
-    Require(AgcDriver::Graphics::BindlessHeap::NearlyFull(), "the capped heap never ran short of image slots");
+    if (!AgcDriver::Graphics::BindlessHeap::WaitsWhenFull()) {
+        Require(AgcDriver::Graphics::BindlessHeap::NearlyFull(), "the capped heap never ran short of image slots");
+        return;
+    }
+    Require(AgcDriver::Graphics::SlotPressureSubmits() > submitsBefore, "the capped heap never submitted a batch early to free image slots");
+    Require(AgcDriver::Graphics::HeapComputeStages() - stagesBefore == FullHeapTextures, "a compute stage left the heap while it ran short of image slots");
 }
 
 void DeviceSample(AgcDriver::VulkanDevice& device, bool heap) {

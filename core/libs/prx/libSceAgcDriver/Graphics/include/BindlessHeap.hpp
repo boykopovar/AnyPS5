@@ -66,15 +66,18 @@ public:
     const Texture* SlotTexture(std::uint32_t kind, std::uint32_t slot) const;
     bool SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const HeapSlotOwner* owner, VkImageView view) const;
     std::optional<std::uint32_t> SamplerSlot(const std::shared_ptr<Sampler>& sampler);
+    std::optional<std::uint32_t> PinnedSamplerSlot(const std::shared_ptr<Sampler>& sampler);
     std::uint32_t SamplerGeneration(std::uint32_t slot) const;
     std::uint64_t SlotSerial() const { return slotSerial.load(std::memory_order_acquire); }
     bool GenerationsCurrent(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> slotGenerations,
                             std::span<const std::uint32_t> samplerSlots, std::span<const std::uint32_t> samplerGenerations) const;
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
+    static bool RefusesDraws();
+    static bool WaitsWhenFull();
     static std::uint32_t ImageSlotCapacity();
     std::uint32_t ImageSlots() const { return slotCap; }
-    std::uint32_t TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::uint32_t touched) const;
+    std::uint32_t TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const;
 
     struct DataSpan {
         std::uint32_t offset = 0;
@@ -98,13 +101,14 @@ public:
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);
     bool TakeRingPressure();
+    bool TakeSlotPressure();
 
     struct Counts {
         std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
         std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
         std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0, ringBytes = 0, imageSlotsHeld = 0;
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, busyChunksSkipped = 0, bufferDescriptors = 0;
-        std::uint64_t ringPressureSubmits = 0;
+        std::uint64_t ringPressureSubmits = 0, slotPressureSubmits = 0, samplersEvicted = 0;
         std::uint64_t poolBytes = 0, poolBatchPeakBytes = 0, poolBlocksMade = 0, poolBlocksRecycled = 0, poolBlocksFreed = 0, poolBlocksHeld = 0, poolBlockBytes = 0;
     };
     Counts Statistics() const;
@@ -224,15 +228,27 @@ private:
     struct RetiringSlot {
         std::uint32_t slot = 0;
         std::uint64_t serial = 0;
+        bool sampler = false;
     };
     std::deque<RetiringSlot> retiring;
     std::size_t ringBatchBytes = 0;
     std::atomic<std::uint32_t> ringOpenChunks{0};
     std::size_t retiringAssigned = 0;
+    std::size_t retiringSamplers = 0;
+    std::size_t samplerRetiringAssigned = 0;
     std::uint32_t evictScanEpoch = 0;
+    std::uint32_t samplerEvictScanEpoch = 0;
+    std::vector<const HeapSlotOwner*> samplerOwners;
+    std::vector<bool> samplerPinned;
+    std::unique_ptr<std::atomic<std::uint32_t>[]> samplerUses;
+    std::atomic<bool> pressured{false};
     Recorder* submitter = nullptr;
     void touchLocked(std::uint32_t slot) const;
-    void evictLocked();
+    void touchSamplerLocked(std::uint32_t slot) const;
+    void evictLocked(std::uint32_t idleSubmissions);
+    void evictSamplersLocked(std::uint32_t idleSubmissions);
+    std::optional<std::uint32_t> samplerSlot(const std::shared_ptr<Sampler>& sampler, bool pin);
+    std::size_t imageRetiring() const { return retiring.size() - retiringSamplers; }
     bool reclaimLocked(bool wait);
     std::optional<std::uint32_t> imageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout, Texture* texture);
     SlotOwner& claimSlotLocked(const ImageSlotKey& key, std::uint32_t slot);
@@ -241,6 +257,7 @@ private:
     std::unordered_map<const HeapSlotOwner*, std::uint32_t> samplerSlots;
     std::unordered_set<std::uint32_t> absentSlots;
     bool refused = false;
+    bool refusing = false;
     void noteRefusedLocked(const char* what, std::uint32_t margin);
     void noteTakenLocked();
     void noteSamplerTakenLocked();
@@ -282,6 +299,8 @@ void NoteEmptyResourceSet();
 std::uint64_t EmptyResourceSets();
 std::uint64_t DataAddressPushes();
 std::uint64_t EmbeddedSamplerMappings();
+std::uint64_t SlotPressureSubmits();
+std::uint64_t HeapSlotEvictions();
 enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, FirstSampleCopy, Count };
 enum class HeapFallback : std::uint8_t { DrawUnmapped, DrawMixedRetry, DrawRefusedPair, DrawMixedReused, DispatchUnmapped, Count };
 enum class HeapStageReason : std::uint8_t {

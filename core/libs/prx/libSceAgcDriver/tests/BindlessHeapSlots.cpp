@@ -402,11 +402,11 @@ void heapComesBack(const Context& context, VkImageView view) {
         require(heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
                 "a texture takes one of the eight capped slots");
     }
-    require(BindlessHeap::NearlyFull(), "one free slot of eight refuses the heap");
+    require(BindlessHeap::NearlyFull(), "one free slot of eight marks the heap nearly full");
     for (std::size_t index = 0; index < 2u; ++index) heap.ReleaseSlots(held[index].get());
-    require(BindlessHeap::NearlyFull(), "three free slots of eight leave the heap refused");
+    require(BindlessHeap::NearlyFull(), "three free slots of eight leave the heap nearly full");
     heap.ReleaseSlots(held[2].get());
-    require(!BindlessHeap::NearlyFull(), "a release that leaves twice the margin free takes the heap again");
+    require(!BindlessHeap::NearlyFull(), "a release that leaves twice the margin free clears the nearly full state");
     for (std::size_t index = 3; index < held.size(); ++index) heap.ReleaseSlots(held[index].get());
     BindlessHeap::Release(context.device);
 }
@@ -427,6 +427,7 @@ bool idleSlotsEvicted(const Context& context, VkImageView view) {
     const auto take = [&](std::size_t index) {
         if (held.size() <= index) held.resize(index + 1u);
         if (held[index] == nullptr) held[index] = fakeTexture(index);
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         return heap.TextureSlot(kind, held[index].get(), view, VK_IMAGE_LAYOUT_GENERAL);
     };
     for (std::size_t index = 0; index < 6u; ++index) {
@@ -447,7 +448,7 @@ bool idleSlotsEvicted(const Context& context, VkImageView view) {
     require(take(7).has_value(), "the eighth texture takes the last never-used slot");
     require(!take(8).has_value(), "an evicted slot is not reused before a submission covers the draws that used it");
     submit();
-    require(!BindlessHeap::NearlyFull(), "evicted slots a submission covers take the heap again");
+    require(!BindlessHeap::NearlyFull(), "evicted slots a submission covers clear the nearly full state");
     require(recorder.WaitSerialFor(recorder.Submissions(), ~std::uint64_t{0}), "the submission completes");
     const auto reused = take(8);
     require(reused.has_value() && std::find(slots.begin(), slots.begin() + 5, *reused) != slots.begin() + 5,
@@ -466,9 +467,9 @@ void storageComesBack(const Context& context, VkImageView view) {
         require(heap.StorageSlot(Abi::FirstStorageImageBinding, &owner, view).has_value(),
                 "a storage owner takes one of the eight capped slots");
     }
-    require(BindlessHeap::NearlyFull(), "storage owners that leave one free slot of eight refuse the heap");
+    require(BindlessHeap::NearlyFull(), "storage owners that leave one free slot of eight mark the heap nearly full");
     for (auto& owner : owners) heap.ReleaseSlots(&owner);
-    require(!BindlessHeap::NearlyFull(), "releasing the storage owners takes the heap again");
+    require(!BindlessHeap::NearlyFull(), "releasing the storage owners clears the nearly full state");
     BindlessHeap::Release(context.device);
 }
 
@@ -482,13 +483,13 @@ void storageViewsComeBack(const Context& context, VkImageView view) {
         }
     }
     require(heap.StorageSlot(Abi::FirstStorageImageBinding, &owners[3], view).has_value(), "a single-view storage owner takes the seventh slot");
-    require(BindlessHeap::NearlyFull(), "storage owners that leave one free slot of eight refuse the heap");
+    require(BindlessHeap::NearlyFull(), "storage owners that leave one free slot of eight mark the heap nearly full");
     const auto freed = heap.Statistics().slotsFreed;
     heap.ReleaseSlots(&owners[0]);
     require(heap.Statistics().slotsFreed == freed + 2u, "a storage owner's release freed " + std::to_string(heap.Statistics().slotsFreed - freed) + " of its two slots");
-    require(BindlessHeap::NearlyFull(), "three free slots of eight leave the heap refused");
+    require(BindlessHeap::NearlyFull(), "three free slots of eight leave the heap nearly full");
     heap.ReleaseSlots(&owners[1]);
-    require(!BindlessHeap::NearlyFull(), "releasing a second two-view owner takes the heap again");
+    require(!BindlessHeap::NearlyFull(), "releasing a second two-view owner clears the nearly full state");
     heap.ReleaseSlots(&owners[2]);
     heap.ReleaseSlots(&owners[3]);
     BindlessHeap::Release(context.device);
@@ -502,15 +503,15 @@ void mixedComesBack(const Context& context, VkImageView sampledView, VkImageView
         require(heap.TextureSlot(Abi::FirstImageBinding, textures.back().get(), sampledView, VK_IMAGE_LAYOUT_GENERAL).has_value(),
                 "a texture takes one of the eight capped slots");
     }
-    require(!BindlessHeap::NearlyFull(), "four textures in eight capped slots leave the heap taken");
+    require(!BindlessHeap::NearlyFull(), "four textures in eight capped slots do not mark the heap nearly full");
     std::array<FakeOwner, 3> owners{};
     for (auto& owner : owners) {
         require(heap.StorageSlot(Abi::FirstStorageImageBinding, &owner, storageView).has_value(),
                 "a storage owner takes one of the slots the textures left");
     }
-    require(BindlessHeap::NearlyFull(), "storage owners that take the slots the textures left refuse the heap");
+    require(BindlessHeap::NearlyFull(), "storage owners that take the slots the textures left mark the heap nearly full");
     for (auto& owner : owners) heap.ReleaseSlots(&owner);
-    require(!BindlessHeap::NearlyFull(), "releasing the storage owners takes the heap again while the textures stay");
+    require(!BindlessHeap::NearlyFull(), "releasing the storage owners clears the nearly full state while the textures stay");
     for (const auto& texture : textures) heap.ReleaseSlots(texture.get());
     BindlessHeap::Release(context.device);
 }
@@ -520,9 +521,9 @@ void viewsComeBack(const Context& context, VkImageView view) {
     const auto kind = Abi::FirstStorageImageBinding + 27u;
     std::array<FakeOwner, 7> owners{};
     for (auto& owner : owners) require(heap.ViewSlot(kind, &owner, view).has_value(), "a view takes one of the eight capped slots");
-    require(BindlessHeap::NearlyFull(), "views that leave one free slot of eight refuse the heap");
+    require(BindlessHeap::NearlyFull(), "views that leave one free slot of eight mark the heap nearly full");
     for (auto& owner : owners) heap.ReleaseSlots(&owner);
-    require(!BindlessHeap::NearlyFull(), "releasing the views takes the heap again");
+    require(!BindlessHeap::NearlyFull(), "releasing the views clears the nearly full state");
     BindlessHeap::Release(context.device);
 }
 
@@ -532,14 +533,130 @@ void twoHeapsComeBack(const Context& context, VkImageView view) {
     std::array<FakeOwner, 7> firstOwners{}, secondOwners{};
     for (auto& owner : firstOwners) require(first->ViewSlot(Abi::FirstStorageImageBinding, &owner, view).has_value(), "a view takes one of the first heap's eight capped slots");
     for (auto& owner : secondOwners) require(second->ViewSlot(Abi::FirstStorageImageBinding, &owner, view).has_value(), "a view takes one of the second heap's eight capped slots");
-    require(BindlessHeap::NearlyFull(), "two nearly full heaps refuse the heap");
+    require(BindlessHeap::NearlyFull(), "two nearly full heaps mark the heap nearly full");
     for (auto& owner : secondOwners) second->ReleaseSlots(&owner);
-    require(BindlessHeap::NearlyFull(), "room in the second heap took the heap back while the first stays nearly full");
+    require(BindlessHeap::NearlyFull(), "room in the second heap cleared the nearly full state while the first stays nearly full");
     second.reset();
-    require(BindlessHeap::NearlyFull(), "destroying the second heap took the heap back while the first stays nearly full");
+    require(BindlessHeap::NearlyFull(), "destroying the second heap cleared the nearly full state while the first stays nearly full");
     for (auto& owner : firstOwners) first->ReleaseSlots(&owner);
-    require(!BindlessHeap::NearlyFull(), "room in the last refused heap did not take the heap back");
+    require(!BindlessHeap::NearlyFull(), "room in the last nearly full heap did not clear the nearly full state");
     first.reset();
+}
+
+bool slotPressureSubmits(const Context& context, VkImageView view) {
+    auto& heap = BindlessHeap::For(context);
+    const auto kind = Abi::FirstImageBinding;
+    Recorder recorder(context, true);
+    if (!recorder.HasTimeline()) return false;
+    recorder.Activate();
+    const auto submit = [&] {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        static_cast<void>(recorder.Commands());
+        recorder.Submit();
+    };
+    require(BindlessHeap::WaitsWhenFull(), "a nearly full heap waits by default instead of refusing draws");
+    std::vector<std::shared_ptr<Texture>> held;
+    std::vector<std::uint32_t> slots;
+    for (std::size_t index = 0; index < 7u; ++index) {
+        held.push_back(fakeTexture(index));
+        const auto slot = heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL);
+        require(slot.has_value(), "a texture takes one of the eight capped slots");
+        slots.push_back(*slot);
+    }
+    require(BindlessHeap::NearlyFull() && !BindlessHeap::RefusesDraws(), "one free slot of eight marks the heap nearly full without refusing draws");
+    submit();
+    require(heap.Statistics().slotsEvicted == 0u && BindlessHeap::NearlyFull(),
+            "a submission in the middle of a draw evicts no slot the draw took in the batch it submitted");
+    const auto submitsBefore = SlotPressureSubmits();
+    const auto generation = heap.SlotGeneration(slots[0]);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        static_cast<void>(recorder.Commands());
+        require(heap.TakeSlotPressure() && SlotPressureSubmits() == submitsBefore + 1u, "a nearly full heap asks the next draw to submit its batch");
+        recorder.Submit();
+    }
+    require(heap.Statistics().slotsEvicted == slots.size(), "the pressure submission evicts every slot, since no draw is being prepared at draw entry");
+    require(!heap.TakeSlotPressure() && !BindlessHeap::NearlyFull(), "slots the submission covers clear the nearly full state");
+    require(heap.SlotGeneration(slots[0]) != generation && heap.SlotTexture(kind, slots[0]) == nullptr, "an evicted slot moves its generation and names no texture");
+    for (std::size_t index = 7; index < 12u; ++index) {
+        held.push_back(fakeTexture(index));
+        const auto slot = heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL);
+        require(slot.has_value(), "a new texture takes a slot after the pressure submission, waiting for it when none is free");
+    }
+    const auto back = heap.TextureSlot(kind, held[0].get(), view, VK_IMAGE_LAYOUT_GENERAL);
+    require(back.has_value() && heap.SlotTexture(kind, *back) == held[0].get(), "an evicted texture takes a slot again");
+    for (const auto& texture : held) heap.ReleaseSlots(texture.get());
+    BindlessHeap::Release(context.device);
+    return true;
+}
+
+void noTimelineRefuses(const Context& context, VkImageView view) {
+    auto& heap = BindlessHeap::For(context);
+    Recorder recorder(context, false);
+    recorder.Activate();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        static_cast<void>(recorder.Commands());
+        recorder.Submit();
+    }
+    std::vector<std::shared_ptr<Texture>> held;
+    for (std::size_t index = 0; index < 7u; ++index) {
+        held.push_back(fakeTexture(index));
+        require(heap.TextureSlot(Abi::FirstImageBinding, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "a texture takes one of the eight capped slots");
+    }
+    require(BindlessHeap::RefusesDraws() && !heap.TakeSlotPressure(), "a heap whose recorder has no timeline cannot evict, so it refuses draws instead of submitting early");
+    for (const auto& texture : held) heap.ReleaseSlots(texture.get());
+    require(!BindlessHeap::RefusesDraws(), "releasing the textures takes the heap again");
+    BindlessHeap::Release(context.device);
+}
+
+bool samplersEvicted(const Context& context) {
+    auto& heap = BindlessHeap::For(context);
+    Recorder recorder(context, true);
+    if (!recorder.HasTimeline()) return false;
+    recorder.Activate();
+    const auto submit = [&] {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        static_cast<void>(recorder.Commands());
+        recorder.Submit();
+    };
+    SamplerCache cache(Abi::GpuSamplerHeapSlots);
+    const auto sampler = [&](std::uint32_t bias) {
+        const std::array<std::uint32_t, 4> words{0u, 0u, bias, 0u};
+        return cache.Get(context, words, false);
+    };
+    constexpr std::uint32_t Taken = Abi::GpuSamplerHeapSlots - Abi::GpuSamplerHeapSlots / 4u + 8u;
+    const auto pinnedSampler = sampler(Taken);
+    const auto pinned = heap.PinnedSamplerSlot(pinnedSampler);
+    require(pinned.has_value(), "a pinned sampler takes a slot");
+    const auto pinnedGeneration = heap.SamplerGeneration(*pinned);
+    std::vector<std::shared_ptr<Sampler>> held;
+    std::vector<std::uint32_t> slots;
+    for (std::uint32_t index = 0; index < Taken; ++index) {
+        held.push_back(sampler(index));
+        const auto slot = heap.SamplerSlot(held.back());
+        require(slot.has_value(), "a sampler takes a slot");
+        require(*slot > *pinned, "the pinned sampler holds a lower slot than every later sampler");
+        slots.push_back(*slot);
+    }
+    require(BindlessHeap::NearlyFull(), "too few free sampler slots mark the heap nearly full");
+    const auto generation = heap.SamplerGeneration(slots[0]);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        static_cast<void>(recorder.Commands());
+        require(heap.TakeSlotPressure(), "a heap short of sampler slots asks the next draw to submit its batch");
+        recorder.Submit();
+    }
+    require(heap.Statistics().samplersEvicted != 0u, "the pressure submission evicts samplers the new batch has not used");
+    require(!BindlessHeap::NearlyFull(), "evicted sampler slots the submission covers clear the nearly full state");
+    require(heap.SamplerGeneration(*pinned) == pinnedGeneration && heap.SamplerSlot(pinnedSampler) == pinned, "a pinned sampler slot is never evicted");
+    require(heap.SamplerGeneration(slots[0]) != generation, "the oldest sampler's slot was evicted and moved its generation");
+    require(recorder.WaitSerialFor(recorder.Submissions(), ~std::uint64_t{0}), "the submission completes");
+    const auto back = heap.SamplerSlot(held[0]);
+    require(back.has_value(), "an evicted sampler takes a slot again");
+    held.clear();
+    BindlessHeap::Release(context.device);
+    return true;
 }
 
 }
@@ -601,9 +718,13 @@ int main(int argc, char** argv) {
                 else if (mode == "views-come-back") viewsComeBack(context, storage);
                 else if (mode == "two-heaps-come-back") twoHeapsComeBack(context, storage);
                 else if (mode == "owner-views-release") ownerViewsRelease(context, storage);
+                else if (mode == "no-timeline-refuses") noTimelineRefuses(context, sampled);
                 else if (mode == "shared-owner-release") sharedOwnerRelease(context, storage);
-                else if (mode == "idle-slots-evicted") {
-                    if (!idleSlotsEvicted(context, sampled)) {
+                else if (mode == "idle-slots-evicted" || mode == "pressure-submit" || mode == "samplers-evicted") {
+                    const bool ran = mode == "idle-slots-evicted" ? idleSlotsEvicted(context, sampled)
+                                     : mode == "pressure-submit" ? slotPressureSubmits(context, sampled)
+                                                                 : samplersEvicted(context);
+                    if (!ran) {
                         std::printf("skipped, the recorder has no timeline\n");
                         return VulkanTestSkipped;
                     }
@@ -612,7 +733,7 @@ int main(int argc, char** argv) {
                 device->WaitIdle();
             }
             device.reset();
-            std::cout << "the refused heap comes back once released slots leave room (" << mode << ")\n";
+            std::cout << "the nearly full heap recovers once released slots leave room (" << mode << ")\n";
             return 0;
         }
         {

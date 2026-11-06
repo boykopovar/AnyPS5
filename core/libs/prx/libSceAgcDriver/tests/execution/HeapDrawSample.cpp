@@ -379,7 +379,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                                                                   std::to_string(StorageMemory[channel]) + ", expected the sampled " +
                                                                   std::to_string(Texel[channel]) + (heap ? " through the heap" : ""));
     }
-    if (!heap || std::getenv("APS5_HEAP_SLOT_CAP") != nullptr) return;
+    if (!heap || (std::getenv("APS5_HEAP_SLOT_CAP") != nullptr && !AgcDriver::Graphics::BindlessHeap::WaitsWhenFull())) return;
     if (mode == Mode::Vertex || mode == Mode::VertexTable)
         Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore,
                 "the heap did not take the sampling vertex stage with descriptor memory");
@@ -465,7 +465,10 @@ int main() {
             DrawSamplesTheTexture(heap, mode);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
         if (heap && !capped) MixedDrawTakesThePerDrawPath();
-        if (capped)
+        if (capped && AgcDriver::Graphics::BindlessHeap::WaitsWhenFull())
+            Require(AgcDriver::Graphics::HeapSlotEvictions() != 0u && !AgcDriver::DriverDetail::HeapRefused(),
+                    "the capped heap refused draws instead of evicting image slots");
+        else if (capped)
             Require(AgcDriver::DriverDetail::HeapRefused(), "a draw found the capped heap full and the heap was not refused");
         AgcDriverShutdown_nid_postfix();
         if (heap && !capped)

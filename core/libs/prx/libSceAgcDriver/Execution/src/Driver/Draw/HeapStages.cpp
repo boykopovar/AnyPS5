@@ -112,7 +112,7 @@ VerifyCounts& verifyCounts() {
 }
 
 bool HeapRefused() {
-    return Graphics::BindlessHeap::NearlyFull();
+    return Graphics::BindlessHeap::RefusesDraws();
 }
 
 namespace {
