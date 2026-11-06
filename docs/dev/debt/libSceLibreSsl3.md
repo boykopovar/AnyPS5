@@ -17,6 +17,7 @@
 ### Functional
 
 - [ASN.1 integer decoding](../../../core/libs/prx/libSceLibreSsl3/src/IntegerDecoder.cpp) - nothing is checked on a console, and the console's application-heap ABI is unverified. Rejections, allocation failures, their error codes and the old output follow [13.42 native-PC evidence](https://github.com/boykopovar/AnyPS5/pull/10948#issuecomment-6412137728) from a recording allocator. Nonnegative null input faults natively and throws here. A negative length in the old output throws rather than erasing out of bounds, as the parent library does. Error combinations the evidence does not cover and content over `INT_MAX` bytes follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1). Closes when: compared with the console.
+- [ASN1_TYPE_free, ECDSA_SIG_new, ECDSA_SIG_set0 and ECDSA_SIG_free](../../../core/libs/prx/libSceLibreSsl3/src/EcdsaSig.cpp) - follow LibreSSL 4.0.0 [`a_type.c`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/asn1/a_type.c), [`tasn_fre.c`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/asn1/tasn_fre.c) and [`ecs_lib.c`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/ecdsa/ecs_lib.c): the type teardown frees object, string or nested values by type under the no-free and object dynamic flags; the constructor allocates a 16-byte object with null components, the setter frees replaced BIGNUMs through `BN_free`, and the destructor releases both components and the object. A null signature throws and a null component returns 0 unchanged. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
 - [CRYPTO_memcmp](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) follows the public [LibreSSL signature and equality contract](https://man.openbsd.org/CRYPTO_memcmp.3), without PS5 verification. The exact nonzero result for unequal buffers is unspecified by that contract. Content-independent execution of its volatile byte reads still depends on the compiler; inspect optimized code when changing toolchains. Closes when: measured on a PS5 and the supported toolchains' generated code is checked.
 - [ASN1_OBJECT_free](../../../core/libs/prx/libSceLibreSsl3/src/Asn1Object.cpp) - the structure layout and ownership flags follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/asn1_local.h) and its [free routine](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_object.c); nothing is checked on the console. Dynamic names and OID data use the guest heap, and dynamic OID data is erased before it is freed. A negative data length with non-null dynamic data throws rather than passing an oversized length to the erase operation.
 - [MD5 and SHA1](../../../core/libs/prx/libSceLibreSsl3/src/Digest.cpp) (libSceLibreSsl3) - follow LibreSSL's [md5.c, sha1.c](https://github.com/libressl/openbsd/tree/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto) and hash through libSceLibreSsl's `MD5_*` and `SHA1_*`. A null digest buffer, which LibreSSL 4.0.0 does not check, throws. Nothing is checked on the console
@@ -54,7 +55,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 164 remaining callable exports: 154 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 160 remaining callable exports: 151 named and 9 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -109,7 +110,6 @@
 | `BIO_meth_set_ctrl` | `GFEaREp1UFw` |
 | `EVP_PKEY_get0_EC_KEY` | `GY2X+VHs568` |
 | `unknown` | `GjO5Ap3E-t4` |
-| `unknown` | `HE-vihq-KKw` |
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `X509_set_version` | `IOutZPRNNPo` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
@@ -133,7 +133,6 @@
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
 | `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
 | `X509_get_signature_nid` | `QnjD8S6Rgk4` |
-| `ECDSA_SIG_new` | `R3NyckUcClU` |
 | `BN_dup` | `RMhEgJs6KLI` |
 | `EVP_sha512_256` | `Sea+FOS2GOI` |
 | `tls_config_set_ca_mem` | `Sqn+7yQmQWc` |
@@ -213,8 +212,6 @@
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
 | `tls_config_insecure_noverifyname` | `wNQT6Zn4UG4` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
-| `ASN1_TYPE_free` | `whL1IRBxFZA` |
-| `ECDSA_SIG_set0` | `xVv3qlSRldc` |
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
 | `X509_get0_pubkey` | `xj7cFYOV4+Y` |
