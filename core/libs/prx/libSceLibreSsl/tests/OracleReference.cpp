@@ -1,6 +1,8 @@
 #include <openssl/aes.h>
+#include <openssl/conf.h>
 #include <openssl/des.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/md4.h>
 #include <openssl/md5.h>
 #include <openssl/objects.h>
@@ -81,6 +83,9 @@ const char* OcspCrlReasonString(long reason) { return OCSP_crl_reason_str(reason
 const char* OcspResponseStatusString(long status) { return OCSP_response_status_str(status); }
 int ObjCreate(const char* oid, const char* shortName, const char* longName) { return OBJ_create(oid, shortName, longName); }
 void ObjCleanup() { OBJ_cleanup(); }
+void AddAllAlgorithms() { OPENSSL_add_all_algorithms_noconf(); }
+void LoadBuiltinModules() { OPENSSL_load_builtin_modules(); }
+void ConfModulesFree() { CONF_modules_free(); }
 int I2tAsn1Object(char* buffer, int length, const void* object) { return i2t_ASN1_OBJECT(buffer, length, const_cast<ASN1_OBJECT*>(static_cast<const ASN1_OBJECT*>(object))); }
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
