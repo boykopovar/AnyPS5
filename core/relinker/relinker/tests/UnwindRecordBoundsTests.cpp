@@ -403,6 +403,21 @@ int main() {
             fdeOverflowRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
         }
         Require(fdeOverflowRejected);
-        std::cout << "35 unwind record cases passed\n";
+        auto cieAugMultiByteBytes = Fixture();
+        Io::WriteU32(cieAugMultiByteBytes, 64, 14);
+        cieAugMultiByteBytes[73] = 'z';
+        cieAugMultiByteBytes[74] = 0;
+        cieAugMultiByteBytes[75] = 1;
+        cieAugMultiByteBytes[76] = 0x78;
+        cieAugMultiByteBytes[77] = 16;
+        cieAugMultiByteBytes[78] = 0x80;
+        cieAugMultiByteBytes[79] = 0x01;
+        bool cieAugMultiByteRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieAugMultiByteBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieAugMultiByteRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(cieAugMultiByteRejected);
+        std::cout << "36 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
