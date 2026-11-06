@@ -240,6 +240,13 @@ struct LibreSslX509 {
     std::int32_t references;
 };
 
+struct LibreSslOcspBasicResponse {
+    void* tbsResponseData;
+    void* signatureAlgorithm;
+    void* signature;
+    LibreSslStack* certs;
+};
+
 struct LibreSslX509StoreContext {
     void* store;
     int currentMethod;
@@ -726,7 +733,7 @@ int APS5_VABI OBJ_obj2nid_nid_postfix(void);
 int APS5_VABI OBJ_sn2nid_nid_postfix(void);
 int APS5_VABI OCSP_BASICRESP_free_nid_postfix(void);
 int APS5_VABI OCSP_RESPONSE_free_nid_postfix(void);
-int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void);
+int APS5_VABI OCSP_basic_add1_cert_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslX509* certificate);
 int APS5_VABI OCSP_basic_verify_nid_postfix(void);
 const char* APS5_VABI OCSP_cert_status_str_nid_postfix(std::int64_t status);
 int APS5_VABI OCSP_check_validity_nid_postfix(const Asn1String* thisUpdate, const Asn1String* nextUpdate, std::int64_t slack, std::int64_t maxAge);
