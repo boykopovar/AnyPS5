@@ -622,6 +622,79 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestDownload() {
+    Require(WKDownloadGetTypeID() == 52);
+    auto download = NKWebKit::Make<NKWebKit::Download>();
+    const void* ref = download.Get();
+
+    Require(!WKDownloadGetWasUserInitiated(ref));
+    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+
+    download->wasUserInitiated = true;
+    Require(WKDownloadGetWasUserInitiated(ref));
+
+    auto dummyReq = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    download->request = std::move(dummyReq);
+    auto* req = WKDownloadCopyRequest(ref);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKDataGetTypeID());
+    WKRelease(req);
+
+    bool threw = false;
+    try {
+        WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestAXObject() {
+    Require(WKAXObjectGetTypeID() == 132);
+    auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
+    const void* ref = ax.Get();
+
+    Require(WKAXObjectCopyTitle(ref) == nullptr);
+    Require(WKAXObjectCopyDescription(ref) == nullptr);
+    Require(WKAXObjectCopyHelpText(ref) == nullptr);
+    Require(WKAXObjectCopyURL(ref) == nullptr);
+
+    ax->title = NKWebKit::String::FromUtf8("Submit Button");
+    ax->description = NKWebKit::String::FromUtf8("Submits the form");
+    ax->helpText = NKWebKit::String::FromUtf8("Click to send your input");
+    ax->url = NKWebKit::String::FromUtf8("https://example.com/action");
+
+    auto* title = WKAXObjectCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Submit Button"));
+    WKRelease(title);
+
+    auto* desc = WKAXObjectCopyDescription(ref);
+    Require(desc != nullptr);
+    Require(WKStringIsEqualToUTF8CString(desc, "Submits the form"));
+    WKRelease(desc);
+
+    auto* help = WKAXObjectCopyHelpText(ref);
+    Require(help != nullptr);
+    Require(WKStringIsEqualToUTF8CString(help, "Click to send your input"));
+    WKRelease(help);
+
+    auto* url = WKAXObjectCopyURL(ref);
+    Require(url != nullptr);
+    Require(WKGetTypeID(url) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(url, "https://example.com/action"));
+    WKRelease(url);
+
+    bool threw = false;
+    try {
+        WKAXObjectCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestPopupMenuItem() {
     Require(WKPopupMenuItemGetTypeID() == 131);
     auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
@@ -729,6 +802,8 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestDownload();
+    TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestCertificateInfo();

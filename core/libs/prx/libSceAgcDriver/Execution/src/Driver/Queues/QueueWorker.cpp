@@ -134,6 +134,11 @@ const std::atomic<std::uint64_t>*& Driver::workerQueued() {
     return queued;
 }
 
+std::atomic<std::uint64_t>*& Driver::workerPacket() {
+    static thread_local std::atomic<std::uint64_t>* packet = nullptr;
+    return packet;
+}
+
 void Driver::reapCompletionLabels() {
     std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::try_to_lock);
     if (!gpuLock.owns_lock()) {
@@ -190,6 +195,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 auto& worker = workers.at(id);
                 auto& pending = worker.pending;
                 workerQueued() = &worker.queued;
+                workerPacket() = &worker.executingPacket;
                 if (traceGpu && pending.empty()) std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
                 const auto ready = [&] { return failure || stopping || !pending.empty(); };
                 const auto allQueuesIdle = [&] {
@@ -254,6 +260,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 }
                 submission = std::move(pending.front());
                 pending.pop_front();
+                worker.executingPacket.store(0, std::memory_order_relaxed);
                 if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 struct OrderHold {
