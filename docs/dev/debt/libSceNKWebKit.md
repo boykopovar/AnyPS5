@@ -1609,13 +1609,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF19ParallelEnvironmentC2EPFvPvEmi` | `ciXM3j2URKk` |
 | `_ZN3WTF19isCompilationThreadEv` | `qoO6VaMuvG0` |
 | `_ZN3WTF19numGraphemeClustersENS_10StringViewE` | `K7qAbz7P3rs` |
-| `_ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv` | `K59xDVxbCyM` |
-| `_ZN3WTF20ConcurrentPtrHashSet5clearEv` | `sDuWnr1d9ko` |
-| `_ZN3WTF20ConcurrentPtrHashSet7addSlowEPNS0_5TableEjjjPv` | `V-fPa0Bhh0w` |
-| `_ZN3WTF20ConcurrentPtrHashSetC1Ev` | `CQtwXOnCU1M` |
-| `_ZN3WTF20ConcurrentPtrHashSetC2Ev` | `ZVyMTXVUQN0` |
-| `_ZN3WTF20ConcurrentPtrHashSetD1Ev` | `NWIItqDdYTQ` |
-| `_ZN3WTF20ConcurrentPtrHashSetD2Ev` | `VZF7dCw7zNo` |
 | `_ZN3WTF20ParallelHelperClient13doSomeHelpingEv` | `jLYyt8tfmkE` |
 | `_ZN3WTF20ParallelHelperClient6finishEv` | `X+GUHRxWSq4` |
 | `_ZN3WTF20ParallelHelperClientD1Ev` | `pCPHOY0VhUY` |
