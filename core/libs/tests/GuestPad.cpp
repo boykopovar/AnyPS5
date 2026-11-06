@@ -1044,6 +1044,69 @@ static void CheckAudioOutPathRouting() {
     }
 }
 
+static void CheckAudioHapticsPortMapping() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    const std::array<std::pair<std::uint8_t, std::uint8_t>, PAD_MAX_CONTROLLERS> distinctHaptics{
+        std::make_pair(std::uint8_t{15}, std::uint8_t{25}),
+        std::make_pair(std::uint8_t{75}, std::uint8_t{85}),
+        std::make_pair(std::uint8_t{150}, std::uint8_t{160}),
+        std::make_pair(std::uint8_t{230}, std::uint8_t{240})
+    };
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSubmitAudioHapticsForPort_nid_postfix(p, distinctHaptics[p].first, distinctHaptics[p].second);
+        const PadOutputState out = OutputOf(p);
+        Require(out.audioVibrationLarge == distinctHaptics[p].first);
+        Require(out.audioVibrationSmall == distinctHaptics[p].second);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const PadOutputState out = OutputOf(p);
+        Require(out.audioVibrationLarge == distinctHaptics[p].first);
+        Require(out.audioVibrationSmall == distinctHaptics[p].second);
+    }
+    PadSubmitAudioHapticsForPort_nid_postfix(1, 245, 250);
+    Require(OutputOf(0).audioVibrationLarge == distinctHaptics[0].first && OutputOf(0).audioVibrationSmall == distinctHaptics[0].second);
+    Require(OutputOf(1).audioVibrationLarge == 245 && OutputOf(1).audioVibrationSmall == 250);
+    Require(OutputOf(2).audioVibrationLarge == distinctHaptics[2].first && OutputOf(2).audioVibrationSmall == distinctHaptics[2].second);
+    Require(OutputOf(3).audioVibrationLarge == distinctHaptics[3].first && OutputOf(3).audioVibrationSmall == distinctHaptics[3].second);
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        for (const auto& [large, small] : {
+                std::pair<std::uint8_t, std::uint8_t>{251, 251},
+                std::pair<std::uint8_t, std::uint8_t>{253, 252},
+                std::pair<std::uint8_t, std::uint8_t>{254, 254},
+                std::pair<std::uint8_t, std::uint8_t>{255, 255}}) {
+            PadSubmitAudioHapticsForPort_nid_postfix(p, large, small);
+            const PadOutputState out = OutputOf(p);
+            Require(out.audioVibrationLarge == large && out.audioVibrationSmall == small);
+        }
+    }
+    for (int invalidPort : {-9999, -100, -2, -1, 4, 5, 10, 100, 9999}) {
+        PadSubmitAudioHapticsForPort_nid_postfix(invalidPort, 200, 200);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const PadOutputState out = OutputOf(p);
+        Require(out.audioVibrationLarge == 255 && out.audioVibrationSmall == 255);
+    }
+    PadSubmitAudioHaptics_nid_postfix(255, 255);
+    Require(OutputOf(0).audioVibrationLarge == 255 && OutputOf(0).audioVibrationSmall == 255);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(OutputOf(p).audioVibrationLarge == 255 && OutputOf(p).audioVibrationSmall == 255);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1361,5 +1424,6 @@ int main() {
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
     CheckAudioFunctionSupport();
     CheckAudioOutPathRouting();
+    CheckAudioHapticsPortMapping();
     CheckPortZeroWithdrawn();
 }
