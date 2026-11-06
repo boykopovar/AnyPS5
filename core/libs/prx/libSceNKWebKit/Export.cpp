@@ -13496,10 +13496,6 @@ int APS5_VABI WKBundleSetWebNotificationPermission() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKClearMockMediaDevices() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKConnectionPostMessage() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14876,10 +14872,6 @@ int APS5_VABI WKRegistrableDomainCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKRemoveMockMediaDevice() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKRenderLayerCopyElementID() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14973,10 +14965,6 @@ int APS5_VABI WKRenderObjectGetFrameRect() {
 }
 
 int APS5_VABI WKRenderObjectGetTextLength() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKResetMockMediaDevices() {
     NotImplemented_nid_no_patch(__func__);
 }
 
