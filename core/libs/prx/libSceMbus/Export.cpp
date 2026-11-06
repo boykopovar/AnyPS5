@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceMbus/include/InventoryExports.hpp"
 #include "prx/libSceMbus/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -60,7 +61,13 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
         return invalidArgument;
     }
     if (infoSize != 112 || maxInfos < 0 || (maxInfos != 0 && infos == nullptr)) return invalidArgument;
-    if (count != nullptr) *count = 0;
+    if (count != nullptr) {
+        const std::int32_t zero = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(count, &zero, sizeof(zero));
+        errno = savedErrno;
+        if (!copied) return invalidArgument;
+    }
     return 0;
 }
 
