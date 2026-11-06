@@ -246,4 +246,7 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+void APS5_VABI WKUserMediaPermissionRequestAllow(const void* requestRef);
+void APS5_VABI WKUserMediaPermissionRequestDeny(const void* requestRef);
+
 }
