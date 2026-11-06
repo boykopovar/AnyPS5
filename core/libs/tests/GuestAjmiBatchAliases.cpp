@@ -191,14 +191,16 @@ void CheckRun(decltype(&sceAjmiBatchJobRunBufferRa_nid_no_patch) call) {
 } // namespace
 
 int main(int argc, char** argv) {
-    Require(argc == 3, "module and operation arguments");
+    Require(argc == 4, "module, operation and variant arguments");
+    const bool patched = std::string_view(argv[3]) == "nid";
+    Require(patched || std::string_view(argv[3]) == "unpatched", "known variant");
     try {
         Module module(argv[1]);
         if (std::string_view(argv[2]) == "inline") {
-            CheckInline(module.Import<decltype(&sceAjmiBatchJobInlineBuffer_nid_no_patch)>("4MsUK9kAnKg"));
+            CheckInline(module.Import<decltype(&sceAjmiBatchJobInlineBuffer_nid_no_patch)>(patched ? "4MsUK9kAnKg" : "4MsUK9kAnKg_nid_no_patch_cut"));
         } else {
             Require(std::string_view(argv[2]) == "run", "known operation");
-            CheckRun(module.Import<decltype(&sceAjmiBatchJobRunBufferRa_nid_no_patch)>("m0xisYC6U2w"));
+            CheckRun(module.Import<decltype(&sceAjmiBatchJobRunBufferRa_nid_no_patch)>(patched ? "m0xisYC6U2w" : "m0xisYC6U2w_nid_no_patch_cut"));
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

@@ -15,7 +15,7 @@ if(BUILD_TESTING)
             set(ajmiAliasModule ${UNPATCHED_DIR}/libSceAjmi.prx)
         endif()
         foreach(operation IN ITEMS inline run)
-            add_test(NAME guest_ajmi_batch_${operation}_${variant} COMMAND guest_ajmi_batch_aliases_tests ${ajmiAliasModule} ${operation})
+            add_test(NAME guest_ajmi_batch_${operation}_${variant} COMMAND guest_ajmi_batch_aliases_tests ${ajmiAliasModule} ${operation} ${variant})
             set_tests_properties(guest_ajmi_batch_${operation}_${variant} PROPERTIES TIMEOUT 20)
             if(WIN32)
                 set_tests_properties(guest_ajmi_batch_${operation}_${variant} PROPERTIES ENVIRONMENT_MODIFICATION
