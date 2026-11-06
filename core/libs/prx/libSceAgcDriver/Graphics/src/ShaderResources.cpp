@@ -5554,12 +5554,15 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
         if (chosen == members.end()) {
             rule = "largest accessible";
             std::uint64_t chosenBytes = 0;
+            std::uint64_t chosenExtent = 0;
             for (auto member = members.begin(); member != members.end(); ++member) {
                 try {
                     const auto bytes = DescribeSurface(member->resource).guestBytes;
-                    if (bytes <= chosenBytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(member->resource.baseAddress), static_cast<std::size_t>(bytes))) continue;
+                    const auto extent = static_cast<std::uint64_t>(member->resource.width) * member->resource.height;
+                    if (bytes < chosenBytes || (bytes == chosenBytes && extent <= chosenExtent) || !GuestMemory::Accessible(reinterpret_cast<const void*>(member->resource.baseAddress), static_cast<std::size_t>(bytes))) continue;
                     chosen = member;
                     chosenBytes = bytes;
+                    chosenExtent = extent;
                 } catch (const std::runtime_error&) {
                 }
             }

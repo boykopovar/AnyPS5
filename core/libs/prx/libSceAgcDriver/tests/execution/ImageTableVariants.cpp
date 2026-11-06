@@ -1,8 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -47,6 +49,7 @@ constexpr std::uint32_t Largest = 60;
 constexpr std::uint32_t Written = 61;
 constexpr std::uint32_t Depth = 62;
 constexpr std::uint32_t Sized = 59;
+constexpr std::uint32_t Tied = 58;
 
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
@@ -278,6 +281,28 @@ void RunLargest(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Expect(before, 1, 3, 0, "three dispatches of two variants with no write and no depth surface");
 }
 
+std::uint64_t GuestBytes(const void* texels, std::uint32_t width) {
+    std::array<std::uint32_t, 8> words{};
+    const auto image = Image(texels, width);
+    std::copy(image.begin(), image.end(), words.begin());
+    return AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(words)).guestBytes;
+}
+
+void RunTied(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Require(GuestBytes(block.Texels(Tied), Narrow) == GuestBytes(block.Texels(Tied), Wide), "image table variants: the narrow and the wide variant no longer have the same guest bytes");
+    Prepare(block);
+    Fill(block.Texels(Tied), 7000.25f);
+    SetRecord(block, 0, block.Texels(Tied), Narrow);
+    SetRecord(block, 1, block.Texels(Tied), Wide);
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    const auto wide = Row(block.Texels(Tied), Wide);
+    Require(Dispatch(device, result, 0) == wide, "image table variants: with the same guest bytes, the narrow variant ahead of the wide one did not borrow the wide one");
+    Require(Dispatch(device, result, 1) == wide, "image table variants: with the same guest bytes, the wide variant behind the narrow one sampled the wrong texels");
+    Expect(before, 1, 2, 0, "two dispatches of two variants with the same guest bytes");
+}
+
 void RunWritten(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     Prepare(block);
     SetRecord(block, 0, block.Texels(Written), Wide);
@@ -350,6 +375,7 @@ void RunRejected(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
 }
 
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    RunTied(device, block);
     RunLargest(device, block);
     RunWritten(device, block);
     RunFetch(device, block);
