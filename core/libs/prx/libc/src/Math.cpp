@@ -3589,6 +3589,43 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
+long double APS5_VABI nextafterl_nid_postfix(long double x, long double y) {
+    if (std::isnan(x) || std::isnan(y)) return x + y;
+    if (x == y) return y;
+    if (x == 0) {
+        const long double value = JoinExtended(1u, static_cast<std::uint16_t>(std::signbit(y) ? 0x8000 : 0));
+        const volatile long double product = value * value;
+        return product == value ? product : value;
+    }
+    ExtendedParts parts = SplitExtended(x);
+    const bool positive = x > 0;
+    const bool above = y > x;
+    if (positive == above) {
+        ++parts.mantissa;
+        if ((parts.mantissa & 0x7fffffffffffffffull) == 0) {
+            parts.mantissa |= 0x8000000000000000ull;
+            ++parts.signExponent;
+        }
+    } else if (parts.mantissa == 0x8000000000000000ull) {
+        parts.mantissa = 0xffffffffffffffffull;
+        --parts.signExponent;
+    } else {
+        --parts.mantissa;
+    }
+    const std::uint16_t exponent = parts.signExponent & 0x7fffu;
+    if (exponent == 0) parts.mantissa &= 0x7fffffffffffffffull;
+    const long double stepped = JoinExtended(parts.mantissa, parts.signExponent);
+    if (exponent == 0x7fffu) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        const volatile long double product = stepped * stepped;
+        if (product != stepped) _Feraise_nid_postfix(0x10);
+    }
+    return stepped;
+}
+long double APS5_VABI nexttowardl_nid_postfix(long double x, long double y) { return nextafterl_nid_postfix(x, y); }
 int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
 int APS5_VABI __isnan_nid_postfix(double x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI __isinf_nid_postfix(double x) { return std::isinf(x) ? 1 : 0; }
