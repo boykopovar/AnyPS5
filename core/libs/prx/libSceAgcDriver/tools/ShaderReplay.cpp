@@ -89,6 +89,8 @@ HeapProfileSelection SelectHeapProfile(ShaderRecompiler::SpirvTarget& target) {
     return selection;
 }
 bool g_code = false;
+bool g_float16WidenNans = false;
+bool g_float16NarrowNans = false;
 
 bool ParseHeapDataUniformDwords(int index, int argc, char** argv, std::uint32_t& result) {
     char* end = nullptr;
@@ -141,6 +143,8 @@ bool Replay(const char* path) {
         request.request.target.supportedExtensions = request.supportedExtensions;
     }
     const auto heapProfile = SelectHeapProfile(request.request.target);
+    if (g_float16WidenNans) request.request.target.float16WidenNans = true;
+    if (g_float16NarrowNans) request.request.target.float16NarrowNans = true;
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     std::printf("  heap profile (%s): %s, gpuResolvedImages %d, descriptorMemory %d, data uniform dwords %u\n", heapProfile.source, heapProfile.heap ? "heap" : "no heap", request.request.target.gpuResolvedImages, request.request.target.descriptorMemory, request.request.target.heapDataUniformDwords);
     if (!forced.empty()) std::printf("  target flags forced on: %s\n", forced.c_str());
@@ -293,7 +297,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--gpu-heap] [--no-gpu-heap] [--heap-data-uniform-dwords N] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n  a request replays with the heap profile it was captured with; --gpu-heap forces the heap profile (gpuResolvedImages, descriptorMemory, and 16384 data uniform dwords unless --heap-data-uniform-dwords is given, replacing a captured limit), --no-gpu-heap forces it off, --heap-data-uniform-dwords N forces the limit (0 selects ring-address reads); --gpu-heap with --no-gpu-heap, and --no-gpu-heap with a nonzero limit, exit 2\n  --maintenance8, --robust2, --wave-lds-memory-barriers, --device-scope-lds-memory-barriers and --lds-lock-fences force their target flag on over the captured value and are listed on a 'target flags forced on' line\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--f16-widen-nans] [--f16-narrow-nans] [--gpu-heap] [--no-gpu-heap] [--heap-data-uniform-dwords N] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n  a request replays with the heap profile it was captured with; --gpu-heap forces the heap profile (gpuResolvedImages, descriptorMemory, and 16384 data uniform dwords unless --heap-data-uniform-dwords is given, replacing a captured limit), --no-gpu-heap forces it off, --heap-data-uniform-dwords N forces the limit (0 selects ring-address reads); --gpu-heap with --no-gpu-heap, and --no-gpu-heap with a nonzero limit, exit 2\n  --maintenance8, --robust2, --wave-lds-memory-barriers, --device-scope-lds-memory-barriers and --lds-lock-fences force their target flag on over the captured value and are listed on a 'target flags forced on' line\n");
         return 2;
     }
     if (HeapFlagsConflict(argc, argv)) return 2;
@@ -354,6 +358,14 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--shader-fma") {
             g_shaderFma = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--f16-widen-nans") {
+            g_float16WidenNans = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--f16-narrow-nans") {
+            g_float16NarrowNans = true;
             continue;
         }
         if (std::string(argv[i]) == "--mem") {

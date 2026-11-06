@@ -38,6 +38,7 @@ int APS5_VABI FT_Get_Advance_nid_postfix(FreeType::GuestFaceRec* face, std::uint
 int APS5_VABI FT_Get_Advances_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t start, std::uint32_t count, std::int32_t flags, std::int64_t* advances);
 int APS5_VABI FT_Get_Glyph_nid_postfix(FreeType::GuestGlyphSlotRec* slot, FreeType::GuestGlyphRec** target);
 int APS5_VABI FT_Glyph_Copy_nid_postfix(FreeType::GuestGlyphRec* source, FreeType::GuestGlyphRec** target);
+void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(FreeType::GuestGlyphRec* glyph, std::uint32_t mode, FreeType::GuestBBox* box);
 void APS5_VABI FT_Done_Glyph_nid_postfix(FreeType::GuestGlyphRec* glyph);
 int APS5_VABI FT_Get_Gasp_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t ppem);
 int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(FreeType::GuestFaceRec* face, const char** registry, const char** ordering, std::int32_t* supplement);
@@ -131,6 +132,11 @@ int APS5_VABI FT_Library_SetLcdFilter_nid_postfix(FreeType::GuestLibrary* librar
 void APS5_VABI FT_Outline_Transform_nid_postfix(const FreeType::GuestOutline* outline, const FreeType::GuestMatrix* matrix);
 int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(FreeType::GuestOutline* outline, std::int64_t xStrength, std::int64_t yStrength);
 int APS5_VABI FT_Outline_Embolden_nid_postfix(FreeType::GuestOutline* outline, std::int64_t strength);
+void APS5_VABI FT_Vector_Polarize_nid_postfix(const FreeType::GuestVector* vector, std::int64_t* length, std::int64_t* angle);
+std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const FreeType::GuestVector* vector);
+void APS5_VABI FT_Vector_Rotate_nid_postfix(FreeType::GuestVector* vector, std::int64_t angle);
+std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y);
+void APS5_VABI FT_Vector_From_Polar_nid_postfix(FreeType::GuestVector* vector, std::int64_t length, std::int64_t angle);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);

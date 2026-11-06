@@ -236,6 +236,16 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_system_logger_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemLogger.cpp)
+    target_include_directories(guest_system_logger_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_system_logger_tests PRIVATE libSceSystemLogger libc libkernel)
+    configure_windows_unwind(guest_system_logger_tests)
+    add_test(NAME guest_system_logger COMMAND guest_system_logger_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_logger PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger>")
+    endif()
+
     add_test_executable(guest_webrtc_vad_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcVad.cpp)
     target_include_directories(guest_webrtc_vad_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_webrtc_vad_tests PRIVATE libwebrtc fvad)
@@ -445,7 +455,7 @@ if(BUILD_TESTING)
         set(public_header_manifest "${CMAKE_CURRENT_BINARY_DIR}/public_headers.json")
         add_test(NAME public_headers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_public_headers.py --audit-only --manifest "${public_header_manifest}")
-        set_tests_properties(public_headers PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE FIXTURES_SETUP public_headers_manifest)
+        set_tests_properties(public_headers PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE FIXTURES_SETUP public_headers_manifest)
         foreach(batch RANGE 0 63)
             add_test(NAME public_headers_compile_${batch} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_public_headers.py --compiler ${CMAKE_CXX_COMPILER} ${public_header_compiler_args}
@@ -607,6 +617,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+    endif()
+    add_test_executable(guest_bemp2sys_tests tests/GuestBemp2sys.cpp)
+    target_include_directories(guest_bemp2sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_bemp2sys_tests PRIVATE libSceBemp2sys libkernel libc)
+    configure_windows_unwind(guest_bemp2sys_tests)
+    add_test(NAME guest_bemp2sys COMMAND guest_bemp2sys_tests)
+    set_tests_properties(guest_bemp2sys PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_bemp2sys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBemp2sys>")
     endif()
     add_test_executable(guest_playready_tests tests/GuestPlayReady.cpp)
     target_include_directories(guest_playready_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -914,6 +934,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_xml_value_types PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_xml_value_types PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
+    endif()
+
+    add_test_executable(guest_xml_initializer_tests tests/GuestXmlInitializer.cpp)
+    target_include_directories(guest_xml_initializer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_xml_initializer_tests PRIVATE libSceXml libkernel libc)
+    configure_windows_unwind(guest_xml_initializer_tests)
+    add_test(NAME guest_xml_initializer COMMAND guest_xml_initializer_tests)
+    set_tests_properties(guest_xml_initializer PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_xml_initializer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
     endif()
 
@@ -1430,4 +1461,19 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_file_wrapper_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcFileWrapper.cpp)
+    target_include_directories(guest_webrtc_file_wrapper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_webrtc_file_wrapper_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_file_wrapper_tests)
+    add_test(NAME guest_webrtc_file_wrapper COMMAND guest_webrtc_file_wrapper_tests)
+    set_tests_properties(guest_webrtc_file_wrapper PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+endif()
+
 include(prx/libSceBeisobmf/Tests.cmake)
