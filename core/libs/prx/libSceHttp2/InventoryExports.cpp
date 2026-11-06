@@ -3,10 +3,6 @@
 
 extern "C" {
 
-int APS5_VABI sceHttp2GetAllTrailingHeaders() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceHttp2SetProxyWithURL() {
     NotImplemented_nid_no_patch(__func__);
 }
