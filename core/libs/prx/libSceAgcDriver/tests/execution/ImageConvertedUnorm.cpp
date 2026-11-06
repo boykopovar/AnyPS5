@@ -662,8 +662,8 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32
 }
 
 void CheckPacked16(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t format) {
-    const std::array<std::uint32_t, 4> widths = format == 133u ? std::array{5u, 6u, 5u, 0u} : format == 134u ? std::array{5u, 5u, 5u, 1u} : std::array{4u, 4u, 4u, 4u};
-    const std::array<std::uint32_t, 4> offsets = format == 133u ? std::array{0u, 5u, 11u, 0u} : format == 134u ? std::array{0u, 5u, 10u, 15u} : std::array{0u, 4u, 8u, 12u};
+    const std::array<std::uint32_t, 4> widths = format == 133u ? std::array{5u, 6u, 5u, 0u} : format == 134u ? std::array{5u, 5u, 5u, 1u} : format == 135u ? std::array{1u, 5u, 5u, 5u} : std::array{4u, 4u, 4u, 4u};
+    const std::array<std::uint32_t, 4> offsets = format == 133u ? std::array{0u, 5u, 11u, 0u} : format == 134u ? std::array{0u, 5u, 10u, 15u} : format == 135u ? std::array{0u, 1u, 6u, 11u} : std::array{0u, 4u, 8u, 12u};
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
         const auto value = static_cast<std::uint16_t>(index * 4051u + 0x39d7u);
         std::memcpy(texels + index * 2u, &value, 2u);
@@ -742,7 +742,7 @@ int main(int argc, char** argv) {
         auto* texels = block.Data();
         if (argc == 3 && std::string(argv[1]) == "--packed16") {
             const auto format = static_cast<std::uint32_t>(std::stoul(argv[2]));
-            Require(format == 133u || format == 134u || format == 136u, "unsupported packed storage test format");
+            Require(format == 133u || format == 134u || format == 135u || format == 136u, "unsupported packed storage test format");
             CheckPacked16(*device, texels, format);
             std::cout << "Packed 16-bit storage image tests passed\n";
             return 0;

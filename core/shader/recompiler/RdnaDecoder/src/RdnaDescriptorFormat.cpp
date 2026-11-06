@@ -14,7 +14,7 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 83> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
@@ -68,8 +68,9 @@ constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
     {IrBufferFormat::Format9_9_9_5Float, true, false, false},
     {IrBufferFormat::Format5_6_5UNorm, true, false, false},
     {IrBufferFormat::Format5_5_5_1UNorm, true, false, false},
-    {IrBufferFormat::Format1_5_5_5UNorm, false, false, false},
+    {IrBufferFormat::Format1_5_5_5UNorm, true, false, false},
     {IrBufferFormat::Format4_4_4_4UNorm, true, false, false},
+    {IrBufferFormat::Format4_4UNorm, true, false, false},
     {IrBufferFormat::Fmask8_S2_F1, true, false, false},
     {IrBufferFormat::Fmask8_S4_F1, true, false, false},
     {IrBufferFormat::Fmask8_S8_F1, true, false, false},
@@ -151,6 +152,7 @@ IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {
     switch (format) {
         case IrBufferFormat::Format5_6_5UNorm:
         case IrBufferFormat::Format5_5_5_1UNorm:
+        case IrBufferFormat::Format1_5_5_5UNorm:
         case IrBufferFormat::Format4_4_4_4UNorm:
             return IrBufferFormat::Format16UInt;
         default:

@@ -2349,7 +2349,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
             }
             if (storage) {
-                for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
+                for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format1_5_5_5UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
                     append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
                 }
             }
