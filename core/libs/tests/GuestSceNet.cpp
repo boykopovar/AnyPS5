@@ -551,6 +551,7 @@ static void CheckInitParam() {
     Require(sceNetTerm() == 0);
     Require(Failed(sceNetGetRandom(&randomOutput), 200));
     Require(Failed(sceNetInitParam(nullptr), 22));
+    Require(Failed(sceNetInitParam(reinterpret_cast<const NetInitializeParameter*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetGetRandom(&randomOutput), 200));
     Require(sceNetInitParam(initialize) == 0);
     Require(sceNetGetRandom(&randomOutput) == 0);
