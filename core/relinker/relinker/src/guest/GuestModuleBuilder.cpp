@@ -369,7 +369,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
     std::vector<std::filesystem::path> runDirectories;
     bool runDirectoriesExist = !windows && !macos;
-    for (std::size_t begin = 0; runDirectoriesExist && begin <= runPath.size();) {
+    for (std::size_t begin = 0; !windows && !macos && begin <= runPath.size();) {
         const auto end = std::min(runPath.find(':', begin), runPath.size());
         const auto component = std::string_view(runPath).substr(begin, end - begin);
         std::filesystem::path directory;
@@ -377,7 +377,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         else if (component.starts_with("$ORIGIN/")) directory = outputPath.parent_path() / std::string(component.substr(8));
         else if (component.starts_with('/')) directory = std::string(component);
         std::error_code error;
-        runDirectoriesExist = !directory.empty() && std::filesystem::is_directory(directory, error);
+        const bool exists = !directory.empty() && std::filesystem::is_directory(directory, error) && !error;
+        runDirectoriesExist = runDirectoriesExist && exists;
         runDirectories.push_back(std::move(directory));
         begin = end + 1;
     }
