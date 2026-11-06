@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(vector_compare_const_tests ${LIBS_INCLUDE_DIR}/tests/VectorCompareConst.cpp)
+    target_link_libraries(vector_compare_const_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(vector_compare_const_tests)
+    add_test(NAME vector_compare_const COMMAND vector_compare_const_tests)
+    if(WIN32)
+        set_tests_properties(vector_compare_const PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
