@@ -103,6 +103,43 @@ void MalformedStrings() {
     RequireConversionError(nullptr, 30, oddBmp, 3, 129, "a malformed string fails before the output is used");
 }
 
+void Print() {
+    Require(ASN1_STRING_print_nid_postfix(nullptr, nullptr) == 0, "null string prints nothing");
+    unsigned char data[] = {'a', 0x01, 'b', '\n', 0x7f, 0x80, 'c'};
+    Asn1String value{static_cast<int>(sizeof(data)), 12, data, 0};
+    auto* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "memory BIO");
+    Require(ASN1_STRING_print_nid_postfix(bio, &value) == 1, "print success");
+    char* output = nullptr;
+    const std::int64_t length = BIO_ctrl_nid_postfix(bio, 3, 0, &output);
+    constexpr char expected[] = "a.b\n..c";
+    Require(length == static_cast<std::int64_t>(sizeof(expected) - 1), "printed length");
+    Require(output != nullptr && std::memcmp(output, expected, sizeof(expected) - 1) == 0, "printed bytes");
+    BIO_free_nid_postfix(bio);
+    Require(ASN1_STRING_print_nid_postfix(nullptr, &value) == 0, "null BIO fails the write");
+    Asn1String empty{0, 12, nullptr, 0};
+    bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "memory BIO");
+    Require(ASN1_STRING_print_nid_postfix(bio, &empty) == 1, "empty print success");
+    output = nullptr;
+    Require(BIO_ctrl_nid_postfix(bio, 3, 0, &output) == 0, "empty output length");
+    BIO_free_nid_postfix(bio);
+    std::array<unsigned char, 81> longData{};
+    longData.fill('x');
+    longData[0] = 'a';
+    longData[1] = 0x01;
+    longData[79] = 'b';
+    longData[80] = 'c';
+    Asn1String longValue{static_cast<int>(longData.size()), 12, longData.data(), 0};
+    bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "memory BIO");
+    Require(ASN1_STRING_print_nid_postfix(bio, &longValue) == 1, "long print success");
+    output = nullptr;
+    Require(BIO_ctrl_nid_postfix(bio, 3, 0, &output) == static_cast<std::int64_t>(longData.size()), "long printed length");
+    Require(output != nullptr && output[0] == 'a' && output[1] == '.' && output[79] == 'b' && output[80] == 'c', "long printed bytes");
+    BIO_free_nid_postfix(bio);
+}
+
 void Accessors() {
     unsigned char data[] = {'a', 0, 'b'};
     Asn1String value{3, 12, data, std::numeric_limits<std::int64_t>::max()};
@@ -292,6 +329,7 @@ int main(int argc, char**) {
     }
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
+    Print();
     Accessors();
     Integers();
     Strings();
