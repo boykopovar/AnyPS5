@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | **Español** | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md)
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | **Español** | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md)
 
 # Acerca de
 
@@ -12,7 +12,7 @@ La compilación solo del relinker funciona en macOS, incluido Apple silicon.
 
 Incluye un [relinker](../../core/relinker) que convierte el ejecutable al formato nativo del sistema de destino e implementaciones de las [bibliotecas prx del sistema](../../core/libs/prx) aptas para el enlazado dinámico. Sin emulación ni proceso de runtime separado.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Uso](USAGE.md), [Instrucciones de compilación](../dev/BUILD.md), [Arquitectura](../dev/ARCHITECTURE.md), [Deuda técnica del proyecto](../dev/TechnicalDebt.md), [convenciones de estilo de código](../dev/CONVENTIONS.md), [cómo contribuir](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Uso](USAGE.md), [Instrucciones de compilación](../dev/BUILD.md), [Arquitectura](../dev/ARCHITECTURE.md), [Deuda técnica del proyecto](../dev/TechnicalDebt.md), [convenciones de estilo de código](../dev/CONVENTIONS.md), [cómo contribuir](../../CONTRIBUTING.md)
 
 ## Estado
 

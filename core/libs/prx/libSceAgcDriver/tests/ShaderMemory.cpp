@@ -2454,6 +2454,82 @@ void verifyAllocationChurnSnapshot() {
     }
 }
 
+void verifyRegisteredViewsUnderUnrelatedChurn() {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t RangeBytes = 65536u;
+    constexpr std::uint32_t Checks = 20000u;
+    alignas(4096) static std::array<std::uint8_t, RangeBytes> texels{};
+    alignas(4096) static std::array<std::uint8_t, 4096> unrelated{};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels.data(), texels.size(), true, false, true);
+    }
+    const auto view = [] {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(texels.data()), false);
+        require(range != nullptr, "registered view churn: the image range was not registered");
+        RegisteredImageView captured;
+        captured.address = reinterpret_cast<std::uintptr_t>(texels.data()) + 256u;
+        captured.hasRange = true;
+        captured.rangeAddress = range->address;
+        captured.rangeBytes = range->bytes;
+        captured.allocationAddress = range->allocationAddress;
+        captured.allocationBytes = range->allocationBytes;
+        captured.backingSerial = range->backingSerial;
+        captured.readable = range->readable;
+        captured.writable = range->writable;
+        captured.gpu = range->gpu;
+        return captured;
+    }();
+    std::array<RegisteredImageView, 3> views{view, view, view};
+    views[1].address = view.address + 4096u;
+    views[2].address = view.address + 8192u;
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> mutations{0};
+    std::thread churn([&] {
+        while (!stop.load(std::memory_order_acquire)) {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Add(unrelated.data(), unrelated.size(), true, true, true);
+            }
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(unrelated.data());
+            }
+            mutations.fetch_add(2u, std::memory_order_relaxed);
+        }
+    });
+    std::uint32_t rejected = 0u;
+    const auto generationBefore = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    while (mutations.load(std::memory_order_relaxed) < 64u) std::this_thread::yield();
+    for (std::uint32_t check = 0; check < Checks; ++check) {
+        if (!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views)) ++rejected;
+    }
+    stop.store(true, std::memory_order_release);
+    churn.join();
+    const auto generationAfter = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    require(generationAfter - generationBefore >= 64u, "registered view churn: the unrelated mappings did not move the allocation generation");
+    const auto rejectedMessage = "registered view churn: " + std::to_string(rejected) + " of " + std::to_string(Checks) + " checks rejected views whose own range never changed while only an unrelated allocation moved";
+    require(rejected == 0u, rejectedMessage.c_str());
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels.data());
+    }
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted after their range was removed");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels.data(), texels.size(), true, false, true);
+    }
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted after their range was mapped again with a new backing");
+    views[0].backingSerial = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(texels.data()), false)->backingSerial;
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted while one of them still names the old backing");
+    views[1].backingSerial = views[2].backingSerial = views[0].backingSerial;
+    require(AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views matching the new backing were rejected");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels.data());
+    }
+}
+
 void verifySnapshotAllocationMoves() {
     using namespace ShaderRecompiler;
     constexpr std::size_t RangeBytes = 65536u;
@@ -3745,6 +3821,10 @@ std::uint32_t* AllocateWatchedTable(std::size_t bytes) {
     return heap;
 }
 
+AgcDriver::ShaderMemory::PendingWrite NoPendingSpan(std::uint64_t, std::size_t, std::span<std::byte>) {
+    return AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
 void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
     GuestArena::GuestArenaSetProtection_nid_postfix(page, 4096u, protection);
 #ifdef _WIN32
@@ -3827,6 +3907,106 @@ void verifyRegionMerge(bool strided = false, bool benchmark = false) {
     std::puts("region merge: mixed initial, captured and shared regions retain order, coverage and recent-read semantics");
 }
 
+
+void verifyNestedSnapshotRetry() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
+    constexpr std::uint32_t Children = ImageTableAbi::MaxNestedKeys / 2u + 1u;
+    std::vector<std::array<std::uint32_t, 8>> leaves(Children, TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
+    const auto child = TableV(leaves.data(), 32u, Children);
+    std::vector<std::uint64_t> parents(Parents, reinterpret_cast<std::uintptr_t>(child.data()));
+    const auto root = TableV(parents.data(), 8u, Parents);
+    std::vector<std::unique_ptr<IrValue>> values;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.resourceTrackingComplete = true;
+    plan.userDataCount = 0u;
+    plan.materializationSources = {2u};
+    plan.descriptorSources.resize(3u);
+    for (std::uint32_t word = 0; word < 4u; ++word) {
+        auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+        value->SetImmediateU32(root[word]);
+        plan.descriptorSources[0].dwords[word] = value.get();
+        values.push_back(std::move(value));
+    }
+    plan.descriptorSources[0].dwordCount = 4u;
+    TableColumn parent;
+    parent.heapSource = 0u;
+    parent.stride = 8u;
+    parent.dwordCount = 4u;
+    parent.indirect = true;
+    parent.buffer = true;
+    plan.descriptorSources[1].tableColumn = parent;
+    TableColumn nested;
+    nested.heapSource = 1u;
+    nested.stride = 32u;
+    nested.dwordCount = 8u;
+    plan.descriptorSources[2].tableColumn = nested;
+    ImageResource image;
+    image.source = 2u;
+    image.table = 0u;
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    plan.info.images.push_back(image);
+    plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    struct Memory {
+        std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
+        std::uint64_t epoch = 0;
+        bool invalidate = false;
+        std::uint32_t firstReads = 0;
+        std::uint32_t epochQueries = 0;
+        std::vector<std::array<std::size_t, 2>> coverage;
+    };
+    const auto capture = [&](bool invalidate) {
+        Memory memory{{{{reinterpret_cast<std::uintptr_t>(parents.data()), parents.size() * sizeof(parents[0])},
+                         {reinterpret_cast<std::uintptr_t>(child.data()), sizeof(child)},
+                         {reinterpret_cast<std::uintptr_t>(leaves.data()), leaves.size() * sizeof(leaves[0])}}}, 0u, invalidate};
+        SrtRuntime runtime{};
+        runtime.userContext = &memory;
+        runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+            auto& memory = *static_cast<Memory*>(context);
+            for (const auto& [base, size] : memory.ranges) {
+                if (address >= base && address - base <= size - sizeof(*value)) {
+                    if (address == memory.ranges[0].first) {
+                        ++memory.firstReads;
+                        memory.coverage.push_back({});
+                    }
+                    if (memory.invalidate && address == memory.ranges[2].first + memory.ranges[2].second - sizeof(*value)) {
+                        ++memory.epoch;
+                        memory.invalidate = false;
+                    }
+                    if (!memory.coverage.empty()) {
+                        if (base == memory.ranges[0].first) memory.coverage.back()[0] = std::max(memory.coverage.back()[0], static_cast<std::size_t>(address - base + sizeof(*value)));
+                        if (base == memory.ranges[2].first) memory.coverage.back()[1] = std::max(memory.coverage.back()[1], static_cast<std::size_t>(address - base + sizeof(*value)));
+                    }
+                    std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                    return true;
+                }
+            }
+            return false;
+        };
+        runtime.descriptorScope = +[](void* context, std::size_t bytes) -> std::uint64_t {
+            auto& memory = *static_cast<Memory*>(context);
+            if (bytes == 0u) ++memory.epochQueries;
+            return memory.epoch;
+        };
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+        require(memory.epochQueries != 0u, "nested retry: a single nested table did not check the descriptor epoch");
+        require(memory.firstReads == (invalidate ? 3u : 1u), "nested retry: expected inner retry and outer revalidation");
+        for (const auto& covered : memory.coverage)
+            require(covered[0] == memory.ranges[0].second && covered[1] == memory.ranges[2].second,
+                    "nested retry: a discarded attempt consumed the next attempt key budgets");
+        require(snapshot.tables.tables.at(0).keys == Parents && snapshot.tables.nested.at(0).keys == Children,
+                "nested retry: parent or child key coverage was truncated");
+        return snapshot.tables;
+    };
+    const auto stable = capture(false);
+    const auto retried = capture(true);
+    require(stable.tables == retried.tables && stable.nested == retried.nested,
+            "nested retry: an invalidation changed the captured keys, pointers, words or codes");
+}
 
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
@@ -5443,6 +5623,54 @@ void verifyScalarAddressRule() {
             require(Abi::KeyRecords(maxKey, stride) == (exact ? maxKey + 1u : 0xffffffffu), "scalar address rule: the key bound is wrong");
         }
     }
+}
+
+void verifyPointerTableUnwrittenReuse() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Palette = 0x40;
+    constexpr std::size_t Bytes = 65536;
+    static TableTexture textures[2];
+    auto* root = AllocateWatchedTable(Bytes);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root));
+    if (AgcDriver::GuestMemory::CollectWrites(base, Bytes) == 0) {
+        std::puts("pointer table unwritten reuse: guest memory has no write watch, not tested");
+        return;
+    }
+    static std::array<std::uint32_t, 8> keys{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto keysV = TableV(keys.data(), 0u, static_cast<std::uint32_t>(sizeof(keys)));
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(keysV.begin(), keysV.end(), root);
+    std::copy(outputV.begin(), outputV.end(), root + 4);
+    const auto pointer = base + Palette + 0x100u;
+    root[12] = static_cast<std::uint32_t>(pointer);
+    root[13] = static_cast<std::uint32_t>(pointer >> 32u);
+    const auto entry = [&](std::uint32_t index, std::array<std::uint32_t, 8> words) {
+        std::copy(words.begin(), words.end(), root + (Palette + index * 32u) / 4u);
+    };
+    entry(0, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    entry(1, TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const std::vector<std::uint32_t> maskedCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u,
+        0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    auto request = TableRequest(maskedCode, userData);
+    request.shader.codeAddress = 0x33000u;
+    const auto capture = [&] {
+        const auto before = ResourceMaterializer::TableReuse();
+        AgcDriver::ShaderMemory memory({}, nullptr, nullptr, nullptr, &NoPendingSpan);
+        const auto words = memory.Capture(request)->snapshot.tables.tables.at(0);
+        const auto after = ResourceMaterializer::TableReuse();
+        return std::tuple{after.unwritten - before.unwritten, after.compared - before.compared, words.words.at(words.codes.at(1)).dwords};
+    };
+    static_cast<void>(capture());
+    const auto [comparedUnwritten, compared, comparedWords] = capture();
+    require(comparedUnwritten == 0u && compared == 1u, "pointer table unwritten reuse: the second capture of a pointer-addressed table was not compared");
+    const auto [unwritten, recompared, unwrittenWords] = capture();
+    require(unwritten == 1u && recompared == 0u && unwrittenWords == comparedWords, "pointer table unwritten reuse: a pointer-addressed table nothing wrote was compared again instead of reused");
+    entry(1, TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D));
+    const auto [written, writtenCompared, writtenWords] = capture();
+    require(written == 0u && writtenWords[1] == root[(Palette + 32u) / 4u + 1u], "pointer table unwritten reuse: a pointer-addressed table the CPU wrote was reused without a read");
+    std::puts("pointer table unwritten reuse passed");
 }
 
 void verifyPointerImageTable() {
@@ -8783,7 +9011,7 @@ void verifyPixelExportReplay() {
     }
 }
 
-std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileRequest twoParameterRequest(std::span<const std::uint32_t> code) {
     using namespace ShaderRecompiler;
     RecompileRequest request{};
     request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
@@ -8794,7 +9022,12 @@ std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t>
     request.target.subgroupSize = 64;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    const auto result = Recompile(request);
+    return request;
+}
+
+std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+    using namespace ShaderRecompiler;
+    const auto result = Recompile(twoParameterRequest(code));
     const auto& words = result.spirv.Words();
     std::map<std::uint32_t, std::uint32_t> locations;
     std::vector<std::uint32_t> decorated;
@@ -8817,7 +9050,8 @@ void verifyPixelInputs() {
     const auto linear = noPerspectiveLocations(byPair);
     require(linear.size() == 1u && linear[0] == 1u, "only the parameter interpolated through the linear pair must be NoPerspective");
     static constexpr std::array<std::uint32_t, 7> bothPairs{0xc8100000u, 0xc8110001u, 0xc8140002u, 0xc8150003u, 0xf800180fu, 0x05040504u, 0xbf810000u};
-    expectFailure([&] { static_cast<void>(noPerspectiveLocations(bothPairs)); }, "interpolated through both a perspective and a linear I/J pair", "a parameter read through both pairs was given one interpolation");
+    const auto both = ShaderRecompiler::Recompile(twoParameterRequest(bothPairs));
+    require(both.barycentricEmulation.active && both.barycentricEmulation.smooth && both.barycentricEmulation.linear, "a parameter read through both pairs did not fall back to both barycentrics");
 
     static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
     RecompileRequest request{};
@@ -9789,6 +10023,42 @@ void verifyUnusedUnnormalizedSampler() {
     msaaArraySnapshot.images[0].dwords[5] = 0x00000020u;
     DescriptorBindingBuilder{}.Populate(msaaArrayAllocation, msaaArrayInfo, IrShaderStage::Compute, 0u, msaaArraySnapshot, {});
     require(msaaArrayAllocation.bindings.size() == 1u && msaaArrayAllocation.bindings[0].imageShape == DescriptorImageShape::Image2DMultisampleArray, "multisampled array image resource did not receive Image2DMultisampleArray descriptor shape");
+}
+
+void verifyDsSwizzleFftMode() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    static std::array<std::uint32_t, 32> output{};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), 128u, 0x31016facu};
+    const auto compiled = [&userData](std::uint32_t offset) {
+        const std::vector<std::uint32_t> code{0xd8d40000u | offset, 0x01000000u, 0x34040082u, 0xbf8cc07fu, 0xe0701000u, 0x80000102u, 0xbf810000u};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x26000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv.Copy();
+    };
+    const auto reversesLanes = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == spv::OpBitReverse) return true;
+        }
+        return false;
+    };
+    for (const auto offset : {0xe000u, 0xe010u, 0xe018u, 0xe001u}) require(reversesLanes(compiled(offset)), "ds_swizzle FFT mode: an offset with a mask below 0x1f did not reverse the lane bits");
+    for (const auto offset : {0xe01fu, 0xc000u, 0xc021u, 0xdfffu}) require(!reversesLanes(compiled(offset)), "ds_swizzle FFT mode: mask 0x1f or a rotate offset reversed the lane bits");
+    require(compiled(0xffe0u) == compiled(0xe000u) && compiled(0xf550u) == compiled(0xe010u), "ds_swizzle FFT mode: offset bits 12:5 changed the swizzle");
 }
 
 void verifyWaveUniformValues() {
@@ -11409,6 +11679,7 @@ int main(int argc, char** argv) {
             verifyImageTableRegistration();
             verifyScalarAddressRule();
             verifyPointerImageTable();
+            verifyPointerTableUnwrittenReuse();
             verifyPointerTableOffsetCarry();
             verifySelectedRecordFallbacks();
             verifySelectedRecordOffsetCarry();
@@ -11420,6 +11691,16 @@ int main(int argc, char** argv) {
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--registered-view-churn") {
+            verifyRegisteredViewsUnderUnrelatedChurn();
+            std::cout << "Registered image views stay current while unrelated allocations change\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
+            verifyNestedSnapshotRetry();
+            std::cout << "Nested snapshot retry preserves parent and child coverage\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
@@ -11505,6 +11786,7 @@ int main(int argc, char** argv) {
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
+        verifyPointerTableUnwrittenReuse();
         verifyPointerTableOffsetCarry();
         verifyChainedTableOffset();
         verifyPointerChainImageTable();
@@ -11544,6 +11826,7 @@ int main(int argc, char** argv) {
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyNullVolumeUnnormalizedSampler();
+        verifyDsSwizzleFftMode();
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
