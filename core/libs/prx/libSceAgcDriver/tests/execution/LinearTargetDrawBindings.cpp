@@ -67,6 +67,7 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelOpaque{0x7e100280u, 0x7e120280u, 0x7e140280u, 0x7e1602f2u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 11> PixelRead{0x7e1a0280u, 0xdc308000u, 0x0c02000du, 0xbf8c3f70u, 0x7e10030cu, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 13> PixelReadStore{0x7e1a0280u, 0xdc308000u, 0x0c02000du, 0xbf8c3f70u, 0xdc708000u, 0x00020c0du, 0x7e10030cu, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 13> PixelCopy{0x7e040280u, 0xe0301000u, 0x80010102u, 0xbf8c3f70u, 0xe0701000u, 0x80020102u, 0x7e100301u, 0x7e120280u, 0x7e140280u, 0x7e1602f2u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{
@@ -250,7 +251,7 @@ void ExpectTexels(const std::uint8_t* target, const char* what, std::uint32_t fi
     }
 }
 
-bool Expect(AgcDriver::VulkanDevice& device, bool unwatch) {
+bool Expect(AgcDriver::VulkanDevice& device, bool unwatch, bool readOnly) {
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if (!context.bufferDeviceAddress) {
         std::puts("skipped, the device lacks bufferDeviceAddress");
@@ -285,9 +286,11 @@ bool Expect(AgcDriver::VulkanDevice& device, bool unwatch) {
     const bool watched = AgcDriver::GuestMemory::Watched(copied.address, TargetBytes);
     Require(!unwatch || !watched, "the copied target is still write-watched after its block was taken out of the write watch");
     const auto submitted = recorder->Submissions();
+    const std::uint64_t synced = readOnly && std::getenv("APS5_NO_READ_ONLY_LEASE_SKIP") == nullptr ? 0u : 1u;
+    const std::string reader = readOnly ? "the read-only address-based draw" : "the storing address-based draw";
     const auto pointed = block.Address() + PointedOffset;
     const std::array<std::uint32_t, 4> pointer{0u, 0u, static_cast<std::uint32_t>(pointed), static_cast<std::uint32_t>(pointed >> 32u)};
-    Draw(device, drawn, PixelRead, pointer, whole);
+    Draw(device, drawn, readOnly ? std::span<const std::uint32_t>(PixelRead) : std::span<const std::uint32_t>(PixelReadStore), pointer, whole);
     Require(pending(drawn.address), "the address-based draw did not leave its linear target pending");
     Require(recorder->Recording() && recorder->Submissions() == submitted, "the address-based draw did not stay in the open batch");
     const auto setsBefore = context.descriptorCache->Counters().sets;
@@ -295,12 +298,12 @@ bool Expect(AgcDriver::VulkanDevice& device, bool unwatch) {
     Draw(device, copied, PixelCopy, firstCopy, {{0, 0}, {Width / 2u, Height}});
     Require(!pending(drawn.address), "the draw writing a copied buffer did not store the drawn linear target first");
     Require(pending(copied.address), "the first copying draw did not leave its linear target pending");
-    Require(recorder->Recording() && recorder->Submissions() == submitted + 1, "storing the drawn linear target did not submit the batch the address-based draw read it in (" + std::to_string(recorder->Submissions() - submitted) + " submissions)");
+    Require(recorder->Recording() && recorder->Submissions() == submitted + synced, "storing the drawn linear target after " + reader + " made " + std::to_string(recorder->Submissions() - submitted) + " submissions, expected " + std::to_string(synced));
     const auto setsBetween = context.descriptorCache->Counters().sets;
     const auto secondCopy = CopyUserData(block.Address() + SecondSourceOffset, SecondOutput);
     Draw(device, copied, PixelCopy, secondCopy, {{static_cast<std::int32_t>(Width / 2u), 0}, {Width / 2u, Height}});
-    if (watched) Require(recorder->Recording() && recorder->Submissions() == submitted + 1, "the second copying draw submitted recorded work");
-    else Require(recorder->Submissions() == submitted + 2, "the second copying draw into a stored target outside the write watch did not submit once to capture its bytes (" + std::to_string(recorder->Submissions() - submitted - 1) + " submissions)");
+    if (watched) Require(recorder->Recording() && recorder->Submissions() == submitted + synced, "the second copying draw submitted recorded work after " + reader);
+    else Require(recorder->Submissions() == submitted + synced + 1, "the second copying draw into a stored target outside the write watch did not submit once to capture its bytes after " + reader + " (" + std::to_string(recorder->Submissions() - submitted - synced) + " submissions)");
     const auto setsAfter = context.descriptorCache->Counters().sets;
     device.WaitIdle();
     Require(FirstOutput[0] == FirstSource, "the first copying draw's output holds " + Hex(FirstOutput[0]) + ", not its source's " + Hex(FirstSource));
@@ -323,8 +326,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!Expect(*device, false)) return VulkanTestSkipped;
-        if (!Expect(*device, true)) return VulkanTestSkipped;
+        for (const bool readOnly : {false, true}) {
+            if (!Expect(*device, false, readOnly)) return VulkanTestSkipped;
+            if (!Expect(*device, true, readOnly)) return VulkanTestSkipped;
+        }
         std::puts("linear target draw binding tests passed");
         return 0;
     } catch (const std::exception& error) {
