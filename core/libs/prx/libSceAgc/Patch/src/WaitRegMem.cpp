@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
+#include "prx/libSceAgc/include/Agc.hpp"
 
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
@@ -93,6 +94,15 @@ int APS5_VABI sceAgcWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::uint8_
 
 int APS5_VABI sceAgcAsyncWriteDataPatchSetCachePolicy(std::uint32_t* cmd, std::uint8_t cachePolicy) {
     return SetWriteDataCachePolicy(cmd, cachePolicy, __func__);
+}
+
+int APS5_VABI sceAgcAcquireMemSetEngine(std::uint32_t* packet, std::uint8_t engine) {
+    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(packet), 4, __func__);
+    if (((packet[0] >> 8u) & 0xffu) != 0x58u) {
+        return static_cast<int>(0x8a6c000c);
+    }
+    packet[1] = (packet[1] & 0x7fffffffu) | (static_cast<std::uint32_t>(engine) << 31u);
+    return 0;
 }
 
 }
