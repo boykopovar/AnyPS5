@@ -62,8 +62,9 @@ void CheckBackupProgress() {
     Check(sceSaveDataGetProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter, "unwritable progress pointer is rejected");
     Check(progress == 0.25f, "a rejected progress query leaves the value untouched");
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "null backup pointer is rejected");
+    Check(progress == 0.25f, "a rejected backup leaves progress untouched");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a rejected backup");
-    Check(progress == 0.25f, "a rejected backup leaves progress where it was");
+    Check(progress == 0.0f, "progress reports 0.0f after a rejected backup");
     Check(Backup("progress") == 0, "a backup succeeds");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a backup");
     Check(progress == 1.0f, "progress reports 1.0f after a backup");
