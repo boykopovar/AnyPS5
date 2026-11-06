@@ -269,6 +269,33 @@ void DetachWrites(Jxr::Stream& stream) {
                 lastSize == std::numeric_limits<std::size_t>::max() - 98 && io.stream == &rejecting,
             "detach converts negative pointer difference to size_t for the callback");
 
+    for (std::int64_t result : {std::int64_t{0}, INT64_C(0x123456789), -INT64_C(0x123456789)}) {
+        calls.clear();
+        mutation = {};
+        output.fill(0xa5);
+        writeResult = result;
+        io = {7, 19, 0, ~8192, ring.data() + 100, ring.data() + 100, &stream, 321};
+        Require(detachISWrite_nid_postfix(nullptr, &io) == result, "detach returns an empty final callback result unchanged");
+        Require(calls == std::vector<char>({'w'}) && lastStream == &stream && lastBuffer == ring.data() + 100 && lastSize == 0,
+                "detach invokes the final callback with an empty output");
+        Require(output[0] == 0xa5 && io.stream == (result < 0 ? &stream : nullptr),
+                "empty final callback preserves output guard and detaches only on success");
+    }
+
+    calls.clear();
+    mutation = {};
+    output.fill(0xa5);
+    writeResult = 0;
+    std::int64_t finalEmptyResult = -INT64_C(0x123456789);
+    io = {7, 19, 0, ~8192, ring.data(), ring.data() + PacketSize, &stream, 654};
+    mutation = {&io, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &finalEmptyResult, false};
+    Require(detachISWrite_nid_postfix(nullptr, &io) == finalEmptyResult, "detach returns a negative empty-final result unchanged after packet flush");
+    Require(calls == std::vector<char>({'w', 'w'}) && lastStream == &stream && lastBuffer == ring.data() + PacketSize && lastSize == 0,
+            "successful full packet flush is followed by an empty final callback");
+    Require(std::equal(output.begin(), output.end(), ring.begin()) && io.stream == &stream && io.start == ring.data() + PacketSize,
+            "negative empty-final result preserves attachment after a successful packet flush");
+    mutation = {};
+
     calls.clear();
     mutation = {};
     io.stream = &stream;
