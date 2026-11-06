@@ -123,6 +123,7 @@ void Errors() {
     char buffer[8];
     RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(buffer, -1, &gap.object); }, "a negative length");
     RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(nullptr, 8, &gap.object); }, "a null buffer with a length");
+    Require(i2t_ASN1_OBJECT_nid_postfix(buffer, -1, nullptr) == 0, "a negative length with a null object");
 }
 
 constexpr std::uint64_t Asn1Error(int reason) {
@@ -164,6 +165,8 @@ void Created() {
     RequireText(unknown.object, 64, 5, "1.2.5", "a NID past the table that was not added prints the encoding");
     Require(ERR_get_error_nid_postfix() == UnknownNidError && ERR_get_error_nid_postfix() == UnknownNidError && ERR_get_error_nid_postfix() == 0,
         "once objects were added, an unknown NID past the table reports OBJ_R_UNKNOWN_NID for each name");
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    RequireText(added.object, 64, 11, "secondShort", "OPENSSL_add_all_algorithms_noconf keeps added objects");
     OBJ_cleanup_nid_postfix();
     RequireText(added.object, 64, 7, "1.2.3.4", "OBJ_cleanup removes added objects");
     RequireText(commonName.object, 64, 10, "commonName", "OBJ_cleanup restores the built-in names");
