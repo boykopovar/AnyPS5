@@ -297,8 +297,94 @@ static void TestUserContentURLPattern() {
     Require(WKStringIsEqualToUTF8CString(hostStr, "example.com"));
     WKRelease(hostStr);
 
+    auto* url1 = WKURLCreateWithUTF8CString("http://example.com/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, url1));
+    WKRelease(url1);
+
+    auto* url2 = WKURLCreateWithUTF8CString("http://sub.example.com/foo/baz?query=1#hash");
+    Require(WKUserContentURLPatternMatchesURL(pat, url2));
+    WKRelease(url2);
+
+    auto* urlPort = WKURLCreateWithUTF8CString("http://example.com:8080/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlPort));
+    WKRelease(urlPort);
+
+    auto* urlAuth = WKURLCreateWithUTF8CString("http://user:pass@example.com/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlAuth));
+    WKRelease(urlAuth);
+
+    auto* urlAuthPort = WKURLCreateWithUTF8CString("http://user:pass@example.com:8080/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlAuthPort));
+    WKRelease(urlAuthPort);
+
+    auto* ipv6Pat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://[2001:db8::1]/api/*"));
+    Require(WKUserContentURLPatternIsValid(ipv6Pat));
+    auto* ipv6Url = WKURLCreateWithUTF8CString("http://user:secret@[2001:db8::1]:9000/api/v1");
+    Require(WKUserContentURLPatternMatchesURL(ipv6Pat, ipv6Url));
+    WKRelease(ipv6Url);
+    WKRelease(ipv6Pat);
+
+    auto* urlDiffScheme = WKURLCreateWithUTF8CString("https://example.com/foo/bar");
+    Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffScheme));
+    WKRelease(urlDiffScheme);
+
+    auto* urlDiffHost = WKURLCreateWithUTF8CString("http://other.com/foo/bar");
+    Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffHost));
+    WKRelease(urlDiffHost);
+
+    auto* urlDiffPath = WKURLCreateWithUTF8CString("http://example.com/bar");
+    Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffPath));
+    WKRelease(urlDiffPath);
+
+    auto* urlCase = WKURLCreateWithUTF8CString("HTTP://EXAMPLE.COM/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlCase));
+    WKRelease(urlCase);
+
+    auto* simplePat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://example.com/*"));
+    Require(WKUserContentURLPatternIsValid(simplePat));
+    auto* queryUrl = WKURLCreateWithUTF8CString("http://example.com?x=1");
+    Require(WKUserContentURLPatternMatchesURL(simplePat, queryUrl));
+    WKRelease(queryUrl);
+    auto* fragUrl = WKURLCreateWithUTF8CString("http://example.com#part");
+    Require(WKUserContentURLPatternMatchesURL(simplePat, fragUrl));
+    WKRelease(fragUrl);
+    auto* literalStarUrl = WKURLCreateWithUTF8CString("http://example.com/*tail");
+    Require(WKUserContentURLPatternMatchesURL(simplePat, literalStarUrl));
+    WKRelease(literalStarUrl);
+    WKRelease(simplePat);
+
+    auto* upperPat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://EXAMPLE.COM/*"));
+    Require(WKUserContentURLPatternIsValid(upperPat));
+    auto* lowerUrl = WKURLCreateWithUTF8CString("http://example.com/foo");
+    Require(WKUserContentURLPatternMatchesURL(upperPat, lowerUrl));
+    WKRelease(lowerUrl);
+    WKRelease(upperPat);
+
+    auto* allSchemes = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("*://example.com/*"));
+    Require(WKUserContentURLPatternIsValid(allSchemes));
+    auto* httpUrl = WKURLCreateWithUTF8CString("http://example.com/test");
+    Require(WKUserContentURLPatternMatchesURL(allSchemes, httpUrl));
+    WKRelease(httpUrl);
+    auto* httpsUrl = WKURLCreateWithUTF8CString("https://example.com/test");
+    Require(WKUserContentURLPatternMatchesURL(allSchemes, httpsUrl));
+    WKRelease(httpsUrl);
+    auto* ftpUrl = WKURLCreateWithUTF8CString("ftp://example.com/test");
+    Require(!WKUserContentURLPatternMatchesURL(allSchemes, ftpUrl));
+    WKRelease(ftpUrl);
+    WKRelease(allSchemes);
+
+    auto* filePat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("file:///path/*"));
+    Require(WKUserContentURLPatternIsValid(filePat));
+    auto* fileUrl = WKURLCreateWithUTF8CString("file:///path/to/file");
+    Require(WKUserContentURLPatternMatchesURL(filePat, fileUrl));
+    WKRelease(fileUrl);
+    WKRelease(filePat);
+
     auto* invalidPat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("not_a_valid_pattern"));
     Require(!WKUserContentURLPatternIsValid(invalidPat));
+    auto* testUrl = WKURLCreateWithUTF8CString("http://example.com/");
+    Require(!WKUserContentURLPatternMatchesURL(invalidPat, testUrl));
+    WKRelease(testUrl);
     auto* invalidScheme = WKUserContentURLPatternCopyScheme(invalidPat);
     Require(WKStringIsEmpty(invalidScheme));
     WKRelease(invalidScheme);
@@ -536,6 +622,79 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestDownload() {
+    Require(WKDownloadGetTypeID() == 52);
+    auto download = NKWebKit::Make<NKWebKit::Download>();
+    const void* ref = download.Get();
+
+    Require(!WKDownloadGetWasUserInitiated(ref));
+    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+
+    download->wasUserInitiated = true;
+    Require(WKDownloadGetWasUserInitiated(ref));
+
+    auto dummyReq = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    download->request = std::move(dummyReq);
+    auto* req = WKDownloadCopyRequest(ref);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKDataGetTypeID());
+    WKRelease(req);
+
+    bool threw = false;
+    try {
+        WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestAXObject() {
+    Require(WKAXObjectGetTypeID() == 132);
+    auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
+    const void* ref = ax.Get();
+
+    Require(WKAXObjectCopyTitle(ref) == nullptr);
+    Require(WKAXObjectCopyDescription(ref) == nullptr);
+    Require(WKAXObjectCopyHelpText(ref) == nullptr);
+    Require(WKAXObjectCopyURL(ref) == nullptr);
+
+    ax->title = NKWebKit::String::FromUtf8("Submit Button");
+    ax->description = NKWebKit::String::FromUtf8("Submits the form");
+    ax->helpText = NKWebKit::String::FromUtf8("Click to send your input");
+    ax->url = NKWebKit::String::FromUtf8("https://example.com/action");
+
+    auto* title = WKAXObjectCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Submit Button"));
+    WKRelease(title);
+
+    auto* desc = WKAXObjectCopyDescription(ref);
+    Require(desc != nullptr);
+    Require(WKStringIsEqualToUTF8CString(desc, "Submits the form"));
+    WKRelease(desc);
+
+    auto* help = WKAXObjectCopyHelpText(ref);
+    Require(help != nullptr);
+    Require(WKStringIsEqualToUTF8CString(help, "Click to send your input"));
+    WKRelease(help);
+
+    auto* url = WKAXObjectCopyURL(ref);
+    Require(url != nullptr);
+    Require(WKGetTypeID(url) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(url, "https://example.com/action"));
+    WKRelease(url);
+
+    bool threw = false;
+    try {
+        WKAXObjectCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestPopupMenuItem() {
     Require(WKPopupMenuItemGetTypeID() == 131);
     auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
@@ -643,6 +802,8 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestDownload();
+    TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestCertificateInfo();

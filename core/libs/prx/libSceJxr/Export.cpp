@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include "Stream.hpp"
 #include "src/EncoderMetadata.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -334,7 +335,10 @@ std::int64_t APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix(tagPKImageEn
                                                                    const std::uint8_t* metadata, std::uint32_t size) {
     if (!encoder) throw std::invalid_argument("XMP metadata setter requires an encoder");
     auto* prefix = reinterpret_cast<Jxr::ImageEncodeMetadataPrefix*>(encoder);
-    if (prefix->headerDone != 0) return Jxr::WmpErrOutOfSequence;
+    if (prefix->headerDone != 0) {
+        prefix->xmpMetadataByteCount = 0;
+        return Jxr::WmpErrOutOfSequence;
+    }
 
     auto* record = reinterpret_cast<std::byte*>(encoder);
     auto** stored = reinterpret_cast<std::uint8_t**>(record + offsetof(Jxr::ImageEncodeMetadataPrefix, xmpMetadata));
@@ -506,10 +510,6 @@ int APS5_VABI attachISRead_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI attachISWrite_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI attach_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -566,8 +566,33 @@ int APS5_VABI initMRPtr_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI initPostProc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int32_t APS5_VABI initPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t mbWidth, std::size_t numChannels) {
+    if (numChannels != 0 && postProcInfo == nullptr) APS5_INVALID_ARG_EX;
+
+    for (std::size_t channel = 0; channel < numChannels; ++channel) {
+        for (std::size_t slot = 0; slot < 2; ++slot) {
+            if (sizeof(int) == 4 && ((((mbWidth + 2) >> 16) * sizeof(JxrGuestPostProcInfo)) & 0xffff0000)) return -1;
+
+            if (mbWidth > std::numeric_limits<std::size_t>::max() - 2 ||
+                mbWidth + 2 > std::numeric_limits<std::size_t>::max() / sizeof(JxrGuestPostProcInfo)) APS5_INVALID_ARG_EX;
+
+            auto* allocation = static_cast<JxrGuestPostProcInfo*>(malloc_nid_postfix((mbWidth + 2) * sizeof(JxrGuestPostProcInfo)));
+            postProcInfo[channel][slot] = allocation;
+            if (allocation == nullptr) return -1;
+            ++postProcInfo[channel][slot];
+
+            auto* leftBoundary = postProcInfo[channel][slot] - 1;
+            leftBoundary->mbTexture = 3;
+            for (std::size_t row = 0; row < 4; ++row) {
+                for (std::size_t column = 0; column < 4; ++column) {
+                    leftBoundary->blockTexture[row][column] = 3;
+                }
+            }
+            std::memcpy(postProcInfo[channel][slot] + mbWidth, leftBoundary, sizeof(*leftBoundary));
+        }
+    }
+
+    return 0;
 }
 
 int APS5_VABI postProcBlock_nid_postfix() {

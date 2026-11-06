@@ -57,10 +57,6 @@ int APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKUserContentURLPatternMatchesURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKURLRequestCreateWithWKURL() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -12562,21 +12558,6 @@ int APS5_VABI WKAXObjectButtonState() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKAXObjectCopyDescription() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyHelpText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyTitle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKAXObjectFrame() {
     NotImplemented_nid_no_patch(__func__);
@@ -13934,17 +13915,6 @@ int APS5_VABI WKCookieManagerStopObservingCookieChanges() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKDownloadCopyRequest() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKDownloadGetOriginatingPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKDownloadGetWasUserInitiated() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKFormSubmissionListenerContinue() {
     NotImplemented_nid_no_patch(__func__);

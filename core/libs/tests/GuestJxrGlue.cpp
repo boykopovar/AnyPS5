@@ -265,7 +265,7 @@ void TestXmpMetadata() {
     const int freesBeforeGuard = frees;
     const auto allocationBeforeGuard = lastCalloc;
     Require(setMetadata(&encoder, reinterpret_cast<const std::uint8_t*>(unchanged), sizeof(unchanged) - 1) == -109);
-    Require(encoder.xmpMetadata == guarded && encoder.xmpMetadataByteCount == 3);
+    Require(encoder.xmpMetadata == guarded && encoder.xmpMetadataByteCount == 0);
     Require(frees == freesBeforeGuard && lastCalloc == allocationBeforeGuard);
     encoder.headerDone = 0;
 

@@ -128,6 +128,21 @@ public:
     bool isContentEditable = false;
 };
 
+class Download final : public ObjectOf<ObjectType::Download> {
+public:
+    Retained<Object> request;
+    Retained<Object> originatingPage;
+    bool wasUserInitiated = false;
+};
+
+class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
+public:
+    Retained<String> title;
+    Retained<String> description;
+    Retained<String> helpText;
+    Retained<String> url;
+};
+
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
 public:
     Retained<String> text;
