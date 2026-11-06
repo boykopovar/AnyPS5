@@ -2321,6 +2321,13 @@ void verifyMalformedPlans() {
     rejects("an image table parent that is not a buffer", [](IrResourcePlan& plan) { plan.descriptorSources[2].tableColumn = *plan.descriptorSources[1].tableColumn; });
     rejects("an image table selection past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->selection = 4u; });
     rejects("a pointer-keyed table that is not indirect", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->pointerKeyed = true; });
+    rejects("a direct pointer chase with a buffer read", [](IrResourcePlan& plan) {
+        auto& column = *plan.descriptorSources[1].tableColumn;
+        column.indirect = true;
+        column.pointerKeyed = true;
+        column.pointerChaseDepth = 1u;
+        column.pointerChases = {PointerChase{8u, 0x60u, 4u, 0u, 0x64u, {}, true}};
+    });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
@@ -2395,6 +2402,15 @@ void verifyPlanRoundTrip() {
     const auto chaseBytes = encodedPlan(chaseTable);
     IrResourcePlan chaseDecoded;
     require(chaseBytes != pointerBytes && ShaderDiskCache::DecodePlan(chaseBytes, chaseDecoded) && samePlan(chaseTable, chaseDecoded) && chaseDecoded.descriptorSources[1].tableColumn->pointerChases == chaseColumn.pointerChases, "a pointer chase whose high word has its own immediate changed in a disk-cache round trip");
+    auto directTable = handBuiltPlan();
+    auto& directColumn = *directTable.descriptorSources[1].tableColumn;
+    directColumn.indirect = true;
+    directColumn.pointerKeyed = true;
+    directColumn.pointerChaseDepth = 1u;
+    directColumn.pointerChases = {PointerChase{8u, 0x60u, 0u, 0u, 0x64u, {}, true}};
+    const auto directBytes = encodedPlan(directTable);
+    IrResourcePlan directDecoded;
+    require(directBytes != chaseBytes && ShaderDiskCache::DecodePlan(directBytes, directDecoded) && samePlan(directTable, directDecoded) && directDecoded.descriptorSources[1].tableColumn->pointerChases == directColumn.pointerChases, "a direct pointer chase changed in a disk-cache round trip");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);

@@ -1188,6 +1188,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
             chases.Value(chase.readHighImmediate);
+            chases.Value(chase.direct);
             for (const auto& edit : chase.edits) {
                 chases.Value(edit.shift);
                 chases.Value(edit.mask);
@@ -1367,6 +1368,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
             chases.Value(chase.readHighImmediate);
+            chases.Value(chase.direct);
             for (auto& edit : chase.edits) {
                 chases.Value(edit.shift);
                 chases.Value(edit.mask);
@@ -1423,7 +1425,8 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         if (parent.has_value() && (column.buffer || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
         if (column.pointerKeyed && (!column.indirect || column.buffer || parent.has_value())) return false;
         if (column.pointerChases.empty() != (column.pointerChaseDepth == 0u) || column.pointerChaseDepth > MaxPointerChaseDepth || (column.pointerChaseDepth != 0u && !column.pointerKeyed)) return false;
-        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return chase.readHighImmediate % sizeof(std::uint32_t) != 0u || chase.readHighImmediate == chase.readImmediate; })) return false;
+        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return chase.readHighImmediate % sizeof(std::uint32_t) != 0u || chase.readHighImmediate == (chase.direct ? chase.immediate : chase.readImmediate); })) return false;
+        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return chase.direct && (chase.immediate % sizeof(std::uint32_t) != 0u || chase.readOffset != 0u || chase.readImmediate != 0u || chase.edits != std::array<DescriptorWordEdit, 4>{}); })) return false;
         if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return std::ranges::any_of(chase.edits, [](const DescriptorWordEdit& edit) { return edit.shift > 31u; }); })) return false;
     }
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;

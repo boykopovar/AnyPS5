@@ -1089,6 +1089,24 @@ private:
         return true;
     }
 
+    bool DirectChaseRead(IrValue& read, IrValue*& pointer, std::uint32_t& offset, std::uint32_t& immediate) const {
+        std::uint32_t memoryIndex = 0;
+        const MemoryInfo* memory = ScalarAddressMemory(read, memoryIndex);
+        if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, read) || !immediateU32(read.Argument(1), offset)) return false;
+        pointer = read.Argument(0)->Resolve();
+        immediate = memory->offset;
+        return pointer->Opcode() == IrOpcode::GetAddressResource && pointer->ArgumentCount() == 2u && immediate % sizeof(std::uint32_t) == 0u;
+    }
+
+    std::optional<std::uint32_t> DirectChaseHighRead(IrValue& read, const IrValue& pointer, std::uint32_t offset, std::uint32_t immediate) const {
+        IrValue* highPointer = nullptr;
+        std::uint32_t highOffset = 0;
+        std::uint32_t highImmediate = 0;
+        if (!DirectChaseRead(read, highPointer, highOffset, highImmediate) || (highPointer != &pointer && !EquivalentValue(m_program.Resources(), &pointer, highPointer))) return std::nullopt;
+        if (highOffset != offset || highImmediate == immediate) return std::nullopt;
+        return highImmediate;
+    }
+
     std::optional<std::uint32_t> ChaseHighRead(IrValue& read, const IrValue& handle, std::uint32_t readOffset, std::uint32_t readImmediate) const {
         IrValue* highHandle = nullptr;
         std::uint32_t highOffset = 0;
@@ -1134,6 +1152,19 @@ private:
                 PointerChase chase;
                 std::uint32_t looseOffset = 0;
                 std::uint32_t looseImmediate = 0;
+                if (DirectChaseRead(*lowWord, pointer, chase.offset, chase.immediate)) {
+                    if (highWord->IsPhi()) {
+                        for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
+                        continue;
+                    }
+                    const auto highImmediate = DirectChaseHighRead(*highWord, *pointer, chase.offset, chase.immediate);
+                    if (!highImmediate.has_value()) return false;
+                    chase.readHighImmediate = *highImmediate;
+                    chase.direct = true;
+                    const auto index = site(*pointer, *pointer, chase);
+                    if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
+                    continue;
+                }
                 if (ChaseRead(*lowWord, handle, chase.readOffset, chase.readImmediate) && ChaseVsharp(*handle, pointer, chase)) {
                     if (highWord->IsPhi()) {
                         for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));

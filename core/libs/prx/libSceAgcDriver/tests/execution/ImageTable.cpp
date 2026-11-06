@@ -460,6 +460,16 @@ alignas(256) constexpr std::array<std::uint32_t, 63> PointerChaseCode{
     0xf40c0916u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffe1u, 0xbefe042eu,
     0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 59> PointerChaseDirectCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf0d8012u, 0xbf840004u, 0xf4040f16u, 0xfa000060u, 0xbf8cc07fu, 0xbeac043cu, 0xbf0d8112u, 0xbf840004u,
+    0xf4041016u, 0xfa000060u, 0xbf8cc07fu, 0xbeac0440u, 0xf40c0916u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u,
+    0x01090401u, 0x8afe3032u, 0xbf89ffe5u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u,
+    0xe0781000u, 0x80070408u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 73> PointerChaseSplitCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2521,6 +2531,98 @@ void RunPointerChaseTests(AgcDriver::VulkanDevice& device) {
     std::puts("pointer table with a conditional V# chase: a T# at a record pointer chased up to twice through a V# at the pointer plus 0x60 checked for every taken and skipped step, a moved link, a link outside the snapshot and a V# with an unaligned base on a step no group takes");
 }
 
+void RunPointerChaseDirectTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 4> nodes{};
+    alignas(256) std::array<std::uint32_t, 64> unsnapshotted{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    const std::array<std::uint32_t, 4> imageOf{0u, 1u, 0u, 1u};
+    std::array<std::uint32_t, 4> next{};
+    const auto address = [](const void* data) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data)); };
+    const auto link = [&](std::uint32_t from, const void* to) {
+        nodes[from][0x60u / 4u] = static_cast<std::uint32_t>(address(to));
+        nodes[from][0x64u / 4u] = static_cast<std::uint32_t>(address(to) >> 32u);
+    };
+    const auto chase = [&](std::uint32_t from, std::uint32_t to) {
+        link(from, nodes[to].data());
+        next[from] = to;
+    };
+    for (std::uint32_t node = 0; node < 4u; ++node) {
+        std::copy(images[imageOf[node]].begin(), images[imageOf[node]].end(), nodes[node].begin());
+        chase(node, node == 3u ? 3u : (node + 1u) % 3u);
+    }
+    std::copy(images[1].begin(), images[1].end(), unsnapshotted.begin());
+    const std::array<std::uint32_t, 4> recordNode{2u, 0u, 1u, 2u};
+    for (std::uint32_t record = 0; record < 4u; ++record) {
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(address(nodes[recordNode[record]].data()));
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(address(nodes[recordNode[record]].data()) >> 32u);
+    }
+    const std::string name = "pointer table with a conditional direct pointer chase";
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    };
+    const Registration registeredNodes(nodes.data(), sizeof(nodes));
+    const Registration registeredUnsnapshotted(unsnapshotted.data(), sizeof(unsnapshotted));
+    const auto run = [&](std::span<const std::uint32_t> code) {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(nodes.data()), std::as_bytes(std::span(nodes))},
+        };
+        const auto inputTable = Table;
+        const auto inputNodes = nodes;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
+        Require(Table == inputTable && nodes == inputNodes, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+        Keys[group * 4u + 2u] = group;
+    }
+    const auto sampled = [&](std::uint32_t group) {
+        return std::function<std::uint32_t(std::uint32_t)>([&, group](std::uint32_t x) {
+            auto node = recordNode[keys[group][x < 32u ? 0u : 1u]];
+            for (std::uint32_t step = 0; step < 2u; ++step) {
+                if ((group >> step) & 1u) node = next[node];
+            }
+            return std::bit_cast<std::uint32_t>(imageOf[node] != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
+        });
+    };
+    const auto untouched = [](const Outcome& outcome) { return std::all_of(outcome.words.begin(), outcome.words.end(), [](auto word) { return word == 0xdeadbeefu; }); };
+    const auto taken = run(PointerChaseDirectCode);
+    Require(!Faulted(taken), name + ": the T# at the end of the chase faulted:\n" + taken.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group), name + ": the T# at the pointer reached by the chase steps taken in group " + std::to_string(group));
+    chase(0u, 3u);
+    const auto moved = run(PointerChaseDirectCode);
+    Require(!Faulted(moved), name + ": the T# behind a moved chase link faulted:\n" + moved.log);
+    Require(moved.artifactId == taken.artifactId, name + ": moving a chased link recompiled the shader");
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(moved, group, Lanes, sampled(group), name + ": the T# after node 0's link moved to node 3 in group " + std::to_string(group));
+    chase(0u, 1u);
+    link(1u, unsnapshotted.data());
+    const auto outside = run(PointerChaseDirectCode);
+    Require(Faulted(outside), name + ": a link to a node outside the snapshot did not fault:\n" + outside.log);
+    Require(untouched(outside), name + ": a link to a node outside the snapshot published copied output");
+    Require(outside.artifactId == taken.artifactId, name + ": a link to a node outside the snapshot recompiled the shader");
+    std::puts("pointer table with a conditional direct pointer chase: a T# at a record pointer chased up to twice through the pointer loaded at the pointer plus 0x60 checked for every taken and skipped step, a moved link and a link to a node outside the snapshot");
+}
+
 void RunPointerChaseSplitTests(AgcDriver::VulkanDevice& device) {
     Fill();
     alignas(256) std::array<std::array<std::uint32_t, 128>, 8> nodes{};
@@ -3200,6 +3302,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-chase") == 0) {
             RunPointerChaseTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-direct") == 0) {
+            RunPointerChaseDirectTests(*device);
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-split") == 0) {

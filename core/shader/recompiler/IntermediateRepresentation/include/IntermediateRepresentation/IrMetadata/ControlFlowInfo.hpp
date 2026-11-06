@@ -53,6 +53,7 @@ struct PointerChase {
     std::uint32_t readImmediate = 0;
     std::uint32_t readHighImmediate = 0;
     std::array<DescriptorWordEdit, 4> edits {};
+    bool direct = false;
 
     bool operator==(const PointerChase& other) const = default;
 };
