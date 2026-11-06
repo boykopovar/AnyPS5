@@ -48,6 +48,14 @@ struct DriverTestAccess {
         std::lock_guard lock(driver.labelStoresMutex);
         return driver.labelTakes.Taken(queue, reinterpret_cast<std::uintptr_t>(address));
     }
+    static bool FindWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token) {
+        return Driver::Get().findWaitProducer(address, bytes, token);
+    }
+    static std::uint64_t AwaitedAddress(std::uint32_t queue) {
+        const auto& driver = Driver::Get();
+        const auto slot = queue == 0 ? 0 : queue - 0x20 + 1;
+        return driver.awaitedSlots[slot].address.load(std::memory_order_acquire);
+    }
 };
 
 }
@@ -1100,6 +1108,63 @@ void testWorkerFailure() {
     check(expectFailure([&] { sceAgcDriverSubmitAcb(0x20, &packet); }) == messages[0], "subsequent ACB lost worker failure");
 }
 
+void testWaitProducerChain() {
+    using AgcDriver::DriverDetail::DriverTestAccess;
+    alignas(64) static volatile std::uint32_t gateFrozen = 0, gateA = 0, gateB = 0, gateC = 0;
+    alignas(64) static volatile std::uint32_t label = 0, scratch1 = 0, scratch2 = 0;
+
+    submit(0x20, commands(waitEqual(&gateFrozen, 1), writeData(&label, 0xAA)));
+    submit(0x21, commands(waitEqual(&gateA, 1), writeData(&scratch1, 1), waitEqual(&gateB, 1), writeData(&label, 0xAA)));
+    submit(0x22, commands(waitEqual(&gateC, 1), writeData(&scratch2, 1), writeData(&gateB, 1)));
+
+    const auto awaitedIs = [](volatile std::uint32_t* expected, std::uint32_t queue, const char* message) {
+        const auto address = reinterpret_cast<std::uintptr_t>(expected);
+        const auto start = std::chrono::steady_clock::now();
+        while (DriverTestAccess::AwaitedAddress(queue) != address) {
+            check(std::chrono::steady_clock::now() - start < std::chrono::seconds(10), message);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    awaitedIs(&gateFrozen, 0x20, "queue 0x20 never reached the frozen gate wait");
+    awaitedIs(&gateA, 0x21, "queue 0x21 never reached the first producer gate");
+    awaitedIs(&gateC, 0x22, "queue 0x22 never reached its own gate");
+
+    const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
+    std::uint64_t token1 = 0;
+    check(DriverTestAccess::FindWaitProducer(labelAddress, 4, token1) && token1 != 0, "no producer seen with two queues holding the awaited label");
+
+    gateA = 1;
+    awaitedIs(&gateB, 0x21, "queue 0x21 never advanced past the first gate");
+
+    std::uint64_t token2 = 0;
+    check(DriverTestAccess::FindWaitProducer(labelAddress, 4, token2), "producer lookup lost the advancing queue");
+    check(token2 != token1, "progress of queue 0x21 was invisible while the same label was frozen on queue 0x20");
+
+    gateC = 1;
+    waitFor(&scratch2, 1, "queue 0x22 never advanced behind queue 0x21's blocked label");
+    waitFor(&label, 0xAA, "the producer chain never wrote the awaited label");
+
+    alignas(64) static volatile std::uint32_t gateStep1 = 0, gateStep2 = 0, labelPair = 0;
+    submit(0x23, commands(waitEqual(&gateStep1, 1), waitEqual(&gateStep2, 1), writeData(&labelPair, 0xBB)));
+    submit(0x24, commands(waitEqual(&gateStep1, 1), waitEqual(&gateStep2, 1), writeData(&labelPair, 0xBB)));
+    awaitedIs(&gateStep1, 0x23, "queue 0x23 never reached the shared first gate");
+    awaitedIs(&gateStep1, 0x24, "queue 0x24 never reached the shared first gate");
+    const auto pairAddress = reinterpret_cast<std::uintptr_t>(&labelPair);
+    std::uint64_t tokenA = 0;
+    check(DriverTestAccess::FindWaitProducer(pairAddress, 4, tokenA) && tokenA != 0, "no producers seen for the paired wait");
+    gateStep1 = 1;
+    awaitedIs(&gateStep2, 0x23, "queue 0x23 never reached the shared second gate");
+    awaitedIs(&gateStep2, 0x24, "queue 0x24 never reached the shared second gate");
+    std::uint64_t tokenB = 0;
+    check(DriverTestAccess::FindWaitProducer(pairAddress, 4, tokenB), "paired producers were lost from the lookup");
+    check(tokenB != tokenA, "identical in-step progress on queues 0x23 and 0x24 was cancelled out of the motion token");
+    gateStep2 = 1;
+    waitFor(&labelPair, 0xBB, "the paired producers never wrote their awaited label");
+
+    gateFrozen = 1;
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -1118,6 +1183,12 @@ int main(int argc, char** argv) {
             testReadOnlyResummarize();
             LibcRunShutdown_nid_postfix();
             std::puts("Read-only resummarize submission passed");
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--wait-producer-chain") {
+            testWaitProducerChain();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC wait producer chain test passed");
             return 0;
         }
         const auto device = OpenVulkanTestDevice();

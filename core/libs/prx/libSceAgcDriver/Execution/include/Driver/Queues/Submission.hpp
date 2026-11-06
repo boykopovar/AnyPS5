@@ -55,6 +55,7 @@ struct QueueWorker {
     std::unordered_map<std::uint64_t, std::uint32_t> unfinishedWrites;
     std::uint64_t executingWaitFree = 0;
     bool executingWaits = false;
+    alignas(64) std::atomic<std::uint64_t> executingPacket{0};
     std::thread thread;
 };
 
