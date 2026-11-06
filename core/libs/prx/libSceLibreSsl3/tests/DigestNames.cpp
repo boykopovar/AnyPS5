@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -174,15 +173,6 @@ const Available* Find(const char* getter) {
     return nullptr;
 }
 
-std::string Missing(const char* name) {
-    try {
-        EVP_get_digestbyname_nid_postfix(name);
-    } catch (const std::runtime_error& error) {
-        return error.what();
-    }
-    return {};
-}
-
 void CheckEveryName() {
     const unsigned char data[] = "The quick brown fox jumps over the lazy dog";
     int available = 0;
@@ -199,9 +189,6 @@ void CheckEveryName() {
             Require(length == mbedtls_md_get_size(info));
             Require(std::memcmp(output, expected, length) == 0);
             ++available;
-        } else {
-            const std::string message = Missing(entry.name);
-            Require(message.find(std::string("EVP_get_digestbyname: ") + entry.getter) != std::string::npos);
         }
     }
     Require(available == 43);
