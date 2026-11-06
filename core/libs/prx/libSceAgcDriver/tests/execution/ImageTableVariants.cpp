@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "ImageTableAbi.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -23,15 +24,20 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
+using AgcDriver::Graphics::CompiledShader;
 using AgcDriver::Graphics::Require;
+using AgcDriver::Graphics::ShaderResources;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Wide = 64;
@@ -50,6 +56,7 @@ constexpr std::uint32_t Written = 61;
 constexpr std::uint32_t Depth = 62;
 constexpr std::uint32_t Sized = 59;
 constexpr std::uint32_t Tied = 58;
+constexpr std::uint32_t Proved = 56;
 
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};
@@ -374,8 +381,72 @@ void RunRejected(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::ClearDepthSurfaces(device.Device());
 }
 
+ShaderRecompiler::RecompileResult ProofProgram(const float* variants, const float* other) {
+    namespace Abi = ShaderRecompiler::ImageTableAbi;
+    using ShaderRecompiler::DescriptorKind;
+    using ShaderRecompiler::DescriptorRole;
+    constexpr std::uint32_t count = 3;
+    constexpr auto bindingCount = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding map{};
+    map.kind = DescriptorKind::StorageBuffer;
+    map.role = DescriptorRole::ImageTableMap;
+    map.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Stage::Main) * bindingCount + static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap);
+    map.count = 1;
+    map.guestDescriptor.assign(Abi::HeaderWords + count, 0u);
+    map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
+    map.guestDescriptor[Abi::HeaderElementCount] = count;
+    map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
+    map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords + count;
+    program.bindings.push_back(map);
+    ShaderRecompiler::DescriptorBinding images{};
+    images.kind = DescriptorKind::SampledImage;
+    images.role = DescriptorRole::ImageTable;
+    images.binding = ShaderRecompiler::RuntimeAbi::ImageTableBinding;
+    images.count = count;
+    const std::array<std::array<std::uint32_t, 4>, count> entries{Image(variants, Narrow), Image(variants, Wide), Image(other, Wide)};
+    for (const auto& entry : entries) {
+        images.guestDescriptor.insert(images.guestDescriptor.end(), entry.begin(), entry.end());
+        images.guestDescriptor.insert(images.guestDescriptor.end(), 4u, 0u);
+    }
+    images.imageShapes.assign(count, ShaderRecompiler::DescriptorImageShape::Image2D);
+    images.imageDepthCompare.assign(count, false);
+    images.imageSamplers.assign(count, 0u);
+    program.bindings.push_back(std::move(images));
+    return program;
+}
+
+void RunProof(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    Fill(block.Texels(Proved), 9000.25f);
+    Fill(block.Texels(Proved + 1u), 9500.25f);
+    const auto program = ProofProgram(block.Texels(Proved), block.Texels(Proved + 1u));
+    const CompiledShader shader{ShaderStage::Compute, &program, 0};
+    const auto context = device.graphicsContext();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::unique_ptr<ShaderResources> resources;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        resources = std::make_unique<ShaderResources>(context, shader);
+        Require(resources->Reusable(), "image table variants: a set over a table with a borrowing entry is not reusable");
+        Require(resources->SampledTextures().size() == 2u, "image table variants: a set over two surfaces and a borrowing entry holds " + std::to_string(resources->SampledTextures().size()) + " textures");
+        const auto entries = AgcDriver::Graphics::TextureCacheUsage().sampledEntries;
+        const bool walked = resources->Revalidate(shader);
+        Require(AgcDriver::Graphics::TextureCacheUsage().sampledEntries == entries, "image table variants: the full walk looked up the own extent of a borrowing entry");
+        Require(walked, "image table variants: the full walk over a table with a borrowing entry failed");
+    }
+    AgcDriver::Graphics::DepthSurfaceView(context, AgcDriver::Graphics::DepthTarget{AddressOf(block.Texels(Proved)), 0, {Narrow, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(!resources->Revalidate(shader), "image table variants: a set whose borrowing entry moved to another representative proved current");
+        resources.reset();
+    }
+    device.WaitIdle();
+    AgcDriver::Graphics::ClearDepthSurfaces(device.Device());
+}
+
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     RunTied(device, block);
+    RunProof(device, block);
     RunLargest(device, block);
     RunWritten(device, block);
     RunFetch(device, block);
@@ -387,6 +458,11 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
 }
 
 int main() {
+#ifdef _WIN32
+    _putenv_s("APS5_NO_FAST_REVALIDATE", "1");
+#else
+    setenv("APS5_NO_FAST_REVALIDATE", "1", 1);
+#endif
     try {
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
