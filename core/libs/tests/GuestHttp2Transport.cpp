@@ -54,7 +54,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -109,10 +109,17 @@ std::string HeaderGzip(const std::string& payload, bool corrupt = false) {
     return header + member.substr(10);
 }
 
+struct ResponseSpec {
+    int status = 0;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::vector<std::pair<std::string, std::string>> informationalHeaders;
+};
+
 class Server {
 public:
-    explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302)
-        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus) {
+    explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
+        std::vector<std::string> responseCookies = {})
+        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -168,6 +175,10 @@ public:
         changed.notify_all();
     }
 
+    void SetResponse(ResponseSpec response) {
+        std::lock_guard lock(responseMutex);
+        responseSpec = std::move(response);
+    }
     void Join() { Release(); if (worker.joinable()) worker.join(); }
     const std::multimap<std::string, std::string>& Headers() const { return headers; }
     const std::string& Upload() const { return upload; }
@@ -178,6 +189,9 @@ private:
     const Mode mode;
     const std::string location;
     const int redirectStatus;
+    const std::vector<std::string> responseCookies;
+    std::mutex responseMutex;
+    ResponseSpec responseSpec;
     unsigned accepted = 0;
     mbedtls_net_context listener;
     mbedtls_entropy_context entropy;
@@ -251,7 +265,13 @@ private:
         return static_cast<nghttp2_ssize>(size);
     }
 
+    ResponseSpec GetResponse() {
+        std::lock_guard lock(responseMutex);
+        return responseSpec;
+    }
+
     void Respond(nghttp2_session* session, std::int32_t stream) {
+        const auto configured = GetResponse();
         Require(!responded, "one response per request");
         responded = true;
         if (mode == Mode::StallHeaders) { Stage(2); Stall(); return; }
@@ -259,6 +279,7 @@ private:
         body = (mode == Mode::Large || mode == Mode::EarlyLarge) ? std::string(200000, 'x') : "response body";
         const bool redirect = mode == Mode::Redirect || mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || (mode == Mode::RedirectOnce && accepted == 1);
         std::string status = IsEarly() ? "413" : mode == Mode::NotFound ? "404" : redirect ? std::to_string(redirectStatus) : mode == Mode::Auth ? "401" : "200";
+        if (configured.status) status = std::to_string(configured.status);
         if (mode == Mode::EarlyEmpty) body.clear();
         auto length = std::to_string(body.size());
         const auto requestMethod = headers.find(":method");
@@ -298,14 +319,23 @@ private:
             if (mode == Mode::GzipTrailingJunk) body = StoredGzip("first") + "trailing junk";
             length = std::to_string(body.size());
         }
-        if (mode == Mode::Informational) {
-            nghttp2_nv early{reinterpret_cast<std::uint8_t*>(const_cast<char*>(":status")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("103")), 7, 3, 0};
-            Require(nghttp2_submit_headers(session, 0, stream, nullptr, &early, 1, nullptr) == 0, "server informational response");
+        if (mode == Mode::Informational || !configured.informationalHeaders.empty()) {
+            std::vector<std::pair<std::string, std::string>> earlyFields{{":status", "103"}};
+            earlyFields.insert(earlyFields.end(), configured.informationalHeaders.begin(), configured.informationalHeaders.end());
+            std::vector<nghttp2_nv> early;
+            for (auto& [name, value] : earlyFields) early.push_back({reinterpret_cast<std::uint8_t*>(name.data()), reinterpret_cast<std::uint8_t*>(value.data()), name.size(), value.size(), 0});
+            Require(nghttp2_submit_headers(session, 0, stream, nullptr, early.data(), early.size(), nullptr) == 0, "server informational response");
         }
         std::vector<std::pair<std::string, std::string>> fields{{":status", status}, {"x-loopback", "yes"}};
         if (mode != Mode::NoLength) fields.emplace_back("content-length", length);
         if (redirect) fields.emplace_back("location", location);
         if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat || mode == Mode::GzipLarge || (mode >= Mode::GzipEmpty && mode <= Mode::GzipTrailingJunk)) fields.emplace_back("content-encoding", "gzip");
+        if (mode == Mode::Cookie) fields.emplace_back("set-cookie", "session=fresh; Path=/");
+        if (mode == Mode::CookieFlood) {
+            for (int i = 0; i < 1500; ++i) fields.emplace_back("set-cookie", "f" + std::to_string(i) + "=v; Path=/");
+        }
+        if (mode == Mode::Auth) fields.emplace_back("www-authenticate", "Basic realm=\"loopback\"");
+        fields.insert(fields.end(), configured.headers.begin(), configured.headers.end());
         std::vector<nghttp2_nv> response;
         for (auto& [name, value] : fields) response.push_back({reinterpret_cast<std::uint8_t*>(name.data()), reinterpret_cast<std::uint8_t*>(value.data()), name.size(), value.size(), 0});
         nghttp2_data_provider2 provider{};
@@ -373,6 +403,7 @@ private:
     }
 
     void ExchangeHttp1(mbedtls_net_context& client, mbedtls_ssl_context* ssl) {
+        const auto configured = GetResponse();
         std::string input;
         std::array<unsigned char, 1024> buffer;
         const auto readMore = [&] {
@@ -410,7 +441,11 @@ private:
             position = next + 2;
         }
         end += 4;
-        if (mode == Mode::Http11Info) write("HTTP/1.1 100 Continue\r\n\r\n");
+        if (mode == Mode::Http11Info || !configured.informationalHeaders.empty()) {
+            std::string informational = "HTTP/1.1 100 Continue\r\n";
+            for (const auto& [name, value] : configured.informationalHeaders) informational += name + ": " + value + "\r\n";
+            write(informational + "\r\n");
+        }
         if (mode == Mode::Http11Early) upload = input.substr(end);
         else if (headers.count("transfer-encoding")) {
             Require(headers.find("transfer-encoding")->second == "chunked", "HTTP1 request transfer coding");
@@ -432,7 +467,7 @@ private:
             upload = input.substr(end, length);
         }
         if (mode == Mode::Http11StallHeaders) { Stage(2); Stall(); return; }
-        const int code = mode == Mode::Http11Early ? 413 : mode == Mode::Http11Redirect ? redirectStatus : 200;
+        const int code = configured.status ? configured.status : mode == Mode::Http11Early ? 413 : mode == Mode::Http11Redirect ? redirectStatus : 200;
         std::string response = mode == Mode::Http10 ? "HTTP/1.0 " : "HTTP/1.1 ";
         response += std::to_string(code) + " Fixture\r\n";
         if (mode == Mode::Http11Chunked || mode == Mode::Http11BadChunk) response += "Transfer-Encoding: chunked\r\n";
@@ -441,6 +476,8 @@ private:
         if (mode == Mode::Http11BadLength) response += "Content-Length: 14\r\n";
         if (mode == Mode::Http11Ambiguous) response += "Transfer-Encoding: chunked\r\n";
         if (mode == Mode::Http11Redirect) response += "Location: " + location + "\r\n";
+        for (const auto& cookie : responseCookies) response += "Set-Cookie: " + cookie + "\r\n";
+        for (const auto& [name, value] : configured.headers) response += name + ": " + value + "\r\n";
         response += "X-Loopback: yes\r\nConnection: close\r\n\r\n";
         if (mode == Mode::Http11StallBody) { write(response); Stage(2); Stall(); return; }
         if (headers.find(":method")->second != "HEAD") {
@@ -531,6 +568,129 @@ struct Client {
     }
     ~Client() { if (context > 0) Require(sceHttp2Term(context) == 0, "client term"); }
 };
+
+void CookieBox(int ssl) {
+    std::fprintf(stderr, "HTTP2 cookie box scenario\n");
+    Server server(Mode::Cookie);
+    Client client(ssl);
+    const std::string url = server.Url("127.0.0.1");
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0 && sceHttp2AddCookie(box, url.c_str(), "stored=old", 10) == 0, "stored cookie");
+    Require(sceHttp2SetCookieBox(client.tmpl, box) == 0, "bind cookie box");
+    client.Create(url);
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "send with a cookie box");
+    std::array<char, 64> buffer;
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    server.Join();
+    const auto& headers = server.Headers();
+    Require(headers.count("cookie") == 1 && headers.find("cookie")->second == "stored=old", "box cookie sent");
+    std::array<char, 64> cookie{};
+    std::size_t required = 0;
+    Require(sceHttp2GetCookie(box, url.c_str(), cookie.data(), &required, cookie.size()) == 0, "response cookie lookup");
+    Require(std::string_view(cookie.data()) == "session=fresh; stored=old", "response cookie stored in the box");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "delete cookie box");
+}
+
+void Http1CookieBox(int ssl, Mode mode) {
+    std::fprintf(stderr, "HTTP1 cookie box scenario %d\n", static_cast<int>(mode));
+    Server server(mode, "/another", 302, {"first=one; Path=/", "second=two; Path=/"});
+    Client client(ssl, 1, 0, mode == Mode::Http10 ? 1 : 2);
+    const auto url = server.Url();
+    const auto secureUrl = mode == Mode::Http1Plain ? "https" + url.substr(4) : url;
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0, "HTTP1 cookie box");
+    for (const std::string cookie : {"stored=old; Path=/", "secure=secret; Path=/; Secure", "hidden=path; Path=/other"})
+        Require(sceHttp2AddCookie(box, secureUrl.c_str(), cookie.c_str(), cookie.size()) == 0, "HTTP1 seed cookie");
+    Require(sceHttp2SetCookieBox(client.tmpl, box) == 0, "HTTP1 bind template cookie box");
+    Require(sceHttp2AddRequestHeader(client.tmpl, "Cookie", "replaced=template", 0) == 0, "HTTP1 template cookie");
+    client.Create(url);
+    Require(sceHttp2AddRequestHeader(client.request, "Cookie", "manual=one", 0) == 0, "HTTP1 replace manual cookie");
+    Require(sceHttp2AddRequestHeader(client.request, "Cookie", "extra=two", 1) == 0, "HTTP1 append manual cookie");
+    Require(sceHttp2AddRequestHeader(client.request, "Host", "other.example", 0) == 0, "HTTP1 override host without changing cookie origin");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 send with cookie box");
+    std::array<char, 256> buffer{};
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    server.Join();
+    const auto& headers = server.Headers();
+    Require(headers.count("cookie") == 1, "HTTP1 exactly one cookie header");
+    const auto& sent = headers.find("cookie")->second;
+    Require(sent.starts_with("manual=one; extra=two; ") && sent.find("stored=old") != std::string::npos,
+        "HTTP1 manual and matching box cookies sent together");
+    Require((sent.find("secure=secret") != std::string::npos) == (mode != Mode::Http1Plain), "HTTP1 secure cookie follows URL scheme");
+    Require(sent.find("hidden=") == std::string::npos && sent.find("replaced=") == std::string::npos,
+        "HTTP1 path selection and manual replacement");
+    std::size_t required = 0;
+    Require(sceHttp2GetCookie(box, url.c_str(), buffer.data(), &required, buffer.size()) == 0, "HTTP1 response cookie lookup");
+    const std::string_view stored(buffer.data());
+    Require(stored.find("first=one") != std::string_view::npos && stored.find("second=two") != std::string_view::npos,
+        "HTTP1 each response cookie stored");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "HTTP1 delete cookie box");
+}
+
+void Http1CookieRedirect(int ssl) {
+    Server target(Mode::Http1Plain);
+    Server redirect(Mode::Http11Redirect, target.Url(), 302, {"ordinary=next; Path=/", "secure=secret; Path=/; Secure"});
+    Client client(ssl, 1, 0, 2);
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0 && sceHttp2SetCookieBox(client.tmpl, box) == 0, "HTTP1 redirect bind cookie box");
+    client.Create(redirect.Url());
+    Require(sceHttp2AddRequestHeader(client.request, "Cookie", "manual=origin", 0) == 0, "HTTP1 origin manual cookie");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 cookie redirect");
+    std::array<char, 64> buffer;
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    redirect.Join();
+    target.Join();
+    const auto& headers = target.Headers();
+    Require(headers.count("cookie") == 1 && headers.find("cookie")->second == "ordinary=next",
+        "HTTP1 redirect stores cookies and excludes secure and origin-only manual cookies on plain target");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "HTTP1 redirect delete cookie box");
+}
+
+void Http1EmptyCookie(int ssl, bool explicitCookie) {
+    Server server(Mode::Http1Plain);
+    Client client(ssl, 1, 0, 2);
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0 && sceHttp2SetCookieBox(client.tmpl, box) == 0, "HTTP1 empty bind cookie box");
+    client.Create(server.Url());
+    if (explicitCookie) Require(sceHttp2AddRequestHeader(client.request, "Cookie", "", 0) == 0, "HTTP1 explicit empty cookie");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 empty box send");
+    std::array<char, 64> buffer;
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    server.Join();
+    const auto& headers = server.Headers();
+    Require(headers.count("cookie") == (explicitCookie ? 1u : 0u), "HTTP1 empty box does not invent a cookie field");
+    if (explicitCookie) Require(headers.find("cookie")->second.empty(), "HTTP1 explicit empty cookie preserved");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "HTTP1 empty delete cookie box");
+}
+
+void CookieBoxDelete(int ssl, Mode mode = Mode::CookieFlood) {
+    std::fprintf(stderr, "cookie box delete scenario %d\n", static_cast<int>(mode));
+    std::vector<std::string> responseCookies;
+    if (mode != Mode::CookieFlood)
+        for (int index = 0; index < 1500; ++index) responseCookies.push_back("item" + std::to_string(index) + "=value; Path=/");
+    Server server(mode, "/another", 302, std::move(responseCookies));
+    Client client(ssl, 4, 0, mode == Mode::CookieFlood ? 3 : 2);
+    const std::string url = server.Url("127.0.0.1");
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0 && sceHttp2SetCookieBox(client.tmpl, box) == 0, "bind cookie box");
+    Require(sceHttp2SetCookieMaxNumPerDomain(box, 2000) == 0, "room for every response cookie");
+    client.Create(url);
+    auto pending = std::async(std::launch::async, [&] {
+        try { static_cast<void>(sceHttp2SendRequest(client.request, nullptr, 0)); } catch (const std::exception&) {}
+    });
+    std::size_t required = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (sceHttp2GetCookie(box, url.c_str(), nullptr, &required, 0) != 0) {
+        Require(std::chrono::steady_clock::now() < deadline, "first response cookie stored");
+        std::this_thread::yield();
+    }
+    auto deleting = std::async(std::launch::async, [&] { return sceHttp2DeleteRequest(client.request); });
+    Require(deleting.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "delete returns while the transport stores response cookies");
+    Require(deleting.get() == 0, "delete a request whose transport stores response cookies");
+    Require(pending.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "send ends after the delete");
+    server.Join();
+    Require(sceHttp2DeleteCookieBox(box) == 0, "delete cookie box");
+}
 
 struct RedirectObservation {
     int calls = 0;
@@ -1425,6 +1585,51 @@ void HostAuthority(int ssl) {
     Require(headers.count("host") == 0, "host header is not sent");
 }
 
+void AuthenticationStatus(int ssl, int version, ResponseSpec response, bool authEnabled) {
+    std::fprintf(stderr, "HTTP2 authentication status scenario version=%d status=%d enabled=%d\n", version, response.status, authEnabled);
+    const int expected = response.status;
+    Server server(version == 1 ? Mode::Http10 : version == 2 ? Mode::Http11 : Mode::Normal);
+    server.SetResponse(std::move(response));
+    Client client(ssl, 4, 0, version);
+    int enabled = -1;
+    Require(sceHttp2GetAuthEnabled(client.tmpl, &enabled) == 0 && enabled == 1, "authentication remains enabled by default");
+    if (!authEnabled) Require(sceHttp2SetAuthEnabled(client.tmpl, 0) == 0, "disable automatic authentication");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "receive response without negotiating authentication");
+    int status = 0;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == expected, "preserve authentication response status");
+    int kind = -1;
+    std::uint64_t length = 0;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13, "preserve authentication response length");
+    std::string body;
+    std::array<char, 32> buffer{};
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0 && count <= static_cast<int>(buffer.size()), "read authentication response body");
+        if (count == 0) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    Require(body == "response body", "preserve authentication response body");
+    server.Join();
+}
+
+void AuthenticationStatuses(int ssl) {
+    for (const int version : {1, 2, 3}) {
+        const std::string origin = version == 3 ? "www-authenticate" : "WwW-AuThEnTiCaTe";
+        const std::string proxy = version == 3 ? "proxy-authenticate" : "PrOxY-AuThEnTiCaTe";
+        const std::string challenge = "Basic realm=\"loopback\"";
+        for (const int status : {401, 407}) {
+            const auto& matching = status == 401 ? origin : proxy;
+            const auto& other = status == 401 ? proxy : origin;
+            AuthenticationStatus(ssl, version, {status, {}, {}}, true);
+            AuthenticationStatus(ssl, version, {status, {{other, challenge}}, {}}, true);
+            AuthenticationStatus(ssl, version, {status, {{matching, challenge}}, {}}, false);
+            if (version != 1) AuthenticationStatus(ssl, version, {status, {}, {{matching, challenge}}}, true);
+        }
+        AuthenticationStatus(ssl, version, {200, {{origin, challenge}, {proxy, challenge}}, {}}, true);
+    }
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
@@ -1443,6 +1648,8 @@ int main(int argc, char** argv) {
         Require(unloaded > 0, "SSL context without certificates");
         Success(unloaded, Mode::Normal);
         Require(sceSslTerm_nid_postfix(unloaded) == 0, "SSL context without certificates term");
+    } else if (argc == 2 && std::string_view(argv[1]) == "--auth-status") {
+        AuthenticationStatuses(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-members") {
         GzipMembers(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-headers") {
@@ -1464,6 +1671,12 @@ int main(int argc, char** argv) {
         Http1Policies(ssl);
         Http1Cancellation(ssl);
         Http1BufferedDeadline(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--http1-cookies") {
+        for (const auto mode : {Mode::Http10, Mode::Http11, Mode::Http11Chunked, Mode::Http11Close, Mode::Http1Plain}) Http1CookieBox(ssl, mode);
+        Http1CookieRedirect(ssl);
+        for (const bool explicitCookie : {false, true}) Http1EmptyCookie(ssl, explicitCookie);
+        CookieBoxDelete(ssl, Mode::Http11);
+        CookieBoxDelete(ssl, Mode::Http1Plain);
     } else if (argc == 2 && std::string_view(argv[1]) == "--ssl-callbacks") {
         SslCallbacks(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--redirects") {
@@ -1486,6 +1699,8 @@ int main(int argc, char** argv) {
         GzipFailure(ssl, Mode::GzipTruncated, "truncated gzip throws");
         GzipFailure(ssl, Mode::GzipChecksum, "gzip checksum mismatch throws");
         for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Auth}) Failure(ssl, mode);
+        CookieBox(ssl);
+        CookieBoxDelete(ssl);
         Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), 0x4);
         Handshake(ssl, Mode::CloseHandshake, static_cast<int>(0x8095170d));
         Handshake(ssl, Mode::AlertHandshake, static_cast<int>(0x8095f010));
