@@ -128,6 +128,14 @@ public:
     bool isContentEditable = false;
 };
 
+class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
+public:
+    Retained<String> text;
+    bool enabled = true;
+    bool isItem = true;
+    bool isSeparator = false;
+};
+
 class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResultListener> {
 public:
     bool cancelled = false;

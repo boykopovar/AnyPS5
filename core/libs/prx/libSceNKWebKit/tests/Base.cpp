@@ -536,6 +536,48 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestPopupMenuItem() {
+    Require(WKPopupMenuItemGetTypeID() == 131);
+    auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
+    const void* ref = item.Get();
+
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+    Require(WKPopupMenuItemCopyText(ref) == nullptr);
+
+    item->text = NKWebKit::String::FromUtf8("Option 1");
+    auto* text = WKPopupMenuItemCopyText(ref);
+    Require(text != nullptr);
+    Require(WKStringIsEqualToUTF8CString(text, "Option 1"));
+    WKRelease(text);
+
+    item->enabled = false;
+    Require(!WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->enabled = true;
+    item->isItem = false;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(!WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->isItem = true;
+    item->isSeparator = true;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(WKPopupMenuItemIsSeparator(ref));
+
+    bool threw = false;
+    try {
+        WKPopupMenuItemIsEnabled(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestOpenPanelResultListener() {
     Require(WKOpenPanelResultListenerGetTypeID() == 80);
 
@@ -601,6 +643,7 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
