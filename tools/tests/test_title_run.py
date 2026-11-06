@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -376,6 +377,31 @@ class SessionTests(unittest.TestCase):
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
+
+    @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
+    def test_exit_code_follows_a_junctioned_interpreter(self):
+        target = Path(sys.executable).parent
+        directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
+        link = directory / "python"
+        session = None
+        try:
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
+            if made.returncode != 0:
+                self.skipTest("cannot create a junction: " + made.stderr.strip())
+            child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
+            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            self.assertTrue(wait_until(lambda: not session.alive()))
+            self.assertEqual(session.exit_code(), 7)
+        finally:
+            if session is not None:
+                session.kill()
+            if link.exists():
+                try:
+                    os.rmdir(link)
+                except OSError:
+                    pass
+            if not link.exists():
+                shutil.rmtree(directory, ignore_errors=True)
 
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):
