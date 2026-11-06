@@ -503,14 +503,16 @@ static void CheckGetdelimAndGetline() {
     rewind_nid_postfix(&allocStream);
     failAllocation = false;
     char* preserveLine = static_cast<char*>(malloc_nid_postfix(8));
-    std::memcpy(preserveLine, "preserve", 8);
+    std::memcpy(preserveLine, "12345678", 8);
     size_t preserveCap = 8;
     failAllocation = true;
     *__error_nid_postfix() = 0;
     Require(getline_nid_postfix(&preserveLine, &preserveCap, &allocStream) == -1 && *__error_nid_postfix() == 12);
-    Require(preserveLine != nullptr && preserveCap == 8 && std::memcmp(preserveLine, "alloc te", 8) == 0);
+    Require(preserveLine != nullptr && preserveCap == 8 && std::memcmp(preserveLine, "alloc t8", 8) == 0);
     Require(ferror_nid_postfix(&allocStream) != 0);
     failAllocation = false;
+    clearerr_nid_postfix(&allocStream);
+    Require(fgetc_nid_postfix(&allocStream) == 'e');
     free_nid_postfix(preserveLine);
     allocStream.Close();
 

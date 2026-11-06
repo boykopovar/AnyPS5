@@ -345,12 +345,16 @@ std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, size_t* n, int delim
         if (pos + 2 > *n) {
             std::size_t nextCapacity = 0;
             if (!LibcDetail::ExpandLineBufferCapacity(*n, pos + 2, maxLineSize, nextCapacity)) {
+                ungetc_nid_postfix(ch, stream);
                 errno = 84;
                 stream->SetError();
                 return -1;
             }
             char* resized = static_cast<char*>(SafeReallocate(*lineptr, nextCapacity));
             if (!resized) {
+                const int savedErrno = errno;
+                ungetc_nid_postfix(ch, stream);
+                errno = savedErrno;
                 stream->SetError();
                 return -1;
             }
