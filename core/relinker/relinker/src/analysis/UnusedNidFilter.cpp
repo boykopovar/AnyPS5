@@ -5,6 +5,7 @@
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <limits>
 
 namespace Relinker {
 
