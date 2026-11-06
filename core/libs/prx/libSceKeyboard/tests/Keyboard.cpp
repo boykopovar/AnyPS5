@@ -92,6 +92,8 @@ int main() {
     KeyboardData data[16]{};
     KeyboardCharData charData{};
     bool connected = false;
+    std::int32_t deviceId = 0;
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
@@ -158,6 +160,18 @@ int main() {
     input.HandleEvent(window, 7);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_OK && connected);
+
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardDebugGetDeviceId(42, &deviceId) == KEYBOARD_ERROR_INVALID_HANDLE && deviceId == -1);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_OK && deviceId == KEYBOARD_DEVICE_ID);
+    window.window.event = SDL_WINDOWEVENT_CLOSE;
+    input.HandleEvent(window, 7);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_INVALID_HANDLE && deviceId == -1);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && !data[0].connected);
+    window.window.event = SDL_WINDOWEVENT_FOCUS_GAINED;
+    input.HandleEvent(window, 7);
+    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_OK && deviceId == KEYBOARD_DEVICE_ID);
 
     for (std::uint16_t key = 0x04; key < 0x04 + 20; ++key) {
         KeyboardInputEvent press{};
@@ -228,6 +242,7 @@ int main() {
     input.HandleEvent(window, 7);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_INVALID_HANDLE && deviceId == -1);
 
     bool threwConnect = false;
     try {

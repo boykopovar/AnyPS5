@@ -30,7 +30,9 @@ struct AbsoluteRecord {
 
 int main() {
     MouseData data[64]{};
+    std::int32_t deviceId = 0;
     Require(!MouseIsOpen_nid_no_patch());
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseInit() == MOUSE_OK);
@@ -204,6 +206,19 @@ int main() {
     Require(MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_OK);
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].buttons == 0);
+
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, nullptr) == MOUSE_ERROR_INVALID_ARG);
+    Require(sceMouseDebugGetDeviceId(42, &deviceId) == MOUSE_ERROR_INVALID_HANDLE && deviceId == -1);
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == MOUSE_DEVICE_ID);
+    MouseInputEvent disconnectEvent{};
+    disconnectEvent.connectionChange = true;
+    disconnectEvent.connected = false;
+    MousePublishInput_nid_no_patch(disconnectEvent);
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == -1);
+    disconnectEvent.connected = true;
+    MousePublishInput_nid_no_patch(disconnectEvent);
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_OK && deviceId == MOUSE_DEVICE_ID);
+
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
     Require(!MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
@@ -225,4 +240,5 @@ int main() {
     Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].x_axis == 20 && data[0].y_axis == 10);
     Require(readAbsolute(MOUSE_HANDLE, absolute, 1) == 1 && absolute[0].x == 110 && absolute[0].y == 105);
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
+    Require(sceMouseDebugGetDeviceId(MOUSE_HANDLE, &deviceId) == MOUSE_ERROR_INVALID_HANDLE && deviceId == -1);
 }

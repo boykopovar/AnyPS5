@@ -163,6 +163,16 @@ int GetConnection(std::int32_t handle, bool* isConnected) {
     return KEYBOARD_OK;
 }
 
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (deviceId == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    *deviceId = -1;
+    if (handle != KEYBOARD_HANDLE || !opened || !connected) return KEYBOARD_ERROR_INVALID_HANDLE;
+    *deviceId = KEYBOARD_DEVICE_ID;
+    return KEYBOARD_OK;
+}
+
 int DisconnectAll() {
     KeyboardInputEvent event{};
     event.connectionChange = true;
