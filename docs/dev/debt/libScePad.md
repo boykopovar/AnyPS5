@@ -26,6 +26,7 @@
 - [scePadSetLightBarBaseBrightness](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns success for known handles without changing the hardware state. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
 
 ### Unknown function info
+- [scePadBondUpdate exports](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - firmware 13.42's libScePad.sprx (module disassembly and an emulated run with the ioctl recorded, not a console) shows no family flag: all eight exports return NOT_INITIALIZED while scePadInit has not run, Init and Term then send one bond-update ioctl and return its result, and every call that reaches the driver returns what ioctl returns. No export checks a handle or device id. The queries and Start return INVALID_ARG for a null output or parameter, SendData refuses a data block whose first 64-bit value is not 0x8000 with INVALID_ARG, and the queries copy the 32-bit driver value to the output even on an ioctl error. The wrapper follows that ladder and throws where the driver would answer, because no driver answer has been verified
 
 - [libScePad profile and device-setting exports](../../../core/libs/prx/libScePad/Export.cpp) - profile getters, tuning, saved settings, USB state, shared output and virtual-device setting arguments are recovered. Hunt and Leonardo reset each consume only a handle; physical VR USB status consumes only an output pointer. Remote settings output is 64 bytes and license-controller information is 1224 bytes. Kernel ioctl payload fields remain incomplete.
 
