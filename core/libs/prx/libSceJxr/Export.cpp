@@ -346,8 +346,10 @@ int APS5_VABI PKImageEncode_WritePixels_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_WriteSource_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+extern "C" std::int64_t PKImageEncode_WriteSource_impl_nid_no_patch(void* encoder, void* converter, void* rectangle);
+
+std::int64_t APS5_VABI PKImageEncode_WriteSource_nid_postfix(void* encoder, void* converter, void* rectangle) {
+    return PKImageEncode_WriteSource_impl_nid_no_patch(encoder, converter, rectangle);
 }
 
 int APS5_VABI ReadWS_File_nid_postfix() {

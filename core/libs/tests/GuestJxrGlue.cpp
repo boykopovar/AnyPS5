@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
+#include "prx/libSceJxr/include/GuidExports.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -22,6 +23,23 @@ std::size_t lastSize = 0;
 void* lastFreed = nullptr;
 int frees = 0;
 bool failCalloc = false;
+std::array<std::byte, 64>* writeSourceConverter = nullptr;
+std::array<std::byte, 160>* writeSourceEncoder = nullptr;
+void* writeSourceRectangle = nullptr;
+JxrGuestGuid writeSourceFrom = JxrGuest_GUID_PKPixelFormat32bppRGB_nid_no_patch;
+JxrGuestGuid writeSourceTo = JxrGuest_GUID_PKPixelFormat32bppRGB_nid_no_patch;
+std::int64_t writeSourceFirstResult = 0;
+std::int64_t writeSourceSecondResult = 0;
+std::int64_t writeSourceCopyResult = 1;
+std::int64_t writeSourceWriteResult = 9;
+int writeSourceFirstCalls = 0;
+int writeSourceSecondCalls = 0;
+int writeSourceCopyCalls = 0;
+int writeSourceWriteCalls = 0;
+std::uint32_t writeSourceObservedHeight = 0;
+std::uint32_t writeSourceObservedStride = 0;
+
+std::int64_t APS5_VABI WriteSourceGetTargetReplacement(void*, JxrGuestGuid*);
 
 void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free(void* pointer) {
@@ -43,6 +61,140 @@ void* APS5_VABI Realign(void* pointer, std::size_t size, std::size_t) { return s
 int APS5_VABI PosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
+}
+
+template <typename T>
+void WriteField(std::byte* record, std::size_t offset, const T& value) {
+    std::memcpy(record + offset, &value, sizeof(value));
+}
+
+std::uintptr_t CallbackAddress(auto callback) { return reinterpret_cast<std::uintptr_t>(callback); }
+
+std::int64_t APS5_VABI WriteSourceGetSource(void* converter, JxrGuestGuid* format) {
+    ++writeSourceFirstCalls;
+    WriteField(reinterpret_cast<std::byte*>(converter), 16,
+               CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, JxrGuestGuid*)>(&WriteSourceGetTargetReplacement)));
+    if (writeSourceFirstResult < 0) return writeSourceFirstResult;
+    *format = writeSourceFrom;
+    return writeSourceFirstResult;
+}
+
+std::int64_t APS5_VABI WriteSourceGetTargetReplacement(void*, JxrGuestGuid* format) {
+    ++writeSourceSecondCalls;
+    if (writeSourceSecondResult < 0) return writeSourceSecondResult;
+    *format = writeSourceTo;
+    return writeSourceSecondResult;
+}
+
+std::int64_t APS5_VABI WriteSourceGetTarget(void*, JxrGuestGuid* format) {
+    ++writeSourceSecondCalls;
+    if (writeSourceSecondResult < 0) return writeSourceSecondResult;
+    *format = JxrGuest_GUID_PKPixelFormat24bppRGB_nid_no_patch;
+    return writeSourceSecondResult;
+}
+
+std::int64_t APS5_VABI WriteSourceWriteMutated(void*, std::uint32_t height, std::uint8_t* buffer,
+                                               std::uint32_t stride) {
+    ++writeSourceWriteCalls;
+    writeSourceObservedHeight = height;
+    writeSourceObservedStride = stride;
+    for (std::uint32_t index = 0; index < height * stride; ++index) Require(buffer[index] == 0x5a);
+    return writeSourceWriteResult;
+}
+
+std::int64_t APS5_VABI WriteSourceWriteInitial(void*, std::uint32_t height, std::uint8_t*, std::uint32_t stride) {
+    ++writeSourceWriteCalls;
+    writeSourceObservedHeight = height;
+    writeSourceObservedStride = stride;
+    return -99;
+}
+
+std::int64_t APS5_VABI WriteSourceCopy(void*, void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    ++writeSourceCopyCalls;
+    Require(rectangle == writeSourceRectangle && reinterpret_cast<std::uintptr_t>(buffer) % 128 == 0);
+    Require(stride == 16);
+    std::memset(buffer, 0x5a, 32);
+    const std::int32_t height = 1;
+    std::memcpy(static_cast<std::byte*>(writeSourceRectangle) + 12, &height, sizeof(height));
+    WriteField(writeSourceEncoder->data(), 56,
+               CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, std::uint32_t, std::uint8_t*, std::uint32_t)>(
+                   &WriteSourceWriteMutated)));
+    return writeSourceCopyResult;
+}
+
+void PrepareWriteSource() {
+    *writeSourceConverter = {};
+    *writeSourceEncoder = {};
+    writeSourceFirstCalls = 0;
+    writeSourceSecondCalls = 0;
+    writeSourceCopyCalls = 0;
+    writeSourceWriteCalls = 0;
+    writeSourceFirstResult = 0;
+    writeSourceSecondResult = 0;
+    writeSourceCopyResult = 1;
+    writeSourceWriteResult = 9;
+    writeSourceFrom = JxrGuest_GUID_PKPixelFormat32bppRGB_nid_no_patch;
+    writeSourceTo = JxrGuest_GUID_PKPixelFormat32bppRGB_nid_no_patch;
+    WriteField(writeSourceConverter->data(), 24,
+               CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, JxrGuestGuid*)>(&WriteSourceGetSource)));
+    WriteField(writeSourceConverter->data(), 16,
+               CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, JxrGuestGuid*)>(&WriteSourceGetTarget)));
+    WriteField(writeSourceConverter->data(), 48,
+               CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, void*, std::uint8_t*, std::uint32_t)>(
+                   &WriteSourceCopy)));
+    WriteField(writeSourceEncoder->data(), 56,
+               CallbackAddress(static_cast<std::int64_t(APS5_VABI*)(void*, std::uint32_t, std::uint8_t*, std::uint32_t)>(
+                   &WriteSourceWriteInitial)));
+    WriteField(writeSourceEncoder->data(), 136, writeSourceTo);
+    WriteField(writeSourceEncoder->data(), 152, std::uint32_t{3});
+}
+
+void TestWriteSource() {
+    alignas(16) static std::array<std::byte, 64> converter{};
+    alignas(16) static std::array<std::byte, 160> encoder{};
+    alignas(16) static std::array<std::byte, 16> rectangle{};
+    writeSourceConverter = &converter;
+    writeSourceEncoder = &encoder;
+    writeSourceRectangle = rectangle.data();
+    const std::int32_t rectValues[4] = {0, 0, 4, 2};
+    std::memcpy(rectangle.data(), rectValues, sizeof(rectValues));
+    PrepareWriteSource();
+
+    writeSourceFirstResult = -7;
+    Require(PKImageEncode_WriteSource_nid_postfix(nullptr, converter.data(), nullptr) == -7);
+    Require(writeSourceFirstCalls == 1 && writeSourceSecondCalls == 0);
+    PrepareWriteSource();
+    writeSourceSecondResult = -8;
+    Require(PKImageEncode_WriteSource_nid_postfix(nullptr, converter.data(), nullptr) == -8);
+    Require(writeSourceFirstCalls == 1 && writeSourceSecondCalls == 1);
+
+    PrepareWriteSource();
+    writeSourceTo = JxrGuest_GUID_PKPixelFormat32bppRGB_nid_no_patch;
+    WriteField(encoder.data(), 136, JxrGuest_GUID_PKPixelFormat24bppRGB_nid_no_patch);
+    Require(PKImageEncode_WriteSource_nid_postfix(encoder.data(), converter.data(), nullptr) == -106);
+    Require(writeSourceFirstCalls == 1 && writeSourceSecondCalls == 1 && writeSourceCopyCalls == 0);
+
+    PrepareWriteSource();
+    std::memcpy(rectangle.data(), rectValues, sizeof(rectValues));
+    const int before = frees;
+    Require(PKImageEncode_WriteSource_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == 9);
+    Require(writeSourceFirstCalls == 1 && writeSourceSecondCalls == 1 && writeSourceCopyCalls == 1 && writeSourceWriteCalls == 1);
+    Require(writeSourceObservedHeight == 1 && writeSourceObservedStride == 16 && frees == before + 1);
+
+    PrepareWriteSource();
+    std::memcpy(rectangle.data(), rectValues, sizeof(rectValues));
+    const int beforeAllocationError = frees;
+    failCalloc = true;
+    Require(PKImageEncode_WriteSource_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == -101);
+    failCalloc = false;
+    Require(writeSourceCopyCalls == 0 && writeSourceWriteCalls == 0 && frees == beforeAllocationError);
+
+    PrepareWriteSource();
+    std::memcpy(rectangle.data(), rectValues, sizeof(rectValues));
+    writeSourceCopyResult = -11;
+    const int beforeCopyError = frees;
+    Require(PKImageEncode_WriteSource_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == -11);
+    Require(writeSourceCopyCalls == 1 && writeSourceWriteCalls == 0 && frees == beforeCopyError + 1);
 }
 
 void InitializeHeap() {
@@ -195,6 +347,7 @@ int main() {
     TestPixelFormatHash();
     TestImageIids();
     TestAlignedAllocation();
+    TestWriteSource();
     Require(IDPEmpty_nid_postfix(nullptr) == 0);
     int codec = 0;
     Require(IDPEmpty_nid_postfix(&codec) == 0 && codec == 0);
