@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include "SceTypes.hpp"
 #include "EvpDigest.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
@@ -49,6 +50,21 @@ static_assert(sizeof(LibreSsl3X509Algor) == 16);
 static_assert(sizeof(LibreSsl3X509Pubkey) == 24);
 static_assert(offsetof(LibreSsl3X509Pubkey, publicKey) == 8);
 
+struct Asn1Object_nid_no_patch {
+    const char* shortName;
+    const char* longName;
+    int nid;
+    int length;
+    const unsigned char* data;
+    int flags;
+};
+
+static_assert(sizeof(Asn1Object_nid_no_patch) == 40);
+static_assert(offsetof(Asn1Object_nid_no_patch, nid) == 16);
+static_assert(offsetof(Asn1Object_nid_no_patch, length) == 20);
+static_assert(offsetof(Asn1Object_nid_no_patch, data) == 24);
+static_assert(offsetof(Asn1Object_nid_no_patch, flags) == 32);
+
 struct LibreSsl3X509Validity {
     void* notBefore;
     void* notAfter;
@@ -73,7 +89,7 @@ struct LibreSsl3ValidityX509 {
 extern "C" {
 
 void APS5_VABI ASN1_INTEGER_free_nid_postfix(Asn1String* integer);
-int APS5_VABI ASN1_OBJECT_free_nid_postfix(void);
+void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object);
 const unsigned char* APS5_VABI ASN1_STRING_get0_data_nid_postfix(const Asn1String* string);
 int APS5_VABI BIO_up_ref_nid_postfix(void);
 int APS5_VABI BIO_vfree_nid_postfix(void);

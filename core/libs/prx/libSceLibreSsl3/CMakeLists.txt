@@ -1,4 +1,4 @@
-add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyParam.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjCmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Extensions.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Validity.cpp)
+add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyParam.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjCmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Extensions.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Validity.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Object.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl libc)
 configure_windows_unwind(libSceLibreSsl3)
@@ -60,6 +60,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_rsa_getters PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
+    add_test_executable(guest_libressl3_asn1_object_tests src/Asn1Object.cpp tests/Asn1Object.cpp)
+    target_include_directories(guest_libressl3_asn1_object_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_asn1_object_tests PRIVATE libc)
+    configure_windows_unwind(guest_libressl3_asn1_object_tests)
+    add_test(NAME guest_libressl3_asn1_object COMMAND guest_libressl3_asn1_object_tests)
+    set_tests_properties(guest_libressl3_asn1_object PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_asn1_object PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_crypto_memcmp_tests ${LIBS_INCLUDE_DIR}/tests/GuestCryptoMemcmp.cpp)
     target_include_directories(guest_crypto_memcmp_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_crypto_memcmp_tests PRIVATE libSceLibreSsl3)
