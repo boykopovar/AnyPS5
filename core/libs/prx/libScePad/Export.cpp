@@ -461,7 +461,7 @@ int APS5_VABI scePadSetVibrationMode(int handle, int mode) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (mode <= 0) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (mode > 3 && mode != 5) return PAD_ERROR_INVALID_ARG;
+ if (mode > 5) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
  Pad::SetVibrationMode(PortOf(handle), mode);
  return PAD_OK;
