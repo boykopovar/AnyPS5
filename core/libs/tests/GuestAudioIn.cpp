@@ -84,6 +84,7 @@ void TestValidation() {
         Require(sceAudioInGetGain(badHandle, &gain) == invalidHandle && gain == 1.0f);
         Require(sceAudioInGetRerouteCount(badHandle) == invalidHandle);
         Require(sceAudioInGetGain(badHandle, nullptr) == invalidPointer);
+        Require(sceAudioInGetGain(badHandle, reinterpret_cast<float*>(static_cast<std::uintptr_t>(0x10))) == invalidPointer);
         Require(sceAudioInClose(badHandle) == invalidHandle);
         Require(sceAudioInInput(badHandle, nullptr) == invalidHandle);
         Require(sceAudioInGetSilentState(badHandle) == invalidHandle);
@@ -92,6 +93,7 @@ void TestValidation() {
     float gain = 0.0f;
     Require(port > 0 && sceAudioInGetGain(port, &gain) == 0 && gain == 1.0f && sceAudioInGetRerouteCount(port) == 0);
     Require(sceAudioInGetGain(port, nullptr) == invalidPointer);
+    Require(sceAudioInGetGain(port, reinterpret_cast<float*>(static_cast<std::uintptr_t>(0x10))) == invalidPointer);
     Require(sceAudioInClose(port) == 0);
     gain = 0.25f;
     Require(sceAudioInGetGain(port, &gain) == invalidHandle && gain == 1.0f && sceAudioInGetRerouteCount(port) == invalidHandle);
