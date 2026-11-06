@@ -116,7 +116,6 @@
 - [std::_Throw_C_error](../../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) follows disassembly of a bundled PS5 `libc.prx`: maps 1 and 2 to generic error 35 (`resource_unavailable_try_again`), 3 to 16 (`device_or_resource_busy`), 4 to 22 (`invalid_argument`), and 5 to 1 (`operation_not_permitted`), throwing a guest `std::system_error` through the existing C++ error helper. Other values return without throwing. Other SDK versions have not been inspected
 - [__modti3](../../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) - the hardware traps on a zero divisor; this throws instead
 
-- [insque and remque](../../../core/libs/prx/libc/src/Queue.cpp) (libc, NIDs `R5JNHGz78TU`, `7Yc8sDyOJCw`) follow POSIX.1-2008 and FreeBSD 11.4 [insque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/gen/insque.c) and [remque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/gen/remque.c) for doubly-linked queue manipulation. Queue elements require forward and backward pointers `q_forw` and `q_back` as their first two 64-bit pointer fields. `insque` inserts `element` after `pred`; if `pred` is null, `element` initializes a linear list with null links. Otherwise, `element` is linked between `pred` and `pred->q_forw`, supporting both linear (null-terminated) and circular queues. `remque` unlinks `element` from its neighbors. Passing a null `element` returns safely without operation to prevent host crashes. Physical console behavior and fault handling for corrupted links are unverified.
 
 - [snprintf and vsnprintf](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) accept any size up to `SIZE_MAX`, as a payload process on a PS5 (firmware 13.60) does. A null buffer with a nonzero size throws here, where the console writes through it, and a result longer than `INT_MAX` throws, which was not measured
 
@@ -129,6 +128,8 @@
 - [HostOpenName, fopen, opendir, rename](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) - on Windows, paths with DOS device names (CON, PRN, AUX, NUL, COM1-9, COM¹-³, LPT1-9, LPT¹-³, CONIN$, CONOUT$) or trailing dots/spaces are prefixed with the `\\?\` verbatim prefix to prevent Win32 normalization from rewriting or stripping them. Host NTFS/FAT filesystems still reject POSIX-valid characters disallowed by Windows (`\`, `/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`), and relative paths are normalized against the process current directory before verbatim prefixing.
 
 ### Functional
+
+- [insque and remque](../../../core/libs/prx/libc/src/Queue.cpp) (libc) have not been verified on a console. A null element throws; behavior with corrupted links is unverified. Otherwise, the queue operations follow FreeBSD 11.4 [insque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/insque.c) and [remque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/remque.c).
 
 - [Call tracing](../../../core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp) (libc) - an unlabeled import whose function has no loaded host image, such as a generated code address, retains an empty library label; `all` still records it. Otherwise missing labels use the defining host module filename; supplied labels are retained.
 

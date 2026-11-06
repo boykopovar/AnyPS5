@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 namespace {
@@ -12,7 +13,7 @@ struct GuestQueueElement {
 
 extern "C" void APS5_VABI insque_nid_postfix(void* element, void* pred) {
     if (element == nullptr) {
-        return;
+        NotImplemented_nid_no_patch(__func__);
     }
     auto* const elem = static_cast<GuestQueueElement*>(element);
     if (pred == nullptr) {
@@ -32,7 +33,7 @@ extern "C" void APS5_VABI insque_nid_postfix(void* element, void* pred) {
 
 extern "C" void APS5_VABI remque_nid_postfix(void* element) {
     if (element == nullptr) {
-        return;
+        NotImplemented_nid_no_patch(__func__);
     }
     auto* const elem = static_cast<GuestQueueElement*>(element);
     if (elem->q_forw != nullptr) {

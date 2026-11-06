@@ -281,15 +281,19 @@ static void CheckCircularQueue() {
 }
 
 static void CheckNullPointers() {
-    insque_nid_postfix(nullptr, nullptr);
+    auto throws = [](auto call) {
+        try { call(); } catch (const std::runtime_error&) { return true; }
+        return false;
+    };
+    Check(throws([] { insque_nid_postfix(nullptr, nullptr); }));
 
     QueueNode dummy{nullptr, nullptr, 99};
-    insque_nid_postfix(nullptr, &dummy);
+    Check(throws([&] { insque_nid_postfix(nullptr, &dummy); }));
     Check(dummy.q_forw == nullptr);
     Check(dummy.q_back == nullptr);
     Check(dummy.value == 99);
 
-    remque_nid_postfix(nullptr);
+    Check(throws([] { remque_nid_postfix(nullptr); }));
 }
 
 static void CheckLargeQueueSequences() {
