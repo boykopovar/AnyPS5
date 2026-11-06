@@ -376,7 +376,7 @@ int APS5_VABI EVP_PKEY_cmp_nid_postfix(const LibreSsl3EvpPkey* first, const Libr
 int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix();
 int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix();
 int APS5_VABI ASN1_OCTET_STRING_free_nid_postfix();
-int APS5_VABI tls_config_parse_protocols_nid_postfix();
+int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* protocols, const char* text);
 int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix();
 int APS5_VABI tls_config_insecure_noverifyname_nid_postfix();
 int APS5_VABI ASN1_TYPE_free_nid_postfix();
