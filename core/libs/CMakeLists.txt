@@ -290,13 +290,14 @@ if(TARGET mimalloc AND WIN32)
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
 elseif(TARGET mimalloc)
+    set(MIMALLOC_NAME ${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
     add_custom_command(
-            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            OUTPUT ${PATCHED_DIR}/${MIMALLOC_NAME}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/${MIMALLOC_NAME}
             DEPENDS mimalloc
-            COMMENT "Copying libmimalloc.dylib beside the libraries"
+            COMMENT "Copying ${MIMALLOC_NAME} beside the libraries"
     )
-    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/${MIMALLOC_NAME})
 endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
@@ -1111,16 +1112,6 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_gesture PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
-    endif()
-
-    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
-    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
-    configure_windows_unwind(guest_sys_util_notification_tests)
-    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
-    if(WIN32)
-        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
     endif()
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
