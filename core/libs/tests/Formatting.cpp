@@ -114,6 +114,21 @@ static int APS5_VABI PrintList(const char* format, ...) {
     return result;
 }
 
+static void CheckPositionalUnknownConversion() {
+    char output[32];
+    for (const std::uint32_t gpOffset : {0u, 48u}) {
+        VaList args = {gpOffset, 176u, nullptr, nullptr};
+        const VaList original = args;
+        for (const char* format : {"%1$C", "%2$C", "%1$hC"}) {
+            Require(vsnprintf_nid_postfix(output, sizeof(output), format, &args) == 2 && std::strcmp(output, "%C") == 0);
+            Require(std::memcmp(&args, &original, sizeof(args)) == 0);
+        }
+        Require(vsnprintf_nid_postfix(output, sizeof(output), "[%1$5C]", &args) == 7 && std::strcmp(output, "[   %C]") == 0);
+        Require(std::memcmp(&args, &original, sizeof(args)) == 0);
+    }
+    Require(FormatList(output, sizeof(output), "%1$C%d", 7) == 3 && std::strcmp(output, "%C7") == 0);
+}
+
 static void CheckIgnoredLengths() {
     CheckCharacterScanLengths();
     char output[96];
@@ -231,10 +246,20 @@ static bool CheckWidePrecision() {
     Require(snprintf_nid_postfix(output, sizeof(output), "%.2ls", bounded) == 2 && std::strcmp(output, "AB") == 0);
     Require(snprintf_nid_postfix(nullptr, 0, "%.1ls", u"\u00e9") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "%.1s", "\xc3\xa9") == 1 && static_cast<unsigned char>(output[0]) == 0xc3 && output[1] == 0);
-    Require(FormatList(output, sizeof(output), "%S:%lc:%C:%d", u"\u00e9", 0x20ac, 0x41, 7) == 10 && std::strcmp(output, "\xc3\xa9:\xe2\x82\xac:A:7") == 0);
+    Require(FormatList(output, sizeof(output), "%S:%lc:%C:%d", u"\u00e9", 0x20ac, 0x41, 7) == 12 && std::strcmp(output, "\xc3\xa9:\xe2\x82\xac:%C:65") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "%.*S", 3, u"\u00e9\u20ac") == 2 && std::strcmp(output, "\xc3\xa9") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "[%ls]", static_cast<const char16_t*>(nullptr)) == 8 && std::strcmp(output, "[(null)]") == 0);
-    Require(snprintf_nid_postfix(output, sizeof(output), "a%lcb%C", 0, 0) == 4 && std::memcmp(output, "a\0b\0", 5) == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "a%lcb%C", 0, 0) == 4 && std::strcmp(output, "ab%C") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%3lc|%-3lc|", 0, 0) == 2 && std::strcmp(output, "||") == 0);
+    for (const char* format : {"%lc", "%.0lc", "%.1lc"})
+        Require(snprintf_nid_postfix(output, sizeof(output), format, 0xe9) == 2 && std::strcmp(output, "\xc3\xa9") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%5lc|%-5lc|%5.1lc", 0xe9, 0xe9, 0xe9) == 17
+        && std::strcmp(output, "   \xc3\xa9|\xc3\xa9   |   \xc3\xa9") == 0);
+    Require(FormatList(output, sizeof(output), "%*.*lc", 5, 1, 0xe9) == 5 && std::strcmp(output, "   \xc3\xa9") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%3.0lc|%-3.1lc", 0, 0) == 1 && std::strcmp(output, "|") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%5C|%-3C|%hC%lC%#C", 0xe9) == 16 && std::strcmp(output, "   %C|%C |%C%C%C") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%C%d", 65) == 4 && std::strcmp(output, "%C65") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hS|%lS|%5S", u"ab", u"c\u00e9", u"d") == 12 && std::strcmp(output, "ab|c\xc3\xa9|    d") == 0);
     Require(FormatList(output, sizeof(output), "%%ls:%2$d:%1$d", 3, 7) == 7 && std::strcmp(output, "%ls:7:3") == 0);
     Require(FormatList(output, sizeof(output), "%ls[%f][%+f][% F][%5.1e]", u"", -NAN, -NAN, NAN, -NAN) == 25
         && std::strcmp(output, "[-nan][-nan][ NAN][ -nan]") == 0);
@@ -404,7 +429,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(std::strcmp(buffer, "[   3.50][3.5    ][      z]") == 0);
     Require(sprintf_nid_postfix(buffer, "[%2$*1$d][%2$.*1$d]", -4, 5) == 9 && std::strcmp(buffer, "[5   ][5]") == 0);
     Require(sprintf_nid_postfix(buffer, "[%1$*2$d]", 5, 3) == 5 && std::strcmp(buffer, "[  5]") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "%2$ls|%1$C|%3$d", 0x41, u"\u00e9", 7) == 6 && std::strcmp(buffer, "\xc3\xa9|A|7") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%2$ls|%1$lc|%3$d", 0x41, u"\u00e9", 7) == 6 && std::strcmp(buffer, "\xc3\xa9|A|7") == 0);
     Require(FormatList(buffer, sizeof(buffer), "%2$d %d %ls|%*5$d|%1$d", 1, 2, 3, u"x", 4) == 12 && std::strcmp(buffer, "2 3 x|   4|1") == 0);
     Require(FormatList(buffer, sizeof(buffer), "[%*3$d]%ls", 5, u"", 3) == 5 && std::strcmp(buffer, "[  5]") == 0);
     Require(FormatList(buffer, sizeof(buffer), "%100$d %2$d%1$ls", u"", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100) == 4 && std::strcmp(buffer, "99 1") == 0);
@@ -775,4 +800,4 @@ static void CheckLongDoubleHexFloat() {
     }
 }
 
-int main() { CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { CheckPositionalUnknownConversion(); CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

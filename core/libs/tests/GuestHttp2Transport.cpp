@@ -109,6 +109,12 @@ std::string HeaderGzip(const std::string& payload, bool corrupt = false) {
     return header + member.substr(10);
 }
 
+struct ResponseSpec {
+    int status = 0;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::vector<std::pair<std::string, std::string>> informationalHeaders;
+};
+
 class Server {
 public:
     explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
@@ -169,6 +175,10 @@ public:
         changed.notify_all();
     }
 
+    void SetResponse(ResponseSpec response) {
+        std::lock_guard lock(responseMutex);
+        responseSpec = std::move(response);
+    }
     void Join() { Release(); if (worker.joinable()) worker.join(); }
     const std::multimap<std::string, std::string>& Headers() const { return headers; }
     const std::string& Upload() const { return upload; }
@@ -180,6 +190,8 @@ private:
     const std::string location;
     const int redirectStatus;
     const std::vector<std::string> responseCookies;
+    std::mutex responseMutex;
+    ResponseSpec responseSpec;
     unsigned accepted = 0;
     mbedtls_net_context listener;
     mbedtls_entropy_context entropy;
@@ -253,7 +265,13 @@ private:
         return static_cast<nghttp2_ssize>(size);
     }
 
+    ResponseSpec GetResponse() {
+        std::lock_guard lock(responseMutex);
+        return responseSpec;
+    }
+
     void Respond(nghttp2_session* session, std::int32_t stream) {
+        const auto configured = GetResponse();
         Require(!responded, "one response per request");
         responded = true;
         if (mode == Mode::StallHeaders) { Stage(2); Stall(); return; }
@@ -261,6 +279,7 @@ private:
         body = (mode == Mode::Large || mode == Mode::EarlyLarge) ? std::string(200000, 'x') : "response body";
         const bool redirect = mode == Mode::Redirect || mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || (mode == Mode::RedirectOnce && accepted == 1);
         std::string status = IsEarly() ? "413" : mode == Mode::NotFound ? "404" : redirect ? std::to_string(redirectStatus) : mode == Mode::Auth ? "401" : "200";
+        if (configured.status) status = std::to_string(configured.status);
         if (mode == Mode::EarlyEmpty) body.clear();
         auto length = std::to_string(body.size());
         const auto requestMethod = headers.find(":method");
@@ -300,9 +319,12 @@ private:
             if (mode == Mode::GzipTrailingJunk) body = StoredGzip("first") + "trailing junk";
             length = std::to_string(body.size());
         }
-        if (mode == Mode::Informational) {
-            nghttp2_nv early{reinterpret_cast<std::uint8_t*>(const_cast<char*>(":status")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("103")), 7, 3, 0};
-            Require(nghttp2_submit_headers(session, 0, stream, nullptr, &early, 1, nullptr) == 0, "server informational response");
+        if (mode == Mode::Informational || !configured.informationalHeaders.empty()) {
+            std::vector<std::pair<std::string, std::string>> earlyFields{{":status", "103"}};
+            earlyFields.insert(earlyFields.end(), configured.informationalHeaders.begin(), configured.informationalHeaders.end());
+            std::vector<nghttp2_nv> early;
+            for (auto& [name, value] : earlyFields) early.push_back({reinterpret_cast<std::uint8_t*>(name.data()), reinterpret_cast<std::uint8_t*>(value.data()), name.size(), value.size(), 0});
+            Require(nghttp2_submit_headers(session, 0, stream, nullptr, early.data(), early.size(), nullptr) == 0, "server informational response");
         }
         std::vector<std::pair<std::string, std::string>> fields{{":status", status}, {"x-loopback", "yes"}};
         if (mode != Mode::NoLength) fields.emplace_back("content-length", length);
@@ -312,6 +334,8 @@ private:
         if (mode == Mode::CookieFlood) {
             for (int i = 0; i < 1500; ++i) fields.emplace_back("set-cookie", "f" + std::to_string(i) + "=v; Path=/");
         }
+        if (mode == Mode::Auth) fields.emplace_back("www-authenticate", "Basic realm=\"loopback\"");
+        fields.insert(fields.end(), configured.headers.begin(), configured.headers.end());
         std::vector<nghttp2_nv> response;
         for (auto& [name, value] : fields) response.push_back({reinterpret_cast<std::uint8_t*>(name.data()), reinterpret_cast<std::uint8_t*>(value.data()), name.size(), value.size(), 0});
         nghttp2_data_provider2 provider{};
@@ -379,6 +403,7 @@ private:
     }
 
     void ExchangeHttp1(mbedtls_net_context& client, mbedtls_ssl_context* ssl) {
+        const auto configured = GetResponse();
         std::string input;
         std::array<unsigned char, 1024> buffer;
         const auto readMore = [&] {
@@ -416,7 +441,11 @@ private:
             position = next + 2;
         }
         end += 4;
-        if (mode == Mode::Http11Info) write("HTTP/1.1 100 Continue\r\n\r\n");
+        if (mode == Mode::Http11Info || !configured.informationalHeaders.empty()) {
+            std::string informational = "HTTP/1.1 100 Continue\r\n";
+            for (const auto& [name, value] : configured.informationalHeaders) informational += name + ": " + value + "\r\n";
+            write(informational + "\r\n");
+        }
         if (mode == Mode::Http11Early) upload = input.substr(end);
         else if (headers.count("transfer-encoding")) {
             Require(headers.find("transfer-encoding")->second == "chunked", "HTTP1 request transfer coding");
@@ -438,7 +467,7 @@ private:
             upload = input.substr(end, length);
         }
         if (mode == Mode::Http11StallHeaders) { Stage(2); Stall(); return; }
-        const int code = mode == Mode::Http11Early ? 413 : mode == Mode::Http11Redirect ? redirectStatus : 200;
+        const int code = configured.status ? configured.status : mode == Mode::Http11Early ? 413 : mode == Mode::Http11Redirect ? redirectStatus : 200;
         std::string response = mode == Mode::Http10 ? "HTTP/1.0 " : "HTTP/1.1 ";
         response += std::to_string(code) + " Fixture\r\n";
         if (mode == Mode::Http11Chunked || mode == Mode::Http11BadChunk) response += "Transfer-Encoding: chunked\r\n";
@@ -448,6 +477,7 @@ private:
         if (mode == Mode::Http11Ambiguous) response += "Transfer-Encoding: chunked\r\n";
         if (mode == Mode::Http11Redirect) response += "Location: " + location + "\r\n";
         for (const auto& cookie : responseCookies) response += "Set-Cookie: " + cookie + "\r\n";
+        for (const auto& [name, value] : configured.headers) response += name + ": " + value + "\r\n";
         response += "X-Loopback: yes\r\nConnection: close\r\n\r\n";
         if (mode == Mode::Http11StallBody) { write(response); Stage(2); Stall(); return; }
         if (headers.find(":method")->second != "HEAD") {
@@ -1555,6 +1585,51 @@ void HostAuthority(int ssl) {
     Require(headers.count("host") == 0, "host header is not sent");
 }
 
+void AuthenticationStatus(int ssl, int version, ResponseSpec response, bool authEnabled) {
+    std::fprintf(stderr, "HTTP2 authentication status scenario version=%d status=%d enabled=%d\n", version, response.status, authEnabled);
+    const int expected = response.status;
+    Server server(version == 1 ? Mode::Http10 : version == 2 ? Mode::Http11 : Mode::Normal);
+    server.SetResponse(std::move(response));
+    Client client(ssl, 4, 0, version);
+    int enabled = -1;
+    Require(sceHttp2GetAuthEnabled(client.tmpl, &enabled) == 0 && enabled == 1, "authentication remains enabled by default");
+    if (!authEnabled) Require(sceHttp2SetAuthEnabled(client.tmpl, 0) == 0, "disable automatic authentication");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "receive response without negotiating authentication");
+    int status = 0;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == expected, "preserve authentication response status");
+    int kind = -1;
+    std::uint64_t length = 0;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == 13, "preserve authentication response length");
+    std::string body;
+    std::array<char, 32> buffer{};
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0 && count <= static_cast<int>(buffer.size()), "read authentication response body");
+        if (count == 0) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    Require(body == "response body", "preserve authentication response body");
+    server.Join();
+}
+
+void AuthenticationStatuses(int ssl) {
+    for (const int version : {1, 2, 3}) {
+        const std::string origin = version == 3 ? "www-authenticate" : "WwW-AuThEnTiCaTe";
+        const std::string proxy = version == 3 ? "proxy-authenticate" : "PrOxY-AuThEnTiCaTe";
+        const std::string challenge = "Basic realm=\"loopback\"";
+        for (const int status : {401, 407}) {
+            const auto& matching = status == 401 ? origin : proxy;
+            const auto& other = status == 401 ? proxy : origin;
+            AuthenticationStatus(ssl, version, {status, {}, {}}, true);
+            AuthenticationStatus(ssl, version, {status, {{other, challenge}}, {}}, true);
+            AuthenticationStatus(ssl, version, {status, {{matching, challenge}}, {}}, false);
+            if (version != 1) AuthenticationStatus(ssl, version, {status, {}, {{matching, challenge}}}, true);
+        }
+        AuthenticationStatus(ssl, version, {200, {{origin, challenge}, {proxy, challenge}}, {}}, true);
+    }
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
@@ -1573,6 +1648,8 @@ int main(int argc, char** argv) {
         Require(unloaded > 0, "SSL context without certificates");
         Success(unloaded, Mode::Normal);
         Require(sceSslTerm_nid_postfix(unloaded) == 0, "SSL context without certificates term");
+    } else if (argc == 2 && std::string_view(argv[1]) == "--auth-status") {
+        AuthenticationStatuses(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-members") {
         GzipMembers(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--gzip-headers") {

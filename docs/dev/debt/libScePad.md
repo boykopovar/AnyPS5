@@ -23,8 +23,7 @@
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
-- [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
-- [scePadGetTriggerEffectState](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns a zeroed state for every known handle, whatever trigger effect is set. The handle and null-output errors and their order are those of the other exports in the file, not measured on a console.
+- [scePadSetLightBarBaseBrightness](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns success for known handles without changing the hardware state. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
 
 ### Unknown function info
 
@@ -70,3 +69,5 @@
 ### Functional
 
 - [Touchpad resolution](../../../core/libs/prx/libScePad/include/PadState.hpp) (libScePad) - the library reports a DualSense to every title, so the controller information reports its touchpad, 1920 by 1080 at 44.86 pixels per cm, and the host controller's fingers and the keyboard touch contacts are placed in that range. [duaLib](https://github.com/WujekFoliarz/duaLib/blob/0b39f92261e2ff0e77eb0dac00943be6970e0dbf/src/source/duaLib.cpp#L847-L849) reports these values for a DualSense and 1920 by 943 at 44 for a DualShock 4, and the Linux kernel's [hid-playstation](https://github.com/torvalds/linux/blob/cd4f494ba535e848e2d299707d363de84e61a518/drivers/hid/hid-playstation.c#L177-L178) holds 1920 by 1080 against 1920 by 942 for the DualShock 4. A DualShock 4 on the host reports through the DualSense range too, so its last touchpad rows are never reached. A PS5 on firmware 13.40 reported 1920 by 1080 at 44.86 and stick dead zones of 13 to a retail title
+- [scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - the boolean is stored per pad; disabling turns both trigger effect blocks off in the next output report and enabling restores the last requested effects. The console's exact behavior, its return codes and whether it also affects effects requested by another process are unmeasured
+- [scePadSetTriggerEffectStrength, scePadGetTriggerEffectInternalState and scePadSetTriggerEffectExt](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - the strength argument's units and range, the `PadTriggerInternalState` layout and the `PadTriggerEffectExtended` layout are unknown, so all three still throw. The DualSense output report has an unexposed trigger motor power reduction field and `scePadSetTriggerEffectStrength` may map to it, but that is not measured
