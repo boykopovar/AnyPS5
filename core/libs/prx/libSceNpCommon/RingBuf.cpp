@@ -269,6 +269,7 @@ void APS5_VABI _ZN3sce2np13RingBufMemory7DestroyEv(NpRingBufMemory* self) {
 
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(NpRingBufMemory* self, std::size_t extraSize) {
     NpRingBuf& ringBuf = self->ringBuf;
+    Require(extraSize <= SIZE_MAX - ringBuf.bufSize, "sce::np::RingBufMemory::Expand: the new size overflows");
     auto* buf = static_cast<std::uint8_t*>(self->allocator->allocator.reallocate(ringBuf.buf, ringBuf.bufSize + extraSize,
         self->allocator->allocator.context));
     if (buf == nullptr) return NP_RING_BUF_ERROR_OUT_OF_MEMORY;
