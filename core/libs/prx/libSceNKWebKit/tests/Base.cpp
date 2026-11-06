@@ -483,11 +483,11 @@ static void TestURLRequestResponse() {
     );
     const void* responseRef = NKWebKit::ToRef(responseObj);
 
-    auto* url = WKURLResponseCopyURL(responseRef);
-    auto* urlString = WKURLCopyString(url);
+    auto* responseUrl = WKURLResponseCopyURL(responseRef);
+    auto* urlString = WKURLCopyString(responseUrl);
     Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/test.png"));
     WKRelease(urlString);
-    WKRelease(url);
+    WKRelease(responseUrl);
 
     auto* mime = WKURLResponseCopyMIMEType(responseRef);
     Require(WKStringIsEqualToUTF8CString(mime, "image/png"));
