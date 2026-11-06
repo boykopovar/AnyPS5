@@ -369,7 +369,12 @@ int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
 static int SleepForRequest(const KernelTimespec* rqtp, bool cancellable) {
     constexpr int guestFault = 14;
     constexpr int guestInvalid = 22;
-    if (rqtp == nullptr) return guestFault;
+    KernelTimespec request{};
+    const int savedErrno = errno;
+    const bool readable = ReadGuestTime(&request, rqtp, sizeof(request));
+    errno = savedErrno;
+    if (!readable) return guestFault;
+    rqtp = &request;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
     constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
@@ -901,4 +906,8 @@ unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
     return 0;
 }
 
+}
+
+namespace {
+const bool clockResolutionRegistered = (RegisterClockGetres_nid_no_patch(&sceKernelClockGetres), true);
 }

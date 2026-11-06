@@ -32,6 +32,9 @@ extern std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIw
 extern std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18];
+extern std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[13];
+extern std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11];
+extern std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9];
 
 }
 
@@ -86,6 +89,7 @@ static void CheckCollateVtableObject() {
     const auto* vtable = reinterpret_cast<const GuestLocale::CollateVtable*>(&_ZTVSt7collateIcE_nid_postfix[2]);
     GuestLocale::CollateFacet facet{};
     facet.base.references = 0;
+    facet.base.vtable = &vtable->facet;
     vtable->facet.destroy(&facet.base);
     vtable->facet.retain(&facet.base);
     Require(facet.base.references == 1);
@@ -96,7 +100,37 @@ static void CheckCollateVtableObject() {
     GuestLocale::String result{};
     Require(vtable->transform(&result, &facet, "abc", "abc" + 3) == &result);
     Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "abc", 3) == 0);
+    Require(_ZNKSt7collateIcE9transformEPKcS2__nid_postfix(&result, &facet, "xyz", "xyz" + 3) == &result);
+    Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "xyz", 3) == 0);
     Require(vtable->hash(&facet, "abc", "abc" + 3) == -1792535898324117685LL);
+}
+
+static void CheckNumpunctVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt8numpunctIcE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
+static void CheckMessagesVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt8messagesIcE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
+static void CheckCodecvtVtableObject() {
+    Require(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) == kCodecvtCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
 }
 
 static void CheckGuestCalls() {
@@ -539,6 +573,16 @@ static void CheckCtypeVtableObject() {
     }
 }
 
+static void CheckTimePutVtableObject() {
+    Require(sizeof(_ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kTimePutCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 static void CheckNumPutVtableObject() {
     Require(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
@@ -576,6 +620,16 @@ static void CheckTimeGetWideVtableObject() {
     }
 }
 
+static void CheckMoneyGetVtableObject() {
+    Require(sizeof(_ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kMoneyGetCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -606,6 +660,11 @@ int main() {
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
     CheckWideCtypeVtableObject();
+    CheckCodecvtVtableObject();
+    CheckTimePutVtableObject();
+    CheckMoneyGetVtableObject();
+    CheckNumpunctVtableObject();
+    CheckMessagesVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
