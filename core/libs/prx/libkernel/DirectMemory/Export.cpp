@@ -36,6 +36,7 @@
 #include <iterator>
 #include <map>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -222,6 +223,16 @@ void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len) {
     _releaseFlexible(address, len);
 }
 
+size_t DirectMemorySize() {
+    static const size_t size = [] {
+        if (std::getenv("APS5_DIRECT_MEMORY_FROM_FLEXIBLE") == nullptr) return DIRECT_MEMORY_SIZE;
+        const size_t flexible = _configuredFlexibleSize();
+        if (flexible >= GAME_MEMORY_SIZE) throw std::runtime_error("param.json kernel.flexibleMemorySize leaves no direct memory");
+        return GAME_MEMORY_SIZE - flexible;
+    }();
+    return size;
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
@@ -229,11 +240,11 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search
   || (len & (PS5_PAGE_SIZE - 1)) || !phys_addr_out
   || (alignment != 0 && (alignment & (PS5_PAGE_SIZE - 1))))
   return SCE_KERNEL_ERROR_EINVAL;
- return DirectMemoryAlloc(search_start, search_end, len, alignment, memory_type, phys_addr_out);
+ return DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
- return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DIRECT_MEMORY_SIZE), len, alignment, memory_type, phys_addr_out);
+ return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DirectMemorySize()), len, alignment, memory_type, phys_addr_out);
 }
 
 int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
@@ -243,7 +254,7 @@ int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t search_start, int64_t 
 int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
  int64_t start = 0;
  size_t size = 0;
- const int result = DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size);
+ const int result = DirectMemoryLargestFree(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), alignment, &start, &size);
  if (result != 0) return result;
  if (phys_addr_out && !GuestCopyOut_nid_no_patch(phys_addr_out, &start, sizeof(start))) return SCE_KERNEL_ERROR_EFAULT;
  if (size_out && !GuestCopyOut_nid_no_patch(size_out, &size, sizeof(size))) return SCE_KERNEL_ERROR_EFAULT;
@@ -274,7 +285,7 @@ int APS5_VABI sceKernelGetDirectMemoryType(int64_t offset, int* memory_type, int
 }
 
 size_t APS5_VABI sceKernelGetDirectMemorySize(void) {
- return DIRECT_MEMORY_SIZE;
+ return DirectMemorySize();
 }
 
 int APS5_VABI sceKernelEnableDmemAliasing(void) {
