@@ -110,7 +110,7 @@ class StubGeneratorTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(Path(stubgen.__file__)), "--module", "libSceTest",
                      "--nids", str(nids), "--out", str(code), "--td-out", str(debt)],
-                    capture_output=True, text=True)
+                    capture_output=True, encoding="utf-8")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(code.read_bytes(), b"original code\n")
