@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -90,6 +91,21 @@ std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* str
     io->accumulator = LoadBigEndian(io->start);
     io->bitsUsed = 0;
     io->mask = ~static_cast<std::int32_t>(8192) & ~std::int32_t{1};
+    io->stream = stream;
+    return 0;
+}
+
+std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream) {
+    State(io, __func__);
+    Require(stream && stream->getPosition, __func__, "missing stream position callback");
+    stream->getPosition(stream, &io->referenceOffset);
+    const auto address = reinterpret_cast<std::uintptr_t>(io);
+    if (address < 8192) NotImplemented_nid_no_patch(__func__);
+    io->start = reinterpret_cast<std::uint8_t*>(address - 8192);
+    io->current = io->start;
+    io->accumulator = 0;
+    io->bitsUsed = 0;
+    io->mask = ~8192;
     io->stream = stream;
     return 0;
 }
