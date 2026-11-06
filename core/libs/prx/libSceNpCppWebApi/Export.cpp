@@ -4117,6 +4117,12 @@ static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const st
     void* object = std::calloc(1, size);
     if (object == nullptr) return MatchesOutOfMemory;
     ReferenceCount(object, ReferenceCountOffset).store(1);
+    try {
+        ReleaseIntrusivePtr(out, ReferenceCountOffset, __func__);
+    } catch (...) {
+        std::free(object);
+        throw;
+    }
     out->object = object;
     out->deleter = deleter;
     out->libContext = const_cast<void*>(context);
