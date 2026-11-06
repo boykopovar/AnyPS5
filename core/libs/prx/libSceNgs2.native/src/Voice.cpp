@@ -806,7 +806,7 @@ static Ngs2Voice* PatchDest(const Ngs2Voice& voice, const Ngs2VoicePatchParam& p
         APS5_INVALID_ARG_EX;
     }
     if (patch.dest_input_id != 0 &&
-        (dest->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || patch.dest_input_id >= dest->rack->maxInputs)) {
+        ((dest->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && dest->rack->rackId != SCE_NGS2_RACK_ID_SUBMIXER) || patch.dest_input_id >= dest->rack->maxInputs)) {
         throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented for this rack");
     }
     return dest;
