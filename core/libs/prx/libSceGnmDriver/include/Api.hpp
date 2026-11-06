@@ -20,7 +20,8 @@ int APS5_VABI sceGnmInsertPopMarker(std::uint32_t* cmd, std::uint32_t size);
 int APS5_VABI sceGnmInsertSetColorMarker();
 int APS5_VABI sceGnmInsertWaitFlipDone(std::uint32_t* cmd, std::uint32_t size, std::uint32_t handle, std::uint32_t index);
 int APS5_VABI sceGnmSubmitCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes, std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg);
+int APS5_VABI sceGnmSubmitAndFlipCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
+    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg);
 int APS5_VABI sceGnmSubmitDone();
 int APS5_VABI sceGnmAreSubmitsAllowed();
 void APS5_VABI sceGnmFlushGarlic();
@@ -49,4 +50,5 @@ int APS5_VABI sceGnmRequestMipStatsReportAndReset();
 int APS5_VABI sceGnmSetGsRingSizes();
 int APS5_VABI sceGnmSetupMipStatsReport();
 int APS5_VABI sceGnmUnmapComputeQueue();
+
 }

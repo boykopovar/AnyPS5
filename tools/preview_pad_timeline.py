@@ -27,7 +27,7 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        document = json.loads(args.timeline.read_text(encoding="utf-8"))
+        document = json.loads(args.timeline.read_text(encoding="utf-8-sig"))
         result = preview(document, args.repeat, args.gap_ms)
     except (OSError, ValueError, RecursionError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")

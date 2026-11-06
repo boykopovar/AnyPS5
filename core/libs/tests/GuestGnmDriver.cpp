@@ -1,6 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
-#include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
+#include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <cstdint>
