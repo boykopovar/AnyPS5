@@ -1159,6 +1159,11 @@ const short* APS5_VABI _Getptoupper_nid_postfix() {
     return g_upperTable.data() + 1;
 }
 
+mbstate_t* APS5_VABI _Getpmbstate_nid_postfix() {
+    thread_local mbstate_t state {};
+    return &state;
+}
+
 mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     thread_local mbstate_t state {};
     return &state;
