@@ -57,12 +57,13 @@ int main() {
     if (largestStorage[12] != std::byte{0x5a} || largestStorage[12 + 65531] != std::byte{0x5a}) return 31;
     if (largestStorage[4 + 65540] != std::byte{0xaa} || largestStorage[3] != std::byte{0xaa}) return 32;
 
-    const std::vector<std::byte> oversized(65533, std::byte{0x5a});
-    std::vector<std::byte> oversizedStorage(65540 + 8, std::byte{0xaa});
-    const auto oversizedWords = sceAgcDriverNopDataWritePacket(oversizedStorage.data() + 4, 0x55667788, oversized.data(), 65533);
-    if (oversizedWords != 0) return 33;
-    for (const auto value : oversizedStorage) {
-        if (value != std::byte{0xaa}) return 34;
-    }
+    const std::vector<std::byte> wrapped(65536, std::byte{0x5a});
+    std::vector<std::byte> wrappedStorage(65544 + 8, std::byte{0xaa});
+    const auto wrappedWords = sceAgcDriverNopDataWritePacket(wrappedStorage.data() + 4, 0x55667788, wrapped.data(), 65536);
+    std::memcpy(&header, wrappedStorage.data() + 4, sizeof(header));
+    std::memcpy(&address, wrappedStorage.data() + 8, sizeof(address));
+    if (wrappedWords != 16386 || header != 0xc0001000U || address != 0x55667788U) return 33;
+    if (wrappedStorage[12] != std::byte{0x5a} || wrappedStorage[12 + 65535] != std::byte{0x5a}) return 34;
+    if (wrappedStorage[4 + 65544] != std::byte{0xaa} || wrappedStorage[3] != std::byte{0xaa}) return 35;
     return 0;
 }
