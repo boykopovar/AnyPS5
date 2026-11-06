@@ -18,6 +18,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WTF language exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLanguage.cpp) call language change observers in registration order; the console iterates a `HashMap` keyed by context in hash-table order. The 16-byte `Vector<String>` layout and the rest of the behavior follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Language.cpp) and have no console verification. Null and `-1` contexts and null observers throw instead of reproducing undefined behavior. Closes when: compared with a console module.
 
+- [Inspector::FrontendRouter](../../../core/libs/prx/libSceNKWebKit/src/InspectorFrontendRouter.cpp) and [AgentRegistry](../../../core/libs/prx/libSceNKWebKit/src/InspectorAgentRegistry.cpp) exports have no console verification. They call guest `FrontendChannel` and `InspectorAgentBase` objects through vtable slots taken from the [PS5 11.x WebKit headers](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/inspector) (destructor pair first, then declaration order), and use the 40- and 16-byte layouts and the `Vector` growth rule of that source. A null channel or agent throws where the console would crash. A callback that connects, disconnects or changes agents during dispatch iterates the vector exactly as the console does, which is undefined there when the vector reallocates. Closes when: compared with a console module.
+
 ### Functional
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 
@@ -60,7 +62,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6561 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6541 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -4623,12 +4625,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc9Allocator12allocateImplEmmNS_13FailureActionE` | `CYJC0YsH4u4` |
 | `_ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm` | `e6cCjttumPM` |
 | `_ZN7bmalloc9Scavenger8scheduleEm` | `KYfHQoyY9Uc` |
-| `_ZN9Inspector13AgentRegistry13discardValuesEv` | `BGd4bkSC3gA` |
-| `_ZN9Inspector13AgentRegistry27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE` | `HQayaNjjt4w` |
-| `_ZN9Inspector13AgentRegistry29willDestroyFrontendAndBackendENS_16DisconnectReasonE` | `MxGDaM0UkSY` |
-| `_ZN9Inspector13AgentRegistryC2Ev` | `U2-E1yYvnxw` |
-| `_ZN9Inspector13AgentRegistryD1Ev` | `2+U7T3s-8fw` |
-| `_ZN9Inspector13AgentRegistryD2Ev` | `IPKTmjbeQ6M` |
 | `_ZN9Inspector14ConsoleMessage13addToFrontendERNS_25ConsoleFrontendDispatcherERNS_21InjectedScriptManagerEb` | `qO-gljTv7Dk` |
 | `_ZN9Inspector14ConsoleMessage14incrementCountEv` | `uIIZREKsTQU` |
 | `_ZN9Inspector14ConsoleMessage20autogenerateMetadataEPN3JSC14JSGlobalObjectE` | `v6I4XZYurCw` |
@@ -4638,14 +4634,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector14ConsoleMessageD2Ev` | `JHSSw7eLWAg` |
 | `_ZN9Inspector14ConsoleMessagenaEmPv` | `M7c9P1DiVjE` |
 | `_ZN9Inspector14ConsoleMessagenwEmPv` | `lWzHkMyiyp0` |
-| `_ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE` | `Q4f93lSW0lk` |
-| `_ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE` | `9Z0gNNdVsQo` |
-| `_ZN9Inspector14FrontendRouter22disconnectAllFrontendsEv` | `PbJcgQdU4CY` |
-| `_ZN9Inspector14FrontendRouter6createEv` | `qyzUBXXLwfw` |
-| `_ZN9Inspector14FrontendRouterC1Ev` | `uffEeeP+lNU` |
-| `_ZN9Inspector14FrontendRouterC2Ev` | `yMsrqRsZRLs` |
-| `_ZN9Inspector14FrontendRouterD1Ev` | `KLHGwPPGQEA` |
-| `_ZN9Inspector14FrontendRouterD2Ev` | `EbP8tz9rbWs` |
 | `_ZN9Inspector14InjectedScript13inspectObjectEN3JSC7JSValueE` | `WCV0pmdA2pI` |
 | `_ZN9Inspector14InjectedScript13releaseObjectERKN3WTF6StringE` | `7+XbDOTe2S0` |
 | `_ZN9Inspector14InjectedScript13setEventValueEN3JSC7JSValueE` | `m-aLrxrcxzA` |
@@ -6257,12 +6245,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK9Inspector14ConsoleMessage7isEqualEPS0_` | `86w9gD5145M` |
 | `_ZNK9Inspector14ConsoleMessage7messageEv` | `488namPY+tQ` |
 | `_ZNK9Inspector14ConsoleMessage9argumentsEv` | `Bd-EIoPzXJs` |
-| `_ZNK9Inspector14FrontendRouter12hasFrontendsEv` | `lcLx31xx-4M` |
-| `_ZNK9Inspector14FrontendRouter12sendResponseERKN3WTF6StringE` | `qKUojuHYhw8` |
-| `_ZNK9Inspector14FrontendRouter13frontendCountEv` | `YcsTWpdaG28` |
-| `_ZNK9Inspector14FrontendRouter16hasLocalFrontendEv` | `85Dwu5xralY` |
-| `_ZNK9Inspector14FrontendRouter17hasRemoteFrontendEv` | `vfj-qG-ZQx8` |
-| `_ZNK9Inspector14FrontendRouter9sendEventERKN3WTF6StringE` | `wtSeaM-ASQM` |
 | `_ZNK9Inspector14InjectedScript10wrapObjectEN3JSC7JSValueERKN3WTF6StringEb` | `1n43cN8DP6E` |
 | `_ZNK9Inspector14InjectedScript12previewValueEN3JSC7JSValueE` | `y7LneQXMe7E` |
 | `_ZNK9Inspector14InjectedScript14findObjectByIdERKN3WTF6StringE` | `cFOaAP9V4YE` |
