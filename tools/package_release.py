@@ -76,6 +76,8 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
     licenses = []
+    if "libSceJemspace.prx" in expected:
+        licenses.append((ROOT / "3rdparty/jemalloc/COPYING", "libs/licenses/jemalloc.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
