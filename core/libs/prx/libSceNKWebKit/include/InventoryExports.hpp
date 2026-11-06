@@ -126,14 +126,8 @@ int APS5_VABI WKBundleGarbageCollectJavaScriptObjectsOnAlternateThreadForDebuggi
 int APS5_VABI WKBundleGarbageCollectJavaScriptObjects();
 int APS5_VABI WKBundleGetApplicationConnection();
 int APS5_VABI WKBundleGetJavaScriptObjectsCount();
-int APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL();
-int APS5_VABI WKBundleHitTestResultCopyAbsoluteLinkURL();
-int APS5_VABI WKBundleHitTestResultCopyAbsoluteMediaURL();
-int APS5_VABI WKBundleHitTestResultCopyAbsolutePDFURL();
 int APS5_VABI WKBundleHitTestResultCopyImage();
-int APS5_VABI WKBundleHitTestResultCopyLinkLabel();
 int APS5_VABI WKBundleHitTestResultCopyLinkSuggestedFilename();
-int APS5_VABI WKBundleHitTestResultCopyLinkTitle();
 int APS5_VABI WKBundleHitTestResultCopyNodeHandle();
 int APS5_VABI WKBundleHitTestResultCopyURLElementHandle();
 int APS5_VABI WKBundleHitTestResultGetFrame();
@@ -4049,7 +4043,6 @@ int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager30applicationWillEnterFore
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager31setShouldDeactivateAudioSessionEb();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager32setIsPlayingToAutomotiveHeadUnitEb();
 int APS5_VABI _ZN7WebCore27parseCacheControlDirectivesERKNS_13HTTPHeaderMapE();
-int APS5_VABI _ZN7WebCore27parseHTMLNonNegativeIntegerEN3WTF10StringViewE();
 int APS5_VABI _ZN7WebCore27screenSupportsExtendedColorEPNS_6WidgetE();
 int APS5_VABI _ZN7WebCore27withinTextUnitOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE();
 int APS5_VABI _ZN7WebCore28BackingStoreBackendCairoImplC1ERKNS_7IntSizeEf();
