@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libSceAjmi/include/Api.hpp"
 #include <cstdint>
@@ -64,9 +65,10 @@ int APS5_VABI sceAjmiBatchWait() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiBatchJobInlineBuffer() {
+int APS5_VABI libSceAjmiUnknown_4MsUK9kAnKg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
+APS5_EXPORT("4MsUK9kAnKg", libSceAjmiUnknown_4MsUK9kAnKg_nid_no_patch);
 
 int APS5_VABI sceAjmiModuleUnregister() {
     NotImplemented_nid_no_patch(__func__);
@@ -128,9 +130,10 @@ int APS5_VABI sceAjmiModuleRegister() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiBatchJobRunBufferRa() {
+int APS5_VABI libSceAjmiUnknown_m0xisYC6U2w_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
+APS5_EXPORT("m0xisYC6U2w", libSceAjmiUnknown_m0xisYC6U2w_nid_no_patch);
 
 int APS5_VABI sceAjmiInstanceCreate() {
     NotImplemented_nid_no_patch(__func__);
