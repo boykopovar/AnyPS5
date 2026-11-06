@@ -9,6 +9,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include "mbedtls/des.h"
 
@@ -16,6 +17,25 @@ namespace {
 
 constexpr std::size_t DesScheduleBytes = 128;
 constexpr int CryptoNumLocks = 41;
+constexpr int EvpLibrary = 6;
+constexpr int EvpAnyFunction = 0xfff;
+constexpr int EvpInputNotInitialized = 111;
+
+struct PkeyMethodPrefix {
+    std::int32_t pkeyId;
+    std::int32_t flags;
+    void* beforeVerifyContext[16];
+    void* verifyContext;
+};
+
+struct PkeyContextPrefix {
+    PkeyMethodPrefix* method;
+};
+
+static_assert(sizeof(PkeyMethodPrefix) == 144);
+static_assert(offsetof(PkeyMethodPrefix, verifyContext) == 136);
+static_assert(sizeof(PkeyContextPrefix) == 8);
+static_assert(offsetof(PkeyContextPrefix, method) == 0);
 
 static_assert(sizeof(CryptoThreadId) == 16);
 
@@ -212,9 +232,25 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void) {
+int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(EvpMdContext* context, unsigned char*, std::size_t) {
+    if (!context) NotImplemented_nid_no_patch(__func__);
+    void* pkeyContext = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&pkeyContext, &context->pkeyContext, sizeof(pkeyContext)) || !pkeyContext)
+        NotImplemented_nid_no_patch(__func__);
+    PkeyMethodPrefix* method = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&method, pkeyContext, sizeof(method)) || !method)
+        NotImplemented_nid_no_patch(__func__);
+    void* verifyContext = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&verifyContext, &method->verifyContext, sizeof(verifyContext)))
+        NotImplemented_nid_no_patch(__func__);
+    const EvpMd* digest = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&digest, &context->digest, sizeof(digest)))
+        NotImplemented_nid_no_patch(__func__);
+    if (!digest) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, EvpAnyFunction, EvpInputNotInitialized, __FILE__, __LINE__);
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI EVP_DigestVerifyInit_nid_postfix(void) {
