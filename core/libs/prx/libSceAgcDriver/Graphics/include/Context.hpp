@@ -249,6 +249,7 @@ struct Context {
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
+    bool wideLines = false;
     bool maintenance5 = false;
     bool storageImageMultisample = false;
     bool storageImageWriteWithoutFormat = false;
