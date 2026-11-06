@@ -83,6 +83,7 @@ int Submit(void* handle, std::uint32_t dwords, bool blocking, const std::functio
     std::lock_guard lock(g_mutex);
     if (!handle) return SdmaErrorInvalidArgument;
     SdmaSlot& slot = *static_cast<SdmaSlot*>(handle);
+    if (!slot.open) return SdmaErrorInvalidArgument;
     if (!Fits(slot, dwords)) {
         if (!blocking) return SdmaErrorRingFull;
         FlushAll(slot);
