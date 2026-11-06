@@ -754,6 +754,7 @@ static bool SeekTargetBeforeStart(FILE* native, std::int64_t offset, int origin)
     std::int64_t base = 0;
     if (origin != SEEK_SET) {
         const int saved = errno;
+        if (origin == SEEK_END && std::fflush(native) != 0) { errno = saved; return false; }
         base = origin == SEEK_CUR ? _ftelli64(native) : _filelengthi64(_fileno(native));
         errno = saved;
         if (base < 0) return false;
