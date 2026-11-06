@@ -683,6 +683,10 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
 }
 
 const char* createHostPointerImport(const Context& context, HostImport& entry, VkResult& failure) {
+    if (!context.hostPointerImport) {
+        failure = VK_ERROR_EXTENSION_NOT_PRESENT;
+        return "VK_EXT_external_memory_host";
+    }
     void* const host = entry.alias != nullptr ? entry.alias : reinterpret_cast<void*>(entry.base);
     VkMemoryHostPointerPropertiesEXT pointer{VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
     if (const auto result = context.Function<PFN_vkGetMemoryHostPointerPropertiesEXT>("vkGetMemoryHostPointerPropertiesEXT")(context.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host, &pointer); result != VK_SUCCESS) {
