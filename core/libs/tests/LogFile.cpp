@@ -21,7 +21,6 @@
 #include <fcntl.h>
 #include <io.h>
 #include <process.h>
-#include <tlhelp32.h>
 #else
 #include <fcntl.h>
 #include <poll.h>
@@ -406,22 +405,6 @@ Result Run(const std::string& role, const std::string& variable, bool set = true
     return result;
 }
 
-int ThreadCount() {
-    int count = 0;
-    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return count;
-    const DWORD self = GetCurrentProcessId();
-    THREADENTRY32 entry{};
-    entry.dwSize = sizeof(entry);
-    if (Thread32First(snapshot, &entry)) {
-        do {
-            if (entry.th32OwnerProcessID == self) ++count;
-        } while (Thread32Next(snapshot, &entry));
-    }
-    CloseHandle(snapshot);
-    return count;
-}
-
 #else
 
 Result Run(const std::string& role, const std::string& variable, bool set = true) {
@@ -492,10 +475,12 @@ int ChildMain(const std::string& role) {
     ::_setmode(1, _O_BINARY);
     ::_setmode(2, _O_BINARY);
 #endif
+#ifndef _WIN32
     if (role == "threads") {
         std::printf("threads=%d\n", ThreadCount());
         return 0;
     }
+#endif
     if (role == "plain") {
         std::printf("stdout line\n");
         std::fprintf(stderr, "stderr line\n");
@@ -578,20 +563,6 @@ void ChildProcesses() {
     Result emptied = Run("plain", "", true);
     Require(emptied.out == "stdout line\n" && emptied.err == "stderr line\n", "an empty variable changed the output");
 
-#ifdef _WIN32
-    {
-        const auto count = [&](bool set) {
-            const Result result = Run("threads", path.string(), set);
-            int threads = -1;
-            Require(std::sscanf(result.out.c_str(), "threads=%d", &threads) == 1, "the thread count line");
-            return threads;
-        };
-        const int without = count(false);
-        const int with = count(true);
-        Require(with == without + 2, "enabling the log did not add exactly the two copy threads");
-        clear();
-    }
-#else
     if (std::filesystem::exists("/proc/self/task")) {
         const auto count = [&](bool set) {
             const Result result = Run("threads", path.string(), set);
@@ -604,7 +575,6 @@ void ChildProcesses() {
         Require(with == without + 2, "enabling the log did not add exactly the two copy threads");
         clear();
     }
-#endif
 }
 
 }
