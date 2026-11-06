@@ -448,17 +448,18 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
     const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
     const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
+    std::vector<UnusedNidFilter::StrictCodeRegion> unwindFunctions;
     if (hasEhFrame) {
-        const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
-        for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
+        unwindFunctions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
+        for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
         if (sceImage)
             for (std::size_t index = 0; index < executableSegments.size(); ++index) {
                 auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
                 static_cast<void>(segmentFileOffset);
-                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, unwindFunctions, gotVAddr, dynJmpRelSize))
                     segment.resize(*codeEnd - segmentVAddr);
-                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
+                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, unwindFunctions);
             }
     }
 
@@ -543,6 +544,10 @@ RelinkResult RelinkerPipeline::Relink() {
             if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
+    }
+    for (const auto& function : unwindFunctions) {
+        exportedFunctions.push_back(function.Begin);
+        for (const auto target : function.ExtraTargets) exportedFunctions.push_back(target);
     }
 
     progress.Report({Domain::ProgressStage::Imports, {}, 0, 1});
