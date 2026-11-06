@@ -11,7 +11,11 @@
 namespace NKWebKit {
 
 class ProcessPool : public ObjectOf<ObjectType::ProcessPool> {};
-class Page : public ObjectOf<ObjectType::Page> {};
+class Page : public ObjectOf<ObjectType::Page> {
+public:
+    bool canGoBack = false;
+    bool canGoForward = false;
+};
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
