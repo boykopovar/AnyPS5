@@ -622,6 +622,38 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestBundleScriptWorld() {
+    Require(WKBundleScriptWorldGetTypeID() == 127);
+    const void* normal = WKBundleScriptWorldNormalWorld();
+    Require(normal != nullptr);
+    Require(WKGetTypeID(normal) == WKBundleScriptWorldGetTypeID());
+    auto* normalName = WKBundleScriptWorldCopyName(normal);
+    Require(normalName != nullptr);
+    Require(WKStringIsEqualToUTF8CString(normalName, ""));
+    WKRelease(normalName);
+
+    auto world = NKWebKit::Make<NKWebKit::BundleScriptWorld>();
+    const void* ref = world.Get();
+    auto* unsetWorldName = WKBundleScriptWorldCopyName(ref);
+    Require(unsetWorldName != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetWorldName, ""));
+    WKRelease(unsetWorldName);
+
+    world->name = NKWebKit::String::FromUtf8("CustomWorld");
+    auto* name = WKBundleScriptWorldCopyName(ref);
+    Require(name != nullptr);
+    Require(WKStringIsEqualToUTF8CString(name, "CustomWorld"));
+    WKRelease(name);
+
+    bool threw = false;
+    try {
+        WKBundleScriptWorldCopyName(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -874,6 +906,7 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestBundleScriptWorld();
     TestBundleHitTestResult();
     TestDownload();
     TestAXObject();

@@ -301,6 +301,7 @@ if(BUILD_TESTING)
     add_test_executable(elf_reader_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfReaderBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp)
+    target_link_libraries(elf_reader_bounds_tests PRIVATE relinker_core)
     target_include_directories(elf_reader_bounds_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
