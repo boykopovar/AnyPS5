@@ -2035,12 +2035,12 @@ static void DestroyHostString(void* field) {
 
 static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* source, const char* function) {
     VectorBody* body = VectorBodyFor(self, 2, function);
-    if (body == nullptr) return ParameterAllocationFailed;
+    if (body == nullptr) return ParameterOutOfMemory;
     if (self->libContext == nullptr) self->libContext = source->libContext;
     const auto* sourceBody = static_cast<const VectorBody*>(source->object);
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
-        return ParameterAllocationFailed;
+        return ParameterOutOfMemory;
     }
     if (sourceBody != nullptr && body == sourceBody) return 0;
     auto* elements = static_cast<CommonString*>(body->elements);
@@ -2048,7 +2048,7 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
     body->size = 0;
     const std::uint64_t count = sourceBody != nullptr ? sourceBody->size : 0;
     if (count == 0) return 0;
-    if (!VectorReserve(body, sizeof(CommonString), count)) return ParameterAllocationFailed;
+    if (!VectorReserve(body, sizeof(CommonString), count)) return ParameterOutOfMemory;
     elements = static_cast<CommonString*>(body->elements);
     const auto* sourceElements = static_cast<const CommonString*>(sourceBody->elements);
     for (std::uint64_t index = 0; index < count; ++index) {
@@ -2062,7 +2062,7 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
             copy.buffer = static_cast<char*>(std::malloc(length));
             if (copy.buffer == nullptr) {
                 body->size = index;
-                return ParameterAllocationFailed;
+                return ParameterOutOfMemory;
             }
             std::memcpy(copy.buffer, sourceElements[index].buffer, length);
             copy.bufferSize = length;
