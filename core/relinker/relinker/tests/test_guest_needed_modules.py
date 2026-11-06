@@ -234,7 +234,7 @@ def check_unavailable_unused(relinker, work):
         source = case / "input.elf"
         source.write_bytes(main_fixture())
         (case / "prx" / "consumer.prx").write_bytes(unused)
-        run_path = f"{first}:{second}"
+        run_path = "$ORIGIN/first:$ORIGIN/second"
         output_path = case / "output.elf"
         result = subprocess.run([str(relinker), "--rpath", run_path, *omit, str(source), str(output_path)],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30)

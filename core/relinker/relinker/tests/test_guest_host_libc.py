@@ -76,7 +76,7 @@ def main():
                 provider_directory = (first, second)[provider_index]
                 provider_directory.mkdir(parents=True, exist_ok=True)
                 (provider_directory / "libkernel_sys.prx").write_bytes(b"provider")
-            run_path = f"{first}:{second}"
+            run_path = "$ORIGIN/first:$ORIGIN/second"
             needed = convert(relinker, case, ("libkernel.prx",), ["other.prx"],
                              ["--rpath", run_path])
             assert ("libkernel_sys.prx" in needed) == expected, (label, needed)
