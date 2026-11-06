@@ -35,6 +35,7 @@ constexpr std::size_t MovedStackBytes = std::size_t {16} << 20;
 std::atomic<bool> mainLoopRunning {false};
 GuestStart guestStart;
 HostStack oldStack;
+std::uintptr_t keptLow = 0;
 std::size_t guestStackBytes = 0;
 
 void* RunGuest(void* argument) {
@@ -49,11 +50,14 @@ void KeepAlive(CFRunLoopTimerRef, void*) {}
 
 [[noreturn]] void ServeMainQueue(void*) {
     if (oldStack.high != oldStack.low) {
-        if (mach_vm_deallocate(mach_task_self(), oldStack.low, oldStack.high - oldStack.low) != KERN_SUCCESS) {
-            std::fprintf(stderr, "cannot release the host stack\n");
-            std::abort();
+        const std::uintptr_t end = keptLow > oldStack.low && keptLow < oldStack.high ? keptLow : oldStack.high;
+        if (end > oldStack.low) {
+            if (mach_vm_deallocate(mach_task_self(), oldStack.low, end - oldStack.low) != KERN_SUCCESS) {
+                std::fprintf(stderr, "cannot release the host stack\n");
+                std::abort();
+            }
+            GuestArena::GuestArenaReleaseHostRegion_nid_no_patch(reinterpret_cast<void*>(oldStack.low), end - oldStack.low);
         }
-        GuestArena::GuestArenaReleaseHostRegion_nid_no_patch(reinterpret_cast<void*>(oldStack.low), oldStack.high - oldStack.low);
     }
     pthread_attr_t attributes;
     if (pthread_attr_init(&attributes) != 0) std::abort();
@@ -124,6 +128,13 @@ void* CopyBlock(void* block) {
     return copy;
 }
 
+std::uintptr_t ProcessStartBlockLow() {
+    const auto argv = reinterpret_cast<std::uintptr_t>(*_NSGetArgv());
+    if (argv <= oldStack.low || argv >= oldStack.high) return 0;
+    const auto page = static_cast<std::uintptr_t>(getpagesize());
+    return (argv - sizeof(char*)) & ~(page - 1);
+}
+
 [[noreturn]] void RunOnStack(void* top, void (*function)(void*)) {
     asm volatile("mov %0, %%rsp\n\txor %%edi, %%edi\n\tcall *%1\n\tud2" : : "r"(top), "r"(function) : "rdi", "memory");
     __builtin_unreachable();
@@ -146,6 +157,7 @@ void MoveHostStack() {
         oldStack = {};
         return;
     }
+    keptLow = ProcessStartBlockLow();
     guestStart.block = CopyBlock(guestStart.block);
     *_NSGetEnviron() = CopyStrings(*_NSGetEnviron());
     *_NSGetArgv() = CopyStrings(*_NSGetArgv());
