@@ -175,7 +175,7 @@ int APS5_VABI sceCamera2GetCalibrationData(void);
 int APS5_VABI sceCameraAudioGetData(void* data);
 int APS5_VABI sceCamera2SetHue(void);
 int APS5_VABI sceCamera2GetGamma(void);
-int APS5_VABI sceCameraGetCalibData(void);
+int APS5_VABI sceCameraGetCalibData(std::int32_t id, void* calibData, void* reserved);
 int APS5_VABI sceCameraWaitForEveReady(void);
 int APS5_VABI sceCameraGetRegistryInfo(void* registryInfo);
 int APS5_VABI sceCameraAudioGetData2(void* data);

@@ -225,7 +225,14 @@ int APS5_VABI sceCamera2GetGamma(void) {
     return 0;
 }
 
-int APS5_VABI sceCameraGetCalibData(void) {
+int APS5_VABI sceCameraGetCalibData(std::int32_t id, void* calibData, void* reserved) {
+    (void)reserved;
+    if (calibData == nullptr) {
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (id != 1 && id != 2) {
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
