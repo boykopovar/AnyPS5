@@ -9,8 +9,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using WKPoint = NKWebKit::PointValue;
@@ -342,6 +345,110 @@ static void TestUserContentURLPattern() {
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
+
+    auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
+        NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
+        NKWebKit::String::FromUtf8("image/png"),
+        200,
+        NKWebKit::String::FromUtf8("test.png"),
+        true,
+        123456789LL
+    );
+    const void* responseRef = NKWebKit::ToRef(responseObj);
+
+    auto* url = WKURLResponseCopyURL(responseRef);
+    auto* urlString = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/test.png"));
+    WKRelease(urlString);
+    WKRelease(url);
+
+    auto* mime = WKURLResponseCopyMIMEType(responseRef);
+    Require(WKStringIsEqualToUTF8CString(mime, "image/png"));
+    WKRelease(mime);
+
+    Require(WKURLResponseHTTPStatusCode(responseRef) == 200);
+
+    auto* filename = WKURLResponseCopySuggestedFilename(responseRef);
+    Require(WKStringIsEqualToUTF8CString(filename, "test.png"));
+    WKRelease(filename);
+
+    Require(WKURLResponseIsAttachment(responseRef));
+    Require(WKURLResponseGetExpectedContentLength(responseRef) == 123456789u);
+    WKRelease(responseRef);
+
+    for (const auto& [stored, expected] : {std::pair<std::int64_t, std::uint32_t>{4294967297LL, 1u}, std::pair<std::int64_t, std::uint32_t>{-1LL, std::numeric_limits<std::uint32_t>::max()}}) {
+        auto lengthObj = NKWebKit::Make<NKWebKit::URLResponse>(NKWebKit::Make<NKWebKit::URL>("https://example.com/"), NKWebKit::String::FromUtf8(""), 200, NKWebKit::String::FromUtf8(""), false, stored);
+        const void* lengthRef = NKWebKit::ToRef(lengthObj);
+        Require(WKURLResponseGetExpectedContentLength(lengthRef) == expected);
+        WKRelease(lengthRef);
+    }
+
+    auto defaultObj = NKWebKit::Make<NKWebKit::URLResponse>();
+    const void* defaultRef = NKWebKit::ToRef(defaultObj);
+
+    Require(WKURLResponseCopyURL(defaultRef) == nullptr);
+
+    auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
+    Require(WKStringIsEmpty(emptyMime));
+    WKRelease(emptyMime);
+
+    Require(WKURLResponseHTTPStatusCode(defaultRef) == 0);
+
+    auto* emptyFilename = WKURLResponseCopySuggestedFilename(defaultRef);
+    Require(WKStringIsEmpty(emptyFilename));
+    WKRelease(emptyFilename);
+
+    Require(!WKURLResponseIsAttachment(defaultRef));
+    Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
+    WKRelease(defaultRef);
+
+    bool threw = false;
+    try {
+        WKURLResponseCopyURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseCopyMIMEType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseHTTPStatusCode(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseCopySuggestedFilename(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseIsAttachment(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseGetExpectedContentLength(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void TestError() {
@@ -349,6 +456,168 @@ static void TestError() {
     auto* domain = WKErrorCopyWKErrorDomain();
     Require(WKStringIsEqualToUTF8CString(domain, "WebKitErrorDomain"));
     WKRelease(domain);
+}
+
+static void TestHitTestResult() {
+    Require(WKHitTestResultGetTypeID() == 63);
+    auto hit = NKWebKit::Make<NKWebKit::HitTestResult>();
+    hit->absoluteImageURL = "https://example.com/img.png";
+    hit->absoluteLinkURL = "https://example.com/link";
+    hit->absoluteMediaURL = "https://example.com/media.mp4";
+    hit->absolutePDFURL = "https://example.com/doc.pdf";
+    hit->linkLabel = u"Click here";
+    hit->linkTitle = u"Title";
+    hit->lookupText = u"Search text";
+    hit->elementBoundingBox = WKRect{{1.0, 2.0}, {30.0, 40.0}};
+    hit->isContentEditable = true;
+
+    const void* ref = NKWebKit::ToRef(hit);
+    auto* imgUrl = WKHitTestResultCopyAbsoluteImageURL(ref);
+    Require(imgUrl != nullptr);
+    auto* imgUrlStr = WKURLCopyString(imgUrl);
+    Require(WKStringIsEqualToUTF8CString(imgUrlStr, "https://example.com/img.png"));
+    WKRelease(imgUrlStr);
+    WKRelease(imgUrl);
+
+    auto* linkUrl = WKHitTestResultCopyAbsoluteLinkURL(ref);
+    Require(linkUrl != nullptr);
+    auto* linkUrlStr = WKURLCopyString(linkUrl);
+    Require(WKStringIsEqualToUTF8CString(linkUrlStr, "https://example.com/link"));
+    WKRelease(linkUrlStr);
+    WKRelease(linkUrl);
+
+    auto* mediaUrl = WKHitTestResultCopyAbsoluteMediaURL(ref);
+    Require(mediaUrl != nullptr);
+    auto* mediaUrlStr = WKURLCopyString(mediaUrl);
+    Require(WKStringIsEqualToUTF8CString(mediaUrlStr, "https://example.com/media.mp4"));
+    WKRelease(mediaUrlStr);
+    WKRelease(mediaUrl);
+
+    auto* pdfUrl = WKHitTestResultCopyAbsolutePDFURL(ref);
+    Require(pdfUrl != nullptr);
+    auto* pdfUrlStr = WKURLCopyString(pdfUrl);
+    Require(WKStringIsEqualToUTF8CString(pdfUrlStr, "https://example.com/doc.pdf"));
+    WKRelease(pdfUrlStr);
+    WKRelease(pdfUrl);
+
+    auto* label = WKHitTestResultCopyLinkLabel(ref);
+    Require(WKStringIsEqualToUTF8CString(label, "Click here"));
+    WKRelease(label);
+
+    auto* title = WKHitTestResultCopyLinkTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Title"));
+    WKRelease(title);
+
+    auto* lookup = WKHitTestResultCopyLookupText(ref);
+    Require(WKStringIsEqualToUTF8CString(lookup, "Search text"));
+    WKRelease(lookup);
+
+    WKRect box = WKHitTestResultGetElementBoundingBox(ref);
+    Require(box.origin.x == 1.0 && box.origin.y == 2.0);
+    Require(box.size.width == 30.0 && box.size.height == 40.0);
+    Require(WKHitTestResultIsContentEditable(ref));
+
+    auto unset = NKWebKit::Make<NKWebKit::HitTestResult>();
+    const void* unsetRef = NKWebKit::ToRef(unset);
+    Require(WKHitTestResultCopyAbsoluteImageURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteLinkURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteMediaURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsolutePDFURL(unsetRef) == nullptr);
+    WKRelease(unsetRef);
+
+    bool threw = false;
+    try {
+        WKHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
+static void TestPopupMenuItem() {
+    Require(WKPopupMenuItemGetTypeID() == 131);
+    auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
+    const void* ref = item.Get();
+
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+    Require(WKPopupMenuItemCopyText(ref) == nullptr);
+
+    item->text = NKWebKit::String::FromUtf8("Option 1");
+    auto* text = WKPopupMenuItemCopyText(ref);
+    Require(text != nullptr);
+    Require(WKStringIsEqualToUTF8CString(text, "Option 1"));
+    WKRelease(text);
+
+    item->enabled = false;
+    Require(!WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->enabled = true;
+    item->isItem = false;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(!WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->isItem = true;
+    item->isSeparator = true;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(WKPopupMenuItemIsSeparator(ref));
+
+    bool threw = false;
+    try {
+        WKPopupMenuItemIsEnabled(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestOpenPanelResultListener() {
+    Require(WKOpenPanelResultListenerGetTypeID() == 80);
+
+    auto listener = NKWebKit::Make<NKWebKit::OpenPanelResultListener>();
+    const void* ref = listener.Get();
+
+    Require(!listener->cancelled);
+    Require(listener->chosenFiles.empty());
+
+    WKOpenPanelResultListenerCancel(ref);
+    Require(listener->cancelled);
+
+    auto urlObj = NKWebKit::Make<NKWebKit::URL>("file:///path/to/file.txt");
+    const void* urlValues[] = { urlObj.Get() };
+    const void* fileArray = WKArrayCreate(urlValues, 1);
+
+    WKOpenPanelResultListenerChooseFiles(ref, fileArray, nullptr);
+    Require(!listener->cancelled);
+    Require(listener->chosenFiles.size() == 1);
+    Require(listener->chosenFiles[0]->Utf8() == "/path/to/file.txt");
+    WKRelease(fileArray);
+
+    WKOpenPanelResultListenerChooseFiles(ref, nullptr, nullptr);
+    Require(listener->chosenFiles.empty());
+
+    bool threw = false;
+    try {
+        WKOpenPanelResultListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKOpenPanelResultListenerChooseFiles(nullptr, nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void TestCertificateInfo() {
@@ -373,6 +642,9 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestHitTestResult();
+    TestPopupMenuItem();
+    TestOpenPanelResultListener();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
