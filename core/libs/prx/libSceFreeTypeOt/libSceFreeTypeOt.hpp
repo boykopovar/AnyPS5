@@ -13,4 +13,6 @@ int APS5_VABI sceFreeTypeOtOpenTypeValidate_nid_no_patch();
 int APS5_VABI sceFreeTypeOtTrueTypeGXFree_nid_no_patch();
 int APS5_VABI sceFreeTypeOtTrueTypeGXValidate_nid_no_patch();
 
+int APS5_VABI FT_Trace_Get_Count_nid_no_patch();
+const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx);
 }
