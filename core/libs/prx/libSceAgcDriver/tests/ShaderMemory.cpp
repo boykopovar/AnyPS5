@@ -2483,6 +2483,7 @@ void verifyRegisteredViewsUnderUnrelatedChurn() {
     std::array<RegisteredImageView, 3> views{view, view, view};
     views[1].address = view.address + 4096u;
     views[2].address = view.address + 8192u;
+    const auto generationBefore = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     std::atomic<bool> stop{false};
     std::atomic<std::uint64_t> mutations{0};
     std::thread churn([&] {
@@ -2499,7 +2500,6 @@ void verifyRegisteredViewsUnderUnrelatedChurn() {
         }
     });
     std::uint32_t rejected = 0u;
-    const auto generationBefore = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     while (mutations.load(std::memory_order_relaxed) < 64u) std::this_thread::yield();
     for (std::uint32_t check = 0; check < Checks; ++check) {
         if (!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views)) ++rejected;

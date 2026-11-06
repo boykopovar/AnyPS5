@@ -622,6 +622,151 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestBundleHitTestResult() {
+    Require(WKBundleHitTestResultGetTypeID() == 120);
+    auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
+    const void* ref = hit.Get();
+
+    Require(WKBundleHitTestResultCopyAbsoluteImageURL(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyAbsoluteLinkURL(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyAbsoluteMediaURL(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyAbsolutePDFURL(ref) == nullptr);
+    auto* unsetLabel = WKBundleHitTestResultCopyLinkLabel(ref);
+    Require(unsetLabel != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetLabel, ""));
+    WKRelease(unsetLabel);
+    auto* unsetTitle = WKBundleHitTestResultCopyLinkTitle(ref);
+    Require(unsetTitle != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetTitle, ""));
+    WKRelease(unsetTitle);
+
+    hit->absoluteImageURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/img.png");
+    hit->absoluteLinkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/link");
+    hit->absoluteMediaURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/media.mp4");
+    hit->absolutePDFURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/doc.pdf");
+    hit->linkLabel = NKWebKit::String::FromUtf8("Example Link");
+    hit->linkTitle = NKWebKit::String::FromUtf8("Example Title");
+
+    auto* imgUrl = WKBundleHitTestResultCopyAbsoluteImageURL(ref);
+    Require(imgUrl != nullptr);
+    auto* imgStr = WKURLCopyString(imgUrl);
+    Require(WKStringIsEqualToUTF8CString(imgStr, "https://example.com/img.png"));
+    WKRelease(imgStr);
+    WKRelease(imgUrl);
+
+    auto* linkUrl = WKBundleHitTestResultCopyAbsoluteLinkURL(ref);
+    Require(linkUrl != nullptr);
+    auto* linkStr = WKURLCopyString(linkUrl);
+    Require(WKStringIsEqualToUTF8CString(linkStr, "https://example.com/link"));
+    WKRelease(linkStr);
+    WKRelease(linkUrl);
+
+    auto* mediaUrl = WKBundleHitTestResultCopyAbsoluteMediaURL(ref);
+    Require(mediaUrl != nullptr);
+    auto* mediaStr = WKURLCopyString(mediaUrl);
+    Require(WKStringIsEqualToUTF8CString(mediaStr, "https://example.com/media.mp4"));
+    WKRelease(mediaStr);
+    WKRelease(mediaUrl);
+
+    auto* pdfUrl = WKBundleHitTestResultCopyAbsolutePDFURL(ref);
+    Require(pdfUrl != nullptr);
+    auto* pdfStr = WKURLCopyString(pdfUrl);
+    Require(WKStringIsEqualToUTF8CString(pdfStr, "https://example.com/doc.pdf"));
+    WKRelease(pdfStr);
+    WKRelease(pdfUrl);
+
+    auto* label = WKBundleHitTestResultCopyLinkLabel(ref);
+    Require(label != nullptr);
+    Require(WKStringIsEqualToUTF8CString(label, "Example Link"));
+    WKRelease(label);
+
+    auto* title = WKBundleHitTestResultCopyLinkTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Example Title"));
+    WKRelease(title);
+
+    bool threw = false;
+    try {
+        WKBundleHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestDownload() {
+    Require(WKDownloadGetTypeID() == 52);
+    auto download = NKWebKit::Make<NKWebKit::Download>();
+    const void* ref = download.Get();
+
+    Require(!WKDownloadGetWasUserInitiated(ref));
+    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+
+    download->wasUserInitiated = true;
+    Require(WKDownloadGetWasUserInitiated(ref));
+
+    auto dummyReq = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    download->request = std::move(dummyReq);
+    auto* req = WKDownloadCopyRequest(ref);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKDataGetTypeID());
+    WKRelease(req);
+
+    bool threw = false;
+    try {
+        WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestAXObject() {
+    Require(WKAXObjectGetTypeID() == 132);
+    auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
+    const void* ref = ax.Get();
+
+    Require(WKAXObjectCopyTitle(ref) == nullptr);
+    Require(WKAXObjectCopyDescription(ref) == nullptr);
+    Require(WKAXObjectCopyHelpText(ref) == nullptr);
+    Require(WKAXObjectCopyURL(ref) == nullptr);
+
+    ax->title = NKWebKit::String::FromUtf8("Submit Button");
+    ax->description = NKWebKit::String::FromUtf8("Submits the form");
+    ax->helpText = NKWebKit::String::FromUtf8("Click to send your input");
+    ax->url = NKWebKit::String::FromUtf8("https://example.com/action");
+
+    auto* title = WKAXObjectCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Submit Button"));
+    WKRelease(title);
+
+    auto* desc = WKAXObjectCopyDescription(ref);
+    Require(desc != nullptr);
+    Require(WKStringIsEqualToUTF8CString(desc, "Submits the form"));
+    WKRelease(desc);
+
+    auto* help = WKAXObjectCopyHelpText(ref);
+    Require(help != nullptr);
+    Require(WKStringIsEqualToUTF8CString(help, "Click to send your input"));
+    WKRelease(help);
+
+    auto* url = WKAXObjectCopyURL(ref);
+    Require(url != nullptr);
+    Require(WKGetTypeID(url) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(url, "https://example.com/action"));
+    WKRelease(url);
+
+    bool threw = false;
+    try {
+        WKAXObjectCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestPopupMenuItem() {
     Require(WKPopupMenuItemGetTypeID() == 131);
     auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
@@ -729,6 +874,9 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestBundleHitTestResult();
+    TestDownload();
+    TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestCertificateInfo();

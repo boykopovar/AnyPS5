@@ -128,6 +128,31 @@ public:
     bool isContentEditable = false;
 };
 
+class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
+public:
+    Retained<URL> absoluteImageURL;
+    Retained<URL> absoluteLinkURL;
+    Retained<URL> absoluteMediaURL;
+    Retained<URL> absolutePDFURL;
+    Retained<String> linkLabel;
+    Retained<String> linkTitle;
+};
+
+class Download final : public ObjectOf<ObjectType::Download> {
+public:
+    Retained<Object> request;
+    Retained<Object> originatingPage;
+    bool wasUserInitiated = false;
+};
+
+class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
+public:
+    Retained<String> title;
+    Retained<String> description;
+    Retained<String> helpText;
+    Retained<String> url;
+};
+
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
 public:
     Retained<String> text;
