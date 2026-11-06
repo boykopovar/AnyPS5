@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -179,6 +180,33 @@ static void TestSetVerify() {
     Require(connection.ssl.verifyMode == 2);
     RequireThrows([&] { SSL_set_verify_nid_postfix(connection.Ssl(), 5, &first); });
     Require(connection.ssl.verifyMode == 2);
+}
+
+static void TestSetCipherListNullRule() {
+    LibreSslCtx context {};
+    LibreSslCtxInternal internal {};
+    context.method = reinterpret_cast<void*>(std::uintptr_t{1});
+    context.cipherList = reinterpret_cast<void*>(std::uintptr_t{2});
+    context.internal = &internal;
+    internal.cipherListById = reinterpret_cast<void*>(std::uintptr_t{3});
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(20, 0xfff, 77);
+    const std::uint64_t existingError = ERR_peek_error_nid_postfix();
+    RequireThrows([] { SSL_CTX_set_cipher_list_nid_postfix(nullptr, nullptr); });
+    Require(SSL_CTX_set_cipher_list_nid_postfix(&context, nullptr) == 0);
+    Require(context.method == reinterpret_cast<void*>(std::uintptr_t{1}));
+    Require(context.cipherList == reinterpret_cast<void*>(std::uintptr_t{2}));
+    Require(context.internal == &internal);
+    Require(internal.cipherListById == reinterpret_cast<void*>(std::uintptr_t{3}));
+    Require(ERR_peek_error_nid_postfix() == existingError);
+    Require(ERR_get_error_nid_postfix() == existingError && ERR_get_error_nid_postfix() == 0);
+    context.internal = nullptr;
+    RequireThrows([&] { SSL_CTX_set_cipher_list_nid_postfix(&context, nullptr); });
+    context.internal = &internal;
+    RequireThrows([&] { SSL_CTX_set_cipher_list_nid_postfix(&context, "DEFAULT"); });
+    Require(context.method == reinterpret_cast<void*>(std::uintptr_t{1}));
+    Require(context.cipherList == reinterpret_cast<void*>(std::uintptr_t{2}));
+    Require(internal.cipherListById == reinterpret_cast<void*>(std::uintptr_t{3}));
 }
 
 static void TestGetAlpnSelected() {
@@ -412,6 +440,7 @@ static void TestControlNullConnection() {
 }
 
 int main() {
+    TestSetCipherListNullRule();
     TestSetVerify();
     TestGetAlpnSelected();
     TestSetConnectState();
