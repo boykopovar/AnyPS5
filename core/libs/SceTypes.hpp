@@ -2047,6 +2047,12 @@ struct PngDecInputControlParam {
     std::uint32_t image_pitch;
 };
 
+struct SystemLoggerLogData {
+    std::uint8_t data[0x40];
+    std::uint32_t size;
+    std::uint8_t reserved[0x20];
+};
+
 struct JpegEncCreateParam {
     std::uint32_t size;
     std::uint32_t attr;
