@@ -961,7 +961,7 @@ void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint3
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("whose samples are only on the host") != std::string::npos, what + " was not refused: " + refusal);
+    Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
 std::vector<std::array<float, 4>> StoreInitial(const Block& block, std::uint32_t fragments, std::uint32_t pipeBankXor, bool uniform) {
@@ -1245,7 +1245,7 @@ void RequireReadbackRefused(const AgcDriver::Graphics::Context& context, const A
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("whose samples are only on the host") != std::string::npos, "native color readback was not refused: " + refusal);
+    Require(refusal.find(expected) != std::string::npos, "native color readback was not refused: " + refusal);
 }
 
 void RequireInitialRefused(const AgcDriver::Graphics::Context& context, const AgcDriver::Graphics::ColorTarget& color, const std::string& expected) {
@@ -1256,7 +1256,7 @@ void RequireInitialRefused(const AgcDriver::Graphics::Context& context, const Ag
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("whose samples are only on the host") != std::string::npos, "native color initialization was not refused: " + refusal);
+    Require(refusal.find(expected) != std::string::npos, "native color initialization was not refused: " + refusal);
 }
 
 bool InitialCountSupported(const AgcDriver::Graphics::Context& context, VkFormat format, std::uint32_t samples) {
@@ -1418,7 +1418,7 @@ void RequireColorSnapshotRefused(const AgcDriver::Graphics::Context& context, co
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("whose samples are only on the host") != std::string::npos, "guest color snapshot was not refused: " + refusal);
+    Require(refusal.find(expected) != std::string::npos, "guest color snapshot was not refused: " + refusal);
 }
 
 
@@ -1606,7 +1606,7 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             PrepareMultisampleTargetForDraw_nid_no_patch(selected != nullptr ? *selected : context, color);
         } catch (const std::runtime_error& error) { refusal = error.what(); }
-        Require(refusal.find("whose samples are only on the host") != std::string::npos, std::string("initial color refusal did not match ") + expected + ": " + refusal);
+        Require(refusal.find(expected) != std::string::npos, std::string("initial color refusal did not match ") + expected + ": " + refusal);
     };
     Block block(4u * BlockBytes);
     StoreWords(block, block.bytes, FillOnes);
@@ -1854,7 +1854,7 @@ void RequirePublicationRefused(const AgcDriver::Graphics::Context& context, cons
     } catch (const std::exception& error) {
         refusal = error.what();
     }
-    Require(refusal.find("whose samples are only on the host") != std::string::npos, "native color publication was not refused: " + refusal);
+    Require(refusal.find(expected) != std::string::npos, "native color publication was not refused: " + refusal);
 }
 
 int InitialReuse(AgcDriver::VulkanDevice& device) {
