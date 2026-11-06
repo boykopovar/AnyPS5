@@ -737,11 +737,11 @@ int main() {
     Require(memmem_nid_postfix(boundedHaystack.data(), boundedHaystack.size() - 1, tail.data(), tail.size()) == nullptr);
     Require(memmem_nid_postfix(boundedHaystack.data(), boundedHaystack.size(), tail.data(), tail.size()) == boundedHaystack.data() + boundedHaystack.size() - tail.size());
     std::string periodic(1 << 20, 'a');
-    std::string unmatched(1 << 12, 'a');
-    unmatched.back() = 'b';
-    Require(memmem_nid_postfix(periodic.data(), periodic.size(), unmatched.data(), unmatched.size()) == nullptr);
+    std::string periodicNeedle(1 << 12, 'a');
+    periodicNeedle.back() = 'b';
+    Require(memmem_nid_postfix(periodic.data(), periodic.size(), periodicNeedle.data(), periodicNeedle.size()) == nullptr);
     periodic.back() = 'b';
-    Require(memmem_nid_postfix(periodic.data(), periodic.size(), unmatched.data(), unmatched.size()) == periodic.data() + periodic.size() - unmatched.size());
+    Require(memmem_nid_postfix(periodic.data(), periodic.size(), periodicNeedle.data(), periodicNeedle.size()) == periodic.data() + periodic.size() - periodicNeedle.size());
     char dest[16] = {};
     Require(memccpy_nid_postfix(dest, "abc:def", ':', 8) == dest + 4);
     Require(std::memcmp(dest, "abc:", 4) == 0);
