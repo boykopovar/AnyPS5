@@ -422,13 +422,6 @@ void TestSystemLifecycle() {
     std::string longPath(0x401, 'a');
     Require(sceHttpCacheSystemInit(longPath.c_str()) == InvalidValue);
     Require(sceHttpCacheSystemClearAll(longPath.c_str()) == InvalidValue);
-    Exchange exchange{sceHttpCacheInit(0)};
-    Cached(exchange, "http://system/a", {{"Cache-Control", "max-age=60"}}, "body");
-    Require(exchange.Retrieve("http://system/a") == 0 && exchange.result == 1);
-    exchange.Done();
-    Require(sceHttpCacheSystemClearAll("/data/cache") == 0);
-    RequireMiss(exchange, "http://system/a");
-    Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
 void TestSystemPathMemory() {

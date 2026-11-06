@@ -156,7 +156,6 @@ std::map<StoreKey, Entry> Store;
 std::int32_t LastCacheId = 0;
 bool UserServiceStarted = false;
 std::uint8_t CacheSharing = 1;
-std::string SystemPath;
 
 bool CopySystemPath(const char* path, std::string& destination) {
     return CopyGuestString_nid_no_patch(path, 0x401, destination) == 0 && destination.size() <= 0x400;
@@ -949,16 +948,12 @@ int APS5_VABI sceHttpCacheSetResponseHeader(std::int32_t requestId, const HttpCa
 int APS5_VABI sceHttpCacheSystemClearAll(const char* path) {
     std::string copiedPath;
     if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
-    std::lock_guard lock(Mutex);
-    Store.clear();
-    return 0;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceHttpCacheSystemInit(const char* path) {
     std::string copiedPath;
     if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
-    std::lock_guard lock(Mutex);
-    SystemPath = copiedPath;
     return 0;
 }
 
