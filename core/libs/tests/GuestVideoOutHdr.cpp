@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/Event.hpp"
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
