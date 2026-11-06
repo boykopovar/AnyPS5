@@ -480,36 +480,6 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
-    sUserInitiated(nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
-static void TestCertificateInfo() {
-    Require(WKCertificateInfoGetTypeID() == 0);
-    Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
-    Require(WKCertificateInfoGetVerificationError(nullptr) == 0);
-    Require(WKCertificateInfoCopyVerificationErrorDescription(nullptr) == nullptr);
-    Require(WKCertificateInfoGetCertificateChainSize(nullptr) == 0);
-    Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
-}
-
-int main() {
-    TestTypeIDs();
-    TestSecurityOrigin();
-    TestRetainRelease();
-    TestStrings();
-    TestURL();
-    TestArray();
-    TestDictionary();
-    TestData();
-    TestNumbers();
-    TestGeometry();
-    TestUserContentURLPattern();
-    TestURLRequestResponse();
-    TestError();
     TestDownload();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
