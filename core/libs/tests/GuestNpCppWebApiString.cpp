@@ -333,6 +333,46 @@ void TestVectorIterationVisitsStringsInOrder() {
     Require(VectorGuardIntact(vector));
 }
 
+void PushStringValue(IntrusivePtr* vector, void* context, const char* text) {
+    CommonString value{};
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(&value, context);
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(&value, text) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(vector, &value) == 0);
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(&value);
+}
+
+void CheckStringVectorContents(const void* vector, const char* const* texts, std::size_t count) {
+    CommonIterator first{}, last{};
+    const auto* self = static_cast<const IntrusivePtr*>(vector);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(&first, self) == &first);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(&last, self) == &last);
+    for (std::size_t index = 0; index < count; ++index) {
+        Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(&first, &last));
+        const auto* value = _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv(&first);
+        Require(std::strcmp(_ZNK3sce2Np9CppWebApi6Common6String5c_strEv(value), texts[index]) == 0);
+        Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv(&first) == &first);
+    }
+    Require(!_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(&first, &last));
+}
+
+void TestStringVectorBodyIteration() {
+    std::uint64_t context = 1;
+    VectorStorage storage;
+    std::memset(storage.bytes, kFill, sizeof(storage.bytes));
+    auto* owner = reinterpret_cast<IntrusivePtr*>(storage.bytes);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(owner, &context);
+    const char* const texts[]{"first", "second"};
+    for (const char* text : texts) PushStringValue(owner, &context, text);
+    void* body = _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEptEv(owner);
+    Require(body != nullptr);
+    CheckStringVectorContents(owner, texts, 2);
+    CheckStringVectorContents(body, texts, 2);
+    Require(LoadBody<std::int32_t>(body, kBodyReferenceCountOffset) == 1);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(owner);
+    Require(VectorGuardIntact(storage));
+    std::puts("string vector iteration accepts the body returned by operator->");
+}
+
 bool BeginThrows(const IntrusivePtr* vector) {
     IteratorStorage iterator;
     try {
@@ -562,6 +602,7 @@ void TestVectorCopyFromStrings() {
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-append") == 0) return TestAppendAliased() ? 1 : 0;
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) return TestVectorAliased();
+    if (argc == 2 && std::strcmp(argv[1], "body-iteration") == 0) { TestStringVectorBodyIteration(); return 0; }
     TestConstructedStringIsEmpty();
     TestNullLibContextIsStored();
     TestAppendBuildsAndClearsBuffer();
@@ -570,6 +611,7 @@ int main(int argc, char** argv) {
     TestVectorIterationVisitsStringsInOrder();
     TestVectorIterationRejectsOtherBodies();
     TestVectorCopyFromStrings();
+    TestStringVectorBodyIteration();
     TestStringEmptyAndEquals();
     TestStringCopyFromAndObservers();
     TestIntrusivePtrVectorPushBack();

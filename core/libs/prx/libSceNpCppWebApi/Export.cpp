@@ -1871,7 +1871,7 @@ static IntrusivePtr* IntrusiveVectorElements(const IntrusivePtr* self, const boo
 }
 
 static CommonString* StringVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
-    const auto* body = static_cast<const VectorBody*>(self->object);
+    const auto* body = ResolveVectorBody(self);
     if (body == nullptr) return nullptr;
     if (body->magic != VectorBodyMagic || body->elementKind != 2) NotImplemented_nid_no_patch(function);
     auto* elements = static_cast<CommonString*>(body->elements);
