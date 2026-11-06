@@ -111,6 +111,12 @@ def main():
         run(relinker, work, "empty-table", fixture(pltrelsz=0))
         run(relinker, work, "symbol-entry-outside-sce-segment",
             fixture(symtab=0xFE0, symbol_bytes=None), "Symbol table entry out of bounds")
+        run(relinker, work, "symbol-entry-past-sce-segment",
+            fixture(symtab=0x780, symbol_bytes=None, sce_size=0x798), "Symbol table entry out of bounds")
+        run(relinker, work, "symbol-entry-past-sce-segment-last-byte",
+            fixture(symtab=0x780, symbol_bytes=None, sce_size=0x7AF), "Symbol table entry out of bounds")
+        run(relinker, work, "symbol-entry-at-sce-segment-end",
+            fixture(symtab=0x780, symbol_bytes=0x30, sce_size=0x7B0))
         run(relinker, work, "offset-max-empty-table",
             fixture(jmprel=0xFFFFFFFFFFFFFFFF, pltrelsz=0), error)
         run(relinker, work, "offset-wrap-empty-table",
