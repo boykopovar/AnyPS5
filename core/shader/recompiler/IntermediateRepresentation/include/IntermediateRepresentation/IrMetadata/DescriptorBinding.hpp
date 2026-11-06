@@ -39,7 +39,7 @@ struct IrDescriptorBinding {
 
 struct IrBindingLayout {
     std::uint32_t pushDataStartDword = PushData::NoStart;
-    std::uint32_t dataAddressDword = PushData::NoStart;
+    bool dataAddress = false;
     std::uint32_t stencilReferenceDword = PushData::NoStart;
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t memoryOffsetCount = 0;
@@ -49,6 +49,7 @@ struct IrBindingLayout {
     std::uint32_t samplerSlotDwords = 0;
     std::uint32_t imageSlotDwords = 0;
     std::uint32_t bufferAddressDwords = 0;
+    std::vector<std::uint32_t> pushedData;
     bool gpuResolvedImages = false;
     bool heapStorageImages = false;
     std::vector<std::uint32_t> userDataRegisters;
@@ -86,7 +87,7 @@ struct IrBindingLayout {
         return pushDataStartDword != PushData::NoStart;
     }
     [[nodiscard]] bool UsesDataAddress() const {
-        return dataAddressDword != PushData::NoStart;
+        return dataAddress;
     }
     [[nodiscard]] std::uint32_t PushSlotDword() const {
         return UsesPushData() ? pushDataStartDword / PushData::DwordCount * PushData::DwordCount : 0u;

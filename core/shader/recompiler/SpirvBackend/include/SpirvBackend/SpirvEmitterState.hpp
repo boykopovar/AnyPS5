@@ -110,6 +110,8 @@ struct SpirvEmitterState {
     bool splitSubgroup = false;
     bool spannedWave = false;
     std::uint32_t spannedExchangeVariable = 0;
+    std::uint32_t spannedBallotVariable = 0;
+    std::uint32_t spannedBallotParityVariable = 0;
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool depthRangeRemap = false;
@@ -117,6 +119,7 @@ struct SpirvEmitterState {
     bool registrationModules = false;
     bool gpuResolvedImages = false;
     std::uint32_t heapDataUniformDwords = 0;
+    bool heapBufferDescriptors = false;
     bool addressedBuffers = false;
     std::optional<bool> guestBuffersWritten;
     bool fragmentDescriptorSet = false;
@@ -149,6 +152,7 @@ struct SpirvEmitterState {
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
     bool nonConstantImageOffsets = false;
+    bool shaderImageMinLod = false;
     bool tableIndexNonUniform = true;
     std::uint32_t storageBufferVariable = 0;
     std::uint32_t storageBufferU64Variable = 0;
@@ -157,6 +161,13 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> memoryByteOffsets;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedBufferFunctions;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedGpuBufferFunctions;
+    struct FaultCheckEntry {
+        const IrBlock* block = nullptr;
+        std::uint32_t guard = 0;
+    };
+    std::map<std::vector<std::uint32_t>, std::vector<FaultCheckEntry>> faultChecks;
+    std::unordered_map<const IrBlock*, const IrBlock*> faultDominators;
+    bool faultCheckDedup = false;
     struct BufferLengthCacheEntry {
         std::array<const IrValue*, 4> descriptor{};
         std::uint32_t variable = 0;
@@ -224,6 +235,7 @@ struct SpirvEmitterState {
     std::uint32_t pushConstantVariable = 0;
     std::uint32_t shaderDataStorageVariable = 0;
     std::uint32_t shaderDataUniformVariable = 0;
+    std::uint32_t pushItems = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
     bool flattenedSrtAddressed = false;
@@ -234,6 +246,14 @@ struct SpirvEmitterState {
     bool pixelFunctionLdsBuffer = false;
     std::uint32_t numWorkgroupsVariable = 0;
     std::array<std::uint32_t, 2> scratchVariable {};
+    std::uint32_t scratchPoolVariable = 0;
+    std::uint32_t scratchPoolSlotVariable = 0;
+    std::uint32_t scratchPoolCandidateVariable = 0;
+    std::uint32_t scratchPoolWonVariable = 0;
+    std::uint32_t scratchPoolSlotCount = 0;
+    std::uint32_t scratchPoolSlot = 0;
+    std::array<std::uint32_t, 2> scratchPoolLaneBase {};
+    std::uint32_t scratchPoolReturns = 0;
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
@@ -243,7 +263,6 @@ struct SpirvEmitterState {
     std::uint32_t meshWindowBaseVariable = 0;
     std::unordered_set<const IrValue*> meshWindowBufferStores;
     std::unordered_set<const IrValue*> meshWindowBufferLoads;
-    std::vector<bool> meshWindowEntryLive;
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
@@ -269,6 +288,8 @@ struct SpirvEmitterState {
     std::uint32_t sampleMaskInputVariable = 0;
     std::uint32_t quadSampleCoverage = 0;
     std::uint32_t sampleOrderWord = 0;
+    std::uint32_t alphaCoverageVariable = 0;
+    std::uint32_t exportedCoverageVariable = 0;
     std::uint32_t subgroupLocalInvocationIdVariable = 0;
     std::uint32_t subgroupIdVariable = 0;
     std::uint32_t perVertexVariable = 0;

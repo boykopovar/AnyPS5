@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -61,14 +62,18 @@ std::uint64_t Driver::relocatedContentKey(const RelocatableUserWord& word, std::
     return hash;
 }
 
-void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& program) {
+void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& program, const ShaderRecompiler::HeapStageWords* heap) {
     if (!drawRelocationEnabled() || variant.compiled == nullptr) return;
     const auto& compiled = *variant.compiled;
     const auto& forwarded = compiled.shaderDataUserWords;
     const auto users = std::min<std::size_t>(program.userData.size(), 64);
     const auto bound = [&](std::uint32_t value) {
         std::size_t count = 0;
-        for (const auto& binding : compiled.bindings) count += static_cast<std::size_t>(std::count(binding.guestDescriptor.begin(), binding.guestDescriptor.end(), value));
+        for (const auto& binding : compiled.bindings) {
+            if (heap != nullptr && binding.role == ShaderRecompiler::DescriptorRole::ShaderData) continue;
+            const auto& words = Graphics::DrawGuestWords(compiled, heap, binding);
+            count += static_cast<std::size_t>(std::count(words.begin(), words.end(), value));
+        }
         return count;
     };
     const auto elsewhere = [&](std::uint32_t index, std::uint32_t value) {
@@ -115,16 +120,18 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         if (base == 0 || taken(index) || bound(base) != 1 || elsewhere(index, base)) continue;
         std::uint32_t binding = 0, word = 0;
         for (std::size_t b = 0; b < compiled.bindings.size(); ++b) {
-            const auto& descriptor = compiled.bindings[b].guestDescriptor;
+            if (heap != nullptr && compiled.bindings[b].role == ShaderRecompiler::DescriptorRole::ShaderData) continue;
+            const auto& descriptor = Graphics::DrawGuestWords(compiled, heap, compiled.bindings[b]);
             const auto found = std::find(descriptor.begin(), descriptor.end(), base);
             if (found == descriptor.end()) continue;
             binding = static_cast<std::uint32_t>(b);
             word = static_cast<std::uint32_t>(found - descriptor.begin());
         }
         const auto& target = compiled.bindings[binding];
+        const auto& targetWords = Graphics::DrawGuestWords(compiled, heap, target);
         const auto element = word / 4u;
-        const bool readOnly = target.role == ShaderRecompiler::DescriptorRole::GuestBuffers && target.guestDescriptor.size() == static_cast<std::size_t>(target.count) * 4u && word % 4u == 0 && element < target.bufferWritten.size() && !target.bufferWritten[element] && (element >= target.bufferAtomic.size() || !target.bufferAtomic[element]);
-        if (!readOnly || target.guestDescriptor[word + 1] != program.userData[index + 1] || target.guestDescriptor[word + 2] != program.userData[index + 2] || readThrough(target.guestDescriptor.data() + word)) continue;
+        const bool readOnly = target.role == ShaderRecompiler::DescriptorRole::GuestBuffers && targetWords.size() == static_cast<std::size_t>(target.count) * 4u && word % 4u == 0 && element < target.bufferWritten.size() && !target.bufferWritten[element] && (element >= target.bufferAtomic.size() || !target.bufferAtomic[element]);
+        if (!readOnly || targetWords[word + 1] != program.userData[index + 1] || targetWords[word + 2] != program.userData[index + 2] || readThrough(targetWords.data() + word)) continue;
         variant.valueWords |= std::uint64_t {1} << index;
         variant.valueSlots.push_back({index, binding, word});
         const auto records = program.userData[index + 2];
@@ -362,6 +369,17 @@ void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     }
     for (const auto& [binding, word, value] : variant.descriptorPatches) {
         if (binding < rebased->bindings.size() && word < rebased->bindings[binding].guestDescriptor.size()) rebased->bindings[binding].guestDescriptor[word] = value;
+    }
+    if (variant.ringTemplate != nullptr && !variant.descriptorPatches.empty()) {
+        auto ringTemplate = std::make_shared<ShaderRecompiler::HeapStageWords>(*variant.ringTemplate);
+        if (ringTemplate->bindings.empty()) ringTemplate->bindings.resize(variant.compiled->bindings.size());
+        for (const auto& [binding, word, value] : variant.descriptorPatches) {
+            if (binding >= ringTemplate->bindings.size()) continue;
+            auto& words = ringTemplate->bindings[binding];
+            if (words.empty()) words = variant.compiled->bindings[binding].guestDescriptor;
+            if (word < words.size()) words[word] = value;
+        }
+        variant.ringTemplate = std::move(ringTemplate);
     }
     variant.compiled = std::move(rebased);
     variant.shaderDataPatches.clear();

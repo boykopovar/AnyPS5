@@ -50,6 +50,18 @@ alignas(256) constexpr std::array<std::uint32_t, 30> VertexCode{
     0xbf810000,
 };
 
+alignas(256) constexpr auto RuntimeFetchCode = [] {
+    std::array<std::uint32_t, 36> code{};
+    std::copy_n(VertexCode.begin(), 23, code.begin());
+    const std::array<std::uint32_t, 8> stores{
+        0xe0c01000, 0x80020c04, 0xe0c01004, 0x80020d04,
+        0xe0c01008, 0x80020e04, 0xe0c0100c, 0x80020f04
+    };
+    std::copy(stores.begin(), stores.end(), code.begin() + 23);
+    std::copy(VertexCode.begin() + 25, VertexCode.end(), code.begin() + 31);
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 30> PostAddCode{
     0x7e020280, 0x7e040280,
     0xd70f7d05, 0x00020a10,
@@ -281,7 +293,7 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, 4 * Slots> Output{};
-alignas(256) std::array<std::uint32_t, 2048> VertexSlots{};
+alignas(256) std::array<std::uint32_t, 65538> VertexSlots{};
 alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
 alignas(256) std::array<std::uint32_t, 8> BufferTable{};
 alignas(256) constexpr std::array<std::uint16_t, 4> Indices{2, 0, 1, 0};
@@ -327,7 +339,7 @@ public:
         return userData;
     }
 
-    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) const {
+    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool runtimeFetch = false) const {
         ShaderRecompiler::ShaderVertexStageInfo info{};
         info.resourcesNum = 2;
         info.resources[0].fields = {BufferTable[0], BufferTable[1], BufferTable[2], BufferTable[3]};
@@ -336,7 +348,7 @@ public:
         info.resourcesDst[1] = {11, 1, 1, 1};
         info.fetchAttribReg = 6;
         info.fetchBufferReg = 4;
-        info.fetchEmbedded = true;
+        info.fetchEmbedded = !runtimeFetch;
         const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{
             {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
             {reinterpret_cast<std::uintptr_t>(BufferTable.data()), std::as_bytes(std::span(BufferTable))}
@@ -349,7 +361,7 @@ public:
         };
         request.useCache = false;
         auto result = ShaderRecompiler::Recompile(request);
-        Require(result.vertexOffsetSgpr == static_cast<std::int32_t>(BaseVertexSgpr) && result.instanceOffsetSgpr == static_cast<std::int32_t>(StartInstanceSgpr), "the fetch adds of s16 and s17 were not folded into the draw (vertex " + std::to_string(result.vertexOffsetSgpr) + ", instance " + std::to_string(result.instanceOffsetSgpr) + ")");
+        if (!runtimeFetch) Require(result.vertexOffsetSgpr == static_cast<std::int32_t>(BaseVertexSgpr) && result.instanceOffsetSgpr == static_cast<std::int32_t>(StartInstanceSgpr), "the fetch adds of s16 and s17 were not folded into the draw (vertex " + std::to_string(result.vertexOffsetSgpr) + ", instance " + std::to_string(result.instanceOffsetSgpr) + ")");
         return result;
     }
 
@@ -371,7 +383,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw) {
+    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool compactRestart = false, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -380,9 +392,17 @@ public:
         ShaderRecompiler::RecompileRequest pixelRequest{{ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}}, {32u, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}}, device->Target(), PixelPushLayout(vertexPush, device->Target())};
         pixelRequest.useCache = false;
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
-        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u, nullptr, heap}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
-        device->Draw(State(), draw, shaders);
+        if (compactRestart) {
+            auto context = device->graphicsContext();
+            context.primitiveListRestart = false;
+            auto state = State();
+            state.primitiveRestart = true;
+            AgcDriver::Graphics::Draw(context, state, draw, shaders);
+        } else {
+            device->Draw(State(), draw, shaders);
+        }
         device->WaitIdle();
     }
 
@@ -438,8 +458,8 @@ std::string PathName(const std::optional<Path>& path) {
     return path ? "the CPU path (" + std::string(AgcDriver::Graphics::IndirectDrawPathName(*path)) + ")" : std::string("the GPU");
 }
 
-std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false) {
-    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false);
+std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
+    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false, heap);
     const auto& indirect = *draw.indirect;
     const bool rules = expectedPath || (indirect.vertexRule == expectedRule && indirect.instanceRule == expectedRule);
     std::cout << what << ": classified to " << PathName(path) << '\n';
@@ -478,6 +498,47 @@ std::string Analysis(Fixture& fixture) {
         if (result.vertexOffsetShared != entry.vertex || result.instanceOffsetShared != entry.instance) failures += line;
     }
     return failures;
+}
+
+std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRestart) {
+    const auto userData = fixture.UserData(0, 0);
+    const auto vertex = fixture.Vertex(RuntimeFetchCode, userData, true);
+    Require(vertex.vertexAttributes.empty(), "runtime fetch must not become fixed vertex attributes");
+    VertexSlots.fill(0);
+    InstanceSlots.fill(0);
+    alignas(256) static std::array<std::uint32_t, 5> indices{};
+    indices = {0xffffffffu, index, index, index, 0xffffffffu};
+    const auto first = compactRestart ? 0u : 1u;
+    const auto count = compactRestart ? 5u : 3u;
+    const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(indices.data() + first), count, 4, 1, 0, true, 0, 0};
+    fixture.Draw(vertex, draw, compactRestart);
+    std::cout << "runtime fetch, index " << index << ", compact restart " << compactRestart
+              << ", attributes " << vertex.vertexAttributes.size() << ": atomic readback "
+              << Output[0] << ' ' << Output[1] << ' ' << Output[2] << ' ' << Output[3] << '\n';
+    const std::array<std::uint32_t, 4> expected{index, 0, index, 0};
+    return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "runtime-fetched VertexIndex was changed\n";
+}
+
+std::string HeapAttributes(Fixture& fixture) {
+    const auto userData = fixture.UserData(0, 0);
+    const auto perDraw = fixture.Vertex(VertexCode, userData);
+    const auto records = BufferTable[2];
+    BufferTable[2] = 1u;
+    const auto shared = fixture.Vertex(VertexCode, userData);
+    BufferTable[2] = records;
+    Require(!perDraw.vertexAttributes.empty() && shared.vertexAttributes.size() == perDraw.vertexAttributes.size(), "the vertex buffers did not become fixed vertex attributes");
+    ShaderRecompiler::HeapStageWords words;
+    words.vertexAttributes = perDraw.vertexAttributes;
+    const auto index = static_cast<std::uint32_t>(VertexSlots.size() - 1u);
+    const std::array<std::uint32_t, 1> fetched{index};
+    fixture.Place(0, fetched, 0);
+    alignas(256) static std::array<std::uint32_t, 5> indices{};
+    indices = {0xffffffffu, index, index, index, 0xffffffffu};
+    const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(indices.data()), 5, 4, 1, 0, true, 0, 0};
+    fixture.Draw(shared, draw, true, &words);
+    std::cout << "heap vertex attributes, index " << index << ", compact restart: readback " << Output[0] << ' ' << Output[1] << ' ' << Output[2] << ' ' << Output[3] << '\n';
+    const std::array<std::uint32_t, 4> expected{index, 0, index, 0};
+    return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "a compacted index inside the draw's own vertex buffer was clamped by the shared program's buffer size\n";
 }
 
 std::string Run(Fixture& fixture) {
@@ -553,6 +614,13 @@ std::string Run(Fixture& fixture) {
             AgcDriver::Pm4::DrawParameters draw{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
             draw.indirect = indexedIndirect;
             failures += Classified(fixture, what, vertex, staleUserData, draw, std::nullopt, Rule::InPlace);
+            if (code == &PostAddCode) {
+                ShaderRecompiler::HeapStageWords words;
+                words.vertexAttributes = vertex.vertexAttributes;
+                for (auto& attribute : words.vertexAttributes) attribute.resource.fields[2] = 0x2000000u;
+                auto heapDraw = draw;
+                failures += Classified(fixture, what + ", with a 128 MiB vertex buffer in its heap words", vertex, staleUserData, heapDraw, Path::VertexRange, Rule::InPlace, false, &words);
+            }
             fixture.Place(indexedRecord[3], bufferIndices, indexedRecord[4]);
             fixture.Draw(vertex, draw);
             failures += fixture.Check(what + ", drawn in place on the GPU", bufferIndices, indexedRecord[3], indexedRecord[4], false);
@@ -587,12 +655,23 @@ std::string Run(Fixture& fixture) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Fixture fixture(device);
-        const auto failures = Run(fixture);
+        std::string failures;
+        if (argc == 1) failures = Run(fixture);
+        else if (argc == 2 && std::string(argv[1]) == "heap-attributes") failures = HeapAttributes(fixture);
+        else {
+            Require(argc == 3 || argc == 4, "expected runtime-fetch INDEX [compact-restart]");
+            Require(std::string(argv[1]) == "runtime-fetch", "unknown case");
+            const auto index = std::stoul(argv[2]);
+            Require(index < VertexSlots.size(), "index exceeds the runtime input buffer");
+            const bool compactRestart = argc == 4;
+            if (compactRestart) Require(std::string(argv[3]) == "compact-restart", "unknown index path");
+            failures = RuntimeFetch(fixture, static_cast<std::uint32_t>(index), compactRestart);
+        }
         if (!failures.empty()) {
             std::cerr << "vertex and instance indices differ from the guest's:\n" << failures;
             return 1;

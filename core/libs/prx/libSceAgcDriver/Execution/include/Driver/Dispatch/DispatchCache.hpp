@@ -3,6 +3,8 @@
 
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -15,11 +17,33 @@
 #include <memory>
 #include <set>
 #include <span>
+#include <span>
 #include <utility>
 #include <vector>
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 
 namespace AgcDriver::DriverDetail {
+
+inline bool CaptureRegisteredViewsCurrent(std::span<const ShaderRecompiler::RegisteredImageView> views) {
+    if (views.empty()) return true;
+    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
+        const auto before = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        bool current = true;
+        for (const auto& view : views) {
+            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(view.address), false);
+            if (view.hasRange != (range != nullptr)) {
+                current = false;
+                break;
+            }
+            if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) {
+                current = false;
+                break;
+            }
+        }
+        if (before == GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return current;
+    }
+    return false;
+}
 
 inline constexpr std::size_t MaxDispatchVariants = 8;
 
@@ -30,6 +54,7 @@ struct DispatchVariant {
     std::vector<SharedWords> shared;
     std::uint64_t forgetSerial = 0;
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
+    std::shared_ptr<const std::vector<ShaderRecompiler::RegisteredImageView>> registeredViews;
     std::array<std::uint32_t, 4> meshIndexDescriptor{};
 
     std::shared_ptr<const ShaderSnapshot> shader;

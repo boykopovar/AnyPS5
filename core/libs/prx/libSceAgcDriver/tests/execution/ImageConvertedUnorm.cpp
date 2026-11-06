@@ -51,11 +51,12 @@ constexpr std::uint32_t DivisionUlps = 3;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t RoundTripOffset = 16384;
 constexpr std::size_t StoreOffset = 32768;
+constexpr std::uint32_t D16Width = 1024;
+constexpr std::uint32_t D16Groups = D16Width / Threads;
 constexpr std::array<std::uint32_t, 4> PointSampler{0x00000092u, 0x00fff000u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> BilinearSampler{0x00000092u, 0x00fff000u, 0x00500000u, 0u};
 constexpr std::array<std::uint32_t, 4> WrapBilinearSampler{0x00000090u, 0x00fff000u, 0x00500000u, 0u};
 constexpr std::array<std::uint32_t, 4> WrapPointSampler{0x00000090u, 0x00fff000u, 0u, 0u};
-constexpr std::array<std::uint32_t, 4> BorderSampler{0x000000b6u, 0x00fff000u, 0u, 0u};
 constexpr std::uint32_t SampleStep = 0x3a200000u;
 constexpr std::uint32_t OffGridStep = 0x3a206000u;
 constexpr std::uint32_t SampleStart = 0x39c00000u;
@@ -69,6 +70,14 @@ constexpr std::array<std::uint32_t, 15> LoadCode(std::uint32_t dmask, std::uint3
     return {
         0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x7e3e0280u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
         0x7e1a0280u, 0xf0001008u | (dmask << 8u), 0x00010a1eu | d16, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
+    };
+}
+
+constexpr std::array<std::uint32_t, 17> LoadStoreCode(std::uint32_t dmask, std::uint32_t d16) {
+    return {
+        0x7e080218u, 0x343c0885u, 0x4a3c3d00u, 0x34063c84u, 0x7e3e0280u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
+        0x7e1a0280u, 0xf0001008u | (dmask << 8u), 0x00010a1eu | d16, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xf0201008u | (dmask << 8u), 0x00010a1eu | d16,
+        0xbf810000u,
     };
 }
 
@@ -102,12 +111,12 @@ alignas(256) constexpr auto LoadXyzw = LoadCode(0xfu, 0u);
 alignas(256) constexpr auto LoadXyz = LoadCode(0x7u, 0u);
 alignas(256) constexpr auto LoadXy = LoadCode(0x3u, 0u);
 alignas(256) constexpr auto LoadD16 = LoadCode(0xfu, D16);
+alignas(256) constexpr auto LoadStoreD16 = LoadStoreCode(0x7u, D16);
 alignas(256) constexpr auto StoreXyz = StoreCode(0x7u, 0u);
 alignas(256) constexpr auto StoreXz = StoreCode(0x5u, 0u);
 alignas(256) constexpr auto StoreD16 = StoreCode(0x7u, D16);
+alignas(256) constexpr auto StoreXzD16 = StoreCode(0x5u, D16);
 alignas(256) constexpr auto SampleLz = SamplerCode(0xf09c0f08u);
-alignas(256) constexpr auto Gather4Lz = SamplerCode(0xf11c0108u);
-alignas(256) constexpr auto GetLod = SamplerCode(0xf1800308u);
 alignas(256) constexpr auto SampleAt = SampleAtCode(SampleStep, SampleStart);
 alignas(256) constexpr auto SampleWrapped = SampleAtCode(SampleStep, WrappedStart);
 alignas(256) constexpr auto SampleOffGrid = SampleAtCode(OffGridStep, SampleStart);
@@ -117,6 +126,28 @@ constexpr std::array<std::uint32_t, 11> StoreValues{
     0x00000000u, 0x3f800000u, 0x3f000000u, 0x3eaaaaabu, 0x80000000u, 0xbf800000u,
     0x40000000u, 0x7f800000u, 0x7fc00000u, 0x000116c2u, 0x3f7fbe77u,
 };
+
+constexpr std::array<std::uint32_t, 11> HalfStoreValues{
+    0x0000u, 0x3c00u, 0x3800u, 0x3555u, 0x8000u, 0xbc00u,
+    0x4000u, 0x7c00u, 0x7e00u, 0x0001u, 0x3bffu,
+};
+
+std::uint32_t HalfToFloatBits(std::uint32_t half) {
+    const auto sign = (half & 0x8000u) << 16u;
+    const auto exponent = (half >> 10u) & 0x1fu;
+    const auto mantissa = half & 0x3ffu;
+    if (exponent == 31u) return sign | 0x7f800000u | (mantissa << 13u);
+    if (exponent != 0u) return sign | ((exponent + 112u) << 23u) | (mantissa << 13u);
+    return sign | std::bit_cast<std::uint32_t>(static_cast<float>(mantissa) * 0x1p-24f);
+}
+
+bool HalfNan(std::uint32_t half) {
+    return (half & 0x7c00u) == 0x7c00u && (half & 0x3ffu) != 0u;
+}
+
+std::uint32_t ResultHalf(std::uint32_t index, std::uint32_t component) {
+    return (Output[index * 4u + component / 2u] >> ((component % 2u) * 16u)) & 0xffffu;
+}
 
 class GuestBlock {
 public:
@@ -252,17 +283,23 @@ void CheckRoundTrip(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
-void CheckStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t dmask, const std::string& what) {
+void CheckStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t dmask, const std::string& what, bool d16 = false) {
     std::fill(texels, texels + Threads * 4u, static_cast<std::uint8_t>(0xa5u));
     Input.fill(0u);
     std::array<std::uint32_t, Threads> expected{};
+    const auto& source = d16 ? HalfStoreValues : StoreValues;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::array<std::uint32_t, 3> values{StoreValues[tid % 11u], StoreValues[(tid + 4u) % 11u], StoreValues[(tid + 8u) % 11u]};
+        const std::array<std::uint32_t, 3> values{source[tid % 11u], source[(tid + 4u) % 11u], source[(tid + 8u) % 11u]};
         std::uint32_t slot = 0;
         for (std::uint32_t component = 0; component < 3u; ++component) {
             if (((dmask >> component) & 1u) == 0u) continue;
-            Input[tid * 4u + slot++] = values[component];
-            expected[tid] |= StoreField(values[component], component == 2u ? 1023u : 2047u) << (component * 11u);
+            if (d16) {
+                Input[tid * 4u + slot / 2u] |= values[component] << ((slot % 2u) * 16u);
+            } else {
+                Input[tid * 4u + slot] = values[component];
+            }
+            ++slot;
+            expected[tid] |= StoreField(d16 ? HalfToFloatBits(values[component]) : values[component], component == 2u ? 1023u : 2047u) << (component * 11u);
         }
     }
     Run(device, code, TextureDescriptor(texels, UnormFormat, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
@@ -431,6 +468,148 @@ void CheckSample(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, st
     }
 }
 
+void CheckUnormLoadD16(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::uint32_t swizzle, const std::string& what) {
+    Run(device, LoadD16, TextureDescriptor(texels, UnormFormat, swizzle, LoadWidth), {}, LoadGroups);
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto actual = ResultHalf(index, component);
+            const auto expected = ChannelValue(LoadTexel(index), swizzle, component);
+            const auto tolerance = expected == 0.0 || expected == 1.0 ? 0.0 : std::ldexp(1.0, std::ilogb(expected) - 10);
+            const auto value = static_cast<double>(std::bit_cast<float>(HalfToFloatBits(actual)));
+            Require((actual & 0x8000u) == 0u && std::fabs(value - expected) <= tolerance, what + ": texel " + std::to_string(index) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + std::to_string(expected) + " within one half ULP");
+        }
+        Require(Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0u, what + ": texel " + std::to_string(index) + " writes more than two result dwords");
+    }
+}
+
+struct FloatLayout {
+    std::uint32_t format;
+    std::array<std::uint32_t, 3> offsets;
+    std::array<std::uint32_t, 3> mantissas;
+    std::size_t loadOffset;
+    std::size_t storeOffset;
+    const char* name;
+};
+
+constexpr std::array<FloatLayout, 2> FloatLayouts{{
+    {FloatFormat, {0u, 10u, 21u}, {5u, 6u, 6u}, 49152, 57344, "R10_G11_B11_FLOAT"},
+    {NativeFloatFormat, {0u, 11u, 22u}, {6u, 6u, 5u}, 53248, 58368, "R11_G11_B10_FLOAT"},
+}};
+
+constexpr std::array<std::array<std::uint32_t, 3>, 8> HalfStoreEdges{{
+    {0xbc00u, 0x8000u, 0x7e00u},
+    {0x7c00u, 0x7bffu, 0xfc00u},
+    {0x3c01u, 0x3c10u, 0x3c30u},
+    {0x0001u, 0x03ffu, 0x0400u},
+    {0xfe00u, 0x7c01u, 0x7dffu},
+    {0x3bffu, 0x7800u, 0x7bf8u},
+    {0x0010u, 0x0200u, 0x3c08u},
+    {0x7bf0u, 0x1400u, 0x3c18u},
+}};
+
+std::uint32_t SmallFloatField(std::uint32_t index, std::uint32_t component, std::uint32_t mantissa) {
+    constexpr std::array<std::uint32_t, 8> exponents{0u, 0u, 0u, 1u, 15u, 30u, 31u, 31u};
+    const auto maximum = (1u << mantissa) - 1u;
+    const std::array<std::uint32_t, 8> mantissas{0u, 1u, maximum, 0u, 0u, maximum, 0u, 1u};
+    const auto special = (index + component * 3u) % 8u;
+    if (index < 64u) return (exponents[special] << mantissa) | mantissas[special];
+    return ((index * 2654435761u) >> (component * 7u + 3u)) & ((1u << (mantissa + 5u)) - 1u);
+}
+
+std::uint32_t ExactHalf(float value) {
+    if (value == 0.0f) return 0u;
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+    return ((((bits >> 23u) & 0xffu) - 112u) << 10u) | ((bits & 0x7fffffu) >> 13u);
+}
+
+void CheckFloatLoadD16(AgcDriver::VulkanDevice& device, std::uint8_t* block, const FloatLayout& layout, bool storage) {
+    auto* texels = block + layout.loadOffset;
+    const auto texelAt = [&](std::uint32_t index) {
+        std::uint32_t texel = 0;
+        for (std::uint32_t component = 0; component < 3u; ++component) texel |= SmallFloatField(index, component, layout.mantissas[component]) << layout.offsets[component];
+        return texel;
+    };
+    for (std::uint32_t index = 0; index < D16Width; ++index) {
+        const auto texel = texelAt(index);
+        std::memcpy(texels + index * 4u, &texel, 4u);
+    }
+    const auto what = std::string(storage ? "image_load d16 then image_store d16 of " : "image_load d16 of ") + layout.name;
+    Run(device, storage ? std::span<const std::uint32_t>(LoadStoreD16) : std::span<const std::uint32_t>(LoadD16), TextureDescriptor(texels, layout.format, SwizzleXYZ1, D16Width), {}, D16Groups);
+    for (std::uint32_t index = 0; index < D16Width; ++index) {
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto actual = ResultHalf(index, component);
+            auto expected = storage ? 0u : 0x3c00u;
+            if (component < 3u) {
+                const auto mantissa = layout.mantissas[component];
+                const auto field = SmallFloatField(index, component, mantissa);
+                expected = ((field >> mantissa) << 10u) | ((field & ((1u << mantissa) - 1u)) << (10u - mantissa));
+            }
+            Require(HalfNan(expected) ? HalfNan(actual) : actual == expected, what + ": texel " + std::to_string(index) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(expected));
+        }
+        Require(Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0u, what + ": texel " + std::to_string(index) + " writes more than two result dwords");
+    }
+    if (!storage) return;
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), D16Width * 4u, nullptr, "test");
+    device.WaitIdle();
+    for (std::uint32_t index = 0; index < D16Width; ++index) {
+        std::uint32_t actual = 0;
+        std::memcpy(&actual, texels + index * 4u, 4u);
+        for (std::uint32_t component = 0; component < 3u; ++component) {
+            const auto mantissa = layout.mantissas[component];
+            const auto mask = (1u << (mantissa + 5u)) - 1u;
+            const auto field = (actual >> layout.offsets[component]) & mask;
+            const auto expected = SmallFloatField(index, component, mantissa);
+            const auto nan = [&](std::uint32_t value) { return (value >> mantissa) == 31u && (value & ((1u << mantissa) - 1u)) != 0u; };
+            Require(nan(expected) ? nan(field) : field == expected, what + ": texel " + std::to_string(index) + " is " + Hex(actual) + " after the round trip, expected " + Hex(texelAt(index)));
+        }
+    }
+}
+
+void CheckFloatStoreD16(AgcDriver::VulkanDevice& device, std::uint8_t* block, const FloatLayout& layout, std::uint32_t dmask) {
+    auto* written = block + layout.storeOffset;
+    auto* reference = written + 256u;
+    std::array<std::array<std::uint32_t, 3>, Threads> halves{};
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        halves[tid] = tid < HalfStoreEdges.size() ? HalfStoreEdges[tid] : std::array<std::uint32_t, 3>{ExactHalf(FloatValues[tid % 11u]), ExactHalf(FloatValues[(tid + 4u) % 11u]), ExactHalf(FloatValues[(tid + 8u) % 11u])};
+    }
+    const auto store = [&](std::uint8_t* target, std::span<const std::uint32_t> code, bool d16) {
+        std::fill(target, target + Threads * 4u, static_cast<std::uint8_t>(0xa5u));
+        Input.fill(0u);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            std::uint32_t slot = 0;
+            for (std::uint32_t component = 0; component < 3u; ++component) {
+                if (((dmask >> component) & 1u) == 0u) continue;
+                if (d16) {
+                    Input[tid * 4u + slot / 2u] |= halves[tid][component] << ((slot % 2u) * 16u);
+                } else {
+                    Input[tid * 4u + slot] = HalfToFloatBits(halves[tid][component]);
+                }
+                ++slot;
+            }
+        }
+        Run(device, code, TextureDescriptor(target, layout.format, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
+        AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(target), Threads * 4u, nullptr, "test");
+        device.WaitIdle();
+    };
+    store(reference, dmask == 0x7u ? std::span<const std::uint32_t>(StoreXyz) : std::span<const std::uint32_t>(StoreXz), false);
+    store(written, dmask == 0x7u ? std::span<const std::uint32_t>(StoreD16) : std::span<const std::uint32_t>(StoreXzD16), true);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        std::uint32_t actual = 0;
+        std::uint32_t widened = 0;
+        std::memcpy(&actual, written + tid * 4u, 4u);
+        std::memcpy(&widened, reference + tid * 4u, 4u);
+        const auto what = std::string("image_store d16 dmask:") + Hex(dmask) + " of " + layout.name + ": texel " + std::to_string(tid);
+        if (tid >= HalfStoreEdges.size()) {
+            std::uint32_t expected = 0;
+            for (std::uint32_t component = 0; component < 3u; ++component) {
+                if (((dmask >> component) & 1u) != 0u) expected |= SmallFloat(FloatValues[(tid + component * 4u) % 11u], layout.mantissas[component]) << layout.offsets[component];
+            }
+            Require(actual == expected, what + " is " + Hex(actual) + ", expected " + Hex(expected));
+        }
+        Require(actual == widened, what + " is " + Hex(actual) + ", but the 32-bit store of the same values wrote " + Hex(widened));
+    }
+}
+
 void CheckConvertedPreparation(AgcDriver::VulkanDevice& device, const std::uint8_t* texels) {
     std::vector<std::uint32_t> userData(24, 0u);
     const auto texture = TextureDescriptor(texels, UnormFormat, SwizzleXYZ1, LoadWidth);
@@ -595,11 +774,16 @@ int main(int argc, char** argv) {
         CheckSample(*device, texels, SampleOffGrid, OffGridStep, SampleStart, SwizzleZYX1, BilinearSampler, true, false, "off-grid bilinear image_sample_lz Z Y X 1");
         CheckSample(*device, texels, SampleWrappedOffGrid, OffGridStep, WrappedStart, SwizzleXYZ1, WrapBilinearSampler, true, true, "off-grid wrapped bilinear image_sample_lz X Y Z 1");
         CheckConvertedPreparation(*device, texels);
-        RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, BorderSampler, "implemented only with wrap or clamp-to-edge addressing", "image_sample_lz with clamp-to-border addressing");
-        RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
-        RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_get_lod");
-        RequireRefused(*device, LoadD16, texels, SwizzleXYZ1, {}, "converted unorm image with 16-bit data", "image_load d16");
-        RequireRefused(*device, StoreD16, texels + StoreOffset, SwizzleXYZ1, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), "converted unorm image with 16-bit data", "image_store d16");
+        for (const auto& layout : FloatLayouts) {
+            CheckFloatStoreD16(*device, texels, layout, 0x7u);
+            CheckFloatStoreD16(*device, texels, layout, 0x5u);
+            CheckFloatLoadD16(*device, texels, layout, true);
+            CheckFloatLoadD16(*device, texels, layout, false);
+        }
+        CheckUnormLoadD16(*device, texels, SwizzleXYZ1, "image_load d16 X Y Z 1");
+        CheckUnormLoadD16(*device, texels, SwizzleZYX1, "image_load d16 Z Y X 1");
+        CheckStore(*device, texels + StoreOffset, StoreD16, 0x7u, "image_store d16 dmask:0x7", true);
+        CheckStore(*device, texels + StoreOffset, StoreXzD16, 0x5u, "image_store d16 dmask:0x5", true);
         RequireRefused(*device, LoadXyzw, texels, SwizzleXYZW, {}, "selects a channel the converted image format does not have", "image_load with DST_SEL X Y Z W");
         RequireRefused(*device, StoreXyz, texels + StoreOffset, SwizzleXYZW, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), "selects a channel the converted image format does not have", "image_store with DST_SEL X Y Z W");
         std::puts("image converted unorm tests passed");

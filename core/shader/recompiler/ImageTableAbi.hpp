@@ -55,6 +55,11 @@ inline constexpr std::uint32_t OutsideDomainPoison = 1;
 inline constexpr std::uint32_t FirstEntryPoison = 2;
 
 inline constexpr std::uint32_t MaxKeys = 65536;
+inline constexpr std::uint32_t MaxParentKeys = 524288;
+inline constexpr std::uint32_t MaxNestedKeys = 1048576;
+inline constexpr std::uint32_t MaxMapWords = 8388608;
+inline constexpr std::uint32_t PointerRecordWords = 3;
+inline constexpr std::uint64_t UncapturedPointer = 0xffffffffffffffffull;
 inline constexpr std::uint32_t MaxModes = 256;
 inline constexpr std::uint32_t ImageElementBudget = 65536;
 inline constexpr std::uint32_t SamplerElementBudget = 1024;

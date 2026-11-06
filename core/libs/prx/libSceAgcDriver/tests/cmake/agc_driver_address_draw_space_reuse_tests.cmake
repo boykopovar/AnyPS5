@@ -1,6 +1,32 @@
 if(BUILD_TESTING)
+    add_test(NAME agc_driver_address_draw_space_reuse_off COMMAND agc_driver_address_draw_space_reuse_tests --off)
+    set_tests_properties(agc_driver_address_draw_space_reuse_off PROPERTIES ENVIRONMENT "APS5_NO_ADDRESS_DRAW_REUSE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_off PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_address_draw_space_reuse_transitions COMMAND agc_driver_address_draw_space_reuse_tests --transitions)
+    set_tests_properties(agc_driver_address_draw_space_reuse_transitions PROPERTIES ENVIRONMENT "APS5_DRAW_TRANSITIONS=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_transitions PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_address_draw_space_reuse_verify COMMAND agc_driver_address_draw_space_reuse_tests --verify)
+    set_tests_properties(agc_driver_address_draw_space_reuse_verify PROPERTIES ENVIRONMENT "APS5_VERIFY_ADDRESS_DRAW_REUSE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_verify PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_address_draw_space_reuse_held COMMAND agc_driver_address_draw_space_reuse_tests --held)
+    set_tests_properties(agc_driver_address_draw_space_reuse_held PROPERTIES ENVIRONMENT "APS5_RELEASE_ON_UNLOCK=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_held PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     agc_add_env_test(agc_driver_address_draw_space_reuse_heap agc_driver_address_draw_space_reuse_tests
             ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 TIMEOUT 60 NO_WORKING_DIRECTORY)
+    agc_add_env_test(agc_driver_address_draw_space_reuse_heap_stages agc_driver_address_draw_space_reuse_tests
+            ARGS --heap-stages ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 TIMEOUT 60 NO_WORKING_DIRECTORY)
     agc_add_env_test(agc_driver_address_draw_space_reuse_heap_transitions agc_driver_address_draw_space_reuse_tests
-            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_DRAW_TRANSITIONS=1 TIMEOUT 60 NO_WORKING_DIRECTORY)
+            ARGS --transitions ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_DRAW_TRANSITIONS=1 TIMEOUT 60 NO_WORKING_DIRECTORY)
 endif()

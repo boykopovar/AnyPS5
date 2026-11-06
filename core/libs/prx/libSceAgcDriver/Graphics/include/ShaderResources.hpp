@@ -9,8 +9,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "Recompiler.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <limits>
 #include <list>
@@ -56,6 +58,7 @@ std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);
 bool AnyPendingCpuWrites(const Context& context);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
+bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding);
 void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
@@ -159,10 +162,15 @@ struct ImageTableReuseCounts {
     std::uint64_t replayed = 0;
     std::uint64_t writesKept = 0;
     std::uint64_t writesMade = 0;
+    std::uint64_t variantSurfaces = 0;
+    std::uint64_t variantSubstituted = 0;
+    std::uint64_t variantRejected = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
+std::uint64_t SampledLookupKeyProofs();
+std::uint64_t DrawInputCopies();
 
 struct PresyncSurface {
     std::uint64_t address;
@@ -173,7 +181,7 @@ struct PresyncSurface {
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
-    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {});
+    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, bool deviceStaging = false);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
     // Two-stage build for dispatches (see build): with `deferred` the constructor runs stage A only,
     // which needs no device lock, and Complete() runs stage B under GuestMemory::GpuMutex; until
@@ -195,6 +203,7 @@ public:
     PipelineSetLayouts SetLayouts() const;
     bool HeapStage() const { return heapStage; }
     void RefreshHeapStage(std::span<const CompiledShader> shaders);
+    void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     void BindDescriptorHeaps(VkCommandBuffer commands) const;
     struct DrawBindings {
@@ -215,7 +224,7 @@ public:
         DescriptorCache::SetAllocation allocation;
         std::vector<Snapshot> snapshots;
         bool addressOffsets = false;
-        std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+        std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
         std::vector<VkDescriptorBufferInfo> addressOverrides;
         ~DrawBindings();
     };
@@ -226,8 +235,20 @@ public:
         std::size_t size;
         std::span<const std::uint32_t> words;
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const;
+    struct DrawUse {
+        DrawUse() = default;
+        DrawUse(const DrawUse&) = delete;
+        DrawUse& operator=(const DrawUse&) = delete;
+        ~DrawUse();
+        std::shared_ptr<BdaResources> record;
+        std::shared_ptr<DrawBindings> bindings;
+        std::shared_ptr<std::atomic<bool>> ownRecord;
+    };
+    std::shared_ptr<DrawUse> BeginDrawUse(Recorder& recorder) const;
+    void CompleteDrawUse(const DrawUse& use) const;
+    void BindDrawUse(VkCommandBuffer commands, VkPipelineLayout layout, const DrawUse* use) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false, const BdaResources* faultRecord = nullptr) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData = nullptr) const;
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
@@ -249,15 +270,25 @@ public:
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
+    bool HasGpuCopies() const { return guestMemory.HasGpuCopies(); }
+    bool HasHostGpuCopies() const { return guestMemory.HasHostGpuCopies(); }
+    bool HasStagedCopies() const { return guestMemory.HasStagedCopies(); }
+    const void* MemoryOwner() const { return &guestMemory; }
+    void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
+    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool SpaceReuse() const { return spaceReuse; }
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
     bool RetakeSpace() { return guestMemory.RetakeSpace(); }
-    bool AddressTableGuardCurrent();
-    bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
+    bool SpaceHeld() const { return guestMemory.SpaceHeld(); }
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
     std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
+    void HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial) { guestMemory.HoldSpaceThrough(recorder, serial); }
+    bool ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough) { return guestMemory.ReleaseCompletedSpace(recorder, completedThrough); }
     bool UsesAddressTable() const { return usesBda; }
+    std::span<const std::byte> AddressTableBytes() const;
+    bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -321,6 +352,7 @@ public:
     struct ProofReport {
         ProofPath path = ProofPath::Fast;
         ProofFailure failure = ProofFailure::None;
+        bool audited = false;
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
     static bool EpochProofs();
@@ -336,7 +368,8 @@ public:
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
     }
-    void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, const DrawBindings* rewritten) const;
+    void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
+    void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     std::size_t BindingCount() const { return bindings.size(); }
@@ -413,6 +446,7 @@ private:
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
         std::uint32_t dataByte = 0;
+        bool oversized = false;
     };
     struct DataPatch {
         std::size_t allocation;
@@ -529,6 +563,7 @@ private:
         bool depthCompare = false;
         VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D;
         bool firstSample = false;
+        bool layerRows = false;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;
@@ -536,9 +571,9 @@ private:
     std::size_t nextImageRecord = 0;
     // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
     // lock and the cache still holds it; null sends the element to cachedTexture.
-    std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
+    std::shared_ptr<Texture> fastTexture(ImageRecord& record);
     void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> guest, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
-    void applyAnisoOverride();
+    void applySamplerVariants();
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
@@ -567,6 +602,7 @@ private:
         bool depth = false;
         bool valid = false;
     };
+    bool keepsTemplateRecords() const;
     void captureValidation();
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
@@ -606,12 +642,14 @@ private:
     Context context;
     std::vector<std::uint32_t> layoutKey;
     GuestBufferMemory guestMemory;
+    std::shared_ptr<ShaderResources> afterRunSelf;
     std::size_t maxDrawSnapshotBytes = MaxDrawSnapshotBytes();
     std::unique_ptr<BdaResources> bda;
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
     bool spaceReuse = false;
+    bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
@@ -631,8 +669,13 @@ private:
     };
     bool splitSets = false;
     bool heapStage = false;
-    std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+    std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const CompiledShader& shader);
+    struct RingDescriptors {
+        std::vector<VkDeviceAddressRangeEXT> ranges;
+        BindlessHeap::SpanMark mark;
+        std::uint32_t first = 0;
+    };
     struct HeapStageState {
         std::vector<std::uintptr_t> key;
         std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
@@ -640,6 +683,7 @@ private:
         std::vector<std::uint32_t> samplerSlots;
         std::vector<std::uint32_t> samplerGenerations;
         std::uint64_t slotSerial = 0;
+        std::uint32_t touchedEpoch = 0;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> dataPatches;
         struct KeptSpan {
             std::vector<std::uint32_t> words;
@@ -647,9 +691,10 @@ private:
         };
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
+        RingDescriptors descriptors;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
-    std::uint32_t heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
+    std::uint64_t heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
     bool ownsHeapBinding(const Binding& binding, VkShaderStageFlags stageBit) const;
     VkImageView heapPlaceholderView(std::uint32_t kind) const;
     VkImageView heapSampledView(std::size_t index) const;
@@ -679,7 +724,7 @@ private:
     std::shared_ptr<const TableDescriptors> keptTable(std::size_t set, std::shared_ptr<const std::vector<std::weak_ptr<Texture>>>& held) noexcept;
     std::uint32_t setOf(const Binding& binding) const;
     std::vector<Allocation> allocations;
-    std::vector<VkDescriptorBufferInfo> descriptorBuffers;
+    mutable std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
     bool addressedBuffers = false;
@@ -687,16 +732,31 @@ private:
     std::array<std::vector<std::uint32_t>, ShaderRecompiler::RuntimeAbi::StageCount> stageDataWords;
     std::array<std::size_t, ShaderRecompiler::RuntimeAbi::StageCount> stageDataIndex{};
     std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtDwords{};
-    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
+    std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const CompiledShader& shader, std::size_t stageIndex);
-    void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides) const;
-    std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const;
+    void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides,
+                              std::vector<VkDeviceAddressRangeEXT>* ranges = nullptr) const;
+    VkDeviceAddressRangeEXT srtRange(std::size_t stage) const;
+    std::uint32_t ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const;
+    std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtOffsets{};
+    std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringDescriptorStages{};
+    std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const;
+    struct FaultDescriptor {
+        std::size_t write;
+        std::size_t buffer;
+        std::uint32_t element;
+    };
+    std::vector<FaultDescriptor> faultDescriptors;
+    void prepareFaultSlot() const;
+    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDescriptorBufferInfo>> inPlace = {}) const;
+    std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
     std::size_t readOnlyBuffers = 0;
     std::chrono::steady_clock::time_point lastFullWalk = std::chrono::steady_clock::now();
+    std::uint64_t walkImportGeneration = HostImportSetGeneration();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeOnlyRanges;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;
@@ -722,11 +782,13 @@ private:
         bool integerBorder = false;
         bool singleLevelImage = false;
         bool mipmappedImage = false;
+        std::optional<std::uint32_t> pinnedLod;
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
+    std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;
     // The pending registry's serial at the last Revalidate that proved this object, taken before
     // its checks and kept only when unchanged after them (0: none): while it is still the serial,
     // no image other than the object's own sources has results pending over its surfaces and
@@ -738,6 +800,7 @@ private:
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
+    bool importsReconcilable = false;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
     void rehashDataWords();
