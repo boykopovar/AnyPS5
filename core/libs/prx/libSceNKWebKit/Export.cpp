@@ -18399,10 +18399,6 @@ int APS5_VABI _ZN3WTF12CountingLock8lockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF12isMainThreadEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18464,10 +18460,6 @@ int APS5_VABI _ZN3WTF13aboutBlankURLEv() {
 }
 
 int APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13isMainRunLoopEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -19051,10 +19043,6 @@ int APS5_VABI _ZN3WTF20ParallelHelperClientD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF20initializeMainThreadEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF20resetAccumulatedLogsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19176,10 +19164,6 @@ int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD2Ev() {
 }
 
 int APS5_VABI _ZN3WTF22TextBreakIteratorCache9singletonEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

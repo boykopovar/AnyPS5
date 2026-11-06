@@ -22,6 +22,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
@@ -35,6 +36,7 @@
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include <limits>
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -3512,6 +3514,34 @@ void metadataPassTests() {
 }
 
 alignas(4096) std::array<std::uint8_t, 4096> cmaskMemory{};
+
+constexpr std::size_t GcnSliceBytes = 64u * 64u * 4u;
+
+void gcnColorSliceTests() {
+    using AgcDriver::Graphics::DecodeColorBuffer;
+    void* block = GuestHeap::GuestHeapAlignForGpu_nid_postfix(256, 3u * GcnSliceBytes);
+    struct Release {
+        void* block;
+        ~Release() { GuestHeap::GuestHeapFree_nid_postfix(block); }
+    } release{block};
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    Require(base < (std::uintptr_t{1} << 40u), "guest heap memory is beyond the 40-bit PS4 GPU address space");
+    auto queue = makeState();
+    queue.context[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    queue.context[0x319] = 64u / 8u - 1u;
+    queue.context[0x31a] = 64u * 64u / 64u - 1u;
+    queue.context[0x31c] = 0x8000u | (10u << 2u);
+    queue.context[0x31d] = 5u;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    struct Restore {
+        ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } restore;
+    for (const std::uint32_t slice : {0u, 2u}) {
+        queue.context[0x31b] = slice | (slice << 13u);
+        const auto target = DecodeColorBuffer(queue.context, 0);
+        Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
+    }
+}
 
 void cmaskTests() {
     using AgcDriver::Graphics::DecodeColorBuffer;
@@ -7933,6 +7963,28 @@ void sampledTextureBudgetTests() {
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
+}
+
+void unitShadowBudgetTests() {
+    using AgcDriver::Graphics::UnitShadowBudget;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0] = {32 * GiB, 0};
+    memory.memoryHeaps[1] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    Require(UnitShadowBudget(memory, nullptr) == 1024 * MiB, "without VK_EXT_memory_budget the unit shadow does not keep its 1 GiB budget");
+    Require(UnitShadowBudget(memory, &reported) == 1024 * MiB, "a zero budget for the device-local heap did not keep the unit shadow's 1 GiB budget");
+    reported.heapBudget[1] = 6 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 768 * MiB, "a 6 GiB device-local budget does not give the unit shadow an eighth of it");
+    reported.heapBudget[1] = 24 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 1024 * MiB, "a 24 GiB device-local budget raised the unit shadow above 1 GiB");
+    reported.heapBudget[1] = 1 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 128 * MiB, "a 1 GiB device-local budget took the unit shadow below its 128 MiB floor");
+    reported.heapBudget[0] = 64 * GiB;
+    reported.heapBudget[1] = 6 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 768 * MiB, "the unit shadow budget was read from a host heap");
 }
 
 void storageTextureBudgetTests() {
@@ -13689,6 +13741,7 @@ int main(int argc, char** argv) {
         metadataPassTests();
         depthCopyPassTests();
         cmaskTests();
+        gcnColorSliceTests();
         uint16ExportTests();
         uint8x2TargetTests();
         uint8x4TargetTests();
@@ -13747,6 +13800,7 @@ int main(int argc, char** argv) {
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
+        unitShadowBudgetTests();
         sampledBudgetReportTests();
         meshArgumentTests();
         meshLimitTests();

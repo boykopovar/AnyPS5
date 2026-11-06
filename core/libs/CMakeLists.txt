@@ -236,6 +236,16 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_system_logger_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemLogger.cpp)
+    target_include_directories(guest_system_logger_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_system_logger_tests PRIVATE libSceSystemLogger libc libkernel)
+    configure_windows_unwind(guest_system_logger_tests)
+    add_test(NAME guest_system_logger COMMAND guest_system_logger_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_logger PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger>")
+    endif()
+
     add_test_executable(guest_webrtc_vad_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcVad.cpp)
     target_include_directories(guest_webrtc_vad_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_webrtc_vad_tests PRIVATE libwebrtc fvad)
@@ -924,6 +934,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_xml_value_types PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_xml_value_types PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
+    endif()
+
+    add_test_executable(guest_xml_initializer_tests tests/GuestXmlInitializer.cpp)
+    target_include_directories(guest_xml_initializer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_xml_initializer_tests PRIVATE libSceXml libkernel libc)
+    configure_windows_unwind(guest_xml_initializer_tests)
+    add_test(NAME guest_xml_initializer COMMAND guest_xml_initializer_tests)
+    set_tests_properties(guest_xml_initializer PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_xml_initializer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
     endif()
 
