@@ -210,8 +210,15 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         // pinning is relaxed once the cache exceeds 1.5x its entry budget, so a scene
         // with more shapes than entries still evicts instead of growing without bound.
         const bool relaxPins = drawCache.size() > drawCacheEntries() + drawCacheEntries() / 2;
+        // The victim search is bounded: scanning the whole LRU list on every insert
+        // (the cache is at capacity almost always) turned eviction into O(entries)
+        // work per draw. Sixteen probes keep the shape representatives alive in
+        // practice while leaving eviction O(1); if every probe is pinned we evict the
+        // coldest entry anyway instead of growing past the budget.
+        constexpr std::size_t VictimProbes = 16;
         auto victim = drawOrder.end();
-        for (auto it = drawOrder.end(); it != drawOrder.begin();) {
+        std::size_t probes = 0;
+        for (auto it = drawOrder.end(); it != drawOrder.begin() && probes < VictimProbes; ++probes) {
             --it;
             bool pinned = false;
             if (shapeCache && !relaxPins) {
@@ -226,15 +233,13 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
                 break;
             }
         }
-        if (victim == drawOrder.end()) break; // every remaining entry is a shape representative
+        if (victim == drawOrder.end()) victim = std::prev(drawOrder.end());
         const auto last = drawCache.find(*victim);
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
         }
         if (traceDrawCache()) traceInsert(traceKeysEvicted, last->first);
-        if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) {
-            if (!shapeCache) drawShapes.erase(shapeOf);
-        }
+        if (const auto shapeOf = drawShapes.find(last->second->shape); shapeOf != drawShapes.end() && shapeOf->second == last->first) drawShapes.erase(shapeOf);
         drawOrder.erase(last->second->order);
         drawCache.erase(last);
         ++drawCacheEvictions;
