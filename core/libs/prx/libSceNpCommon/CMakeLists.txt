@@ -1,4 +1,17 @@
 add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExportsRound7.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_np_hex_capacity_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpHexCapacity.cpp)
+    target_include_directories(guest_np_hex_capacity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_hex_capacity_tests PRIVATE libSceNpCommon libc)
+    configure_windows_unwind(guest_np_hex_capacity_tests)
+    add_test(NAME guest_np_hex_capacity COMMAND guest_np_hex_capacity_tests)
+    set_tests_properties(guest_np_hex_capacity PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_hex_capacity PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
+    endif()
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp")
     target_sources(libSceNpCommon PRIVATE Export.cpp)
 endif()
