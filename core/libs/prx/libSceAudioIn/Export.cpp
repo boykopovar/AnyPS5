@@ -1,6 +1,8 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
+#include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -105,10 +107,9 @@ std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t by
     while (SDL_GetQueuedAudioSize(device) < bytes && Clock::now() < deadline) PreciseSleepUs(1000);
     const std::size_t queued = SDL_GetQueuedAudioSize(device);
     std::array<std::uint8_t, 4096> discard;
-    for (std::size_t excess = queued > bytes * MAX_QUEUED_BLOCKS ? queued - bytes * MAX_QUEUED_BLOCKS : 0; excess > 0;) {
-        const auto chunk = static_cast<Uint32>(std::min(excess, discard.size()));
-        excess -= SDL_DequeueAudio(device, discard.data(), chunk);
-    }
+    const std::size_t excess = queued > bytes * MAX_QUEUED_BLOCKS ? queued - bytes * MAX_QUEUED_BLOCKS : 0;
+    audioin::detail::discardQueuedAudio(excess, discard.data(), discard.size(),
+        [device](std::uint8_t* dest, std::uint32_t chunk) { return SDL_DequeueAudio(device, dest, chunk); });
     return SDL_DequeueAudio(device, dest, static_cast<Uint32>(bytes));
 }
 
@@ -199,7 +200,12 @@ int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
 
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
     if (!gain) return AUDIO_IN_ERROR_INVALID_POINTER;
-    *gain = 1.0f;
+    constexpr float defaultGain = 1.0f;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(gain, &defaultGain, sizeof(defaultGain))) {
+        errno = savedErrno;
+        return AUDIO_IN_ERROR_INVALID_POINTER;
+    }
     std::lock_guard lock(g_mutex);
     return find(handle) ? 0 : AUDIO_IN_ERROR_INVALID_HANDLE;
 }

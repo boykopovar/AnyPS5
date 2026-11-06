@@ -101,6 +101,9 @@ downloads/
 
 *.json
 !demo/web/i18n/*.json
+!/docs/run-report.schema.json
+!/docs/run-report-fixtures/*.json
+!tools/titles.json
 
 !/assets/*.jpg
 !/assets/*.png

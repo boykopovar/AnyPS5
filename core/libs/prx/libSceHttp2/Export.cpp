@@ -66,21 +66,16 @@ static void ReleaseOwnedHandles(int owner) {
     }
 }
 
-bool Http2CookieBoxExists(int cookieBoxId) {
-    std::lock_guard lock(g_handlesMutex);
-    return FindHandle(cookieBoxId, Http2Kind::CookieBox) != nullptr;
-}
-
 static bool HasSettings(const Http2Handle& handle) {
     return handle.kind == Http2Kind::Template || handle.kind == Http2Kind::Request;
 }
 
 template<class TUpdate>
-static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false) {
+static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false, bool contextHasSettings = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindAnyHandle(id);
     if (!handle) return ERROR_INVALID_ID;
-    if (!HasSettings(*handle)) {
+    if (!HasSettings(*handle) && !(contextHasSettings && handle->kind == Http2Kind::Context)) {
         if (otherKindsAreInvalid) return ERROR_INVALID_ID;
         NotImplemented_nid_no_patch(function);
     }
@@ -115,8 +110,7 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
     auto* handle = FindHandle(id, Http2Kind::Request);
     if (!handle) return nullptr;
     if (create && !handle->transport) {
-        if (handle->version != 3) NotImplemented_nid_no_patch("sceHttp2SendRequest: HTTP/1.x transport is not implemented");
-        handle->transport = Http2::CreateRequest_nid_no_patch(handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
+        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->version, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
     }
     if (!handle->transport) NotImplemented_nid_no_patch("sceHttp2: request has not been sent");
     return handle->transport;
@@ -184,9 +178,8 @@ int APS5_VABI sceHttp2DeleteTemplate(int tmpl_id) {
 }
 
 int APS5_VABI sceHttp2GetAllResponseHeaders(int req_id, char** header, size_t* header_size) {
-    if (!Transport(req_id, false)) return ERROR_INVALID_ID;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto request = Transport(req_id, false);
+    return request ? request->Headers(header, header_size) : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t* content_length) {
@@ -264,8 +257,11 @@ int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
     });
 }
 
-int APS5_VABI sceHttp2SetRedirectCallback(int id, void* cb_func, void* user_arg) {
-    return Update(id, __func__, [&](auto&) { if (cb_func || user_arg) NotImplemented_nid_no_patch("sceHttp2SetRedirectCallback"); });
+int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.redirectCallback = cb_func;
+        settings.redirectArgument = user_arg;
+    });
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {
@@ -286,8 +282,11 @@ int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec) {
     });
 }
 
-int APS5_VABI sceHttp2SetSslCallback(int id, void* cb_func, void* user_arg) {
-    return Update(id, __func__, [&](auto&) { if (cb_func || user_arg) NotImplemented_nid_no_patch("sceHttp2SetSslCallback"); });
+int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.sslCallback = cb_func;
+        settings.sslArgument = user_arg;
+    });
 }
 
 int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec) {
@@ -301,14 +300,14 @@ int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslDisableOption");
         settings.verifyFlags &= ~ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslEnableOption");
         settings.verifyFlags |= ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
@@ -358,9 +357,15 @@ int APS5_VABI sceHttp2CreateCookieBox(std::size_t poolSize) {
     void* address = nullptr;
     if (const int result = sceKernelMapNamedFlexibleMemory(&address, mappedSize, 3, 0, "SceHttp2CookieBox"); result != 0) return result;
     std::shared_ptr<void> memory(address, [mappedSize](void* mapped) { sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), mappedSize); });
-    std::lock_guard lock(g_handlesMutex);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    g_handles.emplace(id, Http2Handle{Http2Kind::CookieBox, 0, poolSize, std::move(memory)});
+    Http2AddCookieBox(id);
+    try {
+        std::lock_guard lock(g_handlesMutex);
+        g_handles.emplace(id, Http2Handle{Http2Kind::CookieBox, 0, poolSize, std::move(memory)});
+    } catch (...) {
+        Http2ForgetCookies(id);
+        throw;
+    }
     return id;
 }
 
@@ -375,7 +380,11 @@ int APS5_VABI sceHttp2DeleteCookieBox(int cookie_box_id) {
 }
 
 int APS5_VABI sceHttp2SetCookieBox(int id, int cookie_box_id) {
-    return Update(id, __func__, [&](auto&) { if (cookie_box_id != 0) NotImplemented_nid_no_patch("sceHttp2SetCookieBox"); });
+    return Update(id, __func__, [&](auto& settings) {
+        if (cookie_box_id != 0 && !FindHandle(cookie_box_id, Http2Kind::CookieBox)) return ERROR_INVALID_ID;
+        settings.cookieBox = cookie_box_id;
+        return 0;
+    }, true);
 }
 
 int APS5_VABI sceHttp2SetRequestNoContentLength(int id) {
@@ -453,9 +462,14 @@ int APS5_VABI sceHttp2GetAutoRedirect(int id, int* enable) {
     });
 }
 
-int APS5_VABI sceHttp2GetCookieBox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceHttp2GetCookieBox(int id, int* cookieBoxId) {
+    if (!cookieBoxId) return ERROR_NULL_POINTER;
+    *cookieBoxId = 0;
+    return Read(id, [&](const auto& settings) {
+        if (settings.cookieBox == 0) return ERROR_NOT_FOUND;
+        *cookieBoxId = settings.cookieBox;
+        return 0;
+    });
 }
 
 int APS5_VABI sceHttp2RedirectCacheFlush(int lib_http2_ctx_id) {
