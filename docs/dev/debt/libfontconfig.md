@@ -1,8 +1,13 @@
 # libfontconfig technical debt
 
+### Functional
+
+- [Font sets and object sets](../../../core/libs/prx/libfontconfig/Sets.cpp) are based on disassembly of firmware 13.42 `libfontconfig.sprx` (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`), not the stock desktop Fontconfig layout. Font-set capacity is stored in bytes, grows by sixteen pointers, and stops at 1024 entries; each insertion duplicates the caller's pattern. Object sets allocate their pointer arrays inline and preserve the original argument order with duplicated names. Host safety returns on null destroy and null add, where the firmware accesses pointers without such checks. Console runtime behavior beyond disassembly is not verified.
+- [Pattern-dependent font-set operations](../../../core/libs/prx/libfontconfig/Sets.cpp) require `FcPatternDuplicate` and `FcPatternDestroy`, which still throw in this branch. [PR #14435](https://github.com/boykopovar/AnyPS5/pull/14435) supplies the real pattern operations; until it lands, only empty-set lifecycle and object sets work at runtime. Source-linked tests supply typed pattern duplication/destruction mocks and check independent ownership, 1024-capacity bounds, and ordering.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 48 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -37,24 +42,19 @@
 | `FcPatternDel` | `Om2ww9GOmes` |
 | `FcConfigDestroy` | `Oor7ukCXZOE` |
 | `FcPatternReference` | `QZuEIDVT42s` |
-| `FcObjectSetDestroy` | `WtTZKbENx4o` |
 | `FcPatternGet` | `Xmsz9ffM-9g` |
 | `FcPatternAddMatrix` | `Zqa5tqMhOrI` |
 | `FcPatternAddString` | `bU30lh8YpkE` |
-| `FcFontSetCreate` | `fJfx9D9g9W4` |
 | `FcLangSetHasLang` | `gbtAblHLpQg` |
 | `FcCharSetCreate` | `hNyN1seFzWY` |
 | `FcLangSetCreate` | `jjz2C1StauM` |
 | `FcFreeTypeCharIndex` | `l240XTbw2vk` |
-| `FcFontSetAdd` | `lEIEcYhU2vE` |
 | `FcPatternDestroy` | `nVkAFM4iCS4` |
 | `FcCharSetAddChar` | `nXYd1oE9ZM0` |
 | `FcMatrixMultiply` | `oM+8JNTrd24` |
 | `FcPatternAddCharSet` | `paHcj4DoPQ4` |
 | `FcDefaultSubstitute` | `sqEJZ2yMVNw` |
-| `FcObjectSetBuild` | `v5-8NZmvyrA` |
 | `FcPatternAddLangSet` | `vqX-PYS3MPc` |
-| `FcFontSetDestroy` | `vrZNehbMgsU` |
 | `FcPatternGetLangSet` | `x55q-bC-i+8` |
 | `FcPatternCreate` | `xGAEbwA7FNo` |
 | `FcConfigReference` | `yQed09jA3VA` |
