@@ -22,7 +22,7 @@ std::uint32_t Enumerate(hb_face_t* face, std::uint32_t start, std::uint32_t* cou
     const std::uint32_t written = std::min(*count, total - std::min(total, start));
     if (written && !tags) NotImplemented_nid_no_patch(__func__);
     GuestArena::HostWrite countWrite(count, sizeof(*count));
-    GuestArena::HostWrite tagsWrite(tags, static_cast<std::size_t>(written) * sizeof(*tags));
+    GuestArena::HostWrite tagsWrite(written ? tags : nullptr, static_cast<std::size_t>(written) * sizeof(*tags));
     if (!countWrite.Open() || !tagsWrite.Open()) NotImplemented_nid_no_patch(__func__);
     return query(count, tags);
 }
