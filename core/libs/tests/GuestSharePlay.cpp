@@ -44,6 +44,7 @@ int main() {
     Require(info.hostOnlineId.data[0] == 0 && info.visitorOnlineId.data[0] == 0 && info.hostOnlineId.pad[2] == 0);
     Require(info.hostUserId == -1 && info.visitorUserId == -1);
     Require(sceSharePlayGetCurrentConnectionInfoA(nullptr) == static_cast<int>(0x810E0001));
+    Require(sceSharePlayGetCurrentConnectionInfoA(reinterpret_cast<SharePlayConnectionInfoA*>(0x10)) == invalidArgument);
     unsigned char plain[sizeof(SharePlayConnectionInfo) + 8];
     std::memset(plain, 0x5a, sizeof(plain));
     auto* plainInfo = reinterpret_cast<SharePlayConnectionInfo*>(plain);
@@ -52,6 +53,7 @@ int main() {
     Require(plainInfo->hostUserId == -1 && plainInfo->visitorUserId == -1);
     for (std::size_t i = sizeof(SharePlayConnectionInfo); i < sizeof(plain); ++i) Require(plain[i] == 0x5a);
     Require(sceSharePlayGetCurrentConnectionInfo(nullptr) == invalidArgument);
+    Require(sceSharePlayGetCurrentConnectionInfo(reinterpret_cast<SharePlayConnectionInfo*>(0x10)) == invalidArgument);
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(0) == 0);
