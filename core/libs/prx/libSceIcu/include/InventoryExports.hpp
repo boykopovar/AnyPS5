@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
 
 extern "C" {
 
@@ -69,9 +70,9 @@ int APS5_VABI ures_close();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
-int APS5_VABI uscript_getScript();
-int APS5_VABI uscript_getShortName();
-int APS5_VABI uscript_hasScript();
+std::int32_t APS5_VABI uscript_getScript(std::int32_t codePoint, std::int32_t* error);
+const char* APS5_VABI uscript_getShortName(std::int32_t script);
+std::int8_t APS5_VABI uscript_hasScript(std::int32_t codePoint, std::int32_t script);
 int APS5_VABI utext_close();
 int APS5_VABI utext_openConstUnicodeString();
 int APS5_VABI utext_openUChars();
