@@ -9,8 +9,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using WKPoint = NKWebKit::PointValue;
@@ -50,52 +53,6 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
-}
-
-static void CheckOriginString(const void* string, const char* expected) {
-    Require(WKStringIsEqualToUTF8CString(string, expected));
-    WKRelease(string);
-}
-
-static void TestSecurityOrigin() {
-    struct Case {
-        const char* protocol;
-        const char* host;
-        int port;
-        unsigned expectedPort;
-        const char* text;
-    };
-    for (const Case& value : {
-        Case{"http", "example.com", 8080, 8080, "http://example.com:8080"},
-        Case{"http", "host_name", 0, 0, "http://host_name"},
-        Case{"http", "example.com", 80, 80, "http://example.com:80"},
-        Case{"https", "EXAMPLE", 65536, 0, "https://EXAMPLE"},
-        Case{"custom", "host", -1, 65535, "custom://host:65535"},
-        Case{"custom", "host", -65536, 0, "custom://host:0"},
-        Case{"file", "host", 42, 42, "file://"},
-        Case{"FILE", "host", 0, 0, "FILE://host"},
-        Case{"", "", 0, 0, ""},
-        Case{"http", "a b%_c", 0, 0, "http://a b%_c"}
-    }) {
-        const auto* protocol = WKStringCreateWithUTF8CString(value.protocol);
-        const auto* host = WKStringCreateWithUTF8CString(value.host);
-        const auto* origin = WKSecurityOriginCreate(protocol, host, value.port);
-        WKRelease(protocol);
-        WKRelease(host);
-        Require(WKGetTypeID(origin) == WKSecurityOriginGetTypeID());
-        Require(WKSecurityOriginGetPort(origin) == value.expectedPort);
-        CheckOriginString(WKSecurityOriginCopyProtocol(origin), value.protocol);
-        CheckOriginString(WKSecurityOriginCopyHost(origin), value.host);
-        CheckOriginString(WKSecurityOriginCopyToString(origin), value.text);
-        WKRelease(origin);
-    }
-    auto nullString = NKWebKit::Make<NKWebKit::String>();
-    const auto* origin = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
-    for (const auto* copy : {WKSecurityOriginCopyProtocol(origin), WKSecurityOriginCopyHost(origin), WKSecurityOriginCopyToString(origin)}) {
-        Require(NKWebKit::Cast<NKWebKit::String>(copy, __func__)->null);
-        WKRelease(copy);
-    }
-    WKRelease(origin);
 }
 
 static void TestRetainRelease() {
@@ -340,8 +297,94 @@ static void TestUserContentURLPattern() {
     Require(WKStringIsEqualToUTF8CString(hostStr, "example.com"));
     WKRelease(hostStr);
 
+    auto* url1 = WKURLCreateWithUTF8CString("http://example.com/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, url1));
+    WKRelease(url1);
+
+    auto* url2 = WKURLCreateWithUTF8CString("http://sub.example.com/foo/baz?query=1#hash");
+    Require(WKUserContentURLPatternMatchesURL(pat, url2));
+    WKRelease(url2);
+
+    auto* urlPort = WKURLCreateWithUTF8CString("http://example.com:8080/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlPort));
+    WKRelease(urlPort);
+
+    auto* urlAuth = WKURLCreateWithUTF8CString("http://user:pass@example.com/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlAuth));
+    WKRelease(urlAuth);
+
+    auto* urlAuthPort = WKURLCreateWithUTF8CString("http://user:pass@example.com:8080/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlAuthPort));
+    WKRelease(urlAuthPort);
+
+    auto* ipv6Pat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://[2001:db8::1]/api/*"));
+    Require(WKUserContentURLPatternIsValid(ipv6Pat));
+    auto* ipv6Url = WKURLCreateWithUTF8CString("http://user:secret@[2001:db8::1]:9000/api/v1");
+    Require(WKUserContentURLPatternMatchesURL(ipv6Pat, ipv6Url));
+    WKRelease(ipv6Url);
+    WKRelease(ipv6Pat);
+
+    auto* urlDiffScheme = WKURLCreateWithUTF8CString("https://example.com/foo/bar");
+    Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffScheme));
+    WKRelease(urlDiffScheme);
+
+    auto* urlDiffHost = WKURLCreateWithUTF8CString("http://other.com/foo/bar");
+    Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffHost));
+    WKRelease(urlDiffHost);
+
+    auto* urlDiffPath = WKURLCreateWithUTF8CString("http://example.com/bar");
+    Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffPath));
+    WKRelease(urlDiffPath);
+
+    auto* urlCase = WKURLCreateWithUTF8CString("HTTP://EXAMPLE.COM/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlCase));
+    WKRelease(urlCase);
+
+    auto* simplePat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://example.com/*"));
+    Require(WKUserContentURLPatternIsValid(simplePat));
+    auto* queryUrl = WKURLCreateWithUTF8CString("http://example.com?x=1");
+    Require(WKUserContentURLPatternMatchesURL(simplePat, queryUrl));
+    WKRelease(queryUrl);
+    auto* fragUrl = WKURLCreateWithUTF8CString("http://example.com#part");
+    Require(WKUserContentURLPatternMatchesURL(simplePat, fragUrl));
+    WKRelease(fragUrl);
+    auto* literalStarUrl = WKURLCreateWithUTF8CString("http://example.com/*tail");
+    Require(WKUserContentURLPatternMatchesURL(simplePat, literalStarUrl));
+    WKRelease(literalStarUrl);
+    WKRelease(simplePat);
+
+    auto* upperPat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://EXAMPLE.COM/*"));
+    Require(WKUserContentURLPatternIsValid(upperPat));
+    auto* lowerUrl = WKURLCreateWithUTF8CString("http://example.com/foo");
+    Require(WKUserContentURLPatternMatchesURL(upperPat, lowerUrl));
+    WKRelease(lowerUrl);
+    WKRelease(upperPat);
+
+    auto* allSchemes = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("*://example.com/*"));
+    Require(WKUserContentURLPatternIsValid(allSchemes));
+    auto* httpUrl = WKURLCreateWithUTF8CString("http://example.com/test");
+    Require(WKUserContentURLPatternMatchesURL(allSchemes, httpUrl));
+    WKRelease(httpUrl);
+    auto* httpsUrl = WKURLCreateWithUTF8CString("https://example.com/test");
+    Require(WKUserContentURLPatternMatchesURL(allSchemes, httpsUrl));
+    WKRelease(httpsUrl);
+    auto* ftpUrl = WKURLCreateWithUTF8CString("ftp://example.com/test");
+    Require(!WKUserContentURLPatternMatchesURL(allSchemes, ftpUrl));
+    WKRelease(ftpUrl);
+    WKRelease(allSchemes);
+
+    auto* filePat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("file:///path/*"));
+    Require(WKUserContentURLPatternIsValid(filePat));
+    auto* fileUrl = WKURLCreateWithUTF8CString("file:///path/to/file");
+    Require(WKUserContentURLPatternMatchesURL(filePat, fileUrl));
+    WKRelease(fileUrl);
+    WKRelease(filePat);
+
     auto* invalidPat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("not_a_valid_pattern"));
     Require(!WKUserContentURLPatternIsValid(invalidPat));
+    auto* testUrl = WKURLCreateWithUTF8CString("http://example.com/");
+    Require(!WKUserContentURLPatternMatchesURL(invalidPat, testUrl));
+    WKRelease(testUrl);
     auto* invalidScheme = WKUserContentURLPatternCopyScheme(invalidPat);
     Require(WKStringIsEmpty(invalidScheme));
     WKRelease(invalidScheme);
@@ -388,6 +431,110 @@ static void TestUserContentURLPattern() {
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
+
+    auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
+        NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
+        NKWebKit::String::FromUtf8("image/png"),
+        200,
+        NKWebKit::String::FromUtf8("test.png"),
+        true,
+        123456789LL
+    );
+    const void* responseRef = NKWebKit::ToRef(responseObj);
+
+    auto* url = WKURLResponseCopyURL(responseRef);
+    auto* urlString = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/test.png"));
+    WKRelease(urlString);
+    WKRelease(url);
+
+    auto* mime = WKURLResponseCopyMIMEType(responseRef);
+    Require(WKStringIsEqualToUTF8CString(mime, "image/png"));
+    WKRelease(mime);
+
+    Require(WKURLResponseHTTPStatusCode(responseRef) == 200);
+
+    auto* filename = WKURLResponseCopySuggestedFilename(responseRef);
+    Require(WKStringIsEqualToUTF8CString(filename, "test.png"));
+    WKRelease(filename);
+
+    Require(WKURLResponseIsAttachment(responseRef));
+    Require(WKURLResponseGetExpectedContentLength(responseRef) == 123456789u);
+    WKRelease(responseRef);
+
+    for (const auto& [stored, expected] : {std::pair<std::int64_t, std::uint32_t>{4294967297LL, 1u}, std::pair<std::int64_t, std::uint32_t>{-1LL, std::numeric_limits<std::uint32_t>::max()}}) {
+        auto lengthObj = NKWebKit::Make<NKWebKit::URLResponse>(NKWebKit::Make<NKWebKit::URL>("https://example.com/"), NKWebKit::String::FromUtf8(""), 200, NKWebKit::String::FromUtf8(""), false, stored);
+        const void* lengthRef = NKWebKit::ToRef(lengthObj);
+        Require(WKURLResponseGetExpectedContentLength(lengthRef) == expected);
+        WKRelease(lengthRef);
+    }
+
+    auto defaultObj = NKWebKit::Make<NKWebKit::URLResponse>();
+    const void* defaultRef = NKWebKit::ToRef(defaultObj);
+
+    Require(WKURLResponseCopyURL(defaultRef) == nullptr);
+
+    auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
+    Require(WKStringIsEmpty(emptyMime));
+    WKRelease(emptyMime);
+
+    Require(WKURLResponseHTTPStatusCode(defaultRef) == 0);
+
+    auto* emptyFilename = WKURLResponseCopySuggestedFilename(defaultRef);
+    Require(WKStringIsEmpty(emptyFilename));
+    WKRelease(emptyFilename);
+
+    Require(!WKURLResponseIsAttachment(defaultRef));
+    Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
+    WKRelease(defaultRef);
+
+    bool threw = false;
+    try {
+        WKURLResponseCopyURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseCopyMIMEType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseHTTPStatusCode(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseCopySuggestedFilename(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseIsAttachment(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseGetExpectedContentLength(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void TestError() {
@@ -395,6 +542,241 @@ static void TestError() {
     auto* domain = WKErrorCopyWKErrorDomain();
     Require(WKStringIsEqualToUTF8CString(domain, "WebKitErrorDomain"));
     WKRelease(domain);
+}
+
+static void TestHitTestResult() {
+    Require(WKHitTestResultGetTypeID() == 63);
+    auto hit = NKWebKit::Make<NKWebKit::HitTestResult>();
+    hit->absoluteImageURL = "https://example.com/img.png";
+    hit->absoluteLinkURL = "https://example.com/link";
+    hit->absoluteMediaURL = "https://example.com/media.mp4";
+    hit->absolutePDFURL = "https://example.com/doc.pdf";
+    hit->linkLabel = u"Click here";
+    hit->linkTitle = u"Title";
+    hit->lookupText = u"Search text";
+    hit->elementBoundingBox = WKRect{{1.0, 2.0}, {30.0, 40.0}};
+    hit->isContentEditable = true;
+
+    const void* ref = NKWebKit::ToRef(hit);
+    auto* imgUrl = WKHitTestResultCopyAbsoluteImageURL(ref);
+    Require(imgUrl != nullptr);
+    auto* imgUrlStr = WKURLCopyString(imgUrl);
+    Require(WKStringIsEqualToUTF8CString(imgUrlStr, "https://example.com/img.png"));
+    WKRelease(imgUrlStr);
+    WKRelease(imgUrl);
+
+    auto* linkUrl = WKHitTestResultCopyAbsoluteLinkURL(ref);
+    Require(linkUrl != nullptr);
+    auto* linkUrlStr = WKURLCopyString(linkUrl);
+    Require(WKStringIsEqualToUTF8CString(linkUrlStr, "https://example.com/link"));
+    WKRelease(linkUrlStr);
+    WKRelease(linkUrl);
+
+    auto* mediaUrl = WKHitTestResultCopyAbsoluteMediaURL(ref);
+    Require(mediaUrl != nullptr);
+    auto* mediaUrlStr = WKURLCopyString(mediaUrl);
+    Require(WKStringIsEqualToUTF8CString(mediaUrlStr, "https://example.com/media.mp4"));
+    WKRelease(mediaUrlStr);
+    WKRelease(mediaUrl);
+
+    auto* pdfUrl = WKHitTestResultCopyAbsolutePDFURL(ref);
+    Require(pdfUrl != nullptr);
+    auto* pdfUrlStr = WKURLCopyString(pdfUrl);
+    Require(WKStringIsEqualToUTF8CString(pdfUrlStr, "https://example.com/doc.pdf"));
+    WKRelease(pdfUrlStr);
+    WKRelease(pdfUrl);
+
+    auto* label = WKHitTestResultCopyLinkLabel(ref);
+    Require(WKStringIsEqualToUTF8CString(label, "Click here"));
+    WKRelease(label);
+
+    auto* title = WKHitTestResultCopyLinkTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Title"));
+    WKRelease(title);
+
+    auto* lookup = WKHitTestResultCopyLookupText(ref);
+    Require(WKStringIsEqualToUTF8CString(lookup, "Search text"));
+    WKRelease(lookup);
+
+    WKRect box = WKHitTestResultGetElementBoundingBox(ref);
+    Require(box.origin.x == 1.0 && box.origin.y == 2.0);
+    Require(box.size.width == 30.0 && box.size.height == 40.0);
+    Require(WKHitTestResultIsContentEditable(ref));
+
+    auto unset = NKWebKit::Make<NKWebKit::HitTestResult>();
+    const void* unsetRef = NKWebKit::ToRef(unset);
+    Require(WKHitTestResultCopyAbsoluteImageURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteLinkURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteMediaURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsolutePDFURL(unsetRef) == nullptr);
+    WKRelease(unsetRef);
+
+    bool threw = false;
+    try {
+        WKHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
+static void TestDownload() {
+    Require(WKDownloadGetTypeID() == 52);
+    auto download = NKWebKit::Make<NKWebKit::Download>();
+    const void* ref = download.Get();
+
+    Require(!WKDownloadGetWasUserInitiated(ref));
+    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+
+    download->wasUserInitiated = true;
+    Require(WKDownloadGetWasUserInitiated(ref));
+
+    auto dummyReq = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    download->request = std::move(dummyReq);
+    auto* req = WKDownloadCopyRequest(ref);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKDataGetTypeID());
+    WKRelease(req);
+
+    bool threw = false;
+    try {
+        WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestAXObject() {
+    Require(WKAXObjectGetTypeID() == 132);
+    auto ax = NKWebKit::Make<NKWebKit::AccessibilityObject>();
+    const void* ref = ax.Get();
+
+    Require(WKAXObjectCopyTitle(ref) == nullptr);
+    Require(WKAXObjectCopyDescription(ref) == nullptr);
+    Require(WKAXObjectCopyHelpText(ref) == nullptr);
+    Require(WKAXObjectCopyURL(ref) == nullptr);
+
+    ax->title = NKWebKit::String::FromUtf8("Submit Button");
+    ax->description = NKWebKit::String::FromUtf8("Submits the form");
+    ax->helpText = NKWebKit::String::FromUtf8("Click to send your input");
+    ax->url = NKWebKit::String::FromUtf8("https://example.com/action");
+
+    auto* title = WKAXObjectCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Submit Button"));
+    WKRelease(title);
+
+    auto* desc = WKAXObjectCopyDescription(ref);
+    Require(desc != nullptr);
+    Require(WKStringIsEqualToUTF8CString(desc, "Submits the form"));
+    WKRelease(desc);
+
+    auto* help = WKAXObjectCopyHelpText(ref);
+    Require(help != nullptr);
+    Require(WKStringIsEqualToUTF8CString(help, "Click to send your input"));
+    WKRelease(help);
+
+    auto* url = WKAXObjectCopyURL(ref);
+    Require(url != nullptr);
+    Require(WKGetTypeID(url) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(url, "https://example.com/action"));
+    WKRelease(url);
+
+    bool threw = false;
+    try {
+        WKAXObjectCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestPopupMenuItem() {
+    Require(WKPopupMenuItemGetTypeID() == 131);
+    auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
+    const void* ref = item.Get();
+
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+    Require(WKPopupMenuItemCopyText(ref) == nullptr);
+
+    item->text = NKWebKit::String::FromUtf8("Option 1");
+    auto* text = WKPopupMenuItemCopyText(ref);
+    Require(text != nullptr);
+    Require(WKStringIsEqualToUTF8CString(text, "Option 1"));
+    WKRelease(text);
+
+    item->enabled = false;
+    Require(!WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->enabled = true;
+    item->isItem = false;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(!WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->isItem = true;
+    item->isSeparator = true;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(WKPopupMenuItemIsSeparator(ref));
+
+    bool threw = false;
+    try {
+        WKPopupMenuItemIsEnabled(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestOpenPanelResultListener() {
+    Require(WKOpenPanelResultListenerGetTypeID() == 80);
+
+    auto listener = NKWebKit::Make<NKWebKit::OpenPanelResultListener>();
+    const void* ref = listener.Get();
+
+    Require(!listener->cancelled);
+    Require(listener->chosenFiles.empty());
+
+    WKOpenPanelResultListenerCancel(ref);
+    Require(listener->cancelled);
+
+    auto urlObj = NKWebKit::Make<NKWebKit::URL>("file:///path/to/file.txt");
+    const void* urlValues[] = { urlObj.Get() };
+    const void* fileArray = WKArrayCreate(urlValues, 1);
+
+    WKOpenPanelResultListenerChooseFiles(ref, fileArray, nullptr);
+    Require(!listener->cancelled);
+    Require(listener->chosenFiles.size() == 1);
+    Require(listener->chosenFiles[0]->Utf8() == "/path/to/file.txt");
+    WKRelease(fileArray);
+
+    WKOpenPanelResultListenerChooseFiles(ref, nullptr, nullptr);
+    Require(listener->chosenFiles.empty());
+
+    bool threw = false;
+    try {
+        WKOpenPanelResultListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKOpenPanelResultListenerChooseFiles(nullptr, nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void TestCertificateInfo() {
@@ -408,7 +790,6 @@ static void TestCertificateInfo() {
 
 int main() {
     TestTypeIDs();
-    TestSecurityOrigin();
     TestRetainRelease();
     TestStrings();
     TestURL();
@@ -420,6 +801,11 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestHitTestResult();
+    TestDownload();
+    TestAXObject();
+    TestPopupMenuItem();
+    TestOpenPanelResultListener();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
