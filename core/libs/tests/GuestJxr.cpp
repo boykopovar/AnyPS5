@@ -23,8 +23,8 @@ bool failAllocation = false;
 bool fillMalloc = false;
 int mallocCalls = 0;
 int failMallocAt = -1;
-std::array<void*, 32> mallocLog{};
-std::array<std::size_t, 32> mallocSizeLog{};
+std::array<void*, 512> mallocLog{};
+std::array<std::size_t, 512> mallocSizeLog{};
 std::size_t lastCount = 0;
 std::size_t lastSize = 0;
 void* lastAllocated = nullptr;
@@ -151,6 +151,59 @@ void TestInitPostProc() {
     fillMalloc = false;
 }
 
+void TestAllocateQuantizer() {
+    fillMalloc = true;
+    constexpr std::size_t quantizerSize = 20;
+    int sentinelObject = 0;
+    void* const sentinel = &sentinelObject;
+    std::array<void*, 16> quantizers{};
+    for (std::size_t channels = 0; channels <= 16; ++channels) {
+        for (std::size_t count = 0; count <= 16; ++count) {
+            quantizers.fill(sentinel);
+            const auto allocationIndex = static_cast<std::size_t>(mallocCalls);
+            const int result = allocateQuantizer_nid_postfix(quantizers.data(), channels, count);
+            void* const allocation = mallocLog[allocationIndex];
+            const std::size_t bytes = channels * count * quantizerSize;
+            Require(mallocSizeLog[allocationIndex] == bytes);
+            Require(quantizers[0] == allocation);
+            Require(result == (allocation ? 0 : -1));
+            if (allocation) {
+                auto* const base = static_cast<unsigned char*>(allocation);
+                for (std::size_t i = 0; i < bytes; ++i) Require(base[i] == 0xa5);
+                for (std::size_t channel = 1; channel < channels; ++channel)
+                    Require(quantizers[channel] == base + channel * count * quantizerSize);
+                free_nid_postfix(allocation);
+            }
+            for (std::size_t channel = channels == 0 ? 1 : channels; channel < quantizers.size(); ++channel)
+                Require(quantizers[channel] == sentinel);
+        }
+    }
+
+    const auto callsBeforeBounds = mallocCalls;
+    Require(allocateQuantizer_nid_postfix(nullptr, 17, 0) == -1);
+    Require(allocateQuantizer_nid_postfix(nullptr, 0, 17) == -1);
+    Require(mallocCalls == callsBeforeBounds);
+
+    int failureSentinelObject = 0;
+    void* const failureSentinel = &failureSentinelObject;
+    quantizers.fill(failureSentinel);
+    failMallocAt = mallocCalls + 1;
+    const auto failedAllocationIndex = static_cast<std::size_t>(mallocCalls);
+    Require(allocateQuantizer_nid_postfix(quantizers.data(), 3, 7) == -1);
+    failMallocAt = -1;
+    Require(mallocSizeLog[failedAllocationIndex] == 3 * 7 * quantizerSize);
+    Require(quantizers[0] == nullptr);
+    for (std::size_t channel = 1; channel < quantizers.size(); ++channel)
+        Require(quantizers[channel] == failureSentinel);
+
+    const auto callsBeforeNull = mallocCalls;
+    bool threw = false;
+    try { allocateQuantizer_nid_postfix(nullptr, 1, 1); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && mallocCalls == callsBeforeNull);
+    fillMalloc = false;
+}
+
 }
 
 void TestTermPostProc() {
@@ -236,5 +289,6 @@ int main() {
     Require(threw);
     TestTermPostProc();
     TestInitPostProc();
+    TestAllocateQuantizer();
     return 0;
 }

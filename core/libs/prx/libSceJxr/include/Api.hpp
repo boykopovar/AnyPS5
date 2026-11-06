@@ -128,7 +128,7 @@ int APS5_VABI advanceMRPtr_nid_postfix();
 int APS5_VABI advanceOneMBRow_nid_postfix();
 int APS5_VABI allocateBitIOInfo_nid_postfix();
 int APS5_VABI allocatePredInfo_nid_postfix();
-int APS5_VABI allocateQuantizer_nid_postfix();
+int APS5_VABI allocateQuantizer_nid_postfix(void** quantizers, std::size_t channels, std::size_t quantizerCount);
 int APS5_VABI allocateTileInfo_nid_postfix();
 std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream, void* codec);
 std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream);
