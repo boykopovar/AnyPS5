@@ -100,6 +100,16 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSGetLocalEndpointAttribute(local, 1, &mute, 4) == argumentInvalid);
     Require(sceVoiceQoSGetLocalEndpointAttribute(local + 100, 0, &volume, sizeof(volume)) == argumentInvalid);
     Require(sceVoiceQoSGetLocalEndpointAttribute(local, 0, nullptr, sizeof(volume)) == argumentInvalid);
+    std::uint32_t attributeValue = 0;
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local + 1, 0, &attributeValue, sizeof(attributeValue)) == argumentInvalid);
+    for (std::int32_t attribute : {-1, 4, 7, 9, 100}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, attribute, &attributeValue, sizeof(attributeValue)) == argumentInvalid);
+    for (std::int32_t attribute : {0, 2, 6}) {
+        for (std::int32_t size : {0, 1, 2, 8, -1}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, attribute, &attributeValue, size) == argumentInvalid);
+    }
+    for (std::int32_t attribute : {1, 3, 5}) {
+        for (std::int32_t size : {0, 2, 4, 8, -1}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, attribute, &attributeValue, size) == argumentInvalid);
+    }
+    for (std::int32_t size : {0, 1, 4, 8, -1}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, 8, &attributeValue, size) == argumentInvalid);
     const float halfVolume = 0.5f;
     const std::uint8_t enabled = 1;
     Require(sceVoiceQoSSetLocalEndpointAttribute(local, 0, &halfVolume, sizeof(halfVolume)) == 0);
