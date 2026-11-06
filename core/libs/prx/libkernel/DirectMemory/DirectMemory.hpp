@@ -8,6 +8,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 
 static constexpr size_t DIRECT_MEMORY_SIZE = 13824ULL * 1024 * 1024;
+static constexpr size_t GAME_MEMORY_SIZE = 12736ULL * 1024 * 1024;
 static constexpr size_t PS5_PAGE_SIZE = 0x4000;
 
 #ifdef _WIN32
@@ -16,6 +17,7 @@ using HostSharedMemory = void*;
 using HostSharedMemory = int;
 #endif
 
+size_t DirectMemorySize();
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut);
 void DirectMemoryFree(int64_t start, size_t len);
 bool DirectMemoryCheckedFree(int64_t start, size_t len);
