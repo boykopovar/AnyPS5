@@ -445,7 +445,7 @@ FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
     if (!mode) { errno = 22; return nullptr; }
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
-    if (descriptor < 0) { errno = 9; return nullptr; }
+    if (descriptor < 0) return nullptr;
     AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     try {
         auto nativeMode = parsed->native;

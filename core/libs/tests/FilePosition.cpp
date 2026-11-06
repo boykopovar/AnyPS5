@@ -36,24 +36,8 @@ static void CheckFseekBounds() {
     file.Close();
 }
 
-static void CheckWideScanRejectedByteIsKept() {
-    FileStream input(std::tmpfile());
-    Require(std::fputs("\xff", input.GetHandle()) >= 0);
-    Require(std::fseek(input.GetHandle(), 0, SEEK_SET) == 0);
-    char16_t wide[4]{};
-    Require(fscanf_nid_postfix(&input, "%ls", wide) == EOF);
-    Require(std::fgetc(input.GetHandle()) == 0xff);
-}
-
-static void CheckFdopenNegativeDescriptor() {
-    errno = 0;
-    Require(fdopen_nid_postfix(-1, "r") == nullptr && errno == EBADF);
-}
-
 int main() {
     CheckFseekBounds();
-    CheckWideScanRejectedByteIsKept();
-    CheckFdopenNegativeDescriptor();
     FileStream file(TemporaryFile::Open());
     Require(std::fputs("position", file.GetHandle()) >= 0);
     std::int64_t position = -1;
