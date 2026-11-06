@@ -656,7 +656,7 @@ int APS5_VABI EVP_DigestFinal_ex_nid_postfix(EvpMdContext* context, unsigned cha
 int APS5_VABI EVP_DigestInit_ex_nid_postfix(EvpMdContext* context, const EvpMd* type, void* engine);
 int APS5_VABI EVP_DigestUpdate_nid_postfix(EvpMdContext* context, const void* data, std::size_t length);
 int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void);
-int APS5_VABI EVP_DigestVerifyInit_nid_postfix(void);
+int APS5_VABI EVP_DigestVerifyInit_nid_postfix(EvpMdContext* context, void** pctx, const EvpMd* type, void* engine, void* pkey);
 int APS5_VABI EVP_EncryptFinal_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl);
 int APS5_VABI EVP_EncryptInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const LibreSslEvpCipher* cipher, void* engine, const unsigned char* key, const unsigned char* iv);
 int APS5_VABI EVP_EncryptUpdate_nid_postfix(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, const unsigned char* in, int inl);
