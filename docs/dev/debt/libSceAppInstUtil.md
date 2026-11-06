@@ -1,5 +1,38 @@
 # libSceAppInstUtil technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) - 26 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `2WQuFX8yYXg` |
+| `Unknown` | `4vqRxwpIE1M` |
+| `Unknown` | `9QIC1kZpSG4` |
+| `Unknown` | `K73u2VX0JFo` |
+| `Unknown` | `LsUZe38RhCs` |
+| `Unknown` | `N6H7LMfZD5Q` |
+| `Unknown` | `NXqdUFpinmo` |
+| `Unknown` | `QMjuGVPtjUY` |
+| `Unknown` | `R-OUApMZ1d8` |
+| `Unknown` | `T9h6l8bFKGE` |
+| `Unknown` | `X5Q7QxodFcg` |
+| `Unknown` | `XWjOLtdgxa4` |
+| `Unknown` | `Y+ln-TkY+hA` |
+| `Unknown` | `Zv+26GDSKcQ` |
+| `Unknown` | `ecad2GAw55Y` |
+| `Unknown` | `gFlBHjtrMDI` |
+| `Unknown` | `gP27iU+aZFw` |
+| `Unknown` | `grC16befiso` |
+| `Unknown` | `j80u95nZ+3A` |
+| `Unknown` | `j9qjbjMifhQ` |
+| `Unknown` | `pbYNtR2enrY` |
+| `Unknown` | `qn0aziKw-kE` |
+| `Unknown` | `qxjCWxg8ki4` |
+| `Unknown` | `vZ1SWJ0y4mo` |
+| `Unknown` | `xV7MhF+9AQk` |
+| `Unknown` | `yYVV-f0zoWY` |
+
 ### Unknown function info
 
 - [sceAppInstUtilAppInstallPkg](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) - the package path is followed by an opaque 64-bit value sent to the install service; its meaning and pointer-versus-integer type remain unresolved.
@@ -106,3 +139,8 @@
 - [sceAppInstUtilInstallAddons](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - unknown signature
 - [sceAppInstUtilAppConvertAppDiscToDownload, sceAppInstUtilAppGetCustomThemeInfo, sceAppInstUtilAppGetInstallAddcontFromDiscStatus and sceAppInstUtilAppInstallCloudGame](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - The list is the intersection of the export table of the console's libSceAppInstUtil (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo. Names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAppInstUtil.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
 - [sceAppInstUtilAppInstallMediaPlayer, sceAppInstUtilAppInstallRequestAddcontFromDisc and sceAppInstUtilAppSetSavedataUploadStatus](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - The list is the intersection of the export table of the console's libSceAppInstUtil (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo. Names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAppInstUtil.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
+- [sceAppInstUtilAppIsInInstalling](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - throws, as its prototype is disputed: SharpProspero's [`AppInstUtil.cs`](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/AppInstUtil/AppInstUtil.cs#L79-L88) passes an `int*` that receives the answer, while its [`PackageInstaller.cs`](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Platform/PackageInstaller.cs#L484-L498) passes a NUL-terminated id and reads the return value, as the PS4 headers declare `bool sceAppInstUtilAppIsInInstalling(const char* contentId)` ([flatz](https://github.com/flatz/ps4_stub_lib_maker_v2/blob/a8d044c12ea2dc3fa190ce1769eeb48b30d28ed4/include/appinst_util.h#L35)). Writing through the argument would overwrite a caller's id under the second form
+
+### Functional
+
+- [sceAppInstUtilInitialize, sceAppInstUtilTerminate, sceAppInstUtilAppExists](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) (libSceAppInstUtil) - `sceAppInstUtilAppExists` writes 1 only for the running title's id, as another title cannot be launched (`sceSystemServiceLaunchApp` throws). [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/AppInstUtil/AppInstUtil.cs#L18-L88) gives the meanings but no error codes, so calls outside an `sceAppInstUtilInitialize`/`sceAppInstUtilTerminate` pair, a second initialization and null pointers throw. The non-zero value a console writes for an installed title is unmeasured

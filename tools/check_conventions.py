@@ -14,6 +14,7 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nid_names import CPP_TOKEN, NID_POSTFIX, compute_nid, source_aliases
+import base_ref
 import env_reference
 
 RULES = {
@@ -332,6 +333,20 @@ class Check:
                 for target, resolved in links(path, text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
+        deleted = {path for path, status in self.status.items() if status == "D"}
+        if deleted:
+            for path in sorted(self.tree):
+                if path.startswith("3rdparty/") or PurePosixPath(path).suffix != ".md" or path in deleted:
+                    continue
+                checked = {number for number, _ in files.get(path, [])}
+                source = self.show(path)
+                fenced = fenced_lines(source)
+                for number, text in enumerate(source.split("\n"), 1):
+                    if number in checked or number in fenced:
+                        continue
+                    for target, resolved in links(path, text):
+                        if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
+                            self.report("doc-link", path, number, target)
 
     def debt_entries(self):
         for path, lines in self.files(lambda p: is_debt(p.as_posix())):
@@ -806,7 +821,7 @@ if __name__ == "__main__":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="check a branch against the contributing rules; errors fail the check")
-    parser.add_argument("--base", default="origin/main", help="branch the pull request targets (default: origin/main)")
+    parser.add_argument("--base", help="branch the pull request targets (default: upstream/main, then origin/main, then main)")
     parser.add_argument("--head", default="HEAD")
     parser.add_argument("--title", help="pull request title to check")
     parser.add_argument("--body", help="file with the pull request description to check")
@@ -816,7 +831,7 @@ if __name__ == "__main__":
     if args.event:
         try:
             event = json.loads(Path(args.event).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, RecursionError) as error:
             parser.error(f"--event {args.event}: {error}")
         if not isinstance(event, dict):
             parser.error(f"--event {args.event}: not a JSON object")
@@ -826,7 +841,11 @@ if __name__ == "__main__":
             body = Path(args.body).read_text(encoding="utf-8-sig")
         except (OSError, ValueError) as error:
             parser.error(f"--body {args.body}: {error}")
-    check = Check(args.base, args.head)
+    try:
+        base = base_ref.resolve(".", args.base)
+    except ValueError as error:
+        parser.error(str(error))
+    check = Check(base, args.head)
     check.code()
     check.build()
     check.shaders()

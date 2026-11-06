@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -9,16 +10,21 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 // For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include <algorithm>
@@ -43,21 +49,37 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#if defined(__APPLE__)
+#include <unistd.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
 OwnedImage::~OwnedImage() {
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    ReleaseImageMemory(context, memory, memoryBytes, memoryType);
+    if (allocation) allocation.Reset();
+    else ReleaseImageMemory(context, memory, memoryBytes, memoryType);
 }
 
-void OwnedImage::Allocate(const Context& device, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, bool newImage) {
-    memory = AllocateImageMemory(device, allocation, mask, operation, &memoryType, newImage);
-    memoryBytes = allocation.allocationSize;
+void OwnedImage::Allocate(const Context& device, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage, bool budgeted) {
+    Require(memory == VK_NULL_HANDLE && !allocation, "an owned image already has memory");
+    allocation = AllocateImageMemory(device, image, imageInfo, operation, newImage, budgeted);
+    memoryBytes = allocation.Size();
+    memoryType = allocation.MemoryType();
     context.bufferPool = device.bufferPool;
 }
 
 namespace {
+
+Recorder* recorderFor(const Context& context) {
+    auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->Device() == context.device ? recorder : nullptr;
+}
+
+std::atomic<std::uint64_t>& eightBitWrites() {
+    static std::atomic<std::uint64_t> writes{0};
+    return writes;
+}
 
 // APS5_PROFILE_DRAW: accumulate texture setup phases and report every 200 textures.
 struct TextureProfile {
@@ -76,6 +98,8 @@ struct TextureProfile {
     // batch of their own (APS5_NO_RECORDED_CLEAR=1, or no recorder).
     std::uint64_t storageRecordedClears = 0;
     std::uint64_t storageWaitedClears = 0;
+    std::uint64_t layerRows = 0;
+    double layerRowsMs = 0;
 };
 
 TextureProfile& Profile() {
@@ -106,8 +130,8 @@ thread_local const char* uploadReason = "first";
 // selections widened to every pending unit (the hysteresis in writeBack), units dropped as dead
 // (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
 // reported only.
-std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0};
-std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, handedOverSuperseded{0};
+std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0};
+std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, creationHandOvers{0}, handedOverSuperseded{0};
 // FlushPending listings skipped because no pending unit of the image lay inside the range, images
 // whose selected pending units were dropped because their memory is no longer registered (see
 // writeBackLayers), and pending units a DCC clear -> uncompressed key flip kept as the texels
@@ -119,7 +143,9 @@ std::atomic<std::uint64_t> queuedReadHeld{0};
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
 std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
 std::atomic<std::uint64_t> refreshesProved{0};
+std::atomic<std::uint64_t> refreshesProvedPendingKeys{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
+std::atomic<std::uint64_t> guestSnapshots{0};
 
 struct StorageTraffic {
     AgcDriver::Mutex mutex;
@@ -175,7 +201,7 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     const auto take = [](std::atomic<std::uint64_t>& counter) { return static_cast<unsigned long long>(counter.exchange(0, std::memory_order_relaxed)); };
     const auto partialUploadCount = take(partialUploads), partialWriteBackCount = take(partialWriteBacks);
     const auto uploadMiB = take(partialUploadBytes) / 1048576.0, writeBackMiB = take(partialWriteBackBytes) / 1048576.0;
-    AgcDriver::ProfilePrint_nid_no_patch( "[storage] uploads by path (count/MiB, 10 s):%s; %llu write-backs GPU-direct, %llu stored nothing; block units: partial uploads %llu/%.1f, partial write-backs %llu/%.1f, %llu widened to every pending unit, units dropped %llu, superseded %llu, handed over at %llu clear-key refreshes (%llu units superseded), dropped unregistered %llu, kept over a key flip %llu%s, pretest skipped %llu, held for a queued draw read %llu, evicted stale %llu; drawn linear targets: stores by reason (count/MiB):%s, pending %zu images / %.1f MiB, oldest %.1f ms\n", line.c_str(), static_cast<unsigned long long>(traffic.directWriteBacks), take(emptyWriteBacks), partialUploadCount, uploadMiB, partialWriteBackCount, writeBackMiB, take(coalescedWriteBacks), take(unitsDropped), take(unitsSuperseded), take(clearHandOvers), take(handedOverSuperseded), take(unregisteredDropped), take(keyFlipKept), ShadowReport().c_str(), take(pretestSkipped), take(queuedReadHeld), take(staleEvicted), drawnLine.c_str(), drawn.images, drawn.bytes / 1048576.0, drawn.oldestMs);
+    AgcDriver::ProfilePrint_nid_no_patch( "[storage] uploads by path (count/MiB, 10 s):%s; %llu write-backs GPU-direct, %llu stored nothing; block units: partial uploads %llu/%.1f, partial write-backs %llu/%.1f, %llu widened to every pending unit, units dropped %llu, superseded %llu, handed over at %llu clear-key refreshes and %llu image creations (%llu units superseded), dropped unregistered %llu, kept over a key flip %llu%s, pretest skipped %llu, held for a queued draw read %llu, evicted stale %llu; refreshes proved %llu, %llu of them over pending driver key stores (cumulative); drawn linear targets: stores by reason (count/MiB):%s, pending %zu images / %.1f MiB, oldest %.1f ms\n", line.c_str(), static_cast<unsigned long long>(traffic.directWriteBacks), take(emptyWriteBacks), partialUploadCount, uploadMiB, partialWriteBackCount, writeBackMiB, take(coalescedWriteBacks), take(unitsDropped), take(unitsSuperseded), take(clearHandOvers), take(creationHandOvers), take(handedOverSuperseded), take(unregisteredDropped), take(keyFlipKept), ShadowReport().c_str(), take(pretestSkipped), take(queuedReadHeld), take(staleEvicted), static_cast<unsigned long long>(refreshesProved.load(std::memory_order_relaxed)), static_cast<unsigned long long>(refreshesProvedPendingKeys.load(std::memory_order_relaxed)), drawnLine.c_str(), drawn.images, drawn.bytes / 1048576.0, drawn.oldestMs);
     traffic.writeBacks.clear();
     traffic.uploadReasons.clear();
     traffic.drawnStores.clear();
@@ -213,9 +239,11 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct, bool drawn = false)
 // Every storage image alive, for the fill HLE's cover check (StorageTexture::ClassifyFill): the
 // storage cache indexes surfaces by key, not by address range. Its mutex is a leaf.
 struct LiveImages {
-    AgcDriver::Mutex mutex;
+    MapImportGate::LeafMutex<AgcDriver::Mutex> mutex;
     std::vector<StorageTexture*> textures;
 };
+
+std::atomic<void (*)()> publishHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -235,6 +263,16 @@ bool LayerTrackingEnabled() {
 bool BlockTrackingEnabled() {
     static const bool disabled = std::getenv("APS5_NO_BLOCK_TRACKING") != nullptr;
     return !disabled;
+}
+
+bool BlockWriteBackEach() {
+    static const bool each = std::getenv("APS5_BLOCK_WRITEBACK_EACH") != nullptr || std::getenv("APS5_BLOCK_WRITEBACK_WIDEN") == nullptr;
+    return each;
+}
+
+bool StorageBlockUnits(const GuestTextureResource& descriptor, const SurfaceGeometry& geometry) {
+    return LayerTrackingEnabled() && BlockTrackingEnabled() && !geometry.thick && descriptor.tileMode != TextureTileMode::kLinear && descriptor.baseAddress % 65536 == 0
+        && std::none_of(geometry.mips.begin(), geometry.mips.end(), [](const TileMipLayout& mip) { return mip.gcnSplitStride != 0; });
 }
 
 struct PhaseTimer {
@@ -273,7 +311,8 @@ namespace {
 void ChainMinLod(const Context& context, const GuestTextureResource& descriptor, VkImageViewCreateInfo& viewInfo, VkImageViewMinLodCreateInfoEXT& minLod) {
     const auto clamp = EffectiveMinLod(descriptor);
     if (clamp == 0.0f) return;
-    Require(context.imageViewMinLod, "guest texture descriptor uses a minimum LOD clamp, which needs VK_EXT_image_view_min_lod");
+    Require(context.imageViewMinLod || context.shaderImageMinLod, "guest texture descriptor uses a minimum LOD clamp, which needs VK_EXT_image_view_min_lod, or shaderResourceMinLod without graphics pipeline libraries");
+    if (!context.imageViewMinLod) return;
     minLod.minLod = clamp;
     minLod.pNext = viewInfo.pNext;
     viewInfo.pNext = &minLod;
@@ -299,16 +338,12 @@ ExpandImage CreateExpandImage(const Context& context, const GuestTextureResource
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    result.owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
     Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &result.image), "vkCreateImage sRGB copy");
-    result.owned = std::make_shared<OwnedImage>(context, result.image, VK_NULL_HANDLE);
-    VkMemoryRequirements requirements{};
-    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, result.image, &requirements);
-    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation.allocationSize = requirements.size;
-    allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "texture");
-    result.owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory sRGB copy", true);
-    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, result.image, result.owned->memory, 0), "vkBindImageMemory sRGB copy");
-    result.bytes = requirements.size;
+    result.owned->image = result.image;
+    result.owned->Allocate(context, imageInfo, "vkAllocateMemory sRGB copy", true, true);
+    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, result.image, result.owned->allocation.Memory(), result.owned->allocation.Offset()), "vkBindImageMemory sRGB copy");
+    result.bytes = result.owned->memoryBytes;
     return result;
 }
 
@@ -337,10 +372,11 @@ std::uint64_t SampledTextureMemory() {
     return SampledMemoryCounter().load(std::memory_order_relaxed);
 }
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare) : context(context) {
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, bool layerRows, const VkClearColorValue* clear) : context(context) {
 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
+    const auto started = profile && layerRows ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     try {
         const auto colorFormat = SampledTextureFormat(context, descriptor.format);
         const bool srgbExpand = !depthCompare && SrgbExpandsToRgba8(context, descriptor.format);
@@ -350,6 +386,12 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const VkImageAspectFlags aspect = depthCompare ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         if (IsBlockCompressed(descriptor.format)) {
             Require(context.textureCompressionBC, "device does not support BC compressed textures");
+        }
+        if (layerRows) {
+            Require(!depthCompare && descriptor.dimension == TextureDimension::k1DArray, "only a sampled 1D array is laid out as rows of a 2D image");
+            Require(!srgbExpand, "a 1D array laid out as rows of a 2D image in a format expanded to RGBA8 is not implemented");
+            Require(!IsBlockCompressed(descriptor.format), "a block-compressed 1D array laid out as rows of a 2D image is not implemented");
+            Require(descriptor.baseLevel == 0u && std::min(descriptor.lastLevel, descriptor.mipCount - 1u) == 0u, "a 1D array past maxImageArrayLayers viewed at mip levels other than level 0 alone is not implemented");
         }
 
         const auto geometry = DescribeSurface(descriptor);
@@ -363,37 +405,35 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
 #endif
 
         const auto guestBytes = geometry.guestBytes;
-        Require(snapshot.size() == guestBytes, "texture snapshot size mismatch");
+        Require(clear != nullptr ? snapshot.empty() : snapshot.size() == guestBytes, "texture snapshot size mismatch");
+        Require(clear == nullptr || (!depthCompare && !srgbExpand && !IsRepackedTextureFormat(descriptor.format) && !IsBlockCompressed(descriptor.format)), "a cleared texture needs a plain color format");
 
         const auto sliceLinearBytes = geometry.sliceLinearBytes;
         Require(arrayLayers == 0 || sliceLinearBytes <= UINT64_MAX / arrayLayers, "detiled texture buffer size overflows");
         const auto linearBytes = sliceLinearBytes * arrayLayers;
 
         const bool depth1D = depthCompare && (descriptor.dimension == TextureDimension::k1D || descriptor.dimension == TextureDimension::k1DArray);
+        const auto rowLayers = layerRows ? geometry.imageLayers - descriptor.baseArray : 0u;
+        Require(!layerRows || (descriptor.baseArray < geometry.imageLayers && rowLayers <= context.limits.maxImageDimension2D / 2u), "a 1D array past maxImageArrayLayers whose viewed slices need more than maxImageDimension2D rows is not implemented");
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (SrgbTwinFormat(context, vkFormat) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
-        imageInfo.imageType = depth1D ? VK_IMAGE_TYPE_2D : ImageTypeFor(descriptor.dimension);
+        imageInfo.imageType = depth1D || layerRows ? VK_IMAGE_TYPE_2D : ImageTypeFor(descriptor.dimension);
         imageInfo.format = vkFormat;
-        imageInfo.extent = {descriptor.width, depth1D ? 1u : descriptor.height, geometry.imageDepth};
-        imageInfo.mipLevels = descriptor.mipCount;
-        Require(geometry.imageLayers <= context.limits.maxImageArrayLayers, "a texture array with more layers than maxImageArrayLayers is not implemented");
-        imageInfo.arrayLayers = geometry.imageLayers;
+        imageInfo.extent = {descriptor.width, layerRows ? rowLayers * 2u : depth1D ? 1u : descriptor.height, geometry.imageDepth};
+        imageInfo.mipLevels = layerRows ? 1u : descriptor.mipCount;
+        Require(layerRows || geometry.imageLayers <= context.limits.maxImageArrayLayers, "a texture array with more layers than maxImageArrayLayers is not implemented");
+        imageInfo.arrayLayers = layerRows ? 1u : geometry.imageLayers;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | (srgbExpand ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "texture");
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory texture", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory texture", true, true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory");
 
         const VkImage uploadImage = image;
         std::shared_ptr<OwnedImage> uploadOwned;
@@ -405,7 +445,39 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             allocationBytes = expanded.bytes;
         }
 
-        {
+        if (clear != nullptr) {
+            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
+            auto* recorder = syncUploads ? nullptr : Recorder::Active();
+            std::unique_ptr<CommandBatch> batch;
+            VkCommandBuffer commands = VK_NULL_HANDLE;
+            if (recorder != nullptr) {
+                commands = recorder->Commands();
+                recorder->Keep(owned);
+            } else {
+                batch = std::make_unique<CommandBatch>(context);
+                commands = batch->Handle();
+            }
+            const VkImageSubresourceRange range{aspect, 0, imageInfo.mipLevels, 0, imageInfo.arrayLayers};
+            VkImageMemoryBarrier toTransferDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            toTransferDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toTransferDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toTransferDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransferDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransferDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransferDst.image = image;
+            toTransferDst.subresourceRange = range;
+            context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransferDst);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, 1, &range);
+            VkImageMemoryBarrier toShaderRead = toTransferDst;
+            toShaderRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toShaderRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            toShaderRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toShaderRead);
+            if (batch) batch->SubmitAndWait();
+            else ++Profile().recordedUploads;
+            if (profile) Profile().gpu += timer.lap();
+        } else {
             // Debug aid: APS5_DUMP_TEXTURE=<hex addresses, comma separated> saves the detiled first mip
             // of those sampled textures on their first 8 uploads as texture_<address>_<n>.raw (u32
             // width, height, VkFormat, then tightly packed rows).
@@ -419,10 +491,10 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 // Entries may also be extents ("3840x2160"), since heap addresses change between runs.
                 dumpWanted = dumpList.find(address) != std::string::npos || dumpList.find(extent) != std::string::npos;
             }
+            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
+            auto* recorder = dumpWanted || syncUploads ? nullptr : Recorder::Active();
             auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(staging->Bytes().data(), snapshot.data(), snapshot.size());
-            auto tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             if (profile) Profile().allocate += timer.lap();
             if (profile) Profile().read += timer.lap();
 
@@ -433,23 +505,25 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             // the batch (the cache may drop the texture before it completes). The dump aid needs the
             // linear bytes on the CPU, so it keeps the waiting batch, as does a build without a
             // recorder (tests). APS5_SYNC_TEXTURE_UPLOAD=1 restores the waiting batch for every upload.
-            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
-            auto* recorder = dumpWanted || syncUploads ? nullptr : Recorder::Active();
             std::unique_ptr<CommandBatch> batch;
             VkCommandBuffer commands = VK_NULL_HANDLE;
+            std::shared_ptr<DeviceBuffer> tiled;
+            std::shared_ptr<DeviceBuffer> linear;
             if (recorder != nullptr) {
                 commands = recorder->Commands();
+                tiled = recorder->UploadScratchBuffer(Recorder::UploadScratch::Tiled, static_cast<std::size_t>(guestBytes));
+                linear = recorder->UploadScratchBuffer(Recorder::UploadScratch::Linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(staging, static_cast<std::size_t>(guestBytes));
-                recorder->Keep(tiled, static_cast<std::size_t>(guestBytes));
-                recorder->Keep(linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(owned);
                 if (uploadOwned != nullptr) recorder->Keep(uploadOwned);
             } else {
                 batch = std::make_unique<CommandBatch>(context);
                 commands = batch->Handle();
+                tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             }
 
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | Recorder::UploadScratchReuseStages, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
             CopyBuffer(context, commands, staging->Handle(), 0, tiled->Handle(), 0, guestBytes);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
@@ -489,12 +563,22 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             toTransferDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.image = uploadImage;
-            toTransferDst.subresourceRange = {aspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
+            toTransferDst.subresourceRange = layerRows ? VkImageSubresourceRange{aspect, 0, 1, 0, 1} : VkImageSubresourceRange{aspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearReadBarrier, 1, &toTransferDst);
 
             std::vector<VkBufferImageCopy> regions;
             regions.reserve(static_cast<std::size_t>(arrayLayers) * mips.size());
-            for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+            for (std::uint32_t row = 0; row < rowLayers * 2u; ++row) {
+                const auto layer = descriptor.baseArray + row / 2u;
+                VkBufferImageCopy region{};
+                region.bufferOffset = static_cast<std::uint64_t>(layer) * sliceLinearBytes + mips[0].linearOffset;
+                region.bufferRowLength = mips[0].pitchBytes / BytesPerElement(descriptor.format) * BlockWidth(descriptor.format);
+                region.imageSubresource = {aspect, 0, 0, 1};
+                region.imageOffset = {0, static_cast<std::int32_t>(row), 0};
+                region.imageExtent = {descriptor.width, 1u, 1u};
+                regions.push_back(region);
+            }
+            for (std::uint32_t layer = 0; layer < (layerRows ? 0u : arrayLayers); ++layer) {
                 const auto linearLayerOffset = static_cast<std::uint64_t>(layer) * sliceLinearBytes;
                 for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
@@ -571,11 +655,11 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
 
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = image;
-        viewInfo.viewType = depth1D ? (descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D) : ViewTypeFor(descriptor.dimension, viewLayerCount);
+        viewInfo.viewType = layerRows ? VK_IMAGE_VIEW_TYPE_2D : depth1D ? (descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D) : ViewTypeFor(descriptor.dimension, viewLayerCount);
         viewInfo.format = srgbExpand ? VK_FORMAT_R8G8B8A8_SRGB : vkFormat;
         viewFormat = viewInfo.format;
         viewInfo.components = depthCompare ? VkComponentMapping{} : components;
-        viewInfo.subresourceRange = {aspect, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
+        viewInfo.subresourceRange = layerRows ? VkImageSubresourceRange{aspect, 0, 1, 0, 1} : VkImageSubresourceRange{aspect, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
 
@@ -588,6 +672,11 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             auto& totals = Profile();
             totals.view += timer.lap();
             if (++totals.count % 200 == 0) std::fprintf(stderr, "[texture] %llu textures (%llu copied from storage images, %llu uploads recorded): allocate+image %.0f ms, guest read %.0f ms, detile+copy %.0f ms, view+buffer release %.0f ms\n", static_cast<unsigned long long>(totals.count), static_cast<unsigned long long>(totals.fromStorage), static_cast<unsigned long long>(totals.recordedUploads), totals.allocate, totals.read, totals.gpu, totals.view);
+            if (layerRows) {
+                const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+                totals.layerRowsMs += ms;
+                std::fprintf(stderr, "[texture] layer rows 0x%llx: %u slices of %u texels as a %ux%u image in %.2f ms (%llu layer-row textures, %.0f ms in all)\n", static_cast<unsigned long long>(descriptor.baseAddress), rowLayers, descriptor.width, descriptor.width, rowLayers * 2u, ms, static_cast<unsigned long long>(++totals.layerRows), totals.layerRowsMs);
+            }
         }
         countedBytes = allocationBytes;
         SampledMemoryCounter().fetch_add(countedBytes, std::memory_order_relaxed);
@@ -667,16 +756,12 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage repacked copy");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory repacked copy", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory repacked copy");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory repacked copy", true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory repacked copy");
 
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
@@ -729,16 +814,12 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage block copy");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory block copy", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory block copy");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory block copy", true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory block copy");
 
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
@@ -790,16 +871,12 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        owned = std::make_shared<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage depth copy");
-        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocationBytes = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory depth copy", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory depth copy");
+        owned->image = image;
+        owned->Allocate(context, imageInfo, "vkAllocateMemory depth copy", true);
+        allocationBytes = owned->memoryBytes;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory depth copy");
 
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
         const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
@@ -1055,7 +1132,7 @@ bool Texture::CanCopyFrom(const StorageTexture& source, const GuestTextureResour
     // Same memory, same layout, same texel size: the GPU copy reinterprets the texels exactly as a
     // guest read through the sampled descriptor would.
     if (IsRepackedTextureFormat(descriptor.format)) return false;
-    return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
+    return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && descriptor.linearPitch == from.linearPitch && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components) : context(context), storageSource(source) {
@@ -1155,7 +1232,7 @@ void Texture::prepareSrgbView(const GuestTextureResource& descriptor, VkImageVie
     viewInfo.pNext = nullptr;
     viewInfo.format = format;
     srgbInfo = viewInfo;
-    srgbMinLod = EffectiveMinLod(descriptor);
+    srgbMinLod = context.imageViewMinLod ? EffectiveMinLod(descriptor) : 0.0f;
 }
 
 VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
@@ -1272,21 +1349,21 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
     };
     VkFormat storage = VK_FORMAT_UNDEFINED;
     const auto packed = PackedStorageViewFormat(format);
+    VkFormat linear = VK_FORMAT_UNDEFINED;
+    switch (format) {
+        case VK_FORMAT_R8G8B8A8_SRGB: linear = VK_FORMAT_R8G8B8A8_UNORM; break;
+        case VK_FORMAT_B8G8R8A8_SRGB: linear = VK_FORMAT_B8G8R8A8_UNORM; break;
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32: linear = VK_FORMAT_A8B8G8R8_UNORM_PACK32; break;
+        case VK_FORMAT_R8_SRGB: linear = VK_FORMAT_R8_UNORM; break;
+        case VK_FORMAT_R8G8_SRGB: linear = VK_FORMAT_R8G8_UNORM; break;
+        default: break;
+    }
     if (packed != VK_FORMAT_UNDEFINED) {
         if (supports(packed)) storage = format;
+    } else if (linear != VK_FORMAT_UNDEFINED) {
+        if (supports(linear)) storage = linear;
     } else if (supports(format)) {
         storage = format;
-    } else {
-        VkFormat linear = VK_FORMAT_UNDEFINED;
-        switch (format) {
-            case VK_FORMAT_R8G8B8A8_SRGB: linear = VK_FORMAT_R8G8B8A8_UNORM; break;
-            case VK_FORMAT_B8G8R8A8_SRGB: linear = VK_FORMAT_B8G8R8A8_UNORM; break;
-            case VK_FORMAT_A8B8G8R8_SRGB_PACK32: linear = VK_FORMAT_A8B8G8R8_UNORM_PACK32; break;
-            case VK_FORMAT_R8_SRGB: linear = VK_FORMAT_R8_UNORM; break;
-            case VK_FORMAT_R8G8_SRGB: linear = VK_FORMAT_R8G8_UNORM; break;
-            default: break;
-        }
-        if (linear != VK_FORMAT_UNDEFINED && supports(linear)) storage = linear;
     }
     std::lock_guard lock(table.mutex);
     table.formats.emplace(key, storage);
@@ -1419,11 +1496,13 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
         return true;
     }();
     static_cast<void>(unwatchHooked);
+    const MapImportGate::PublishHold publication(descriptor.baseAddress, DescribeSurface(descriptor).guestBytes);
     auto texture = std::shared_ptr<StorageTexture>(new StorageTexture(context, detiler, descriptor, mipLevel));
     uploadReason = "first";
     texture->upload();
     texture->defaultMip = mipLevel;
     texture->view = texture->createView(mipLevel, false, texture->storageFormat);
+    if (const auto hook = publishHookForTest.load(std::memory_order_acquire)) hook();
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -1469,11 +1548,13 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         const bool layered = geometry.layers >= 2 && !geometry.thick && geometry.imageDepth == 1 && geometry.layers == geometry.imageLayers && geometry.layerBytes * geometry.layers == guestBytes && geometry.layerBytes % 65536 == 0 && descriptor.baseAddress % 65536 == 0;
         // Tile blocks divide the stamp blocks, so at an aligned base every unit is whole tile blocks
         // of its (layer, mip) slices (sliceWindows).
-        blockUnits = LayerTrackingEnabled() && BlockTrackingEnabled() && !geometry.thick && descriptor.tileMode != TextureTileMode::kLinear && descriptor.baseAddress % 65536 == 0
-            && std::none_of(mips.begin(), mips.end(), [](const TileMipLayout& mip) { return mip.gcnSplitStride != 0; });
+        blockUnits = StorageBlockUnits(descriptor, geometry);
         trackedLayers = blockUnits ? static_cast<std::uint32_t>((guestBytes + 65535) / 65536) : layered && LayerTrackingEnabled() ? geometry.layers : 1u;
         trackedLayerBytes = blockUnits ? 65536 : guestBytes / trackedLayers;
         layerGeneration.assign(trackedLayers, 0);
+        layerPendingSince.assign(trackedLayers, 0);
+        unwatchHash.assign(trackedLayers, {});
+        pendingMiss.assign(trackedLayers, BaselineMiss::None);
         layerPending.assign(trackedLayers, false);
         layerOriginal.assign(trackedLayers, true);
         savedTicket.assign(trackedLayers, 0);
@@ -1501,14 +1582,10 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage storage");
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        memoryBytes = requirements.size;
-        allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "storage texture");
-        memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory storage texture", &memoryType, true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory storage");
+        imageAllocation = AllocateImageMemory(context, image, imageInfo, "vkAllocateMemory storage texture", true, true);
+        memoryBytes = imageAllocation.Size();
+        this->context.bufferPool = context.bufferPool;
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, imageAllocation.Memory(), imageAllocation.Offset()), "vkBindImageMemory storage");
     } catch (...) {
         release();
         throw;
@@ -1585,7 +1662,7 @@ private:
 
 // Storage images whose results have not reached guest memory yet.
 struct PendingWrites {
-    SlimMutex mutex;
+    MapImportGate::LeafMutex<SlimMutex> mutex;
     PendingList textures;
     // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
     std::vector<StorageTexture*> flushing;
@@ -1773,7 +1850,8 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
 
 // The image being validated by Refresh: its own pending results are what the next dispatch wants,
 // so the comparison with guest memory must not flush them.
-thread_local const StorageTexture* refreshing = nullptr;
+struct RefreshingTag;
+using Refreshing = HostThreadSlot<const StorageTexture*, RefreshingTag>;
 
 void FlushHook(std::uint64_t address, std::size_t bytes) {
     StorageTexture::FlushPending(address, bytes);
@@ -1827,7 +1905,7 @@ bool ClearKeepsDenormals(const Context& context, VkFormat format) {
             VkDeviceMemory& memory;
             ~Release() {
                 if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-                if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+                if (memory) MemoryAccounting::Free(context, memory);
             }
         } release{context, image, memory};
         VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -1847,7 +1925,7 @@ bool ClearKeepsDenormals(const Context& context, VkFormat format) {
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory denormal clear probe");
+        Check(MemoryAccounting::Allocate(context, allocation, "denormal clear probe", &memory), "vkAllocateMemory denormal clear probe");
         Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory denormal clear probe");
         Buffer readback(context, elementBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         CommandBatch batch(context);
@@ -1943,7 +2021,8 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     Require(mip < descriptor.mipCount, "attachment mip exceeds the storage image");
     const bool volume = descriptor.dimension == TextureDimension::k3D;
     const bool array = !volume && descriptor.dimension == TextureDimension::k2DArray;
-    Require((depthSlice == 0 && layers == 1) || (volume && mip == 0 && layers != 0 && depthSlice + layers - 1u <= descriptor.depthOrLastArray) || (array && depthSlice == 0 && layers != 0), "attachment slice is outside the storage image");
+    const auto depth = volume ? std::max((descriptor.depthOrLastArray + 1u) >> mip, 1u) : 1u;
+    Require((depthSlice == 0 && layers == 1) || (volume && layers != 0 && depthSlice < depth && layers <= depth - depthSlice) || (array && depthSlice == 0 && layers != 0), "attachment slice is outside the storage image");
     Require((layer == 0 && layers == 1) || (volume && layer == 0) || (array && descriptor.baseArray + layer + layers - 1u <= descriptor.depthOrLastArray), "attachment layer is outside the storage image");
     const auto found = attachmentViews.find({format, mip, depthSlice, layers, layer});
     if (found != attachmentViews.end()) return found->second;
@@ -1979,13 +2058,8 @@ VkImageView StorageTexture::AttachmentProxyView() {
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &proxyImage), "vkCreateImage attachment proxy");
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, proxyImage, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        proxyMemory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory attachment proxy");
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, proxyImage, proxyMemory, 0), "vkBindImageMemory attachment proxy");
+        proxyAllocation = AllocateImageMemory(context, proxyImage, imageInfo, "vkAllocateMemory attachment proxy");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, proxyImage, proxyAllocation.Memory(), proxyAllocation.Offset()), "vkBindImageMemory attachment proxy");
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = proxyImage;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -1995,9 +2069,8 @@ VkImageView StorageTexture::AttachmentProxyView() {
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &proxyView), "vkCreateImageView attachment proxy");
     } catch (...) {
         if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
-        if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
+        proxyAllocation.Reset();
         proxyImage = VK_NULL_HANDLE;
-        proxyMemory = VK_NULL_HANDLE;
         proxyView = VK_NULL_HANDLE;
         throw;
     }
@@ -2183,17 +2256,18 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         }
         NoteProved();
         refreshesProved.fetch_add(1, std::memory_order_relaxed);
+        if (profile && keyProof.pendingNote != 0) refreshesProvedPendingKeys.fetch_add(1, std::memory_order_relaxed);
         if (profile) LookupOutcomes::Add(LookupOutcomes::RefreshProved, start);
         return true;
     }
     refreshProof = {};
     struct Exempt {
         const StorageTexture* previous;
-        ~Exempt() { refreshing = previous; }
-    } exempt{refreshing};
+        ~Exempt() { Refreshing::Set(previous); }
+    } exempt{Refreshing::Get()};
     // This image's own pending results stay on the GPU, where the next dispatch wants them (the
     // flush below and the compare through the hook skip it).
-    refreshing = this;
+    Refreshing::Set(this);
     NoteProved();
     // Results of other images pending in this memory must reach it first, except an alias's: its
     // units are taken on the device below (borrowUnits), so it stays pending. The keys read for
@@ -2222,6 +2296,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
     const bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+    pruneAdoptedSources();
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
@@ -2473,7 +2548,10 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         uploadReason = "alias";
         borrowUnits(*alias, borrowed);
         for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
-            if (borrowed[unit]) layerGeneration[unit] = currentFor(unit);
+            if (borrowed[unit]) {
+                layerGeneration[unit] = currentFor(unit);
+                forgetUnwatchHash(unit, 1);
+            }
         }
         refreshGeneration();
     }
@@ -2489,7 +2567,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
 DccKeys StorageTexture::ProvedKeys() const {
     std::optional<DccKeys> keys;
     if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) keys = WaitForKeyWriters(descriptor, guestBytes);
-    if (keys.has_value()) keyProof = {};
+    if (keys.has_value()) keyProof = PendingKeyProof(descriptor, guestBytes, *keys);
     else keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
     if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
     return *keys;
@@ -2505,6 +2583,10 @@ std::uint64_t StorageTexture::SlabRetiles() {
 
 std::uint64_t StorageTexture::PaddingSeedCopies() {
     return paddingSeedCopies.load(std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::LinearImportRetiles() {
+    return linearImportRetiles.load(std::memory_order_relaxed);
 }
 
 bool StorageTexture::otherPendingOverlaps() const {
@@ -2524,7 +2606,7 @@ bool StorageTexture::refreshProved() {
     queries[used++] = {descriptor.baseAddress, bytes, generation};
     if (descriptor.dccAddress != 0) {
         const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
-        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys) return false;
+        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys || !PendingKeyProofHolds(descriptor, guestBytes, keyProof)) return false;
         if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
         queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
     }
@@ -2552,6 +2634,10 @@ std::uint64_t StorageTexture::RefreshesProved() {
 
 std::uint64_t StorageTexture::UntrackedCompares() {
     return untrackedCompares.load(std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::GuestSnapshots() {
+    return guestSnapshots.load(std::memory_order_relaxed);
 }
 
 bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
@@ -2588,19 +2674,153 @@ void traceKeyStore(const char* path, const GuestTextureResource& descriptor, std
 
 }
 
-void StorageTexture::captureGuestBytes(const std::vector<bool>* layers) {
+void StorageTexture::captureGuestBytes(const std::vector<bool>* layers, bool keepWritten) {
+    guestSnapshots.fetch_add(1, std::memory_order_relaxed);
     original.resize(static_cast<std::size_t>(guestBytes));
     comparedRanges = {};
     std::vector<bool> selected(trackedLayers, true);
     if (layers != nullptr) selected = *layers;
-    for (const auto& [begin, end] : unitRuns(selected)) GuestMemory::FlushGpuWrites(descriptor.baseAddress + begin, static_cast<std::size_t>(end - begin));
+    const auto runs = unitRuns(selected);
+    for (const auto& [begin, end] : runs) GuestMemory::FlushGpuWrites(descriptor.baseAddress + begin, static_cast<std::size_t>(end - begin));
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!selected[layer]) continue;
         const auto offset = static_cast<std::size_t>(layerBegin(layer) - descriptor.baseAddress);
         GuestMemory::ReadCommittedUnsynced(layerBegin(layer), std::span(original).subspan(offset, static_cast<std::size_t>(layerBytes(layer))));
+    }
+    if (keepWritten) {
+        for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+            if (!selected[layer] || layerGeneration[layer] == 0) continue;
+            GuestMemory::CollectWritesUncached(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)));
+            keepWrittenSince(layer);
+        }
+    }
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (!selected[layer]) continue;
         layerOriginal[layer] = true;
         cancelStoredSave(layer);
     }
+}
+
+bool StorageTexture::guestBytesStillHeld() const {
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (original.size() != bytes || !originalHolds(descriptor.baseAddress, bytes)) return false;
+    if (std::any_of(savedTicket.begin(), savedTicket.end(), [](std::uint64_t ticket) { return ticket != 0; })) return false;
+    for (const auto& [from, unitGeneration] : keptAtUnwatch) {
+        if (keptAtUnwatchHolds(from, static_cast<std::uint32_t>((from - descriptor.baseAddress) / trackedLayerBytes))) return false;
+    }
+    constexpr std::uint64_t blockBytes = 65536;
+    std::vector<std::uint8_t> blocks(static_cast<std::size_t>((descriptor.baseAddress + guestBytes - 1) / blockBytes - descriptor.baseAddress / blockBytes + 1));
+    if (!compareUntracked(descriptor.baseAddress, bytes, blocks, true)) return false;
+    return std::all_of(blocks.begin(), blocks.end(), [](std::uint8_t block) { return block == GuestMemory::BlockUnchanged; });
+}
+
+bool StorageTexture::keepWrittenSince(std::uint32_t unit) {
+    constexpr std::uint64_t block = 65536;
+    const auto begin = layerBegin(unit);
+    const auto end = begin + layerBytes(unit);
+    const auto spanBegin = begin & ~(block - 1);
+    const auto spanBlocks = static_cast<std::size_t>((end - spanBegin + block - 1) / block);
+    std::vector<std::uint64_t> generations(spanBlocks);
+    for (std::size_t k = 0; k < spanBlocks; ++k) generations[k] = unitBlockGeneration(unit, spanBegin + k * block);
+    std::vector<std::uint8_t> changedBlocks(spanBlocks);
+    if (!GuestMemory::ChangedBlocks(begin, static_cast<std::size_t>(end - begin), generations, changedBlocks)) return false;
+    forgetKeptAtUnwatch(unit);
+    for (auto at = spanBegin; at < end; at += block) {
+        const auto from = std::max(at, begin);
+        const auto to = std::min(at + block, end);
+        const bool edge = from != at || to != at + block;
+        if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten && (!edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(unit, at))) && !cpuLeftUnchanged(unit, from, to, edge)) keptAtUnwatch.emplace(from, layerGeneration[unit]);
+    }
+    return true;
+}
+
+constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
+
+std::array<std::uint64_t, 2> StorageTexture::unitContentHash(std::uint32_t unit) const {
+    constexpr std::size_t chunkBytes = 65536;
+    std::array<std::uint64_t, 2> hash{0x5eed7e0d00000001ull, 0x5eed7e0d00000002ull};
+    const auto begin = layerBegin(unit);
+    const auto bytes = static_cast<std::size_t>(layerBytes(unit));
+    std::vector<std::byte> chunk(std::min(chunkBytes, bytes));
+    for (std::size_t at = 0; at < bytes; at += chunkBytes) {
+        const auto part = std::span<std::byte>(chunk).first(std::min(chunkBytes, bytes - at));
+        GuestMemory::ReadCommittedUnsynced(begin + at, part);
+        hash[0] = ShaderRecompiler::HashBytes(part, hash[0]);
+        hash[1] = ShaderRecompiler::HashBytes(part, hash[1]);
+    }
+    if (hash[0] == 0 && hash[1] == 0) hash[0] = 1;
+    return hash;
+}
+
+void StorageTexture::hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven) {
+    if (released || unwatchHash.size() != trackedLayers || generationBaseline.size() == guestBytes) return;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        const auto begin = layerBegin(unit);
+        const auto unitBytes = static_cast<std::size_t>(layerBytes(unit));
+        if (begin >= address + bytes || address >= begin + unitBytes || layerGeneration[unit] == 0) continue;
+        const auto skip = [&](BaselineMiss miss) {
+            unwatchHash[unit].skipped = miss;
+            unwatchHash[unit].skippedGeneration = layerGeneration[unit];
+        };
+        if (layerPending[unit] || layerOriginal[unit] || savedTicket[unit] != 0) {
+            skip(BaselineMiss::UnwatchWhileSaved);
+            continue;
+        }
+        if (!proven || GuestMemory::CollectWritesUncached(begin, unitBytes) == 0) {
+            skip(BaselineMiss::UnwatchUnproven);
+            continue;
+        }
+        if (!GuestMemory::UnchangedSince(begin, unitBytes, layerGeneration[unit])) {
+            skip(BaselineMiss::UnwatchSawCpuWrites);
+            continue;
+        }
+        unwatchHash[unit] = {unitContentHash(unit), layerGeneration[unit]};
+    }
+}
+
+void StorageTexture::forgetUnwatchHash(std::uint32_t first, std::uint32_t count) {
+    for (auto unit = first; unit < first + count && unit < unwatchHash.size(); ++unit) unwatchHash[unit] = {};
+}
+
+const char* StorageTexture::BaselineMissText(BaselineMiss miss) {
+    switch (miss) {
+    case BaselineMiss::None:
+        return "no cause was recorded";
+    case BaselineMiss::LeftWatchWhilePending:
+        return "its results became pending while its range was watched, and its bytes were not saved when the range left the watch";
+    case BaselineMiss::SaveInFlight:
+        return "a save of its bytes was in flight when its results became pending, and it did not complete";
+    case BaselineMiss::SavedBytesDropped:
+        return "its saved bytes were dropped while its results were pending";
+    case BaselineMiss::NoUploadCopy:
+        return "no copy of its bytes was taken at its upload";
+    case BaselineMiss::UploadCopyDiffers:
+        return "its bytes differ from the copy taken at its upload";
+    case BaselineMiss::NoUnwatchHash:
+        return "no hash of its bytes was taken for its current generation: its range left the watch without the unwatch hook, or its generation changed after the hash";
+    case BaselineMiss::UnwatchUnproven:
+        return "its range left the watch through the unwatch hook without its CPU writes proven (a failed collect or import page walk)";
+    case BaselineMiss::UnwatchSawCpuWrites:
+        return "the write watch saw CPU writes to it after its generation, before its range left the watch";
+    case BaselineMiss::UnwatchWhileSaved:
+        return "it had pending results or saved bytes when its range left the watch, so the unwatch hook did not hash it";
+    case BaselineMiss::HashDiffers:
+        return "its bytes no longer match the hash taken when its range left the watch";
+    }
+    throw std::runtime_error("AGC graphics: an unknown cause for a storage image unit without saved guest bytes");
+}
+
+StorageTexture::BaselineMiss StorageTexture::baselineMiss(std::uint32_t unit) const {
+    if (generationBaseline.size() == guestBytes) {
+        const auto offset = static_cast<std::size_t>(layerBegin(unit) - descriptor.baseAddress);
+        return GuestMemory::EqualsCommittedUnsynced(layerBegin(unit), std::span<const std::byte>(generationBaseline).subspan(offset, static_cast<std::size_t>(layerBytes(unit)))) ? BaselineMiss::None : BaselineMiss::UploadCopyDiffers;
+    }
+    if (guestBytes <= GenerationBaselineBytes) return BaselineMiss::NoUploadCopy;
+    if (unwatchHash.size() != trackedLayers) return BaselineMiss::NoUnwatchHash;
+    const auto& entry = unwatchHash[unit];
+    if (entry.generation != 0 && entry.generation == layerGeneration[unit]) return unitContentHash(unit) == entry.hash ? BaselineMiss::None : BaselineMiss::HashDiffers;
+    if (entry.skipped != BaselineMiss::None && entry.skippedGeneration == layerGeneration[unit]) return entry.skipped;
+    return BaselineMiss::NoUnwatchHash;
 }
 
 bool StorageTexture::originalHolds(std::uint64_t address, std::size_t bytes) const {
@@ -2614,9 +2834,9 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     if (!originalHolds(address, bytes)) return false;
     struct Exempt {
         const StorageTexture* previous;
-        ~Exempt() { refreshing = previous; }
-    } exempt{refreshing};
-    refreshing = this;
+        ~Exempt() { Refreshing::Set(previous); }
+    } exempt{Refreshing::Get()};
+    Refreshing::Set(this);
     Require(address >= descriptor.baseAddress && bytes <= guestBytes && address - descriptor.baseAddress <= guestBytes - bytes, "texture comparison exceeds its snapshot");
     Require(original.size() == guestBytes, "texture comparison has no complete snapshot");
     GuestMemory::FlushGpuWrites(address, bytes);
@@ -2628,8 +2848,9 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     const auto* recorder = Recorder::Active();
     const auto epoch = GuestMemory::CollectEpoch();
     const auto hint = memoize && epoch != 0 ? GuestMemory::UntrackedHint(address, bytes) : 0;
-    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
-    const bool cacheable = memoize && epoch != 0 && (stamp[3] & 1u) == 0;
+    const bool forgetting = (GuestMemory::ForgetSerial() & 1u) != 0;
+    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    const bool cacheable = memoize && epoch != 0 && !forgetting;
     if (cacheable && std::any_of(comparedRanges.begin(), comparedRanges.end(), [&](const ComparedRange& entry) { return entry.address == address && entry.bytes == bytes && entry.stamp == stamp; })) {
         std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
         return true;
@@ -2654,8 +2875,6 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     }
     return true;
 }
-
-constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
 bool SingleKeyColorFor(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof, VkFormat format, DccKeys keys, VkClearColorValue& clear) {
     if (keys != DccKeys::ClearSingle || !ProvedSingleUniform(resource, guestBytes, collected, proof)) return false;
@@ -2706,6 +2925,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         }
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (!whole && !(*layers)[layer]) continue;
+            forgetKeptAtUnwatch(layer);
             layerGeneration[layer] = collectedLayerGeneration(layer, now);
             if (whole || generationBaseline.size() != guestBytes) continue;
             const auto offset = static_cast<std::size_t>(layerBegin(layer) - descriptor.baseAddress);
@@ -2726,7 +2946,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
             cancelStoredSaves();
-        } else {
+        } else if (!guestBytesStillHeld()) {
             captureGuestBytes(nullptr);
         }
         forgetBorrowed(0, trackedLayers);
@@ -2853,7 +3073,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestLayerOffset(layer) + mip.tiledOffset, elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
             recordDirectUploadDone(commands);
@@ -2872,7 +3092,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             for (std::uint32_t level = 0; level < mips.size(); ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
-                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestLayerOffset(layer) + mip.tiledOffset, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
             }
         }
         const auto linearRead = WholeBufferBarrier(linear->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -2953,7 +3173,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled.Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled.Handle(), geometry.GuestOffset(layer, mip), linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
             const auto linearRead = WholeBufferBarrier(linear.Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -2975,9 +3195,9 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
-            APS5_LOG_CHARS_OUT("StorageTexture upload submit");
+            APS5_LOG_CHARS_OUT_DEBUG("StorageTexture upload submit");
             batch.SubmitAndWait();
-            APS5_LOG_CHARS_OUT("StorageTexture upload done");
+            APS5_LOG_CHARS_OUT_DEBUG("StorageTexture upload done");
     }
     countStorageUpload(2, uploadedBytes);
     ++version;
@@ -3005,7 +3225,7 @@ std::vector<StorageTexture::SliceWindow> StorageTexture::sliceWindows(std::span<
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
                 const auto block = ThinBlockLayout(MipTileMode(descriptor.tileMode, mip), elementBytes);
-                const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+                const auto sliceBegin = geometry.GuestOffset(layer, mip);
                 const auto sliceEnd = sliceBegin + mip.tiledSize;
                 if (runEnd <= sliceBegin || sliceEnd <= runBegin) continue;
                 SliceWindow window{layer, level, 0, 0, {}, 0, {}};
@@ -3094,7 +3314,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> StorageTexture::uncoveredBy
         for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
             for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
-                const auto sliceBegin = geometry.GuestLayerOffset(layer) + mips[level].tiledOffset;
+                const auto sliceBegin = geometry.GuestOffset(layer, mips[level]);
                 for (const auto& [begin, end] : CoveredMipBytes(descriptor.tileMode, elementBytes, mips[level])) covered.emplace_back(sliceBegin + begin, sliceBegin + end);
             }
         }
@@ -3266,7 +3486,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
             if (!geometry.HasLayer(level, layer)) continue;
             const auto& mip = mips[level];
             if (!mip.tail) continue;
-            const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+            const auto sliceBegin = geometry.GuestOffset(layer, mip);
             if (tailBlocks.empty() || tailBlocks.back().first != sliceBegin) tailBlocks.emplace_back(sliceBegin, sliceBegin + mip.tiledSize);
         }
     }
@@ -3341,7 +3561,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
                 detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), view, mip, false, window.layer, detile);
             } else {
                 detile.tiledBase = 0;
-                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestLayerOffset(window.layer) + mip.tiledOffset, view, mip, false, window.layer, detile);
+                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), view, mip, false, window.layer, detile);
             }
         }
         recordDirectUploadDone(commands);
@@ -3365,7 +3585,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         } else {
             // The import holds the whole mip: the window's tiled base is the mip's.
             detile.tiledBase = 0;
-            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestLayerOffset(window.layer) + mip.tiledOffset, linear->Handle(), positions[i], mip, false, window.layer, false, detile);
+            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), linear->Handle(), positions[i], mip, false, window.layer, false, detile);
         }
         for (auto region : window.regions) {
             region.bufferOffset += positions[i];
@@ -3447,6 +3667,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     std::vector<SlabPieces> slabPieces;
     std::vector<std::vector<VkBufferCopy>> importCopies(segments.size());
     std::vector<SeedUnit> seeds;
+    const bool spanWatched = GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored));
     struct AddedPiece {
         std::size_t pieces;
         std::size_t copy;
@@ -3464,7 +3685,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             const auto& import = *segments[segment].import;
             auto pieceEnd = std::min(guestEnd, segments[segment].end);
             if (UnitShadowEnabled()) pieceEnd = std::min(pieceEnd, SlabBoundary(import, guestBegin));
-            const auto destination = guestBytes <= SmallStoreBytes ? std::optional<ShadowDestination>{} : ShadowDestinationFor(context, import, guestBegin, pieceEnd);
+            const auto destination = spanWatched && guestBytes > SmallStoreBytes ? ShadowDestinationFor(context, import, guestBegin, pieceEnd) : std::nullopt;
             if (destination.has_value()) {
                 if (slabPieces.empty() || slabPieces.back().slab != destination->slab) slabPieces.push_back({destination->slab, destination->pin, {}});
                 slabPieces.back().copies.push_back({scratchOffset, destination->offset, pieceEnd - guestBegin});
@@ -3511,8 +3732,9 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         const auto parts = std::span<const AddedPiece>(added).subspan(first, last - first);
         const auto sliceBegin = window.tiledBegin - window.window.rangeBegin;
         const auto intoSlabs = std::all_of(parts.begin(), parts.end(), [&](const AddedPiece& part) {
+            if (!part.slab || part.seeded) return false;
             const auto& copy = slabPieces[part.pieces].copies[part.copy];
-            return part.slab && !part.seeded && copy.dstOffset % 4 == 0 && copy.size % 4 == 0 && (part.begin - sliceBegin) % blockBytes == 0 && (part.end - sliceBegin) % blockBytes == 0;
+            return copy.dstOffset % 4 == 0 && copy.size % 4 == 0 && (part.begin - sliceBegin) % blockBytes == 0 && (part.end - sliceBegin) % blockBytes == 0;
         });
         if (intoSlabs) slabRetiled.push_back({i, first, last});
     }
@@ -3625,7 +3847,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     const bool scratchUsed = std::any_of(directRanges.begin(), directRanges.end(), [](const auto& range) { return range.first == range.second; }) || std::any_of(slabPieces.begin(), slabPieces.end(), [](const SlabPieces& pieces) { return !pieces.copies.empty(); }) || std::any_of(importCopies.begin(), importCopies.end(), [](const auto& copies) { return !copies.empty(); }) || !saves.empty() || !padding.copies.empty() || !seeds.empty();
     auto tiledScratch = scratchUsed ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(scratchTotal), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
     detiler.BeginBatch();
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
     std::unique_ptr<CommandBatch> batch;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     VkAccessFlags covered = 0;
@@ -3832,7 +4054,7 @@ void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
 }
 
 bool StorageTexture::anyLayerPending() const {
-    return std::any_of(layerPending.begin(), layerPending.end(), [](bool pending) { return pending; });
+    return layerPending.Any();
 }
 
 void StorageTexture::refreshGeneration() {
@@ -3884,36 +4106,110 @@ void StorageTexture::noteLayersBehind(std::uint32_t firstLayer, std::uint32_t la
     if (std::none_of(layerBehind.begin(), layerBehind.end(), [](bool behind) { return behind; })) layerBehind.clear();
 }
 
+namespace {
+
+struct WriteRecords {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, StorageTexture::WriteRecord> byAddress;
+    std::uint64_t serial = 0;
+};
+
+WriteRecords& LayoutWrites() {
+    static WriteRecords records;
+    return records;
+}
+
+}
+
+std::optional<StorageTexture::WriteRecord> StorageTexture::LastWrite(std::uint64_t address) {
+    auto& records = LayoutWrites();
+    std::lock_guard lock(records.mutex);
+    const auto found = records.byAddress.find(address);
+    if (found == records.byAddress.end()) return std::nullopt;
+    return found->second;
+}
+
+namespace {
+std::atomic<std::uint64_t> flipSerial{0};
+std::atomic<std::uint64_t> occasionalLabelStores{0};
+}
+
+void StorageTexture::NoteFlip() {
+    flipSerial.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::OccasionalLabelStores() {
+    return occasionalLabelStores.load(std::memory_order_relaxed);
+}
+
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
+    {
+        auto& records = LayoutWrites();
+        std::lock_guard lock(records.mutex);
+        if (records.byAddress.size() >= 65536u) records.byAddress.clear();
+        records.byAddress[descriptor.baseAddress] = {descriptor.width, descriptor.height, descriptor.tileMode, descriptor.dimension, descriptor.format, ++records.serial};
+    }
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
-    std::vector<bool> unsaved;
-    bool anyUnsaved = false;
-    const bool trims = CommitTrims();
-    if (trims) {
-        for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
+    if (const auto flip = flipSerial.load(std::memory_order_relaxed); writes == 1u || flip != writtenFlip) {
+        writtenOccasionally = writes == 1u || flip - writtenFlip > OccasionalWriteFlips;
+        writtenFlip = flip;
     }
-    if (!trims || anyUnsaved) {
-        unsaved.assign(trackedLayers, false);
-        anyUnsaved = false;
-        for (std::uint32_t layer = first; layer < first + count; ++layer) {
-            unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
-            anyUnsaved = anyUnsaved || unsaved[layer];
+    std::optional<MapImportGate::PublishHold> publication;
+    if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
+    if (!layerPending.AllIn(first, count)) {
+        std::vector<bool> unsaved;
+        bool anyUnsaved = false;
+        const bool trims = CommitTrims();
+        if (trims) {
+            for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || savedTicket[layer] == 0 || keptForCpu(layer));
         }
+        if (!trims || anyUnsaved) {
+            unsaved.assign(trackedLayers, false);
+            anyUnsaved = false;
+            for (std::uint32_t layer = first; layer < first + count; ++layer) {
+                if (layerPending[layer]) continue;
+                if (layerOriginal[layer]) {
+                    pendingMiss[layer] = BaselineMiss::SavedBytesDropped;
+                    continue;
+                }
+                auto miss = BaselineMiss::LeftWatchWhilePending;
+                if (layerGeneration[layer] != 0 && savedTicket[layer] != 0) miss = BaselineMiss::SaveInFlight;
+                else if (layerGeneration[layer] != 0 && !GuestMemory::Watched(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)))) miss = baselineMiss(layer);
+                unsaved[layer] = keptForCpu(layer) || miss == BaselineMiss::LeftWatchWhilePending || miss == BaselineMiss::None;
+                pendingMiss[layer] = miss == BaselineMiss::None ? BaselineMiss::SavedBytesDropped : miss;
+                anyUnsaved = anyUnsaved || unsaved[layer];
+            }
+        } else {
+            for (std::uint32_t layer = first; layer < first + count; ++layer) {
+                if (!layerPending[layer]) pendingMiss[layer] = layerOriginal[layer] ? BaselineMiss::SavedBytesDropped : BaselineMiss::SaveInFlight;
+            }
+        }
+        if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
+            captureGuestBytes(&unsaved, true);
+            for (std::uint32_t layer = first; layer < first + count; ++layer) {
+                if (unsaved[layer]) pendingMiss[layer] = BaselineMiss::SavedBytesDropped;
+            }
+        }
+        GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
+        if (!completionKept.empty()) {
+            for (std::uint32_t layer = first; layer < first + count; ++layer) {
+                if (layerPending[layer]) continue;
+                const auto end = layerBegin(layer) + layerBytes(layer);
+                for (auto at = layerBegin(layer) & ~std::uint64_t{65535}; at < end; at += 65536) completionKept[static_cast<std::size_t>(at / 65536 - descriptor.baseAddress / 65536)] = 0;
+            }
+        }
+        layerPending.SetRange(first, count, true);
     }
-    if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) captureGuestBytes(&unsaved);
+    const auto pendingSince = GuestMemory::TrackerGeneration();
     for (std::uint32_t layer = first; layer < first + count; ++layer) {
-        if (!layerPending[layer] && !completionKept.empty()) {
-            const auto end = layerBegin(layer) + layerBytes(layer);
-            for (auto at = layerBegin(layer) & ~std::uint64_t{65535}; at < end; at += 65536) completionKept[static_cast<std::size_t>(at / 65536 - descriptor.baseAddress / 65536)] = 0;
-        }
-        layerPending[layer] = true;
+        if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
     }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
-    if (auto source = borrowedFrom.lock(); source != nullptr && borrowedUnits.size() == trackedLayers) {
+    if (auto source = borrowedUnits.size() == trackedLayers && borrowedUnits.AnyIn(first, count) ? borrowedFrom.lock() : nullptr; source != nullptr) {
         bool superseded = false;
         for (std::uint32_t unit = first; unit < first + count; ++unit) {
             if (!borrowedUnits[unit]) continue;
@@ -3927,6 +4223,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     if (!handedOver.empty() || !handedUnits.empty()) supersedeHandedOver(first, count);
     if (eager) {
+        publication.reset();
         WriteBack();
         return;
     }
@@ -3946,6 +4243,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         static_cast<void>(hooked);
     }
     ++version;
+    if (const auto format = ResolveTextureFormat(descriptor.format); format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8_UNORM) eightBitWrites().fetch_add(1, std::memory_order_release);
     const bool wasLent = std::exchange(lent, false);
     if (dirty) {
         if (wasLent) BumpPendingSerial();
@@ -4184,6 +4482,8 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
 }
 
 void StorageTexture::Flush() {
+    for (const auto& source : std::exchange(adoptedSources, {})) source->Flush();
+    storeTrappedOverlaps("cache eviction");
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -4203,6 +4503,31 @@ void StorageTexture::Flush() {
     flushReason = previous;
 }
 
+void StorageTexture::appendStoredLayers(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const {
+    constexpr std::uint64_t block = 65536;
+    constexpr std::size_t runs = 8;
+    const auto start = ranges.size();
+    const bool all = readTrapped.load(std::memory_order_acquire) || (descriptor.dccAddress != 0 && (uploadedKeys != DccKeys::Uncompressed || descriptor.mipCount > 1)) || (blockUnits && !BlockWriteBackEach());
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (!layerPending[layer]) continue;
+        const auto begin = layerBegin(layer);
+        const auto end = begin + layerBytes(layer);
+        if (!all && !(address < end && begin < address + bytes)) continue;
+        const auto first = begin / block * block;
+        const auto last = (end + block - 1) / block * block;
+        if (ranges.size() > start && ranges.back().first <= first && first <= ranges.back().second) ranges.back().second = std::max(ranges.back().second, last);
+        else ranges.emplace_back(first, last);
+    }
+    if (ranges.size() - start <= runs) return;
+    auto hull = ranges[start];
+    for (auto index = start + 1; index < ranges.size(); ++index) {
+        hull.first = std::min(hull.first, ranges[index].first);
+        hull.second = std::max(hull.second, ranges[index].second);
+    }
+    ranges.resize(start);
+    ranges.push_back(hull);
+}
+
 // Whether a pending unit of the image lies inside the range (writeBack's own selection): an image
 // listed by FlushPending without one stored nothing and only cost the GPU mutex.
 bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes) const {
@@ -4220,6 +4545,29 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 
 namespace {
 
+#if defined(__APPLE__)
+std::atomic<bool> labelTrapsSet{false};
+
+std::uint64_t TrapPage() {
+    static const auto page = static_cast<std::uint64_t>(::getpagesize());
+    return page;
+}
+
+void ResolveLabelTrap(std::uintptr_t begin, std::uintptr_t end) {
+    const auto bytes = static_cast<std::size_t>(end - begin);
+    GuestMemory::FlushGpuWrites(begin, bytes);
+    while (AgcDriver::DriverDetail::DrawPipeline::HeldReads(begin, bytes)) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        GuestMemory::FlushGpuWrites(begin, bytes);
+    }
+}
+
+bool LabelTrapsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr && GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveLabelTrap);
+    return enabled;
+}
+#endif
+
 void waitForIdlePublish(const char* reason) {
     if (reason == nullptr || std::strcmp(reason, "idle") != 0 || Recorder::InCompletion()) return;
     if (auto* recorder = Recorder::Active()) {
@@ -4230,7 +4578,7 @@ void waitForIdlePublish(const char* reason) {
 
 }
 
-bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
+bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
     const auto nothingToStore = [&] {
@@ -4238,7 +4586,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
         if (!pending.textures.SurelyClear(address, bytes)) {
             std::lock_guard lock(pending.mutex);
-            const auto* exempt = refreshing;
+            const auto* exempt = Refreshing::Get();
             if (pending.textures.MayOverlap(address, bytes) && std::any_of(pending.textures.begin(), pending.textures.end(), [&](const StorageTexture* texture) { return texture != except && texture != exempt && texture->overlaps(address, bytes) && texture->pendingUnitInside(address, bytes); })) return false;
             if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
         }
@@ -4268,10 +4616,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-        const auto* exempt = refreshing;
+        const auto* exempt = Refreshing::Get();
         for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
             auto* texture = *it;
-            if (texture != except && texture != exempt && texture->overlaps(address, bytes)) {
+            if (texture != except && texture != exempt && (device == VK_NULL_HANDLE || texture->context.device == device) && texture->overlaps(address, bytes)) {
                 if (!texture->pendingUnitInside(address, bytes)) {
                     pretestSkipped.fetch_add(1, std::memory_order_relaxed);
                     ++it;
@@ -4288,6 +4636,22 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                 ++it;
             }
         }
+#if defined(__APPLE__)
+        if (!flush.empty() && labelTrapsSet.load(std::memory_order_relaxed)) {
+            const auto selected = flush.size();
+            for (auto it = pending.textures.begin(); it != pending.textures.end();) {
+                auto* texture = *it;
+                const auto covered = [&](const std::shared_ptr<StorageTexture>& stored) { return stored->overlaps(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)); };
+                if (texture == except || texture == exempt || !texture->readTrapped.load(std::memory_order_acquire) || std::none_of(flush.begin(), flush.begin() + static_cast<std::ptrdiff_t>(selected), covered)) {
+                    ++it;
+                    continue;
+                }
+                texture->dirty = false;
+                if (auto alive = texture->weak_from_this().lock()) flush.push_back(std::move(alive));
+                it = pending.textures.erase(it);
+            }
+        }
+#endif
         // Still pending for the adjacency rule of writeBack until each one is stored.
         for (const auto& texture : flush) pending.flushing.push_back(texture.get());
         pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
@@ -4322,13 +4686,51 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
     if (!ownNotes.empty() && (flush.size() != 1 || std::any_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return ExistingHostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr; }))) ownNotes.clear();
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingWriterSerial(address, bytes, ownNotes) != 0) {
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
         try {
-            recorder->Reap();
-            if (const auto writer = recorder->PendingWriterSerial(address, bytes, ownNotes); writer == recorder->OpenSerial()) {
-                Recorder::CountSync(recorder->OpenWriteOverlaps(address, bytes) ? 1 : 3);
-                recorder->Sync();
-            } else if (writer != 0) {
+            static const bool wholeRange = std::getenv("APS5_FLUSH_WAIT_WHOLE_RANGE") != nullptr;
+            const bool publishes = !wholeRange && scope != PublishScope::None;
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> stored;
+            const auto waitRanges = [&] {
+                stored.clear();
+                if (wholeRange) {
+                    stored.emplace_back(address, address + bytes);
+                    return;
+                }
+                for (const auto& texture : flush) texture->appendStoredLayers(address, bytes, stored);
+                if (publishes) {
+                    for (const auto& range : LiveShadowedRanges(address, bytes, scope)) stored.push_back(range);
+                }
+            };
+            const auto pendingWriter = [&](const Recorder& active) {
+                constexpr std::uint64_t block = 65536;
+                std::uint64_t writer = 0;
+                if (publishes) {
+                    constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+                    const auto first = address / block * block;
+                    const auto end = bytes > top - address ? top : address + bytes;
+                    const auto last = end > top - block ? end : (end + block - 1) / block * block;
+                    writer = active.PendingLeaseSerial(first, static_cast<std::size_t>(last - first));
+                }
+                for (const auto& [begin, end] : stored) {
+                    if (writer == active.OpenSerial()) break;
+                    writer = std::max(writer, active.PendingWriterSerial(begin, static_cast<std::size_t>(end - begin), ownNotes));
+                }
+                return writer;
+            };
+            const auto openWrites = [&stored](const Recorder& active) {
+                return std::any_of(stored.begin(), stored.end(), [&active](const auto& range) { return active.OpenWriteOverlaps(range.first, static_cast<std::size_t>(range.second - range.first)); });
+            };
+            for (waitRanges(); pendingWriter(*recorder) != 0; waitRanges()) {
+                recorder->Reap();
+                waitRanges();
+                const auto writer = pendingWriter(*recorder);
+                if (writer == recorder->OpenSerial()) {
+                    Recorder::CountSync(openWrites(*recorder) ? 1 : 3);
+                    recorder->Sync();
+                    break;
+                }
+                if (writer == 0) break;
                 recorder->FinishUpTo(writer);
             }
         } catch (...) {
@@ -4362,7 +4764,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
 bool StorageTexture::WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
     auto& pending = Pending();
     if (pending.flushingCount.load(std::memory_order_acquire) == 0 || GuestMemory::GpuMutex().HeldByThisThread()) return false;
-    const auto* exempt = refreshing;
+    const auto* exempt = Refreshing::Get();
     for (bool waited = false;; waited = true) {
         {
             std::lock_guard lock(pending.mutex);
@@ -4371,6 +4773,28 @@ bool StorageTexture::WaitForFlushing(std::uint64_t address, std::size_t bytes, c
         { std::lock_guard gpu(GuestMemory::GpuMutex()); }
         std::this_thread::yield();
     }
+}
+
+bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) const {
+    return guestBytes > GenerationBaselineBytes && overlapsLive(address, bytes);
+}
+
+void StorageTexture::SetPublishHookForTest(void (*hook)()) {
+    publishHookForTest.store(hook, std::memory_order_release);
+}
+
+bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    if (AnyPendingOverlaps(ranges)) return true;
+    auto& live = Live();
+    std::lock_guard lock(live.mutex);
+    for (const auto& range : ranges) {
+        if (range.second <= range.first) continue;
+        const auto bytes = static_cast<std::size_t>(range.second - range.first);
+        for (const auto* texture : live.textures) {
+            if (texture->hashedAtUnwatch(range.first, bytes)) return true;
+        }
+    }
+    return false;
 }
 
 void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes) {
@@ -4385,8 +4809,20 @@ void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
         for (auto* texture : pending.textures) take(texture);
         for (auto* texture : pending.flushing) take(texture);
     }
-    if (overlapping.empty()) return;
+    std::vector<std::shared_ptr<StorageTexture>> live;
+    const bool proven = GuestMemory::UnwatchWritesProven();
+    {
+        auto& images = Live();
+        std::lock_guard lock(images.mutex);
+        for (auto* texture : images.textures) {
+            if (!texture->hashedAtUnwatch(address, bytes)) continue;
+            if (auto alive = texture->weak_from_this().lock()) live.push_back(std::move(alive));
+        }
+    }
+    if (overlapping.empty() && live.empty()) return;
+    RequireGpuLockBeforeImports("the unwatch hook");
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    for (const auto& texture : live) texture->hashBeforeUnwatch(address, bytes, proven);
     for (const auto& texture : overlapping) texture->saveBeforeUnwatch();
 }
 
@@ -4398,6 +4834,15 @@ void StorageTexture::forgetKeptAtUnwatch(std::uint32_t unit) {
 bool StorageTexture::keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const {
     const auto found = keptAtUnwatch.find(from);
     return found != keptAtUnwatch.end() && layerOriginal[unit] && found->second == layerGeneration[unit];
+}
+
+bool StorageTexture::keptForCpu(std::uint32_t unit) const {
+    const auto begin = layerBegin(unit);
+    const auto end = begin + layerBytes(unit);
+    for (auto it = keptAtUnwatch.lower_bound(begin); it != keptAtUnwatch.end() && it->first < end; ++it) {
+        if (it->second == layerGeneration[unit]) return true;
+    }
+    return false;
 }
 
 void StorageTexture::forgetSavedOver(std::uint64_t address, std::size_t bytes) {
@@ -4421,7 +4866,6 @@ void StorageTexture::saveBeforeUnwatch() {
     comparedRanges = {};
     for (const auto& [begin, end] : runs) GuestMemory::ReadCommittedUnsynced(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
     for (const auto& [begin, end] : runs) GuestMemory::CollectWritesUncached(descriptor.baseAddress + begin, static_cast<std::size_t>(end - begin));
-    constexpr std::uint64_t block = 65536;
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (!units[unit]) continue;
         if (layerGeneration[unit] == 0) {
@@ -4431,21 +4875,7 @@ void StorageTexture::saveBeforeUnwatch() {
             cancelStoredSave(unit);
             continue;
         }
-        const auto begin = layerBegin(unit);
-        const auto end = begin + layerBytes(unit);
-        const auto spanBegin = begin & ~(block - 1);
-        const auto spanBlocks = static_cast<std::size_t>((end - spanBegin + block - 1) / block);
-        std::vector<std::uint64_t> generations(spanBlocks);
-        for (std::size_t k = 0; k < spanBlocks; ++k) generations[k] = unitBlockGeneration(unit, spanBegin + k * block);
-        std::vector<std::uint8_t> changedBlocks(spanBlocks);
-        if (!GuestMemory::ChangedBlocks(begin, static_cast<std::size_t>(end - begin), generations, changedBlocks)) continue;
-        forgetKeptAtUnwatch(unit);
-        for (auto at = spanBegin; at < end; at += block) {
-            const auto from = std::max(at, begin);
-            const auto to = std::min(at + block, end);
-            const bool edge = from != at || to != at + block;
-            if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten && (!edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(unit, at))) && !unchangedSinceBaseline(from, to)) keptAtUnwatch.emplace(from, layerGeneration[unit]);
-        }
+        if (!keepWrittenSince(unit)) continue;
         layerOriginal[unit] = true;
         cancelStoredSave(unit);
     }
@@ -4464,7 +4894,7 @@ void StorageTexture::commitStoredSave(const std::vector<std::uint32_t>& units) {
     if (units.empty()) return;
     const auto ticket = ++lastSaveTicket;
     for (const auto unit : units) savedTicket[unit] = ticket;
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
     if (recorder == nullptr) {
         applyStoredSave(ticket, units);
         return;
@@ -4505,7 +4935,8 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
         last = std::max(last, layerBegin(unit) + layerBytes(unit));
     }
     if (last <= first) return;
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
+    if (recorder == nullptr) recorder = context.recorder;
     Require(recorder != nullptr, "a write-back's saved guest bytes are pending without a recorder");
     recorder->SyncThrough(first, static_cast<std::size_t>(last - first));
     const auto outstanding = [&] {
@@ -4637,10 +5068,31 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
 }
 
-void StorageTexture::FlushAllPending(const char* reason) {
+void StorageTexture::FlushAllPending(const char* reason, VkDevice device) {
     std::optional<PublishOnCpuScope> onCpu;
     if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
-    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason));
+    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason, PublishScope::Whole, nullptr, false, device));
+}
+
+bool StorageTexture::FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device) {
+    std::optional<PublishOnCpuScope> onCpu;
+    if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
+    std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.mutex);
+        for (const auto* texture : pending.textures) {
+            if (device == VK_NULL_HANDLE || texture->context.device == device) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
+    }
+    constexpr std::size_t piece = std::size_t{4} << 20u;
+    for (const auto& [address, bytes] : ranges) {
+        for (std::size_t offset = 0; offset < bytes; offset += piece) {
+            if (stop()) return false;
+            static_cast<void>(FlushPending(address + offset, std::min(piece, bytes - offset), nullptr, reason, PublishScope::Whole, nullptr, false, device));
+        }
+    }
+    return true;
 }
 
 std::size_t StorageTexture::StoreSmallPending(const char* reason) {
@@ -4663,18 +5115,46 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
     return stored;
 }
 
-void StorageTexture::StoreReadbackBeforeLabel(const char* reason) {
+void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice device) {
     static const bool disabled = std::getenv("APS5_NO_LABEL_READBACK_STORE") != nullptr;
     if (disabled) return;
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    std::vector<std::pair<std::uint64_t, std::size_t>> occasional;
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
+#if defined(__APPLE__)
+        const bool trap = LabelTrapsEnabled();
+        if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
+        const auto page = TrapPage();
+        const auto sharesPage = [&](const StorageTexture* texture) {
+            const auto first = texture->descriptor.baseAddress & ~(page - 1);
+            const auto bytes = static_cast<std::size_t>(((texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1)) - first);
+            const auto shares = [&](const StorageTexture* other) { return other != texture && other->overlaps(first, bytes); };
+            const auto sharesStored = [&](const StorageTexture* other) { return shares(other) && (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes); };
+            return std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares);
+        };
+#endif
         for (const auto* texture : pending.textures) {
-            if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+            if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
+#if defined(__APPLE__)
+            if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
+                texture->readTrapped.store(true, std::memory_order_release);
+                continue;
+            }
+#endif
+            ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
+        for (auto* texture : pending.textures) {
+            if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
+            if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
+            if (!texture->writtenOccasionally.exchange(false, std::memory_order_relaxed)) continue;
+            occasionalLabelStores.fetch_add(1, std::memory_order_relaxed);
+            occasional.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
     }
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
+    for (const auto& [address, bytes] : occasional) static_cast<void>(FlushPending(address, bytes, nullptr, reason, PublishScope::Whole, nullptr, false, device));
 }
 
 std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
@@ -4738,6 +5218,10 @@ bool StorageTexture::StoreAtLabelRequested(const char* value) {
     throw std::runtime_error(std::string("APS5_STORE_AT_LABEL=") + value + ": expected 1");
 }
 
+std::uint64_t StorageTexture::EightBitWrites() {
+    return eightBitWrites().load(std::memory_order_acquire);
+}
+
 std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t address, std::uint64_t bytes) {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
@@ -4750,6 +5234,10 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
         if (containing == nullptr) containing = texture;
     }
     return containing != nullptr ? containing->weak_from_this().lock() : nullptr;
+}
+
+VkDevice StorageTexture::Device() const {
+    return context.device;
 }
 
 std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t address, std::uint64_t bytes) {
@@ -4929,7 +5417,7 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
     if (pending.textures.SurelyClear(address, bytes)) return overlapping;
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return overlapping;
-    const auto* exempt = refreshing;
+    const auto* exempt = Refreshing::Get();
     for (auto* texture : pending.textures) {
         if (texture == exempt || !texture->overlaps(address, bytes) || !texture->pendingUnitInside(address, bytes)) continue;
         if (auto alive = texture->weak_from_this().lock()) overlapping.push_back(std::move(alive));
@@ -5111,7 +5599,7 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
     std::lock_guard lock(pending.mutex);
     std::size_t discarded = 0;
     const auto end = address + bytes;
-    const auto* exempt = refreshing;
+    const auto* exempt = Refreshing::Get();
     for (auto it = pending.textures.begin(); it != pending.textures.end();) {
         auto* texture = *it;
         const auto begin = texture->descriptor.baseAddress;
@@ -5304,7 +5792,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-        droppedUnits = static_cast<std::size_t>(std::count(layerPending.begin(), layerPending.end(), true));
+        droppedUnits = layerPending.Count();
         layerPending.assign(trackedLayers, false);
         if (dirty) {
             dirty = false;
@@ -5344,6 +5832,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     filledKeys = DccKeys::Uncompressed;
     keyProof = {};
     forgetBorrowed(0, trackedLayers);
+    forgetUnwatchHash(0, trackedLayers);
     const auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) layerGeneration[layer] = collectedLayerGeneration(layer, now);
     refreshGeneration();
@@ -5515,6 +6004,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
 }
 
 void StorageTexture::WriteBack() {
+    storeTrappedOverlaps("explicit");
     const auto previous = std::exchange(flushReason, "explicit");
     writeBack(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     flushReason = previous;
@@ -5534,7 +6024,7 @@ std::shared_ptr<StorageTexture> StorageTexture::FindLive(std::uint64_t address, 
 bool StorageTexture::SameSurfaceShape(const StorageTexture& other) const {
     const auto& mine = descriptor;
     const auto& theirs = other.descriptor;
-    return guestBytes == other.guestBytes && mine.width == theirs.width && mine.height == theirs.height && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && mine.dimension == theirs.dimension && mine.format == theirs.format && storageFormat == other.storageFormat && geometry.imageLayers == other.geometry.imageLayers && geometry.imageDepth == other.geometry.imageDepth;
+    return guestBytes == other.guestBytes && mine.width == theirs.width && mine.height == theirs.height && mine.linearPitch == theirs.linearPitch && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && mine.dimension == theirs.dimension && mine.format == theirs.format && storageFormat == other.storageFormat && geometry.imageLayers == other.geometry.imageLayers && geometry.imageDepth == other.geometry.imageDepth;
 }
 
 bool StorageTexture::ImageCoversGuestBytes() const {
@@ -5840,6 +6330,96 @@ void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t coun
         if (moved) refreshGeneration();
     }
     if (std::none_of(handedUnits.begin(), handedUnits.end(), [](bool handed) { return handed; })) handedUnits.clear();
+    pruneAdoptedSources();
+}
+
+void StorageTexture::pruneAdoptedSources() {
+    std::erase_if(adoptedSources, [](const std::shared_ptr<StorageTexture>& source) { return !source->Dirty(); });
+}
+
+void StorageTexture::Detach() {
+    storeTrappedOverlaps("cache eviction");
+    auto& live = Live();
+    std::lock_guard lock(live.mutex);
+    released = true;
+}
+
+StorageTexture::CreationHandOver::~CreationHandOver() {
+    if (detached != nullptr) detached->Flush();
+}
+
+std::uint64_t StorageTexture::CreationHandOvers() {
+    return creationHandOvers.load(std::memory_order_relaxed);
+}
+
+StorageTexture::CreationHandOver StorageTexture::PrepareCreation(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes, std::shared_ptr<StorageTexture> detached, bool& flushed) {
+    CreationHandOver handOver;
+    const auto storeFirst = [&] {
+        const bool dirty = detached != nullptr && detached->Dirty();
+        if (detached != nullptr) detached->Flush();
+        flushed = FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "storage image creation", PublishScope::None) || dirty;
+        return CreationHandOver();
+    };
+    flushed = false;
+    if (!ClearHandOverOn().load(std::memory_order_relaxed) || descriptor.dccAddress == 0 || IsBlockCompressed(descriptor.format)) return storeFirst();
+    const auto geometry = DescribeSurface(descriptor);
+    if (geometry.guestBytes != guestBytes || !StorageBlockUnits(descriptor, geometry)) return storeFirst();
+    const auto keyBytes = DccKeyBytes(guestBytes);
+    CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    CompletePendingCpuWrites(context, descriptor.dccAddress, keyBytes);
+    if (!GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) return storeFirst();
+    auto others = overlappingPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    if (others.empty()) return storeFirst();
+    const auto begin = descriptor.baseAddress;
+    const auto end = descriptor.baseAddress + guestBytes;
+    for (const auto& other : others) {
+        if (!other->blockUnits || (other->descriptor.dccAddress != 0 && other->uploadedKeys != DccKeys::Uncompressed)) return storeFirst();
+        if (other->descriptor.dccAddress != 0 && other->descriptor.dccAddress < descriptor.dccAddress + keyBytes && descriptor.dccAddress < other->descriptor.dccAddress + DccKeyBytes(other->guestBytes)) return storeFirst();
+        for (std::uint32_t unit = 0; unit < other->trackedLayers; ++unit) {
+            if (!other->layerPending[unit]) continue;
+            const auto from = other->layerBegin(unit);
+            const auto to = from + other->layerBytes(unit);
+            if (to <= begin || from >= end) continue;
+            if (from < begin || to > end || other->layerBytes(unit) != 65536) return storeFirst();
+        }
+    }
+    DccKeyProof proof;
+    const auto keys = ProvedClearKeys(descriptor, guestBytes, proof);
+    VkClearColorValue clear{};
+    if (!IsDccClear(keys) || !ClearColorFor(StorageFormatFor(context, ResolveTextureFormat(descriptor.format)), keys, clear)) return storeFirst();
+    handOver.keys = keys;
+    handOver.sources = std::move(others);
+    handOver.detached = std::move(detached);
+    handOver.handed = true;
+    return handOver;
+}
+
+void StorageTexture::AdoptHandOver(CreationHandOver handOver) {
+    if (!handOver.handed) return;
+    if (!blockUnits || trackedLayerBytes != 65536 || uploadedKeys != handOver.keys || anyLayerPending()) {
+        FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), this, "storage image creation", PublishScope::None);
+        if (handOver.detached != nullptr) handOver.detached->Flush();
+        if (uploadedKeys != handOver.keys) Refresh();
+        return;
+    }
+    const auto begin = descriptor.baseAddress;
+    const auto end = descriptor.baseAddress + guestBytes;
+    if (handedUnits.size() != trackedLayers) handedUnits.assign(trackedLayers, false);
+    for (const auto& source : handOver.sources) {
+        for (std::uint32_t unit = 0; unit < source->trackedLayers; ++unit) {
+            const auto from = source->layerBegin(unit);
+            if (source->layerPending[unit] && from >= begin && from < end) handedUnits[static_cast<std::size_t>((from - begin) / trackedLayerBytes)] = true;
+        }
+        const auto same = std::find_if(handedOver.begin(), handedOver.end(), [&](const auto& entry) { return entry.first.lock() == source; });
+        if (same != handedOver.end()) same->second = source->writes;
+        else handedOver.emplace_back(source, source->writes);
+    }
+    if (handOver.detached != nullptr) {
+        auto inherited = std::exchange(handOver.detached->adoptedSources, {});
+        adoptedSources.push_back(std::move(handOver.detached));
+        for (auto& source : inherited) adoptedSources.push_back(std::move(source));
+    }
+    creationHandOvers.fetch_add(1, std::memory_order_relaxed);
 }
 
 std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
@@ -5869,8 +6449,8 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
 
 void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
     if (borrowedUnits.empty()) return;
-    for (auto unit = first; unit < first + count && unit < borrowedUnits.size(); ++unit) borrowedUnits[unit] = false;
-    if (std::none_of(borrowedUnits.begin(), borrowedUnits.end(), [](bool held) { return held; })) {
+    if (first < borrowedUnits.size()) borrowedUnits.SetRange(first, std::min<std::size_t>(count, borrowedUnits.size() - first), false);
+    if (!borrowedUnits.Any()) {
         borrowedUnits.clear();
         borrowedFrom.reset();
     }
@@ -5941,7 +6521,53 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     return bytes;
 }
 
+void StorageTexture::releaseReadTraps(bool sharingPages) {
+#if defined(__APPLE__)
+    if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
+    const auto release = [](const StorageTexture* texture) {
+        if (texture->readTrapped.exchange(false, std::memory_order_acq_rel)) GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes));
+    };
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    release(this);
+    if (!sharingPages) return;
+    const auto page = TrapPage();
+    const auto first = descriptor.baseAddress & ~(page - 1);
+    const auto bytes = static_cast<std::size_t>(((descriptor.baseAddress + guestBytes + page - 1) & ~(page - 1)) - first);
+    for (const auto* texture : pending.textures) {
+        if (texture != this && texture->overlaps(first, bytes)) release(texture);
+    }
+    for (const auto* texture : pending.flushing) {
+        if (texture != this && texture->overlaps(first, bytes)) release(texture);
+    }
+#else
+    static_cast<void>(sharingPages);
+#endif
+}
+
+void StorageTexture::storeTrappedOverlaps(const char* reason) {
+#if defined(__APPLE__)
+    if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
+    std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.mutex);
+        if (!dirty) return;
+        for (const auto* texture : pending.textures) {
+            if (texture != this && texture->readTrapped.load(std::memory_order_acquire) && texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
+    }
+    for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
+#else
+    static_cast<void>(reason);
+#endif
+}
+
 void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
+    if (readTrapped.load(std::memory_order_acquire)) {
+        address = descriptor.baseAddress;
+        bytes = static_cast<std::size_t>(guestBytes);
+    }
     // Block units are stored per access; an image whose units keep being asked for in pieces (a
     // consumer touching it through many small ranges, each piece re-arming the pending memos of
     // the next dispatch) stores every pending unit once more than `pieces` partial stores fall
@@ -5950,7 +6576,7 @@ void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
     // widening them stored whole images again (movie stage: 39 vs 35 ms of GPU per present, 188 vs
     // 214 presents per 10 s); APS5_BLOCK_WRITEBACK_WIDEN=1 enables the widening, and
     // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only, every time.
-    static const bool each = std::getenv("APS5_BLOCK_WRITEBACK_EACH") != nullptr || std::getenv("APS5_BLOCK_WRITEBACK_WIDEN") == nullptr;
+    const bool each = BlockWriteBackEach();
     static const std::uint32_t pieces = [] { const char* text = std::getenv("APS5_BLOCK_WRITEBACK_PIECES"); return text != nullptr ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 10)) : 4u; }();
     static const std::uint64_t window = [] { const char* text = std::getenv("APS5_BLOCK_WRITEBACK_FRAMES"); return text != nullptr ? std::strtoull(text, nullptr, 10) : 8ull; }();
     std::vector<bool> layers(trackedLayers, false);
@@ -5976,7 +6602,7 @@ void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
         }
         if (present < storeWholeUntil || ++partialStores > pieces) {
             storeWholeUntil = present + window;
-            layers = layerPending;
+            layers = layerPending.Bools();
             coalescedWriteBacks.fetch_add(1, std::memory_order_relaxed);
         }
     }
@@ -5995,6 +6621,16 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
     if (baseline.size() != guestBytes) return false;
     const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
     return GuestMemory::EqualsCommittedUnsynced(from, std::span<const std::byte>(baseline).subspan(offset, static_cast<std::size_t>(to - from)));
+}
+
+bool StorageTexture::cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const {
+    if (!unchangedSinceBaseline(from, to)) return false;
+    if (edge || layerPendingSince[layer] == 0) return true;
+    const std::array<std::uint64_t, 1> since{layerPendingSince[layer]};
+    std::array<std::uint8_t, 1> changed{};
+    std::array<std::uint8_t, 1> cpu{};
+    GuestMemory::ChangedBlocks(from, static_cast<std::size_t>(to - from), since, changed, cpu);
+    return cpu[0] == 0;
 }
 
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
@@ -6017,6 +6653,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // may have reused the memory for something else entirely (see layerGeneration). A generation of
     // zero means no tracking, and the layer is stored whole.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> keep;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> keptBlocks;
     std::vector<bool> skippedLayer(trackedLayers, false);
     bool skippedAny = false;
     std::size_t skipped = 0;
@@ -6028,6 +6665,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         lastStored = std::max(lastStored, layerBegin(layer) + layerBytes(layer));
     }
     if (lastStored <= firstStored) return;
+    struct ReleaseReadTrap {
+        StorageTexture& texture;
+        ~ReleaseReadTrap() { texture.releaseReadTraps(false); }
+    } releaseReadTrap{*this};
     constexpr std::uint64_t block = 65536;
     const auto spanBegin = firstStored & ~(block - 1);
     const auto spanBlocks = static_cast<std::size_t>((lastStored - spanBegin + block - 1) / block);
@@ -6066,12 +6707,14 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         }
     };
     bool unsavedOutsideWatch = false;
+    std::string unsavedCause;
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layers[layer]) continue;
         const auto begin = layerBegin(layer);
         const auto end = begin + layerBytes(layer);
         const bool unknown = tracked ? layerGeneration[layer] == 0 : !compared[layer];
         if (unknown && !drawn.rect) {
+            if (!tracked && !unsavedOutsideWatch) unsavedCause = std::string("storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented (unit ") + std::to_string(layer) + " of " + std::to_string(trackedLayers) + ": " + BaselineMissText(pendingMiss[layer]) + ")";
             unsavedOutsideWatch = unsavedOutsideWatch || !tracked;
             keep.emplace_back(begin, end);
             continue;
@@ -6083,10 +6726,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             const bool edge = from != at || to != at + block;
             const auto index = static_cast<std::size_t>((at - spanBegin) / block);
             const bool kept = keptAtUnwatchHolds(from, layer);
-            const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !unchangedSinceBaseline(from, to));
+            const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !cpuLeftUnchanged(layer, from, to, edge));
             if (written && (!drawn.rect || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
+                keptBlocks.emplace_back(from, layer);
                 ++skipped;
                 continue;
             }
@@ -6098,6 +6742,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (layers[layer]) forgetKeptAtUnwatch(layer);
     }
+    for (const auto& [from, layer] : keptBlocks) keptAtUnwatch.emplace(from, layerGeneration[layer]);
     // Debug aid: APS5_TRACE_FLUSH also names the blocks a write-back leaves to the CPU.
     static const bool traceKept = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (traceKept && skippedAny) {
@@ -6143,7 +6788,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (!advances && adjacent.empty() && shadowed.empty()) return;
         const auto now = memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
-            if (layers[layer] && !skippedLayer[layer]) layerGeneration[layer] = collectedLayerGeneration(layer, now, !memoizedCollect);
+            if (layers[layer] && !skippedLayer[layer]) {
+                layerGeneration[layer] = collectedLayerGeneration(layer, now, !memoizedCollect);
+                forgetUnwatchHash(layer, 1);
+            }
         }
         refreshGeneration();
         advanceAdjacent(adjacent, now, firstBlock, lastBlock);
@@ -6162,7 +6810,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     else segments = importSegments();
     if (flushReason != nullptr && std::strcmp(flushReason, "idle") == 0 && GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored))) segments.clear();
     if (!segments.empty()) {
-        Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
+        Require(!unsavedOutsideWatch, unsavedCause);
         // Outside the write watch the stored bytes are what the next store compares with.
         const auto saveUnits = GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored)) ? std::vector<std::uint32_t>{} : prepareStoredSave(layers, skippedLayer);
         if (blockUnits) {
@@ -6207,21 +6855,34 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // untouched blocks are copied into the imported bytes in place, recorded behind the work that
         // produced the image; nothing crosses to the CPU.
         auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        auto tiledScratch = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         std::vector<CopiedBytes> copied;
         for (const auto& [from, to] : keep) copied.push_back({from - descriptor.baseAddress, to - descriptor.baseAddress, from - descriptor.baseAddress});
         auto padding = paddingSeeds(segments, copied);
         std::vector<std::pair<std::uint64_t, std::uint64_t>> importStores(keep.begin(), keep.end());
         const bool linearRows = descriptor.tileMode == TextureTileMode::kLinear && !geometry.thick && std::none_of(mips.begin(), mips.end(), [](const TileMipLayout& mip) { return mip.tail; });
+        const HostImport* directImport = nullptr;
         if (linearRows && !padding.copies.empty() && padding.slabs.empty() && saveUnits.empty()) {
             std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
             for (const auto& range : copied) runs.emplace_back(range.begin, range.end);
             importStores.clear();
             for (const auto& [begin, end] : coveredBytes(runs)) importStores.emplace_back(descriptor.baseAddress + begin, descriptor.baseAddress + end);
             padding = {};
+            static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
+            if (importRetile && !geometry.levelMajor && elementBytes % 4 == 0 && segments.size() == 1 && segments.front().begin <= firstStored && lastStored <= segments.front().end) {
+                std::vector<std::pair<std::uint64_t, std::uint64_t>> wholeLayers;
+                for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+                    if (!layers[layer]) continue;
+                    const auto begin = layerBegin(layer);
+                    const auto end = begin + layerBytes(layer);
+                    if (!wholeLayers.empty() && wholeLayers.back().second == begin) wholeLayers.back().second = end;
+                    else wholeLayers.emplace_back(begin, end);
+                }
+                if (wholeLayers == keep && HostImportDeviceLocal(context, *segments.front().import)) directImport = segments.front().import;
+            }
         }
+        const auto tiledScratch = directImport == nullptr ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
         detiler.BeginBatch();
-        auto* recorder = Recorder::Active();
+        auto* recorder = recorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         auto timing = Recorder::NoTiming;
@@ -6233,11 +6894,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
             if (linear) recorder->Keep(linear, linear->Size());
-            recorder->Keep(tiledScratch, tiledScratch->Size());
+            if (tiledScratch) recorder->Keep(tiledScratch, tiledScratch->Size());
             for (const auto& slab : padding.slabs) recorder->Keep(slab);
             // The image itself must outlive the recorded retile: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
-            Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, padding.copies.empty() ? 4 : 5);
+            Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, (padding.copies.empty() ? 4 : 5) - (directImport != nullptr ? 1 : 0));
             if (Recorder::BarrierValidate()) {
                 const std::pair<VkImage, bool> read{image, false};
                 recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{padding.importReads, importStores, std::span(&read, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
@@ -6279,10 +6940,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             for (std::uint32_t level = 0; level < mips.size(); ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
-                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                if (directImport != nullptr) detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, directImport->buffer, HostImportOffset(*directImport, descriptor.baseAddress + geometry.GuestOffset(layer, mip)), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                else detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
             }
         }
-        {
+        if (directImport != nullptr) {
+            linearImportRetiles.fetch_add(1, std::memory_order_relaxed);
+        } else {
             const auto scratchDone = WholeBufferBarrier(tiledScratch->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &scratchDone, 0, nullptr);
             for (const auto& segment : segments) {
@@ -6334,6 +6998,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         ++Profile().storageDirectWriteBacks;
         return;
     }
+    releaseReadTraps(true);
     // A surface whose memory is no longer registered (freed, or re-registered under another
     // allocation: no readable registered range contains it) has nothing to receive its results;
     // the round trip through the CPU below would store stale texels over whatever the memory
@@ -6372,7 +7037,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // them (a GPU clear, a dropped or kept unit). Reading them says nothing about the image: a
     // stale unit (dropped, or kept for the CPU) still differs from them, so `original` vouches for
     // the content again only where it did before, or once every unit is stored.
-    Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
+    Require(!unsavedOutsideWatch, unsavedCause);
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
     for (const auto& [begin, end] : unitRuns(unsaved)) {
@@ -6416,7 +7081,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         for (std::uint32_t level = 0; level < mips.size(); ++level) {
             if (!geometry.HasLayer(level, layer)) continue;
             const auto& mip = mips[level];
-            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiled.Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiled.Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
         }
     }
     const bool dumpSelected = StorageDumpSelects(descriptor) && StorageDumpReady();
@@ -6523,10 +7188,10 @@ void StorageTexture::release() noexcept {
     attachmentViews.clear();
     if (proxyView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, proxyView, nullptr);
     if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
-    if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
+    proxyAllocation.Reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    ReleaseImageMemory(context, memory, memoryBytes, memoryType);
+    imageAllocation.Reset();
 }
 
 std::uint64_t StorageTexture::GuestBytes() const {

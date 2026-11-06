@@ -518,7 +518,7 @@ uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferOb
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* buffer) {
-    return buffer->size;
+    return buffer != nullptr ? buffer->size : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* buffer) {
@@ -991,8 +991,8 @@ double APS5_VABI sceAmprSinh(double x, double y) {
 }
 
 APS5_EXPORT("-vXEQdRADLI", sceAmprStrtokS);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context) {
-    return SonyStrtokS(str, delim, context);
+char* APS5_VABI sceAmprStrtokS(char* str, std::size_t* remaining, const char* delimiters, char** context) {
+    return SonyStrtokS(str, remaining, delimiters, context);
 }
 
 APS5_EXPORT("2UFh+YKfuzk", sceAmprCtimeS);

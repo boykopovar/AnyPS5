@@ -24,12 +24,17 @@ std::uint32_t Driver::ReserveEopFlipAt(const FlipInfo& info, std::uint32_t token
 std::uint32_t Driver::reserveEopFlip(const FlipInfo& info, std::uint32_t token) {
     rethrowFailure();
     checkStopping();
-    require(token >= EopFlipTokenBase && token <= EopFlipTokenLimit && !eopFlips.contains(token), "EOP flip token is not free");
+    require(token >= EopFlipTokenBase && token <= EopFlipTokenLimit, "EOP flip token is out of range");
     const auto output = outputs.find(info.handle);
     require(output != outputs.end(), "EOP flip references an unregistered video output");
+    if (const auto found = eopFlips.find(token); found != eopFlips.end()) {
+        const auto& reserved = found->second.info;
+        require(reserved.handle == info.handle && reserved.index == info.index && reserved.mode == info.mode && reserved.argument == info.argument, "EOP flip token is reserved for a different flip");
+        throw EopFlipAlreadyReserved{};
+    }
     auto request = output->second->TryReserve(info);
     if (!request) return 0;
-    eopFlips.emplace(token, EopFlip{info.handle, std::move(request)});
+    eopFlips.emplace(token, EopFlip{info, std::move(request)});
     nextEopToken = std::max(nextEopToken, token + 1);
     return token;
 }
@@ -53,7 +58,7 @@ void Driver::UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<I
     std::lock_guard lock(mutex);
     const auto it = outputs.find(handle);
     require(it != outputs.end() && it->second == output, "video output registration mismatch");
-    std::erase_if(eopFlips, [handle](const auto& entry) { return entry.second.handle == handle; });
+    std::erase_if(eopFlips, [handle](const auto& entry) { return entry.second.info.handle == handle; });
     outputs.erase(it);
 }
 
