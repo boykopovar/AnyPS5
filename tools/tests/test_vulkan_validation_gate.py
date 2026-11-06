@@ -80,6 +80,22 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             self.assertFalse(output.exists())
 
+    def test_relative_executable_follows_the_test_working_directory(self):
+        for mode in ("default", "absolute", "relative"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                build = Path(directory).resolve()
+                working = build if mode == "default" else build / "working directory"
+                working.mkdir(exist_ok=True)
+                executable = working / "probe"
+                executable.write_bytes(b"original executable")
+                properties = [] if mode == "default" else [{"name": "WORKING_DIRECTORY",
+                    "value": str(working if mode == "absolute" else working.relative_to(build))}]
+                tests = [{"name": "probe", "command": ["./probe"], "properties": properties}]
+                before = gate.artifact_hashes(build, tests, [])
+                self.assertIn(str(executable), before)
+                executable.write_bytes(b"changed executable")
+                self.assertNotEqual(before, gate.artifact_hashes(build, tests, []))
+
     def test_relative_command_files_follow_the_test_working_directory(self):
         for mode in ("default", "absolute", "relative"):
             for definition in (False, True):
@@ -94,7 +110,9 @@ class ReportTests(unittest.TestCase):
                         "name": "WORKING_DIRECTORY",
                         "value": str(working if mode == "absolute" else working.relative_to(build)),
                     }]
-                    tests = [{"name": "probe", "command": [sys.executable, argument], "properties": properties}]
+                    command = build / "probe-command"
+                    command.write_bytes(b"probe")
+                    tests = [{"name": "probe", "command": [str(command), argument], "properties": properties}]
                     before = gate.artifact_hashes(build, tests, [])
                     self.assertIn(str(script.resolve()), before)
                     script.write_text("changed", encoding="utf-8")

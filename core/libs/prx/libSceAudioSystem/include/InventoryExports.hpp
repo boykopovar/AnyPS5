@@ -1,0 +1,38 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI sceAudioOutServerBusGetIoParam();
+int APS5_VABI sceAudioOutServerGetOption();
+int APS5_VABI libSceAudioSystemUnknown__minus_e5aJEqL34Y_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_17nOsxccH5o_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_2bKJUeywpeY_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_3HOelmA2vcw_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_5SM0uQwcgTQ_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_5oOYYvwIb0k_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_6PGbkl6OnvE_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_9QaKJdd7jKk_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_B_minus_JyTVr90kc_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_Fd9u7_minus_OKW_plus_Q_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_GUtNdBeMrcM_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_HxLyu3KUv5U_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_IiO_plus_DdVz_minus_4E_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_J2Fx9JLKcqU_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_Met2nIMg_plus_Ng_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_WRDd2feDYzg_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_c4m3OSO0lj8_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_ds20PmJfSSk_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_hjlhfF8Voz0_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_jLjHQbmK9_plus_A_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_jZPcy9MG4w0_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_lSatNsWSmps_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_ltR0PMUM270_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_tHodLaUv04w_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_uoPBJTVWhrg_nid_no_patch();
+int APS5_VABI libSceAudioSystemUnknown_xG7GUeOKtBM_nid_no_patch();
+
+}

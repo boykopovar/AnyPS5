@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <unordered_set>
 
@@ -6,7 +7,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
 
-extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
+extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char* funcName);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 
 namespace {
@@ -91,18 +92,40 @@ int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, in
     if (which < WhichThread || which > WhichDomain || which == WhichIrq || which == WhichDomain) {
         return Fail(GuestEinval);
     }
-    if (which != WhichProcess) {
-        NotImplemented_nid_no_patch("cpuset_getid other than process");
-    }
-    if (id != -1 && id != getpid_nid_postfix()) {
-        return Fail(GuestEsrch);
+    if (which != WhichProcess && which != WhichCpuset) {
+        NotImplemented_nid_no_patch("cpuset_getid other than process or cpuset");
     }
     int resultId = 0;
-    if (level == LevelRoot) {
-        resultId = RootSetId;
+    if (which == WhichProcess) {
+        if (id != -1 && id != getpid_nid_postfix()) {
+            return Fail(GuestEsrch);
+        }
+        if (level == LevelRoot) {
+            resultId = RootSetId;
+        } else {
+            std::lock_guard lock(setMutex);
+            resultId = currentProcessSetId;
+        }
     } else {
-        std::lock_guard lock(setMutex);
-        resultId = currentProcessSetId;
+        if (id == -1) {
+            if (level == LevelRoot) {
+                resultId = RootSetId;
+            } else {
+                std::lock_guard lock(setMutex);
+                resultId = currentProcessSetId;
+            }
+        } else {
+            const int lookupId = static_cast<int>(id);
+            std::lock_guard lock(setMutex);
+            if (validSets.find(lookupId) == validSets.end()) {
+                return Fail(GuestEsrch);
+            }
+            if (level == LevelRoot) {
+                resultId = RootSetId;
+            } else {
+                resultId = lookupId;
+            }
+        }
     }
     if (!GuestCopyOut_nid_no_patch(setid, &resultId, sizeof(resultId))) {
         return Fail(GuestEfault);

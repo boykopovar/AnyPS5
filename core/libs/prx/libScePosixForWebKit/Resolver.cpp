@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -281,6 +282,20 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     if (rawQuery && service) return 9;
     if (!Ready()) return 4;
+    const char* numericName = nullptr;
+    if (node && hints && (hints->flags & 2)) {
+        std::array<unsigned char, 4> v4{};
+        std::array<unsigned char, 16> v6{};
+        const char* scope = std::strchr(node, '%');
+        const std::size_t length = scope ? static_cast<std::size_t>(scope - node) : std::strlen(node);
+        std::array<char, 64> address{};
+        bool numericV6 = false;
+        if (length < address.size()) {
+            std::memcpy(address.data(), node, length);
+            numericV6 = inet_pton(AF_INET6, address.data(), v6.data()) == 1;
+        }
+        if ((hints->flags & 4) || NumericAddress(node, v4) || numericV6) numericName = node;
+    }
     std::array<addrinfo, 2> queries{nativeHints, nativeHints};
     std::size_t queryCount = 1;
     if (!nativeHints.ai_socktype && !nativeHints.ai_protocol) {
@@ -340,11 +355,11 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
                 std::memcpy(bytes + 8, &v6->sin6_addr, 16);
                 std::memcpy(bytes + 24, &v6->sin6_scope_id, 4);
             }
-            if (item->ai_canonname) {
-                const auto size = std::strlen(item->ai_canonname) + 1;
+            if (const char* canonical = item->ai_canonname ? item->ai_canonname : numericName) {
+                const auto size = std::strlen(canonical) + 1;
                 converted->canonicalName = static_cast<char*>(std::malloc(size));
                 if (!converted->canonicalName) { failure = 6; break; }
-                std::memcpy(converted->canonicalName, item->ai_canonname, size);
+                std::memcpy(converted->canonicalName, canonical, size);
             }
         }
         ::freeaddrinfo(native);

@@ -154,6 +154,20 @@ struct IosBase {
     Implementation** locale;
 };
 
+struct SceV2IosBase {
+    const void* vtable;
+    std::int64_t standardStream;
+    unsigned char reserved[0x20];
+    void* streamNodes;
+    void* callbackNodes;
+    Implementation** locale;
+};
+
+static_assert(offsetof(SceV2IosBase, streamNodes) == 0x30);
+static_assert(offsetof(SceV2IosBase, callbackNodes) == 0x38);
+static_assert(offsetof(SceV2IosBase, locale) == 0x40);
+static_assert(sizeof(SceV2IosBase) == 0x48);
+
 struct Streambuf;
 
 struct StreambufVtable {
@@ -253,5 +267,14 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
+static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
+extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];
+inline constexpr std::size_t kTimePutCharVtableSlots = 7;
+static_assert(kTimePutCharVtableSlots * sizeof(std::uintptr_t) == 56);
+extern "C" std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots];
+inline constexpr std::size_t kMoneyGetCharVtableSlots = 8;
+static_assert(kMoneyGetCharVtableSlots * sizeof(std::uintptr_t) == 64);
+extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots];
 
 #endif

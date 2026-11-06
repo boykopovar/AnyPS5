@@ -109,8 +109,13 @@ int main() {
     const int nextFilter = sceNpWebApi2PushEventCreateFilter(pushLibrary, pushHandle, "sessionManager", 0, nullptr, 0);
     Require(pushHandle > 0 && filter > 0 && nextFilter > 0 && nextFilter != filter);
     int userArg = 0;
-    const int callback = sceNpWebApi2PushEventRegisterCallback(pushUser, filter, nullptr, &userArg);
-    const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nullptr, &userArg);
+    for (const int userContext : {pushUser, 0, 1, -1, 0x7fffffff}) {
+        Require(sceNpWebApi2PushEventRegisterCallback(userContext, 5, nullptr, &userArg) == invalidArgument);
+        Require(sceNpWebApi2PushEventRegisterPushContextCallback(userContext, 5, nullptr, &userArg) == invalidArgument);
+    }
+    void* const nonNullCallback = &userArg;
+    const int callback = sceNpWebApi2PushEventRegisterCallback(pushUser, filter, nonNullCallback, &userArg);
+    const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nonNullCallback, &userArg);
     Require(callback > 0 && contextCallback > 0 && contextCallback != callback);
     NpWebApi2PushContextId pushContext{};
     Require(sceNpWebApi2PushEventCreatePushContext(pushUser, &pushContext) == unavailable);

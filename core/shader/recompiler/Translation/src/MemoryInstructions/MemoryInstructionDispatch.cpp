@@ -145,9 +145,6 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::BufferAtomicSub:
         return bufferAtomic(inst, IrOpcode::BufferAtomicISub32);
     case RdnaOpcode::BufferAtomicCsub:
-        if (!inst.glc) {
-            throw std::runtime_error("buffer_atomic_csub without glc is not supported, at pc " + std::to_string(inst.programCounter));
-        }
         return bufferAtomic(inst, IrOpcode::BufferAtomicUSubSat32);
     case RdnaOpcode::BufferAtomicSmin:
         return bufferAtomic(inst, IrOpcode::BufferAtomicSMin32);

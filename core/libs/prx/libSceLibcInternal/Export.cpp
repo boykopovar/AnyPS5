@@ -8,6 +8,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -1056,6 +1057,12 @@ const char* APS5_VABI _getprogname_nid_postfix() {
     return getprogname_nid_postfix();
 }
 
+void APS5_VABI setprogname_nid_postfix(const char* name) {
+    if (name == nullptr) throw std::invalid_argument("setprogname: null name");
+    const char* slash = std::strrchr(name, '/');
+    __progname_nid_postfix = (slash != nullptr) ? slash + 1 : name;
+}
+
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }
@@ -1129,9 +1136,16 @@ int APS5_VABI _Closreg_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _Daysto_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _Daysto_nid_postfix(int year, int month) {
+    static constexpr short DaysBeforeMonth[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+    static constexpr short LeapDaysBeforeMonth[12] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335};
+    if (month < 0 || month >= 12) throw std::out_of_range("_Daysto: the month index is outside the twelve-entry tables");
+    const auto bits = static_cast<std::uint32_t>(year);
+    std::uint32_t leapDays = 0;
+    if (year > 0) leapDays = (bits - 1u) >> 2;
+    else if (year <= -4) leapDays = ((4u - bits) >> 2) + 1u;
+    const bool common = (bits & 3u) != 0 || year == 0;
+    return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
 }
 
 int APS5_VABI _Deletegloballocale_nid_postfix() {
@@ -1241,9 +1255,15 @@ int APS5_VABI _FXp_addx_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FXp_getw_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count) {
+    if (count == 0) return 0.0f;
+    if (count == 1 || parts[0] == 0.0f || parts[1] == 0.0f) return parts[0];
+    if (count == 2 || parts[2] == 0.0f) return parts[0] + parts[1];
+    const float head = parts[0] + parts[1];
+    float tail = parts[2];
+    if (count >= 4) tail += parts[3];
+    if (head - parts[0] == parts[1]) return head + tail;
+    return parts[0] + (parts[1] + tail);
 }
 
 int APS5_VABI _FXp_invx_nid_postfix() {
@@ -1433,8 +1453,7 @@ int APS5_VABI sceLibcInternalUnknown_wUa_oPQvFZ0_nid_no_patch() {
 APS5_EXPORT("wUa+oPQvFZ0", sceLibcInternalUnknown_wUa_oPQvFZ0_nid_no_patch);
 
 int APS5_VABI _Isdst_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return -1;
 }
 
 int APS5_VABI _LAtan_nid_postfix() {

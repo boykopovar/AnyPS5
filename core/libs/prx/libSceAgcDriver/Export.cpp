@@ -127,26 +127,6 @@ int APS5_VABI sceAgcDriverTmpInitIdhs(void) {
     return 0;
 }
 
-int APS5_VABI sceAgcDriverUserDataWritePacket(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAgcDriverUserDataWritePopMarker(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAgcDriverUserDataWritePushMarker(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAgcDriverUserDataWriteSetMarker(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 }
 
 extern "C" {

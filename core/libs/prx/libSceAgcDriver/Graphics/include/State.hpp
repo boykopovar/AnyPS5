@@ -64,6 +64,7 @@ struct ColorTarget {
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     bool cmaskFastClear = false;
+    std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};
     std::uint32_t mipCount = 1;
@@ -87,6 +88,9 @@ struct ColorTarget {
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
     std::uint16_t partialWriteMask = 0;
+    bool staged = false;
+    std::uint16_t stagedMask = 0;
+    VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
 
     std::uint64_t MemoryAddress() const {
         return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
@@ -111,6 +115,7 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    bool gcn = false;
 };
 
 struct State {
@@ -224,6 +229,7 @@ std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
 std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+ColorTarget StagedMergeTarget(const ColorTarget& staged);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
 std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
