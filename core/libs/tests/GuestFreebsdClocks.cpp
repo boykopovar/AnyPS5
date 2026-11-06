@@ -371,7 +371,12 @@ int main() {
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(sceKernelGettimeofday(nullptr) == static_cast<int>(0x8002000eu));
+    constexpr int fault = static_cast<int>(0x8002000eu);
+    Require(sceKernelGettimeofday(nullptr) == fault);
+    auto* const badTimeval = reinterpret_cast<KernelTimeval*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(gettimeofday_nid_postfix(badTimeval, nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelGettimeofday(badTimeval) == fault);
     const std::int64_t beforeSce = Microseconds();
     KernelTimeval sceTime{-1, -1};
     Require(sceKernelGettimeofday(&sceTime) == SCE_OK);
