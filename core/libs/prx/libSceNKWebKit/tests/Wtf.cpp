@@ -1,6 +1,16 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libc/include/General.hpp"
+#include <chrono>
+#include <filesystem>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -375,6 +385,181 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+static void TestFileHandles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto seek = &_ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE;
+    const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
+    const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
+    const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
+    const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(guestPath));
+    Require(open(path, 0, true, false) == -1);
+    Require(openAndLock(path, 0, 1) == -1);
+    NKWebKit::WtfAbi::String nullPath;
+    Require(open(nullPath, 0, true, false) == -1);
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    int handle = open(path, 1, false, false);
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(handle >= 0);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    Require(seek(handle, 2, 0) == 2);
+    Require(seek(handle, 1, 1) == 3);
+    Require(seek(handle, -1, 2) == 5);
+    Require(truncate(handle, 4));
+    Require(seek(handle, 0, 2) == 4);
+    Require(!truncate(handle, -1));
+    close(handle);
+    Require(handle == -1);
+    close(handle);
+    Require(handle == -1);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / std::filesystem::path(u8"é.bin")).permissions() & std::filesystem::perms::mask) == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+    handle = open(path, 0, true, false);
+    Require(handle >= 0);
+    char bytes[8]{};
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 4);
+    Require(std::memcmp(bytes, "abcd", 4) == 0);
+    Require(!truncate(handle, 1));
+    close(handle);
+    for (int mode = 0; mode != 3; ++mode) Require(open(path, mode, true, true) == -1);
+    Require(std::filesystem::file_size(root / std::filesystem::path(u8"é.bin")) == 4);
+    handle = open(path, 2, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 4);
+    Require(sceKernelWrite(handle, "ef", 2) == 2);
+    Require(seek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 6);
+    Require(std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    handle = open(path, 1, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 0);
+    Require(sceKernelClose(handle) == 0);
+    handle = sceKernelOpen(guestPath, SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    close(handle);
+    Require(handle == -1);
+    handle = openAndLock(path, 2, 2);
+    Require(handle >= 0 && sceKernelWrite(handle, "x", 1) == 1);
+    unlockAndClose(handle);
+    Require(seek(handle, 0, 0) == -1);
+    Require(!truncate(-1, 0));
+    Require(seek(-1, 0, 0) == -1);
+    handle = -2;
+    close(handle);
+    Require(handle == -1);
+    auto allPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/all.bin"));
+#ifndef _WIN32
+    const auto allMask = ::umask(0);
+#endif
+    handle = open(allPath, 2, true, true);
+#ifndef _WIN32
+    ::umask(allMask);
+#endif
+    Require(handle >= 0);
+    close(handle);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "all.bin").permissions() & std::filesystem::perms::mask) == static_cast<std::filesystem::perms>(0666));
+#endif
+    auto readPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/read.bin"));
+    handle = open(readPath, 0, false, true);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
+    close(handle);
+    RemovePathAlias_nid_no_patch("/nkwebkit-handles");
+    std::filesystem::remove_all(root);
+}
+
+static void TestFilePaths() {
+    const auto exists = &_ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE;
+    const auto removeFile = &_ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE;
+    const auto move = &_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_;
+    const auto makeDirectories = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto removeDirectory = &_ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE;
+    const auto realPath = &_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE;
+    const auto string = [](const char* value) { return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(value)); };
+    const auto bytes = [](const NKWebKit::WtfAbi::String& value) {
+        const auto utf8 = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&value, 0);
+        return std::string(reinterpret_cast<const char*>(utf8.buffer + 1), utf8.buffer->length);
+    };
+    const auto root = std::filesystem::current_path() / ("nkwebkit-paths-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+#ifndef _WIN32
+    std::filesystem::permissions(root, std::filesystem::perms::set_gid, std::filesystem::perm_options::add);
+#endif
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-paths", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto parent = string("/nkwebkit-paths/a");
+    auto directory = string("/nkwebkit-paths/a/b");
+    auto missing = string("/nkwebkit-paths/missing");
+    Require(!exists(missing) && !removeFile(missing) && !removeDirectory(missing));
+    Require(bytes(realPath(missing)) == "/nkwebkit-paths/missing");
+    Require(!makeDirectories(string("")));
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(makeDirectories(directory));
+#ifndef _WIN32
+    ::umask(oldMask);
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::all) == static_cast<std::filesystem::perms>(0777));
+#endif
+    Require(makeDirectories(directory) && makeDirectories(string("/nkwebkit-paths/a/b/")));
+    Require(exists(directory) && exists(parent));
+    Require(!removeFile(directory) && !removeDirectory(parent));
+    Require(removeDirectory(directory) && !exists(directory));
+    Require(makeDirectories(directory));
+    Require(makeDirectories(string("/nkwebkit-paths/fresh/../sibling")));
+    Require(std::filesystem::is_directory(root / "fresh") && std::filesystem::is_directory(root / "sibling"));
+    const auto write = [](const char* path, const char* data) {
+        const int handle = sceKernelOpen(path, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0600);
+        Require(handle >= 0);
+        const auto length = std::strlen(data);
+        Require(sceKernelWrite(handle, data, length) == static_cast<std::int64_t>(length));
+        Require(sceKernelClose(handle) == 0);
+    };
+    write("/nkwebkit-paths/a/b/source", "source");
+    write("/nkwebkit-paths/a/b/destination", "old");
+    auto source = string("/nkwebkit-paths/a/b/source");
+    auto destination = string("/nkwebkit-paths/a/b/destination");
+    Require(exists(source) && !removeDirectory(source) && !removeDirectory(directory));
+    Require(!makeDirectories(source) && !makeDirectories(string("/nkwebkit-paths/a/b/source/child")));
+    Require(!move(source, string("/nkwebkit-paths/missing/target")) && exists(source));
+    Require(!move(source, directory) && exists(source));
+    Require(move(source, destination) && !exists(source) && exists(destination));
+    Require(!move(source, destination));
+    const int handle = sceKernelOpen("/nkwebkit-paths/a/b/destination", SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    char content[7]{};
+    Require(sceKernelRead(handle, content, sizeof(content)) == 6 && std::memcmp(content, "source", 6) == 0);
+    Require(sceKernelClose(handle) == 0);
+    Require(bytes(realPath(string("/nkwebkit-paths/a/./b/../b/destination"))) == "/nkwebkit-paths/a/b/destination");
+#ifndef _WIN32
+    std::filesystem::create_directory_symlink("a", root / "directory-link");
+    auto directoryLink = string("/nkwebkit-paths/directory-link");
+    Require(exists(directoryLink) && makeDirectories(directoryLink) && !removeDirectory(directoryLink));
+    Require(removeFile(directoryLink) && exists(parent));
+    std::filesystem::create_symlink("a/b/destination", root / "file-link");
+    auto fileLink = string("/nkwebkit-paths/file-link");
+    Require(exists(fileLink) && bytes(realPath(fileLink)) == "/nkwebkit-paths/a/b/destination");
+    Require(removeFile(fileLink) && exists(destination));
+    std::filesystem::create_symlink("missing", root / "dangling-link");
+    auto dangling = string("/nkwebkit-paths/dangling-link");
+    Require(!exists(dangling) && !removeDirectory(dangling));
+    Require(removeFile(dangling));
+#endif
+    Require(removeFile(destination) && !exists(destination) && !removeFile(destination));
+    Require(removeDirectory(directory) && removeDirectory(parent));
+    RemovePathAlias_nid_no_patch("/nkwebkit-paths");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     TestAdditionalWtf();
     TestMemoryAllocations();
@@ -384,6 +569,8 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestFilePaths();
+    TestFileHandles();
     return 0;
 }
 

@@ -186,6 +186,18 @@ void APS5_VABI _ZN3WTF7CStringC2EPKc(NKWebKit::WtfAbi::CString* self, const char
 void APS5_VABI _ZN3WTF7CStringC2EPKcm(NKWebKit::WtfAbi::CString* self, const char* data, std::size_t length);
 unsigned int APS5_VABI _ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_( const char* data, const char* dataEnd, unsigned int& dataLength, unsigned int& utf16Length);
 std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv();
+int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(const NKWebKit::WtfAbi::String& path, int mode, bool permission, bool failIfFileExists);
+void APS5_VABI _ZN3WTF14FileSystemImpl9closeFileERi(int& handle);
+long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int handle, long long offset, int origin);
+bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset);
+int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode);
+void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle);
+bool APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_(const NKWebKit::WtfAbi::String& from, const NKWebKit::WtfAbi::String& to);
+bool APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+bool APS5_VABI _ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl8realPathERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
 double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm( const char16_t* string, std::size_t length, std::size_t& parsedLength);
 WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv();
 void APS5_VABI _ZN3WTF8dataLogFEPKcz(const char* format, ...);
