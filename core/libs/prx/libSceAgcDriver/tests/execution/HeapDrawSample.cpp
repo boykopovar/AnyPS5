@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -19,9 +21,15 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -82,6 +90,28 @@ constexpr float SecondAlpha = 0.6f;
 constexpr std::uint8_t SecondAlphaByte = 153u;
 alignas(4096) std::array<float, 1024> BufferMemory{};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
+
+std::span<std::byte> MergedTarget(std::size_t index) {
+    constexpr std::size_t Bytes = 65536;
+    static std::array<std::byte*, 2> data{};
+    if (data.at(index) == nullptr) data[index] = [] {
+        std::byte* block = nullptr;
+#ifdef _WIN32
+        block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, Bytes));
+        GuestArena::GuestArenaCommit_nid_postfix(block, Bytes, PAGE_READWRITE, Bytes);
+#else
+        void* raw = mmap(nullptr, 2u * Bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(raw != MAP_FAILED, "cannot map the merged color target");
+        const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+        block = reinterpret_cast<std::byte*>((begin + Bytes - 1u) & ~static_cast<std::uintptr_t>(Bytes - 1u));
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, Bytes);
+#endif
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, Bytes, true, true, true);
+        return block;
+    }();
+    return {data[index], ColorMemory.size()};
+}
 alignas(256) std::array<std::uint8_t, 1024> TextureMemory{};
 
 struct Header {
@@ -108,7 +138,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-enum class Mode { Texture, Buffer, Storage, Gds, Vertex, Bda, Table, VertexTable, MovedBuffer, MovedTexture, PixelLds, ConstantSampler };
+enum class Mode { Texture, Buffer, Storage, Gds, Vertex, Bda, Table, VertexTable, MovedBuffer, MovedTexture, PixelLds, ConstantSampler, MergedBlend, MergedBlendOther };
 
 const std::uint32_t* VertexProgram(Mode mode) {
     if (mode == Mode::VertexTable) return TableVertexCode.data();
@@ -134,6 +164,7 @@ unsigned ExpectedChannel(Mode mode, bool buffer, std::size_t channel) {
     if (mode == Mode::MovedTexture) return 0x33u;
     if ((mode == Mode::Bda || mode == Mode::MovedBuffer) && channel == 3) return SecondAlphaByte;
     if (buffer && channel == 3) return BufferAlphaByte;
+    if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) return std::min(2u * Texel[channel] + static_cast<unsigned>(Kept), 0xffu);
     return Texel[channel];
 }
 
@@ -144,6 +175,8 @@ const char* DrawnWhat(Mode mode, bool buffer) {
     if (buffer) return " (texture and buffer)";
     if (mode == Mode::Table) return " (image table)";
     if (mode == Mode::ConstantSampler) return " (texture with a constant sampler)";
+    if (mode == Mode::MergedBlend) return " (texture blended unclamped into the color target)";
+    if (mode == Mode::MergedBlendOther) return " (texture blended unclamped into a second color target)";
     return " (texture)";
 }
 
@@ -154,6 +187,7 @@ const char* TakenWhat(Mode mode, bool buffer) {
     if (mode == Mode::Table) return " reading an image table";
     if (mode == Mode::VertexTable) return " (vertex stage reading an image table)";
     if (mode == Mode::ConstantSampler) return " sampling with a constant sampler";
+    if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) return " merging into its color target";
     return "";
 }
 
@@ -179,7 +213,7 @@ std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode, const
     const bool vertexSampling = mode == Mode::Vertex || mode == Mode::VertexTable;
     const auto vertex = reinterpret_cast<std::uintptr_t>(vertexCode != nullptr ? vertexCode : VertexProgram(mode));
     const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
-    const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory.data());
+    const auto color = reinterpret_cast<std::uintptr_t>(mode == Mode::MergedBlend ? MergedTarget(0).data() : mode == Mode::MergedBlendOther ? MergedTarget(1).data() : ColorMemory.data());
     std::array<std::uint32_t, 24> descriptors{};
     const auto textureImage = ImageDescriptor(TextureMemory.data());
     const auto bufferDescriptor = BufferDescriptor(BufferMemory.data() + 1, sizeof(BufferMemory) - sizeof(float));
@@ -278,6 +312,10 @@ std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode, const
     std::vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
+    if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) {
+        Append(commands, 0x69, {0x1e0, (1u << 30u) | (1u << 8u) | 1u});
+        Append(commands, 0x69, {0x31c, 0x28028u & ~0x8000u});
+    }
     if (vertexSampling) {
         Append(commands, 0x69, {0x1b6, 1});
         Append(commands, 0x69, {0x191, 1u << 10u});
@@ -325,7 +363,8 @@ std::span<const std::uint32_t> PixelProgram(Mode mode, bool buffer, bool vertexS
 
 void DrawSamplesTheTexture(bool heap, Mode mode) {
     const bool buffer = mode == Mode::Buffer || mode == Mode::Bda || mode == Mode::MovedBuffer;
-    ColorMemory.fill(Kept);
+    const auto colorMemory = mode == Mode::MergedBlend ? MergedTarget(0) : mode == Mode::MergedBlendOther ? MergedTarget(1) : std::span<std::byte>(ColorMemory);
+    std::ranges::fill(colorMemory, Kept);
     StorageMemory.fill(0u);
     BufferMemory.fill(0.0f);
     BufferMemory[1] = BufferAlpha;
@@ -348,6 +387,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
     const auto tablesBefore = AgcDriver::Graphics::ImageTableBuilds();
     const auto pushesBefore = AgcDriver::Graphics::DataAddressPushes();
     const auto embeddedBefore = AgcDriver::Graphics::EmbeddedSamplerMappings();
+    const auto templatesBefore = ShaderRecompiler::HeapTemplateCounts().entries;
     auto* gdsCounter = reinterpret_cast<volatile std::uint32_t*>(AgcDriver::Pm4::GdsAddress() + 0x10u);
     if (mode == Mode::Gds) *gdsCounter = 0u;
     auto commands = Draw(code, mode);
@@ -355,12 +395,12 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
     std::size_t drawn = 0;
-    for (std::size_t offset = 0; offset < ColorMemory.size(); offset += 4) {
-        if (std::all_of(ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset),
-                        ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte value) { return value == Kept; }))
+    for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
+        if (std::all_of(colorMemory.begin() + static_cast<std::ptrdiff_t>(offset),
+                        colorMemory.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte value) { return value == Kept; }))
             continue;
         for (std::size_t channel = 0; channel < 4; ++channel) {
-            const auto value = static_cast<unsigned>(ColorMemory[offset + channel]);
+            const auto value = static_cast<unsigned>(colorMemory[offset + channel]);
             const unsigned expected = ExpectedChannel(mode, buffer, channel);
             Require(value == expected, "pixel " + std::to_string(offset / 4) + " channel " + std::to_string(channel) + " is " +
                                            std::to_string(value) + ", expected " + std::to_string(expected) + DrawnWhat(mode, buffer) +
@@ -390,6 +430,9 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
             "the heap stages did not read their shader data through pushed addresses");
     if (mode == Mode::ConstantSampler)
         Require(AgcDriver::Graphics::EmbeddedSamplerMappings() > embeddedBefore, "the fragment stage's constant sampler was not embedded in its pipeline");
+    if (mode == Mode::MergedBlendOther)
+        Require(ShaderRecompiler::HeapTemplateCounts().entries == templatesBefore,
+                "merging into a second color target built another heap template instead of reusing the first target's");
 }
 
 void MixedDrawTakesThePerDrawPath() {
@@ -461,7 +504,7 @@ int main() {
             mutation.Add(BufferMemory.data(), sizeof(BufferMemory), true, true, true);
         }
         for (const auto mode : {Mode::Texture, Mode::Buffer, Mode::Storage, Mode::Gds, Mode::Vertex, Mode::Bda, Mode::Table, Mode::VertexTable,
-                                Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::ConstantSampler, Mode::Texture})
+                                Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::ConstantSampler, Mode::MergedBlend, Mode::MergedBlendOther, Mode::Texture})
             DrawSamplesTheTexture(heap, mode);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
         if (heap && !capped) MixedDrawTakesThePerDrawPath();

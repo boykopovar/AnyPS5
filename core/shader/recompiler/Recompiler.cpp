@@ -2061,7 +2061,8 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(merge.target);
             mix(merge.mask);
             mix(merge.samples);
-            for (const auto word : merge.descriptor) mix(word);
+            if (scope.descriptors)
+                for (const auto word : merge.descriptor) mix(word);
             if (!merge.blend.enabled) continue;
             mix(merge.blend.snorm);
             mix(merge.blend.colorSource);
@@ -2466,10 +2467,12 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     const bool perDrawBindings = (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex) && !tables;
     auto& source = *handle->source;
     const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    const std::uint64_t key = HeapTemplateKey(request, *variant, snapshot, perDrawBindings, substitutes);
+    ResourceSnapshot mergedStorage;
+    const auto& merged = mergeTargetImage(*variant, request, snapshot, false, mergedStorage);
+    const std::uint64_t key = HeapTemplateKey(request, *variant, merged, perDrawBindings, substitutes);
     const auto complete = [&](const std::shared_ptr<const HeapTemplate>& shared) {
         HeapVertexAttributes(request, *shared->result, words);
-        if (perDrawBindings) HeapBindingWords(request, *variant, snapshot, *shared, words);
+        if (perDrawBindings) HeapBindingWords(request, *variant, merged, *shared, words);
         CompleteHeapDataWords(*shared->result, words);
     };
     std::shared_ptr<const HeapTemplate> hit;
@@ -2488,7 +2491,7 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap
     built->cacheHit = true;
     for (const auto reg : layout.userDataRegisters) built->heapUserWords.push_back(reg - userDataBase);
     built->heapTemplateId = NextTemplateId();
-    auto created = std::make_shared<HeapTemplate>(HeapTemplate{std::move(built), std::move(usedPlan), perDrawBindings ? snapshot.buffers : std::vector<DescriptorValue>{}, perDrawBindings ? snapshot.images : std::vector<DescriptorValue>{}, perDrawBindings ? snapshot.samplers : std::vector<DescriptorValue>{}});
+    auto created = std::make_shared<HeapTemplate>(HeapTemplate{std::move(built), std::move(usedPlan), perDrawBindings ? merged.buffers : std::vector<DescriptorValue>{}, perDrawBindings ? merged.images : std::vector<DescriptorValue>{}, perDrawBindings ? merged.samplers : std::vector<DescriptorValue>{}});
     created->bytes = HeapTemplateBytes(*created);
     std::shared_ptr<const HeapTemplate> shared = std::move(created);
     bool inserted = false;

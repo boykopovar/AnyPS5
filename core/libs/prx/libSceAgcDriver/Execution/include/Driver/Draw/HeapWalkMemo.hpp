@@ -16,6 +16,7 @@ struct HeapWalkEntry {
     std::uint64_t shaderBase = 0;
     std::uint32_t pushOffset = 0;
     std::vector<std::uint32_t> userData;
+    std::vector<ShaderRecompiler::TargetMerge> merges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::vector<std::uint32_t> values;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> accessible;

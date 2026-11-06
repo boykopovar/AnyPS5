@@ -373,7 +373,7 @@ std::uint64_t HeapWalkWordsBytes(const ShaderRecompiler::HeapStageWords& words) 
 
 std::uint64_t HeapWalkEntryOwnBytes(const HeapWalkEntry& entry) {
     return sizeof(HeapWalkEntry) + vectorBytes(entry.userData) + vectorBytes(entry.ranges) + vectorBytes(entry.values) +
-           vectorBytes(entry.accessible) + vectorBytes(entry.userDataUse.reads);
+           vectorBytes(entry.accessible) + vectorBytes(entry.userDataUse.reads) + vectorBytes(entry.merges);
 }
 
 std::uint64_t HeapWalkEntryBytes(const HeapWalkEntry& entry) {
@@ -498,10 +498,17 @@ void guardRanges(const AddressRanges& ranges) {
     for (const auto& [begin, end] : ranges) GuestMemory::GuardRead(begin, static_cast<std::size_t>(end - begin));
 }
 
+std::span<const ShaderRecompiler::TargetMerge> targetMerges(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
+    const auto& pixel = invocation.Request().context.pixel;
+    return pixel ? std::span<const ShaderRecompiler::TargetMerge>(pixel->targetMerges) : std::span<const ShaderRecompiler::TargetMerge>{};
+}
+
 std::uint64_t walkMemoKey(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
                           std::uint64_t shaderBase) {
     auto key = (invocation.VariantId() * 0x9e3779b97f4a7c15ull ^ shaderBase) + invocation.Request().layout.pushConstantOffsetBytes;
     for (const auto word : userData) key = (key ^ word) * 0x100000001b3ull;
+    for (const auto& merge : targetMerges(invocation))
+        for (const auto word : merge.descriptor) key = (key ^ word) * 0x100000001b3ull;
     return key;
 }
 
@@ -510,6 +517,7 @@ bool sameWalkInputs(const HeapWalkEntry& entry, const ShaderRecompiler::Prepared
     const bool sameStage = entry.variant == invocation.VariantId() && entry.shaderBase == shaderBase &&
                            entry.pushOffset == invocation.Request().layout.pushConstantOffsetBytes;
     if (!sameStage || !std::equal(entry.userData.begin(), entry.userData.end(), userData.begin(), userData.end())) return false;
+    if (!std::ranges::equal(entry.merges, targetMerges(invocation))) return false;
     std::size_t cursor = 0;
     for (const auto& [begin, end] : entry.ranges) {
         const auto count = static_cast<std::size_t>((end - begin) / WordBytes);
@@ -537,6 +545,8 @@ void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderI
     entry.pushOffset = invocation.Request().layout.pushConstantOffsetBytes;
     entry.shaderBase = shaderBase;
     entry.userData.assign(userData.begin(), userData.end());
+    const auto merges = targetMerges(invocation);
+    entry.merges.assign(merges.begin(), merges.end());
     entry.ranges = ranges;
     entry.values = values;
     entry.accessible = accessible;
