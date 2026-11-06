@@ -10,11 +10,6 @@ int APS5_VABI libfreetypePaletteDataGet_nid_no_patch() {
 }
 APS5_EXPORT("+AF9KH7aZbc", libfreetypePaletteDataGet_nid_no_patch);
 
-int APS5_VABI libfreetypeGetVarAxisFlags_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("+sDVkl3aAR8", libfreetypeGetVarAxisFlags_nid_no_patch);
-
 int APS5_VABI libfreetypeSetDefaultProperties_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -98,11 +93,6 @@ int APS5_VABI freetypeLegacyFaceProperties_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("VKuZXhyjtoo", freetypeLegacyFaceProperties_nid_no_patch);
-
-int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Xxtq+Qr5lzI", freetypeLegacyLibrarySetLcdGeometry_nid_no_patch);
 
 int APS5_VABI freetypeLegacyErrorString_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
