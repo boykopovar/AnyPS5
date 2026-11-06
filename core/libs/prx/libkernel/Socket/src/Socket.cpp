@@ -42,6 +42,7 @@ std::atomic<KernelSocketPoll::Closer> g_socketCloser{nullptr};
 std::atomic<KernelSocketPoll::OptionSetter> g_socketOptionSetter{nullptr};
 std::atomic<KernelSocketPoll::OptionGetter> g_socketOptionGetter{nullptr};
 std::atomic<KernelSocketPoll::StatusControl> g_socketStatusControl{nullptr};
+std::atomic<KernelSocketPoll::IoctlControl> g_socketIoctlControl{nullptr};
 std::atomic<KernelSocketPoll::NativeLookup> g_socketNativeLookup{nullptr};
 
 bool DescriptorSet(const void* set, int descriptor) {
@@ -190,6 +191,15 @@ bool KernelControlSocketStatus_nid_no_patch(int descriptor, int command, int fla
     return control != nullptr && control(descriptor, command, flags, result, error);
 }
 
+void KernelSetSocketIoctlControl_nid_no_patch(KernelSocketPoll::IoctlControl control) {
+    g_socketIoctlControl.store(control);
+}
+
+bool KernelControlSocketIoctl_nid_no_patch(int descriptor, std::uint32_t request, void* argument, int* error) {
+    const auto control = g_socketIoctlControl.load();
+    return control != nullptr && control(descriptor, request, argument, error);
+}
+
 void KernelSetSocketNativeLookup_nid_no_patch(KernelSocketPoll::NativeLookup lookup) {
     g_socketNativeLookup.store(lookup);
 }
@@ -268,8 +278,12 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
                 return -1;
             }
             for (const auto& entry : hosts.entries) {
-                if ((entry.revents & KernelSocketPoll::Unknown) != 0)
-                    throw std::runtime_error("select: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file, a directory nor a kqueue");
+                if ((entry.revents & KernelSocketPoll::Unknown) == 0) continue;
+                if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
+                    *__error_nid_postfix() = GuestEbadf;
+                    return -1;
+                }
+                throw std::runtime_error("select: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file, a directory nor a kqueue");
             }
             groups.push_back(std::move(hosts));
         }

@@ -4,6 +4,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/LegacySignals.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 
@@ -25,6 +26,9 @@ using ThreadDestructorFunction = void (APS5_VABI*)(void*);
 
 extern "C" {
 
+int APS5_VABI sigblock_nid_postfix(int mask);
+int APS5_VABI sigsetmask_nid_postfix(int mask);
+
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
@@ -38,6 +42,7 @@ void APS5_VABI _warn_nid_postfix(const char* format, ...);
 void APS5_VABI warnx_nid_postfix(const char* format, ...);
 const char* APS5_VABI getprogname_nid_postfix();
 const char* APS5_VABI _getprogname_nid_postfix();
+void APS5_VABI setprogname_nid_postfix(const char* name);
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
@@ -54,8 +59,17 @@ std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
 char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
 char* APS5_VABI inet_ntoa_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI inet_netof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI __inet_netof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI inet_lnaof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI __inet_lnaof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
+std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
+std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
+std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
+int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);
 int APS5_VABI posix_spawnattr_init_nid_postfix(PosixSpawnAttributes** attributes);
 int APS5_VABI posix_spawnattr_destroy_nid_postfix(PosixSpawnAttributes** attributes);
 int APS5_VABI posix_spawnattr_setflags_nid_postfix(PosixSpawnAttributes** attributes, std::int16_t flags);
@@ -93,6 +107,7 @@ std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const ch
 int APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(const char* path, std::int64_t* seconds, std::int64_t* nanoseconds);
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
+void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self);
 int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
 bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);
@@ -108,6 +123,9 @@ int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
 void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
 void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
+void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();
