@@ -1,4 +1,4 @@
-#include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 
@@ -114,6 +114,7 @@ constexpr int ControlSetMaxSendFragment = 52;
 constexpr int ControlGetRenegotiationInfoSupport = 76;
 constexpr int ControlClearOptions = 77;
 constexpr int ControlClearMode = 78;
+constexpr int ControlSetTlsExtHostName = 55;
 constexpr int Dtls1Version = 0xFEFF;
 constexpr int StateConnectBefore = 0x5000;
 constexpr std::int64_t DtlsMinimumMtu = 228;
@@ -290,6 +291,8 @@ std::int64_t APS5_VABI SSL_ctrl_nid_postfix(LibreSslSsl* ssl, int command, std::
         const Ssl3StateInternal* state = Ssl3Internal(Connection(ssl, __func__), __func__);
         return state ? state->sendConnectionBinding : 0;
     }
+    case ControlSetTlsExtHostName:
+        return LibreSslSetTlsExtHostName_nid_no_patch(Connection(ssl, __func__), argument, pointer);
     default:
         NotImplemented_nid_no_patch(("SSL_ctrl: command " + std::to_string(command)).c_str());
     }

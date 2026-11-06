@@ -521,20 +521,20 @@ const LibreSslEncMethod dtlsEnc{reinterpret_cast<void*>(EncUnavailable_nid_no_pa
 const LibreSslMethodInternal tlsClientInternal{
     Tls1_2Version, Tls1Version, Tls1_2Version,
     TlsNew_nid_no_patch, TlsClear_nid_no_patch, TlsFree_nid_no_patch,
-    UndefinedFunction_nid_no_patch, ConnectUnavailable_nid_no_patch,
-    ReadUnavailable_nid_no_patch, PeekUnavailable_nid_no_patch, WriteUnavailable_nid_no_patch, ShutdownUnavailable_nid_no_patch,
+    UndefinedFunction_nid_no_patch, LibreSslConnect_nid_no_patch,
+    LibreSslRead_nid_no_patch, LibreSslPeek_nid_no_patch, LibreSslWrite_nid_no_patch, LibreSslShutdown_nid_no_patch,
     UndefinedFunction_nid_no_patch, AlwaysOk_nid_no_patch,
     GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
-    PendingUnavailable_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
+    LibreSslPending_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
 
 const LibreSslMethodInternal tlsServerInternal{
     Tls1_2Version, Tls1Version, Tls1_2Version,
     TlsNew_nid_no_patch, TlsClear_nid_no_patch, TlsFree_nid_no_patch,
-    AcceptUnavailable_nid_no_patch, UndefinedFunction_nid_no_patch,
-    ReadUnavailable_nid_no_patch, PeekUnavailable_nid_no_patch, WriteUnavailable_nid_no_patch, ShutdownUnavailable_nid_no_patch,
+    LibreSslAccept_nid_no_patch, UndefinedFunction_nid_no_patch,
+    LibreSslRead_nid_no_patch, LibreSslPeek_nid_no_patch, LibreSslWrite_nid_no_patch, LibreSslShutdown_nid_no_patch,
     UndefinedFunction_nid_no_patch, AlwaysOk_nid_no_patch,
     GetMessageUnavailable_nid_no_patch, ReadBytesUnavailable_nid_no_patch, WriteBytesUnavailable_nid_no_patch,
-    PendingUnavailable_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
+    LibreSslPending_nid_no_patch, GetMethodUnavailable_nid_no_patch, TlsDefaultTimeout_nid_no_patch, UndefinedVoidFunction_nid_no_patch, &tlsEnc};
 
 const LibreSslMethodInternal dtlsClientInternal{
     Dtls1Version, Dtls1Version, Dtls1Version,
@@ -590,6 +590,10 @@ int LibreSslStateFunction_nid_no_patch(int state) {
     case StateOk | StateConnect: return 79;
     case StateBefore | StateAccept: return 80;
     case StateOk | StateAccept: return 81;
+    case StateConnectHelloA: return 2;
+    case StateConnectCertB: return 7;
+    case StateAcceptHelloA: return 37;
+    case StateAcceptHelloC: return 39;
     default: NotImplemented_nid_no_patch("SSLerror: handshake state not modelled");
     }
 }
