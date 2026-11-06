@@ -16,4 +16,3 @@ struct WebRtcGuestString {
 static_assert(sizeof(WebRtcGuestString) == 40);
 static_assert(offsetof(WebRtcGuestString, size) == 24);
 static_assert(offsetof(WebRtcGuestString, capacity) == 32);
-
