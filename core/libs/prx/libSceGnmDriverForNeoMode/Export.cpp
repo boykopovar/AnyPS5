@@ -639,6 +639,7 @@ int APS5_VABI sceGnmSetCsShaderWithModifier(std::uint32_t* cmdbuf, std::uint32_t
 }
 
 int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return CommandFailed;
     if (shaderId > 1) return Failure;
     const bool black = shaderId == 0;
     const auto* code = black ? GnmNeo::BlackPs.data() : GnmNeo::DepthOnlyPs.data();
@@ -656,6 +657,7 @@ int APS5_VABI sceGnmSetEmbeddedPsShader(std::uint32_t* cmdbuf, std::uint32_t, st
 }
 
 int APS5_VABI sceGnmSetEmbeddedVsShader(std::uint32_t* cmdbuf, std::uint32_t, std::uint32_t shaderId, std::uint32_t) {
+    if (!cmdbuf) return CommandFailed;
     if (shaderId != 0) return Failure;
     const auto* code = GnmNeo::FullscreenVs.data();
     auto* at = EmitPacket(cmdbuf, OpSetShReg, {0x48, AddressLo(code), AddressHi(code)});
