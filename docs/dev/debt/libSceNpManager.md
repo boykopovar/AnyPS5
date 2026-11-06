@@ -1,7 +1,5 @@
 # libSceNpManager technical debt
 
-- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
-
 ### sce2np value classes
 
 - [NpOnlineId, NpId, User, NpTitleToken, NpAccessToken and NpTicket value methods](../../../core/libs/prx/libSceNpManager/ValueClasses.cpp) (libSceNpManager) - constructors, `Clear`, comparisons, `SetNpOnlineIdStr`, `GetStr`, `IsEmpty`, `GetUserId` and the User account lookups follow firmware 11.00 `libSceNpManager.sprx` disassembly. `NpOnlineId` holds 16 text bytes and a 32-bit term at offset 0x18; `NpId` embeds the 0x24-byte SDK block; `User` keeps one 32-bit id; `NpTitleToken` is 0x410 bytes and `NpAccessToken` 0x108 bytes. `SetNpOnlineIdStr` refuses more than 16 characters with `0x80559E11` and copies only the measured text length instead of the firmware's fixed 16-byte read. The account lookups and `IsLoggedIn` call `sceUserServiceGetNpAccountId`, because `sceUserServiceIsLoggedIn` is not implemented in this build. `GetUser` reads `sceUserServiceGetRegisteredUserIdList` with this build's 16-entry list; firmware 11.00 compares 20 entries. `GetUser` returns `0x80559E2A` for an invalid or unregistered id, and `GetAccountId` returns `0x80559E2B` for a zero account id. `GetNpOnlineId` keeps the signed-out model and returns `0x80550007` for an invalid user and `0x80550006` otherwise. `NpTicket::GetTicketData` throws instead of the firmware assertion for a null data pointer; the object keeps its owner at 0x08, data at 0x10 and size at 0x18. The destructors and `NpTicket::Clear` still throw.
@@ -15,6 +13,7 @@
 
 ### Unknown function info
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
 - [libSceNpManager additional exports](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) - 148 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded.
 
 | Name | NID |
