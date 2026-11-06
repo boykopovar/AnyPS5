@@ -193,11 +193,6 @@ void* APS5_VABI UnexpectedRealign(void*, std::size_t, std::size_t) { throw std::
 int APS5_VABI UnexpectedPosixAlign(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
 
 static void TestGet1ChainWithoutCapacity() {
-    std::array<void*, 10> api {
-        reinterpret_cast<void*>(CountingAllocate), reinterpret_cast<void*>(CountingFree), reinterpret_cast<void*>(CountingCalloc),
-        reinterpret_cast<void*>(CountingReallocate), reinterpret_cast<void*>(UnexpectedAlign), reinterpret_cast<void*>(UnexpectedRealign),
-        reinterpret_cast<void*>(UnexpectedPosixAlign)};
-    ApplicationHeapRegister_nid_no_patch(api.data());
     allocations = frees = 0;
 
     TestContext context;
@@ -210,14 +205,14 @@ static void TestGet1ChainWithoutCapacity() {
     free_nid_postfix(copy->data);
     free_nid_postfix(copy);
     Require(allocations == frees);
-
-    void* const restore[10] {};
-    ApplicationHeapRegister_nid_no_patch(restore);
 }
 
 int main() {
-    void* const heap[10] {};
-    ApplicationHeapRegister_nid_no_patch(heap);
+    std::array<void*, 10> heap {
+        reinterpret_cast<void*>(CountingAllocate), reinterpret_cast<void*>(CountingFree), reinterpret_cast<void*>(CountingCalloc),
+        reinterpret_cast<void*>(CountingReallocate), reinterpret_cast<void*>(UnexpectedAlign), reinterpret_cast<void*>(UnexpectedRealign),
+        reinterpret_cast<void*>(UnexpectedPosixAlign)};
+    ApplicationHeapRegister_nid_no_patch(heap.data());
     TestGetError();
     TestSetError();
     TestGetErrorDepth();
