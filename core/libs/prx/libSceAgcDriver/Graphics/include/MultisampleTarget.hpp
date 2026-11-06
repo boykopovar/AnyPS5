@@ -122,8 +122,6 @@ void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const 
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access, std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten = {});
 void RetireOverwrittenMultisampleColorTargets(std::span<const std::pair<std::uint64_t, std::uint64_t>> overwritten);
 bool HoldsMultisampleTargetsLock();
-void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
-void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }
