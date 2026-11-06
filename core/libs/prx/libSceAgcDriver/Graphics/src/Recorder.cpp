@@ -1101,10 +1101,9 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
 }
 
 struct Recorder::ProgressWatcher {
-    std::mutex mutex;
-    std::condition_variable wake;
-    std::uint64_t submitted = 0;
-    bool stop = false;
+    std::atomic<std::uint64_t> submitted{0};
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint32_t> wakes{0};
     std::thread thread;
 
     ProgressWatcher(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, PFN_vkGetSemaphoreCounterValueKHR counterValue) {
@@ -1112,10 +1111,11 @@ struct Recorder::ProgressWatcher {
             CpuTopology::PinHelperThread("GPU progress watcher");
             std::uint64_t seen = 0;
             for (;;) {
-                {
-                    std::unique_lock lock(mutex);
-                    wake.wait(lock, [&] { return stop || submitted > seen; });
-                    if (stop) return;
+                const auto token = wakes.load(std::memory_order_acquire);
+                if (stop.load(std::memory_order_acquire)) return;
+                if (submitted.load(std::memory_order_acquire) <= seen) {
+                    wakes.wait(token, std::memory_order_acquire);
+                    continue;
                 }
                 const std::uint64_t target = seen + 1;
                 VkSemaphoreWaitInfoKHR info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
@@ -1137,19 +1137,15 @@ struct Recorder::ProgressWatcher {
     }
 
     void Submitted(std::uint64_t serial) {
-        {
-            std::lock_guard lock(mutex);
-            submitted = serial;
-        }
-        wake.notify_one();
+        submitted.store(serial, std::memory_order_release);
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
     }
 
     ~ProgressWatcher() {
-        {
-            std::lock_guard lock(mutex);
-            stop = true;
-        }
-        wake.notify_one();
+        stop.store(true, std::memory_order_release);
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
         thread.join();
     }
 };
