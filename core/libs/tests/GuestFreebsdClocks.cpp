@@ -78,7 +78,10 @@ static void UnsupportedResolutionStillThrows() {
 static void OmittedTimeIsFaultAfterClockValidation() {
     constexpr int fault = static_cast<int>(0x8002000eu);
     for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC,
-             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
+             GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE, GUEST_CLOCK_UPTIME_FAST,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST,
+             GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST,
+             GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
         Require(sceKernelClockGettime(clockId, nullptr) == fault);
@@ -92,6 +95,7 @@ static void OmittedTimeIsFaultAfterClockValidation() {
     }
     Require(rejected);
     Require(sceKernelClockGettime(3, nullptr) == fault);
+    Require(sceKernelClockGettime(21, nullptr) == fault);
 }
 
 static void InvalidClockIdFailsGettime() {
@@ -367,7 +371,12 @@ int main() {
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(sceKernelGettimeofday(nullptr) == static_cast<int>(0x8002000eu));
+    constexpr int fault = static_cast<int>(0x8002000eu);
+    Require(sceKernelGettimeofday(nullptr) == fault);
+    auto* const badTimeval = reinterpret_cast<KernelTimeval*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(gettimeofday_nid_postfix(badTimeval, nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelGettimeofday(badTimeval) == fault);
     const std::int64_t beforeSce = Microseconds();
     KernelTimeval sceTime{-1, -1};
     Require(sceKernelGettimeofday(&sceTime) == SCE_OK);
