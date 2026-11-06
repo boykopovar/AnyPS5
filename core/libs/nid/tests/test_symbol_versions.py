@@ -199,6 +199,28 @@ def test_unversioned_library_is_still_patched(patcher):
     assert len({entry[0] for entry in after if entry[0]}) == len([entry for entry in after if entry[0]])
 
 
+def sysv_only_image(entries):
+    image = bytearray(build_image(entries, False))
+    struct.pack_into("<I", image, SHOFF + 3 * 64 + 4, 1)
+    return image
+
+
+def test_version_table_smaller_than_symbols_is_rejected(patcher):
+    image = sysv_only_image(symbols(False))
+    for index in range(len(symbols(False))):
+        struct.pack_into("<H", image, VERSYM_OFFSET + index * 2, 2)
+    struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64, 0, SHT_GNU_VERSYM, 2, 0, VERSYM_OFFSET, 0, 1, 0, 2, 2)
+    struct.pack_into("<H", image, 0x3C, 5)
+    image = bytes(image)
+    assert not any(section[1] == SHT_GNU_HASH for section in sections(image))
+
+    result, on_disk = patch(patcher, image, SONAME)
+    assert result.returncode != 0, result.stdout
+    message = result.stderr.decode("utf-8", errors="replace")
+    assert "version symbol table" in message, message
+    assert on_disk == image, "the rejected library was written back modified"
+
+
 def find_patcher():
     for index, argument in enumerate(sys.argv[1:], 1):
         candidate = Path(argument)
@@ -231,6 +253,7 @@ def main():
             sys.exit(0)
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
+    test_version_table_smaller_than_symbols_is_rejected(patcher)
     print("NID patcher symbol version tests passed")
 
 
