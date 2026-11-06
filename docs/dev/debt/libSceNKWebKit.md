@@ -24,6 +24,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [HitTestResult getters](../../../core/libs/prx/libSceNKWebKit/src/HitTestResult.cpp) (libSceNKWebKit) - WKHitTestResult* getters return image/link/media/PDF URLs, link text, bounding box and content editable flag from the host object.
 
 - [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 137 exports answer with a fixed value in the PS5 11.00 module: 111 execute `xor eax,eax; ret`, 13 `mov eax,imm32; ret` and 13 `mov al,1; ret` (addresses and bodies from the 11.00 `libSceNKWebKit.sprx`, SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`; NIDs recomputed from the declared names). The 124 EAX-writing bodies measure the 32-bit return; the 13 `mov al,1` bodies write only the low byte, so for them only AL is measured and the upper bits are unspecified. The declared prototypes stay the no-parameter `int` placeholders, so no other width, pointer or floating-point return is claimed. Only 11.00 was measured.
+- [Constant-return exports from 13.42](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 14 `WKBundleFrame`, `WKBundleNavigationAction`, `WKBundlePage`, `WKFrame`, `WKPage` and `WKProtectionSpace` exports return 0 as read from the disassembly of the PS5 13.42 `libSceNKWebKit.sprx` (SHA-256 `e63acdc164592330a287cf6914c265336b27a357098a449c1609f8f82e104409`), not measured on a console: their export addresses all point to one shared body at `0x5b90`, `xor eax,eax; ret`. As in the entry above, the declared prototypes stay the no-parameter `int` placeholders, so only the 32-bit return is claimed. 11.00 was not checked for these 14.
 - [Security origins](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKSecurityOriginCopyDatabaseIdentifier` still throws pending `encodeForFileName` (#14858). `WKSecurityOriginCreateFromString` and `WKSecurityOriginCreateFromDatabaseIdentifier` still throw; URL parsing and default-port normalization (#13766) are not wired into origin creation. Value objects follow [the pinned WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source); console execution and ABI are unverified.
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
@@ -53,7 +54,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7054 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7040 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -144,7 +145,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleFrameGetScrollOffset` | `hYAhYYYeVZA` |
 | `WKBundleFrameGetVisibleContentBounds` | `53ZFAkGdDkU` |
 | `WKBundleFrameGetVisibleContentBoundsExcludingScrollbars` | `cPtt38dvZK8` |
-| `WKBundleFrameHandlesPageScaleGesture` | `-0ETdbxl-Kg` |
 | `WKBundleFrameHasHorizontalScrollbar` | `PvA6Ayn4Kjk` |
 | `WKBundleFrameHasVerticalScrollbar` | `v1lCb6JzKZ0` |
 | `WKBundleFrameIsMainFrame` | `GJ+VEmIdxUQ` |
@@ -179,14 +179,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleInspectorShow` | `KVehJeKp2gE` |
 | `WKBundleIsPageBoxVisible` | `ysYpNHM+f2U` |
 | `WKBundleIsProcessingUserGesture` | `flLt+xWYloc` |
-| `WKBundleNavigationActionCopyDownloadAttribute` | `25mS80V8okg` |
-| `WKBundleNavigationActionCopyFormElement` | `5EIJscg02gs` |
-| `WKBundleNavigationActionCopyHitTestResult` | `kRoezIaLVtk` |
-| `WKBundleNavigationActionGetEventModifiers` | `tyF8jxT9cso` |
-| `WKBundleNavigationActionGetEventMouseButton` | `TuYK6TAg+UY` |
-| `WKBundleNavigationActionGetNavigationType` | `tnvxzeWju10` |
-| `WKBundleNavigationActionGetShouldOpenExternalURLs` | `Ez-Pj0QWgSc` |
-| `WKBundleNavigationActionGetShouldTryAppLinks` | `x2Bw3o33jBY` |
 | `WKBundleNodeHandleCopyDocumentFrame` | `o1BJoFZNBYo` |
 | `WKBundleNodeHandleCopyDocument` | `H7cknGH2DVo` |
 | `WKBundleNodeHandleCopyHTMLIFrameElementContentFrame` | `tS9cMOapHWU` |
@@ -257,7 +249,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundlePageIsEditingCommandEnabled` | `UT8x3GgcrzQ` |
 | `WKBundlePageIsSuspended` | `NVjEy07nN2o` |
 | `WKBundlePageIsTrackingRepaints` | `viw0OkjLHgQ` |
-| `WKBundlePageIsUsingDarkAppearance` | `xBZFJROAY60` |
 | `WKBundlePageIsUsingEphemeralSession` | `glsQJ5HCC-U` |
 | `WKBundlePageListenForLayoutMilestones` | `l5JzEGDSvhk` |
 | `WKBundlePageNumberForElementById` | `wUbSyYekZ2Y` |
@@ -417,14 +408,12 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKErrorGetErrorCode` | `Jx+jaw-BVuE` |
 | `WKFormSubmissionListenerContinue` | `NRF4gBL1p9o` |
 | `WKFrameCanProvideSource` | `pupKRlW6z-w` |
-| `WKFrameCanShowMIMEType` | `K5V0IcHAoOE` |
 | `WKFrameCopyMIMEType` | `UwMYQFss8oM` |
 | `WKFrameCopyProvisionalURL` | `dAKWNwkRfZw` |
 | `WKFrameCopyTitle` | `kEags+FqdZQ` |
 | `WKFrameCopyURL` | `3PiMrWNwmgw` |
 | `WKFrameCopyUnreachableURL` | `U4g7RC9mWd8` |
 | `WKFrameCreateFrameHandle` | `3MUp7-9-xkg` |
-| `WKFrameGetCertificateInfo` | `L1HtA3ROv5k` |
 | `WKFrameGetFrameLoadState` | `82n4LwLnE3s` |
 | `WKFrameGetMainResourceData` | `wd3NsMeiyj4` |
 | `WKFrameGetPage` | `pAEazR4ifq8` |
@@ -575,7 +564,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetPageLength` | `FeYrnuEZxkI` |
 | `WKPageGetPageZoomFactor` | `fPJ3h4AHMkU` |
 | `WKPageGetPaginationBehavesLikeColumns` | `QyAWkI0ffLQ` |
-| `WKPageGetPaginationLineGridEnabled` | `vHCGXG+KeDA` |
 | `WKPageGetPaginationMode` | `kk2zHgt--8E` |
 | `WKPageGetProcessIdentifier` | `llISO4CgRb8` |
 | `WKPageGetRenderTreeSize` | `kfVCX7XUVkM` |
@@ -705,7 +693,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
 | `WKPreferencesSetAccelerated2DCanvasEnabled` | `UEBk9iGqhPo` |
 | `WKPreferencesSetQTKitEnabled` | `6jkxaKVf01A` |
-| `WKProtectionSpaceCopyCertificateInfo` | `FdhooB4MqkE` |
 | `WKProtectionSpaceCopyHost` | `U0xPrr5rnH4` |
 | `WKProtectionSpaceCopyRealm` | `osSHWP92dx4` |
 | `WKProtectionSpaceGetAuthenticationScheme` | `aO1clLvwumw` |
