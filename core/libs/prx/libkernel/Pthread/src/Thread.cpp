@@ -58,6 +58,7 @@ extern "C" bool IsInitialPthread_nid_no_patch() {
 
 static constexpr int SCE_OK = 0;
 static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
+static constexpr std::size_t GUEST_THREAD_NAME_COPY_LIMIT = 1024;
 static constexpr int GUEST_EINVAL = 22;
 
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
@@ -1499,10 +1500,13 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, GUEST_THREAD_NAME_COPY_LIMIT, copy))
+        return error == 14 ? SCE_KERNEL_ERROR_EFAULT : error == 63 ? SCE_KERNEL_ERROR_ENAMETOOLONG : SCE_KERNEL_ERROR_ENOMEM;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);
-    thread->name = name;
+    thread->name = std::move(copy);
 #ifdef _WIN32
     SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);
