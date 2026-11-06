@@ -313,6 +313,25 @@ int APS5_VABI BN_bn2bin_nid_postfix(const Bignum* a, unsigned char* to) {
     return static_cast<int>(length);
 }
 
+int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* value) {
+    const Bignum* number = Checked(value, __func__);
+    if (!bio) throw std::invalid_argument(std::string(__func__) + ": null BIO");
+    const Int loaded = Load(number);
+    if (loaded.neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
+    if (loaded.mag.empty() && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
+    constexpr char Hex[] = "0123456789ABCDEF";
+    bool started = false;
+    for (std::size_t limb = loaded.mag.size(); limb-- > 0;) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            const int nibble = static_cast<int>((loaded.mag[limb] >> shift) & 0x0f);
+            if (!started && nibble == 0) continue;
+            started = true;
+            if (LibreSslBioWrite_nid_no_patch(bio, &Hex[nibble], 1) != 1) return 0;
+        }
+    }
+    return 1;
+}
+
 int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
     if (!str || !*str) return 0;
     const bool negative = *str == '-';
