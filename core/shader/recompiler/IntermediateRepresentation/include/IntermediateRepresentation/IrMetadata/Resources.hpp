@@ -183,6 +183,10 @@ struct DeviceImageUse {
     bool operator==(const DeviceImageUse& other) const = default;
 };
 
+inline bool AppliesLodBiasInShader(const SamplerResource& sampler) {
+    return sampler.table == NoTable && (sampler.uses & (SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient)) != 0u;
+}
+
 struct SampledResourcePair {
     std::uint32_t image = 0;
     std::uint32_t sampler = 0;
