@@ -6,6 +6,7 @@
 #include "prx/libSceJxr/GuestPixelInfo.h"
 #include "prx/libSceJxr/Stream.hpp"
 
+struct tagPKImageEncode;
 struct JxrGuestPostProcInfo {
     std::int32_t mbDc;
     std::uint8_t mbTexture;
@@ -100,7 +101,8 @@ int APS5_VABI PKImageEncode_Initialize_nid_postfix();
 int APS5_VABI PKImageEncode_Release_nid_postfix();
 int APS5_VABI PKImageEncode_SetColorContext_nid_postfix();
 int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix();
-int APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
+    tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size);
 int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix();
@@ -130,7 +132,7 @@ int APS5_VABI allocateBitIOInfo_nid_postfix();
 int APS5_VABI allocatePredInfo_nid_postfix();
 int APS5_VABI allocateQuantizer_nid_postfix();
 int APS5_VABI allocateTileInfo_nid_postfix();
-int APS5_VABI attachISRead_nid_postfix();
+std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream, void* codec);
 std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream);
 int APS5_VABI attach_SB_nid_postfix();
 int APS5_VABI checkImageBuffer_nid_postfix();
@@ -153,7 +155,7 @@ int APS5_VABI setBitIOPointers_nid_postfix();
 int APS5_VABI setUniformQuantizer_nid_postfix();
 int APS5_VABI slideOneMBRow_nid_postfix();
 int APS5_VABI swapMRPtr_nid_postfix();
-int APS5_VABI termPostProc_nid_postfix();
+void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t numChannels);
 int APS5_VABI updatePostProcInfo_nid_postfix();
 int APS5_VABI updatePredInfo_nid_postfix();
 int APS5_VABI useDCQuantizer_nid_postfix();

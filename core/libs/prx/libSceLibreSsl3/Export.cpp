@@ -8,11 +8,6 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI BIO_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI BIO_vfree_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

@@ -28,6 +28,7 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
+#include "src/EncoderMetadata.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -302,8 +303,11 @@ int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
+    tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size) {
+    return Jxr::SetImageEncodeMetadata(
+        static_cast<void*>(encoder), metadata, size, offsetof(Jxr::ImageEncodeMetadataPrefix, exifMetadata),
+        offsetof(Jxr::ImageEncodeMetadataPrefix, exifMetadataByteCount));
 }
 
 int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix() {
@@ -449,10 +453,6 @@ int APS5_VABI allocateTileInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI attachISRead_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI attach_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -562,8 +562,16 @@ int APS5_VABI swapMRPtr_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI termPostProc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t numChannels) {
+    if (numChannels != 0 && postProcInfo == nullptr) APS5_INVALID_ARG_EX;
+
+    for (std::size_t channel = 0; channel < numChannels; ++channel) {
+        for (std::size_t slot = 0; slot < 2; ++slot) {
+            if (postProcInfo[channel][slot] != nullptr) {
+                free_nid_postfix(postProcInfo[channel][slot] - 1);
+            }
+        }
+    }
 }
 
 int APS5_VABI updatePostProcInfo_nid_postfix() {
