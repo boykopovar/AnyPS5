@@ -1,7 +1,5 @@
 # libSceNpManager technical debt
 
-- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
-
 ### Destructors
 
 - [The deleting destructors and NpTicket teardown](../../../core/libs/prx/libSceNpManager/Destructors.cpp) (libSceNpManager) call `_ZN3sce2np6ObjectdlEPv` for the deleting destructor of `NpOnlineId`, `NpId`, `User`, `NpTitleToken`, `NpAccessToken` and `NpTicket`, as firmware 11.00 `libSceNpManager.sprx` does. `NpTicket` keeps its allocator at 0x08, data at 0x10 and size at 0x18; its destructors and `Clear` release the data through `_sceNpAllocatorExFree` and `Clear` zeroes the data and size. The module imports both allocator-free variants and the relocation table could not be resolved, so the exact variant at the destructor's call site is inferred from the `SceNpAllocatorEx` fields. The non-deleting destructors of the five value classes are outside this change.
@@ -15,6 +13,7 @@
 
 ### Unknown function info
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
 - [libSceNpManager additional exports](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) - 148 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded.
 
 | Name | NID |

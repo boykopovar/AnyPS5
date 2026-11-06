@@ -31,6 +31,7 @@ int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
 void APS5_VABI vwarnc_nid_postfix(int code, const char* format, VaList* args);
@@ -42,6 +43,7 @@ void APS5_VABI _warn_nid_postfix(const char* format, ...);
 void APS5_VABI warnx_nid_postfix(const char* format, ...);
 const char* APS5_VABI getprogname_nid_postfix();
 const char* APS5_VABI _getprogname_nid_postfix();
+void APS5_VABI setprogname_nid_postfix(const char* name);
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
