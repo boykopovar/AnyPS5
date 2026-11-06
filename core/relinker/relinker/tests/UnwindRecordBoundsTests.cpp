@@ -1,4 +1,5 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
+#include <relinker/analysis/ExceptionTableParser.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <iostream>
@@ -631,6 +632,198 @@ int main() {
             lsdaTrailingRejected = std::string(error.what()).find("LSDA call-site table size mismatch") != std::string::npos;
         }
         Require(lsdaTrailingRejected);
-        std::cout << "48 unwind record cases passed\n";
+        Relinker::ExceptionTableParser parser;
+        auto multiLevelLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 39;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x50);
+            bytes[0x110] = 1;
+            Io::WriteU32(bytes, 0x111, 0x10);
+            Io::WriteU32(bytes, 0x115, 0x10);
+            Io::WriteU32(bytes, 0x119, 0x70);
+            bytes[0x11D] = 3;
+            Io::WriteU32(bytes, 0x11E, 0x20);
+            Io::WriteU32(bytes, 0x122, 0x10);
+            Io::WriteU32(bytes, 0x126, 0x90);
+            bytes[0x12A] = 5;
+            bytes[0x12B] = 1;
+            bytes[0x12C] = 1;
+            bytes[0x12D] = 2;
+            bytes[0x12E] = 1;
+            bytes[0x12F] = 0;
+            bytes[0x130] = 0;
+            return bytes;
+        };
+        const auto nestedParsed = parser.Parse(multiLevelLsda(), 0x100, 0x2000);
+        Require(nestedParsed.LandingBase == 0x2000 && nestedParsed.CallSites.size() == 3);
+        Require(nestedParsed.CallSites[0].Start == 0 && nestedParsed.CallSites[0].Length == 0x10 && nestedParsed.CallSites[0].LandingPad == 0x2050);
+        Require(nestedParsed.CallSites[0].ActionChain.size() == 3);
+        Require(nestedParsed.CallSites[0].ActionChain[0].Filter == 1 && nestedParsed.CallSites[0].ActionChain[0].RecordAddress == 0x12B && nestedParsed.CallSites[0].ActionChain[0].NextRecordAddress == 0x12D);
+        Require(nestedParsed.CallSites[0].ActionChain[1].Filter == 2 && nestedParsed.CallSites[0].ActionChain[1].RecordAddress == 0x12D && nestedParsed.CallSites[0].ActionChain[1].NextRecordAddress == 0x12F);
+        Require(nestedParsed.CallSites[0].ActionChain[2].Filter == 0 && nestedParsed.CallSites[0].ActionChain[2].RecordAddress == 0x12F && nestedParsed.CallSites[0].ActionChain[2].NextRecordAddress == 0);
+        Require(nestedParsed.CallSites[0].LinksToCatchAll);
+        Require(nestedParsed.CallSites[1].Start == 0x10 && nestedParsed.CallSites[1].Length == 0x10 && nestedParsed.CallSites[1].LandingPad == 0x2070);
+        Require(nestedParsed.CallSites[1].ActionChain.size() == 2);
+        Require(nestedParsed.CallSites[1].ActionChain[0].Filter == 2 && nestedParsed.CallSites[1].ActionChain[0].NextRecordAddress == 0x12F);
+        Require(nestedParsed.CallSites[1].ActionChain[1].Filter == 0 && nestedParsed.CallSites[1].ActionChain[1].NextRecordAddress == 0);
+        Require(nestedParsed.CallSites[1].LinksToCatchAll);
+        Require(nestedParsed.CallSites[2].Start == 0x20 && nestedParsed.CallSites[2].Length == 0x10 && nestedParsed.CallSites[2].LandingPad == 0x2090);
+        Require(nestedParsed.CallSites[2].ActionChain.size() == 1);
+        Require(nestedParsed.CallSites[2].ActionChain[0].Filter == 0 && nestedParsed.CallSites[2].ActionChain[0].NextRecordAddress == 0);
+        Require(nestedParsed.CallSites[2].LinksToCatchAll);
+        auto noCatchAllLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 13;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x50);
+            bytes[0x110] = 1;
+            bytes[0x111] = 1;
+            bytes[0x112] = 1;
+            bytes[0x113] = 2;
+            bytes[0x114] = 0;
+            return bytes;
+        };
+        const auto noCatchAllParsed = parser.Parse(noCatchAllLsda(), 0x100, 0x2000);
+        Require(noCatchAllParsed.CallSites.size() == 1);
+        Require(noCatchAllParsed.CallSites[0].ActionChain.size() == 2);
+        Require(noCatchAllParsed.CallSites[0].ActionChain[0].Filter == 1 && noCatchAllParsed.CallSites[0].ActionChain[0].NextRecordAddress == 0x113);
+        Require(noCatchAllParsed.CallSites[0].ActionChain[1].Filter == 2 && noCatchAllParsed.CallSites[0].ActionChain[1].NextRecordAddress == 0);
+        Require(!noCatchAllParsed.CallSites[0].LinksToCatchAll);
+        auto cleanupLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 13;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x30);
+            bytes[0x110] = 0;
+            return bytes;
+        };
+        const auto cleanupParsed = parser.Parse(cleanupLsda(), 0x100, 0x2000);
+        Require(cleanupParsed.CallSites.size() == 1);
+        Require(cleanupParsed.CallSites[0].LandingPad == 0x2030 && cleanupParsed.CallSites[0].ActionOffset == 0);
+        Require(cleanupParsed.CallSites[0].ActionChain.empty() && !cleanupParsed.CallSites[0].LinksToCatchAll);
+        auto typeTableCatchAllLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0x03;
+            bytes[0x102] = 21;
+            bytes[0x103] = 0x0B;
+            bytes[0x104] = 13;
+            Io::WriteU32(bytes, 0x105, 0);
+            Io::WriteU32(bytes, 0x109, 0x10);
+            Io::WriteU32(bytes, 0x10D, 0x60);
+            bytes[0x111] = 1;
+            bytes[0x112] = 1;
+            bytes[0x113] = 0;
+            Io::WriteU32(bytes, 0x114, 0);
+            return bytes;
+        };
+        const auto typeTableCatchAllParsed = parser.Parse(typeTableCatchAllLsda(), 0x100, 0x2000);
+        Require(typeTableCatchAllParsed.CallSites.size() == 1);
+        Require(typeTableCatchAllParsed.CallSites[0].ActionChain.size() == 1);
+        Require(typeTableCatchAllParsed.CallSites[0].ActionChain[0].Filter == 1 && typeTableCatchAllParsed.CallSites[0].ActionChain[0].NextRecordAddress == 0);
+        Require(typeTableCatchAllParsed.CallSites[0].LinksToCatchAll);
+        auto backwardLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 13;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x80);
+            bytes[0x110] = 3;
+            bytes[0x111] = 0;
+            bytes[0x112] = 0;
+            bytes[0x113] = 1;
+            bytes[0x114] = 0x7D;
+            return bytes;
+        };
+        const auto backwardParsed = parser.Parse(backwardLsda(), 0x100, 0x2000);
+        Require(backwardParsed.CallSites.size() == 1);
+        Require(backwardParsed.CallSites[0].ActionChain.size() == 2);
+        Require(backwardParsed.CallSites[0].ActionChain[0].Filter == 1 && backwardParsed.CallSites[0].ActionChain[0].RecordAddress == 0x113 && backwardParsed.CallSites[0].ActionChain[0].NextRecordAddress == 0x111);
+        Require(backwardParsed.CallSites[0].ActionChain[1].Filter == 0 && backwardParsed.CallSites[0].ActionChain[1].RecordAddress == 0x111 && backwardParsed.CallSites[0].ActionChain[1].NextRecordAddress == 0);
+        Require(backwardParsed.CallSites[0].LinksToCatchAll);
+        auto cyclicLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 13;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x40);
+            bytes[0x110] = 1;
+            bytes[0x111] = 1;
+            bytes[0x112] = 1;
+            bytes[0x113] = 2;
+            bytes[0x114] = 0x7D;
+            return bytes;
+        };
+        bool cyclicRejected = false;
+        try { parser.Parse(cyclicLsda(), 0x100, 0x2000); }
+        catch (const Domain::RelinkerException& error) {
+            cyclicRejected = std::string(error.what()).find("cyclic LSDA action record chain") != std::string::npos;
+        }
+        Require(cyclicRejected);
+        auto underflowDispLsda = []() {
+            std::vector<std::uint8_t> bytes(0x200, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 13;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x40);
+            bytes[0x110] = 1;
+            bytes[0x111] = 1;
+            bytes[0x112] = 0x7A;
+            return bytes;
+        };
+        bool underflowDispRejected = false;
+        try { parser.Parse(underflowDispLsda(), 0x100, 0x2000); }
+        catch (const Domain::RelinkerException& error) {
+            underflowDispRejected = std::string(error.what()).find("LSDA action record address underflow") != std::string::npos;
+        }
+        Require(underflowDispRejected);
+        auto actionExceedsLsda = []() {
+            std::vector<std::uint8_t> bytes(0x115, 0);
+            bytes[0x100] = 0xFF;
+            bytes[0x101] = 0xFF;
+            bytes[0x102] = 0x0B;
+            bytes[0x103] = 13;
+            Io::WriteU32(bytes, 0x104, 0);
+            Io::WriteU32(bytes, 0x108, 0x10);
+            Io::WriteU32(bytes, 0x10C, 0x40);
+            bytes[0x110] = 0x7F;
+            return bytes;
+        };
+        bool actionExceedsRejected = false;
+        try { parser.Parse(actionExceedsLsda(), 0x100, 0x2000); }
+        catch (const Domain::RelinkerException& error) {
+            actionExceedsRejected = std::string(error.what()).find("LSDA action record exceeds table") != std::string::npos;
+        }
+        Require(actionExceedsRejected);
+        Domain::ProgramHeader segLoad{}; segLoad.Type = 1; segLoad.MappedAddress = 0x1000; segLoad.FileSize = 0x80;
+        bool nonFileBackedLsdaRejected = false;
+        try { parser.Parse(std::vector<std::uint8_t>(0x80, 0), {segLoad}, 0x1090, 0x1000); }
+        catch (const Domain::RelinkerException& error) {
+            nonFileBackedLsdaRejected = std::string(error.what()).find("unwind address is not file-backed") != std::string::npos;
+        }
+        Require(nonFileBackedLsdaRejected);
+        std::cout << "56 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
