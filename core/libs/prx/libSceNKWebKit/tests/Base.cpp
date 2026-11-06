@@ -155,6 +155,204 @@ static void TestURL() {
     auto* str = WKURLCopyString(u);
     Require(WKStringIsEqualToUTF8CString(str, "https://example.com/test?a=1#frag"));
     WKRelease(str);
+
+    auto* scheme = WKURLCopyScheme(u);
+    Require(WKStringIsEqualToUTF8CString(scheme, "https"));
+    WKRelease(scheme);
+
+    auto* host = WKURLCopyHostName(u);
+    Require(WKStringIsEqualToUTF8CString(host, "example.com"));
+    WKRelease(host);
+
+    auto* path = WKURLCopyPath(u);
+    Require(WKStringIsEqualToUTF8CString(path, "/test"));
+    WKRelease(path);
+
+    auto* lastComp = WKURLCopyLastPathComponent(u);
+    Require(WKStringIsEqualToUTF8CString(lastComp, "test"));
+    WKRelease(lastComp);
+
+    auto* same = WKURLCreateWithUTF8CString("https://example.com/test?a=1#frag");
+    auto* diff = WKURLCreateWithUTF8CString("https://example.com/other");
+    Require(WKURLIsEqual(u, u));
+    Require(WKURLIsEqual(u, same));
+    Require(!WKURLIsEqual(u, diff));
+    Require(!WKURLIsEqual(u, nullptr));
+    Require(WKURLIsEqual(nullptr, nullptr));
+    WKRelease(same);
+    WKRelease(diff);
+
+    auto* fileUrl = WKURLCreateWithUTF8CString("file:///path/to/folder/file.tar.gz");
+    auto* fileScheme = WKURLCopyScheme(fileUrl);
+    Require(WKStringIsEqualToUTF8CString(fileScheme, "file"));
+    WKRelease(fileScheme);
+    auto* fileHost = WKURLCopyHostName(fileUrl);
+    Require(WKStringIsEqualToUTF8CString(fileHost, ""));
+    WKRelease(fileHost);
+    auto* filePath = WKURLCopyPath(fileUrl);
+    Require(WKStringIsEqualToUTF8CString(filePath, "/path/to/folder/file.tar.gz"));
+    WKRelease(filePath);
+    auto* fileLast = WKURLCopyLastPathComponent(fileUrl);
+    Require(WKStringIsEqualToUTF8CString(fileLast, "file.tar.gz"));
+    WKRelease(fileLast);
+    WKRelease(fileUrl);
+
+    auto* authUrl = WKURLCreateWithUTF8CString("http://user:secret@sub.domain.org:8080/dir/subdir/");
+    auto* authHost = WKURLCopyHostName(authUrl);
+    Require(WKStringIsEqualToUTF8CString(authHost, "sub.domain.org"));
+    WKRelease(authHost);
+    auto* authPath = WKURLCopyPath(authUrl);
+    Require(WKStringIsEqualToUTF8CString(authPath, "/dir/subdir/"));
+    WKRelease(authPath);
+    auto* authLast = WKURLCopyLastPathComponent(authUrl);
+    Require(WKStringIsEqualToUTF8CString(authLast, "subdir"));
+    WKRelease(authLast);
+    WKRelease(authUrl);
+
+    auto* ipv6Url = WKURLCreateWithUTF8CString("http://[2001:db8::1]:9000/api");
+    auto* ipv6Host = WKURLCopyHostName(ipv6Url);
+    Require(WKStringIsEqualToUTF8CString(ipv6Host, "[2001:db8::1]"));
+    WKRelease(ipv6Host);
+    WKRelease(ipv6Url);
+
+    auto* aboutUrl = WKURLCreateWithUTF8CString("about:blank");
+    auto* aboutScheme = WKURLCopyScheme(aboutUrl);
+    Require(WKStringIsEqualToUTF8CString(aboutScheme, "about"));
+    WKRelease(aboutScheme);
+    auto* aboutPath = WKURLCopyPath(aboutUrl);
+    Require(WKStringIsEqualToUTF8CString(aboutPath, "blank"));
+    WKRelease(aboutPath);
+    auto* aboutLast = WKURLCopyLastPathComponent(aboutUrl);
+    Require(WKStringIsEqualToUTF8CString(aboutLast, "blank"));
+    WKRelease(aboutLast);
+    WKRelease(aboutUrl);
+
+    auto* rootUrl = WKURLCreateWithUTF8CString("https://example.com/");
+    auto* rootPath = WKURLCopyPath(rootUrl);
+    Require(WKStringIsEqualToUTF8CString(rootPath, "/"));
+    WKRelease(rootPath);
+    auto* rootLast = WKURLCopyLastPathComponent(rootUrl);
+    Require(WKStringIsEqualToUTF8CString(rootLast, ""));
+    WKRelease(rootLast);
+    WKRelease(rootUrl);
+
+    auto* base = WKURLCreateWithUTF8CString("https://example.com/dir/page.html");
+    auto* r1 = WKURLCreateWithBaseURL(base, "other.html");
+    auto* s1 = WKURLCopyString(r1);
+    Require(WKStringIsEqualToUTF8CString(s1, "https://example.com/dir/other.html"));
+    WKRelease(s1);
+    WKRelease(r1);
+
+    auto* r2 = WKURLCreateWithBaseURL(base, "../top.html");
+    auto* s2 = WKURLCopyString(r2);
+    Require(WKStringIsEqualToUTF8CString(s2, "https://example.com/top.html"));
+    WKRelease(s2);
+    WKRelease(r2);
+
+    auto* r3 = WKURLCreateWithBaseURL(base, "/root.html");
+    auto* s3 = WKURLCopyString(r3);
+    Require(WKStringIsEqualToUTF8CString(s3, "https://example.com/root.html"));
+    WKRelease(s3);
+    WKRelease(r3);
+
+    auto* r4 = WKURLCreateWithBaseURL(base, "?query=1");
+    auto* s4 = WKURLCopyString(r4);
+    Require(WKStringIsEqualToUTF8CString(s4, "https://example.com/dir/page.html?query=1"));
+    WKRelease(s4);
+    WKRelease(r4);
+
+    auto* r5 = WKURLCreateWithBaseURL(base, "#section");
+    auto* s5 = WKURLCopyString(r5);
+    Require(WKStringIsEqualToUTF8CString(s5, "https://example.com/dir/page.html#section"));
+    WKRelease(s5);
+    WKRelease(r5);
+
+    auto* r6 = WKURLCreateWithBaseURL(base, "//cdn.example.org/lib.js");
+    auto* s6 = WKURLCopyString(r6);
+    Require(WKStringIsEqualToUTF8CString(s6, "https://cdn.example.org/lib.js"));
+    WKRelease(s6);
+    WKRelease(r6);
+
+    auto* r7 = WKURLCreateWithBaseURL(base, "http://standalone.org/");
+    auto* s7 = WKURLCopyString(r7);
+    Require(WKStringIsEqualToUTF8CString(s7, "http://standalone.org/"));
+    WKRelease(s7);
+    WKRelease(r7);
+
+    auto* r8 = WKURLCreateWithBaseURL(base, nullptr);
+    auto* s8 = WKURLCopyString(r8);
+    Require(WKStringIsEqualToUTF8CString(s8, "https://example.com/dir/page.html"));
+    WKRelease(s8);
+    WKRelease(r8);
+
+    auto* r9 = WKURLCreateWithBaseURL(nullptr, "https://example.com/");
+    auto* s9 = WKURLCopyString(r9);
+    Require(WKStringIsEqualToUTF8CString(s9, "https://example.com/"));
+    WKRelease(s9);
+    WKRelease(r9);
+
+    auto* baseOrg = WKURLCreateWithUTF8CString("https://example.org/dir/page");
+    auto* rDotDot = WKURLCreateWithBaseURL(baseOrg, "/a/../b");
+    auto* sDotDot = WKURLCopyString(rDotDot);
+    Require(WKStringIsEqualToUTF8CString(sDotDot, "https://example.org/b"));
+    WKRelease(sDotDot);
+    WKRelease(rDotDot);
+
+    auto* rDot = WKURLCreateWithBaseURL(baseOrg, "/a/./b");
+    auto* sDot = WKURLCopyString(rDot);
+    Require(WKStringIsEqualToUTF8CString(sDot, "https://example.org/a/b"));
+    WKRelease(sDot);
+    WKRelease(rDot);
+
+    auto* rDoubleSlash = WKURLCreateWithBaseURL(baseOrg, "/a//b");
+    auto* sDoubleSlash = WKURLCopyString(rDoubleSlash);
+    Require(WKStringIsEqualToUTF8CString(sDoubleSlash, "https://example.org/a//b"));
+    WKRelease(sDoubleSlash);
+    WKRelease(rDoubleSlash);
+
+    auto* rRelDoubleSlash = WKURLCreateWithBaseURL(baseOrg, "sub//item");
+    auto* sRelDoubleSlash = WKURLCopyString(rRelDoubleSlash);
+    Require(WKStringIsEqualToUTF8CString(sRelDoubleSlash, "https://example.org/dir/sub//item"));
+    WKRelease(sRelDoubleSlash);
+    WKRelease(rRelDoubleSlash);
+    WKRelease(baseOrg);
+
+    auto* baseFrag = WKURLCreateWithUTF8CString("https://example.org/a?q#old");
+    auto* rEmpty = WKURLCreateWithBaseURL(baseFrag, "");
+    auto* sEmpty = WKURLCopyString(rEmpty);
+    Require(WKStringIsEqualToUTF8CString(sEmpty, "https://example.org/a?q"));
+    WKRelease(sEmpty);
+    WKRelease(rEmpty);
+    WKRelease(baseFrag);
+
+    auto* upperUrl = WKURLCreateWithUTF8CString("HTTP://Example.COM/a");
+    auto* upperScheme = WKURLCopyScheme(upperUrl);
+    Require(WKStringIsEqualToUTF8CString(upperScheme, "http"));
+    WKRelease(upperScheme);
+    auto* upperHost = WKURLCopyHostName(upperUrl);
+    Require(WKStringIsEqualToUTF8CString(upperHost, "example.com"));
+    WKRelease(upperHost);
+    auto* upperStr = WKURLCopyString(upperUrl);
+    Require(WKStringIsEqualToUTF8CString(upperStr, "HTTP://Example.COM/a"));
+    WKRelease(upperStr);
+    auto* lowerUrl = WKURLCreateWithUTF8CString("http://example.com/a");
+    Require(WKURLIsEqual(upperUrl, lowerUrl));
+    WKRelease(lowerUrl);
+    WKRelease(upperUrl);
+
+    auto* bslashUrl = WKURLCreateWithUTF8CString("   https://example.com/dir\\file.txt   ");
+    auto* bslashPath = WKURLCopyPath(bslashUrl);
+    Require(WKStringIsEqualToUTF8CString(bslashPath, "/dir/file.txt"));
+    WKRelease(bslashPath);
+    auto* bslashLast = WKURLCopyLastPathComponent(bslashUrl);
+    Require(WKStringIsEqualToUTF8CString(bslashLast, "file.txt"));
+    WKRelease(bslashLast);
+    auto* bslashStr = WKURLCopyString(bslashUrl);
+    Require(WKStringIsEqualToUTF8CString(bslashStr, "   https://example.com/dir\\file.txt   "));
+    WKRelease(bslashStr);
+    WKRelease(bslashUrl);
+
+    WKRelease(base);
     WKRelease(u);
 }
 
