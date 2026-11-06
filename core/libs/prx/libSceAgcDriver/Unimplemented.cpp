@@ -13,7 +13,6 @@ constexpr int DRIVER_NULL_OUTPUT = static_cast<int>(0x8A6D0003);
 constexpr int GPU_RESET_UNAVAILABLE = static_cast<int>(0x8A6C0045);
 constexpr int MODULE_REGISTRATION_FAILED = static_cast<int>(0x8A6D0003);
 constexpr std::size_t TOOL_MEMORY_RANGE_SIZE = 12;
-constexpr std::uint64_t NOP_PACKET_MAX_COUNT = 0x3fff;
 
 }
 
@@ -63,7 +62,6 @@ int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* first, uint16_t* second) {
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes) {
     const auto alignedBytes = (static_cast<std::uint64_t>(bytes) + 3) & ~std::uint64_t{3};
     const auto totalBytes = alignedBytes + 8;
-    if (totalBytes / 4 - 2 > NOP_PACKET_MAX_COUNT) return 0;
     std::memset(destination, 0, static_cast<std::size_t>(totalBytes));
     const auto header = (static_cast<std::uint32_t>(totalBytes) << 14) + 0x3ffe0000U | 0xc0001000U;
     std::memcpy(destination, &header, sizeof(header));
@@ -158,6 +156,46 @@ int APS5_VABI sceAgcDriverAllocateToolMemoryForGpuReset(uint64_t, uint64_t, uint
 int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* range) {
     if (range != nullptr) std::memset(range, 0, TOOL_MEMORY_RANGE_SIZE);
     return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverIsCoredumpValid() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSetTFRingDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverIsSuspendPointInFlightDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverReleaseRazorACQ() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSdmaCopyLinearBlocking() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverRegisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverDeregisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdSetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetSystemGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
