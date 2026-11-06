@@ -430,8 +430,8 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
         std::lock_guard lock(g_state_mutex);
         g_events.push_back(event);
     }
-    DeliverEvent(event);
     g_backupProgress = 1.0f;
+    DeliverEvent(event);
     return SAVE_DATA_OK;
 }
 
