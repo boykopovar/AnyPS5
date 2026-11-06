@@ -57,28 +57,33 @@ void CheckBackupProgress() {
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes for the progress checks");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds");
     Check(progress == 0.0f, "progress reports 0.0f before any backup");
+    progress = 0.25f;
     Check(sceSaveDataGetProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
     Check(sceSaveDataGetProgress(reinterpret_cast<float*>(0x10)) == SaveDataErrorParameter, "unwritable progress pointer is rejected");
-    Check(progress == 0.0f, "a rejected progress query leaves the value untouched");
+    Check(progress == 0.25f, "a rejected progress query leaves the value untouched");
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "null backup pointer is rejected");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a rejected backup");
-    Check(progress == 0.0f, "a rejected backup leaves progress at 0.0f");
+    Check(progress == 0.25f, "a rejected backup leaves progress where it was");
     Check(Backup("progress") == 0, "a backup succeeds");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after a backup");
     Check(progress == 1.0f, "progress reports 1.0f after a backup");
-    Check(sceSaveDataClearProgress() == 0, "clear progress succeeds");
-    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after clear progress");
-    Check(progress == 0.0f, "clear progress resets the value");
-    SaveDataEvent event{};
-    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "the backup queues a completion");
-    Check(event.type == 2 && event.error_code == 0, "the completion reports a successful backup");
-    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "the rejected backup queues no completion");
-    Check(sceSaveDataTerminate() == 0, "SaveData terminates after the progress checks");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates after a backup");
     Check(sceSaveDataGetProgress(&progress) == SaveDataErrorNotInitialized, "progress query after terminate fails with not initialized");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData reinitializes after the progress checks");
     Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after reinitialize");
     Check(progress == 0.0f, "progress does not survive a terminate");
-    Check(sceSaveDataTerminate() == 0, "SaveData terminates after the reinitialized progress check");
+    Check(Backup("progress") == 0, "a backup succeeds after reinitialize");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after the second backup");
+    Check(progress == 1.0f, "progress reports 1.0f after the second backup");
+    Check(sceSaveDataClearProgress() == 0, "clear progress succeeds");
+    Check(sceSaveDataGetProgress(&progress) == 0, "get progress succeeds after clear progress");
+    Check(progress == 0.0f, "clear progress resets the value");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "the first backup queues a completion");
+    Check(event.type == 2 && event.error_code == 0, "the completion reports a successful backup");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "the second backup queues a completion");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "the rejected backup queues no completion");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates after the progress checks");
 }
 
 }
