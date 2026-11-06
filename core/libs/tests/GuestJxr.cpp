@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -85,6 +86,119 @@ void InitializeHeap() {
     write(replacement, 0x48, reinterpret_cast<void*>(&Realign));
     write(replacement, 0x50, reinterpret_cast<void*>(&PosixAlign));
     ApplicationHeapInitialize_nid_no_patch(process.data());
+}
+
+void TestExifMetadata() {
+    struct Fixture {
+        Jxr::ImageEncodeMetadataPrefix encoder;
+        std::array<std::byte, 32> trailing;
+    } fixture;
+    std::memset(&fixture, 0xa5, sizeof(fixture));
+    fixture.encoder.headerDone = 0;
+    fixture.encoder.exifMetadata = nullptr;
+    fixture.encoder.exifMetadataByteCount = 0xfeed;
+    auto& encoder = fixture.encoder;
+    auto* const encoderPointer = reinterpret_cast<tagPKImageEncode*>(&encoder);
+    const auto snapshot = [&] {
+        std::array<std::byte, sizeof(fixture)> bytes;
+        std::memcpy(bytes.data(), &fixture, sizeof(fixture));
+        return bytes;
+    };
+    const auto requireOnlyExif = [&](const std::array<std::byte, sizeof(fixture)>& before, const std::uint8_t* pointer,
+                                     std::uint32_t size) {
+        auto expected = before;
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, exifMetadata),
+                    &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, exifMetadataByteCount),
+                    &size, sizeof(size));
+        Require(std::memcmp(expected.data(), &fixture, sizeof(fixture)) == 0);
+    };
+    const std::array<std::uint8_t, 5> first {0x11, 0x22, 0x33, 0x44, 0x55};
+    const std::array<std::uint8_t, 3> second {0xa1, 0xb2, 0xc3};
+    auto before = snapshot();
+    const auto firstCalloc = callocCalls;
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == 0);
+    Require(callocCalls == firstCalloc + 1 && lastCount == 1 && lastSize == first.size());
+    Require(encoder.exifMetadata != first.data() && encoder.exifMetadataByteCount == first.size());
+    Require(std::memcmp(encoder.exifMetadata, first.data(), static_cast<std::uint32_t>(first.size())) == 0);
+    requireOnlyExif(before, encoder.exifMetadata, static_cast<std::uint32_t>(first.size()));
+
+    auto* const previous = encoder.exifMetadata;
+    const auto previousFrees = frees;
+    before = snapshot();
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    Require(frees == previousFrees + 1 && lastFreed == previous);
+    Require(encoder.exifMetadata != second.data() && encoder.exifMetadataByteCount == second.size());
+    Require(std::memcmp(encoder.exifMetadata, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    requireOnlyExif(before, encoder.exifMetadata, static_cast<std::uint32_t>(second.size()));
+
+    auto* const guardedPointer = encoder.exifMetadata;
+    const auto guardedSize = encoder.exifMetadataByteCount;
+    const auto guardedFrees = frees;
+    const auto guardedCallocs = callocCalls;
+    encoder.headerDone = 1;
+    before = snapshot();
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == -109);
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -109);
+    Require(encoder.exifMetadata == guardedPointer && encoder.exifMetadataByteCount == guardedSize);
+    Require(snapshot() == before);
+    Require(frees == guardedFrees && callocCalls == guardedCallocs);
+    encoder.headerDone = 0;
+
+    bool threw = false;
+    try { PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(nullptr, first.data(), static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    before = snapshot();
+    const auto nullInputFrees = frees;
+    const auto nullInputCallocs = callocCalls;
+    try { PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && frees == nullInputFrees + 1 && lastFreed == guardedPointer);
+    Require(callocCalls == nullInputCallocs + 1 && encoder.exifMetadata == lastAllocated && encoder.exifMetadataByteCount == 0);
+    requireOnlyExif(before, encoder.exifMetadata, 0);
+    void* nullInputAllocation = encoder.exifMetadata;
+    Require(PKFree_nid_postfix(&nullInputAllocation) == 0);
+    encoder.exifMetadata = static_cast<std::uint8_t*>(nullInputAllocation);
+
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    auto* const failurePrevious = encoder.exifMetadata;
+    const auto failedCallocs = callocCalls;
+    const auto failedFrees = frees;
+    before = snapshot();
+    failAllocation = true;
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == -101);
+    failAllocation = false;
+    Require(callocCalls == failedCallocs + 1 && lastCount == 1 && lastSize == first.size());
+    Require(lastAllocated == nullptr && encoder.exifMetadata == nullptr && encoder.exifMetadataByteCount == 0);
+    Require(frees == failedFrees + 1 && lastFreed == failurePrevious);
+    requireOnlyExif(before, nullptr, 0);
+
+    failAllocation = false;
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    auto* const nullFailurePrevious = encoder.exifMetadata;
+    before = snapshot();
+    const auto failedNullCallocs = callocCalls;
+    const auto failedNullFrees = frees;
+    failAllocation = true;
+    Require(PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -101);
+    Require(callocCalls == failedNullCallocs + 1 && frees == failedNullFrees + 1 && lastFreed == nullFailurePrevious);
+    Require(encoder.exifMetadata == nullptr && encoder.exifMetadataByteCount == 0);
+    requireOnlyExif(before, nullptr, 0);
+    failAllocation = false;
+
+    std::uint8_t emptyInput = 0;
+    before = snapshot();
+    const auto zeroResult = PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(encoderPointer, &emptyInput, 0);
+    Require(zeroResult == (lastAllocated ? 0 : -101));
+    Require(encoder.exifMetadata == lastAllocated && encoder.exifMetadataByteCount == 0);
+    requireOnlyExif(before, encoder.exifMetadata, 0);
+    if (encoder.exifMetadata) {
+        void* emptyAllocation = encoder.exifMetadata;
+        Require(PKFree_nid_postfix(&emptyAllocation) == 0);
+        encoder.exifMetadata = static_cast<std::uint8_t*>(emptyAllocation);
+    }
 }
 
 void TestInitPostProc() {
@@ -236,5 +350,6 @@ int main() {
     Require(threw);
     TestTermPostProc();
     TestInitPostProc();
+    TestExifMetadata();
     return 0;
 }
