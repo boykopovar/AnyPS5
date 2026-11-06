@@ -235,6 +235,7 @@ private:
     void noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void retireLabelTakes(std::uint32_t queue, std::uint64_t received);
+    bool findWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
     static std::array<WriteRecord, 16384>& writeHistory();
@@ -399,6 +400,7 @@ private:
     static std::optional<std::uint32_t> releaseInterrupt(std::span<const std::uint32_t> packet, std::uint32_t opcode, bool carriesFlip);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
+    static std::atomic<std::uint64_t>*& workerPacket();
     void reapCompletionLabels();
     void run(std::uint32_t id) noexcept;
 
