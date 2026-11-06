@@ -32,6 +32,7 @@
 #include <string>
 #include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -1233,6 +1234,24 @@ void CheckRawGetcwd() {
 }
 
 int main() {
+    constexpr int ktropClearFile = 2;
+    constexpr unsigned int ktrfacRoot = 0x80000000u;
+    const auto invalidFilename = reinterpret_cast<const char*>(1);
+    *__error_nid_postfix() = 73;
+    Require(ktrace_nid_postfix(invalidFilename, 0, 0, 0) == -1 && Error() == 22);
+    *__error_nid_postfix() = 73;
+    Require(ktrace_nid_postfix(invalidFilename, 1, static_cast<int>(ktrfacRoot), 0) == -1 && Error() == 22);
+    for (const auto [ops, facs] : std::array<std::pair<int, int>, 3>{{
+             {ktropClearFile | 0x100, 0}, {ktropClearFile, 1}, {0, 1}}}) {
+        *__error_nid_postfix() = 73;
+        bool threw = false;
+        try {
+            ktrace_nid_postfix(invalidFilename, ops, facs, 0);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && Error() == 73);
+    }
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
     CharUpperBuffW(hostDirectorySpelling.data(), static_cast<DWORD>(hostDirectorySpelling.size()));
