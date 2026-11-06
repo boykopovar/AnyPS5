@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -174,6 +175,29 @@ class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResul
 public:
     bool cancelled = false;
     std::vector<Retained<String>> chosenFiles;
+};
+
+class FramePolicyListener final : public ObjectOf<ObjectType::FramePolicyListener> {
+public:
+    enum class Action { None, Use, Download, Ignore, UseInNewProcess, UseWithPolicies, UseInNewProcessWithPolicies };
+
+    using CompletionHandler = std::function<void(Action, const Object*)>;
+
+    FramePolicyListener() = default;
+    explicit FramePolicyListener(CompletionHandler handler) : completionHandler(std::move(handler)) {}
+
+    void Resolve(Action act, Retained<Object> pol = nullptr) {
+        action = act;
+        policies = std::move(pol);
+        if (completionHandler) {
+            auto handler = std::move(completionHandler);
+            handler(action, policies.Get());
+        }
+    }
+
+    Action action = Action::None;
+    Retained<Object> policies;
+    CompletionHandler completionHandler;
 };
 
 }  // namespace NKWebKit

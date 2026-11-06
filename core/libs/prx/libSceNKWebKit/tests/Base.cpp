@@ -1081,6 +1081,50 @@ static void TestOpenPanelResultListener() {
     Require(threw);
 }
 
+static void TestFramePolicyListener() {
+    Require(WKFramePolicyListenerGetTypeID() == 57);
+
+    NKWebKit::FramePolicyListener::Action callbackAction = NKWebKit::FramePolicyListener::Action::None;
+    const NKWebKit::Object* callbackPolicies = nullptr;
+    auto listener = NKWebKit::Make<NKWebKit::FramePolicyListener>([&](NKWebKit::FramePolicyListener::Action act, const NKWebKit::Object* pol) {
+        callbackAction = act;
+        callbackPolicies = pol;
+    });
+    const void* ref = NKWebKit::ToRef(listener);
+
+    WKFramePolicyListenerUse(ref);
+    Require(listener->action == NKWebKit::FramePolicyListener::Action::Use);
+    Require(callbackAction == NKWebKit::FramePolicyListener::Action::Use);
+
+    WKFramePolicyListenerDownload(ref);
+    Require(listener->action == NKWebKit::FramePolicyListener::Action::Download);
+
+    WKFramePolicyListenerIgnore(ref);
+    Require(listener->action == NKWebKit::FramePolicyListener::Action::Ignore);
+
+    WKFramePolicyListenerUseInNewProcess(ref);
+    Require(listener->action == NKWebKit::FramePolicyListener::Action::UseInNewProcess);
+
+    auto policies = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::WebsitePolicies>>();
+    WKFramePolicyListenerUseWithPolicies(ref, policies.Get());
+    Require(listener->action == NKWebKit::FramePolicyListener::Action::UseWithPolicies);
+    Require(listener->policies.Get() == policies.Get());
+
+    WKFramePolicyListenerUseInNewProcessWithPolicies(ref, policies.Get());
+    Require(listener->action == NKWebKit::FramePolicyListener::Action::UseInNewProcessWithPolicies);
+    Require(listener->policies.Get() == policies.Get());
+
+    bool threw = false;
+    try {
+        WKFramePolicyListenerUse(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1110,6 +1154,7 @@ int main() {
     TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
+    TestFramePolicyListener();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
