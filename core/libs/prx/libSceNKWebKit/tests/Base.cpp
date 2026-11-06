@@ -179,6 +179,8 @@ static void TestSecurityOrigin() {
         StringCase{"http://user:pass@example.com:9000", "http", "example.com", 9000, "http://example.com:9000", "http_example.com_9000"},
         StringCase{"file:///home/user/test.html", "file", "", 0, "file://", "file__0"},
         StringCase{"custom://host", "custom", "host", 0, "custom://host", "custom_host_0"},
+        StringCase{"file://localhost/etc/hosts", "file", "", 0, "file://", "file__0"},
+        StringCase{"FILE://host:99999/x", "file", "", 0, "file://", "file__0"},
         StringCase{"invalid-string", "", "", 0, "", "__0"},
         StringCase{"", "", "", 0, "", "__0"},
         StringCase{"http://example.com:80/", "http", "example.com", 0, "http://example.com", "http_example.com_0"},

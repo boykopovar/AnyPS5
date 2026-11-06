@@ -315,7 +315,6 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
 namespace {
 
 std::optional<std::uint16_t> WithoutDefaultPort(const std::u16string& protocol, std::optional<std::uint16_t> port) {
-    if (!port) return port;
     struct DefaultPort {
         std::u16string_view protocol;
         std::uint16_t port;
@@ -324,7 +323,7 @@ std::optional<std::uint16_t> WithoutDefaultPort(const std::u16string& protocol, 
         {u"ftp", 21}, {u"ws", 80}, {u"http", 80}, {u"wss", 443}, {u"https", 443},
     };
     for (const auto& entry : defaults) {
-        if (entry.protocol == protocol && entry.port == *port) return std::nullopt;
+        if (port && entry.protocol == protocol && entry.port == *port) return std::nullopt;
     }
     return port;
 }
@@ -381,7 +380,6 @@ bool IsValidScheme(const std::u16string& scheme) {
 }
 
 bool ParseAuthorityPort(std::u16string_view text, std::optional<std::uint16_t>& port) {
-    port.reset();
     if (text.empty()) return true;
     unsigned value = 0;
     for (const char16_t c : text) {
@@ -487,7 +485,6 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* i
     if (string->null) return nullptr;
     const auto& text = string->characters;
     const auto separator1 = text.find(u'_');
-    if (separator1 == std::u16string::npos) return nullptr;
     const auto separator2 = text.rfind(u'_');
     if (separator1 == separator2) return nullptr;
 
