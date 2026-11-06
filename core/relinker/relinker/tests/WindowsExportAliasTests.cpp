@@ -64,7 +64,8 @@ static void Positive(bool reverse) {
 int main() {
     try {
         Positive(false);Positive(true);
-        Reject([]{Relinker::GuestImageReader().Read("generic.prx",Fixture());},"Duplicate or empty export");
+        const auto linux=Relinker::GuestImageReader().Read("generic.prx",Fixture());
+        Check(linux.Symbols.size()==4&&linux.Symbols[1].Name=="alias"&&linux.Symbols[2].Name=="alias","Linux did not retain alias symbol indices");
         const std::array<std::pair<unsigned,std::uint64_t>,7> changes={{{4,0x22},{4,0x11},{5,0},{6,2},{8,0x28},{16,2},{6,Relinker::AbsoluteSection}}};
         for(const auto& [field,value]:changes){auto b=Fixture();auto off=0x2400+48+field;if(field<6)b[off]=value;else if(field==6)Io::WriteU16(b,off,value);else Io::WriteU64(b,off,value);Reject([&]{Relinker::GuestImageReader().Read("generic.prx",b,true);},"Duplicate or empty export");}
         auto good=Relinker::GuestImageReader().Read("generic.prx",Fixture(),true);
