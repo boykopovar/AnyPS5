@@ -52,8 +52,12 @@ target_link_libraries(agc_driver_graphics_tests PRIVATE
 if(BUILD_TESTING)
     add_test(NAME agc_command_batch_fence_failure COMMAND agc_driver_graphics_tests --command-batch-fence-failure)
     set_tests_properties(agc_command_batch_fence_failure PROPERTIES TIMEOUT 20)
+    add_test(NAME agc_graphics_profile_draw COMMAND agc_driver_graphics_tests)
+    set_tests_properties(agc_graphics_profile_draw PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PROFILE_DRAW=1"
+        SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_command_batch_fence_failure PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_command_batch_fence_failure agc_graphics_profile_draw PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -156,6 +160,19 @@ if(BUILD_TESTING)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME agc_driver_graphics_maps_fallback COMMAND agc_driver_graphics_tests)
         set_tests_properties(agc_driver_graphics_maps_fallback PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_PROCMAP_QUERY=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
+    add_test(NAME agc_driver_fault_only_template_records COMMAND agc_driver_graphics_tests --fault-only-template-records)
+    add_test(NAME agc_driver_fault_only_template_records_kept COMMAND agc_driver_graphics_tests --fault-only-template-records)
+    add_test(NAME agc_driver_fault_only_template_records_loop_guard COMMAND agc_driver_graphics_tests --fault-only-template-records)
+    add_test(NAME agc_driver_fault_only_template_records_loop_guard_kept COMMAND agc_driver_graphics_tests --fault-only-template-records)
+    set_tests_properties(agc_driver_fault_only_template_records PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1")
+    set_tests_properties(agc_driver_fault_only_template_records_kept PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_KEEP_TEMPLATE_RECORDS=1")
+    set_tests_properties(agc_driver_fault_only_template_records_loop_guard PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LOOP_GUARD=1")
+    set_tests_properties(agc_driver_fault_only_template_records_loop_guard_kept PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LOOP_GUARD=1;APS5_KEEP_TEMPLATE_RECORDS=1")
+    set_tests_properties(agc_driver_fault_only_template_records agc_driver_fault_only_template_records_kept agc_driver_fault_only_template_records_loop_guard agc_driver_fault_only_template_records_loop_guard_kept PROPERTIES SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_fault_only_template_records agc_driver_fault_only_template_records_kept agc_driver_fault_only_template_records_loop_guard agc_driver_fault_only_template_records_loop_guard_kept PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_pm4_failure COMMAND agc_driver_pm4_tests failure)
     set_tests_properties(agc_driver_pm4_failure PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)

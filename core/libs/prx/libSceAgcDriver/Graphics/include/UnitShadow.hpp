@@ -43,6 +43,7 @@ struct HostImport;
 // or mutate freshness); the registry's own mutex is a leaf (lock order GpuMutex -> Imports/Pending ->
 // Shadows -> tracker).
 bool UnitShadowEnabled();
+std::uint64_t UnitShadowBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
 
 // None: a device-facing caller (a storage upload reads the slab itself); Whole: a reader of every
 // byte of the range; PartialUnits: a writer of the range (only units it covers partly are published,
