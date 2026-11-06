@@ -212,6 +212,10 @@ void APS5_VABI _ZN7bmalloc3api23decommitAlignedPhysicalEPvmNS_8HeapKindE(void*, 
 void* APS5_VABI _ZN7bmalloc3api29tryLargeZeroedMemalignVirtualEmmNS_8HeapKindE(std::size_t alignment, std::size_t size, std::uint32_t);
 void APS5_VABI _ZN7bmalloc3api8scavengeEv();
 bool APS5_VABI _ZN7bmalloc3api9isEnabledENS_8HeapKindE(std::uint32_t);
+void APS5_VABI _ZN7bmalloc8FreeList14initializeBumpEPcj(bmalloc::FreeList* self, char* payloadEnd, unsigned remaining);
+void APS5_VABI _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj(bmalloc::FreeList* self, bmalloc::FreeCell* head, std::uintptr_t secret, unsigned bytes);
+void APS5_VABI _ZN7bmalloc8FreeList5clearEv(bmalloc::FreeList* self);
+void APS5_VABI _ZN7bmalloc8FreeListC1Ev(bmalloc::FreeList* self);
 void* APS5_VABI _ZN8Gigacage10tryReallocENS_4KindEPvm(std::uint32_t, void* ptr, std::size_t size);
 void APS5_VABI _ZN8Gigacage11alignedFreeENS_4KindEPv(std::uint32_t, void* ptr);
 void* APS5_VABI _ZN8Gigacage11mallocArrayENS_4KindEmm(std::uint32_t, std::size_t count, std::size_t size);
