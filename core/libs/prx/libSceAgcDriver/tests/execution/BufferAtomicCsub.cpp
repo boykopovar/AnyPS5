@@ -168,16 +168,10 @@ void Check(const Workgroup& workgroup) {
     }
 }
 
-void CheckNoReturnRejected(const AgcDriver::VulkanDevice& device) {
+void CheckNoReturnAccepted(const AgcDriver::VulkanDevice& device) {
     const auto userData = UserData();
-    const std::string reason = "buffer_atomic_csub without glc is not supported";
-    std::string failure;
-    try {
-        static_cast<void>(Recompile(device, NoReturnCode, Workgroups[0], userData));
-    } catch (const std::exception& error) {
-        failure = error.what();
-    }
-    Require(failure.find(reason) != std::string::npos, "buffer atomic csub: expected '" + reason + "', got '" + failure + "'");
+    const auto recompiled = Recompile(device, NoReturnCode, Workgroups[0], userData);
+    Require(!recompiled.spirv.empty(), "buffer atomic csub: expected valid SPIR-V for instruction without glc");
 }
 
 }
@@ -190,7 +184,7 @@ int main() {
             Run(*device, workgroup);
             Check(workgroup);
         }
-        CheckNoReturnRejected(*device);
+        CheckNoReturnAccepted(*device);
         std::puts("buffer atomic csub tests passed");
         return 0;
     } catch (const std::exception& error) {

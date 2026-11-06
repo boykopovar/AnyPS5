@@ -17,6 +17,8 @@ int main() {
     std::array<std::uint32_t, 2> processing{kFill, kFill};
 
     Require(sceMoveTrackerGetWorkingMemorySize(nullptr, nullptr) == kErrInvalidArg);
+    Require(sceMoveTrackerGetWorkingMemorySize(reinterpret_cast<std::uint32_t*>(0x10), processing.data()) == kErrInvalidArg);
+    Require(sceMoveTrackerGetWorkingMemorySize(total.data(), reinterpret_cast<std::uint32_t*>(0x10)) == kErrInvalidArg);
     Require(sceMoveTrackerGetWorkingMemorySize(total.data(), nullptr) == kErrInvalidArg);
     Require(sceMoveTrackerGetWorkingMemorySize(nullptr, processing.data()) == kErrInvalidArg);
     Require(total[0] == kFill && total[1] == kFill && processing[0] == kFill && processing[1] == kFill);

@@ -7,7 +7,7 @@ int APS5_VABI UCNV_FROM_U_CALLBACK_ESCAPE_nid_postfix();
 int APS5_VABI UCNV_FROM_U_CALLBACK_SUBSTITUTE_nid_postfix();
 int APS5_VABI UCNV_TO_U_CALLBACK_ESCAPE_nid_postfix();
 int APS5_VABI UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix();
-int APS5_VABI locale_getKeywordsStart_nid_postfix();
+const char* APS5_VABI locale_getKeywordsStart_nid_postfix(const char* localeID);
 int APS5_VABI res_countArrayItems_nid_postfix();
 int APS5_VABI res_getAlias_nid_postfix();
 int APS5_VABI res_getArrayItem_nid_postfix();

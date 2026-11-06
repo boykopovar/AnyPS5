@@ -31,6 +31,7 @@ int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
 void APS5_VABI vwarnc_nid_postfix(int code, const char* format, VaList* args);
@@ -92,6 +93,7 @@ int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileAction
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t* processId, const char* path, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment);
 int APS5_VABI posix_spawnp_nid_postfix(std::int32_t* processId, const char* file, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment);
 void APS5_VABI makecontext_nid_postfix(UserUcontext* context, void (APS5_VABI* start)(), int count, ...);
+int APS5_VABI __kernel_rem_pio2_nid_postfix(double* x, double* y, int e0, int nx, int prec);
 
 [[noreturn]] void APS5_VABI verrc_nid_postfix(int status, int code, const char* format, VaList* args);
 [[noreturn]] void APS5_VABI verr_nid_postfix(int status, const char* format, VaList* args);
