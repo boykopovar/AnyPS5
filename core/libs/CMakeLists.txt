@@ -1294,13 +1294,29 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_kernel_sys_cpuset_tests tests/GuestKernelSysCpuset.cpp)
     target_include_directories(guest_kernel_sys_cpuset_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_kernel_sys_cpuset_tests PRIVATE libkernel_sys libkernel libc)
+    target_link_libraries(guest_kernel_sys_cpuset_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_kernel_sys_cpuset_tests)
     add_test(NAME guest_kernel_sys_cpuset COMMAND guest_kernel_sys_cpuset_tests)
     set_tests_properties(guest_kernel_sys_cpuset PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_cpuset PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+
+    add_test_executable(guest_kernel_process_exports_tests tests/GuestKernelProcessExports.cpp)
+    target_include_directories(guest_kernel_process_exports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_process_exports_tests PRIVATE ${CMAKE_DL_LIBS})
+    configure_host_test_executable(guest_kernel_process_exports_tests)
+    add_custom_target(guest_kernel_process_exports_libraries DEPENDS libkernel ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_process_exports_tests guest_kernel_process_exports_libraries)
+    add_test(NAME guest_kernel_process_exports COMMAND guest_kernel_process_exports_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_process_exports_patched COMMAND guest_kernel_process_exports_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_process_exports guest_kernel_process_exports_patched PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_process_exports PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${UNPATCHED_DIR}")
+        set_tests_properties(guest_kernel_process_exports_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
 
     add_test_executable(guest_posix_random_tests tests/GuestPosixRandom.cpp)
