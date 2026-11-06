@@ -273,7 +273,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `__kernel_cosdf` | `7ruwcMCJVGI` |
 | `__kernel_sindf` | `2Lvc7KWtErs` |
 | `__longjmp` | `9mKjVppFsL0` |
-| `__vfprintf` | `yAZ5vOpmBus` |
 | `_init_tls` | `6NCOqr3cD74` |
 | `_malloc_finalize_lv2` | `RnqlvEmvkdw` |
 | `_malloc_fini` | `21KFhEQDJ3s` |
@@ -534,6 +533,8 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [_ZNSt12future_errorD2Ev, _ZNSt14overflow_errorD2Ev and _ZNSt15underflow_errorD2Ev](../../../core/libs/prx/libSceLibcInternal/ExceptionDestructors.cpp) (libSceLibcInternal, NIDs `XFh0C66aEms`, `OypvNf3Uq3c` and `xiqd+QkuYXc`) are the base-object destructors of classes without virtual bases, which the [Itanium C++ ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#definitions) makes do the same work as the complete-object `D1` destructors, so they run the `libc` exports of those `D1` names. The console's `libSceLibcInternal.sprx` was not read and no title was seen calling them, so whether it frees the message from the same heap as `libc.prx` is unverified
 - [_Mtxinit, _Mtxlock, _Mtxunlock, _Mtxdst](../../../core/libs/prx/libSceLibcInternal/Mutex.cpp) (libSceLibcInternal) follow the PS4 code of [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/860d73b7e99559106a3ffa3d3d69f0f9237e115e/src/core/libraries/libc_internal/libc_internal_threads.cpp#L10-L62) and [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/libcinternal/ps4_mtx_internal.pas#L47-L99): the argument points to a pointer-sized libkernel mutex handle, `_Mtxinit` creates it recursive, a zeroed handle becomes an error-checking mutex on its first lock as with the POSIX calls, and each returns 0 on success and 1 on any failure. A null handle pointer throws in libkernel. The `SceLibcI_` name goes to `scePthreadMutexInit`, which drops it. For PS5 only the names are known (NID hashes, ps5sdk stubs); layout, signatures, mutex type and results are not verified on a PS5
 
+- [__vfprintf](../../../core/libs/prx/libSceLibcInternal/Format.cpp) (libSceLibcInternal, NID `yAZ5vOpmBus`) takes three arguments (`stream, format, args`) and reuses the public `vfprintf` implementation (`vfprintf_nid_postfix`), acquiring stream locks and returning -1 with `EBADF` (9) for a closed or null stream. This differs from FreeBSD 11.4 libc ([vfprintf.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdio/vfprintf.c)), where `__vfprintf` is a 4-argument unlocked helper (`fp, locale, fmt0, ap`) without null checking. Console signature, locking and null handling are unverified.
+
 ### Additional PS5 3.20 imports (xdCloudy #9498)
 
 - [3.20 pending imports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following PS5 3.20 inventory names are declared for import resolution only; their prototypes and behavior are unverified, and each call throws through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
@@ -542,7 +543,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FDtento`, `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`, `_FXp_addh`, `_FXp_addx`, `_FXp_invx`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FXp_ldexpx`, `_FXp_movx`, `_FXp_mulh`, `_FXp_mulx`, `_FXp_setn`, `_FXp_setw`, `_FXp_sqrtx`, `_FXp_subx`, `_Fac_tidy`, `_Fail_s`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - 
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fgpos`, `_Fofind`, `_Fofree`, `_Fopen`, `_Foprep`, `_Frprep`, `_Fspos`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fwprep`, `_Genld`, `_Gentime`, `_Getcloc`, `_Getctyptab`, `_Getdst`, `_Geterrno`, `_Getfld`, `_Getfloat`, `_Getgloballocale`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getpcostate`, `_Getpwcostate`, `_Getpwctrtab`, `_Getpwctytab`, `_Getstr`, `_Gettime`, `_Getzone`, `_Hypot`
