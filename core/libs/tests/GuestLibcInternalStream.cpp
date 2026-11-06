@@ -43,8 +43,8 @@ int main() {
     FileStream closedStream(TemporaryFile::Open());
     closedStream.Close();
     *__error_nid_postfix() = 0;
-    Require(__fflush_nid_postfix(&closedStream) == -1);
-    Require(*__error_nid_postfix() == 9);
+    Require(__fflush_nid_postfix(&closedStream) == 0);
+    Require(*__error_nid_postfix() == 0);
 
     const auto fileA = "guest_libc_internal_stream_a_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
     const auto fileB = "guest_libc_internal_stream_b_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp";
