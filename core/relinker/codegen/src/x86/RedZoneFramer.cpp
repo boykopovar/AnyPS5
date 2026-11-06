@@ -330,21 +330,29 @@ std::optional<TrampolineSite> relocateLeaf(
     }
 
     std::int64_t deepest = 0;
+    std::map<std::size_t, std::pair<std::int64_t, std::int64_t>> indirectExits;
     {
         std::vector<std::optional<std::int64_t>> depthAt(body.size());
         std::vector<std::optional<std::int64_t>> frameAt(body.size());
+        std::vector<std::int64_t> pushedAt(body.size(), 0);
         std::set<std::int64_t> poppedSlots;
         std::vector<std::pair<std::int64_t, bool>> upperOperands;
         std::vector<std::size_t> work{0};
         depthAt[0] = 0;
-        const auto reach = [&](const std::size_t k, const std::int64_t depth, const std::optional<std::int64_t> frame) {
+        const auto reach = [&](const std::size_t k, const std::int64_t depth, const std::optional<std::int64_t> frame, const std::int64_t pushed) {
             if (!depthAt[k]) {
                 depthAt[k] = depth;
                 frameAt[k] = frame;
+                pushedAt[k] = pushed;
                 work.push_back(k);
                 return true;
             }
-            return *depthAt[k] == depth && frameAt[k] == frame;
+            if (*depthAt[k] != depth || frameAt[k] != frame) return false;
+            if (pushedAt[k] != pushed && pushedAt[k] != -1) {
+                pushedAt[k] = -1;
+                work.push_back(k);
+            }
+            return true;
         };
         while (!work.empty()) {
             const auto k = work.back();
@@ -354,6 +362,7 @@ std::optional<TrampolineSite> relocateLeaf(
             const auto& info = insn.Info;
             auto depth = *depthAt[k];
             auto frame = frameAt[k];
+            auto pushed = pushedAt[k];
             const auto use = memoryUse(code, insn);
             if (use.RspBased && (use.Indexed || use.RspDisp >= 0)) upperOperands.emplace_back(use.RspDisp - depth, use.Indexed);
             if (use.RbpBased && frame && (use.RbpIndexed || use.RbpDisp - *frame >= -depth)) upperOperands.emplace_back(use.RbpDisp - *frame, use.RbpIndexed);
@@ -368,12 +377,14 @@ std::optional<TrampolineSite> relocateLeaf(
                 }
                 if (pop) poppedSlots.insert(-depth);
                 depth += push ? 8 : -8;
+                if (pushed != -1) pushed = push ? pushed + 8 : pushed >= 8 ? pushed - 8 : -1;
             } else if (const auto adjustment = rspAdjustment(code, insn)) {
                 depth -= *adjustment;
                 if (depth < 0) {
                     refusal = "frees stack its caller allocated";
                     return std::nullopt;
                 }
+                if (pushed > depth) pushed = -1;
             } else if (move && move->Destination == kRegRbp && move->Source == kRegRsp) {
                 frame = depth;
             } else if (move && move->Destination == kRegRsp && move->Source == kRegRbp) {
@@ -382,6 +393,7 @@ std::optional<TrampolineSite> relocateLeaf(
                     return std::nullopt;
                 }
                 depth = *frame;
+                pushed = depth == 0 ? 0 : -1;
             } else if (!info.IsTwoByteOpcode && info.Opcode == 0xc9 && insn.Length == 1) {
                 if (!frame || *frame < 8) {
                     refusal = "leave without a frame";
@@ -390,6 +402,7 @@ std::optional<TrampolineSite> relocateLeaf(
                 poppedSlots.insert(-*frame);
                 depth = *frame - 8;
                 frame.reset();
+                pushed = depth == 0 ? 0 : -1;
             }
             deepest = std::max(deepest, depth);
             const auto flow = info.FlowKind;
@@ -400,13 +413,7 @@ std::optional<TrampolineSite> relocateLeaf(
                 }
                 continue;
             }
-            if (flow == ControlFlowKind::IndirectJump) {
-                if (depth != 0) {
-                    refusal = "indirect jump at another stack depth";
-                    return std::nullopt;
-                }
-                continue;
-            }
+            if (flow == ControlFlowKind::IndirectJump) continue;
             std::optional<std::int64_t> target;
             if ((flow == ControlFlowKind::UnconditionalJump || flow == ControlFlowKind::ConditionalBranch) && info.HasBranchTarget) {
                 const auto at = static_cast<std::int64_t>(insn.Offset + insn.Length) + info.BranchDisp;
@@ -416,14 +423,24 @@ std::optional<TrampolineSite> relocateLeaf(
                     return std::nullopt;
                 }
             }
-            if (target && !reach(index.at(static_cast<std::size_t>(*target)), depth, frame)) {
+            if (target && !reach(index.at(static_cast<std::size_t>(*target)), depth, frame, pushed)) {
                 refusal = "inconsistent stack depth";
                 return std::nullopt;
             }
-            if (flow != ControlFlowKind::UnconditionalJump && k + 1 < body.size() && !reach(k + 1, depth, frame)) {
+            if (flow != ControlFlowKind::UnconditionalJump && k + 1 < body.size() && !reach(k + 1, depth, frame, pushed)) {
                 refusal = "inconsistent stack depth";
                 return std::nullopt;
             }
+        }
+        for (std::size_t k = 0; k < body.size(); ++k) {
+            if (body[k].Info.FlowKind != ControlFlowKind::IndirectJump || !depthAt[k]) continue;
+            const auto depth = *depthAt[k];
+            const auto pushed = pushedAt[k];
+            if (depth != 0 && pushed != 0 && pushed != depth) {
+                refusal = "indirect jump at a stack depth of pushes and allocations";
+                return std::nullopt;
+            }
+            indirectExits.emplace(k, std::make_pair(depth, depth == 0 ? 0 : pushed));
         }
         for (const auto& [offset, indexed] : upperOperands) {
             const auto slot = poppedSlots.upper_bound(offset);
@@ -479,6 +496,18 @@ std::optional<TrampolineSite> relocateLeaf(
             if (info.HasRipRelativeDisp) {
                 refusal = "rip-relative indirect branch";
                 return std::nullopt;
+            }
+            const auto exit = indirectExits.find(static_cast<std::size_t>(&insn - body.data()));
+            if (exit == indirectExits.end()) {
+                out.insert(out.end(), code, code + insn.Length);
+                continue;
+            }
+            const auto [depth, pushed] = exit->second;
+            for (std::int64_t slot = 8; slot <= pushed; slot += 8) {
+                const auto source = static_cast<std::uint32_t>(static_cast<std::int32_t>(depth - slot));
+                const auto destination = static_cast<std::uint32_t>(static_cast<std::int32_t>(shift + depth - slot));
+                out.insert(out.end(), {0xff, 0xb4, 0x24, static_cast<std::uint8_t>(source), static_cast<std::uint8_t>(source >> 8), static_cast<std::uint8_t>(source >> 16), static_cast<std::uint8_t>(source >> 24)});
+                out.insert(out.end(), {0x8f, 0x84, 0x24, static_cast<std::uint8_t>(destination), static_cast<std::uint8_t>(destination >> 8), static_cast<std::uint8_t>(destination >> 16), static_cast<std::uint8_t>(destination >> 24)});
             }
             out.insert(out.end(), raise.begin(), raise.end());
             out.insert(out.end(), code, code + insn.Length);

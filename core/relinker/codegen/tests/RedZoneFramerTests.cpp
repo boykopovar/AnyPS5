@@ -402,7 +402,7 @@ void relocatesLeavesTailJumpingThroughARegister() {
     require(std::search(stub.begin(), stub.end(), raiseThenJump.begin(), raiseThenJump.end()) != stub.end(), "the relocated leaf does not raise rsp back before its indirect jump");
 }
 
-void refusesRelocatingIndirectJumpsAtADepth() {
+void relocatesIndirectJumpsWithPushedRegisters() {
     std::vector<std::uint8_t> body = StoreBelowRsp;
     append(body, {0x53});
     append(body, LoadBelowRsp);
@@ -410,7 +410,21 @@ void refusesRelocatingIndirectJumpsAtADepth() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
-    require(sites.empty() && report.Relocated == 0, "a leaf jumping through rdi with a register still pushed was relocated");
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf jumping through rdi with rbx pushed was not relocated");
+    const auto& stub = sites[0].Body;
+    const std::vector<std::uint8_t> moveRaiseJump{0xff, 0xb4, 0x24, 0x00, 0x00, 0x00, 0x00, 0x8f, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xff, 0xe7};
+    require(std::search(stub.begin(), stub.end(), moveRaiseJump.begin(), moveRaiseJump.end()) != stub.end(), "the relocated leaf does not move its pushed rbx to the slot the original code expects before raising rsp and jumping");
+}
+
+void refusesRelocatingIndirectJumpsAfterPushesAndAllocations() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x48, 0x83, 0xec, 0x10});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, {0xff, 0xe7})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.empty() && report.Relocated == 0, "a leaf jumping through rdi after a push and a sub was relocated");
 }
 
 void refusesRelocatingRipRelativeBranches() {
@@ -982,7 +996,8 @@ int main() {
         refusesRelocatingRipRelativeBranches();
         relocatesLeavesEndingInTheSdkAssertTrap();
         relocatesLeavesTailJumpingThroughARegister();
-        refusesRelocatingIndirectJumpsAtADepth();
+        relocatesIndirectJumpsWithPushedRegisters();
+        refusesRelocatingIndirectJumpsAfterPushesAndAllocations();
         relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
         refusesRelocatingStackReadsOfAPushedRegister();
         skipsWideningOverBranchTargets();
