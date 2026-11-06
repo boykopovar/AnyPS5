@@ -624,7 +624,13 @@ int32_t APS5_VABI sceFiberRename(FiberObject* object, const char* name) {
 
 int32_t APS5_VABI sceFiberOptParamInitialize(FiberOptParam* opt_param) {
     if (!opt_param) return SCE_FIBER_ERROR_NULL;
-    std::memset(opt_param, 0, FIBER_OPT_PARAM_SIZE);
+    const std::uint8_t zero[FIBER_OPT_PARAM_SIZE] = {};
+    const auto preserved = errno;
+    if (!GuestCopyOut_nid_no_patch(opt_param, zero, sizeof(zero))) {
+        errno = preserved;
+        return SCE_FIBER_ERROR_INVALID;
+    }
+    errno = preserved;
     return SCE_OK;
 }
 

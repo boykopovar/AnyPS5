@@ -218,7 +218,13 @@ static constexpr const char* HandledMarker = "[guest_exception_fault] handler re
 
 enum class Mode { Resume, Registers, Nested, Jump, Retry, Unprotect, Remove };
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void RequireFailed(const char* expression, const char* file, int line) {
+    std::fprintf(stderr, "[guest_exception_fault] Require failed: %s at %s:%d\n", expression, file, line);
+    std::fflush(stderr);
+    std::abort();
+}
+
+#define Require(...) do { if (!(__VA_ARGS__)) RequireFailed(#__VA_ARGS__, __FILE__, __LINE__); } while (false)
 
 template <typename TValue>
 static TValue Field(void* context, std::size_t offset) {
@@ -493,6 +499,11 @@ static int RemoveAndReturnChild() {
     return EXIT_SUCCESS;
 }
 
+static void ReportChild(unsigned long code, const std::string& output) {
+    std::fprintf(stderr, "[guest_exception_fault] child status 0x%lx, %zu bytes of output:\n%s\n[guest_exception_fault] end of child output\n", code, output.size(), output.c_str());
+    std::fflush(stderr);
+}
+
 static void TestRemoveAndReturn(const char* self) {
     std::string output;
 #ifdef _WIN32
@@ -512,7 +523,7 @@ static void TestRemoveAndReturn(const char* self) {
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdInput = nul;
     startup.hStdOutput = writeEnd;
-    startup.hStdError = nul;
+    startup.hStdError = writeEnd;
     PROCESS_INFORMATION child{};
     Require(CreateProcessW(path, command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &child) != 0);
     CloseHandle(writeEnd);
@@ -525,9 +536,11 @@ static void TestRemoveAndReturn(const char* self) {
     const DWORD waited = WaitForSingleObject(child.hProcess, ChildTimeoutSeconds * 1000);
     if (waited != WAIT_OBJECT_0) TerminateProcess(child.hProcess, 1);
     reader.join();
+    if (waited != WAIT_OBJECT_0) ReportChild(waited, output);
     Require(waited == WAIT_OBJECT_0);
     DWORD code = 0;
     Require(GetExitCodeProcess(child.hProcess, &code) != 0);
+    if (code != static_cast<DWORD>(EXCEPTION_ACCESS_VIOLATION)) ReportChild(code, output);
     Require(code == static_cast<DWORD>(EXCEPTION_ACCESS_VIOLATION));
     CloseHandle(readEnd);
     CloseHandle(child.hThread);
@@ -562,6 +575,7 @@ static void TestRemoveAndReturn(const char* self) {
     close(pipeEnds[0]);
 #endif
     const auto first = output.find(HandledMarker);
+    if (first == std::string::npos || output.find(HandledMarker, first + 1) != std::string::npos) ReportChild(0, output);
     Require(first != std::string::npos && output.find(HandledMarker, first + 1) == std::string::npos);
 }
 
