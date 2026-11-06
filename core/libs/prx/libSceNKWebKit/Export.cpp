@@ -18858,15 +18858,7 @@ int APS5_VABI _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -18911,10 +18903,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6Stri
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -19463,10 +19451,6 @@ int APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv() {
 }
 
 int APS5_VABI _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -32643,22 +32627,6 @@ int APS5_VABI _ZN7bmalloc6IsoTLS13ensureEntriesEj() {
 }
 
 int APS5_VABI _ZN7bmalloc6IsoTLS8scavengeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc8FreeList14initializeBumpEPcj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc8FreeList5clearEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc8FreeListC1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 

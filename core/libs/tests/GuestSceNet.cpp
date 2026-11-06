@@ -23,6 +23,7 @@
 #include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -59,6 +60,19 @@ static bool FailResolverLookup(const char* hostname, int family, std::vector<std
         std::strcmp(hostname, "guest-sce-net.invalid") == 0));
     Require(family == AF_INET || family == AF_INET6);
     return false;
+}
+
+static std::atomic<int> blockedResolverLookup{0};
+
+static bool LoopbackResolverLookup(const char* hostname, int family, std::vector<std::array<std::uint8_t, 16>>& addresses) {
+    if (hostname != nullptr && std::strcmp(hostname, "guest-sce-net.resolver-blocked") == 0) {
+        blockedResolverLookup = 1;
+        while (blockedResolverLookup == 1) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } else if (hostname == nullptr || std::strcmp(hostname, "guest-sce-net.resolver-epoll") != 0 || family != AF_INET) {
+        return false;
+    }
+    addresses.push_back({127, 0, 0, 1});
+    return true;
 }
 
 class ScopedResolverLookupOverride {
@@ -787,6 +801,77 @@ static void CheckEmptyEpoll() {
     }
 }
 
+static void CheckResolverEpoll() {
+    constexpr std::uint32_t in = 0x1, hup = 0x10, descid = 0x10000;
+    constexpr int async = 0x1;
+    ScopedResolverLookupOverride lookupOverride(LoopbackResolverLookup);
+    const int resolver = sceNetResolverCreate("epoll-resolver", 0, 0);
+    const int epoll = sceNetEpollCreate("resolver-epoll", 0);
+    Require(resolver >= 1024 && resolver < 0x4000 && epoll >= 0x4000);
+    const int second = sceNetResolverCreate("second-resolver", 0, 0);
+    Require(second > resolver && second < 0x4000);
+    Require(sceNetResolverDestroy(second) == 0);
+    Require(sceNetResolverCreate("reused-resolver", 0, 0) == second);
+    Require(sceNetResolverDestroy(second) == 0);
+    NetEpollEvent registration{};
+    registration.events = in;
+    registration.data.u64 = 0x1234;
+    Require(sceNetEpollControl(epoll, 1, resolver, &registration) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 48));
+    NetEpollEvent ready{};
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+
+    std::uint32_t address = 0;
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, 0) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+    address = 0;
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
+    Require(address == 0x0100007fu);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
+    Require(ready.events == (in | descid) && ready.ident == static_cast<std::uint64_t>(resolver) && ready.data.u64 == 0x1234 && ready.reserved == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.unknown", &address, 0, 0, async) == 0);
+    int status = 0;
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == static_cast<int>(0x804101E1u));
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (in | descid));
+
+    auto waiter = std::async(std::launch::async, [epoll] {
+        NetEpollEvent woken{};
+        return std::make_pair(sceNetEpollWait(epoll, &woken, 1, -1), woken.events);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(waiter.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout);
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
+    Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+    Require(waiter.get() == std::make_pair(1, in | descid));
+
+    const int writer = sceNetEpollCreate("resolver-writer", 0);
+    registration.events = 0x2;
+    Require(sceNetEpollControl(writer, 1, resolver, &registration) == 0);
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
+    Require(sceNetEpollWait(writer, &ready, 1, 0) == 0);
+    Require(sceNetEpollControl(writer, 3, resolver, nullptr) == 0);
+    Require(Failed(sceNetEpollControl(writer, 3, resolver, nullptr), 2));
+    Require(sceNetEpollDestroy(writer) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
+
+    auto aborted = std::async(std::launch::async, [resolver, &address] {
+        return sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-blocked", &address, 0, 0, async);
+    });
+    while (blockedResolverLookup != 1) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(sceNetResolverAbort(resolver, 0) == 0);
+    blockedResolverLookup = 0;
+    Require(aborted.get() == 0);
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == static_cast<int>(0x80410104u));
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (in | descid | hup));
+
+    Require(sceNetResolverDestroy(resolver) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 9));
+    Require(sceNetEpollDestroy(epoll) == 0);
+}
+
 static void CheckRejectedArguments() {
     Require(Failed(sceNetEpollCreate(nullptr, 0), 22));
     for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetEpollCreate("rejected-epoll", flags), 22));
@@ -1195,6 +1280,25 @@ static void CheckIoctl() {
     Require(Failed(sceNetIoctl(socket, 0x4004667f, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
     Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
+    for (const int value : {0, 3}) {
+        int request = value;
+        Require(ioctl_nid_postfix(socket, 0x8004667e, &request) == 0);
+        int nonblocking = -1;
+        std::uint32_t length = sizeof(nonblocking);
+        Require(sceNetGetsockopt(socket, 0xffff, 0x1200, &nonblocking, &length) == 0 && nonblocking == (value != 0 ? 1 : 0));
+        Require(fcntl_nid_postfix(socket, 3) == (value != 0 ? 2 | 4 : 2));
+    }
+    Require(sceNetSendto(socket, payload, sizeof(payload), 0, address.data(), address.size()) == sizeof(payload));
+    entry.revents = 0;
+    Require(poll_nid_postfix(&entry, 1, 1000) == 1 && entry.revents == 1);
+    readable = -1;
+    Require(ioctl_nid_postfix(socket, 0x4004667f, &readable) == 0 && readable == sizeof(payload));
+    Require(sceNetRecv(socket, buffer, sizeof(buffer), 0) == sizeof(payload));
+    Require(ioctl_nid_postfix(socket, 0x4004667f, &readable) == 0 && readable == 0);
+    *__error_nid_postfix() = 0;
+    Require(ioctl_nid_postfix(socket, 0x4004667f, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(ioctl_nid_postfix(socket, 0x8004667e, nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(sceNetSocketClose(socket) == 0);
     Require(Failed(sceNetIoctl(socket, 0x8004667e, &enabled), 9));
     Require(Failed(sceNetIoctl(-1, 0x4004667f, &readable), 9));
@@ -2426,6 +2530,7 @@ int main() {
     CheckNetMemory();
     CheckNetstat();
     CheckEmptyEpoll();
+    CheckResolverEpoll();
     CheckIfFlags();
     CheckRejectedArguments();
     CheckDontWait();

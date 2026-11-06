@@ -9,6 +9,7 @@
 #include "prx/libwebrtc/include/IpAddress.hpp"
 #include "prx/libwebrtc/include/RmsLevel.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
+#include "prx/libwebrtc/include/RtcpPli.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
 #include <cstddef>
@@ -243,7 +244,7 @@ int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4Nack5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4NackC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4NackD1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp3Pli5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
+bool APS5_VABI _ZN6webrtc4rtcp3Pli5ParseERKNS0_12CommonHeaderE_nid_postfix(WebRtcRtcpPli* pli, const WebRtcRtcpCommonHeader* packet);
 int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void);
