@@ -128,7 +128,7 @@ int APS5_VABI detach_SB_nid_postfix();
 int APS5_VABI flushToByte_SB_nid_postfix();
 int APS5_VABI freePredInfo_nid_postfix();
 int APS5_VABI freeQuantizer_nid_postfix();
-int APS5_VABI freeTileInfo_nid_postfix();
+void APS5_VABI freeTileInfo_nid_postfix(void* codec);
 int APS5_VABI getBit32_SB_nid_postfix();
 int APS5_VABI getByteRead_SB_nid_postfix();
 int APS5_VABI getDCACPredMode_nid_postfix();

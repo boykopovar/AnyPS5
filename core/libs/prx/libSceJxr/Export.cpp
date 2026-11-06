@@ -488,10 +488,6 @@ int APS5_VABI freeQuantizer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI freeTileInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI getBit32_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
