@@ -468,10 +468,13 @@ int RunKeyWriteAfterMemo(AgcDriver::VulkanDevice& device, std::uint8_t* block, K
     else if (write == KeyWrite::RegisterRewrite) std::memset(keys, RegisterClear, KeyBytes);
     else std::memset(keys + KeyBytes, BesideValue, BesideBytes);
     const auto provedBefore = StorageTexture::RefreshesProved();
-    const auto epochBefore = StorageTexture::epochRefreshes.load();
+    const auto ownBefore = AgcDriver::Graphics::ThreadLookupOutcomes().counts[LookupOutcomes::RefreshProved];
     Require(AgcDriver::Graphics::CachedStorageSurface(context, resource) == image, "keys written after a memoized collect: the lookup after the key write made another image");
-    Require(lookupsBefore < 1u || StorageTexture::RefreshesProved() == provedBefore + 1u, "keys written after a memoized collect: the lookup after the key write was not answered by the refresh's own proof");
-    Require(lookupsBefore < 2u || StorageTexture::epochRefreshes.load() == epochBefore + 1u, "keys written after a memoized collect: the lookup after the key write was not answered inside the epoch of the last proof");
+    const auto proved = StorageTexture::RefreshesProved() - provedBefore;
+    const auto own = AgcDriver::Graphics::ThreadLookupOutcomes().counts[LookupOutcomes::RefreshProved] - ownBefore;
+    Require(lookupsBefore != 0u || (proved == 0u && own == 0u), "keys written after a memoized collect: the lookup after the key write was answered by a proof of the refresh instead of a refresh under the memoized collect");
+    Require(lookupsBefore != 1u || (proved == 1u && own == 1u), "keys written after a memoized collect: the lookup after the key write was not answered by the refresh's own proof");
+    Require(lookupsBefore != 2u || (proved == 1u && own == 0u), "keys written after a memoized collect: the lookup after the key write was not answered inside the epoch of the last proof");
     Require(image->UploadedKeys() == DccKeys::Clear0000, "keys written after a memoized collect: the lookup after the key write did not keep the image under its clear keys");
     if (write == KeyWrite::Beside) Require(!AgcDriver::GuestMemory::UnchangedSinceCollected(AddressOf(keys), KeyBytes, collected), "keys written after a memoized collect: the guest write beside the keys did not stamp the keys' page");
     image->MarkDirty();
@@ -1035,6 +1038,7 @@ int main(int argc, char** argv) {
                 std::puts("keys written after a memoized collect: no write watching: skipped");
                 return VulkanTestSkipped;
             }
+            Require(LookupOutcomes::Profiled(), "keys written after a memoized collect: the driver does not count lookup outcomes under APS5_PROFILE_DRAW");
             watched.emplace(true);
             return RunKeyWriteAfterMemo(*device, watched->Data(), mode->write, mode->lookupsBefore);
         }
