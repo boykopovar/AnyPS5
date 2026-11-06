@@ -60,8 +60,9 @@ std::uint8_t* WriteBlock(NpRingBuf& ringBuf, std::size_t& blockSize) {
 }
 
 void CommitWrite(NpRingBuf& ringBuf, std::size_t size) {
+    Require(size <= static_cast<std::size_t>(End(ringBuf) - ringBuf.writePointer),
+        "sce::np::RingBuf::CheckinForWrite: the write passes the end of the buffer");
     ringBuf.writePointer += size;
-    Require(ringBuf.writePointer <= End(ringBuf), "sce::np::RingBuf::CheckinForWrite: the write passes the end of the buffer");
     if (ringBuf.writePointer == End(ringBuf)) ringBuf.writePointer = ringBuf.buf;
     ringBuf.size += size;
 }
