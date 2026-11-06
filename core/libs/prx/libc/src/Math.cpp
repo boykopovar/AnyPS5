@@ -3589,6 +3589,60 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
     }
     return std::bit_cast<double>(next);
 }
+double APS5_VABI nexttoward_nid_postfix(double x, long double y) {
+    const std::uint64_t ux = std::bit_cast<std::uint64_t>(x);
+    if (std::isnan(x) || std::isnan(y)) {
+        const volatile long double sum = y + static_cast<long double>(x);
+        return static_cast<double>(sum);
+    }
+    if (static_cast<long double>(x) == y) return static_cast<double>(y);
+    if (x == 0) {
+        const std::uint64_t sign = std::signbit(y) ? 0x8000000000000000ull : 0ull;
+        const volatile double smallest = std::bit_cast<double>(sign | 1u);
+        const volatile double product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    const bool positive = static_cast<std::int32_t>(ux >> 32) > 0;
+    const bool above = y > static_cast<long double>(x);
+    const std::uint64_t next = positive == above ? ux + 1 : ux - 1;
+    const std::uint64_t exponent = next & 0x7ff0000000000000ull;
+    if (exponent == 0x7ff0000000000000ull) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        const volatile double product = x * x;
+        if (product != x) _Feraise_nid_postfix(0x10);
+    }
+    return std::bit_cast<double>(next);
+}
+float APS5_VABI nexttowardf_nid_postfix(float x, long double y) {
+    const std::uint32_t ux = std::bit_cast<std::uint32_t>(x);
+    if (std::isnan(x) || std::isnan(y)) {
+        const volatile long double sum = y + static_cast<long double>(x);
+        return static_cast<float>(sum);
+    }
+    if (static_cast<long double>(x) == y) return static_cast<float>(y);
+    if ((ux & 0x7fffffffu) == 0) {
+        const std::uint32_t sign = std::signbit(y) ? 0x80000000u : 0u;
+        const volatile float smallest = std::bit_cast<float>(sign | 1u);
+        const volatile float product = smallest * smallest;
+        return product == smallest ? product : smallest;
+    }
+    const bool positive = static_cast<std::int32_t>(ux) >= 0;
+    const bool above = y > static_cast<long double>(x);
+    const std::uint32_t next = positive == above ? ux + 1u : ux - 1u;
+    const std::uint32_t exponent = next & 0x7f800000u;
+    if (exponent == 0x7f800000u) {
+        _Feraise_nid_postfix(0x08);
+        return x + x;
+    }
+    if (exponent == 0) {
+        const volatile float product = x * x;
+        if (product != x) _Feraise_nid_postfix(0x10);
+    }
+    return std::bit_cast<float>(next);
+}
 int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
 int APS5_VABI __isnan_nid_postfix(double x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI __isinf_nid_postfix(double x) { return std::isinf(x) ? 1 : 0; }

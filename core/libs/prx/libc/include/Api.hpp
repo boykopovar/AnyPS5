@@ -789,6 +789,8 @@ double APS5_VABI _Recip_nid_postfix(double x);
 float APS5_VABI _FRecip_nid_postfix(float x);
 float APS5_VABI nextafterf_nid_postfix(float x, float y);
 double APS5_VABI nextafter_nid_postfix(double x, double y);
+double APS5_VABI nexttoward_nid_postfix(double x, long double y);
+float APS5_VABI nexttowardf_nid_postfix(float x, long double y);
 int APS5_VABI __isfinite_nid_postfix(double x);
 int APS5_VABI __isnan_nid_postfix(double x);
 int APS5_VABI __isinf_nid_postfix(double x);
