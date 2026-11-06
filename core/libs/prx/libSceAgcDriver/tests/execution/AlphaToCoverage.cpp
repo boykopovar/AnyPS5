@@ -1484,7 +1484,7 @@ int main(int argc, char** argv) {
             const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
             const bool unwatch = std::string_view(argv[1]) == "--dcc-unwatch";
             if (!unwatch && context.hostImportAlignment == 0) {
-                std::puts("skipped, the multisample DCC publication gate test requires host imports");
+                std::puts("skipped, host imports are unavailable for the multisample DCC publication gate test");
                 return VulkanTestSkipped;
             }
             const VkSampleCountFlags requiredSamples = unwatch ? VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT : VK_SAMPLE_COUNT_4_BIT;
