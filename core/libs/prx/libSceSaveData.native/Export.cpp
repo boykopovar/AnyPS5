@@ -52,6 +52,7 @@ static constexpr char SAVE_DIR[] = "_sd";
 static std::atomic<std::int32_t> g_transaction_counter{1};
 static std::atomic<int> g_initializations{0};
 static std::atomic<float> g_convertProgress{0.0f};
+static std::atomic<float> g_backupProgress{0.0f};
 
 static std::string save_root() {
     return std::string(SAVE_DIR);
@@ -430,6 +431,7 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
         g_events.push_back(event);
     }
     DeliverEvent(event);
+    g_backupProgress = 1.0f;
     return SAVE_DATA_OK;
 }
 
@@ -1430,6 +1432,7 @@ int APS5_VABI sceSaveDataTerminate(void) {
         --g_initializations;
         if (g_initializations == 0) {
             g_convertProgress = 0.0f;
+            g_backupProgress = 0.0f;
             stopped = DetachEventDelivery();
         }
     }
@@ -1695,6 +1698,7 @@ int APS5_VABI sceSaveDataClearProgress() {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
+    g_backupProgress = 0.0f;
     return SAVE_DATA_OK;
 }
 
@@ -1798,9 +1802,24 @@ int APS5_VABI sceSaveDataGetMountedSaveDataCount() {
     return 0;
 }
 
+static int getProgress(float* progress) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (progress == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    const float current = g_backupProgress.load();
+    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    return SAVE_DATA_OK;
+}
+
 int APS5_VABI sceSaveDataGetProgress(float* progress) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const int rc = getProgress(progress);
+    SAVEDATA_TRACE("getProgress -> 0x%08x progress=%.2f", static_cast<unsigned>(rc), rc == SAVE_DATA_OK ? g_backupProgress.load() : 0.0f);
+    return rc;
 }
 
 int APS5_VABI sceSaveDataGetSaveDataCount() {
