@@ -24,7 +24,6 @@ int APS5_VABI sceVideoOutConfigureOutputModeEx_();
 int APS5_VABI sceVideoOutConfigureOutputMode_();
 int APS5_VABI sceVideoOutControlHdcpEncryption();
 int APS5_VABI sceVideoOutCursorIsUpdatePending();
-int APS5_VABI sceVideoOutCursorSetHotSpot();
 int APS5_VABI sceVideoOutCursorSetPositionStereo();
 int APS5_VABI sceVideoOutCurveSamplePointsCalc_();
 int APS5_VABI sceVideoOutDebugAddVrrPrivilege();
