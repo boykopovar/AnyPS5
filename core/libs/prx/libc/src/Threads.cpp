@@ -633,11 +633,16 @@ struct StartGate {
 
 void* APS5_VABI StartGateEntry_nid_no_patch(void* argument) {
     auto* gate = static_cast<StartGate*>(argument);
-    RequireThrd(_Mtx_lock_nid_postfix(gate->mutex), "_Thrd_create: _Mtx_lock");
-    gate->started->store(1, std::memory_order_release);
-    RequireThrd(_Cnd_signal_nid_postfix(gate->condition), "_Thrd_create: _Cnd_signal");
-    RequireThrd(_Mtx_unlock_nid_postfix(gate->mutex), "_Thrd_create: _Mtx_unlock");
-    void* const result = gate->entry(gate->argument);
+    void** const condition = gate->condition;
+    void** const mutex = gate->mutex;
+    std::atomic<int>* const started = gate->started;
+    void* (APS5_VABI* const entry)(void*) = gate->entry;
+    void* const value = gate->argument;
+    RequireThrd(_Mtx_lock_nid_postfix(mutex), "_Thrd_create: _Mtx_lock");
+    started->store(1, std::memory_order_release);
+    RequireThrd(_Cnd_signal_nid_postfix(condition), "_Thrd_create: _Cnd_signal");
+    RequireThrd(_Mtx_unlock_nid_postfix(mutex), "_Thrd_create: _Mtx_unlock");
+    void* const result = entry(value);
     _Cnd_do_broadcast_at_thread_exit_nid_postfix();
     return result;
 }
