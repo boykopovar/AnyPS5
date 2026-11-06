@@ -476,13 +476,7 @@ struct Replay {
             return;
         case FrameCallKind::Memory: {
             std::lock_guard lock(memoryMutex);
-            const auto found = groups.find(call.values.at(0));
-            if (found == groups.end()) return;
-            for (const auto* chunk : found->second) {
-                if (skipped.Overlaps(*chunk)) continue;
-                restore(reader, *chunk);
-                deltaBytes += chunk->bytes;
-            }
+            restoreGroup(call.values.at(0));
             return;
         }
         case FrameCallKind::FrameStart:
@@ -491,6 +485,57 @@ struct Replay {
             return;
         }
         throw std::runtime_error("frame replay: unknown call kind");
+    }
+
+    static bool rewindWait(const AgcDriver::AwaitedWait& wait) {
+        return wait.function == 0 && wait.bytes == 0;
+    }
+
+    void restoreGroup(std::uint64_t group) {
+        const auto found = groups.find(group);
+        if (found == groups.end()) return;
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        std::vector<std::uint64_t> parked;
+        for (std::size_t slot = 0; slot < count; ++slot) {
+            if (rewindWait(awaited[slot])) parked.push_back(awaited[slot].address);
+        }
+        std::vector<std::pair<std::uint32_t*, std::uint32_t>> controls;
+        for (const auto* chunk : found->second) {
+            if (skipped.Overlaps(*chunk)) continue;
+            auto bytes = reader.Read(*chunk);
+            auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+            for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, bytes.data() + at, sizeof(value));
+                if ((value & AgcDriver::Pm4::RewindValid) == 0) continue;
+                std::uint32_t header = 0;
+                if (at >= 4) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
+                const bool rewind = (header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u;
+                if (!rewind && std::find(parked.begin(), parked.end(), chunk->address + at) == parked.end()) continue;
+                controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                std::memcpy(bytes.data() + at, target + at, sizeof(value));
+            }
+            std::memcpy(target, bytes.data(), bytes.size());
+            deltaBytes += chunk->bytes;
+        }
+        for (const auto& [control, value] : controls) std::atomic_ref<std::uint32_t>(*control).store(value, std::memory_order_release);
+    }
+
+    bool releaseRewind(const FrameCall& call, const AgcDriver::AwaitedWait& wait) {
+        if (call.kind != FrameCallKind::Memory) return false;
+        const auto found = groups.find(call.values.at(0));
+        if (found == groups.end()) return false;
+        for (const auto* chunk : found->second) {
+            if (chunk->address > wait.address || wait.address + 4 > chunk->address + chunk->bytes || skipped.Overlaps(*chunk)) continue;
+            const auto bytes = reader.Read(*chunk);
+            std::uint32_t value = 0;
+            std::memcpy(&value, bytes.data() + (wait.address - chunk->address), sizeof(value));
+            if ((value & AgcDriver::Pm4::RewindValid) == 0) return false;
+            restoreGroup(call.values.at(0));
+            return true;
+        }
+        return false;
     }
 
     static std::uint64_t load(std::uint64_t address, std::size_t bytes) {
@@ -558,6 +603,11 @@ struct Replay {
             const std::size_t bytes = wait.bytes == 8 ? 8 : 4;
             if (wait.function != 0 && satisfies(wait, load(wait.address, bytes))) continue;
             bool released = false;
+            if (rewindWait(wait)) {
+                for (auto index = from; index < calls.size() && !released; ++index) released = releaseRewind(calls[index], wait);
+                if (released) ++earlyReleases;
+                continue;
+            }
             for (auto index = from; index < calls.size() && !released; ++index) released = writeRecordedValue(calls[index], wait);
             for (auto index = std::min(from, calls.size()); index > 0 && !released; --index) {
                 released = writeRecordedValue(calls[index - 1], wait);
