@@ -87,7 +87,7 @@ void ThreadAndSessionTests(int descriptor) {
     Require(tcsetsid_nid_postfix(-1, session) == -1 && Error() == 9);
     const int socketDescriptor = socket_nid_postfix(2, 2, 0);
     Require(socketDescriptor >= 0);
-    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 25);
+    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 49);
     Require(close_nid_postfix(socketDescriptor) == 0);
 }
 

@@ -403,7 +403,8 @@ int APS5_VABI sceNpServiceClientInit(void);
 int APS5_VABI sceNpServiceClientTerm(void);
 int APS5_VABI sceNpSetAdditionalScope(void);
 int APS5_VABI sceNpSetNpTitleIdVsh(void);
-int APS5_VABI sceNpUnregisterGamePresenceCallbackA(void);
+int APS5_VABI sceNpRegisterGamePresenceCallbackA(void* callback, void* userdata);
+int APS5_VABI sceNpUnregisterGamePresenceCallbackA(int callbackId);
 int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void);
 
 }

@@ -139,6 +139,7 @@ std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const FreeType::GuestVector*
 void APS5_VABI FT_Vector_Rotate_nid_postfix(FreeType::GuestVector* vector, std::int64_t angle);
 std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y);
 void APS5_VABI FT_Vector_From_Polar_nid_postfix(FreeType::GuestVector* vector, std::int64_t length, std::int64_t angle);
+int APS5_VABI FT_Open_Face_nid_postfix(FreeType::GuestLibrary* library, const FreeType::GuestOpenArgs* args, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
@@ -154,4 +155,5 @@ void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std
 int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
 void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
 int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch();
+int APS5_VABI sceFreeTypeOtOpenFace_nid_no_patch();
 }

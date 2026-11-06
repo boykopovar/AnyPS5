@@ -141,6 +141,8 @@ int APS5_VABI getw_nid_postfix(FileStream* stream);
 int APS5_VABI putw_nid_postfix(int value, FileStream* stream);
 void APS5_VABI abort_handler_s_nid_postfix(const char* message, void*, int);
 void* APS5_VABI bsearch_s_nid_postfix(const void* key, const void* base, std::size_t count, std::size_t size, GuestContextCompare compare, void* context);
+void APS5_VABI insque_nid_postfix(void* element, void* pred);
+void APS5_VABI remque_nid_postfix(void* element);
 std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* remaining, const std::uint16_t* delimiters, std::uint16_t** context);
 int APS5_VABI wctomb_s_nid_postfix(int* status, char* destination, std::size_t capacity, std::uint16_t wide);
 int APS5_VABI wcrtomb_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, std::uint16_t wide, void* state);
