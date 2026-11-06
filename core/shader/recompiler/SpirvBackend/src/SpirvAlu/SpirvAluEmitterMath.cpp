@@ -583,7 +583,7 @@ public:
 private:
     static constexpr std::uint32_t LowKind = 0u;
     static constexpr std::uint32_t HighKind = 1u;
-    static constexpr std::uint32_t OwnKind = 2u;
+    static constexpr std::uint32_t OwnBitKind = 2u;
     static constexpr std::uint32_t NonEmptyKind = 3u;
 
     bool ownMask(const IrValue* mask, const IrBlock* reader) {
@@ -603,8 +603,8 @@ private:
                 result = kind == NonEmptyKind ? nonEmpty(value->Argument(index), value->PhiBlock(index), value->Parent()) : walk(value->Argument(index), kind);
             }
             assumed.erase(key);
-        } else if (kind == OwnKind) {
-            result = exactlyOwn(value);
+        } else if (kind == OwnBitKind) {
+            result = holdsOwnBit(value);
         } else if (kind != NonEmptyKind) {
             result = ownWord(value, kind);
         }
@@ -615,7 +615,7 @@ private:
     bool nonEmpty(const IrValue* word, const IrBlock* block, const IrBlock* entered) {
         word = Resolved(word);
         if (word == nullptr) return false;
-        if (walk(word, OwnKind)) return true;
+        if (walk(word, OwnBitKind)) return true;
         for (const IrBlock* at = block; at != nullptr && spend(); entered = at, at = at->Predecessors().front()) {
             if (entered != nullptr && tested(at, entered, word)) return true;
             if (at == word->Parent() || at->Predecessors().size() != 1u) break;
@@ -660,17 +660,17 @@ private:
         return value != nullptr && value->HasImmediate() && ((value->Type() == IrType::U32 && value->ImmediateU32() == 0u) || (value->Type() == IrType::U64 && value->ImmediateU64() == 0u));
     }
 
-    bool exactlyOwn(const IrValue* word) {
-        if (word->HasImmediate()) return word->Type() == IrType::U32 && word->ImmediateU32() == 1u;
+    bool holdsOwnBit(const IrValue* word) {
+        if (word->HasImmediate()) return word->Type() == IrType::U32 && (word->ImmediateU32() & 1u) != 0u;
         switch (word->Opcode()) {
             case IrOpcode::CompositeExtractU32x4: {
                 const auto* ballot = Resolved(word->Argument(0));
                 const auto* active = Is(ballot, IrOpcode::Ballot) ? Resolved(ballot->Argument(0)) : nullptr;
                 return active != nullptr && active->HasImmediate() && active->Type() == IrType::Bool && active->ImmediateBool() && IsU32(word->Argument(1), 0u);
             }
-            case IrOpcode::BitwiseAnd32: return walk(word->Argument(0), OwnKind) && walk(word->Argument(1), OwnKind);
-            case IrOpcode::BitwiseOr32: return EitherOrder(word, [this](const IrValue* own, const IrValue* other) { return walk(own, OwnKind) && walk(other, LowKind); });
-            case IrOpcode::SelectU32: return walk(word->Argument(1), OwnKind) && walk(word->Argument(2), OwnKind);
+            case IrOpcode::BitwiseAnd32: return walk(word->Argument(0), OwnBitKind) && walk(word->Argument(1), OwnBitKind);
+            case IrOpcode::BitwiseOr32: return walk(word->Argument(0), OwnBitKind) || walk(word->Argument(1), OwnBitKind);
+            case IrOpcode::SelectU32: return walk(word->Argument(1), OwnBitKind) && walk(word->Argument(2), OwnBitKind);
             default: return false;
         }
     }

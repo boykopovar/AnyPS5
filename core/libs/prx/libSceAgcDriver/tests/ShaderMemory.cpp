@@ -6195,6 +6195,38 @@ void verifySingleLaneVertexWave() {
     expectFailure([&] { static_cast<void>(compiled(comparedWaterfall, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups entered an s_ff1 waterfall over a compare result that can be empty, which reads lane 63");
     expectFailure([&] { static_cast<void>(compiled(conditionalLane, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups read the lane s_cselect_b32 took from s_ff1_i32_b32 of EXEC or -1 on a test of the vertex index");
     require(!compiled(selectedLane, 32u, true).empty(), "single-lane vertex wave: the lane v_readfirstlane_b32 took from the vertex index did not build on a 32-lane vertex subgroup");
+    const auto firstLaneRead = [](std::initializer_list<std::uint32_t> mask, bool guarded) {
+        std::vector<std::uint32_t> code(mask);
+        if (guarded) code.insert(code.end(), {0xbf078000u, 0xbf840003u});
+        code.insert(code.end(), {0xbe821300u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u});
+        return code;
+    };
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 3> ownMasks{{
+        {"a compare result tested for zero before s_ff1_i32_b32", firstLaneRead({0x7d880a84u, 0xbe80036au}, true)},
+        {"a copy of EXEC", firstLaneRead({0xbe80037eu}, false)},
+        {"a copy of EXEC ORed with a compare result", firstLaneRead({0x7d880a84u, 0xbe87036au, 0xbe86037eu, 0x88000706u}, false)},
+    }};
+    for (const auto& [name, code] : ownMasks) {
+        const auto spirv = compiled(code, 32u, false);
+        require(!spirv.empty() && !usesSubgroups(spirv), (std::string("single-lane vertex wave: the lane s_ff1 took from ") + name + " did not build without subgroup operations").c_str());
+    }
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 12> otherMasks{{
+        {"an AND of two words v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0x80058104u, 0x87000504u}, true)},
+        {"a copy of EXEC ORed with a word v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0xbe86037eu, 0x88000406u}, true)},
+        {"a copy of EXEC XORed with a word v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0xbe86037eu, 0x89000406u}, true)},
+        {"an s_cselect_b32 of a copy of EXEC or a word v_readfirstlane_b32 took from the vertex index, tested for zero", firstLaneRead({0x7e080505u, 0xbe86037eu, 0xbf068004u, 0x85000406u}, true)},
+        {"a copy of EXEC ANDed with a word v_readfirstlane_b32 took from the vertex index", firstLaneRead({0x7e080505u, 0xbe86037eu, 0x87000406u}, false)},
+        {"an s_cselect_b32 of a copy of EXEC or 0", firstLaneRead({0x7e080505u, 0xbe86037eu, 0xbf068004u, 0x85008006u}, false)},
+        {"an OR of two compare results", firstLaneRead({0x7d880a84u, 0xbe87036au, 0x7d880a88u, 0xbe88036au, 0x88000807u}, false)},
+        {"a compare result in the low word and EXEC in the high word, tested for zero by s_cmp_lg_u64", {0x7d880a84u, 0xbe80036au, 0xbe81037eu, 0xbf138000u, 0xbf840003u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a compare result in the low word and EXEC in the high word, tested for zero by the SCC of s_and_b64", {0x7d880a84u, 0xbe82036au, 0xbe83037eu, 0x87800202u, 0xbf840003u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a compare result read only when s_cmp_lg_u32 found it zero", {0x7d880a84u, 0xbe80036au, 0xbf078000u, 0xbf850003u, 0xbe821300u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a copy of EXEC behind an s_cselect_b32 on s_cmp_lg_u32 of a word v_readfirstlane_b32 took from the vertex index", {0x7e080505u, 0xbe80037eu, 0xbe821300u, 0xbf078004u, 0x8502c102u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+        {"a copy of EXEC behind an s_cselect_b32 on s_cmp_eq_u32 of that copy and 0", {0xbe80037eu, 0xbe821300u, 0xbf068000u, 0x8502c102u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u}},
+    }};
+    for (const auto& [name, code] : otherMasks) {
+        expectFailure([&] { static_cast<void>(compiled(code, 32u, false)); }, registerLane, (std::string("single-lane vertex wave: the lane s_ff1 took from ") + name + " was accepted").c_str());
+    }
 
     ShaderPixelStageInfo info{};
     info.inputAddr = PixelInputBit(PixelInput::PerspectiveCenter);
