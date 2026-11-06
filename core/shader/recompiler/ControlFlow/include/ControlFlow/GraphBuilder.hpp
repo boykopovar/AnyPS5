@@ -52,6 +52,7 @@ struct TableCall {
     std::uint32_t entryOffset = 0;
     std::uint32_t entryStride = 0;
     std::optional<std::uint64_t> constantPointer;
+    std::optional<std::uint32_t> nestedDescriptorOffset;
 };
 
 struct TableCallee {
