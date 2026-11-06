@@ -3097,7 +3097,7 @@ int APS5_VABI sceNetInitParam(const NetInitializeParameter* parameter) {
     std::lock_guard lk(g_mutex);
     if (g_net_init_param_set) return fail(NET_EBUSY);
     if (parameter == nullptr) return fail(NET_EINVAL);
-    std::memcpy(g_net_init_param.data(), parameter, g_net_init_param.size());
+    if (!GuestSocketReadGuest_nid_no_patch(g_net_init_param.data(), parameter, g_net_init_param.size())) return fail(NET_EFAULT);
     g_net_init_param_set = true;
     g_net_inited = true;
     return 0;
