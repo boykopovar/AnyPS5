@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -1113,7 +1114,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         ++cache.counts.stale;
     }
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
-    const bool noSnapshot = source != nullptr || clear.has_value();
+    static const bool sampledImport = std::getenv("APS5_NO_SAMPLED_IMPORT") == nullptr;
+    const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
+    const HostImport* gpuSource = gpuWritten ? ExistingHostImportFor(context, address, bytes) : nullptr;
+    const bool noSnapshot = source != nullptr || clear.has_value() || gpuSource != nullptr;
     if (noSnapshot) parkSnapshot(cache, recycled);
     else if (recycled.empty()) recycled = spareSnapshot(cache, bytes);
     CachedTexture entry{key, address, noSnapshot ? std::vector<std::byte>{} : (recycled.empty() ? std::vector<std::byte>(bytes) : std::move(recycled)), nullptr, *keys, snapshotGeneration};
@@ -1147,6 +1151,9 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
         entry.accounted = entry.texture->AllocationBytes();
         counters.cleared.fetch_add(1, std::memory_order_relaxed);
+    } else if (gpuSource != nullptr) {
+        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, gpuSource);
+        entry.accounted = entry.texture->AllocationBytes();
     } else {
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
         const bool pending = *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
