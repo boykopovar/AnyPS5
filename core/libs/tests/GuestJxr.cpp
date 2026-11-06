@@ -18,6 +18,7 @@ void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.
 
 void* lastFreed = nullptr;
 int frees = 0;
+std::array<void*, 32> freeLog{};
 bool failAllocation = false;
 bool fillMalloc = false;
 int mallocCalls = 0;
@@ -49,6 +50,7 @@ void* APS5_VABI Allocate(std::size_t size) {
 void APS5_VABI Free(void* pointer) {
     if (pointer != nullptr) {
         lastFreed = pointer;
+        if (frees < static_cast<int>(freeLog.size())) freeLog[static_cast<std::size_t>(frees)] = pointer;
         ++frees;
     }
     std::free(pointer);
@@ -168,6 +170,48 @@ void TestInitPostProc() {
 
 }
 
+void TestTermPostProc() {
+    JxrGuestPostProcInfo sentinel{};
+    JxrGuestPostProcInfo* slots[3][2];
+    for (auto& channel : slots)
+        for (auto& slot : channel) slot = &sentinel;
+
+    std::array<JxrGuestPostProcInfo*, 3> base{};
+    const auto firstAllocation = mallocCalls;
+    for (auto& pointer : base) {
+        pointer = static_cast<JxrGuestPostProcInfo*>(malloc_nid_postfix(sizeof(JxrGuestPostProcInfo)));
+        Require(pointer != nullptr);
+    }
+    Require(mallocCalls == firstAllocation + 3);
+    for (std::size_t i = 0; i < base.size(); ++i) {
+        const auto index = static_cast<std::size_t>(firstAllocation) + i;
+        Require(mallocLog[index] == base[i]);
+        Require(mallocSizeLog[index] == 88);
+    }
+
+    slots[0][0] = base[0] + 1;
+    slots[0][1] = nullptr;
+    slots[1][0] = base[1] + 1;
+    slots[1][1] = base[2] + 1;
+    const auto firstFree = frees;
+    termPostProc_nid_postfix(slots, 2);
+    Require(frees == firstFree + 3);
+    for (std::size_t i = 0; i < base.size(); ++i)
+        Require(freeLog[static_cast<std::size_t>(firstFree) + i] == base[i]);
+    Require(slots[0][0] == base[0] + 1 && slots[0][1] == nullptr);
+    Require(slots[1][0] == base[1] + 1 && slots[1][1] == base[2] + 1);
+    for (std::size_t slot = 0; slot < 2; ++slot) Require(slots[2][slot] == &sentinel);
+
+    const auto freesBeforeZeroChannels = frees;
+    termPostProc_nid_postfix(nullptr, 0);
+    Require(frees == freesBeforeZeroChannels);
+
+    bool threw = false;
+    try { termPostProc_nid_postfix(nullptr, 1); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+}
+
 int main() {
     InitializeHeap();
     void* memory = malloc_nid_postfix(64);
@@ -256,6 +300,7 @@ int main() {
     try { PKFormatConverter_GetSize_nid_postfix(&invalidConverter, &output.width, &output.height); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    TestTermPostProc();
     TestInitPostProc();
     return 0;
 }
