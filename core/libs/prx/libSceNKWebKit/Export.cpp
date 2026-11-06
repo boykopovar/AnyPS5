@@ -12558,21 +12558,6 @@ int APS5_VABI WKAXObjectButtonState() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKAXObjectCopyDescription() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyHelpText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyTitle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKAXObjectCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKAXObjectFrame() {
     NotImplemented_nid_no_patch(__func__);
