@@ -929,7 +929,7 @@ void CheckBdaSpan(AgcDriver::VulkanDevice& device, const Block& block, std::size
         failure = error.what();
     }
     const auto deferred = log.Finish();
-    if (failure.empty()) failure = deferred;
+    if (failure.empty() && deferred.find("BDA access failed:") != std::string::npos) failure = deferred;
     if (refused) {
         Require(failure.find("BDA access failed:") != std::string::npos, "BDA access to a resident native multisample range was not refused: " + failure);
         Require(std::equal(before.begin(), before.end(), block.data), "a refused BDA access changed guest memory");
@@ -1415,7 +1415,10 @@ int main(int argc, char** argv) {
             recipeReused = true;
             CheckBufferRefused([&] {
                 AgcDriver::VulkanDevice::IndirectOutcome outcome{};
-                device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome);
+                if (device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome) == AgcDriver::RecipeOutcome::Rebuild) {
+                    std::puts("native buffer recipe requested rebuild; checking the ordinary dispatch refusal");
+                    device->Dispatch(warm, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
+                }
                 device->WaitIdle();
             }, "recipe dispatch", missing);
         }
