@@ -50,4 +50,11 @@ static_assert(offsetof(MouseData, wheel) == 24);
 static_assert(offsetof(MouseData, tilt) == 28);
 static_assert(offsetof(MouseData, reserved) == 32);
 
+constexpr int MOUSE_ERROR_NO_HANDLE = static_cast<int>(0x80df0008u);
+constexpr std::uint32_t MOUSE_MAX_HAND_TYPE = 1;
+constexpr std::uint32_t MOUSE_MAX_POINTER_SPEED = 8;
+constexpr std::uint32_t MOUSE_EXTENSION_DATA_SIZE = 0x30;
+constexpr std::uint32_t MOUSE_EXTENSION_STATE_SIZE = 0x40;
+constexpr std::size_t MOUSE_EXTENSION_CONFIG_SIZE = 0x20;
+
 #endif
