@@ -67,6 +67,43 @@ static std::string Digest(const Algorithm& algorithm, const std::string& message
     return Hex(digest, algorithm.digestSize);
 }
 
+static void CheckWideInitialization(const Algorithm& algorithm) {
+    struct GuardedContext {
+        std::uint64_t before;
+        Sha512Context context;
+        std::uint64_t after;
+    };
+    for (const unsigned char seed : {0u, 0x55u, 0xffu}) {
+        GuardedContext guarded;
+        std::memset(&guarded, seed, sizeof(guarded));
+        for (std::size_t index = 0; index < sizeof(guarded.context.data); ++index)
+            reinterpret_cast<unsigned char*>(guarded.context.data)[index] = static_cast<unsigned char>(seed + index);
+        unsigned char retained[sizeof(guarded.context.data)];
+        std::memcpy(retained, guarded.context.data, sizeof(retained));
+        const auto before = guarded.before;
+        const auto after = guarded.after;
+        auto& context = guarded.context;
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            Require(algorithm.init(&context) == 1, "wide init returns 1");
+            Require(std::memcmp(context.data, retained, sizeof(retained)) == 0, "wide init preserves the block buffer");
+            Require(context.Nl == 0 && context.Nh == 0 && context.num == 0 && context.mdLength == algorithm.digestSize,
+                    "wide init resets the counters and digest size");
+            Require(guarded.before == before && guarded.after == after, "wide init stays within the context");
+            if (cycle == 0) {
+                Require(algorithm.update(&context, "discarded partial input", 23) == 1, "wide partial input before reinit");
+            } else {
+                unsigned char digest[64];
+                const std::size_t length = cycle == 1 ? 3 : 0;
+                Require(algorithm.update(&context, "abc", length) == 1, "wide input after reinit");
+                Require(algorithm.final(digest, &context) == 1, "wide final after reinit");
+                Require(Hex(digest, algorithm.digestSize) == algorithm.expected[cycle == 1 ? 1 : 0],
+                        "wide reinit discards the previous digest state");
+            }
+            std::memcpy(retained, context.data, sizeof(retained));
+        }
+    }
+}
+
 int main() {
     const std::string messages[6] {
         "",
@@ -111,6 +148,7 @@ int main() {
     };
 
     for (const auto& algorithm : algorithms) {
+        if (algorithm.blockSize == 128) CheckWideInitialization(algorithm);
         for (int i = 0; i < 6; ++i) {
             if (!algorithm.expected[i]) continue;
             const auto& message = messages[i];

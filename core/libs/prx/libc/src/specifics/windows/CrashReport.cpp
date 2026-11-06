@@ -4,6 +4,8 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/HostFault.hpp"
+#include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/CrashText.hpp"
 #include <algorithm>
@@ -32,8 +34,7 @@ void Report(const char* format, ...) {
     va_end(args);
     if (length <= 0) return;
     if (length > static_cast<int>(sizeof(buffer)) - 1) length = sizeof(buffer) - 1;
-    DWORD written = 0;
-    WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
+    log_file::CrashWrite(log_file::StandardError, buffer, static_cast<std::size_t>(length));
 }
 
 void ReportAllThreads();
@@ -76,6 +77,7 @@ bool IsFatal(DWORD code) {
     case EXCEPTION_PRIV_INSTRUCTION:
     case EXCEPTION_STACK_OVERFLOW:
     case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_INT_OVERFLOW:
     case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
     case EXCEPTION_IN_PAGE_ERROR:
         return true;
@@ -334,6 +336,13 @@ void ReportUndeliverableException(const EXCEPTION_POINTERS* info, std::uint64_t 
     ReportStackCandidates(info->ContextRecord->Rsp, 32, 0x4000);
 }
 
+std::atomic<LibcHostFaultHandler> g_hostFaultHandler{nullptr};
+
+bool HandleHostFault(EXCEPTION_POINTERS* info) {
+    const auto handler = g_hostFaultHandler.load(std::memory_order_acquire);
+    return handler != nullptr && handler(info);
+}
+
 bool HandleSse4a(EXCEPTION_POINTERS* info) {
     if (!g_sse4aEmulation) return false;
     const auto* record = info->ExceptionRecord;
@@ -352,11 +361,13 @@ bool HandleSse4a(EXCEPTION_POINTERS* info) {
 
 LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     static std::atomic<bool> reported{false};
+    if (GuestArena::GuestArenaRecoverRead_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* fault = info->ExceptionRecord;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
         if (const auto frame = FrameWithoutUnwindData(*info->ContextRecord)) ReportUndeliverableException(info, frame);
@@ -372,7 +383,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     char line[MAX_PATH + 64];
     char threadName[128] = "";
     if (PWSTR description = ThreadDescription(GetCurrentThread())) {
-        WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName), nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName) - 1, nullptr, nullptr);
         LocalFree(description);
     }
     Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
@@ -590,7 +601,7 @@ void ReportAllThreads() {
             ResumeThread(thread);
             char name[128] = "";
             if (PWSTR description = ThreadDescription(thread)) {
-                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name) - 1, nullptr, nullptr);
                 LocalFree(description);
             }
             CloseHandle(thread);
@@ -690,5 +701,9 @@ const bool g_crashReportInstalled = [] {
     return true;
 }();
 
+}
+
+extern "C" void LibcSetHostFaultHandler_nid_no_patch(LibcHostFaultHandler handler) noexcept {
+    g_hostFaultHandler.store(handler, std::memory_order_release);
 }
 #endif

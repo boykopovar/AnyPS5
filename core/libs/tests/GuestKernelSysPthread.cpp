@@ -1,9 +1,14 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <thread>
 
 static constexpr int SCOPE_PROCESS = 0;
 static constexpr int SCOPE_SYSTEM = 2;
@@ -34,6 +39,44 @@ static void TestScope() {
     Require(scePthreadAttrDestroy(&attr) == 0);
 }
 
+static void TestMutexAttributeGeneration() {
+    PthreadMutexattr attr = nullptr;
+    Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+
+    int generation = -1;
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, &generation) == 0 && generation == 0);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(&attr, 1) == 0);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, &generation) == 0 && generation == 1);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(&attr, 2) == 45);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(nullptr, &generation) == 22);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, nullptr) == 22);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(nullptr, 0) == 22);
+    PthreadMutexattr destroyedAttr = nullptr;
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&destroyedAttr, &generation) == 22);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(&destroyedAttr, 0) == 22);
+
+    Require(scePthreadMutexattrSetgen(&attr, 0) == 0);
+    Require(scePthreadMutexattrGetgen(&attr, &generation) == 0 && generation == 0);
+    Require(scePthreadMutexattrSetgen(&attr, 2) == SCE_KERNEL_ERROR_EOPNOTSUPP);
+    Require(scePthreadMutexattrGetgen(nullptr, &generation) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, reinterpret_cast<int*>(0x10)) == 14);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(reinterpret_cast<const PthreadMutexattr*>(0x10), &generation) == 22);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(reinterpret_cast<PthreadMutexattr*>(0x10), 0) == 22);
+    Require(scePthreadMutexattrGetgen(&attr, reinterpret_cast<int*>(0x10)) == static_cast<int>(0x80020000u | 14u));
+    Require(scePthreadMutexattrGetgen(reinterpret_cast<const PthreadMutexattr*>(0x10), &generation) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetgen(reinterpret_cast<PthreadMutexattr*>(0x10), 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+}
+
+static void TestThreadAttrCreateSuspend() {
+    Require(pthread_attr_setcreatesuspend_np_nid_postfix(nullptr) == 22);
+    Require(pthread_attr_setcreatesuspend_np_nid_postfix(reinterpret_cast<PthreadAttr*>(0x10)) == 22);
+    PthreadAttr attr{};
+    Require(scePthreadAttrInit(&attr) == 0);
+    Require(pthread_attr_setcreatesuspend_np_nid_postfix(&attr) == 0);
+    Require(scePthreadAttrDestroy(&attr) == 0);
+}
+
 static void TestConcurrency() {
     Require(scePthreadSetconcurrency(3) == 0 && scePthreadGetconcurrency() == 3);
     Require(scePthreadSetconcurrency(-1) == SCE_KERNEL_ERROR_EINVAL && scePthreadGetconcurrency() == 3);
@@ -50,9 +93,47 @@ static void TestAtfork() {
     Require(handlers[before + 1].prepare == nullptr && handlers[before + 1].parent == nullptr && handlers[before + 1].child == nullptr);
 }
 
+struct TimedjoinGate {
+    std::atomic<bool> release{false};
+    std::atomic<bool> entered{false};
+};
+
+static void* APS5_VABI TimedjoinWorker(void* argument) {
+    auto& gate = *static_cast<TimedjoinGate*>(argument);
+    gate.entered.store(true, std::memory_order_release);
+    while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+    return reinterpret_cast<void*>(std::uintptr_t{0x12345678});
+}
+
+static void TestTimedjoin() {
+    Require(scePthreadTimedjoin(nullptr, nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadTimedjoin(scePthreadSelf(), nullptr, 1000000) == SCE_KERNEL_ERROR_EDEADLK);
+
+    TimedjoinGate gate;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, TimedjoinWorker, &gate, nullptr) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!gate.entered.load(std::memory_order_acquire)) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+
+    void* returnValue = reinterpret_cast<void*>(std::uintptr_t{0x55});
+    Require(scePthreadTimedjoin(thread, &returnValue, 0) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(returnValue == reinterpret_cast<void*>(std::uintptr_t{0x55}));
+
+    gate.release.store(true, std::memory_order_release);
+    Require(scePthreadTimedjoin(thread, &returnValue, 3000000) == 0);
+    Require(returnValue == reinterpret_cast<void*>(std::uintptr_t{0x12345678}));
+    Require(scePthreadTimedjoin(thread, nullptr, 3000000) == SCE_KERNEL_ERROR_ESRCH);
+}
+
 int main() {
     TestScope();
+    TestMutexAttributeGeneration();
+    TestThreadAttrCreateSuspend();
     TestConcurrency();
     TestAtfork();
+    TestTimedjoin();
     return 0;
 }

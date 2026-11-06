@@ -74,6 +74,11 @@ std::uint64_t Driver::DrawCacheBytes() {
     return bytes;
 }
 
+bool Driver::drawCacheIndirect() {
+    static const bool indirect = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
+    return indirect;
+}
+
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;
@@ -222,8 +227,8 @@ void Driver::eraseDrawEntry(std::uint64_t key, const std::shared_ptr<DrawEntry>&
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {
     return std::all_of(decode.programs.begin(), decode.programs.end(), [&](const DrawProgram& program) {
         if (!program.snapshot->header.empty()) return true;
-        return ReadRawShader(program.snapshot->codeAddress + program.codeOffset * sizeof(std::uint32_t)) == program.snapshot &&
-            (program.tailContinuation == nullptr || ReadRawShader(program.tailContinuation->codeAddress) == program.tailContinuation);
+        return ReadRawShader(program.snapshot->codeAddress + program.codeOffset * sizeof(std::uint32_t), program.snapshot) == program.snapshot &&
+            (program.tailContinuation == nullptr || ReadRawShader(program.tailContinuation->codeAddress, program.tailContinuation) == program.tailContinuation);
     });
 }
 
