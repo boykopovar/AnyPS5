@@ -1,3 +1,10 @@
+#include <array>
+#include <atomic>
+#include <barrier>
+#include <chrono>
+#include <future>
+#include <thread>
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
@@ -44,6 +51,84 @@ using WebCore::FloatRect;
 using WebCore::IntPoint;
 using WebCore::IntSize;
 using WebCore::IntRect;
+
+}  // namespace
+
+namespace {
+
+constexpr auto WordLockSlow = _ZN3WTF8WordLock8lockSlowEv;
+constexpr auto WordUnlockSlow = _ZN3WTF8WordLock10unlockSlowEv;
+
+void WordLock(std::uintptr_t& storage) {
+    std::uintptr_t expected = 0;
+    if (!std::atomic_ref(storage).compare_exchange_strong(expected, 1, std::memory_order_acquire)) WordLockSlow(&storage);
+}
+
+void WordUnlock(std::uintptr_t& storage) {
+    std::uintptr_t expected = 1;
+    if (!std::atomic_ref(storage).compare_exchange_strong(expected, 0, std::memory_order_release)) WordUnlockSlow(&storage);
+}
+
+void AwaitWordQueue(std::uintptr_t& storage) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    std::atomic_ref word(storage);
+    for (;;) {
+        const auto value = word.load();
+        if ((value & ~std::uintptr_t{3}) && !(value & 2)) return;
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+}
+
+void TestWordLock() {
+    std::uintptr_t storage = 0;
+    std::atomic_ref word(storage);
+    WordLockSlow(&storage);
+    Require(word.load() == 1);
+    WordUnlockSlow(&storage);
+    Require(word.load() == 0);
+
+    WordLock(storage);
+    std::promise<void> acquired;
+    auto ownsLock = acquired.get_future();
+    std::promise<void> release;
+    auto mayRelease = release.get_future();
+    std::thread waiter([&] {
+        WordLock(storage);
+        acquired.set_value();
+        Require(mayRelease.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        WordUnlock(storage);
+    });
+    AwaitWordQueue(storage);
+    Require(word.load() & 1);
+    WordUnlock(storage);
+    Require(ownsLock.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    Require(word.load() == 1);
+    release.set_value();
+    waiter.join();
+    Require(word.load() == 0);
+
+    WordLock(storage);
+    std::barrier start(5);
+    unsigned counter = 0;
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) {
+        thread = std::thread([&] {
+            start.arrive_and_wait();
+            for (unsigned i = 0; i < 2000; ++i) {
+                WordLock(storage);
+                ++counter;
+                if (!(i % 64)) std::this_thread::yield();
+                WordUnlock(storage);
+            }
+        });
+    }
+    start.arrive_and_wait();
+    AwaitWordQueue(storage);
+    WordUnlock(storage);
+    for (auto& thread : threads) thread.join();
+    Require(counter == 8000 && word.load() == 0);
+}
 
 }  // namespace
 
@@ -258,6 +343,7 @@ static void TestTime() {
 }
 
 static void TestSystem() {
+    TestWordLock();
     int cores = _ZN3WTF22numberOfProcessorCoresEv();
     Require(cores >= 1);
 
