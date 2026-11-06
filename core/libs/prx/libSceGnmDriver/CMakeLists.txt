@@ -1,0 +1,17 @@
+add_library(libSceGnmDriver SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceGnmDriver PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut)
+configure_windows_unwind(libSceGnmDriver)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_gnm_driver_tests ${LIBS_INCLUDE_DIR}/tests/GuestGnmDriver.cpp)
+    target_include_directories(guest_gnm_driver_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gnm_driver_tests PRIVATE libSceGnmDriver libSceAgcDriver libc)
+    configure_windows_unwind(guest_gnm_driver_tests)
+    add_test(NAME guest_gnm_driver COMMAND guest_gnm_driver_tests)
+    set_tests_properties(guest_gnm_driver PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_gnm_driver PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
+endif()

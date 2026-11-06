@@ -82,6 +82,17 @@ int main() {
     OBJ_cleanup_nid_postfix();
     Require(ERR_peek_error_nid_postfix() == 0, "PKCS12_PBE_add, OBJ_cleanup and SSL_load_error_strings queue no error");
 
+    static_assert(std::is_void_v<decltype(OPENSSL_add_all_algorithms_noconf_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(OPENSSL_load_builtin_modules_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(CONF_modules_free_nid_postfix())>);
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    OPENSSL_load_builtin_modules_nid_postfix();
+    OPENSSL_load_builtin_modules_nid_postfix();
+    CONF_modules_free_nid_postfix();
+    CONF_modules_free_nid_postfix();
+    Require(ERR_peek_error_nid_postfix() == 0, "the algorithm and configuration module setup and cleanup calls queue no error");
+
     ERR_clear_error_nid_postfix();
     const std::uint64_t nullEngine = Pack(38, 0xfff, 67);
     Require(ENGINE_get_first_nid_postfix() == nullptr, "no engine is listed");
