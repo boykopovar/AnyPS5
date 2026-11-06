@@ -1773,8 +1773,8 @@ void reciprocalExecution() {
             std::memcpy(sameLanes, sameOut.data(), sizeof(sameLanes));
             for (std::size_t lane = 0; lane < 4; ++lane) {
                 const float expected = squareRoot ? 1.0f / std::sqrt(lanes[lane]) : 1.0f / lanes[lane];
-                require(sameLane(expected, distinctLanes[lane]), "Packed reciprocal stub is not correctly rounded");
-                require(sameLane(expected, sameLanes[lane]), "Packed reciprocal stub with equal operands is not correctly rounded");
+                require(sameLane(expected, distinctLanes[lane]), "Packed reciprocal stub does not match 1/x or SQRT then DIV");
+                require(sameLane(expected, sameLanes[lane]), "Packed reciprocal stub with equal operands does not match 1/x or SQRT then DIV");
             }
         }
     }
@@ -1800,7 +1800,7 @@ void reciprocalExecution() {
                 const auto out = runRegisterFormStub(site.Code, site.Destination, source);
                 float outLanes[4];
                 std::memcpy(outLanes, out.data(), sizeof(outLanes));
-                require(sameLane(expected, outLanes[0]), "Scalar reciprocal stub is not correctly rounded");
+                require(sameLane(expected, outLanes[0]), "Scalar reciprocal stub does not match 1/x or SQRT then DIV");
                 for (std::size_t lane = 1; lane < 4; ++lane)
                     require(sameLane(site.Upper[lane], outLanes[lane]), "Scalar reciprocal stub changed the wrong upper lanes");
             }
