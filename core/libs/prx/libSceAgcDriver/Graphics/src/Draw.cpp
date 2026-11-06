@@ -49,7 +49,40 @@
 
 namespace AgcDriver::Graphics {
 
+void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue);
+void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue);
+
 namespace {
+
+bool DrawFaultTokens() {
+    static const bool enabled = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    return enabled;
+}
+
+void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, bool indirect) {
+    try {
+        if (!DrawFaultTokens()) return;
+        const auto queue = GuestMemory::GpuLockThreadTag();
+        if (queue != 0) return;
+        const auto faultToken = AgcDriver::FaultTokenRing::Instance().Claim();
+        if (faultToken == 0) return;
+        if (auto* entry = AgcDriver::FaultTokenRing::Instance().Mutable(faultToken)) {
+            entry->submitSerial = recorder.OpenSerial();
+            entry->programAddress = 0;
+            std::uint64_t variant = 0;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr && (variant == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) variant = shader.program->variantId;
+            }
+            entry->variantId = variant;
+            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", indirect ? " indirect" : "", draw.indexCount, draw.instanceCount);
+            recorder.NoteFaultToken(faultToken);
+            std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
+        }
+        WriteCheckpointMarker(context, commands, faultToken, queue);
+        WriteNvCheckpointToken(context, commands, faultToken, queue);
+    } catch (...) {
+    }
+}
 
 struct PixelFunctionLdsPool {
     Context context{};
@@ -2805,6 +2838,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
+    noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -3784,6 +3818,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
+    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
