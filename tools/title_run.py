@@ -315,11 +315,13 @@ def is_module(path):
 def stage_inputs(package, entry, source):
     (source / "sce_module").mkdir(parents=True)
     unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    executables = [path for path in (package / "eboot.bin", *(package / name for name in entry.get("executables", []))) if path.is_file()]
     for directory in ["sce_module", *module_dirs(entry)]:
         if not (package / directory).is_dir():
             continue
         (source / directory).mkdir(parents=True, exist_ok=True)
-        for module in sorted(path for path in (package / directory).iterdir() if path.is_file() and is_module(path)):
+        for module in sorted(path for path in (package / directory).iterdir()
+                             if path.is_file() and is_module(path) and not any(path.samefile(executable) for executable in executables)):
             unwrap_or_copy(module, source / directory / module.name)
     for executable in entry.get("executables", []):
         unwrap_or_copy(package / executable, source / executable)

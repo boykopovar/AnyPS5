@@ -371,6 +371,17 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue((staged / "Empty").is_dir())
         self.assertFalse((staged / "Missing").exists())
 
+    def test_module_dirs_leave_out_the_executables_and_their_aliases(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "tool.elf", "plugin.prx"):
+            (source / name).write_bytes(elf)
+        os.link(source / "eboot.bin", source / "alias.bin")
+        entry = {"relink": ["--module-dir", "."], "executables": ["tool.elf"]}
+        title_run.stage_inputs(source, entry, self.root / "input")
+        staged = sorted(path.name for path in (self.root / "input").iterdir() if path.is_file())
+        self.assertEqual(staged, ["eboot.elf", "plugin.prx", "tool.elf"])
+
     def test_link_tree_skips(self):
         source = package(self.root / "pkg", "PPSA00001")
         (source / "sce_module").mkdir()
