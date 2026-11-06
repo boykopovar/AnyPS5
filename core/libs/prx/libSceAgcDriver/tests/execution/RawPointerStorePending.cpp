@@ -106,7 +106,7 @@ void BuildStoreCode(std::array<std::uint32_t, 20>& code, const std::array<std::u
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(bool writable = true) {
 #ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
         if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
@@ -124,7 +124,7 @@ public:
 #endif
         if (block == nullptr) throw std::runtime_error("raw pointer store pending: cannot allocate a guest block");
         std::memset(block, 0, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, writable, true);
     }
 
     GuestBlock(const GuestBlock&) = delete;
@@ -362,6 +362,35 @@ void ComputeTableWrittenWhileHeld() {
     Report("a compute dispatch recorded while an earlier submission's dispatch, which rewrites its V# table through a raw pointer, is still held on the GPU", OutputIs(output, 0x2000u), OutputText(output));
 }
 
+void ReadOnlyRangeNotPending() {
+    GuestBlock table, moved;
+    GuestBlock readOnly(false);
+    const auto input = BufferDescriptor(moved.At(0));
+    std::memcpy(table.Bytes(0), input.data(), sizeof(input));
+    BuildStoreCode(ComputeStoreCode, BufferDescriptor(moved.At(0)));
+    Register(ComputeStoreHeader, ComputeStoreCode.data(), sizeof(ComputeStoreCode), 0, false);
+    std::vector<std::uint32_t> store;
+    ComputeProgram(store, ComputeStoreCode.data(), 4u, 1u);
+    Append(store, 0x76, {0x240, 0u, 0u, static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u)});
+    Dispatch(store);
+    SubmitHold hold;
+    hold.Arm();
+    Enqueue(store, "a raw-pointer store held on the GPU beside a read-only range");
+    static_cast<void>(hold.AwaitHeldSubmission());
+    bool tableNoted = false;
+    bool readOnlyNoted = false;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        tableNoted = recorder != nullptr && recorder->PendingWriteOverlaps(table.At(0), 16);
+        readOnlyNoted = recorder != nullptr && recorder->PendingWriteOverlaps(readOnly.At(0), BlockBytes);
+    }
+    hold.Finish();
+    AgcDriverWaitIdle_nid_postfix();
+    Report("a held dispatch that stores through a raw pointer leaves the writable range it can store into pending", tableNoted, tableNoted ? "the table's range is pending" : "the table's range is not pending");
+    Report("a held dispatch that stores through a raw pointer leaves no pending write over a range its address table maps read-only", !readOnlyNoted, readOnlyNoted ? "the read-only range is pending" : "the read-only range is not pending");
+}
+
 void DrawRegisters(std::vector<std::uint32_t>& commands, const GuestBlock& target, std::uint64_t pixelData, const std::function<void(std::vector<std::uint32_t>&)>& tableRegisters) {
     const auto color = target.At(0);
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
@@ -469,6 +498,7 @@ int main() {
         ComputeTableWrittenByDispatch(true);
         DrawTableWrittenByDispatch(true);
         ComputeTableWrittenWhileHeld();
+        ReadOnlyRangeNotPending();
         AgcDriverShutdown_nid_postfix();
         if (!Failures.empty()) {
             std::string all;

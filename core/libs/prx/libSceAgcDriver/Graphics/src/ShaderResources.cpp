@@ -6433,7 +6433,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     recorder.NotePendingWrites(guestMemory.Writes());
     if (usesBda && !bdaReadOnly) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reachable;
-        guestMemory.DeviceReads(reachable);
+        guestMemory.AddressStores(reachable);
         recorder.NotePendingWrites(reachable);
     }
     guestMemory.MarkDirectWrites();
