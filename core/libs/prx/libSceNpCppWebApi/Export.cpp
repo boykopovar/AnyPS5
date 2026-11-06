@@ -242,8 +242,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivitie
     return 0;
 }
 
-static constexpr std::size_t ReferenceCountOffset = 0;
-static constexpr std::size_t VectorReferenceCountOffset = 0x30;
 static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
 static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
