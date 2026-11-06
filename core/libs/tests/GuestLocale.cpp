@@ -573,6 +573,16 @@ static void CheckCtypeVtableObject() {
     }
 }
 
+static void CheckTimePutVtableObject() {
+    Require(sizeof(_ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kTimePutCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 static void CheckNumPutVtableObject() {
     Require(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
@@ -603,6 +613,16 @@ static void CheckTimeGetVtableObject() {
 
 static void CheckTimeGetWideVtableObject() {
     for (std::uintptr_t& slot : _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
+static void CheckMoneyGetVtableObject() {
+    Require(sizeof(_ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kMoneyGetCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
         Require(slot == 0);
         slot = 0x1111;
         Require(slot == 0x1111);
@@ -641,6 +661,8 @@ int main() {
     CheckCtypeVtableObject();
     CheckWideCtypeVtableObject();
     CheckCodecvtVtableObject();
+    CheckTimePutVtableObject();
+    CheckMoneyGetVtableObject();
     CheckNumpunctVtableObject();
     CheckMessagesVtableObject();
     _Locksyslock_nid_postfix();
