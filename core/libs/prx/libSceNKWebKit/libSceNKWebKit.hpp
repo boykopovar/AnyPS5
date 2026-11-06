@@ -11,3 +11,4 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
+#include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
