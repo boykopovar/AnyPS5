@@ -86,21 +86,17 @@ static void OmittedTimeIsFaultAfterClockValidation() {
         Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
         Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
-    bool rejected = false;
-    try {
-        clock_gettime_nid_postfix(3, nullptr);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
+    for (const int clockId : {3, 20}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 22);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
-    Require(rejected);
-    Require(sceKernelClockGettime(3, nullptr) == fault);
     Require(sceKernelClockGettime(21, nullptr) == fault);
 }
 
 static void InvalidClockIdFailsGettime() {
     KernelTimespec time{-1, -1};
-    for (const int clockId : {-1, 999}) {
+    for (const int clockId : {-1, 999, 3, 6, 17, 18, 20, 22, 31}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
         Require(time.tv_sec == -1 && time.tv_nsec == -1);

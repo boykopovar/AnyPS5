@@ -586,8 +586,12 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 #endif
 }
 
+static bool MeasuredInvalidClock(int clockId) {
+    return clockId == 3 || clockId == 6 || clockId == 17 || clockId == 18 || clockId == 20 || (clockId >= 22 && clockId < 32);
+}
+
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
-    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32 || MeasuredInvalidClock(clockId))) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
     }
