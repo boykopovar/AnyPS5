@@ -14,6 +14,7 @@
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
+#include "prx/libwebrtc/include/VideoFrame.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -129,16 +130,16 @@ int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(void)
 int APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scoped_refptrINS_16VideoFrameBufferEEE_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder17set_timestamp_rtpEj_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_msEl_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(void);
+WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(WebRtcVideoFrameBuilder* builder, std::int64_t timestampMs);
+WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder17set_timestamp_rtpEj_nid_postfix(WebRtcVideoFrameBuilder* builder, std::uint32_t timestampRtp);
+WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_msEl_nid_postfix(WebRtcVideoFrameBuilder* builder, std::int64_t ntpTimeMs);
+WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(WebRtcVideoFrameBuilder* builder, std::uint16_t id);
 int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc10VideoFrame6heightEv_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder);
+void APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder);
 int APS5_VABI _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrameD1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc14VideoSinkWantsC1Ev_nid_postfix(void);
