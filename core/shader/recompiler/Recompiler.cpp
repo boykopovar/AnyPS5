@@ -2553,14 +2553,6 @@ void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words)
     }
 }
 
-bool HeapFragmentEligible(const IrResourcePlan& plan) {
-    if (plan.stage == IrShaderStage::Unknown || plan.stage == IrShaderStage::Fetch) return false;
-    for (const auto& image : plan.info.images) {
-        if (image.source >= plan.descriptorSources.size()) return false;
-    }
-    return true;
-}
-
 const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle) {
     if (handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
     return handle.artifact->artifact;

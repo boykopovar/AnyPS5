@@ -2706,7 +2706,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->functionsReady = true;
     }
     Graphics::PrepareImportWatch(graphicsContext());
-    Graphics::SetDescriptorHeapDevice(state->descriptorHeap && state->descriptorHeapProperties.maxPushDataSize >= Graphics::PipelinePushConstantBytes);
+    const bool heapDevice = state->descriptorHeap && state->descriptorHeapProperties.maxPushDataSize >= Graphics::PipelinePushConstantBytes;
+    if (heapDevice && Graphics::GpuHeapEnabled() && !state->timelineSemaphores)
+        throw std::runtime_error("AGC graphics: the GPU heap needs timeline semaphores to evict slots; APS5_NO_TIMELINE cannot be used with APS5_GPU_HEAP");
+    Graphics::SetDescriptorHeapDevice(heapDevice);
     Graphics::BufferPool::SetForceAddresses(Graphics::DescriptorHeapEnabled());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);

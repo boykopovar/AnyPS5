@@ -300,13 +300,11 @@ constexpr std::uint32_t ImageSlotMargin = 1024u;
 constexpr std::uint32_t EvictIdleSubmissions = 2u;
 constexpr std::uint32_t SamplerSlotMargin = Abi::GpuSamplerHeapSlots / 4u;
 std::atomic<std::uint32_t> refusedHeaps{0};
-std::atomic<std::uint32_t> refusingHeaps{0};
 
 }
 
 BindlessHeap::~BindlessHeap() {
     if (refused) refusedHeaps.fetch_sub(1, std::memory_order_relaxed);
-    if (refusing) refusingHeaps.fetch_sub(1, std::memory_order_relaxed);
 }
 
 namespace {
@@ -473,9 +471,6 @@ bool BindlessHeap::NearlyFull() {
     return refusedHeaps.load(std::memory_order_relaxed) != 0u;
 }
 
-bool BindlessHeap::RefusesDraws() {
-    return refusingHeaps.load(std::memory_order_relaxed) != 0u;
-}
 
 
 
@@ -496,14 +491,8 @@ void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
     if (refused) return;
     refused = true;
     refusedHeaps.fetch_add(1, std::memory_order_relaxed);
-    if (submitter == nullptr || submitter->HasTimeline()) {
-        pressured.store(true, std::memory_order_relaxed);
-        std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; the next draw or dispatch submits its batch so idle slots can be evicted\n", margin, what);
-        return;
-    }
-    refusing = true;
-    refusingHeaps.fetch_add(1, std::memory_order_relaxed);
-    std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; draws and dispatches take the per-draw path until released slots leave twice that many free\n", margin, what);
+    pressured.store(true, std::memory_order_relaxed);
+    std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; the next draw or dispatch submits its batch so idle slots can be evicted\n", margin, what);
 }
 
 void BindlessHeap::noteTakenLocked() {
@@ -537,7 +526,7 @@ std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t
 
 void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
-    if (submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (submitter == nullptr || !GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (idleSubmissions != 0u && evictScanEpoch == epoch) return;
     if (idleSubmissions != 0u) evictScanEpoch = epoch;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
@@ -570,7 +559,7 @@ void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
 
 void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
-    if (submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (submitter == nullptr || !GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (idleSubmissions != 0u && samplerEvictScanEpoch == epoch) return;
     if (idleSubmissions != 0u) samplerEvictScanEpoch = epoch;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
@@ -597,7 +586,7 @@ void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
 
 bool BindlessHeap::reclaimLocked(bool wait) {
     bool reclaimed = false;
-    while (!retiring.empty() && retiring.front().serial != 0u && submitter != nullptr && submitter->HasTimeline()) {
+    while (!retiring.empty() && retiring.front().serial != 0u && submitter != nullptr) {
         const auto serial = retiring.front().serial;
         if (!submitter->WaitSerialFor(serial, 0u)) {
             if (!wait || reclaimed || serial > submitter->Submissions()) break;
@@ -637,10 +626,6 @@ void BindlessHeap::noteReleasedLocked() {
     refused = false;
     refusedHeaps.fetch_sub(1, std::memory_order_relaxed);
     pressured.store(false, std::memory_order_relaxed);
-    if (!refusing) return;
-    refusing = false;
-    refusingHeaps.fetch_sub(1, std::memory_order_relaxed);
-    std::fprintf(stderr, "[gpu-heap] released slots left twice the margin free; draws take the heap again\n");
 }
 
 std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
@@ -777,7 +762,7 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
 
 bool BindlessHeap::poolBlockDoneLocked(PoolBlock& block) {
     if (block.serial == 0u) return true;
-    if (block.recorder == nullptr || !block.recorder->HasTimeline() || !block.recorder->WaitSerialFor(block.serial, 0u)) return false;
+    if (block.recorder == nullptr || !block.recorder->WaitSerialFor(block.serial, 0u)) return false;
     block.serial = 0u;
     return true;
 }
@@ -886,7 +871,7 @@ BindlessHeap::DataSpan BindlessHeap::RingAllocate(std::size_t words, SpanMark& m
         if (!skipBusy) return Taken::No;
         for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) {
             auto& entry = ringChunks[chunk];
-            if (chunk == ringChunk || entry.serial == 0u || entry.recorder == nullptr || !entry.recorder->HasTimeline()) continue;
+            if (chunk == ringChunk || entry.serial == 0u || entry.recorder == nullptr) continue;
             if (!entry.recorder->WaitSerialFor(entry.serial, 0u)) return Taken::Busy;
             entry.serial = 0u;
         }
@@ -950,8 +935,6 @@ void BindlessHeap::enterRingChunk(std::size_t index) {
     auto& chunk = ringChunks[index];
     if (chunk.open) throw std::runtime_error("AGC bindless heap: one batch's buffer descriptors exceed the descriptor ring");
     if (chunk.serial != 0u) {
-        if (!chunk.recorder->HasTimeline())
-            throw std::runtime_error("AGC bindless heap: the descriptor ring needs the recorder timeline to wait for a batch");
         if (!chunk.recorder->WaitSerialFor(chunk.serial, 0u)) {
             chunk.recorder->WaitSerial(chunk.serial);
             ++counts.ringWaits;
@@ -1168,9 +1151,11 @@ VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, co
 
 }
 
-bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds, bool meshWindow, bool scratchPool) {
+bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds, bool meshWindow, bool scratchPool,
+                            std::pair<std::uint32_t, std::uint32_t>* refused) {
     HeapBindingUse use;
     const bool mappable = heapBindings(spirv, {.workgroupAddress = workgroupAddress, .gdsAddress = gdsAddress, .pixelLds = pixelLds, .meshWindow = meshWindow, .scratchPool = scratchPool}, use);
+    if (!mappable && refused != nullptr) *refused = use.refused;
     if (!mappable && pipelineStats()) {
         static std::mutex causesMutex;
         static std::map<SetAndBinding, std::uint64_t> causes;
@@ -1365,26 +1350,17 @@ std::atomic<std::uint64_t> commandBuffersBegun{0};
 std::atomic<std::uint64_t> cpuBufferCopies{0};
 std::atomic<std::uint64_t> cpuBufferCopyBytes{0};
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(SetBindSite::Count)> setBinds{};
-std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapFallback::Count)> heapFallbacks{};
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapExcluded::Count)> heapExcludedCounts{};
 std::array<std::atomic<std::uint64_t>, 4> heapRecords{};
 
 std::size_t heapRecordIndex(bool compute, bool heap) {
     return (compute ? 2u : 0u) + (heap ? 1u : 0u);
 }
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapStageReason::Count)> heapStageReasons{};
-constexpr std::array<const char*, static_cast<std::size_t>(HeapStageReason::Count)> HeapStageReasonNames{"heap",
-                                                                                                         "disabled",
-                                                                                                         "pair refused",
-                                                                                                         "fragment off heap",
-                                                                                                         "stage kind",
-                                                                                                         "no plan",
-                                                                                                         "plan stage",
-                                                                                                         "unresolved image source",
-                                                                                                         "known ineligible"};
+constexpr std::array<const char*, static_cast<std::size_t>(HeapStageReason::Count)> HeapStageReasonNames{"heap", "disabled", "excluded"};
 constexpr std::array<const char*, static_cast<std::size_t>(SetBindSite::Count)> SetBindSiteNames{"draw", "dispatch", "detiler",
                                                                                                  "color transfer", "presentation", "depth transfer", "staged merge", "first-sample copy"};
-constexpr std::array<const char*, static_cast<std::size_t>(HeapFallback::Count)> HeapFallbackNames{
-    "draw unmapped", "draw mixed retry", "draw refused pair", "draw mixed reused", "dispatch unmapped"};
+constexpr std::array<const char*, static_cast<std::size_t>(HeapExcluded::Count)> HeapExcludedNames{"draw excluded", "dispatch excluded"};
 
 std::uint64_t takeCount(std::atomic<std::uint64_t>& counter) {
     return counter.exchange(0, std::memory_order_relaxed);
@@ -1419,7 +1395,7 @@ void reportHeapStatistics() {
     if (now - last < std::chrono::seconds(10)) return;
     last = now;
     const auto binds = takeNamedCounts(setBinds, SetBindSiteNames);
-    const auto fallbacks = takeNamedCounts(heapFallbacks, HeapFallbackNames);
+    const auto excluded = takeNamedCounts(heapExcludedCounts, HeapExcludedNames);
     const auto stageReasons = takeNamedCounts(heapStageReasons, HeapStageReasonNames);
     std::string costs;
     for (std::size_t i = 0; i < heapCostNs.size(); ++i) {
@@ -1498,10 +1474,10 @@ void reportHeapStatistics() {
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
-                 "heap binds %llu over %llu command buffers; set binds:%s; fallbacks:%s; draw stages:%s; "
+                 "heap binds %llu over %llu command buffers; set binds:%s; excluded:%s; draw stages:%s; "
                  "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, %llu early submits, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
-                 printed(commandBuffers), binds.c_str(), fallbacks.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
+                 printed(commandBuffers), binds.c_str(), excluded.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
                  printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(pressureSubmits), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
@@ -1537,12 +1513,16 @@ void NoteCpuBufferCopy(std::uint64_t bytes) {
     cpuBufferCopyBytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
-void NoteHeapFallback(HeapFallback reason) {
-    heapFallbacks[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+void NoteHeapExcluded(HeapExcluded reason) {
+    heapExcludedCounts[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
 }
 
-std::uint64_t HeapFallbacks(HeapFallback reason) {
-    return heapFallbacks[static_cast<std::size_t>(reason)].load(std::memory_order_relaxed);
+std::uint64_t HeapExcludedCount(HeapExcluded reason) {
+    return heapExcludedCounts[static_cast<std::size_t>(reason)].load(std::memory_order_relaxed);
+}
+
+std::uint64_t HeapStageReasons(HeapStageReason reason) {
+    return heapStageReasons[static_cast<std::size_t>(reason)].load(std::memory_order_relaxed);
 }
 
 void NoteCommandBufferBegun(VkCommandBuffer commands) {
@@ -1670,6 +1650,7 @@ void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {
 }
 
 void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
+    if (!recorder.HasTimeline()) throw std::runtime_error("AGC bindless heap: a batch using the heap was submitted by a recorder without a timeline semaphore");
     std::lock_guard lock(mutex);
     submitter = &recorder;
     useEpoch.fetch_add(1, std::memory_order_relaxed);

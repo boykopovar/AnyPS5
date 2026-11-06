@@ -73,7 +73,6 @@ public:
                             std::span<const std::uint32_t> samplerSlots, std::span<const std::uint32_t> samplerGenerations) const;
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
-    static bool RefusesDraws();
     static std::uint32_t ImageSlotCapacity();
     std::uint32_t ImageSlots() const { return slotCap; }
     std::uint32_t TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const;
@@ -255,7 +254,6 @@ private:
     std::unordered_map<const HeapSlotOwner*, std::uint32_t> samplerSlots;
     std::unordered_set<std::uint32_t> absentSlots;
     bool refused = false;
-    bool refusing = false;
     void noteRefusedLocked(const char* what, std::uint32_t margin);
     void noteTakenLocked();
     void noteSamplerTakenLocked();
@@ -287,7 +285,8 @@ private:
 bool GpuHeapEnabled();
 void SetDescriptorHeapDevice(bool available);
 bool DescriptorHeapEnabled();
-bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false, bool scratchPool = false);
+bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
+                            std::pair<std::uint32_t, std::uint32_t>* refused = nullptr);
 void NoteHeapComputeStage();
 std::uint64_t HeapComputeStages();
 void NoteImageTableBuild();
@@ -300,23 +299,18 @@ std::uint64_t EmbeddedSamplerMappings();
 std::uint64_t SlotPressureSubmits();
 std::uint64_t HeapSlotEvictions();
 enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, FirstSampleCopy, Count };
-enum class HeapFallback : std::uint8_t { DrawUnmapped, DrawMixedRetry, DrawRefusedPair, DrawMixedReused, DispatchUnmapped, Count };
+enum class HeapExcluded : std::uint8_t { Draw, Dispatch, Count };
 enum class HeapStageReason : std::uint8_t {
     Heap,
     Disabled,
-    PairRefused,
-    FragmentOffHeap,
-    StageKind,
-    NoPlan,
-    PlanStage,
-    UnresolvedImageSource,
-    KnownIneligible,
+    Excluded,
     Count
 };
 void NoteHeapStageReason(HeapStageReason reason);
 void NoteHeapRecord(bool compute, bool heap);
-void NoteHeapFallback(HeapFallback reason);
-std::uint64_t HeapFallbacks(HeapFallback reason);
+void NoteHeapExcluded(HeapExcluded reason);
+std::uint64_t HeapExcludedCount(HeapExcluded reason);
+std::uint64_t HeapStageReasons(HeapStageReason reason);
 void NoteCpuBufferCopy(std::uint64_t bytes);
 enum class HeapCost : std::uint8_t {
     StagePrepare,

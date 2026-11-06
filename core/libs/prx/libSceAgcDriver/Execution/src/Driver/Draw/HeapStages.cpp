@@ -111,70 +111,22 @@ VerifyCounts& verifyCounts() {
 
 }
 
-bool HeapRefused() {
-    return Graphics::BindlessHeap::RefusesDraws();
-}
-
-namespace {
-
-bool& heapDrawOff() {
-    struct DrawOffStorage {};
-    return HostThreadLocal<bool, DrawOffStorage>();
-}
-
-}
-
-HeapDrawOff::HeapDrawOff() : previous(heapDrawOff()) {
-    heapDrawOff() = true;
-}
-
-HeapDrawOff::~HeapDrawOff() {
-    heapDrawOff() = previous;
-}
-
-bool HeapFragmentsEnabled() {
-    return Graphics::DescriptorHeapEnabled() && !HeapRefused() && !heapDrawOff();
-}
-
 bool HeapPreRasterStage(ShaderRecompiler::ShaderStage stage) {
     using Stage = ShaderRecompiler::ShaderStage;
     return stage == Stage::Vertex || stage == Stage::Local || stage == Stage::TessellationControl ||
            stage == Stage::TessellationEvaluation || stage == Stage::Mesh;
 }
 
-Graphics::HeapStageReason HeapStageIneligibility(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan,
-                                                 bool heapVertex) {
-    using Reason = Graphics::HeapStageReason;
-    if (stage != ShaderRecompiler::ShaderStage::Fragment && !HeapPreRasterStage(stage)) return Reason::StageKind;
-    if (plan == nullptr) return Reason::NoPlan;
-    if (stage != ShaderRecompiler::ShaderStage::Fragment && !heapVertex) return Reason::FragmentOffHeap;
+const char* HeapStageIneligibility(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan) {
+    if (stage != ShaderRecompiler::ShaderStage::Fragment && !HeapPreRasterStage(stage)) return "its stage kind does not take the heap";
+    if (plan == nullptr) return "it has no resource plan";
     if (plan->stage == ShaderRecompiler::IrShaderStage::Unknown || plan->stage == ShaderRecompiler::IrShaderStage::Fetch)
-        return Reason::PlanStage;
-    if (!ShaderRecompiler::HeapFragmentEligible(*plan)) return Reason::UnresolvedImageSource;
-    return Reason::Heap;
+        return "its resource plan has a fetch or unknown stage";
+    return nullptr;
 }
 
-bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan, bool heapVertex) {
-    return HeapStageIneligibility(stage, plan, heapVertex) == Graphics::HeapStageReason::Heap;
-}
-
-namespace {
-
-std::unordered_set<std::uint64_t>& refusedPairs() {
-    struct PairsStorage {};
-    return HostThreadLocal<std::unordered_set<std::uint64_t>, PairsStorage>();
-}
-
-}
-
-bool HeapPairRefused(std::uint64_t pair) {
-    return refusedPairs().contains(pair);
-}
-
-void RefuseHeapPair(std::uint64_t pair) {
-    auto& refused = refusedPairs();
-    if (refused.size() >= ThreadCacheLimit) refused.clear();
-    refused.insert(pair);
+bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan) {
+    return HeapStageIneligibility(stage, plan) == nullptr;
 }
 
 namespace {
@@ -234,7 +186,7 @@ const HeapExclusions& heapExclusions() {
     return exclusions;
 }
 
-bool heapClassesAllowed(const ShaderRecompiler::RecompileResult& result) {
+std::string heapClassesFailure(const ShaderRecompiler::RecompileResult& result) {
     using Role = ShaderRecompiler::DescriptorRole;
     using Kind = ShaderRecompiler::DescriptorKind;
     const auto& exclusions = heapExclusions();
@@ -243,61 +195,64 @@ bool heapClassesAllowed(const ShaderRecompiler::RecompileResult& result) {
         const bool table = binding.role == Role::ImageTable || binding.role == Role::ImageStorageTable;
         const bool image = binding.role == Role::GuestImages && (binding.kind == Kind::SampledImage || binding.kind == Kind::StorageImage);
         if (table || image) demand += binding.count;
-        if (table && exclusions.tables) return false;
-        if (image && binding.kind == Kind::StorageImage && exclusions.storage) return false;
-        if (image && binding.kind == Kind::SampledImage && exclusions.sampled) return false;
+        if ((table && exclusions.tables) || (image && binding.kind == Kind::StorageImage && exclusions.storage) ||
+            (image && binding.kind == Kind::SampledImage && exclusions.sampled))
+            return "AGC graphics: a GPU heap stage uses an image class APS5_GPU_HEAP_EXCLUDE names, which its resource plan did not show";
     }
-    return demand <= Graphics::BindlessHeap::ImageSlotCapacity();
+    const auto capacity = Graphics::BindlessHeap::ImageSlotCapacity();
+    if (demand > capacity)
+        return "AGC graphics: a GPU heap stage needs " + std::to_string(demand) + " image slots, more than the heap's " + std::to_string(capacity);
+    return {};
 }
 
+std::string heapStageFailure(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
+    if (auto failure = heapClassesFailure(result); !failure.empty()) return failure;
+    std::pair<std::uint32_t, std::uint32_t> refused{};
+    if (!Graphics::DescriptorHeapMappable(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()), workgroupAddress, result.dataAddressPush,
+                                          result.functionLdsBuffer, result.meshWindowBuffer, result.scratchPoolSlotDwords != 0u, &refused))
+        return "AGC graphics: a GPU heap stage uses descriptor set " + std::to_string(refused.first) + " binding " + std::to_string(refused.second) +
+               ", which the heap cannot map";
+    return {};
+}
+
+const std::string& knownHeapStageFailure(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
+    struct MappableStorage {};
+    auto& known = HostThreadLocal<std::unordered_map<std::uint64_t, std::string>, MappableStorage>();
+    const auto key = result.variantId * 2u + (workgroupAddress ? 1u : 0u);
+    if (const auto found = known.find(key); found != known.end()) return found->second;
+    if (known.size() >= ThreadCacheLimit) known.clear();
+    return known.emplace(key, heapStageFailure(result, workgroupAddress)).first->second;
+}
+
+}
+
+void RequireHeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
+    if (const auto& failure = knownHeapStageFailure(result, workgroupAddress); !failure.empty()) throw std::runtime_error(failure);
+}
+
+bool HeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
+    return knownHeapStageFailure(result, workgroupAddress).empty();
 }
 
 bool HeapStageExcluded(ShaderRecompiler::ShaderStage stage) {
     return (heapExclusions().stages >> static_cast<std::uint32_t>(stage) & 1u) != 0u;
 }
 
-bool HeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress) {
-    struct MappableStorage {};
-    auto& known = HostThreadLocal<std::unordered_map<std::uint64_t, bool>, MappableStorage>();
-    const auto key = result.variantId * 2u + (workgroupAddress ? 1u : 0u);
-    if (const auto found = known.find(key); found != known.end()) return found->second;
-    if (known.size() >= ThreadCacheLimit) known.clear();
-    const bool mappable = heapClassesAllowed(result) &&
-                          Graphics::DescriptorHeapMappable(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()), workgroupAddress, result.dataAddressPush, result.functionLdsBuffer, result.meshWindowBuffer, result.scratchPoolSlotDwords != 0u);
-    known.emplace(key, mappable);
-    return mappable;
+bool HeapPlanExcluded(const ShaderRecompiler::IrResourcePlan& plan) {
+    using Class = ShaderRecompiler::ImageResourceClass;
+    const auto& exclusions = heapExclusions();
+    if (exclusions.tables && std::ranges::any_of(plan.descriptorSources, [](const ShaderRecompiler::DescriptorSource& source) { return source.tableColumn.has_value(); }))
+        return true;
+    const auto excludedImage = [&](const ShaderRecompiler::ImageResource& image) {
+        return (exclusions.storage && image.resourceClass == Class::Storage) || (exclusions.sampled && image.resourceClass == Class::Sampled);
+    };
+    if (std::ranges::any_of(plan.info.images, excludedImage)) return true;
+    return std::ranges::any_of(plan.info.runtimeImageModes, [&](const std::vector<ShaderRecompiler::ImageResource>& modes) { return std::ranges::any_of(modes, excludedImage); });
 }
 
-namespace {
-
-struct HeapFragmentKey {
-    const void* snapshot;
-    std::size_t codeOffset;
-    bool operator==(const HeapFragmentKey&) const = default;
-};
-
-struct HeapFragmentKeyHash {
-    std::size_t operator()(const HeapFragmentKey& key) const {
-        return std::hash<const void*>{}(key.snapshot) ^ (key.codeOffset * 0x9e3779b97f4a7c15ull);
-    }
-};
-
-std::unordered_map<HeapFragmentKey, bool, HeapFragmentKeyHash>& heapFragments() {
-    struct FragmentsStorage {};
-    auto& value = HostThreadLocal<std::unordered_map<HeapFragmentKey, bool, HeapFragmentKeyHash>, FragmentsStorage>();
-    return value;
-}
-
-}
-
-std::optional<bool> HeapFragmentKnown(const void* snapshot, std::size_t codeOffset) {
-    const auto& known = heapFragments();
-    const auto found = known.find({snapshot, codeOffset});
-    return found == known.end() ? std::nullopt : std::optional(found->second);
-}
-
-void NoteHeapFragment(const void* snapshot, std::size_t codeOffset, bool eligible) {
-    heapFragments()[{snapshot, codeOffset}] = eligible;
+bool HeapClassesExcluded() {
+    const auto& exclusions = heapExclusions();
+    return exclusions.tables || exclusions.storage || exclusions.sampled;
 }
 
 bool SampleHeapStageVerify() {
@@ -652,19 +607,6 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     return materialized;
 }
 
-namespace {
-
-std::atomic<int> unmappedStage{-1};
-
-}
-
-void SetHeapStageUnmapped(std::optional<ShaderRecompiler::ShaderStage> stage) {
-    unmappedStage.store(stage.has_value() ? static_cast<int>(*stage) : -1, std::memory_order_relaxed);
-}
-
-bool HeapDrawStageMappable(const ShaderRecompiler::RecompileResult& result, ShaderRecompiler::ShaderStage stage) {
-    return unmappedStage.load(std::memory_order_relaxed) != static_cast<int>(stage) && !HeapStageExcluded(stage) && HeapStageMappable(result);
-}
 
 std::uint64_t HeapStagesTaken() {
     return heapStages().load();

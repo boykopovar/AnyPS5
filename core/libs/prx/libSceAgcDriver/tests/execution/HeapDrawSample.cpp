@@ -21,6 +21,7 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <span>
 #include <string>
 #include <utility>
@@ -86,8 +87,8 @@ alignas(256) constexpr std::array<std::uint32_t, 28> TableVertexCode{
     0x10040500u, 0x060404f3u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u, 0xbf810000u,
 };
 alignas(256) std::array<std::uint32_t, 16> TableMemory{};
-alignas(256) std::array<std::uint32_t, 24> MixedVertexCode{};
-alignas(256) std::array<std::uint32_t, 8> MixedPixelCode{};
+alignas(256) std::array<std::uint32_t, 24> FreshVertexCode{};
+alignas(256) std::array<std::uint32_t, 8> FreshPixelCode{};
 alignas(256) std::array<std::uint32_t, 4> MaterialMemory{};
 alignas(256) std::array<std::uint8_t, 1024> OtherTextureMemory{};
 constexpr float BufferAlpha = 0.2f;
@@ -448,56 +449,74 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                 "merging into a second color target built another heap template instead of reusing the first target's");
 }
 
-void MixedDrawTakesThePerDrawPath() {
-    using AgcDriver::Graphics::HeapFallback;
-    using AgcDriver::Graphics::HeapFallbacks;
-    MixedVertexCode = SamplingVertexCode;
-    MixedPixelCode = InterpolantPixelCode;
+void UnpreparedPairTakesTheHeap() {
+    using AgcDriver::Graphics::HeapExcluded;
+    using AgcDriver::Graphics::HeapExcludedCount;
+    using AgcDriver::Graphics::HeapStageReason;
+    using AgcDriver::Graphics::HeapStageReasons;
+    FreshVertexCode = SamplingVertexCode;
+    FreshPixelCode = InterpolantPixelCode;
     for (std::size_t offset = 0; offset < TextureMemory.size(); offset += Texel.size())
         std::memcpy(TextureMemory.data() + offset, Texel.data(), Texel.size());
-    Registered(PixelHeader, MixedPixelCode.data(), sizeof(MixedPixelCode), 1);
-    {
-        Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
-        auto commands = Draw(MixedPixelCode.data(), Mode::Texture);
-        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw putting the fragment stage on the heap failed");
-        AgcDriverWaitIdle_nid_postfix();
-        Registered(VertexHeader, MixedVertexCode.data(), sizeof(MixedVertexCode), 2);
+    Registered(VertexHeader, FreshVertexCode.data(), sizeof(FreshVertexCode), 2);
+    Registered(PixelHeader, FreshPixelCode.data(), sizeof(FreshPixelCode), 1);
+    const auto heapBefore = HeapStageReasons(HeapStageReason::Heap);
+    const auto takenBefore = AgcDriver::DriverDetail::HeapStagesTaken();
+    const auto offHeapBefore = HeapStageReasons(HeapStageReason::Disabled) + HeapStageReasons(HeapStageReason::Excluded);
+    const auto excludedBefore = HeapExcludedCount(HeapExcluded::Draw);
+    ColorMemory.fill(Kept);
+    auto commands = Draw(FreshPixelCode.data(), Mode::Vertex, FreshVertexCode.data());
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the unprepared pair's draw submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    std::size_t drawn = 0;
+    for (std::size_t offset = 0; offset < ColorMemory.size(); offset += 4) {
+        if (std::all_of(ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset),
+                        ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte value) { return value == Kept; }))
+            continue;
+        for (std::size_t channel = 0; channel < 4; ++channel)
+            Require(static_cast<unsigned>(ColorMemory[offset + channel]) == Texel[channel],
+                    "the unprepared pair: pixel " + std::to_string(offset / 4) + " channel " + std::to_string(channel) + " is " +
+                        std::to_string(static_cast<unsigned>(ColorMemory[offset + channel])) + ", expected " + std::to_string(Texel[channel]));
+        ++drawn;
     }
-    AgcDriver::DriverDetail::SetHeapStageUnmapped(ShaderRecompiler::ShaderStage::Fragment);
-    for (const char* draw : {"first", "repeated"}) {
-        const auto takenBefore = AgcDriver::DriverDetail::HeapStagesTaken();
-        const auto retriesBefore = HeapFallbacks(HeapFallback::DrawMixedRetry);
-        const auto refusedBefore = HeapFallbacks(HeapFallback::DrawRefusedPair);
-        ColorMemory.fill(Kept);
-        auto commands = Draw(MixedPixelCode.data(), Mode::Vertex, MixedVertexCode.data());
-        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-        Require(sceAgcDriverSubmitDcb(&packet) == 0, std::string("the ") + draw + " mixed draw submission failed");
-        AgcDriverWaitIdle_nid_postfix();
-        std::size_t drawn = 0;
-        for (std::size_t offset = 0; offset < ColorMemory.size(); offset += 4) {
-            if (std::all_of(ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset),
-                            ColorMemory.begin() + static_cast<std::ptrdiff_t>(offset + 4), [](std::byte value) { return value == Kept; }))
-                continue;
-            for (std::size_t channel = 0; channel < 4; ++channel)
-                Require(static_cast<unsigned>(ColorMemory[offset + channel]) == Texel[channel],
-                        std::string("the ") + draw + " mixed draw: pixel " + std::to_string(offset / 4) + " channel " +
-                            std::to_string(channel) + " is " + std::to_string(static_cast<unsigned>(ColorMemory[offset + channel])) +
-                            ", expected " + std::to_string(Texel[channel]));
-            ++drawn;
-        }
-        Require(drawn != 0, std::string("the ") + draw + " mixed draw covered no pixel");
-        const bool first = std::strcmp(draw, "first") == 0;
-        if (first)
-            Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore, "the heap did not take the vertex stage of the mixed draw");
-        Require(HeapFallbacks(HeapFallback::DrawMixedRetry) - retriesBefore == (first ? 1u : 0u),
-                std::string("the ") + draw + " mixed draw retried on the per-draw path " +
-                    std::to_string(HeapFallbacks(HeapFallback::DrawMixedRetry) - retriesBefore) + " times, expected " +
-                    (first ? "once" : "never"));
-        Require(HeapFallbacks(HeapFallback::DrawRefusedPair) == refusedBefore,
-                std::string("the ") + draw + " mixed draw stayed mixed after its per-draw retry");
+    Require(drawn != 0, "the unprepared pair's draw covered no pixel");
+    Require(HeapStageReasons(HeapStageReason::Heap) - heapBefore >= 2u && AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore,
+            "the first draw of an unprepared vertex and pixel pair did not put both stages on the heap");
+    Require(HeapStageReasons(HeapStageReason::Disabled) + HeapStageReasons(HeapStageReason::Excluded) == offHeapBefore,
+            "a stage of the unprepared pair's first draw was decided off the heap");
+    Require(HeapExcludedCount(HeapExcluded::Draw) == excludedBefore, "the unprepared pair's draw took the per-draw path");
+}
+
+void UnmappableStageFails() {
+    constexpr std::uint32_t Decorate = 4u << 16u | 71u;
+    ShaderRecompiler::RecompileResult result;
+    result.variantId = ~std::uint64_t{0} - 2u;
+    result.spirv = {0x07230203u, 0x00010000u, 0u, 2u, 0u, Decorate, 1u, 34u, 0u, Decorate, 1u, 33u, 4000u};
+    try {
+        AgcDriver::DriverDetail::RequireHeapStageMappable(result);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("descriptor set 0 binding 4000") != std::string::npos,
+                std::string("an unmappable heap stage failed for another reason: ") + error.what());
+        Require(!AgcDriver::DriverDetail::HeapStageFits(result), "an unmappable heap stage was reported as fitting");
+        return;
     }
-    AgcDriver::DriverDetail::SetHeapStageUnmapped(std::nullopt);
+    Require(false, "a stage whose module keeps a binding the heap does not map was mapped onto the heap");
+}
+
+void OversizedStageFails() {
+    const auto capacity = AgcDriver::Graphics::BindlessHeap::ImageSlotCapacity();
+    ShaderRecompiler::RecompileResult result;
+    result.variantId = ~std::uint64_t{0} - 1u;
+    result.bindings.push_back({ShaderRecompiler::DescriptorKind::SampledImage, ShaderRecompiler::DescriptorRole::GuestImages, 1u, 0u, capacity + 1u});
+    try {
+        AgcDriver::DriverDetail::RequireHeapStageMappable(result);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("image slots") != std::string::npos, std::string("an oversized heap stage failed for another reason: ") + error.what());
+        Require(!AgcDriver::DriverDetail::HeapStageFits(result), "an oversized heap stage was reported as fitting");
+        return;
+    }
+    Require(false, "a stage needing more image slots than the heap holds was mapped onto the heap");
 }
 
 }
@@ -509,8 +528,10 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
-        if (heap && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
+        const bool excluded = std::getenv("APS5_GPU_HEAP_EXCLUDE") != nullptr;
+        const bool heapMode = std::getenv("APS5_GPU_HEAP") != nullptr;
+        const bool heap = heapMode && !excluded;
+        if (heapMode && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(StorageMemory.data(), StorageMemory.size(), true, true, true);
@@ -520,10 +541,17 @@ int main() {
                                 Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::ConstantSampler, Mode::BorderSampler, Mode::WrapSampler, Mode::MergedBlend, Mode::MergedBlendOther, Mode::Texture})
             DrawSamplesTheTexture(heap, mode);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
-        if (heap && !capped) MixedDrawTakesThePerDrawPath();
+        if (heap && !capped) UnpreparedPairTakesTheHeap();
+        if (heap) {
+            OversizedStageFails();
+            UnmappableStageFails();
+        }
+        if (excluded)
+            Require(AgcDriver::Graphics::HeapExcludedCount(AgcDriver::Graphics::HeapExcluded::Draw) != 0u,
+                    "no draw took the per-draw path for its excluded heap class");
         if (capped)
-            Require(AgcDriver::Graphics::HeapSlotEvictions() != 0u && !AgcDriver::DriverDetail::HeapRefused(),
-                    "the capped heap refused draws instead of evicting image slots");
+            Require(AgcDriver::Graphics::HeapSlotEvictions() != 0u,
+                    "the capped heap evicted no image slot");
         AgcDriverShutdown_nid_postfix();
         if (heap && !capped)
             Require(AgcDriver::Graphics::EmptyResourceSets() != 0, "no heap draw bound without a per-draw resource set");

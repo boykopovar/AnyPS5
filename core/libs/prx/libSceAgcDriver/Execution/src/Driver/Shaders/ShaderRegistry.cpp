@@ -1130,12 +1130,6 @@ std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const S
 
 }
 
-bool PreparedHeapStage(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
-    if (snapshot.prepared == nullptr) return false;
-    std::lock_guard lock(snapshot.prepared->mutex);
-    return std::ranges::any_of(snapshot.prepared->entries, [&](const auto& entry) { return entry.codeOffset == codeOffset && entry.handle != nullptr && entry.handle->artifact != nullptr && ShaderRecompiler::GetPreparedArtifact(*entry.handle).gpuResolvedImages; });
-}
-
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
@@ -1425,7 +1419,7 @@ bool LibraryPrebuildDisabled() {
 
 void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Graphics::ShaderStages& stages, ShaderRecompiler::ShaderStage stage, std::shared_ptr<const ShaderRecompiler::RecompileResult> result, std::uint32_t pushOffset, std::uint64_t program) {
     if (LibraryPrebuildDisabled() || result == nullptr || (stage != ShaderRecompiler::ShaderStage::Vertex && stage != ShaderRecompiler::ShaderStage::Fragment)) return;
-    if (result->gpuResolvedImages && !HeapStageMappable(*result)) return;
+    if (result->gpuResolvedImages && !HeapStageFits(*result)) return;
     SubmitLibraryPrebuild([device, stages, stage, result = std::move(result), pushOffset] {
         const std::array<Graphics::CompiledShader, 1> shaders{{{stage, result.get(), pushOffset}}};
         try {
@@ -1457,9 +1451,9 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
         }
     };
     bool heapPrebuilt = false;
-    if ((fragment || heapVertex) && !HeapStageExcluded(request.shader.stage) && HeapFragmentsEnabled()) {
+    if ((fragment || heapVertex) && !HeapStageExcluded(request.shader.stage) && Graphics::DescriptorHeapEnabled()) {
         const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, entries.front().handle);
-        if (invocation && HeapStageEligible(request.shader.stage, invocation->Plan().get(), heapVertex)) {
+        if (invocation && HeapStageEligible(request.shader.stage, invocation->Plan().get())) {
             auto heapRequest = request;
             heapRequest.target.gpuResolvedImages = true;
             PerformanceTimer timing("Shader.PrepareArtifact");
@@ -2043,13 +2037,13 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         requests.push_back(std::move(request));
         pushOffset += bytes;
     }
-    if (HeapFragmentsEnabled()) {
+    if (Graphics::DescriptorHeapEnabled()) {
         std::vector<PreparedGraphicsStage> heap;
         const auto addHeap = [&](std::size_t index, bool heapVertex) {
             const auto& stage = prepared[index];
             if (stage.entry.handle == nullptr || !requests[index] || HeapStageExcluded(stage.stage)) return false;
             const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(*requests[index], stage.entry.handle);
-            if (!invocation || !HeapStageEligible(stage.stage, invocation->Plan().get(), heapVertex)) return false;
+            if (!invocation || !HeapStageEligible(stage.stage, invocation->Plan().get()) || (HeapPreRasterStage(stage.stage) && !heapVertex)) return false;
             auto request = *requests[index];
             request.target.gpuResolvedImages = true;
             const auto handle = preparedHandle(*stage.snapshot, stage.entry.codeOffset, request);

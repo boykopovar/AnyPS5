@@ -214,7 +214,7 @@ void ringSpans(const Context& context) {
     require(counts.spansWritten == 3u && counts.spansKept == 3u, "three spans written and kept");
     BindlessHeap::SpanMark third;
     static_cast<void>(heap.RingAllocate(chunkWords, third));
-    Recorder recorder(context);
+    Recorder recorder(context, true);
     heap.Submitted(recorder, 0u);
     require(heap.Held(first), "a span stays held after its batch is submitted while the ring has not come back to its chunk");
     BindlessHeap::SpanMark fill;
@@ -241,7 +241,7 @@ bool ringLargeSpans(const Context& context) {
     BindlessHeap::SpanMark large;
     const auto span = heap.RingAllocate(largeWords, large);
     require(span.words.size() == largeWords && heap.Held(large), "a span over two chunks is written and held");
-    Recorder recorder(context);
+    Recorder recorder(context, true);
     BindlessHeap::SpanMark fill;
     const auto untilWrap = [&](const BindlessHeap::SpanMark& kept) {
         const auto wraps = heap.Statistics().ringWraps;
@@ -271,7 +271,7 @@ bool ringPressure(const Context& context) {
     BindlessHeap heap(context);
     if (heap.RingChunkCount() < 4u) return false;
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    Recorder recorder(context);
+    Recorder recorder(context, true);
     BindlessHeap::SpanMark fill;
     require(!heap.TakeRingPressure(), "an empty ring is under no pressure");
     const auto half = heap.RingChunkCount() / 2u;
@@ -295,7 +295,7 @@ bool ringPressure(const Context& context) {
 void ringCurrentChunk(const Context& context) {
     BindlessHeap heap(context);
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    Recorder recorder(context);
+    Recorder recorder(context, true);
     std::vector<BindlessHeap::SpanMark> pins(heap.RingChunkCount() - 1u);
     for (auto& pin : pins) {
         static_cast<void>(heap.RingAllocate(chunkWords, pin));
@@ -562,7 +562,7 @@ bool slotPressureSubmits(const Context& context, VkImageView view) {
         require(slot.has_value(), "a texture takes one of the eight capped slots");
         slots.push_back(*slot);
     }
-    require(BindlessHeap::NearlyFull() && !BindlessHeap::RefusesDraws(), "one free slot of eight marks the heap nearly full without refusing draws");
+    require(BindlessHeap::NearlyFull(), "one free slot of eight marks the heap nearly full");
     submit();
     require(heap.Statistics().slotsEvicted == 0u && BindlessHeap::NearlyFull(),
             "a submission in the middle of a draw evicts no slot the draw took in the batch it submitted");
@@ -589,23 +589,21 @@ bool slotPressureSubmits(const Context& context, VkImageView view) {
     return true;
 }
 
-void noTimelineRefuses(const Context& context, VkImageView view) {
-    auto& heap = BindlessHeap::For(context);
-    Recorder recorder(context, false);
+void noTimelineFails(const Context& context) {
+    static_cast<void>(BindlessHeap::For(context));
+    Recorder recorder(context);
     recorder.Activate();
+    bool failed = false;
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         static_cast<void>(recorder.Commands());
-        recorder.Submit();
+        try {
+            recorder.Submit();
+        } catch (const std::runtime_error& error) {
+            failed = std::string(error.what()).find("without a timeline semaphore") != std::string::npos;
+        }
     }
-    std::vector<std::shared_ptr<Texture>> held;
-    for (std::size_t index = 0; index < 7u; ++index) {
-        held.push_back(fakeTexture(index));
-        require(heap.TextureSlot(Abi::FirstImageBinding, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "a texture takes one of the eight capped slots");
-    }
-    require(BindlessHeap::RefusesDraws() && !heap.TakeSlotPressure(), "a heap whose recorder has no timeline cannot evict, so it refuses draws instead of submitting early");
-    for (const auto& texture : held) heap.ReleaseSlots(texture.get());
-    require(!BindlessHeap::RefusesDraws(), "releasing the textures takes the heap again");
+    require(failed, "a heap batch from a recorder without a timeline, which could not wait for its slots, was accepted");
     BindlessHeap::Release(context.device);
 }
 
@@ -717,8 +715,8 @@ int main(int argc, char** argv) {
                 else if (mode == "views-come-back") viewsComeBack(context, storage);
                 else if (mode == "two-heaps-come-back") twoHeapsComeBack(context, storage);
                 else if (mode == "owner-views-release") ownerViewsRelease(context, storage);
-                else if (mode == "no-timeline-refuses") noTimelineRefuses(context, sampled);
                 else if (mode == "shared-owner-release") sharedOwnerRelease(context, storage);
+                else if (mode == "no-timeline-fails") noTimelineFails(context);
                 else if (mode == "idle-slots-evicted" || mode == "pressure-submit" || mode == "samplers-evicted") {
                     const bool ran = mode == "idle-slots-evicted" ? idleSlotsEvicted(context, sampled)
                                      : mode == "pressure-submit" ? slotPressureSubmits(context, sampled)

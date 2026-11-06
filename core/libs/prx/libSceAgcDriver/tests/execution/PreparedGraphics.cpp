@@ -576,7 +576,7 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
             if (stage.heapVariant == heapVariant) set.push_back(&stage);
         }
         if (heapVariant && set.empty()) {
-            Require(!HeapFragmentsEnabled(), "the heap prepared no heap variants of the merged hull draw");
+            Require(!AgcDriver::Graphics::DescriptorHeapEnabled(), "the heap prepared no heap variants of the merged hull draw");
             continue;
         }
         const auto handleOf = [&](ShaderRecompiler::ShaderStage wanted) {

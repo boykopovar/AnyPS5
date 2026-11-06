@@ -77,7 +77,6 @@ private:
     std::shared_ptr<const SourceHandle> handle;
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
-[[nodiscard]] bool HeapFragmentEligible(const IrResourcePlan& plan);
 void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation);

@@ -250,7 +250,6 @@ function(add_shader_recompiler target runtimeTarget)
             FirstAtomicStorageImageBinding
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
-            HeapFragmentEligible
             CompleteHeapDataWords
             HeapTemplateCounts
             BuildPreparedShaderKey

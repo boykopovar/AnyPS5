@@ -260,12 +260,10 @@ void TablesChangingPerDispatch(const GuestBlock& block) {
         Dispatch(block, 0);
         most = std::max(most, cache.TableElements());
     }
-    const bool tableFitsHeap = AgcDriver::Graphics::BindlessHeap::ImageSlotCapacity() >= Elements + Spare;
-    if (AgcDriver::Graphics::DescriptorHeapEnabled() && tableFitsHeap) {
+    if (AgcDriver::Graphics::DescriptorHeapEnabled()) {
         Require(AgcDriver::Graphics::HeapComputeStages() > heapStages, "image table cache bounds: the dispatches did not take the descriptor heap");
         return;
     }
-    if (AgcDriver::Graphics::DescriptorHeapEnabled()) Require(AgcDriver::Graphics::HeapComputeStages() == heapStages, "image table cache bounds: a table stage with more images than the heap's slots took the heap");
     Require(most >= Elements, "image table cache bounds: no dispatch kept its table in the resource cache");
     Require(most <= AgcDriver::Graphics::ResourceCache::TableElementBudget(), "image table cache bounds: tables that changed every dispatch kept " + std::to_string(most) + " table elements in the resource cache, over its budget of " + std::to_string(AgcDriver::Graphics::ResourceCache::TableElementBudget()));
 }

@@ -10,7 +10,6 @@ namespace AgcDriver::DriverDetail {
 
 void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::shared_ptr<DrawEntry>& dataEntry, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData) {
     using Role = ShaderRecompiler::ProgramRole;
-    const bool heapRefused = HeapRefused();
     if (useDrawEntries) {
         if (!registerKey) {
             drawKey = 0xcbf29ce484222325ull;
@@ -146,7 +145,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     for (std::size_t rank = 0; rank < variants.size(); ++rank) {
                         const auto& variant = variants[rank];
                         if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
-                        if (variant->pushOffset != cursor || (heapRefused && variant->compiled->gpuResolvedImages) || (heapMode && variant->compiled->gpuResolvedImages != *heapMode)) continue;
+                        if (variant->pushOffset != cursor || (heapMode && variant->compiled->gpuResolvedImages != *heapMode)) continue;
                         if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh && !std::equal(variant->meshIndexDescriptor.begin(), variant->meshIndexDescriptor.end(), programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord)) {
                             if (!anyLayout) outcome = EntryOutcome::Differing;
                             anyLayout = true;
@@ -256,7 +255,6 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 auto& candidates = dataCandidates[i];
                 for (const auto& variant : dataEntry->stages[i]) {
                     if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
-                    if (heapRefused && variant->compiled->gpuResolvedImages) continue;
                     bool usedEqual = true;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
                         if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;

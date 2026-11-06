@@ -14,42 +14,14 @@
 
 namespace AgcDriver::DriverDetail {
 
-bool HeapFragmentsEnabled();
-bool HeapRefused();
 bool HeapStageExcluded(ShaderRecompiler::ShaderStage stage);
 bool HeapPreRasterStage(ShaderRecompiler::ShaderStage stage);
-Graphics::HeapStageReason HeapStageIneligibility(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan,
-                                                 bool heapVertex);
-bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan, bool heapVertex);
-enum class HeapKeyClass { Draw, Compute, HeapVertex };
-
-constexpr std::size_t HeapFragmentKey(std::size_t codeOffset, HeapKeyClass keyClass) {
-    switch (keyClass) {
-    case HeapKeyClass::Compute: return codeOffset | std::size_t{1} << 61u;
-    case HeapKeyClass::HeapVertex: return codeOffset | std::size_t{1} << 62u;
-    case HeapKeyClass::Draw: break;
-    }
-    return codeOffset;
-}
-
-std::optional<bool> HeapFragmentKnown(const void* snapshot, std::size_t codeOffset);
-void NoteHeapFragment(const void* snapshot, std::size_t codeOffset, bool eligible);
-bool HeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress = false);
-void SetHeapStageUnmapped(std::optional<ShaderRecompiler::ShaderStage> stage);
-bool HeapDrawStageMappable(const ShaderRecompiler::RecompileResult& result, ShaderRecompiler::ShaderStage stage);
-bool HeapPairRefused(std::uint64_t pair);
-void RefuseHeapPair(std::uint64_t pair);
-
-class HeapDrawOff {
-public:
-    HeapDrawOff();
-    ~HeapDrawOff();
-    HeapDrawOff(const HeapDrawOff&) = delete;
-    HeapDrawOff& operator=(const HeapDrawOff&) = delete;
-
-private:
-    bool previous;
-};
+const char* HeapStageIneligibility(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan);
+bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan);
+bool HeapPlanExcluded(const ShaderRecompiler::IrResourcePlan& plan);
+bool HeapClassesExcluded();
+void RequireHeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress = false);
+bool HeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress = false);
 
 bool SampleHeapStageVerify();
 

@@ -209,33 +209,6 @@ bool MixesHeapAndGuestStages(std::span<const Graphics::CompiledShader> stages, s
     return std::ranges::any_of(stages, [](const Graphics::CompiledShader& stage) { return stage.program->gpuResolvedImages; }) && std::ranges::any_of(stages, [&](const Graphics::CompiledShader& stage) { return guest(stage) && !stage.program->gpuResolvedImages; });
 }
 
-class DrawStageCheckpoint {
-public:
-    DrawStageCheckpoint(std::vector<Graphics::CompiledShader>& stages, std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>>& compiledStages, std::uint32_t& pushCursorBytes, Pm4::DrawParameters& drawParameters, ShaderRecompiler::ShaderPixelStageInfo& pixel, bool keepCopies)
-        : stages(stages), compiledStages(compiledStages), pushCursorBytes(pushCursorBytes), drawParameters(drawParameters), pixel(pixel), stagesBefore(stages.size()), compiledBefore(compiledStages.size()), pushBefore(pushCursorBytes),
-          parametersBefore(keepCopies ? std::optional(drawParameters) : std::nullopt), pixelBefore(keepCopies ? std::optional(pixel) : std::nullopt) {}
-
-    void Restore() {
-        stages.resize(stagesBefore);
-        compiledStages.resize(compiledBefore);
-        pushCursorBytes = pushBefore;
-        drawParameters = *parametersBefore;
-        pixel = *pixelBefore;
-    }
-
-private:
-    std::vector<Graphics::CompiledShader>& stages;
-    std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>>& compiledStages;
-    std::uint32_t& pushCursorBytes;
-    Pm4::DrawParameters& drawParameters;
-    ShaderRecompiler::ShaderPixelStageInfo& pixel;
-    std::size_t stagesBefore;
-    std::size_t compiledBefore;
-    std::uint32_t pushBefore;
-    std::optional<Pm4::DrawParameters> parametersBefore;
-    std::optional<ShaderRecompiler::ShaderPixelStageInfo> pixelBefore;
-};
-
 }
 
 namespace {
@@ -1000,13 +973,23 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
     const bool heapCheck = !drawHit && Graphics::DescriptorHeapEnabled();
-    std::uint64_t heapPair = 0xcbf29ce484222325ull;
-    for (const auto& program : programs) heapPair = (heapPair ^ reinterpret_cast<std::uintptr_t>(program.snapshot.get()) ^ (static_cast<std::uint64_t>(program.codeOffset) << 1u)) * 0x100000001b3ull;
-    const bool heapPairRefused = heapCheck && HeapPairRefused(heapPair);
-    bool heapRetry = false;
     const DrawStageContext stageContext{queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, meshBarycentrics};
-    const auto candidateForStage = [&](std::size_t i, bool afterHeap) {
-        return std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes && (!afterHeap || kept.first->compiled->gpuResolvedImages); });
+    const bool heapMode = Graphics::DescriptorHeapEnabled();
+    const bool heapDraw = heapMode && [&] {
+        std::uint32_t cursor = pushCursorBytes;
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            if (roles[i] == Role::GeometryBack) continue;
+            const auto stage = programs[i].binary.stage;
+            require(stage == Stage::Fragment || HeapPreRasterStage(stage), "a draw stage kind the GPU heap does not take");
+            require(stage == Stage::Fragment || localDevice->Target().descriptorMemory, "a GPU heap draw on a device target without descriptor memory");
+            cursor = Graphics::StagePushOffset(cursor, stage, localDevice->GraphicsPipelineLibraries());
+            if (HeapStageExcluded(stage) || (HeapClassesExcluded() && drawStageExcluded(stageContext, i, cursor, drawParameters))) return false;
+        }
+        return true;
+    }();
+    const auto fitsDraw = [&](const ShaderRecompiler::RecompileResult& compiled) { return !heapMode || compiled.gpuResolvedImages == heapDraw; };
+    const auto candidateForStage = [&](std::size_t i) {
+        return std::find_if(dataCandidates[i].begin(), dataCandidates[i].end(), [&](const auto& kept) { return kept.first->pushOffset == pushCursorBytes && fitsDraw(*kept.first->compiled); });
     };
     const auto runStages = [&]() -> std::optional<DrawVerdict> {
         for (std::size_t i = 0; i < programs.size(); ++i) {
@@ -1020,13 +1003,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
                 ringWords(i);
             } else {
-                const bool afterHeap = heapRetry || std::any_of(programResults.begin(), programResults.begin() + static_cast<std::ptrdiff_t>(i), [](const ShaderRecompiler::RecompileResult* earlier) { return earlier != nullptr && earlier->gpuResolvedImages; });
-                if (reused[i] && afterHeap && !matched[i]->compiled->gpuResolvedImages) {
+                if (reused[i] && !fitsDraw(*matched[i]->compiled)) {
                     reused[i] = false;
                     matched[i] = nullptr;
                     matchedRegions[i].clear();
                 }
-                const auto candidate = reused[i] ? dataCandidates[i].end() : candidateForStage(i, afterHeap);
+                const auto candidate = reused[i] ? dataCandidates[i].end() : candidateForStage(i);
                 if (reused[i]) {
                     programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
                     memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
@@ -1048,7 +1030,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                             break;
                         }
                     }
-                    compiledStages.push_back(materializeDrawStage(stageContext, i, pushCursorBytes, drawParameters, !heapPairRefused));
+                    compiledStages.push_back(materializeDrawStage(stageContext, i, pushCursorBytes, drawParameters, heapDraw));
                     if (!rejected.empty()) return DrawVerdict::Rejected;
                     programResults[i] = compiledStages.back().get();
                     if (verifyHit && matched[i] != nullptr && matched[i]->ringTemplate != nullptr) VerifyRingWords(*matched[i]->compiled, *buildRingWords(i, *matched[i]), *programResults[i], stageCaptures[i].heapWords.get());
@@ -1078,25 +1060,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         return std::nullopt;
     };
-    DrawStageCheckpoint checkpoint(stages, compiledStages, pushCursorBytes, drawParameters, pixel, heapCheck);
     if (const auto verdict = runStages()) return *verdict;
-    for (std::uint32_t retry = 0; heapCheck && MixesHeapAndGuestStages(stages, programResults); ++retry) {
-        require(retry < 2u, "a draw mixes GPU-mode and per-draw stages after taking the per-draw path");
-        Graphics::NoteHeapFallback(retry == 0u ? Graphics::HeapFallback::DrawMixedRetry : Graphics::HeapFallback::DrawRefusedPair);
-        if (retry == 1u) RefuseHeapPair(heapPair);
-        const auto reusedGuest = [&](std::size_t i) { return reused[i] && programResults[i] != nullptr && !programResults[i]->gpuResolvedImages; };
-        if (std::ranges::any_of(std::views::iota(std::size_t{0}, programs.size()), reusedGuest)) Graphics::NoteHeapFallback(Graphics::HeapFallback::DrawMixedReused);
-        heapRetry = retry == 0u;
-        checkpoint.Restore();
-        std::fill(programResults.begin(), programResults.end(), nullptr);
-        for (std::size_t i = 0; i < programs.size(); ++i) {
-            if (!reused[i]) stageCaptures[i] = {};
-        }
-        dataStagesReused = dataStagesCompiled = dataVerified = stageDataVerified = 0;
-        indirectCpu.reset();
-        std::optional<HeapDrawOff> heapOff;
-        if (retry == 1u) heapOff.emplace();
-        if (const auto verdict = runStages()) return *verdict;
+    if (heapCheck) {
+        require(!MixesHeapAndGuestStages(stages, programResults), "a draw mixes GPU heap and per-draw stages");
+        if (!heapDraw) Graphics::NoteHeapExcluded(Graphics::HeapExcluded::Draw);
     }
 
     if (stageDataVerified != 0) {
@@ -1190,8 +1157,9 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         if (programResults[0]->meshBarycentrics != meshBarycentrics) {
             const auto pushBytes = programResults[0]->pushConstants.size();
             const auto exports = programResults[0]->parameterExports;
-            compiledStages.push_back(materializeDrawStage(stageContext, 0, pushOffsets[0], drawParameters, !heapPairRefused));
+            compiledStages.push_back(materializeDrawStage(stageContext, 0, pushOffsets[0], drawParameters, heapDraw));
             if (!rejected.empty()) return DrawVerdict::Rejected;
+            require(fitsDraw(*compiledStages.back()), "a rebuilt mesh stage left the GPU heap mode of its draw");
             programResults[0] = compiledStages.back().get();
             stages[0].program = programResults[0];
             stages[0].registeredImageViews = stageCaptures[0].registeredViews.get();
@@ -1312,10 +1280,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
                 decodeVertexInfo(programIndex);
-                result = *materializeDrawStage(stageContext, programIndex, pushOffsets[programIndex], programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, !heapPairRefused);
+                result = *materializeDrawStage(stageContext, programIndex, pushOffsets[programIndex], programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, heapDraw);
                 for (auto& stage : stages) if (stage.program == &result) stage.registeredImageViews = stageCaptures[programIndex].registeredViews.get();
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
+                require(fitsDraw(result), "a patched program left the GPU heap mode of its draw");
                 for (auto& stage : stages) {
                     if (stage.program == &result) stage.heap = stageCaptures[programIndex].heapWords.get();
                 }

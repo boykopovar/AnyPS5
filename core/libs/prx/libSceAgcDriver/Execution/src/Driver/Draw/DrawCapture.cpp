@@ -84,7 +84,7 @@ void TraceShaderRequestFailure(std::uint64_t token, const Submission& submission
 
 }
 
-Driver::HeapDirect Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t i, const ShaderRecompiler::PreparedShaderInvocation& invocation, const ShaderRecompiler::RecompileRequest& request, PerformanceTimer& timing) {
+bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t i, const ShaderRecompiler::PreparedShaderInvocation& invocation, const ShaderRecompiler::RecompileRequest& request, PerformanceTimer& timing) {
     const auto& program = context.programs[i];
     auto& stageCapture = context.stageCaptures[i];
     HeapStageMaterialized materialized;
@@ -96,8 +96,8 @@ Driver::HeapDirect Driver::materializeHeapDirect(const DrawStageContext& context
     }
     callCost.Stop();
     Graphics::HeapCostScope finishCost(Graphics::HeapCost::StageFinish);
-    if (materialized.result == nullptr) return HeapDirect::Declined;
-    if (!HeapDrawStageMappable(*materialized.result, program.binary.stage)) return HeapDirect::Unmapped;
+    if (materialized.result == nullptr) return false;
+    RequireHeapStageMappable(*materialized.result);
     NoteHeapDirect();
     stageCapture.compiled = std::move(materialized.result);
     stageCapture.heapWords = stageCapture.compiled->heapTemplateId != 0 ? std::const_pointer_cast<ShaderRecompiler::HeapStageWords>(std::move(materialized.words)) : nullptr;
@@ -123,11 +123,12 @@ Driver::HeapDirect Driver::materializeHeapDirect(const DrawStageContext& context
         stageCapture.capture = std::move(reads.capture);
         stageCapture.userDataMask = UserDataMask(program, context.vertexInfos[i], reads.userDataUse.asValue | reads.userDataUse.asBase, *stageCapture.compiled);
         stageCapture.ring = true;
+        context.memory.insert(context.memory.end(), stageCapture.regions.begin(), stageCapture.regions.end());
     }
     context.recompiled[i] = true;
     timing.Mark("heap_direct");
     context.phaseTiming.Phase(DrawRowRecompile);
-    return HeapDirect::Taken;
+    return true;
 }
 
 std::runtime_error Driver::stageFailure(const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request, const std::exception& error, std::span<const ShaderRecompiler::MemoryRegion> regions) {
@@ -147,12 +148,9 @@ std::runtime_error Driver::stageFailure(const DrawProgram& program, const Shader
     return std::runtime_error(where.str() + error.what());
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(const DrawStageContext& context, std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& drawParameters, bool heapPartners) try {
-    PerformanceTimer timing("Shader.DrawStage");
+ShaderRecompiler::RecompileRequest Driver::drawStageRequest(const DrawStageContext& context, std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& drawParameters) {
     using Stage = ShaderRecompiler::ShaderStage;
-    context.phaseTiming.Phase(DrawRowVectors);
     const auto& program = context.programs[i];
-    Graphics::HeapCostScope prepareCost(Graphics::HeapCost::StagePrepare);
     const auto waveSize = Graphics::StageWaveSize(context.graphics.stages, program.binary.stage);
     ShaderRecompiler::RecompileRequest request{
         program.binary,
@@ -164,18 +162,29 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (context.graphics.depthRemap.mode != 0u && pushOffset < Graphics::PipelinePushSlotBytes) {
         request.layout.pushConstantSizeBytes = std::min(request.layout.pushConstantSizeBytes, ShaderRecompiler::DepthRemapPushOffsetBytes - pushOffset);
     }
+    return request;
+}
+
+bool Driver::drawStageExcluded(const DrawStageContext& context, std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& drawParameters) {
+    const auto& program = context.programs[i];
+    auto request = drawStageRequest(context, i, pushOffset, drawParameters);
+    request.target.gpuResolvedImages = true;
+    const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request);
+    const auto plan = invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
+    if (plan == nullptr) throw std::runtime_error("AGC graphics: a GPU heap stage has no resource plan to apply APS5_GPU_HEAP_EXCLUDE to");
+    return HeapPlanExcluded(*plan);
+}
+
+std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(const DrawStageContext& context, std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& drawParameters, bool heapDraw) try {
+    PerformanceTimer timing("Shader.DrawStage");
+    using Stage = ShaderRecompiler::ShaderStage;
+    context.phaseTiming.Phase(DrawRowVectors);
+    const auto& program = context.programs[i];
+    Graphics::HeapCostScope prepareCost(Graphics::HeapCost::StagePrepare);
+    auto request = drawStageRequest(context, i, pushOffset, drawParameters);
+
     const auto waitedBefore = traceCapSync() || context.profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-    const bool heapCandidate = heapPartners && (program.binary.stage == Stage::Fragment || HeapPreRasterStage(program.binary.stage)) && !HeapStageExcluded(program.binary.stage) && HeapFragmentsEnabled();
-    const auto fragmentOnHeap = [&] {
-        const auto fragment = std::find_if(context.programs.begin(), context.programs.end(), [](const DrawProgram& candidate) { return candidate.binary.stage == Stage::Fragment; });
-        if (fragment == context.programs.end()) return true;
-        const auto known = HeapFragmentKnown(fragment->snapshot.get(), fragment->codeOffset);
-        return known.has_value() ? *known : PreparedHeapStage(*fragment->snapshot, fragment->codeOffset);
-    };
-    const bool heapVertex = request.target.descriptorMemory && HeapPreRasterStage(program.binary.stage) && fragmentOnHeap();
-    const auto heapKey = HeapFragmentKey(program.codeOffset, heapVertex ? HeapKeyClass::HeapVertex : HeapKeyClass::Draw);
-    const auto heapKnown = heapCandidate ? HeapFragmentKnown(program.snapshot.get(), heapKey) : std::nullopt;
-    if (heapKnown.value_or(false)) request.target.gpuResolvedImages = true;
+    if (heapDraw) request.target.gpuResolvedImages = true;
     const auto invocationFor = [&] {
         try {
             return InvocationFor(*program.snapshot, program.codeOffset, request);
@@ -185,25 +194,12 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         }
     };
     auto invocation = invocationFor();
-    const auto heapEligible = [&](const std::shared_ptr<const ShaderRecompiler::IrResourcePlan>& plan) { return HeapStageEligible(program.binary.stage, plan.get(), heapVertex); };
-    const auto plan = heapCandidate && invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
     using StageReason = Graphics::HeapStageReason;
-    StageReason stageReason = StageReason::Heap;
-    if (!heapCandidate) stageReason = !HeapFragmentsEnabled() ? StageReason::Disabled : !heapPartners ? StageReason::PairRefused : StageReason::StageKind;
-    else if (heapKnown == std::optional(false)) stageReason = StageReason::KnownIneligible;
-    if (heapKnown.value_or(false) && !heapEligible(plan)) {
-        stageReason = HeapStageIneligibility(program.binary.stage, plan.get(), heapVertex);
-        NoteHeapFragment(program.snapshot.get(), heapKey, false);
-        request.target.gpuResolvedImages = false;
-        invocation = invocationFor();
-    } else if (heapCandidate && !heapKnown.has_value()) {
-        stageReason = HeapStageIneligibility(program.binary.stage, plan.get(), heapVertex);
-        const bool eligible = stageReason == StageReason::Heap;
-        NoteHeapFragment(program.snapshot.get(), heapKey, eligible);
-        if (eligible) {
-            request.target.gpuResolvedImages = true;
-            invocation = invocationFor();
-        }
+    const StageReason stageReason = heapDraw ? StageReason::Heap : !Graphics::DescriptorHeapEnabled() ? StageReason::Disabled : StageReason::Excluded;
+    if (heapDraw) {
+        const auto plan = invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
+        if (const auto* ineligible = HeapStageIneligibility(program.binary.stage, plan.get()))
+            throw std::runtime_error(std::string("AGC graphics: a GPU heap stage cannot take the heap: ") + ineligible);
     }
     Graphics::NoteHeapStageReason(stageReason);
     prepareCost.Stop();
@@ -215,17 +211,8 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.capture.reset();
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
     stageCapture.pushOffset = pushOffset;
-    const auto unmapped = [&] {
-        Graphics::NoteHeapFallback(Graphics::HeapFallback::DrawUnmapped);
-        NoteHeapFragment(program.snapshot.get(), heapKey, false);
-        return materializeDrawStage(context, i, pushOffset, drawParameters, heapPartners);
-    };
     if (request.target.gpuResolvedImages) {
-        switch (materializeHeapDirect(context, i, invocation, request, timing)) {
-        case HeapDirect::Taken: return stageCapture.compiled;
-        case HeapDirect::Unmapped: return unmapped();
-        case HeapDirect::Declined: break;
-        }
+        if (materializeHeapDirect(context, i, invocation, request, timing)) return stageCapture.compiled;
     }
     const auto capture = [&] {
         const SampledReadScope sampling(evidenceReads);
@@ -245,6 +232,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
 
     for (std::size_t j = 0; j < context.programs.size(); ++j) {
         if (context.matched[j] != nullptr && !context.recompiled[j] && (context.drawHit || j < i)) context.memory.insert(context.memory.end(), context.matchedRegions[j].begin(), context.matchedRegions[j].end());
+        if (j < i && context.recompiled[j] && context.stageCaptures[j].direct) context.memory.insert(context.memory.end(), context.stageCaptures[j].regions.begin(), context.stageCaptures[j].regions.end());
     }
     request.context.memory = context.memory;
     if (traceCapSync()) traceCapture("draw-capture", program.binary.codeAddress, context.submission.queue, context.memory, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
@@ -297,7 +285,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
             throw stageFailure(program, request, error, request.context.memory);
         }
     }
-    if (stageCapture.compiled->gpuResolvedImages && !HeapDrawStageMappable(*stageCapture.compiled, program.binary.stage)) return unmapped();
+    if (stageCapture.compiled->gpuResolvedImages) RequireHeapStageMappable(*stageCapture.compiled);
     stageCapture.capture = capture;
     timing.Mark("materialize");
     const auto walked = capture->userDataUse.asValue | capture->userDataUse.asBase;
