@@ -6,7 +6,9 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/6bd58c3d7a0fa933dd4b524754c43265/e4e5dbc43890a24e35dc1c656135000210e28390) records module, library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp); it is a metadata summary rather than independent verification. One entry belongs to the logical library `libSceLibcInternalExt` within this module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 295 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 289 match the public 3.20 catalogue and 6 do not. These are declarations only; neither image label authenticates a retail firmware version. Signatures and behavior are unverified; parameterless `int` declarations are placeholders. Every entry throws through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 288 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 282 match the public 3.20 catalogue and 6 do not. Apart from the two `showmanyc` exports below, these remain import-resolution declarations: signatures and behavior are unverified, parameterless `int` declarations are placeholders, and their bodies throw through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No other runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+- [showmanyc](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) has no console-runtime validation. Firmware 13.60 libSceLibcInternal.sprx (SHA-256 a2d70cc64c3abc3927662cbe0c3765b74b2385b4b2ad80eb7b942a891f9259fb) contains bytes 31 c0 c3 (xor eax,eax; ret) at 0x92b30 for IAEl1Ta7yVU and 0xc2c80 for olsoiZsezkk. These static observations establish a zero result without buffer access. The Itanium names identify narrow/wide std::basic_streambuf specializations; std::streamsize follows the standard-library declaration and the [base showmanyc contract](https://eel.is/c++draft/streambuf.virt.get). No console measurement or other firmware equivalence is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -55,10 +57,8 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_ZNSt13basic_ostreamIwSt11char_traitsIwEED1Ev` | `EYZJsnX58DE` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsgetnEPci` | `VpwymQiS4ck` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKci` | `sXaxl1QGorg` |
-| `_ZNSt15basic_streambufIcSt11char_traitsIcEE9showmanycEv` | `IAEl1Ta7yVU` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsgetnEPwi` | `lZVehk7yFok` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsputnEPKwi` | `041c37QfoUc` |
-| `_ZNSt15basic_streambufIwSt11char_traitsIwEE9showmanycEv` | `olsoiZsezkk` |
 | `_ZNSt16nested_exceptionD1Ev` | `+qKS53qzWdA` |
 | `_ZNSt16nested_exceptionD2Ev` | `8R00hgzXQDY` |
 | `_ZNSt22_Future_error_categoryD0Ev` | `WDKzMM-uuLE` |
@@ -254,10 +254,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_ZSt22_Random_device_entropyv` | `mDIHE-aaRaI` |
 | `_ZSt6_ThrowRKSt9exception` | `pDFe-IgbTPg` |
 | `_ZSt7_FiopenPKwNSt5_IosbIiE9_OpenmodeEi` | `aqyjhIx7jaY` |
-| `_ZSt7_MP_AddPyy` | `QfPuSqhub7o` |
-| `_ZSt7_MP_GetPy` | `lrQSsTRMMr4` |
-| `_ZSt7_MP_MulPyyy` | `Gav1Xt1Ce+c` |
-| `_ZSt7_MP_RemPyy` | `Ozk+Z6QnlTY` |
 | `_ZSt7setbasei` | `4rrOHCHAV1w` |
 | `_ZSt9_LStrxfrmIcEmPT_S1_PKS0_S3_PKSt8_Collvec` | `V62E2Q8bJVY` |
 | `_ZSt9_LStrxfrmIwEmPT_S1_PKS0_S3_PKSt8_Collvec` | `BloPUt1HCH0` |
@@ -347,6 +343,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [setprogname](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) follows FreeBSD 11.4 `lib/libc/gen/setprogname.c`: finds the last `/` and strips leading path components; a null name throws
 - [__inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) was not measured on the console: it runs `inet_ntoa_r`, as FreeBSD 11.4 names the function `__inet_ntoa_r` ([arpa/inet.h](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/include/arpa/inet.h#L129)) and makes `inet_ntoa_r` a weak alias of it ([inet_ntoa.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_ntoa.c#L62-L76))
 - [inet_netof, inet_lnaof, inet_makeaddr and inet_network](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal, NIDs `UXEIr+tUsM4`, `4y7OKpbXUDs`, `5YaIoLorY8A`, `-Qdf3rmtqRA`, and aliases `3R15U5X00nY`, `bD39ou3sn7w`, `9cf7QE7cmto`, `xDCABmswhcM`) follow FreeBSD 11.4 [inet_netof.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_netof.c), [inet_lnaof.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_lnaof.c), [inet_makeaddr.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_makeaddr.c) and [inet_network.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_network.c) (`8c639945a4`). `inet_network` components are bounded to 0xff with a 32-bit accumulator. A null text throws std::invalid_argument. Console unverified.
+- [std::_MP_Get, _MP_Add, _MP_Mul and _MP_Rem](../../../core/libs/prx/libSceLibcInternal/MultiPrecision.cpp) (libSceLibcInternal, NIDs `lrQSsTRMMr4`, `QfPuSqhub7o`, `Gav1Xt1Ce+c` and `Ozk+Z6QnlTY`) are unverified on the console: firmware 13.42's `libSceLibcInternal.sprx` exports all four ([#14936](https://github.com/boykopovar/AnyPS5/pull/14936#pullrequestreview-5731406143)), but their code was not run and no title was seen calling them. Parameters come from the mangled names, the rest from the first MSVC STL release's [multprec.cpp](https://github.com/microsoft/STL/blob/219514876ea86491de191ceaa88632616bbc0f19/stl/src/multprec.cpp), Dinkumware's code: five 64-bit words of base 2^32 digits, with its results for words wider than a digit, a carry into the fifth word and a borrow past the top digit. A null array throws, and `_MP_Rem` throws where that code reads outside its arrays: a zero divisor or value, a nonzero fifth word, or a nonzero quotient digit for a divisor below 2^32
 
 
 ### Additional PS5 3.20 imports (xdCloudy #9511)
@@ -541,20 +538,21 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 - [3.20 pending imports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following PS5 3.20 inventory names are declared for import resolution only; their prototypes and behavior are unverified, and each call throws through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Atan`, `_Atqexit`, `_Atthreadexit`, `_CStrftime`, `_CStrxfrm`, `_CWcsxfrm`, `_Call_onceEx`, `_Closreg`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Daysto`, `_Deletegloballocale`, `_Do_call`, `_Dtento`, `_Erfc`, `_FAtan`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Deletegloballocale`, `_Do_call`, `_Dtento`, `_Erfc`, `_FAtan`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FDtento`, `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`, `_FXp_addh`, `_FXp_addx`, `_FXp_getw`, `_FXp_invx`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`, `_FXp_addh`, `_FXp_addx`, `_FXp_invx`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FXp_ldexpx`, `_FXp_movx`, `_FXp_mulh`, `_FXp_mulx`, `_FXp_setn`, `_FXp_setw`, `_FXp_sqrtx`, `_FXp_subx`, `_Fac_tidy`, `_Fail_s`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - 
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fgpos`, `_Fofind`, `_Fofree`, `_Fopen`, `_Foprep`, `_Frprep`, `_Fspos`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fwprep`, `_Genld`, `_Gentime`, `_Getcloc`, `_Getctyptab`, `_Getdst`, `_Geterrno`, `_Getfld`, `_Getfloat`, `_Getgloballocale`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getpcostate`, `_Getpwcostate`, `_Getpwctrtab`, `_Getpwctytab`, `_Getstr`, `_Gettime`, `_Getzone`, `_Hypot`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Isdst`, `_LAtan`, `_LDtento`, `_LErfc`, `_LHypot`, `_LLogpoly`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LAtan`, `_LDtento`, `_LErfc`, `_LHypot`, `_LLogpoly`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LPlsw`, `_LPmsw`, `_LPow`, `_LQuad`, `_LQuadph`, `_LRint`, `_LSincos`, `_LTan`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LTgamma`, `_LXp_addh`, `_LXp_addx`, `_LXp_getw`, `_LXp_invx`, `_LXp_ldexpx`, `_LXp_movx`, `_LXp_mulh`, `_LXp_mulx`, `_LXp_setn`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LXp_setw`, `_LXp_sqrtx`, `_LXp_subx`, `_Ldtob`, `_Litob`, `_Lock_spin_lock`, `_Locsum`, `_Locterm`, `_Locvar`, `_Logpoly`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Makeloc`, `_Makestab`, `_Makewct`, `_Mbtowc`, `_Nnl`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Plsw`, `_Pmsw`, `_Pow`, `_Printf`, `_Putfld`, `_Putstr`, `_Puttxt`, `_Quad`, `_Quadph`, `_Readloc`
+- [`_Daysto`, `_FXp_getw` and `_Isdst`](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - follow firmware 13.42's libSceLibcInternal: read to the return, disassembly only, not measured on a console. `_Isdst` returns -1 without reading its argument. `_Daysto(year, month)` adds the leap days before `year` to the module's twelve-entry common or leap month table, as Dinkumware's `_Daysto` does; the module indexes the table with any month, and a month outside 0 to 11 throws here instead of reading past it. `_FXp_getw` follows Dinkumware's `_Xp_getw` for `float` parts, branch for branch.
 
 ### Additional PS5 3.20 imports (round 6)
 

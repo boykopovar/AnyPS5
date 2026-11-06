@@ -58,3 +58,5 @@
 ### Additional PS5 3.20 imports (xdCloudy #9485)
 
 - [sceHttp2Unknown_*_nid_no_patch](../../../core/libs/prx/libSceHttp2/Export.cpp) (libSceHttp2) - 1 PS5 3.20 import declarations (`_Z5dummyv`). Their prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. This records the export names without claiming an ABI or behavior. Source: [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
+
+- [libSceHttp2 authentication responses](../../../core/libs/prx/libSceHttp2/Transport.cpp) - Sony SDK/console handling of a 401 without WWW-Authenticate or a 407 without Proxy-Authenticate is unmeasured. This transport exposes the received status and body when the matching challenge field is absent, following the challenge/header distinction in [RFC9110 section11.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-11.3). Matching fields still throw with automatic authentication enabled; challenge-value parsing, credential negotiation, caches and callbacks remain unimplemented. Informational headers do not carry authentication challenges into the final response.
