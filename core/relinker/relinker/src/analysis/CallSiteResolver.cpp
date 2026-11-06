@@ -19,10 +19,16 @@ std::int32_t readDisp32(const std::vector<std::uint8_t>& text, std::size_t offse
     return static_cast<std::int32_t>(v);
 }
 
-std::optional<std::size_t> ripRelativeDispOffset(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
+struct RelativeOperand {
+    std::size_t DisplacementOffset;
+    bool AddressSize32;
+};
+
+std::optional<RelativeOperand> relativeOperand(const std::vector<std::uint8_t>& text, const Codegen::InstructionMatch& m) {
     std::size_t cur = static_cast<std::size_t>(m.Offset);
     std::size_t end = cur + m.Length;
     bool hasRexW = false;
+    bool addressSize32 = false;
     while (cur < end) {
         std::uint8_t b = text[cur];
         if (b >= RexMin && b <= RexMax) {
@@ -30,8 +36,9 @@ std::optional<std::size_t> ripRelativeDispOffset(const std::vector<std::uint8_t>
             ++cur;
             continue;
         }
-        if (b == PrefixRepne || b == PrefixSegDs) {
+        if (b == PrefixRepne || b == PrefixSegCs || b == PrefixSegDs || b == PrefixSegEs || b == PrefixSegSs || b == PrefixAddressSize) {
             hasRexW = false;
+            if (b == PrefixAddressSize) addressSize32 = true;
             ++cur;
             continue;
         }
@@ -47,9 +54,9 @@ std::optional<std::size_t> ripRelativeDispOffset(const std::vector<std::uint8_t>
     if (mod != ModRmModIndirect || rm != ModRmRmRipRelative) return std::nullopt;
     const auto operation = (modrm >> ModRmRegShift) & ModRmRegMask;
     if (opcode == OneByteGrp5Rm && operation >= 2 && operation <= 6)
-        return cur + 2;
+        return RelativeOperand{cur + 2, addressSize32};
     if (opcode == OneByteModRmRangeJMax && hasRexW)
-        return cur + 2;
+        return RelativeOperand{cur + 2, addressSize32};
     return std::nullopt;
 }
 }
@@ -79,11 +86,12 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector
         constexpr std::size_t MinRipRelativeInstructionBytes = 6;
         _cachedTargetToInstr.reserve(std::min(static_cast<std::size_t>(candidateCount), textSection.size() / MinRipRelativeInstructionBytes));
         scanner->VisitCodeSection(textSection, 0, textSection.size(), [&](const Codegen::InstructionMatch& m) {
-            const auto dispOff = ripRelativeDispOffset(textSection, m);
-            if (!dispOff || *dispOff + 4 > textSection.size()) return;
-            std::int32_t disp = readDisp32(textSection, *dispOff);
+            const auto operand = relativeOperand(textSection, m);
+            if (!operand || operand->DisplacementOffset + 4 > textSection.size()) return;
+            std::int32_t disp = readDisp32(textSection, operand->DisplacementOffset);
             VirtualAddress instrEnd = textSectionVAddr + m.Offset + static_cast<VirtualAddress>(m.Length);
             VirtualAddress target = instrEnd + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
+            if (operand->AddressSize32) target = static_cast<std::uint32_t>(target);
             _cachedTargetToInstr.emplace_back(target, m.Offset);
         });
         std::sort(_cachedTargetToInstr.begin(), _cachedTargetToInstr.end());
