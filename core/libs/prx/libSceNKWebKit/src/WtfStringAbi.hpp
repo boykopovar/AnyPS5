@@ -20,6 +20,26 @@ struct StringView {
     bool is8Bit;
 };
 
+enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
+
+struct HTMLNonNegativeIntegerResult {
+    union {
+        unsigned value;
+        HTMLIntegerParsingError error;
+    };
+    bool hasValue;
+};
+
+static_assert(sizeof(HTMLIntegerParsingError) == 4);
+static_assert(sizeof(HTMLNonNegativeIntegerResult) == 8);
+static_assert(alignof(HTMLNonNegativeIntegerResult) == 4);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, value) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, error) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, hasValue) == 4);
+static_assert(std::is_trivially_copy_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_move_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_destructible_v<HTMLNonNegativeIntegerResult>);
+
 struct URL {
     StringImpl* impl;
     unsigned bits;
@@ -57,6 +77,23 @@ struct String {
     String(const String& other) : impl(other.impl) { if (impl) impl->refCount += 2; }
     String(String&& other) noexcept : impl(std::exchange(other.impl, nullptr)) {}
     ~String() { Release(impl); }
+    String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
+};
+
+StringImpl* EmptyStringImpl();
+StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
+String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
+
+struct StringVector {
+    String* buffer;
+    unsigned capacity;
+    unsigned size;
+    StringVector() : buffer(nullptr), capacity(0), size(0) {}
+    StringVector(StringVector&& other) noexcept
+        : buffer(std::exchange(other.buffer, nullptr)), capacity(std::exchange(other.capacity, 0)), size(std::exchange(other.size, 0)) {}
+    StringVector(const StringVector&) = delete;
+    StringVector& operator=(const StringVector&) = delete;
+    ~StringVector();
 };
 
 struct CString {
@@ -83,6 +120,11 @@ static_assert(offsetof(StringImpl, data) == 8);
 static_assert(offsetof(StringImpl, hashAndFlags) == 16);
 static_assert(sizeof(String) == 8);
 static_assert(offsetof(String, impl) == 0);
+static_assert(sizeof(StringVector) == 16);
+static_assert(offsetof(StringVector, buffer) == 0);
+static_assert(offsetof(StringVector, capacity) == 8);
+static_assert(offsetof(StringVector, size) == 12);
+static_assert(!std::is_trivially_destructible_v<StringVector>);
 static_assert(sizeof(StringView) == 16);
 static_assert(offsetof(StringView, data) == 0);
 static_assert(offsetof(StringView, length) == 8);
