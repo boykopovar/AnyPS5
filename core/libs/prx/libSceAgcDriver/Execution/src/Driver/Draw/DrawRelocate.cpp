@@ -359,6 +359,25 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
 
 void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     if (variant.shaderDataPatches.empty() && variant.descriptorPatches.empty()) return;
+    const bool templateOnly = variant.ringTemplate != nullptr && variant.shaderDataPatches.empty() &&
+                              std::all_of(variant.descriptorPatches.begin(), variant.descriptorPatches.end(), [&](const std::array<std::uint32_t, 3>& patch) {
+                                  if (patch[0] >= variant.compiled->bindings.size()) return true;
+                                  const auto role = variant.compiled->bindings[patch[0]].role;
+                                  return role != ShaderRecompiler::DescriptorRole::FlattenedSrt && role != ShaderRecompiler::DescriptorRole::ShaderData;
+                              });
+    if (templateOnly) {
+        auto ringTemplate = std::make_shared<ShaderRecompiler::HeapStageWords>(*variant.ringTemplate);
+        if (ringTemplate->bindings.empty()) ringTemplate->bindings.resize(variant.compiled->bindings.size());
+        for (const auto& [binding, word, value] : variant.descriptorPatches) {
+            if (binding >= ringTemplate->bindings.size()) continue;
+            auto& words = ringTemplate->bindings[binding];
+            if (words.empty()) words = variant.compiled->bindings[binding].guestDescriptor;
+            if (word < words.size()) words[word] = value;
+        }
+        variant.ringTemplate = std::move(ringTemplate);
+        variant.descriptorPatches.clear();
+        return;
+    }
     auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
     for (const auto& [slot, value] : variant.shaderDataPatches) {
         const auto at = static_cast<std::size_t>(slot) * sizeof(std::uint32_t);
@@ -388,7 +407,7 @@ void Driver::applyShaderDataPatches(DispatchVariant& variant) {
 
 void Driver::reportDrawRelocation() {
     auto& counters = drawRelocationCounters;
-    AgcDriver::ProfilePrint_nid_no_patch("[draw-relocate] %llu alias lookups: %llu donors with moved user words, %llu refusals, %llu hits through a relocated entry; %zu shader sets learned, %zu aliases held (%llu dropped at the limit)\n", static_cast<unsigned long long>(counters.lookups), static_cast<unsigned long long>(counters.donors), static_cast<unsigned long long>(counters.refused), static_cast<unsigned long long>(counters.hits), drawRelocations.size(), drawAliases.size(), static_cast<unsigned long long>(counters.evicted));
+    AgcDriver::ProfilePrint_nid_no_patch("[draw-relocate] %llu alias lookups: %llu donors with moved user words, %llu refusals, %llu hits through a relocated entry (%llu cached under their own key); %zu shader sets learned, %zu aliases held (%llu dropped at the limit)\n", static_cast<unsigned long long>(counters.lookups), static_cast<unsigned long long>(counters.donors), static_cast<unsigned long long>(counters.refused), static_cast<unsigned long long>(counters.hits), static_cast<unsigned long long>(counters.admitted), drawRelocations.size(), drawAliases.size(), static_cast<unsigned long long>(counters.evicted));
     counters = {};
 }
 

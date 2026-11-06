@@ -69,13 +69,13 @@ public:
     std::optional<std::uint32_t> PinnedSamplerSlot(const std::shared_ptr<Sampler>& sampler);
     std::uint32_t SamplerGeneration(std::uint32_t slot) const;
     std::uint64_t SlotSerial() const { return slotSerial.load(std::memory_order_acquire); }
-    bool GenerationsCurrent(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> slotGenerations,
+    bool GenerationsCurrent(std::span<const std::uint32_t> slots, std::span<const std::uint32_t> slotGenerations,
                             std::span<const std::uint32_t> samplerSlots, std::span<const std::uint32_t> samplerGenerations) const;
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
     static std::uint32_t ImageSlotCapacity();
     std::uint32_t ImageSlots() const { return slotCap; }
-    std::uint32_t TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const;
+    std::uint32_t TouchSlots(std::span<const std::uint32_t> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const;
 
     struct DataSpan {
         std::uint32_t offset = 0;
@@ -93,6 +93,7 @@ public:
     DataSpan Allocate(std::size_t words, SpanMark& mark);
     DataSpan RingAllocate(std::size_t words, SpanMark& mark);
     bool Held(const SpanMark& mark);
+    std::optional<DataSpan> KeepOrAllocate(std::size_t words, SpanMark& mark, bool same);
     std::uint32_t RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark);
     static constexpr std::uint32_t BufferSlotBytes = 16u;
 
@@ -166,6 +167,8 @@ private:
     std::uint32_t poolAlignment = 256;
     std::size_t poolBatchBytes = 0;
     std::size_t takePoolBlockLocked(std::size_t bytes);
+    bool heldLocked(const SpanMark& mark);
+    DataSpan allocateLocked(std::size_t words, SpanMark& mark);
     bool poolBlockDoneLocked(PoolBlock& block);
     void trimPoolLocked();
     std::uint32_t ringAlignment = 256;
@@ -206,7 +209,9 @@ private:
         std::uint32_t next = 0;
         std::uint32_t limit = 0;
         std::vector<std::uint32_t> free;
-        std::vector<std::uint32_t> generations;
+        std::unique_ptr<std::atomic<std::uint32_t>[]> generations;
+        void Configure(std::uint32_t first, std::uint32_t slots);
+        void Retire(std::uint32_t slot);
         std::optional<std::uint32_t> Take(bool& reused);
         void Free(std::uint32_t slot);
         std::size_t Unused() const;

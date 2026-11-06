@@ -168,7 +168,7 @@ struct DrawRelocationTrial {
 };
 
 struct DrawRelocationCounters {
-    std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0;
+    std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0, admitted = 0;
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);

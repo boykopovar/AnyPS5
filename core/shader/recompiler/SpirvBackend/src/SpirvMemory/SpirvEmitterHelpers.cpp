@@ -560,8 +560,9 @@ void DefineDescriptors(SpirvEmitterState& state) {
             if (layout.UsesDataAddress() && !state.heapBufferDescriptors) state.flattenedSrtAddressed = true;
             else {
                 state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
-                if (layout.UsesDataAddress()) state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::FlattenedSrt);
-                if (!layout.UsesDataAddress()) state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
+                state.flattenedSrtPushed = layout.UsesDataAddress();
+                if (state.flattenedSrtPushed) state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::SrtAddress);
+                else state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
             }
             break;
         case DescriptorBindingKind::Samplers:

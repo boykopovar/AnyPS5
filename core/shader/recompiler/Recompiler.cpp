@@ -2538,18 +2538,18 @@ void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words)
         const auto& binding = shared.bindings[index];
         if (binding.role != DescriptorRole::ShaderData && binding.role != DescriptorRole::FlattenedSrt) continue;
         if (!words.bindings.empty() && !words.bindings[index].empty()) continue;
-        std::vector<std::uint32_t> descriptor;
         if (binding.role == DescriptorRole::FlattenedSrt) {
             if (words.flattenedSrt.empty() || words.flattenedSrt == binding.guestDescriptor) continue;
-            descriptor = words.flattenedSrt;
+            if (words.bindings.empty()) words.bindings.resize(count);
+            words.bindings[index].assign(words.flattenedSrt.begin(), words.flattenedSrt.end());
         } else {
             const auto patched = std::min(words.userData.size(), binding.guestDescriptor.size());
             if (std::equal(words.userData.begin(), words.userData.begin() + static_cast<std::ptrdiff_t>(patched), binding.guestDescriptor.begin())) continue;
-            descriptor = binding.guestDescriptor;
+            if (words.bindings.empty()) words.bindings.resize(count);
+            auto& descriptor = words.bindings[index];
+            descriptor.assign(binding.guestDescriptor.begin(), binding.guestDescriptor.end());
             std::copy_n(words.userData.begin(), patched, descriptor.begin());
         }
-        if (words.bindings.empty()) words.bindings.assign(count, {});
-        words.bindings[index] = std::move(descriptor);
     }
 }
 

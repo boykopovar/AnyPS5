@@ -167,11 +167,18 @@ std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index
         return Select(state, u32, inBounds, dataAddressLoad(state, RuntimeAbi::RootItem::SrtAddress, clamped), ConstantU32(state, 0u));
     }
     if (state.flattenedSrtVariable == 0) FailEmit("the flattened SRT descriptor is missing");
+    const auto u32 = TypeU32(state);
+    std::uint32_t inBounds = 0;
+    if (state.flattenedSrtPushed) {
+        const auto dwords = EmitRootItemDword(state, RuntimeAbi::RootItem::SrtDwords, 0u);
+        inBounds = Binary(state, spv::OpULessThan, TypeBool(state), index, dwords);
+        index = Select(state, u32, inBounds, index, ConstantU32(state, 0u));
+    }
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0u), index);
     const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
+    state.module.AddFunction(spv::OpLoad, u32, value, pointer);
+    return inBounds != 0 ? Select(state, u32, inBounds, value, ConstantU32(state, 0u)) : value;
 }
 
 std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dwordIndex) {

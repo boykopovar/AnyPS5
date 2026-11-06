@@ -202,10 +202,11 @@ public:
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const;
     bool HeapStage() const { return heapStage; }
+    std::atomic<std::uint64_t>& CacheTouchedAt() const { return cacheTouchedAt; }
     void RefreshHeapStage(std::span<const CompiledShader> shaders);
     void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
-    void BindDescriptorHeaps(VkCommandBuffer commands) const;
+    void BindDescriptorHeaps(VkCommandBuffer commands, bool guestBuffersChecked = false) const;
     struct DrawBindings {
         DrawBindings() = default;
         DrawBindings(const DrawBindings&) = delete;
@@ -226,6 +227,7 @@ public:
         bool addressOffsets = false;
         std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
         std::vector<VkDescriptorBufferInfo> addressOverrides;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> movedReads;
         ~DrawBindings();
     };
     void RefreshMovedAddresses(DrawBindings& rewritten) const;
@@ -673,6 +675,7 @@ private:
     std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const CompiledShader& shader);
     struct RingDescriptors {
+        VkDeviceAddressRangeEXT srt{};
         std::vector<VkDeviceAddressRangeEXT> ranges;
         BindlessHeap::SpanMark mark;
         std::uint32_t first = 0;
@@ -680,6 +683,7 @@ private:
     struct HeapStageState {
         std::vector<std::uintptr_t> key;
         std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
+        std::vector<std::uint32_t> imageSlots;
         std::vector<std::uint32_t> slotGenerations;
         std::vector<std::uint32_t> samplerSlots;
         std::vector<std::uint32_t> samplerGenerations;
@@ -693,6 +697,7 @@ private:
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
         RingDescriptors descriptors;
+        std::uint64_t inertProgram = 0;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
     std::uint64_t heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
@@ -729,6 +734,8 @@ private:
     std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
     bool addressedBuffers = false;
+    std::vector<VkDeviceAddressRangeEXT> resolvedAddresses;
+    VkDeviceAddress emptyAddress = 0;
     std::size_t gdsAllocation = std::numeric_limits<std::size_t>::max();
     std::array<std::vector<std::uint32_t>, ShaderRecompiler::RuntimeAbi::StageCount> stageDataWords;
     std::array<std::size_t, ShaderRecompiler::RuntimeAbi::StageCount> stageDataIndex{};
@@ -739,6 +746,9 @@ private:
     void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides,
                               std::vector<VkDeviceAddressRangeEXT>* ranges = nullptr) const;
     VkDeviceAddressRangeEXT srtRange(std::size_t stage) const;
+    bool stageReadsOverride(std::size_t stage, const std::vector<VkDescriptorBufferInfo>& overrides) const;
+    VkDeviceAddressRangeEXT bufferAddress(const Allocation& allocation) const;
+    void resolveBufferAddresses();
     std::uint32_t ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const;
     std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtOffsets{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringDescriptorStages{};
@@ -804,6 +814,7 @@ private:
     bool importsReconcilable = false;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
+    mutable std::atomic<std::uint64_t> cacheTouchedAt{0};
     void rehashDataWords();
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
     std::vector<DataPatch> dataPatches;
@@ -870,6 +881,7 @@ public:
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a
     // hot template must not age out under the recipes that depend on it); false when no entry.
     bool Touch(const Key& key);
+    void TouchAging(const Key& key, std::atomic<std::uint64_t>& touchedAt);
     // Find and Touch calls so far (the [rescache] line: a recipe hit touches instead of finding).
     static std::uint64_t Finds();
     static std::uint64_t Touches();
@@ -928,6 +940,10 @@ private:
     static constexpr std::size_t InitialShrinkWindow = 8;
     static constexpr std::size_t MaximumShrinkWindow = 1024;
     std::size_t baseEntries = InitialEntries;
+    std::atomic<std::uint64_t> operations{0};
+    std::atomic<std::uint64_t> usesWindowStart{0};
+    std::atomic<std::size_t> agingWindow{InitialEntries / 8u};
+    void publishAgingWindow();
     std::size_t baseShrinkWindow = InitialShrinkWindow;
     std::size_t shrinkWindow = InitialShrinkWindow;
     bool shrankLast = false;

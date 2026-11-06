@@ -240,6 +240,7 @@ struct SpirvEmitterState {
     std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
     bool flattenedSrtAddressed = false;
+    bool flattenedSrtPushed = false;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;
     std::uint32_t ldsBufferU64Variable = 0;

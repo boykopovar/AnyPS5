@@ -279,6 +279,7 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
         ringHeapOffset = sizes.ringOffset;
         ringBytes = sizes.ringBytes;
         ringData = resourceHeap->Bytes().data() + ringHeapOffset;
+        writeResourceDescriptors = context.Function<PFN_vkWriteResourceDescriptorsEXT>("vkWriteResourceDescriptorsEXT");
     } else {
         ringBytes = 0;
     }
@@ -288,9 +289,8 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     slotCap = configuredSlotCap(sizes.imageSlots);
     deviceImageSlots.store(slotCap, std::memory_order_relaxed);
     slotUses = std::make_unique<std::atomic<std::uint32_t>[]>(slotCap);
-    imagePool.next = SamplerKind;
-    imagePool.limit = slotCap;
-    samplerPool.limit = Abi::GpuSamplerHeapSlots;
+    imagePool.Configure(SamplerKind, slotCap);
+    samplerPool.Configure(0u, Abi::GpuSamplerHeapSlots);
     samplerUses = std::make_unique<std::atomic<std::uint32_t>[]>(Abi::GpuSamplerHeapSlots);
 }
 
@@ -323,13 +323,23 @@ std::atomic<std::uint64_t> heapsEpoch{0};
 
 }
 
+namespace {
+
+struct CachedHeap {
+    VkDevice device = VK_NULL_HANDLE;
+    BindlessHeap* heap = nullptr;
+    std::uint64_t epoch = ~std::uint64_t{0};
+};
+
+CachedHeap& ThreadCachedHeap() {
+    thread_local CachedHeap cached;
+    return cached;
+}
+
+}
+
 BindlessHeap& BindlessHeap::For(const Context& context) {
-    struct Cached {
-        VkDevice device = VK_NULL_HANDLE;
-        BindlessHeap* heap = nullptr;
-        std::uint64_t epoch = ~std::uint64_t{0};
-    };
-    thread_local Cached cached;
+    auto& cached = ThreadCachedHeap();
     if (cached.heap != nullptr && cached.device == context.device && cached.epoch == heapsEpoch.load(std::memory_order_acquire)) {
         return *cached.heap;
     }
@@ -356,9 +366,13 @@ void BindlessHeap::Release(VkDevice device) {
 }
 
 BindlessHeap* BindlessHeap::Existing(const Context& context) {
+    auto& cached = ThreadCachedHeap();
+    if (cached.heap != nullptr && cached.device == context.device && cached.epoch == heapsEpoch.load(std::memory_order_acquire)) return cached.heap;
     std::lock_guard lock(heapsMutex());
     const auto found = heaps().find(context.device);
-    return found == heaps().end() ? nullptr : found->second.get();
+    if (found == heaps().end()) return nullptr;
+    cached = {context.device, found->second.get(), heapsEpoch.load(std::memory_order_acquire)};
+    return found->second.get();
 }
 
 std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, Texture* texture, VkImageView view, VkImageLayout layout) {
@@ -449,13 +463,21 @@ std::optional<std::uint32_t> BindlessHeap::SlotPool::Take(bool& reused) {
         return slot;
     }
     if (next >= limit) return std::nullopt;
-    const auto slot = next++;
-    if (generations.size() <= slot) generations.resize(static_cast<std::size_t>(slot) + 1u, 0u);
-    return slot;
+    return next++;
+}
+
+void BindlessHeap::SlotPool::Configure(std::uint32_t first, std::uint32_t slots) {
+    next = first;
+    limit = slots;
+    generations = std::make_unique<std::atomic<std::uint32_t>[]>(slots);
+}
+
+void BindlessHeap::SlotPool::Retire(std::uint32_t slot) {
+    generations[slot].fetch_add(1u, std::memory_order_release);
 }
 
 void BindlessHeap::SlotPool::Free(std::uint32_t slot) {
-    ++generations[slot];
+    Retire(slot);
     free.push_back(slot);
 }
 
@@ -464,7 +486,7 @@ std::size_t BindlessHeap::SlotPool::Unused() const {
 }
 
 std::uint32_t BindlessHeap::SlotPool::Generation(std::uint32_t slot) const {
-    return slot < generations.size() ? generations[slot] : 0u;
+    return slot < limit ? generations[slot].load(std::memory_order_acquire) : 0u;
 }
 
 bool BindlessHeap::NearlyFull() {
@@ -510,13 +532,11 @@ void BindlessHeap::touchSamplerLocked(std::uint32_t slot) const {
     if (slot < Abi::GpuSamplerHeapSlots) samplerUses[slot].store(useEpoch.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
 
-std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const {
+std::uint32_t BindlessHeap::TouchSlots(std::span<const std::uint32_t> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const {
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
     if (touched == epoch) return epoch;
-    for (const auto& kindSlots : slots) {
-        for (const auto slot : kindSlots) {
-            if (slot < slotCap) slotUses[slot].store(epoch, std::memory_order_relaxed);
-        }
+    for (const auto slot : slots) {
+        if (slot < slotCap) slotUses[slot].store(epoch, std::memory_order_relaxed);
     }
     for (const auto slot : samplerSlots) {
         if (slot < Abi::GpuSamplerHeapSlots) samplerUses[slot].store(epoch, std::memory_order_relaxed);
@@ -549,7 +569,7 @@ void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
         }
         owner.texture = nullptr;
         owner.key = {};
-        ++imagePool.generations[slot];
+        imagePool.Retire(slot);
         retiring.push_back({slot, 0u});
         ++counts.slotsEvicted;
         heapSlotEvictions.fetch_add(1, std::memory_order_relaxed);
@@ -575,7 +595,7 @@ void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
         const auto slot = idle[index].second;
         samplerSlots.erase(samplerOwners[slot]);
         samplerOwners[slot] = nullptr;
-        ++samplerPool.generations[slot];
+        samplerPool.Retire(slot);
         retiring.push_back({slot, 0u, true});
         ++retiringSamplers;
         ++counts.samplersEvicted;
@@ -630,19 +650,15 @@ void BindlessHeap::noteReleasedLocked() {
 
 std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
     if (slot == Abi::NoEmbeddedSampler) return 0u;
-    std::lock_guard lock(mutex);
     return samplerPool.Generation(slot);
 }
 
-bool BindlessHeap::GenerationsCurrent(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> slotGenerations,
+bool BindlessHeap::GenerationsCurrent(std::span<const std::uint32_t> slots, std::span<const std::uint32_t> slotGenerations,
                                       std::span<const std::uint32_t> samplerSlots,
                                       std::span<const std::uint32_t> samplerGenerations) const {
-    std::lock_guard lock(mutex);
-    std::size_t generation = 0;
-    for (std::uint32_t kind = 0; kind < slots.size(); ++kind) {
-        for (const auto slot : slots[kind]) {
-            if (generation >= slotGenerations.size() || imagePool.Generation(slot) != slotGenerations[generation++]) return false;
-        }
+    if (slots.size() != slotGenerations.size()) return false;
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        if (imagePool.Generation(slots[i]) != slotGenerations[i]) return false;
     }
     for (std::size_t i = 0; i < samplerSlots.size(); ++i) {
         if (samplerSlots[i] == Abi::NoEmbeddedSampler) continue;
@@ -652,7 +668,6 @@ bool BindlessHeap::GenerationsCurrent(std::span<const std::vector<std::uint32_t>
 }
 
 std::uint32_t BindlessHeap::SlotGeneration(std::uint32_t slot) const {
-    std::lock_guard lock(mutex);
     return imagePool.Generation(slot);
 }
 
@@ -716,8 +731,13 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words) {
 
 bool BindlessHeap::Held(const SpanMark& mark) {
     if (mark.entry == 0u || mark.words == 0u) return false;
+    std::lock_guard lock(mutex);
+    return heldLocked(mark);
+}
+
+bool BindlessHeap::heldLocked(const SpanMark& mark) {
+    if (mark.entry == 0u || mark.words == 0u) return false;
     if (mark.block != 0u) {
-        std::lock_guard lock(mutex);
         const auto index = mark.block - 1u;
         if (index >= poolBlocks.size() || poolBlocks[index].generation != mark.entry) {
             ++counts.spansExpired;
@@ -729,7 +749,6 @@ bool BindlessHeap::Held(const SpanMark& mark) {
     }
     const auto first = chunkOf(mark.offset);
     const auto last = lastChunkOf(mark.offset, static_cast<std::size_t>(mark.words) * sizeof(std::uint32_t));
-    std::lock_guard lock(mutex);
     for (auto chunk = first; chunk <= last; ++chunk) {
         if (ringChunks[chunk].entered > mark.entry) {
             ++counts.spansExpired;
@@ -745,8 +764,18 @@ bool BindlessHeap::Held(const SpanMark& mark) {
 }
 
 BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark) {
-    const auto bytes = alignUp(std::max<std::size_t>(words, 1u) * sizeof(std::uint32_t), RingSpanAlignment);
     std::lock_guard lock(mutex);
+    return allocateLocked(words, mark);
+}
+
+std::optional<BindlessHeap::DataSpan> BindlessHeap::KeepOrAllocate(std::size_t words, SpanMark& mark, bool same) {
+    std::lock_guard lock(mutex);
+    if (same && heldLocked(mark)) return std::nullopt;
+    return allocateLocked(words, mark);
+}
+
+BindlessHeap::DataSpan BindlessHeap::allocateLocked(std::size_t words, SpanMark& mark) {
+    const auto bytes = alignUp(std::max<std::size_t>(words, 1u) * sizeof(std::uint32_t), RingSpanAlignment);
     if (poolCurrent >= poolBlocks.size() || alignUp(poolBlocks[poolCurrent].cursor, poolAlignment) + bytes > poolBlocks[poolCurrent].bytes) poolCurrent = takePoolBlockLocked(bytes);
     auto& block = poolBlocks[poolCurrent];
     const auto offset = static_cast<std::size_t>(alignUp(block.cursor, poolAlignment));
@@ -1010,7 +1039,8 @@ struct HeapBindingUse {
     bool meshWindowMemory = false;
     bool scratchPoolMemory = false;
     std::vector<std::uint32_t> dataUniforms;
-    std::vector<SetAndBinding> ringDescriptors;
+    std::vector<std::uint32_t> ringBuffers;
+    std::vector<std::uint32_t> srtAddresses;
     std::vector<std::uint32_t> embeddedSamplers;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
 };
@@ -1076,9 +1106,12 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             continue;
         }
         const bool stageBinding = binding / bindingCount < Abi::StageCount;
-        if (roots.gdsAddress && stageBinding && ((set == Abi::DescriptorSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers)) ||
-                             (set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt)))) {
-            if (std::find(use.ringDescriptors.begin(), use.ringDescriptors.end(), entry) == use.ringDescriptors.end()) use.ringDescriptors.push_back(entry);
+        if (roots.gdsAddress && stageBinding && set == Abi::DescriptorSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers)) {
+            if (std::ranges::find(use.ringBuffers, binding) == use.ringBuffers.end()) use.ringBuffers.push_back(binding);
+            continue;
+        }
+        if (roots.gdsAddress && stageBinding && set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt)) {
+            if (std::ranges::find(use.srtAddresses, binding) == use.srtAddresses.end()) use.srtAddresses.push_back(binding);
             continue;
         }
         const bool heapImageOrSampler = set == Abi::FragmentDescriptorSet && binding >= firstImage && binding <= samplers;
@@ -1122,16 +1155,14 @@ std::uint32_t rootItemOffset(const ShaderRecompiler::StagePushPlacement* placeme
     return placement->Item(item) * static_cast<std::uint32_t>(sizeof(std::uint32_t));
 }
 
-VkDescriptorSetAndBindingMappingEXT ringDescriptorMapping(std::uint32_t set, std::uint32_t binding, VkDeviceSize ringOffset, const ShaderRecompiler::StagePushPlacement* placement) {
-    constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
-    const bool buffers = binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers);
+VkDescriptorSetAndBindingMappingEXT ringBufferMapping(std::uint32_t binding, VkDeviceSize ringOffset, const ShaderRecompiler::StagePushPlacement* placement) {
     VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = set;
+    mapping.descriptorSet = Abi::DescriptorSet;
     mapping.firstBinding = binding;
     mapping.bindingCount = 1;
     mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
     mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
-    mapping.sourceData.pushIndex.heapOffset = static_cast<std::uint32_t>(ringOffset + (buffers ? BindlessHeap::BufferSlotBytes : 0u));
+    mapping.sourceData.pushIndex.heapOffset = static_cast<std::uint32_t>(ringOffset);
     mapping.sourceData.pushIndex.pushOffset = rootItemOffset(placement, Abi::RootItem::FlattenedSrt);
     mapping.sourceData.pushIndex.heapIndexStride = BindlessHeap::BufferSlotBytes;
     mapping.sourceData.pushIndex.heapArrayStride = BindlessHeap::BufferSlotBytes;
@@ -1245,8 +1276,8 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         .workgroupAddress = workgroupAddressOffset != ~0u, .gdsAddress = rootGds, .faultAddress = rootFault, .pixelLds = pixelLds, .meshWindow = meshWindow,
         .scratchPool = scratchPool};
     if (!heapBindings(spirv, roots, use)) return false;
-    if (!use.ringDescriptors.empty() && !ringInHeap) return false;
-    if (!use.ringDescriptors.empty() && context.descriptorHeapProperties.bufferDescriptorSize != BufferSlotBytes) return false;
+    if (!use.ringBuffers.empty() && !ringInHeap) return false;
+    if (!use.ringBuffers.empty() && context.descriptorHeapProperties.bufferDescriptorSize != BufferSlotBytes) return false;
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
     constexpr VkSpirvResourceTypeFlagsEXT imageResources = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT |
                                                            VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT |
@@ -1274,8 +1305,10 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         mappings.push_back(*mapping);
     }
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, placement));
-    std::sort(use.ringDescriptors.begin(), use.ringDescriptors.end());
-    for (const auto& [set, binding] : use.ringDescriptors) mappings.push_back(ringDescriptorMapping(set, binding, ringHeapOffset, placement));
+    std::ranges::sort(use.ringBuffers);
+    for (const auto binding : use.ringBuffers) mappings.push_back(ringBufferMapping(binding, ringHeapOffset, placement));
+    std::ranges::sort(use.srtAddresses);
+    for (const auto binding : use.srtAddresses) mappings.push_back(pushAddressMapping(Abi::GpuDataSet, binding, rootItemOffset(placement, Abi::RootItem::SrtAddress)));
     if (use.workgroupMemory)
         mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset));
     if (use.scratchPoolMemory)
@@ -1296,6 +1329,7 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
 std::uint32_t BindlessHeap::RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark) {
     Require(ringInHeap && context.descriptorHeapProperties.bufferDescriptorSize == BufferSlotBytes, "ring buffer descriptors need the descriptor ring inside the resource heap");
     const auto span = RingAllocate(buffers.size() * (BufferSlotBytes / sizeof(std::uint32_t)), mark);
+    counts.bufferDescriptors += buffers.size();
     Require(span.offset % BufferSlotBytes == 0u, "a ring buffer descriptor span is misaligned");
     struct ResourcesStorage {};
     struct RangesStorage {};
@@ -1309,14 +1343,7 @@ std::uint32_t BindlessHeap::RingBufferDescriptors(std::span<const VkDeviceAddres
         resources[index].data.pAddressRange = &buffers[index];
         ranges[index] = {bytes + index * BufferSlotBytes, BufferSlotBytes};
     }
-    PFN_vkWriteResourceDescriptorsEXT write = nullptr;
-    {
-        std::lock_guard lock(mutex);
-        if (writeResourceDescriptors == nullptr) writeResourceDescriptors = context.Function<PFN_vkWriteResourceDescriptorsEXT>("vkWriteResourceDescriptorsEXT");
-        write = writeResourceDescriptors;
-        counts.bufferDescriptors += buffers.size();
-    }
-    Check(write(context.device, static_cast<std::uint32_t>(buffers.size()), resources.data(), ranges.data()), "vkWriteResourceDescriptorsEXT ring buffers");
+    Check(writeResourceDescriptors(context.device, static_cast<std::uint32_t>(buffers.size()), resources.data(), ranges.data()), "vkWriteResourceDescriptorsEXT ring buffers");
     return static_cast<std::uint32_t>(span.offset / BufferSlotBytes);
 }
 
@@ -1344,6 +1371,7 @@ namespace {
 
 std::mutex boundHeapsMutex;
 std::unordered_set<VkCommandBuffer> boundHeaps;
+std::atomic<std::uint64_t> boundHeapsEpoch{0};
 std::atomic<std::uint64_t> heapBinds{0};
 std::atomic<std::uint64_t> heapBindWindow{0};
 std::atomic<std::uint64_t> commandBuffersBegun{0};
@@ -1484,7 +1512,7 @@ void reportHeapStatistics() {
 void forgetHeapBinding(VkCommandBuffer commands) {
     if (!DescriptorHeapEnabled()) return;
     std::lock_guard lock(boundHeapsMutex);
-    boundHeaps.erase(commands);
+    if (boundHeaps.erase(commands) != 0) boundHeapsEpoch.fetch_add(1, std::memory_order_release);
 }
 
 }
@@ -1631,9 +1659,19 @@ void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t
 
 void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {
     if (resourceHeap == nullptr) return;
+    struct LastBound {
+        VkCommandBuffer commands = VK_NULL_HANDLE;
+        const BindlessHeap* heap = nullptr;
+        std::uint64_t epoch = 0;
+    };
+    thread_local LastBound last;
+    const auto epoch = boundHeapsEpoch.load(std::memory_order_acquire);
+    if (last.commands == commands && last.heap == this && last.epoch == epoch) return;
     {
         std::lock_guard lock(boundHeapsMutex);
-        if (!boundHeaps.insert(commands).second) return;
+        const bool inserted = boundHeaps.insert(commands).second;
+        last = {commands, this, epoch};
+        if (!inserted) return;
     }
     heapBinds.fetch_add(1, std::memory_order_relaxed);
     heapBindWindow.fetch_add(1, std::memory_order_relaxed);

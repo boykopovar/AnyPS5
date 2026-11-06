@@ -1268,12 +1268,22 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     for (const auto& shader : shaders) {
         const auto sizeAt = key.size();
         key.push_back(0u);
-        auto& memo = shader.program->drawKeyMemo.words;
-        if (auto words = memo.load(std::memory_order_acquire); words != nullptr && shader.heap == nullptr) {
-            key.insert(key.end(), words->begin(), words->end());
+        auto& memo = shader.heap != nullptr ? shader.heap->drawKeyMemo.words : shader.program->drawKeyMemo.words;
+        const auto ownerId = shader.program->heapTemplateId != 0 ? shader.program->heapTemplateId : static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(shader.program));
+        const std::array<std::uint32_t, 3> owner{static_cast<std::uint32_t>(ownerId), static_cast<std::uint32_t>(ownerId >> 32u),
+                                                 static_cast<std::uint32_t>(shader.stage) | (shader.program->heapTemplateId != 0 ? 0x80000000u : 0u)};
+        const std::size_t prefix = shader.heap != nullptr ? owner.size() : 0u;
+        const bool memoize = shader.heap == nullptr || shader.heap->memoizeKey;
+        const auto words = memoize ? memo.load(std::memory_order_acquire) : nullptr;
+        if (words != nullptr && words->size() >= prefix && std::equal(owner.begin(), owner.begin() + static_cast<std::ptrdiff_t>(prefix), words->begin())) {
+            key.insert(key.end(), words->begin() + static_cast<std::ptrdiff_t>(prefix), words->end());
         } else {
             ShaderResources::AppendContentKey(shader, true, MovableBuffers(), key);
-            if (shader.heap == nullptr) memo.store(std::make_shared<const std::vector<std::uint32_t>>(key.begin() + static_cast<std::ptrdiff_t>(sizeAt + 1u), key.end()), std::memory_order_release);
+            if (memoize) {
+                auto stored = std::make_shared<std::vector<std::uint32_t>>(owner.begin(), owner.begin() + static_cast<std::ptrdiff_t>(prefix));
+                stored->insert(stored->end(), key.begin() + static_cast<std::ptrdiff_t>(sizeAt + 1u), key.end());
+                memo.store(std::move(stored), std::memory_order_release);
+            }
         }
         key[sizeAt] = static_cast<std::uint32_t>(key.size() - sizeAt - 1u);
     }
@@ -1421,7 +1431,7 @@ bool DrawRecipes() {
 }
 
 const char* DrawRecipeMissName(DrawRecipeMiss miss) {
-    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof"};
+    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof", "moved buffers refused"};
     return names[static_cast<std::size_t>(miss)];
 }
 
@@ -2880,7 +2890,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool heapPipeline = record.pipeline->DescriptorHeap();
     NoteHeapRecord(false, heapPipeline);
     if (heapPipeline) {
-        resources.BindDescriptorHeaps(commands);
+        resources.BindDescriptorHeaps(commands, true);
         NoteEmptyResourceSet();
     } else if (drawBindings != nullptr) {
         Require(!resources.HeapStage(), "a GPU-mode draw needs a VK_EXT_descriptor_heap pipeline");
@@ -3256,7 +3266,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     }
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
     if (context.recorder != nullptr) context.recorder->BoundDrawBatch();
-    if (AnyHeapShader(shaders)) recipeOut = nullptr;
     auto& timing = prepared.timing.emplace("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -3747,7 +3756,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && resolved.moved.empty() && !multisampled && !pipeline->ReordersSamples()) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && !multisampled && !pipeline->ReordersSamples()) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
@@ -3767,6 +3776,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             recipe->fragmentOutputs = inputs.fragmentOutputs;
             recipe->shaderStages = inputs.shaderStages;
             recipe->hasDepth = state.depth.has_value();
+            recipe->movedBuffers = !resolved.moved.empty();
             *recipeOut = std::move(recipe);
         }
         timing.Mark("draw_and_resource_release");
@@ -4253,9 +4263,19 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         timer.phase(PhaseLookup);
         return miss(DrawRecipeMiss::Proof);
     }
+    std::vector<ShaderResources::MovedBuffer> moved;
+    if (recipe.movedBuffers) {
+        auto found = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
+        if (!found.has_value()) {
+            timer.phase(PhaseLookup);
+            return miss(DrawRecipeMiss::Moved);
+        }
+        moved = std::move(*found);
+    }
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
+    if (resources->HeapStage()) resources->RefreshHeapStage(shaders);
     if (recipe.hasDepth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
-    SharedResourceCache().Touch(recipe.key);
+    SharedResourceCache().TouchAging(recipe.key, resources->CacheTouchedAt());
     countCache(&DrawProfile::cacheHits);
     timer.phase(PhaseLookup);
     outcome.completion = resources->ChecksFaults();
@@ -4281,6 +4301,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.framebuffer = std::move(framebuffer);
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
+    record.moved = moved;
     for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
     record.pushBytes = &recipe.pushBytes;
     record.pushStages = recipe.pushStages;

@@ -5229,11 +5229,11 @@ DispatchCounters& Dispatches() {
 
 // The [recipe] line (APS5_PROFILE_DRAW, every 10 s), dispatch and indirect rows apart. The
 // pre-check runs without the mutex, so the counters are atomic.
-enum RecipeMiss : std::size_t { MissNoRecipe, MissDevice, MissTemplateGone, MissObjectsGone, MissNotRecordable, RecipeMissCount };
-constexpr std::array<const char*, RecipeMissCount> RecipeMissNames{"no recipe", "device", "template gone", "objects gone", "not recordable"};
+enum RecipeMiss : std::size_t { MissNoRecipe, MissDevice, MissTemplateGone, MissObjectsGone, MissNotRecordable, MissMoved, RecipeMissCount };
+constexpr std::array<const char*, RecipeMissCount> RecipeMissNames{"no recipe", "device", "template gone", "objects gone", "not recordable", "moved buffers refused"};
 // The draw rows name the miss reasons of DrawWithRecipe (a target or a pipeline gone is the
 // objects-gone slot).
-constexpr std::array<const char*, RecipeMissCount> DrawRecipeMissNames{"no recipe", "device", "template gone", "targets gone", "not recordable"};
+constexpr std::array<const char*, RecipeMissCount> DrawRecipeMissNames{"no recipe", "device", "template gone", "targets gone", "not recordable", "moved buffers refused"};
 constexpr std::array<const char*, static_cast<std::size_t>(Graphics::ShaderResources::ProofPath::Count)> ProofPathNames{"fast", "T1 refreshed", "full"};
 constexpr std::array<const char*, static_cast<std::size_t>(Graphics::ShaderResources::ProofFailure::Count)> ProofFailureNames{"none", "imports", "evicted", "pending", "changed", "keys", "other"};
 
@@ -5533,6 +5533,14 @@ void VulkanDevice::NoteDrawRecipeMiss(DrawRecipePrecheck miss) {
     counters.precheckMisses[miss == DrawRecipePrecheck::NoRecipe ? MissNoRecipe : MissDevice].fetch_add(1, std::memory_order_relaxed);
 }
 
+std::uint64_t VulkanDevice::DispatchRecipeTemplatesGone() {
+    return Recipes().kinds[static_cast<std::size_t>(RecipeKind::Dispatch)].precheckMisses[MissTemplateGone].load(std::memory_order_relaxed);
+}
+
+std::uint64_t VulkanDevice::DrawRecipeHits() {
+    return Recipes().kinds[static_cast<std::size_t>(RecipeKind::Draw)].hits.load(std::memory_order_relaxed);
+}
+
 RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const DrawTraceContext* trace) {
     PerformanceTimer timing("Vulkan.DrawFromRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -5551,6 +5559,7 @@ RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, cons
             case Graphics::DrawRecipeMiss::TargetGone:
             case Graphics::DrawRecipeMiss::ObjectsGone: counters.precheckMisses[MissObjectsGone].fetch_add(1, std::memory_order_relaxed); break;
             case Graphics::DrawRecipeMiss::TemplateGone: counters.precheckMisses[MissTemplateGone].fetch_add(1, std::memory_order_relaxed); break;
+            case Graphics::DrawRecipeMiss::Moved: counters.precheckMisses[MissMoved].fetch_add(1, std::memory_order_relaxed); break;
             case Graphics::DrawRecipeMiss::Proof: counters.rebuilds[static_cast<std::size_t>(outcome.proof.failure)].fetch_add(1, std::memory_order_relaxed); break;
             default: break;
         }
@@ -5872,6 +5881,9 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const bool overlapCapable = overlapQueue != 0 && Graphics::Recorder::DispatchOverlapEnabled() && arguments == 0 && argumentImport == nullptr && record.threadGroup == std::array<std::uint32_t, 3>{} && record.shader->program->workgroupMemoryDwords == 0 && state->checkpointMarker == nullptr && state->bufferMarker == nullptr && record.x <= groupLimit[0] && record.y <= groupLimit[1] && record.z <= groupLimit[2] && !resources.HasHostGpuCopies();
     std::vector<Graphics::Recorder::RunAccess> runAccesses;
     if (overlapCapable) resources.RunAccesses(runAccesses);
+    if (overlapCapable && record.bindings != nullptr) {
+        for (const auto& [begin, end] : record.bindings->movedReads) runAccesses.push_back({begin, end, 0u});
+    }
     VkAccessFlags covered = 0;
     bool overlapped = false;
     const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};
@@ -6679,7 +6691,8 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
         }
         // A data-only hit's words are the shader's, not the recipe's: its hash decision is
         // computed from the shader, as the record below decides by words.
-        const bool byHash = TemplateDataRefresh() && hit->resources->DataWordsHash() != (refreshByWords ? Graphics::ShaderResources::DataWordsHash(shaders[0]) : recipe.dataWordsHash);
+        const bool byHash = TemplateDataRefresh() && !hit->resources->HeapStage() &&
+                            hit->resources->DataWordsHash() != (refreshByWords ? Graphics::ShaderResources::DataWordsHash(shaders[0]) : recipe.dataWordsHash);
         const bool byWords = TemplateDataRefresh() && hit->resources->DataWordsDiffer(shaders[0]);
         const char* disagreement = mapped != hit->objects ? "the pipeline objects" : byHash != byWords ? "the RefreshData decision" : nullptr;
         if (disagreement != nullptr) {
@@ -6711,7 +6724,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     }
     counters.proofPaths[static_cast<std::size_t>(report.path)].fetch_add(1, std::memory_order_relaxed);
     ++d.cacheHits;
-    state->resourceCache.Touch(recipe.key);
+    state->resourceCache.TouchAging(recipe.key, hit->resources->CacheTouchedAt());
     // The recipe's hash names the words it was attached with, not a data-only hit's: that hit
     // refreshes by the per-word compare (RefreshData keeps the template's own hash exact, so a
     // later exact hit of a sibling variant compares correctly against it).

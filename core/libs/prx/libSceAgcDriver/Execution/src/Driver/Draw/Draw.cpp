@@ -42,6 +42,26 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
+std::shared_ptr<ShaderRecompiler::HeapStageWords> RecycledRingWords() {
+    constexpr std::size_t PoolSize = 1024, Probes = 16;
+    thread_local std::vector<std::shared_ptr<ShaderRecompiler::HeapStageWords>> pool;
+    thread_local std::size_t cursor = 0;
+    for (std::size_t probe = 0; probe < Probes && probe < pool.size(); ++probe) {
+        auto& candidate = pool[cursor];
+        cursor = cursor + 1 == pool.size() ? 0 : cursor + 1;
+        if (candidate.use_count() != 1) continue;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        candidate->userData.clear();
+        candidate->drawKeyMemo.words.store(nullptr, std::memory_order_relaxed);
+        candidate->memoizeKey = false;
+        return candidate;
+    }
+    auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+    words->memoizeKey = false;
+    if (pool.size() < PoolSize) pool.push_back(words);
+    return words;
+}
+
 bool TraceShaderCorrelation() {
     static const bool enabled = std::getenv("APS5_TRACE_SHADER_CORRELATION") != nullptr;
     return enabled && AgcDriver::CaptureTrace::Enabled();
@@ -676,11 +696,17 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (stageData[i].compiled != nullptr) stageData[i].compiled = patchDataWords(*matched[i], stageData[i].words);
     }
     const auto relocatedDecode = decode;
+    bool admitRelocated = false;
     if (!userPatches.empty()) {
         std::lock_guard cacheLock(drawCacheMutex);
         if (drawHit || verifyHit) {
             ++drawRelocationCounters.hits;
             ++drawRelocationTrials[drawIdentity].hits;
+            if (drawHit && drawKey != 0 && !drawCache.contains(drawKey)) {
+                if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
+                admitRelocated = drawKeySightings->SeenBefore(drawKey);
+                if (admitRelocated) ++drawRelocationCounters.admitted;
+            }
             if (const auto alias = drawAliases.find(drawAlias); alias != drawAliases.end()) {
                 const auto donor = drawCache.find(alias->second);
                 if (donor != drawCache.end() && drawCacheHits - donor->second->touched > drawCacheEntries() / 8) {
@@ -696,6 +722,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         auto current = std::make_shared<DrawDecode>(*decode);
         for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
         decode = std::move(current);
+    }
+    if (admitRelocated && std::all_of(matched.begin(), matched.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant != nullptr; })) {
+        auto current = std::make_shared<DrawDecode>(*decode);
+        for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
+        std::vector<std::shared_ptr<DispatchVariant>> fresh(matched.begin(), matched.end());
+        insertDrawEntry(drawKey, fresh, std::move(current), 0, false);
     }
     tail.patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; });
     tail.relocatedDecode = relocatedDecode;
@@ -892,7 +924,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
     };
     const auto buildRingWords = [&](std::size_t i, const DispatchVariant& variant) {
-        auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+        auto words = RecycledRingWords();
         const auto& user = programs[i].userData;
         for (const auto index : variant.compiled->heapUserWords) {
             require(index < user.size(), "a ring vertex template reads a user word the draw does not have");
@@ -900,6 +932,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
         const auto& ringTemplate = *variant.ringTemplate;
         words->vertexAttributes = ringTemplate.vertexAttributes;
+        words->flattenedSrt.clear();
+        words->bindings.clear();
         if (!ringTemplate.flattenedSrt.empty()) {
             words->flattenedSrt = ringTemplate.flattenedSrt;
             if (&variant == matched[i].get() && stageData[i].compiled != nullptr) {
@@ -951,8 +985,13 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
-        const auto& fresh = *stageCaptures[i].compiled;
-        const auto& patched = *hit.compiled;
+        std::shared_ptr<const ShaderRecompiler::RecompileResult> effective = hit.compiled, expected = stageCaptures[i].compiled;
+        if (kept.ringTemplate != nullptr) {
+            effective = PatchedHeapResult(*hit.compiled, *buildRingWords(i, kept));
+            if (stageCaptures[i].heapWords != nullptr) expected = PatchedHeapResult(*stageCaptures[i].compiled, *stageCaptures[i].heapWords);
+        }
+        const auto& fresh = *expected;
+        const auto& patched = *effective;
         const bool sameBindings = fresh.bindings.size() == patched.bindings.size() && std::equal(fresh.bindings.begin(), fresh.bindings.end(), patched.bindings.begin(), [](const auto& a, const auto& b) { return a.kind == b.kind && a.role == b.role && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor; });
         const char* what = runs != kept.runs ? "runs" : words != hit.words ? "words" : fresh.variantId != patched.variantId ? "variant" : fresh.pushConstants != patched.pushConstants ? "push constants" : !sameBindings ? "bindings" : nullptr;
         ++stageDataVerified;

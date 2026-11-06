@@ -499,11 +499,23 @@ struct HeapTemplateCacheCounts {
 };
 HeapTemplateCacheCounts HeapTemplateCounts();
 
+struct ResultKeyMemo {
+    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
 struct HeapStageWords {
     std::vector<std::uint32_t> userData;
     std::vector<std::uint32_t> flattenedSrt;
     std::vector<VertexAttribute> vertexAttributes;
     std::vector<std::vector<std::uint32_t>> bindings;
+    ResultKeyMemo drawKeyMemo;
+    bool memoizeKey = true;
 };
 
 struct RecompileRequest {
@@ -847,16 +859,6 @@ struct PipelineIdentity {
     [[nodiscard]] bool Empty() const { return low == 0 && high == 0; }
     bool operator==(const PipelineIdentity&) const = default;
     auto operator<=>(const PipelineIdentity&) const = default;
-};
-
-struct ResultKeyMemo {
-    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
-    ResultKeyMemo() = default;
-    ResultKeyMemo(const ResultKeyMemo&) {}
-    ResultKeyMemo& operator=(const ResultKeyMemo&) {
-        words.store(nullptr, std::memory_order_relaxed);
-        return *this;
-    }
 };
 
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
