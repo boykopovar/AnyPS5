@@ -3,6 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 
+struct LibreSsl3Bignum {
+    std::uint64_t* data;
+    std::int32_t top;
+    std::int32_t capacity;
+    std::int32_t negative;
+    std::int32_t flags;
+};
+
+static_assert(sizeof(LibreSsl3Bignum) == 24);
+static_assert(offsetof(LibreSsl3Bignum, flags) == 20);
+
 struct LibreSsl3EvpPkey {
     std::int32_t type;
     std::int32_t references;
@@ -47,14 +58,61 @@ struct LibreSsl3Rsa {
     void* mtBlinding;
 };
 
+struct LibreSsl3SslCtx {
+    const void* method;
+    const void* quicMethod;
+    void* cipherList;
+    void* certStore;
+    std::int64_t sessionTimeout;
+    std::int32_t references;
+    void* extraCerts;
+    std::int32_t verifyMode;
+    std::uint64_t sidCtxLength;
+    unsigned char sidCtx[32];
+    void* param;
+    void* defaultPasswdCallback;
+    void* defaultPasswdCallbackUserdata;
+    std::uint16_t minTlsVersion;
+    std::uint16_t maxTlsVersion;
+    std::uint16_t minProtoVersion;
+    std::uint16_t maxProtoVersion;
+};
+
+struct LibreSsl3Bio {
+    const void* method;
+    void* callback;
+    void* callbackEx;
+    char* callbackArgument;
+    std::int32_t initialized;
+    std::int32_t shutdown;
+    std::int32_t flags;
+    std::int32_t retryReason;
+    std::int32_t number;
+    void* data;
+    LibreSsl3Bio* nextBio;
+    LibreSsl3Bio* previousBio;
+    std::int32_t references;
+    std::uint64_t bytesRead;
+    std::uint64_t bytesWritten;
+    void* exData;
+};
+
 static_assert(sizeof(LibreSsl3EvpPkey) == 32);
 static_assert(offsetof(LibreSsl3EvpPkey, references) == 4);
 static_assert(sizeof(LibreSsl3EcKey) == 64);
 static_assert(offsetof(LibreSsl3EcKey, references) == 48);
 static_assert(sizeof(LibreSsl3Rsa) == 152);
 static_assert(offsetof(LibreSsl3Rsa, references) == 104);
+static_assert(sizeof(LibreSsl3SslCtx) == 136);
+static_assert(offsetof(LibreSsl3SslCtx, references) == 40);
+static_assert(offsetof(LibreSsl3SslCtx, minTlsVersion) == 128);
+static_assert(offsetof(LibreSsl3SslCtx, maxTlsVersion) == 130);
+static_assert(offsetof(LibreSsl3SslCtx, minProtoVersion) == 132);
+static_assert(offsetof(LibreSsl3SslCtx, maxProtoVersion) == 134);
 static_assert(offsetof(LibreSsl3Rsa, p) == 48);
 static_assert(offsetof(LibreSsl3Rsa, q) == 56);
 static_assert(offsetof(LibreSsl3Rsa, dmp1) == 64);
 static_assert(offsetof(LibreSsl3Rsa, dmq1) == 72);
 static_assert(offsetof(LibreSsl3Rsa, iqmp) == 80);
+static_assert(sizeof(LibreSsl3Bio) == 112);
+static_assert(offsetof(LibreSsl3Bio, references) == 80);
