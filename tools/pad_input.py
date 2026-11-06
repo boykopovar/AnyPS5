@@ -63,12 +63,16 @@ def previous_sequence(path):
                 return timeline_sequence(command, line)
     except FileNotFoundError:
         return 0
-    tokens = line.split()
+    if os.name == "nt":
+        line = line.split(b"\x1a", 1)[0]
+    if len(line.rstrip(b"\n")) > 127:
+        return 0
+    tokens = line.split(b"\0", 1)[0].split()
     if len(tokens) in (4, 8):
         touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
         if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
             return 0
-    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in (3, 7):
+    if len(tokens) not in (3, 7):
         return 0
     if any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
         return 0
