@@ -1,4 +1,7 @@
 #include "prx/libSceMsgDialog/include/Api.hpp"
+#include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
+#include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -10,10 +13,6 @@
 #include "SceTypes.hpp"
 #include "HitLog.hpp"
 #include "prx/libc/include/General.hpp"
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace {
 constexpr int kStatusNone = 0;
@@ -27,66 +26,40 @@ constexpr int kErrBusy = static_cast<int>(0x80B80007u);
 constexpr int kErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
 
-constexpr int kModeUserMsg = 1;
-constexpr int kModeProgressBar = 2;
-constexpr int kModeSystemMsg = 3;
-
-constexpr int kButtonTypeOk = 0;
-constexpr int kButtonTypeYesNo = 1;
-constexpr int kButtonTypeNone = 2;
-constexpr int kButtonTypeOkCancel = 3;
-constexpr int kButtonTypeYesNoFocusNo = 4;
-
-constexpr int kButtonIdOk = 1;
-constexpr int kButtonIdNo = 2;
+constexpr int kButtonIdOk = MsgDialog::ButtonIdOk;
+constexpr int kButtonIdNo = MsgDialog::ButtonIdNo;
+constexpr int kModeUserMsg = MsgDialog::ModeUserMsg;
+constexpr int kModeProgressBar = MsgDialog::ModeProgressBar;
 
 std::mutex g_lock;
 int g_status = kStatusNone;
 int g_mode = kModeUserMsg;
 int g_buttonId = kButtonIdOk;
 int g_pollsLeft = 0;
+bool g_presented = false;
 std::chrono::steady_clock::time_point g_openedAt;
 
-bool Readable(const void* p, std::size_t n) {
-#ifdef _WIN32
-    if (p == nullptr) return false;
-    MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0 || mbi.State != MEM_COMMIT) return false;
-    if ((mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return false;
-    const auto end = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
-    return reinterpret_cast<std::uintptr_t>(p) + n <= end;
-#else
-    return p != nullptr;
-#endif
+void Inspect(const MsgDialog::ParsedParam& parsed) {
+    g_mode = parsed.mode;
+    g_buttonId = kButtonIdOk;
+    if (parsed.hasUserMessage && parsed.buttonType == MsgDialog::ButtonTypeYesNoFocusNo) g_buttonId = kButtonIdNo;
 }
 
-void Inspect(const void* param) {
-    const std::uint8_t* bytes = static_cast<const std::uint8_t*>(param);
-    g_mode = kModeUserMsg;
-    g_buttonId = kButtonIdOk;
-    if (!Readable(bytes, 0x60)) return;
-    std::int32_t mode = 0;
-    std::memcpy(&mode, bytes + 0x38, 4);
-    if (mode >= kModeUserMsg && mode <= kModeSystemMsg) g_mode = mode;
-    if (g_mode != kModeUserMsg) return;
-    const std::uint8_t* userMsg = nullptr;
-    std::memcpy(&userMsg, bytes + 0x40, 8);
-    if (!Readable(userMsg, 16)) return;
-    std::int32_t buttonType = 0;
-    std::memcpy(&buttonType, userMsg, 4);
-    const char* msg = nullptr;
-    std::memcpy(&msg, userMsg + 8, 8);
-    if (buttonType == kButtonTypeYesNoFocusNo) g_buttonId = kButtonIdNo;
-    if (Readable(msg, 4)) {
-        char text[161] = {};
-        for (int i = 0; i < 160 && Readable(msg + i, 1) && msg[i] != '\0'; ++i) text[i] = (msg[i] >= 0x20 || msg[i] == '\n') ? msg[i] : '?';
-        APS5_HIT("MSGDIALOG", "open: buttons=%d text=\"%s\" -> auto answer", buttonType, text);
-    }
+bool Present(const MsgDialog::ParsedParam& parsed) {
+    ModalDialogRequest request;
+    if (!MsgDialog::BuildRequest(parsed, request)) return false;
+    request.owner = ModalDialogOwnerMsgDialog;
+    return ModalDialogOpen_nid_postfix(request);
 }
 
 int Poll() {
     std::lock_guard g(g_lock);
-    if (g_status == kStatusRunning) {
+    if (g_status == kStatusRunning && g_presented) {
+        std::size_t chosen = 0;
+        const ModalDialogState state = ModalDialogPoll_nid_postfix(chosen, ModalDialogOwnerMsgDialog);
+        if (state == ModalDialogState::Answered) g_buttonId = MsgDialog::ButtonIdOf(chosen);
+        if (state != ModalDialogState::Showing) g_status = kStatusFinished;
+    } else if (g_status == kStatusRunning) {
         bool done = false;
         if (g_mode == kModeProgressBar) {
             done = std::chrono::steady_clock::now() - g_openedAt > std::chrono::seconds(30);
@@ -111,13 +84,18 @@ int APS5_VABI sceMsgDialogTerminate(void) {
  std::lock_guard g(g_lock);
  const bool was = g_status != kStatusNone;
  g_status = kStatusNone;
+ g_presented = false;
+ ModalDialogReset_nid_postfix(ModalDialogOwnerMsgDialog);
  return was ? kErrOk : kErrNotInitialized;
 }
 int APS5_VABI sceMsgDialogOpen(const void* param) {
  if (param == nullptr) return kErrArgNull;
  std::lock_guard g(g_lock);
  if (g_status == kStatusRunning) return kErrBusy;
- Inspect(param);
+ const MsgDialog::ParsedParam parsed = MsgDialog::ParseParam(param);
+ Inspect(parsed);
+ g_presented = Present(parsed);
+ if (parsed.hasText) APS5_HIT("MSGDIALOG", "open: buttons=%d text=\"%s\" -> %s", parsed.buttonType, MsgDialog::LogText(parsed.text).c_str(), g_presented ? "shown" : "auto answer");
  g_pollsLeft = 2;
  g_openedAt = std::chrono::steady_clock::now();
  g_status = kStatusRunning;
@@ -132,6 +110,7 @@ int APS5_VABI sceMsgDialogUpdateStatus(void) {
 int APS5_VABI sceMsgDialogClose(void) {
  std::lock_guard g(g_lock);
  if (g_status != kStatusRunning) return kErrNotRunning;
+ if (g_presented) ModalDialogClose_nid_postfix(ModalDialogOwnerMsgDialog);
  g_status = kStatusFinished;
  return kErrOk;
 }

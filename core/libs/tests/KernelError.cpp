@@ -23,6 +23,10 @@ int main() {
     }
     Require(SCE_KERNEL_ERROR_ENOTRECOVERABLE == static_cast<std::int32_t>(0x8002005fu));
     Require(SCE_KERNEL_ERROR_EOWNERDEAD == static_cast<std::int32_t>(0x80020060u));
+    Require(SCE_KERNEL_ERROR_ELAST == SCE_KERNEL_ERROR_EOWNERDEAD);
+    Require(SCE_KERNEL_ERROR_ELAST == static_cast<std::int32_t>(0x80020060u));
+    Require(SCE_KERNEL_ERROR_EWOULDBLOCK == SCE_KERNEL_ERROR_EAGAIN);
+    Require(SCE_KERNEL_ERROR_ENOTSUP == SCE_KERNEL_ERROR_EOPNOTSUPP);
     Require(sceKernelError(-1) == static_cast<std::int32_t>(0x8001ffffu));
     Require(sceKernelError(std::numeric_limits<std::int32_t>::max()) == 0x1ffff);
     Require(sceKernelError(std::numeric_limits<std::int32_t>::min()) == 0x20000);

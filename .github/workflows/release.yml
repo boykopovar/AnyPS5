@@ -24,15 +24,15 @@ jobs:
   build:
     name: Build and test (${{ matrix.platform }})
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - platform: linux
             runner: ubuntu-latest
-            timeout: 30
+            timeout: 60
           - platform: windows
             runner: windows-latest
-            timeout: 45
+            timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     defaults:
@@ -162,17 +162,55 @@ jobs:
       - name: Check release files and collect documentation
         shell: bash
         run: |
-          for file in "prx-windows-$RELEASE_TAG.zip" "prx-windows-$RELEASE_TAG.tar.gz" "prx-linux-$RELEASE_TAG.zip" "prx-linux-$RELEASE_TAG.tar.gz" "relinker-$RELEASE_TAG.exe" "relinker-$RELEASE_TAG" "web-$RELEASE_TAG.zip"; do
+          for file in "prx-windows-$RELEASE_TAG.zip" "prx-windows-$RELEASE_TAG.tar.gz" "prx-linux-$RELEASE_TAG.zip" "prx-linux-$RELEASE_TAG.tar.gz" "prx-windows-unpatched-$RELEASE_TAG.zip" "prx-windows-unpatched-$RELEASE_TAG.tar.gz" "prx-linux-unpatched-$RELEASE_TAG.zip" "prx-linux-unpatched-$RELEASE_TAG.tar.gz" "relinker-$RELEASE_TAG.exe" "relinker-$RELEASE_TAG" "web-$RELEASE_TAG.zip"; do
             test -s "dist/$file"
           done
           python tools/package_release.py --docs docs/user --output dist
+          python tools/package_release.py --platform headers --version "$RELEASE_TAG" --output dist
+          test -s "dist/prx-headers-$RELEASE_TAG.zip"
+          test -s "dist/prx-headers-$RELEASE_TAG.tar.gz"
           chmod +x "dist/relinker-$RELEASE_TAG"
       - name: Prepare release notes
         shell: bash
         run: |
           gh api --method POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.json"
           python tools/prepare_release_notes.py --input "$RUNNER_TEMP/release-notes.json" --body "$RUNNER_TEMP/release-body.md" --full dist/release-notes.md
-      - name: Create draft and upload files
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
+      - name: Create or refresh draft and upload files
+        shell: bash
+        run: |
+          release_marker="<!-- anyps5-release-workflow:$GITHUB_SHA -->"
+          printf '\n%s\n' "$release_marker" >> "$RUNNER_TEMP/release-body.md"
+          release_state="$(
+            gh release list --limit 10000 --json tagName,isDraft |
+              python -c 'import json, os, sys; matches = [release for release in json.load(sys.stdin) if release["tagName"] == os.environ["RELEASE_TAG"]]; print("missing" if not matches else ("draft" if matches[0]["isDraft"] else "published"))'
+          )"
+          case "$release_state" in
+            missing)
+              gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
+              ;;
+            draft)
+              release_body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
+              if [[ "$release_body" != *"$release_marker"* ]]; then
+                echo "::error::Draft release $RELEASE_TAG was not created by this workflow for $GITHUB_SHA"
+                exit 1
+              fi
+              gh release edit "$RELEASE_TAG" --draft=true --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
+              gh release upload "$RELEASE_TAG" dist/* --clobber
+              ;;
+            published)
+              echo "::error::Release $RELEASE_TAG is already published"
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected release state for $RELEASE_TAG: $release_state"
+              exit 1
+              ;;
+          esac
+          for file in dist/*; do basename "$file"; done | LC_ALL=C sort > "$RUNNER_TEMP/expected-release-assets"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort > "$RUNNER_TEMP/actual-release-assets"
+          if ! diff -u "$RUNNER_TEMP/expected-release-assets" "$RUNNER_TEMP/actual-release-assets"; then
+            echo "::error::Draft release assets do not exactly match the packaged files"
+            exit 1
+          fi
       - name: Publish complete release
         run: gh release edit "$RELEASE_TAG" --draft=false

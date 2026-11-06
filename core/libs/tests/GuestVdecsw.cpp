@@ -102,6 +102,12 @@ void checkGenericPictureInfo(const OutputInfo& output, const TInfo& typed) {
     shorter.thisSize = sizeof(OutputInfo) - 8;
     auto actual = typed;
     check(sceVdecswGetPictureInfo(&shorter, &actual, nullptr) == 0 && std::memcmp(&actual, &typed, sizeof(actual)) == 0, "generic picture info rejected the shorter output descriptor");
+    auto doubled = output;
+    doubled.pictureCount = 2;
+    auto doubledFirst = typed;
+    const auto doubledBefore = doubledFirst;
+    auto doubledSecond = typed;
+    check(throws([&] { sceVdecswGetPictureInfo(&doubled, &doubledFirst, &doubledSecond); }) && std::memcmp(&doubledFirst, &doubledBefore, sizeof(doubledFirst)) == 0 && std::memcmp(&doubledSecond, &doubledBefore, sizeof(doubledSecond)) == 0, "generic picture info accepted two pictures");
 }
 
 void testGenericPictureInfoValidation() {
@@ -304,6 +310,29 @@ void testWithoutOutput() {
     check(sceVdecswTrySyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.isLastFrame, "the only picture of a finalized sequence is not marked last");
     check(sceVdecswResetDecoder(session.decoder) == 0, "reset failed");
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a reset decoder kept its inputs");
+}
+
+void testRejectedUnitDoesNotBlockQueue() {
+    Session session;
+    const auto units = accessUnits(false);
+    const std::array<std::uint8_t, 4> rejected{0x12, 0x34, 0x56, 0x78};
+    const SceVideodec2::InputData bad{sizeof(SceVideodec2::InputData), rejected.data(), rejected.size(), 1, 0, 0};
+    check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &bad); }), "a unit that is neither Annex-B nor length-prefixed was accepted");
+    InputResult result{sizeof(InputResult)};
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == rejected.data() && result.outputFrameCount == 0, "a rejected unit stayed queued");
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a rejected unit left the queue blocked");
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input after a rejected unit was refused");
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "a valid unit after a rejected one was not decoded");
+}
+
+void testOversizedUnitIsRejectedBeforeCopy() {
+    Session session;
+    const std::array<std::uint8_t, 4> small{0x00, 0x00, 0x00, 0x01};
+    const SceVideodec2::InputData oversized{sizeof(SceVideodec2::InputData), small.data(), std::uint64_t{std::numeric_limits<int>::max()} + 1, 1, 0, 0};
+    check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &oversized); }), "an access unit larger than int was accepted");
+    InputResult result{sizeof(InputResult)};
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "an oversized access unit was queued");
 }
 
 void testSyncWrappers() {
@@ -523,6 +552,8 @@ int main() {
         testHevcCrop();
         testHevcMain10();
         testWithoutOutput();
+        testRejectedUnitDoesNotBlockQueue();
+        testOversizedUnitIsRejectedBeforeCopy();
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();

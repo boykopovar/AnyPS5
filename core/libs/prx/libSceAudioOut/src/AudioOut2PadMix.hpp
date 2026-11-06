@@ -13,6 +13,7 @@ static constexpr std::uint32_t AUDIO_OUT2_PAD_SPEAKER_RIGHT = 1;
 static constexpr std::uint32_t AUDIO_OUT2_PAD_VIBRATION_LEFT = 2;
 static constexpr std::uint32_t AUDIO_OUT2_PAD_VIBRATION_RIGHT = 3;
 static constexpr std::uint32_t AUDIO_OUT2_PAD_DEVICE_CHANNELS_MAX = 6;
+static constexpr const char* AUDIO_PAD_SPEAKER_FALLBACK_ENV = "APS5_PAD_SPEAKER_FALLBACK_DB";
 
 enum class AudioOut2Route {
     Main,
@@ -25,12 +26,14 @@ struct AudioOut2PadLayout {
     std::uint32_t position[AUDIO_OUT2_PAD_CHANNELS] = {0, 1, 2, 3};
 };
 
+float AudioPadSpeakerFallbackGainFrom(const char* dbText);
+float AudioPadSpeakerFallbackGain();
 AudioOut2Route AudioOut2RouteForPort(std::uint16_t type, std::uint32_t channels);
 bool AudioOut2IsPadAudioDevice(const char* name);
 void AudioOut2AccumulatePadFrame(AudioOut2Route route, const float* in, std::uint32_t channels, const float* volume, float* pad);
 void AudioOut2FinishPadMix(float* out, std::uint32_t frames);
 std::array<std::uint8_t, 2> AudioOut2RumbleFromPadFrames(const float* pad, std::uint32_t frames);
 AudioOut2PadLayout AudioOut2PadLayoutForDriver(const char* driver);
-void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames);
+void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames, unsigned vibrationPercent = 100);
 
 #endif

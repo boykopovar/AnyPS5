@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 #include <vector>
 
 static Ngs2CustomSubmixerRackOption RackOption(std::uint32_t count, std::uint32_t channels = 2) {
@@ -79,7 +80,7 @@ static uintptr_t Input(uintptr_t system, const std::vector<std::int16_t>& pcm, s
     return voice;
 }
 
-static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain, bool startup = false) {
+static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain, bool startup = false, const std::vector<float>& scale = {}) {
     Require(sceNgs2SystemSetGrainSamples(system, grain) == SCE_NGS2_OK);
     std::vector<std::vector<float>> samples(expected.size(), std::vector<float>(grain * channels, 9.0f));
     std::vector<Ngs2RenderBufferInfo> info;
@@ -87,7 +88,7 @@ static void Render(uintptr_t system, const std::vector<float>& expected, std::ui
     Require(sceNgs2SystemRender(system, info.data(), static_cast<std::uint32_t>(info.size())) == SCE_NGS2_OK);
     for (std::size_t port = 0; port < expected.size(); port++) {
         for (std::size_t i = 0; i < samples[port].size(); ++i) {
-            const float value = startup && i / channels < 3 ? 0.0f : expected[port];
+            const float value = startup && i / channels < 3 ? 0.0f : expected[port] * (scale.empty() ? 1.0f : scale[i % channels]);
             Require(std::fabs(samples[port][i] - value) <= 0.000001f);
         }
     }
@@ -196,8 +197,24 @@ static void TestUnityCopy() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool Ps4Library = true;
+#else
+static constexpr bool Ps4Library = false;
+#endif
+
+static std::vector<float> MasteringScale(std::uint32_t channels) {
+    if (Ps4Library) return {};
+    constexpr float half = std::numbers::sqrt2_v<float> / 2.0f;
+    if (channels == 3) return {1.0f + half, 1.0f + half, 0.0f};
+    if (channels == 5) return {1.0f, 1.0f, 1.0f, 0.0f, 1.0f};
+    if (channels == 7) return {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, half};
+    return {};
+}
+
 static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto system = CreateSystem();
+    const auto scale = MasteringScale(channels);
     auto option = RackOption(4, channels);
     AddGain(option, 0, 3);
     const auto rack = CustomRack(system, option);
@@ -214,13 +231,13 @@ static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto input1 = Input(system, pcm1, channels);
     Route(input0, 0, first, 0, channels);
     Route(input1, 0, second, 0, channels);
-    Render(system, {0.5f, 0.75f}, channels, Grain, true);
+    Render(system, {0.5f, 0.75f}, channels, Grain, true, scale);
     Route(input0, 0, 0, 0, channels);
-    Render(system, {0.0f, 0.75f}, channels);
+    Render(system, {0.0f, 0.75f}, channels, Grain, false, scale);
     SetGain(first, 4.0f);
-    Render(system, {0.0f, 0.75f}, channels);
+    Render(system, {0.0f, 0.75f}, channels, Grain, false, scale);
     Route(input0, 0, first, 0, channels);
-    Render(system, {1.0f, 0.75f}, channels);
+    Render(system, {1.0f, 0.75f}, channels, Grain, false, scale);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 

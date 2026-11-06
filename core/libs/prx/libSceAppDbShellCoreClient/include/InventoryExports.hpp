@@ -1,0 +1,18 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceAppDbShellCoreClientUnknown__minus_NB6hsKeI2E_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_0PevQGrqaXQ_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_1rdpvtPYXUg_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_3GBO83N9XYk_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_8ahcDF2NTFc_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_DdycECIaV2o_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_SlsrwedLC34_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_aqObO3I7PVk_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_gyhDBiNNvlg_nid_no_patch();
+int APS5_VABI libSceAppDbShellCoreClientUnknown_s3XFdWNwYD8_nid_no_patch();
+
+}

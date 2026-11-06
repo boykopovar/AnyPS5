@@ -1,12 +1,14 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
 #include "prx/libSceIme/Export.cpp"
 #include "prx/libc/include/General.hpp"
+#include <cstring>
 
 extern "C" {
 
-int APS5_VABI sceImeBackendParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceImeBackendParamInit(void* param) {
+    if (param == nullptr) return;
+    std::memset(param, 0, 0x28);
+    std::memset(param, 0xff, 4);
 }
 
 int APS5_VABI sceImeBackendOpen(void) {
@@ -110,6 +112,31 @@ int APS5_VABI sceImeBackendGetCandidateListSize(void) {
 }
 
 int APS5_VABI sceImeBackendGetCandidateSelect(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendGetConvertMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendTemporalConfirm(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendSetConvertMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendForTestFunction(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendDeleteCharacter(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

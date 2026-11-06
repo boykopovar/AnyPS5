@@ -34,6 +34,7 @@ int main() {
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before init");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc before init");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value before init");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay before init");
 
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
@@ -76,6 +77,18 @@ int main() {
         Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
         Require(sceSaveDataDialogGetResult(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with null result pointer");
+        Require(sceSaveDataDialogGetResult(reinterpret_cast<SaveDataDialogResult*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with invalid pointer");
+        SaveDataDialogResult invalidDirResult{};
+        invalidDirResult.dir_name = reinterpret_cast<void*>(0x10);
+        Require(sceSaveDataDialogGetResult(&invalidDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with invalid directory name pointer");
+        SaveDataDialogResult nullDirResult{};
+        nullDirResult.dir_name = nullptr;
+        Require(sceSaveDataDialogGetResult(&nullDirResult) == 0, "get result with null directory name pointer");
+        Require(nullDirResult.mode == param.mode && nullDirResult.result == SAVE_DATA_DIALOG_RESULT_OK &&
+                nullDirResult.user_data == &context,
+                "save result without directory name must preserve mode and context");
         Require(result.mode == param.mode && result.result == SAVE_DATA_DIALOG_RESULT_OK &&
                 result.user_data == &context && std::strcmp(selected.data, "SDU1") == 0,
                 "save result must preserve its mode, directory and caller context");
@@ -129,4 +142,5 @@ int main() {
 
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc after terminate");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value after terminate");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay after terminate");
 }

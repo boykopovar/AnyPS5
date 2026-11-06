@@ -2,6 +2,18 @@
 
 ### Unknown function info
 
+- [Additional SysCore exports](../../../core/libs/prx/libSceSysCore/Export.cpp) - the seven name/NID pairs below are defined exports in the [13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscesyscore-d26d4fb57b.jsonl). Their signatures and behavior are unverified. Parameterless `int` declarations are import placeholders, not verified ABI prototypes; every call throws through `NotImplemented_nid_no_patch`. No application, coredump or debugger behavior is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceApplicationExitSpawn3` | `45owwvXWN+o` |
+| `sceApplicationKickCoredump3` | `jPgvaIiVhRU` |
+| `sceApplicationNotifyUnmountForExitSpawn` | `gsItPZhA9-s` |
+| `sceApplicationSendResultOfDebuggerRestoreRequest` | `KVWYLwWcpHs` |
+| `sceApplicationSendResultOfDebuggerSaveRequest` | `sMlp8+iJX-U` |
+| `sceApplicationSwitchToPprNativeMode` | `GEsnTMR3YAA` |
+| `sceApplicationSwitchToPprNativeMode2` | `EO-wjsuZdRM` |
+
 - [sceApplicationGetAppInfoByAppId](../../../core/libs/prx/libSceSysCore/Export.cpp) takes a 32-bit application ID and a writable 152-byte record. The service fills the record through IPC; its complete field layout remains unresolved. The SystemService caller consumes a subrecord beginning at byte 48.
 
 - [_sceApplicationGetAppId, sceApplicationAddProcess2, sceApplicationBeginSclkChange, sceApplicationBlockingKill2, sceApplicationBlockingKill3, sceApplicationContinue, sceApplicationCrashSyscore, sceApplicationCrashSystemProcess](../../../core/libs/prx/libSceSysCore/Export.cpp) (libSceSysCore) - The list is the intersection of the export table of the console's libSceSysCore (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo. Names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSysCore.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
@@ -15,3 +27,15 @@
 - [sceApplicationSetControllerFocus, sceApplicationSetControllerFocusPermissionToSubProcess, sceApplicationSetMemoryPstate, sceApplicationSignalShellCoreHeartBeat, sceApplicationSpawn2 and sceApplicationSuspend](../../../core/libs/prx/libSceSysCore/Export.cpp) (libSceSysCore) - The list is the intersection of the export table of the console's libSceSysCore (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo. Names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSysCore.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
 - [sceApplicationSuspendSystemForDebugger, sceApplicationSwitchToBaseMode, sceApplicationSwitchToNeoMode, sceApplicationSwitchToNeoMode2, sceApplicationSystemReboot and sceApplicationSystemShutdown2](../../../core/libs/prx/libSceSysCore/Export.cpp) (libSceSysCore) - The list is the intersection of the export table of the console's libSceSysCore (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo. Names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSysCore.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
 - [sceApplicationSystemSuspend, sceApplicationSystemSuspend2, sceApplictionGetStateForDebugger, sceSysCoreGetEventCount and sceSysCoreReceiveEvent](../../../core/libs/prx/libSceSysCore/Export.cpp) (libSceSysCore) - The list is the intersection of the export table of the console's libSceSysCore (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo. Names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSysCore.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceSysCore/Export.cpp) - 5 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `F2qydFnZWfY` |
+| `Unknown` | `Q5nkKEHtW18` |
+| `Unknown` | `V7awqOXNG30` |
+| `Unknown` | `lGA8mxzKIhk` |
+| `Unknown` | `piCjhbSYauo` |

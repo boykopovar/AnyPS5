@@ -69,6 +69,17 @@ int main() {
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &tooMany, &sent, 0), 22) && sent == 77);
     const GuestSendfileHeaders negative{nullptr, 0, trailer, -1};
     Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &negative, &sent, 0), 22) && sent == 77);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, reinterpret_cast<const GuestSendfileHeaders*>(0x10), &sent, 0), 14) && sent == 77);
+    int unwritable[2];
+    Require(socketpair_nid_postfix(1, 1, 0, unwritable) == 0);
+    Require(sendfile_nid_postfix(file, unwritable[0], 0, 16, nullptr, reinterpret_cast<std::int64_t*>(0x10), 0) == 0);
+    Require(Receive(unwritable[1], 16) == content.substr(0, 16));
+    Require(close_nid_postfix(unwritable[0]) == 0 && close_nid_postfix(unwritable[1]) == 0);
+    const GuestSendfileHeaders badHeaderIov{reinterpret_cast<KernelIovec*>(0x10), 1, nullptr, 0};
+    Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &badHeaderIov, &sent, 0), 14) && sent == 77);
+    const GuestSendfileHeaders badTrailerIov{nullptr, 0, reinterpret_cast<KernelIovec*>(0x10), 1};
+    Require(Fails(sendfile_nid_postfix(file, pair[0], 0, 0, &badTrailerIov, &sent, 0), 14) && sent == 77);
     Require(Fails(sendfile_nid_postfix(pair[1], pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, file, 0, 0, nullptr, &sent, 0), 38) && sent == 0);

@@ -44,6 +44,7 @@ void CheckOptionBlock() {
     unsigned char block[0x70];
     std::memset(block, 0x5a, sizeof(block));
     Require(sceCompanionHttpdOptParamInitialize(nullptr) == InvalidParam, "a null option block must be rejected");
+    Require(sceCompanionHttpdOptParamInitialize(reinterpret_cast<CompanionHttpdOptParam*>(0x10)) == InvalidParam, "an unwritable option block must return InvalidParam");
     Require(sceCompanionHttpdOptParamInitialize(reinterpret_cast<CompanionHttpdOptParam*>(block)) == 0, "sceCompanionHttpdOptParamInitialize failed");
     for (std::size_t index = 0; index < sizeof(block); ++index) {
         Require(block[index] == (index < 0x60 ? 0u : 0x5au), "the option block must be zeroed over its 0x60 bytes and nothing past them");
@@ -87,13 +88,27 @@ void CheckStates() {
     Require(sceCompanionHttpdInitialize(reinterpret_cast<const CompanionHttpdOptParam*>(param)) == 0, "initializing again after the termination failed");
     Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == 0, "the termination kept the callback");
     Require(sceCompanionHttpdTerminate() == 0, "the last termination failed");
+    Require(sceCompanionHttpdGetEvent(nullptr) == InvalidParam, "a null event after the last termination");
+    Require(sceCompanionHttpdGetEvent(event) == NotInitialized, "an event after the last termination");
+    Require(sceCompanionHttpdStart() == NotInitialized, "a start after the last termination");
+    Require(sceCompanionHttpdStop() == NotInitialized, "a stop after the last termination");
+    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == InvalidParam, "a null callback after the last termination");
+    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == NotInitialized, "a callback after the last termination");
+    Require(sceCompanionHttpdUnregisterRequestCallback() == NotInitialized, "an unregistration after the last termination");
+    Require(sceCompanionHttpdInitialize(nullptr) == InvalidParam, "a null parameter on reinit after termination");
 }
 
 void CheckResponseBuilders() {
-    unsigned char response[0x20]{};
-    RequireNotImplemented([&] { sceCompanionHttpdAddHeader("key", "value", response); }, "sceCompanionHttpdAddHeader");
-    RequireNotImplemented([&] { sceCompanionHttpdSetStatus(200, response); }, "sceCompanionHttpdSetStatus");
-    RequireNotImplemented([&] { sceCompanionHttpdSetBody("body", 4, response); }, "sceCompanionHttpdSetBody");
+    unsigned char response[0x20];
+    unsigned char untouched[sizeof(response)];
+    std::memset(response, 0xa5, sizeof(response));
+    std::memcpy(untouched, response, sizeof(response));
+    Require(sceCompanionHttpdAddHeader("key", "value", response) == 0, "sceCompanionHttpdAddHeader did not return zero");
+    Require(std::memcmp(response, untouched, sizeof(response)) == 0, "sceCompanionHttpdAddHeader wrote the response");
+    Require(sceCompanionHttpdSetStatus(200, response) == 0, "sceCompanionHttpdSetStatus did not return zero");
+    Require(std::memcmp(response, untouched, sizeof(response)) == 0, "sceCompanionHttpdSetStatus wrote the response");
+    Require(sceCompanionHttpdSetBody("body", 4, response) == 0, "sceCompanionHttpdSetBody did not return zero");
+    Require(std::memcmp(response, untouched, sizeof(response)) == 0, "sceCompanionHttpdSetBody wrote the response");
     RequireNotImplemented([] { sceCompanionHttpdGet2ndScreenStatus(); }, "sceCompanionHttpdGet2ndScreenStatus");
     RequireNotImplemented([] { sceCompanionHttpdGetUserId(); }, "sceCompanionHttpdGetUserId");
     RequireNotImplemented([] { sceCompanionHttpdInitialize2(); }, "sceCompanionHttpdInitialize2");

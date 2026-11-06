@@ -12,6 +12,7 @@ constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
 constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
+constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000Au);
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 
@@ -76,6 +77,7 @@ int main() {
     Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(scePlayerReviewDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(scePlayerReviewDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT);
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_RESULT_USER_CANCELED);
     Require(result[0] == -1 && result[1] == -1 && result[3] == -1);
     Require(result[2] == COMMON_DIALOG_RESULT_USER_CANCELED);

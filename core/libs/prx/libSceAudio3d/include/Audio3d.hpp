@@ -2,6 +2,32 @@
 
 #include "SceTypes.hpp"
 
+struct Audio3dPcm {
+    std::uint32_t format;
+    const void* sample_buffer;
+    std::uint32_t num_samples;
+};
+
+struct Audio3dReportArguments {
+    std::uint32_t gp_offset;
+    std::uint32_t fp_offset;
+    void* overflow_arg_area;
+    void* reg_save_area;
+};
+
+struct Audio3dReport {
+    std::uint64_t size;
+    std::uint32_t port_id;
+    std::uint32_t object_id;
+    std::uint32_t type;
+    std::int32_t result;
+    const char* function;
+    const char* argument_types;
+    Audio3dReportArguments arguments;
+};
+
+using Audio3dReportHandler = void (APS5_VABI*)(const Audio3dReport* report, void* user_data);
+
 struct Audio3dSpeakerArrayParameters {
     const AudioOut2Position* positions;
     std::uint32_t numSpeakers;
@@ -33,12 +59,12 @@ int APS5_VABI sceAudio3dAudioOutClose(std::int32_t handle);
 int APS5_VABI sceAudio3dAudioOutOutput(std::int32_t handle, const void* ptr);
 int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num);
 const char* APS5_VABI sceAudio3dStrError(std::int32_t error);
-int APS5_VABI sceAudio3dPortOpenEx(void);
+int APS5_VABI sceAudio3dPortOpenEx(int user_id, const Audio3dOpenParameters* parameters, uint32_t* id);
 int APS5_VABI sceAudio3dPortCreate(uint32_t granularity, uint32_t rate, int64_t reserved, uint32_t* id);
-int APS5_VABI sceAudio3dPortDestroy(uint32_t portId);
-int APS5_VABI sceAudio3dPortGetStatus(uint32_t portId, void* status);
-int APS5_VABI sceAudio3dReportRegisterHandler(void);
-int APS5_VABI sceAudio3dReportUnregisterHandler(void);
+int APS5_VABI sceAudio3dPortDestroy(uint32_t port_id);
+int APS5_VABI sceAudio3dPortGetStatus(uint32_t port_id, uint32_t* status, char* description, size_t description_size);
+int APS5_VABI sceAudio3dReportRegisterHandler(uint32_t type, Audio3dReportHandler handler, void* user_data, uint64_t* handle);
+int APS5_VABI sceAudio3dReportUnregisterHandler(uint64_t handle);
 size_t APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(uint32_t numSpeakers, uint8_t is3d);
 int APS5_VABI sceAudio3dCreateSpeakerArray(AudioOut2SpeakerArrayHandle* handle, const Audio3dSpeakerArrayParameters* parameters);
 int APS5_VABI sceAudio3dDeleteSpeakerArray(AudioOut2SpeakerArrayHandle handle);

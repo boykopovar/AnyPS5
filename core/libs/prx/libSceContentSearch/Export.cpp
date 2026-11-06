@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include <cstdint>
@@ -189,21 +190,45 @@ int APS5_VABI sceContentBinderStart() {
 int APS5_VABI sceContentBinderTerminate() {
     return static_cast<int>(0x809D000F);
 }
-int APS5_VABI sceContentSearchGetApplicationLastUpdateId() {
+int APS5_VABI sceContentSearchGetApplicationLastUpdateId(std::int64_t* lastUpdateId) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if (lastUpdateId == nullptr) return ErrorInvalidArgument;
+    *lastUpdateId = LibraryUpdateId;
+    return 0;
+}
+int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if (index == nullptr) return ErrorInvalidArgument;
+    *index = 0;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceContentSearchGetMyApplicationIndex() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceContentSearchGetNumOfApplication() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::int64_t* numOfApplication, std::int64_t* lastUpdateId) {
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if ((columnSet == nullptr) != (columnSetLength == 0) || (orderByConditions == nullptr) != (orderByConditionsLength == 0) || numOfApplication == nullptr || lastUpdateId == nullptr) return ErrorInvalidArgument;
+    ValidateColumnSets(__func__, columnSet, columnSetLength);
+    ValidateOrderBy(__func__, orderByConditions, orderByConditionsLength);
+    *numOfApplication = 0;
+    *lastUpdateId = LibraryUpdateId;
     return 0;
 }
 int APS5_VABI sceContentSearchSearchApplication() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceContentSearchUnknown_Np8cEpyDFRE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Np8cEpyDFRE", libSceContentSearchUnknown_Np8cEpyDFRE_nid_no_patch);
+
+int APS5_VABI libSceContentSearchUnknown_X9e_plus_hZfue0U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("X9e+hZfue0U", libSceContentSearchUnknown_X9e_plus_hZfue0U_nid_no_patch);
 
 }

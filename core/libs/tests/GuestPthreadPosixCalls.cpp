@@ -65,6 +65,15 @@ int main() {
     Check(pthread_attr_destroy_nid_postfix(&attr) == 0);
     int afterDestroy = -1;
     Check(pthread_attr_getdetachstate_nid_postfix(&attr, &afterDestroy) == GuestEinval);
+    PthreadAttr unset = nullptr;
+    std::size_t guard = 7;
+    afterDestroy = -1;
+    for (PthreadAttr* invalid : {static_cast<PthreadAttr*>(nullptr), &unset, &attr}) {
+        Check(pthread_attr_getdetachstate_nid_postfix(invalid, &afterDestroy) == GuestEinval && afterDestroy == -1);
+        Check(pthread_attr_setdetachstate_nid_postfix(invalid, 0) == GuestEinval);
+        Check(pthread_attr_getguardsize_nid_postfix(invalid, &guard) == GuestEinval && guard == 7);
+        Check(pthread_attr_setguardsize_nid_postfix(invalid, 4096) == GuestEinval);
+    }
     Check(pthread_attr_init_nid_postfix(nullptr) == GuestEinval);
     Check(pthread_attr_destroy_nid_postfix(nullptr) == GuestEinval);
 
@@ -89,5 +98,9 @@ int main() {
     Check(pthread_setcancelstate_nid_postfix(CancelDisable, &old) == 0 && old == CancelEnable);
     Check(pthread_setcancelstate_nid_postfix(CancelEnable, &old) == 0 && old == CancelDisable);
     Check(pthread_setcancelstate_nid_postfix(CancelEnable, &old) == 0 && old == CancelEnable);
+    for (const int invalid : {2, -1}) Check(pthread_setcancelstate_nid_postfix(invalid, &old) == GuestEinval);
+    Check(pthread_setcancelstate_nid_postfix(CancelDisable, &old) == 0 && old == CancelEnable);
+    Check(pthread_setcancelstate_nid_postfix(3, nullptr) == GuestEinval);
+    Check(pthread_setcancelstate_nid_postfix(CancelEnable, &old) == 0 && old == CancelDisable);
     return 0;
 }

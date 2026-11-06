@@ -1,8 +1,14 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceKeyboard/include/InventoryExports.hpp"
 #include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 
 extern "C" {
+
+int APS5_VABI sceDbgKeyboardGetHandle() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 int APS5_VABI sceKeyboardInit(void) {
     return Keyboard::Initialize();
@@ -39,8 +45,7 @@ int APS5_VABI sceKeyboardConnectPort(std::int32_t first, std::int32_t second) {
 }
 
 int APS5_VABI sceKeyboardDebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::DebugGetDeviceId(handle, deviceId);
 }
 
 int APS5_VABI sceKeyboardDeviceOpen(std::uint64_t deviceId, std::int32_t index, std::uint32_t options) {
@@ -73,16 +78,6 @@ int APS5_VABI sceKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::
 }
 
 int APS5_VABI sceKeyboardMbusInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKeyboardPadEmulateClose(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKeyboardPadEmulateOpen(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -122,7 +117,7 @@ int APS5_VABI sceDbgKeyboardRead() {
     return 0;
 }
 
-int APS5_VABI sceDbgKeyboardReadState() {
+int APS5_VABI sceDbgKeyboardReadState(std::int32_t handle, KeyboardData* data) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -130,5 +125,14 @@ int APS5_VABI sceDbgKeyboardReadState() {
 void KeyboardPublishInput_nid_postfix(const KeyboardInputEvent& event) {
     Keyboard::Publish(event);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceKeyboardUnknown_l76jptHfizM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("l76jptHfizM", libSceKeyboardUnknown_l76jptHfizM_nid_no_patch);
 
 }

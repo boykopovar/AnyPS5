@@ -253,6 +253,10 @@ int APS5_VABI mmap_np() {
     return 0;
 }
 
+int APS5_VABI mkostemp_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI msetname() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
