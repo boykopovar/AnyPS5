@@ -383,6 +383,12 @@ void testHullHalves() {
     Shader refused{};
     expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &front, &back, nullptr); });
     check(std::memcmp(backSh.data(), backBefore.data(), sizeof(backSh)) == 0, "hull fusion without scratch wrote the back half");
+    Shader noFrontSpecials = front;
+    noFrontSpecials.specials = nullptr;
+    expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &noFrontSpecials, &back, scratch.data()); });
+    Shader noBackSpecials = back;
+    noBackSpecials.specials = nullptr;
+    expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &front, &noBackSpecials, scratch.data()); });
 }
 
 }
