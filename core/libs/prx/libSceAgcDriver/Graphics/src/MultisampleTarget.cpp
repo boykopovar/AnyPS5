@@ -1837,6 +1837,13 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
+void RetireMultisampleColorTarget(const std::shared_ptr<std::atomic<bool>>& active) {
+    std::unique_lock lock(guardedMutex());
+    active->store(false, std::memory_order_release);
+    if (std::erase_if(guarded(), [&](const auto& range) { return range.active == active; }) != 0u) guardedGeneration().fetch_add(1, std::memory_order_release);
+    anyGuarded().store(!guarded().empty(), std::memory_order_release);
+}
+
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     AppendHostWrittenDepthRanges(address, bytes, ranges);

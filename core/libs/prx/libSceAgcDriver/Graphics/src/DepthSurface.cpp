@@ -242,6 +242,7 @@ struct DepthSamplingState {
     std::optional<MultisampleColorAlias> depthAlias;
     bool unevenPlanes = false;
     std::optional<std::uint8_t> overwriteStencil;
+    std::optional<MultisampleColorAlias> stencilAlias;
 
     void Refuse(const char* reason) {
         if (refusal.empty()) refusal = reason;
@@ -257,11 +258,22 @@ std::optional<MultisampleColorAlias> soleDepthAlias(const GuestMemory::Unchanged
     return aliases.front();
 }
 
+bool sameAliasValue(const MultisampleColorAlias& recorded, const MultisampleColorAlias& current) {
+    return recorded.value.has_value() == current.value.has_value() && (!recorded.value || std::memcmp(&*recorded.value, &*current.value, sizeof(VkClearColorValue)) == 0);
+}
+
+bool unchangedAlias(const MultisampleColorAlias& recorded, const GuestMemory::UnchangedQuery& plane) {
+    const auto aliases = MultisampleColorTargetsOver(plane.address, plane.bytes);
+    if (aliases.size() != 1u) return false;
+    const auto& current = aliases.front();
+    return current.active == recorded.active && current.contents == recorded.contents && current.newest == recorded.newest && current.fills == recorded.fills && sameAliasValue(recorded, current);
+}
+
 bool sameDepthAlias(const MultisampleColorAlias& recorded, const GuestMemory::UnchangedQuery& plane) {
     const auto aliases = MultisampleColorTargetsOver(plane.address, plane.bytes);
     if (aliases.size() != 1u) return false;
     const auto& current = aliases.front();
-    const auto sameValue = recorded.value.has_value() == current.value.has_value() && (!recorded.value || std::memcmp(&*recorded.value, &*current.value, sizeof(VkClearColorValue)) == 0);
+    const auto sameValue = sameAliasValue(recorded, current);
     const bool refilled = recorded.newest == MultisampleColorContent::Clear && current.newest == MultisampleColorContent::Fill && current.fills > recorded.fills && current.fills - recorded.fills == current.sameRun && current.filledBytes >= current.bytes;
     return current.active == recorded.active && current.contents == recorded.contents && (current.newest == recorded.newest || refilled) && (current.fills == recorded.fills || refilled) && sameValue;
 }
@@ -444,7 +456,10 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
             return refuse(index == 2u ? stencilAliasRefusal : depthAliasRefusal);
         }
         if (depthValue) state.aliasDepth = *depthValue;
-        else state.aliasStencil = *stencilValue;
+        else {
+            state.aliasStencil = *stencilValue;
+            state.stencilAlias = *alias;
+        }
     }
     const auto& htile = state.initial[1];
     for (auto& range : state.initial) {
@@ -745,6 +760,7 @@ public:
             const bool stencilRange = index == 2u || (index == 1u && uniform);
             if (!kept) reportAlias(*alias, range, stencilRange ? "stencil plane" : index == 1u ? "HTILE" : "depth");
             Require(kept, stencilRange ? stencilAliasRefusal : depthAliasRefusal);
+            if (index == 2u && stencilClearGeneration != 0u) sampling.stencilAlias = *alias;
             if (stencilValue) stencilPlaneAliased = true;
         }
         if (stencilClearGeneration != 0u) {
@@ -2587,10 +2603,14 @@ void DepthSurface::PublishToGuest() {
             live[index] = found->live;
         }
     }
-    for (const auto& parts : live) {
-        for (const auto& part : parts) {
+    const auto supersedes = [&] {
+        return std::array{sampling.depthAlias && unchangedAlias(*sampling.depthAlias, sampling.initial[0]), false, sampling.stencilAlias && unchangedAlias(*sampling.stencilAlias, sampling.initial[2])};
+    };
+    const auto superseded = supersedes();
+    for (std::size_t index = 0u; index < live.size(); ++index) {
+        for (const auto& part : live[index]) {
             Require(GuestMemory::Accessible(reinterpret_cast<const void*>(part.address), part.bytes, true) && GuestMemory::Watched(part.address, part.bytes), "native multisample depth publication requires watched accessible guest memory");
-            Require(!MultisampleColorTargetOver(part.address, part.bytes), "native multisample depth publication over a resident colour target is not implemented");
+            Require(superseded[index] || !MultisampleColorTargetOver(part.address, part.bytes), "native multisample depth publication over a resident colour target is not implemented");
             const std::pair<std::uint64_t, std::uint64_t> range{part.address, part.address + part.bytes};
             Require(!StorageTexture::AnyPendingUnitsOverlap(std::span(&range, 1u)), "native multisample depth publication over pending storage image writes is not implemented");
         }
@@ -2658,6 +2678,7 @@ void DepthSurface::PublishToGuest() {
     for (const auto& range : observed) Require(GuestMemory::UnchangedSinceCollected(range.address, range.bytes, range.generation), "guest writes raced native multisample depth publication");
     Require(GuestMemory::UnchangedSinceAll(observed), "guest writes raced native multisample depth publication");
     Require(active->load(std::memory_order_acquire) && !clearPending && clearGeneration == 0u && stencilClearGeneration == 0u && pendingClear == 0u, "native multisample depth ownership changed during publication");
+    Require(supersedes() == superseded, "native multisample depth publication over a resident colour target is not implemented");
     publicationFailed = true;
     if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::BeforeCommit);
     auto seen = observed.begin();
@@ -2681,6 +2702,8 @@ void DepthSurface::PublishToGuest() {
     }
     hostWritten->store(false, std::memory_order_release);
     publication.clear();
+    if (superseded[0]) RetireMultisampleColorTarget(sampling.depthAlias->active);
+    if (superseded[2]) RetireMultisampleColorTarget(sampling.stencilAlias->active);
 }
 
 void publishWrittenDepth(std::span<const std::shared_ptr<std::atomic<bool>>> written) {
