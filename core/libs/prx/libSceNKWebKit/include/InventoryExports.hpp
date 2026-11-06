@@ -4555,7 +4555,6 @@ int APS5_VABI _ZN7WebCore7JSRangeD2Ev();
 int APS5_VABI _ZN7WebCore7JSRangeaSERKS0_();
 int APS5_VABI _ZN7WebCore7PatternD1Ev();
 int APS5_VABI _ZN7WebCore7PatternD2Ev();
-int APS5_VABI _ZN7WebCore7Process10identifierEv();
 int APS5_VABI _ZN7WebCore8DOMTimerD0Ev();
 int APS5_VABI _ZN7WebCore8DOMTimerD1Ev();
 int APS5_VABI _ZN7WebCore8DOMTimerD2Ev();
