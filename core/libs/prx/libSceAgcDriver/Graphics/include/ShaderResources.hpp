@@ -50,6 +50,7 @@ struct TextureCacheUse {
 };
 TextureCacheUse TextureCacheUsage();
 void OverrideCacheBudgetForTest(std::uint64_t bytes);
+void SampledFromStorageForTest(bool enabled);
 std::uint64_t SampledTextureCacheBudget(const Context& context);
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D);
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);

@@ -588,9 +588,11 @@ bool MetadataMoved(const StorageTexture& image, const GuestTextureResource& reso
 // GPU-direct (a snapshot of such a surface reads and compares its bytes on the CPU, waiting for
 // the recorded work that wrote them). APS5_NO_SAMPLED_FROM_STORAGE=1 keeps every sampled texture a
 // snapshot as before.
+std::atomic<bool> sampledFromStorageForTest{true};
+
 bool SampledFromStorageEligible(const Context& context, std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes) {
     static const bool disabled = std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") != nullptr;
-    if (disabled || IsBlockCompressed(format) || !StorageFormatAvailable(context, format)) return false;
+    if (disabled || !sampledFromStorageForTest.load(std::memory_order_relaxed) || IsBlockCompressed(format) || !StorageFormatAvailable(context, format)) return false;
     return HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
 }
 
@@ -1484,6 +1486,10 @@ std::optional<std::uint32_t> LargestDeviceLocalHeap(const VkPhysicalDeviceMemory
 
 std::uint64_t StorageTextureCacheBudget(const Context& context) {
     return storageBudget(context);
+}
+
+void SampledFromStorageForTest(bool enabled) {
+    sampledFromStorageForTest.store(enabled, std::memory_order_relaxed);
 }
 
 void OverrideCacheBudgetForTest(std::uint64_t bytes) {

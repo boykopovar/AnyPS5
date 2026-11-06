@@ -962,35 +962,29 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         imageBinding.count = 1;
         imageBinding.imageSamplers = {0};
         imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-        imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (132u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+        imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
         imageProgram.bindings.push_back(imageBinding);
         const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
         recorder.Sync();
-        if (StorageFormatAvailable(context, 132)) {
-            std::cout << "E5B9G9R9 has a storage form on this device: a sampled GPU-written surface no storage image views not tested\n";
-        } else {
-            std::memset(block, 0, 65536);
-            update(direct, 7);
-            const auto importedBefore = SampledTexturesImported();
-            const auto submissionsBefore = recorder.Submissions();
-            auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
-            Require(SampledTexturesImported() == importedBefore + 1, "a sampled surface with a pending GPU write and no storage form was not uploaded from its host import");
-            Require(recorder.Submissions() == submissionsBefore, "the sampled lookup waited for the GPU write instead of uploading after it");
-            Require(sampled->SampledTextures().size() == 1, "the sampled lookup made no texture");
-            const auto commands = recorder.Commands();
-            recorder.Keep(sampled);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-            VkBufferImageCopy copy{};
-            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            copy.imageExtent = {1, 1, 1};
-            context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, sampled->SampledTextures().front()->Image(), sampled->SampledTextures().front()->Layout(), readback.Handle(), 1, &copy);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-            recorder.Sync();
-            std::uint32_t value = 0;
-            std::memcpy(&value, readback.Bytes().data(), sizeof(value));
-            Require(value == 7, "the sampled texture uploaded from the host import preceded the GPU write");
-            sampled.reset();
-        }
+        const auto savedWord = *block;
+        SampledFromStorageForTest(false);
+        struct Restore {
+            std::uint32_t* block;
+            std::uint32_t word;
+            ~Restore() { SampledFromStorageForTest(true); *block = word; }
+        } restore{block, savedWord};
+        update(direct, 7);
+        const auto importedBefore = SampledTexturesImported();
+        const auto submissionsBefore = recorder.Submissions();
+        auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
+        Require(SampledTexturesImported() == importedBefore + 1, "a sampled surface with a pending GPU write was not uploaded from its host import");
+        Require(recorder.Submissions() == submissionsBefore, "the sampled lookup waited for the GPU write instead of uploading after it");
+        Require(sampled->SampledTextures().size() == 1, "the sampled lookup made no texture");
+        recorder.Keep(sampled);
+        recorder.Sync();
+        Require(*block == savedWord + 7, "the GPU write the sampled texture follows did not land");
+        std::cout << "sampled surface over a pending GPU write: uploaded from its host import without a wait: ok\n";
+        sampled.reset();
     }
     {
         TextureDetiler detiler(context);

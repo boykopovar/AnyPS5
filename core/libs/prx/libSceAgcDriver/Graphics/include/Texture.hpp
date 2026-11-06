@@ -105,7 +105,6 @@ public:
         std::uint32_t layers;
     };
     ViewRange SampledViewRange(bool firstLayer) const { return firstLayer ? firstLayerRange : viewRange; }
-    VkImage Image() const { return image; }
     // The layout the image is kept in while sampled.
     VkImageLayout Layout() const { return layout; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
