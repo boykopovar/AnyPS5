@@ -124,11 +124,6 @@ bool IsOpen() {
     return opened;
 }
 
-bool IsInitialized() {
-    std::lock_guard lock(mouseMutex);
-    return initialized;
-}
-
 int Initialize() {
     std::lock_guard lock(mouseMutex);
     initialized = true;
