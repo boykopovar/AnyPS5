@@ -481,6 +481,18 @@ std::int64_t APS5_VABI imaxabs_nid_postfix(std::int64_t x) {
 }
 
 float APS5_VABI fmodf_nid_postfix(float x, float y) {
+    const std::uint32_t ix = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    const std::uint32_t iy = std::bit_cast<std::uint32_t>(y) & 0x7fffffffu;
+    if (iy == 0 || ix >= 0x7f800000u || iy > 0x7f800000u) {
+        _Feraise_nid_postfix(0x01);
+        if (iy > 0x7f800000u) {
+            return y + y;
+        }
+        if (ix > 0x7f800000u) {
+            return x + x;
+        }
+        return (x * y) / (x * y);
+    }
     const int saved_errno = errno;
     const float result = std::fmod(x, y);
     errno = saved_errno;
@@ -541,7 +553,85 @@ float APS5_VABI acosf_nid_postfix(float x) {
     const float correction = (z - high * high) / (s + high);
     return 2.0f * (high + (AcosfRational(z) * s + correction));
 }
-float APS5_VABI hypotf_nid_postfix(float x, float y) { return static_cast<float>(std::hypot(static_cast<double>(x), static_cast<double>(y))); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_hypotf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_hypotf.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+float APS5_VABI hypotf_nid_postfix(float x, float y) {
+    const auto word = [](float value) { return static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(value)); };
+    const auto fromWord = [](std::int32_t value) { return std::bit_cast<float>(static_cast<std::uint32_t>(value)); };
+    std::int32_t ha = word(x) & 0x7fffffff;
+    std::int32_t hb = word(y) & 0x7fffffff;
+    float a = x;
+    float b = y;
+    if (hb > ha) {
+        std::swap(a, b);
+        std::swap(ha, hb);
+    }
+    a = std::fabs(a);
+    b = std::fabs(b);
+    if (ha - hb > 0xf000000) {
+        return a + b;
+    }
+    int k = 0;
+    if (ha > 0x58800000) {
+        if (ha >= 0x7f800000) {
+            float w = std::fabs(x + 0.0f) - std::fabs(y + 0.0f);
+            if (ha == 0x7f800000) {
+                w = a;
+            }
+            if (hb == 0x7f800000) {
+                w = b;
+            }
+            return w;
+        }
+        ha -= 0x22000000;
+        hb -= 0x22000000;
+        k += 68;
+        a = fromWord(ha);
+        b = fromWord(hb);
+    }
+    if (hb < 0x26800000) {
+        if (hb <= 0x007fffff) {
+            if (hb == 0) {
+                return a;
+            }
+            b *= 0x1p126f;
+            a *= 0x1p126f;
+            k -= 126;
+        } else {
+            ha += 0x22000000;
+            hb += 0x22000000;
+            k -= 68;
+            a = fromWord(ha);
+            b = fromWord(hb);
+        }
+    }
+    float w = a - b;
+    if (w > b) {
+        const float t1 = fromWord(ha & static_cast<std::int32_t>(0xfffff000));
+        const float t2 = a - t1;
+        w = std::sqrt(t1 * t1 - (b * (-b) - t2 * (a + t1)));
+    } else {
+        a = a + a;
+        const float y1 = fromWord(hb & static_cast<std::int32_t>(0xfffff000));
+        const float y2 = b - y1;
+        const float t1 = fromWord((ha + 0x00800000) & static_cast<std::int32_t>(0xfffff000));
+        const float t2 = a - t1;
+        w = std::sqrt(t1 * y1 - (w * (-w) - (t1 * y2 + t2 * b)));
+    }
+    if (k != 0) {
+        return fromWord((127 + k) << 23) * w;
+    }
+    return w;
+}
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_hypot.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_hypot.c */
 /*
  * ====================================================
@@ -1160,8 +1250,93 @@ double APS5_VABI atan_nid_postfix(double x) {
     z = atanhi[id] - ((x * (s1 + s2) - atanlo[id]) - x);
     return hx < 0 ? -z : z;
 }
-double APS5_VABI tan_nid_postfix(double x) { return std::tan(x); }
-double APS5_VABI log_nid_postfix(double x) { return std::log(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_log.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_log.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+double APS5_VABI log_nid_postfix(double x) {
+    const double ln2_hi = 6.93147180369123816490e-01;
+    const double ln2_lo = 1.90821492927058770002e-10;
+    const double two54 = 1.80143985094819840000e+16;
+    const double Lg1 = 6.666666666666735130e-01;
+    const double Lg2 = 3.999999999940941908e-01;
+    const double Lg3 = 2.857142874366239149e-01;
+    const double Lg4 = 2.222219843214978396e-01;
+    const double Lg5 = 1.818357216161805012e-01;
+    const double Lg6 = 1.531383769920937332e-01;
+    const double Lg7 = 1.479819860511658591e-01;
+    static volatile double vzero = 0.0;
+    std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    std::int32_t k = 0;
+    if (hx < 0x00100000) {
+        if (((hx & 0x7fffffff) | lx) == 0) {
+            errno = ERANGE;
+            return -two54 / vzero;
+        }
+        if (hx < 0) {
+            _Feraise_nid_postfix(0x01);
+            return (x - x) / 0.0;
+        }
+        k -= 54;
+        x *= two54;
+        bits = std::bit_cast<std::uint64_t>(x);
+        hx = static_cast<std::int32_t>(bits >> 32);
+    }
+    if (hx >= 0x7ff00000) {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    hx &= 0x000fffff;
+    std::int32_t i = (hx + 0x95f64) & 0x100000;
+    x = std::bit_cast<double>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(hx | (i ^ 0x3ff00000))) << 32) | (bits & 0xffffffffu));
+    k += i >> 20;
+    const double f = x - 1.0;
+    if ((0x000fffff & (2 + hx)) < 3) {
+        if (f == 0.0) {
+            if (k == 0) {
+                return 0.0;
+            }
+            const double dk = k;
+            return dk * ln2_hi + dk * ln2_lo;
+        }
+        const double R = f * f * (0.5 - 0.33333333333333333 * f);
+        if (k == 0) {
+            return f - R;
+        }
+        const double dk = k;
+        return dk * ln2_hi - ((R - dk * ln2_lo) - f);
+    }
+    const double s = f / (2.0 + f);
+    const double dk = k;
+    const double z = s * s;
+    i = hx - 0x6147a;
+    const double w = z * z;
+    const std::int32_t j = 0x6b851 - hx;
+    const double t1 = w * (Lg2 + w * (Lg4 + w * Lg6));
+    const double t2 = z * (Lg1 + w * (Lg3 + w * (Lg5 + w * Lg7)));
+    i |= j;
+    const double R = t2 + t1;
+    if (i > 0) {
+        const double hfsq = 0.5 * f * f;
+        if (k == 0) {
+            return f - (hfsq - s * (hfsq + R));
+        }
+        return dk * ln2_hi - ((hfsq - (s * (hfsq + R) + dk * ln2_lo)) - f);
+    }
+    if (k == 0) {
+        return f - s * (f - R);
+    }
+    return dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
+}
 double APS5_VABI log1p_nid_postfix(double x) {
     const double ln2_hi = 6.93147180369123816490e-01;
     const double ln2_lo = 1.90821492927058770002e-10;
@@ -1444,6 +1619,138 @@ double APS5_VABI lgamma_nid_postfix(double x) {
     return std::lgamma(x);
 }
 
+static const std::int32_t RemPio2Ipio2[] = {
+    0xA2F983, 0x6E4E44, 0x1529FC, 0x2757D1, 0xF534DD, 0xC0DB62, 0x95993C, 0x439041, 0xFE5163, 0xABDEBB, 0xC561B7, 0x246E3A,
+    0x424DD2, 0xE00649, 0x2EEA09, 0xD1921C, 0xFE1DEB, 0x1CB129, 0xA73EE8, 0x8235F5, 0x2EBB44, 0x84E99C, 0x7026B4, 0x5F7E41,
+    0x3991D6, 0x398353, 0x39F49C, 0x845F8B, 0xBDF928, 0x3B1FF8, 0x97FFDE, 0x05980F, 0xEF2F11, 0x8B5A0A, 0x6D1F6D, 0x367ECF,
+    0x27CB09, 0xB74F46, 0x3F669E, 0x5FEA2D, 0x7527BA, 0xC7EBE5, 0xF17B3D, 0x0739F7, 0x8A5292, 0xEA6BFB, 0x5FB11F, 0x8D5D08,
+    0x560330, 0x46FC7B, 0x6BABF0, 0xCFBC20, 0x9AF436, 0x1DA9E3, 0x91615E, 0xE61B08, 0x659985, 0x5F14A0, 0x68408D, 0xFFD880,
+    0x4D7327, 0x310606, 0x1556CA, 0x73A8C9, 0x60E27B, 0xC08C6B,
+};
+
+static const double RemPio2Parts[] = {
+    1.57079625129699707031e+00, 7.54978941586159635335e-08, 5.39030252995776476554e-15, 3.28200341580791294123e-22,
+    1.27065575308067607349e-29, 1.22933308981111328932e-36, 2.73370053816464559624e-44, 2.16741683877804819444e-51,
+};
+
+static int KernelRemPio2(const double* x, double* y, int e0, int nx, int prec) {
+    const double two24 = 1.67772160000000000000e+07, twon24 = 5.96046447753906250000e-08;
+    std::int32_t jz, jv, jp, jk, carry, n, iq[20], i, j, k, m, q0, ih;
+    double z, fw, f[20], fq[20], q[20];
+    const std::int32_t jx = nx - 1;
+    jk = prec == 0 ? 3 : 4;
+    jp = jk;
+    jv = (e0 - 3) / 24;
+    if (jv < 0) jv = 0;
+    q0 = e0 - 24 * (jv + 1);
+    j = jv - jx;
+    m = jx + jk;
+    for (i = 0; i <= m; i++, j++) f[i] = j < 0 ? 0.0 : static_cast<double>(RemPio2Ipio2[j]);
+    for (i = 0; i <= jk; i++) {
+        for (j = 0, fw = 0.0; j <= jx; j++) fw += x[j] * f[jx + i - j];
+        q[i] = fw;
+    }
+    jz = jk;
+recompute:
+    for (i = 0, j = jz, z = q[jz]; j > 0; i++, j--) {
+        fw = static_cast<double>(static_cast<std::int32_t>(twon24 * z));
+        iq[i] = static_cast<std::int32_t>(z - two24 * fw);
+        z = q[j - 1] + fw;
+    }
+    z = std::scalbn(z, q0);
+    z -= 8.0 * std::floor(z * 0.125);
+    n = static_cast<std::int32_t>(z);
+    z -= static_cast<double>(n);
+    ih = 0;
+    if (q0 > 0) {
+        i = iq[jz - 1] >> (24 - q0);
+        n += i;
+        iq[jz - 1] -= i << (24 - q0);
+        ih = iq[jz - 1] >> (23 - q0);
+    } else if (q0 == 0) {
+        ih = iq[jz - 1] >> 23;
+    } else if (z >= 0.5) {
+        ih = 2;
+    }
+    if (ih > 0) {
+        n += 1;
+        carry = 0;
+        for (i = 0; i < jz; i++) {
+            j = iq[i];
+            if (carry == 0) {
+                if (j != 0) {
+                    carry = 1;
+                    iq[i] = 0x1000000 - j;
+                }
+            } else {
+                iq[i] = 0xffffff - j;
+            }
+        }
+        if (q0 > 0) {
+            switch (q0) {
+                case 1: iq[jz - 1] &= 0x7fffff; break;
+                case 2: iq[jz - 1] &= 0x3fffff; break;
+            }
+        }
+        if (ih == 2) {
+            z = 1.0 - z;
+            if (carry != 0) z -= std::scalbn(1.0, q0);
+        }
+    }
+    if (z == 0.0) {
+        j = 0;
+        for (i = jz - 1; i >= jk; i--) j |= iq[i];
+        if (j == 0) {
+            for (k = 1; iq[jk - k] == 0; k++) {
+            }
+            for (i = jz + 1; i <= jz + k; i++) {
+                f[jx + i] = static_cast<double>(RemPio2Ipio2[jv + i]);
+                for (j = 0, fw = 0.0; j <= jx; j++) fw += x[j] * f[jx + i - j];
+                q[i] = fw;
+            }
+            jz += k;
+            goto recompute;
+        }
+    }
+    if (z == 0.0) {
+        jz -= 1;
+        q0 -= 24;
+        while (iq[jz] == 0) {
+            jz--;
+            q0 -= 24;
+        }
+    } else {
+        z = std::scalbn(z, -q0);
+        if (z >= two24) {
+            fw = static_cast<double>(static_cast<std::int32_t>(twon24 * z));
+            iq[jz] = static_cast<std::int32_t>(z - two24 * fw);
+            jz += 1;
+            q0 += 24;
+            iq[jz] = static_cast<std::int32_t>(fw);
+        } else {
+            iq[jz] = static_cast<std::int32_t>(z);
+        }
+    }
+    fw = std::scalbn(1.0, q0);
+    for (i = jz; i >= 0; i--) {
+        q[i] = fw * static_cast<double>(iq[i]);
+        fw *= twon24;
+    }
+    for (i = jz; i >= 0; i--) {
+        for (fw = 0.0, k = 0; k <= jp && k <= jz - i; k++) fw += RemPio2Parts[k] * q[i + k];
+        fq[jz - i] = fw;
+    }
+    fw = 0.0;
+    for (i = jz; i >= 0; i--) fw += fq[i];
+    y[0] = ih == 0 ? fw : -fw;
+    if (prec != 0) {
+        fw = fq[0] - fw;
+        for (i = 1; i <= jz; i++) fw += fq[i];
+        y[1] = ih == 0 ? fw : -fw;
+    }
+    return n & 7;
+}
+
 static const std::int32_t TrigfIpio2[] = {
     0xA2F983, 0x6E4E44, 0x1529FC, 0x2757D1, 0xF534DD, 0xC0DB62, 0x95993C, 0x439041, 0xFE5163, 0xABDEBB, 0xC561B7, 0x246E3A,
     0x424DD2, 0xE00649, 0x2EEA09, 0xD1921C, 0xFE1DEB, 0x1CB129, 0xA73EE8, 0x8235F5, 0x2EBB44, 0x84E99C, 0x7026B4, 0x5F7E41,
@@ -1722,8 +2029,298 @@ void APS5_VABI sincosf_nid_postfix(float x, float* sinp, float* cosp) {
     *cosp = cosf_nid_postfix(x);
 }
 
-double APS5_VABI sin_nid_postfix(double x) { return std::sin(x); }
-double APS5_VABI cos_nid_postfix(double x) { return std::cos(x); }
+static std::int32_t HighWord(double x) {
+    return static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+}
+
+static double ClearLowWord(double x) {
+    return std::bit_cast<double>(std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull);
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_rem_pio2.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_rem_pio2.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ *
+ * Optimized by Bruce D. Evans.
+ */
+static int RemPio2Near(double x, double* y, std::int32_t hx, int k) {
+    const double pio2_1 = 1.57079632673412561417e+00;
+    const double pio2_1t = 6.07710050650619224932e-11;
+    if (hx > 0) {
+        const double z = x - k * pio2_1;
+        y[0] = z - k * pio2_1t;
+        y[1] = (z - y[0]) - k * pio2_1t;
+        return k;
+    }
+    const double z = x + k * pio2_1;
+    y[0] = z + k * pio2_1t;
+    y[1] = (z - y[0]) + k * pio2_1t;
+    return -k;
+}
+
+static int RemPio2(double x, double* y) {
+    const double two24 = 1.67772160000000000000e+07;
+    const double invpio2 = 6.36619772367581382433e-01;
+    const double pio2_1 = 1.57079632673412561417e+00;
+    const double pio2_1t = 6.07710050650619224932e-11;
+    const double pio2_2 = 6.07710050630396597660e-11;
+    const double pio2_2t = 2.02226624879595063154e-21;
+    const double pio2_3 = 2.02226624871116645580e-21;
+    const double pio2_3t = 8.47842766036889956997e-32;
+    const std::int32_t hx = HighWord(x);
+    const std::int32_t ix = hx & 0x7fffffff;
+    bool medium = false;
+    if (ix <= 0x400f6a7a) {
+        if ((ix & 0xfffff) != 0x921fb) {
+            return RemPio2Near(x, y, hx, ix <= 0x4002d97c ? 1 : 2);
+        }
+        medium = true;
+    } else if (ix <= 0x401c463b) {
+        if (ix <= 0x4015fdbc) {
+            if (ix != 0x4012d97c) {
+                return RemPio2Near(x, y, hx, 3);
+            }
+        } else if (ix != 0x401921fb) {
+            return RemPio2Near(x, y, hx, 4);
+        }
+        medium = true;
+    }
+    if (medium || ix < 0x413921fb) {
+        double fn = x * invpio2 + 0x1.8p52;
+        fn = fn - 0x1.8p52;
+        const std::int32_t n = static_cast<std::int32_t>(fn);
+        double r = x - fn * pio2_1;
+        double w = fn * pio2_1t;
+        const std::int32_t j = ix >> 20;
+        y[0] = r - w;
+        std::int32_t i = j - ((HighWord(y[0]) >> 20) & 0x7ff);
+        if (i > 16) {
+            double t = r;
+            w = fn * pio2_2;
+            r = t - w;
+            w = fn * pio2_2t - ((t - r) - w);
+            y[0] = r - w;
+            i = j - ((HighWord(y[0]) >> 20) & 0x7ff);
+            if (i > 49) {
+                t = r;
+                w = fn * pio2_3;
+                r = t - w;
+                w = fn * pio2_3t - ((t - r) - w);
+                y[0] = r - w;
+            }
+        }
+        y[1] = (r - y[0]) - w;
+        return n;
+    }
+    if (ix >= 0x7ff00000) {
+        y[0] = y[1] = x - x;
+        return 0;
+    }
+    const std::uint32_t low = static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(x));
+    const std::int32_t e0 = (ix >> 20) - 1046;
+    double z = std::bit_cast<double>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(ix - (e0 << 20))) << 32) | low);
+    double tx[3];
+    double ty[2];
+    for (int i = 0; i < 2; i++) {
+        tx[i] = static_cast<double>(static_cast<std::int32_t>(z));
+        z = (z - tx[i]) * two24;
+    }
+    tx[2] = z;
+    int nx = 3;
+    while (tx[nx - 1] == 0.0) nx--;
+    const int n = KernelRemPio2(tx, ty, e0, nx, 1);
+    if (hx < 0) {
+        y[0] = -ty[0];
+        y[1] = -ty[1];
+        return -n;
+    }
+    y[0] = ty[0];
+    y[1] = ty[1];
+    return n;
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_sin.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_sin.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+static double KernelSin(double x, double y, int iy) {
+    const double S1 = -1.66666666666666324348e-01;
+    const double S2 = 8.33333333332248946124e-03;
+    const double S3 = -1.98412698298579493134e-04;
+    const double S4 = 2.75573137070700676789e-06;
+    const double S5 = -2.50507602534068634195e-08;
+    const double S6 = 1.58969099521155010221e-10;
+    const double z = x * x;
+    const double w = z * z;
+    const double r = S2 + z * (S3 + z * S4) + z * w * (S5 + z * S6);
+    const double v = z * x;
+    if (iy == 0) {
+        return x + v * (S1 + z * r);
+    }
+    return x - ((z * (0.5 * y - v * r) - y) - v * S1);
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_cos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_cos.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+static double KernelCos(double x, double y) {
+    const double C1 = 4.16666666666666019037e-02;
+    const double C2 = -1.38888888888741095749e-03;
+    const double C3 = 2.48015872894767294178e-05;
+    const double C4 = -2.75573143513906633035e-07;
+    const double C5 = 2.08757232129817482790e-09;
+    const double C6 = -1.13596475577881948265e-11;
+    const double z = x * x;
+    double w = z * z;
+    const double r = z * (C1 + z * (C2 + z * C3)) + w * w * (C4 + z * (C5 + z * C6));
+    const double hz = 0.5 * z;
+    w = 1.0 - hz;
+    return w + (((1.0 - w) - hz) + (z * r - x * y));
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_tan.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_tan.c */
+/*
+ * ====================================================
+ * Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static double KernelTan(double x, double y, int iy) {
+    static constexpr double T[] = {
+        3.33333333333334091986e-01, 1.33333333333201242699e-01, 5.39682539762260521377e-02, 2.18694882948595424599e-02,
+        8.86323982359930005737e-03, 3.59207910759131235356e-03, 1.45620945432529025516e-03, 5.88041240820264096874e-04,
+        2.46463134818469906812e-04, 7.81794442939557092300e-05, 7.14072491382608190305e-05, -1.85586374855275456654e-05,
+        2.59073051863633712884e-05,
+    };
+    const double pio4 = 7.85398163397448278999e-01;
+    const double pio4lo = 3.06161699786838301793e-17;
+    const std::int32_t hx = HighWord(x);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x3fe59428) {
+        if (hx < 0) {
+            x = -x;
+            y = -y;
+        }
+        const double z = pio4 - x;
+        const double w = pio4lo - y;
+        x = z + w;
+        y = 0.0;
+    }
+    const double z = x * x;
+    double w = z * z;
+    double r = T[1] + w * (T[3] + w * (T[5] + w * (T[7] + w * (T[9] + w * T[11]))));
+    double v = z * (T[2] + w * (T[4] + w * (T[6] + w * (T[8] + w * (T[10] + w * T[12])))));
+    double s = z * x;
+    r = y + z * (s * (r + v) + y);
+    r += T[0] * s;
+    w = x + r;
+    if (ix >= 0x3fe59428) {
+        v = static_cast<double>(iy);
+        return static_cast<double>(1 - ((hx >> 30) & 2)) * (v - 2.0 * (x - (w * w / (w + v) - r)));
+    }
+    if (iy == 1) {
+        return w;
+    }
+    const double head = ClearLowWord(w);
+    v = r - (head - x);
+    const double a = -1.0 / w;
+    const double t = ClearLowWord(a);
+    s = 1.0 + t * head;
+    return t + a * (s + t * v);
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_sin.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_sin.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+double APS5_VABI sin_nid_postfix(double x) {
+    const std::int32_t ix = HighWord(x) & 0x7fffffff;
+    if (ix <= 0x3fe921fb) {
+        if (ix < 0x3e500000 && static_cast<int>(x) == 0) {
+            return x;
+        }
+        return KernelSin(x, 0.0, 0);
+    }
+    if (ix >= 0x7ff00000) {
+        if (ix == 0x7ff00000) {
+            errno = EDOM;
+        }
+        return x - x;
+    }
+    double y[2];
+    switch (RemPio2(x, y) & 3) {
+        case 0: return KernelSin(y[0], y[1], 1);
+        case 1: return KernelCos(y[0], y[1]);
+        case 2: return -KernelSin(y[0], y[1], 1);
+        default: return -KernelCos(y[0], y[1]);
+    }
+}
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_cos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_cos.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+double APS5_VABI cos_nid_postfix(double x) {
+    const std::int32_t ix = HighWord(x) & 0x7fffffff;
+    if (ix <= 0x3fe921fb) {
+        if (ix < 0x3e46a09e && static_cast<int>(x) == 0) {
+            return 1.0;
+        }
+        return KernelCos(x, 0.0);
+    }
+    if (ix >= 0x7ff00000) {
+        if (ix == 0x7ff00000) {
+            errno = EDOM;
+        }
+        return x - x;
+    }
+    double y[2];
+    switch (RemPio2(x, y) & 3) {
+        case 0: return KernelCos(y[0], y[1]);
+        case 1: return -KernelSin(y[0], y[1], 1);
+        case 2: return -KernelCos(y[0], y[1]);
+        default: return KernelSin(y[0], y[1], 1);
+    }
+}
 /*-
  * Copyright (c) 2011 David Schultz <das@FreeBSD.ORG>
  * All rights reserved.
@@ -1772,6 +2369,36 @@ static double SinhLdexpExpHalf(double x) {
  * ====================================================
  */
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_sinh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_sinh.c */
+
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_tan.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_tan.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+double APS5_VABI tan_nid_postfix(double x) {
+    const std::int32_t ix = HighWord(x) & 0x7fffffff;
+    if (ix <= 0x3fe921fb) {
+        if (ix < 0x3e400000 && static_cast<int>(x) == 0) {
+            return x;
+        }
+        return KernelTan(x, 0.0, 1);
+    }
+    if (ix >= 0x7ff00000) {
+        if (ix == 0x7ff00000) {
+            errno = EDOM;
+        }
+        return x - x;
+    }
+    double y[2];
+    const int n = RemPio2(x, y);
+    return KernelTan(y[0], y[1], 1 - ((n & 1) << 1));
+}
 double APS5_VABI sinh_nid_postfix(double x) {
     const double one = 1.0;
     const double shuge = 1.0e307;
@@ -1924,7 +2551,48 @@ float APS5_VABI acoshf_nid_postfix(float x) {
     const float t = x - 1.0f;
     return AtanhfLog1p(t + std::sqrt(2.0f * t + t * t));
 }
-double APS5_VABI atanh_nid_postfix(double x) { return std::atanh(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_atanh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_atanh.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ *
+ */
+double APS5_VABI atanh_nid_postfix(double x) {
+    const double huge = 1e300;
+    static volatile double zero = 0.0;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if ((static_cast<std::uint32_t>(ix) | ((lx | (0u - lx)) >> 31)) > 0x3ff00000u) {
+        _Feraise_nid_postfix(0x01);
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (ix == 0x3ff00000) {
+        _Feraise_nid_postfix(0x04);
+        errno = ERANGE;
+        return x / zero;
+    }
+    if (ix < 0x3e300000 && huge + x > 0.0) {
+        return x;
+    }
+    x = std::bit_cast<double>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(ix)) << 32) | lx);
+    double t;
+    if (ix < 0x3fe00000) {
+        t = x + x;
+        t = 0.5 * log1p_nid_postfix(t + t * x / (1.0 - x));
+    } else {
+        t = 0.5 * log1p_nid_postfix((x + x) / (1.0 - x));
+    }
+    return hx >= 0 ? t : -t;
+}
 
 float APS5_VABI atanhf_nid_postfix(float x) {
     const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
@@ -2737,9 +3405,32 @@ float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
     errno = saved_errno;
     return result;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_fmod.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_fmod.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI fmod_nid_postfix(double x, double y) {
-    int saved_errno = errno;
-    double result = std::fmod(x, y);
+    const std::uint64_t ix = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    const std::uint64_t iy = std::bit_cast<std::uint64_t>(y) & 0x7fffffffffffffffull;
+    if (iy == 0 || ix >= 0x7ff0000000000000ull || iy > 0x7ff0000000000000ull) {
+        _Feraise_nid_postfix(0x01);
+        if (iy > 0x7ff0000000000000ull) {
+            return y + y;
+        }
+        if (ix > 0x7ff0000000000000ull) {
+            return x + x;
+        }
+        return (x * y) / (x * y);
+    }
+    const int saved_errno = errno;
+    const double result = std::fmod(x, y);
     errno = saved_errno;
     return result;
 }

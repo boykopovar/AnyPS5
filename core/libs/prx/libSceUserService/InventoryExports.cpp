@@ -1,4 +1,6 @@
 #include "SceTypes.hpp"
+#include "prx/libSceUserService/UserService.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
@@ -84,8 +86,15 @@ int APS5_VABI libSceUserServiceUnknown_DL6cKVeISqs_nid_no_patch() {
 }
 APS5_EXPORT("DL6cKVeISqs", libSceUserServiceUnknown_DL6cKVeISqs_nid_no_patch);
 
-int APS5_VABI libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(std::uint32_t userId, char* path, std::size_t size) {
+    if (path == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size <= 0x25) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    std::snprintf(path, size, "/%s/eap/rodata/home/%08x", sceKernelGetFsSandboxRandomWord(), userId);
+    return USER_SERVICE_OK;
 }
 APS5_EXPORT("ErTMkmSho4E", libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch);
 
