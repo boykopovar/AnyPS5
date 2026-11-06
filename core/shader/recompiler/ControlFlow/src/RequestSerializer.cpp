@@ -475,12 +475,12 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
         TargetMerge merge;
         merge.target = reader.ReadU8();
         const auto word = reader.ReadU32();
-        merge.mask = version < 54u ? word & 0xffffu : word;
+        merge.mask = version < 55u ? word & 0xffffu : word;
         merge.samples = reader.ReadU8();
         for (std::uint32_t& descriptor : merge.descriptor) descriptor = reader.ReadU32();
         merge.depthStencilWrites = reader.ReadBool();
         merge.depthStencilTests = reader.ReadBool();
-        const std::uint32_t flags = version < 54u ? word >> TargetMergeFlagShift : reader.ReadU8();
+        const std::uint32_t flags = version < 55u ? word >> TargetMergeFlagShift : reader.ReadU8();
         if ((flags & ~(TargetBlendFlag | (index == 0u ? FurtherMergeMask : 0u))) != 0u) throw std::runtime_error("invalid recompile request target merge mask");
         count += (flags & FurtherMergeMask) >> FurtherMergeShift;
         if ((flags & TargetBlendFlag) != 0u) {
@@ -496,7 +496,7 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
             blend.writeMask = reader.ReadU8();
             for (std::uint32_t& constant : blend.constants) constant = reader.ReadU32();
         }
-        if (version >= 54u) {
+        if (version >= 55u) {
             merge.packing = readColorExportPacking(reader);
             merge.blendControl = reader.ReadU32();
             merge.layered = reader.ReadBool();
@@ -916,7 +916,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(54u);
+    writer.WriteU32(55u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -961,6 +961,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.tessellationEvaluationSubgroups);
     writer.WriteBool(request.target.hostInterpolationFirst);
     writer.WriteBool(request.target.shaderImageMinLod);
+    writer.WriteBool(request.target.float16WidenNans);
+    writer.WriteBool(request.target.float16NarrowNans);
     return base64Encode(buffer);
 }
 
@@ -969,7 +971,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 54u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 55u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1032,6 +1034,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 51u) result.request.target.tessellationEvaluationSubgroups = reader.ReadBool();
     if (version >= 52u) result.request.target.hostInterpolationFirst = reader.ReadBool();
     if (version >= 53u) result.request.target.shaderImageMinLod = reader.ReadBool();
+    if (version >= 54u) {
+        result.request.target.float16WidenNans = reader.ReadBool();
+        result.request.target.float16NarrowNans = reader.ReadBool();
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }
