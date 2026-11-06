@@ -126,6 +126,28 @@ int main() {
     int count = 123;
     const KernelUseconds poll = 0;
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &poll) != 0);
+    {
+#ifdef _WIN32
+        _putenv("APS5_NET_DISCONNECTED=1");
+#else
+        setenv("APS5_NET_DISCONNECTED", "1", 1);
+#endif
+        Require(sceHttp2SendRequestAsync(request, nullptr, 0, &option, nullptr) == 0);
+        KernelEvent event_dc{};
+        int count_dc = 0;
+        const KernelUseconds poll_dc = 0;
+        Require(sceKernelWaitEqueue(eq, &event_dc, 1, &count_dc, &poll_dc) == 0);
+        Require(count_dc == 1);
+        Http2AsyncResult result_dc{};
+        std::uint32_t timeout_dc = 500;
+        Require(sceHttp2WaitAsync(request, &result_dc, &timeout_dc, nullptr) == 0);
+        Require(result_dc.req_id == request && result_dc.result == static_cast<int>(0x80436063));
+#ifdef _WIN32
+        _putenv("APS5_NET_DISCONNECTED=");
+#else
+        unsetenv("APS5_NET_DISCONNECTED");
+#endif
+    }
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
     const int child = sceHttp2CreateRequestWithURL(sibling, "CONNECT", "https://localhost/", 0);
