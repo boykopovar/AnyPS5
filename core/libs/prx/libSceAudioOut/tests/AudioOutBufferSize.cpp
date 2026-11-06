@@ -85,6 +85,12 @@ void RunInvalidFormat() {
     Require(sceAudioOutOpen(0, 0, 0, 512, 48000, 0xFF) == expectedError, "format 0xFF did not return SCE_AUDIO_OUT_ERROR_INVALID_FORMAT");
     Require(opened == 0, "an invalid format opened an audio device");
 }
+
+void RunInvalidSampleRate() {
+    constexpr int expectedError = -2144993272;
+    Require(sceAudioOutOpen(0, 0, 0, 512, 0, 0) == expectedError, "sample rate 0 did not return SCE_AUDIO_OUT_ERROR_INVALID_PARAM");
+    Require(opened == 0, "a zero sample rate opened an audio device");
+}
 }
 
 int InitializeSdlAudio_nid_no_patch() { return 0; }
@@ -125,6 +131,7 @@ int main(int argc, char** argv) {
         else if (mode == "threshold") RunOverflow(0x40000000u, 0, sizeof(std::int16_t));
         else if (mode == "virtual_overflow") RunVirtualOverflow();
         else if (mode == "invalid_format") RunInvalidFormat();
+        else if (mode == "invalid_sample_rate") RunInvalidSampleRate();
         else Require(false, "invalid buffer size mode");
         std::puts("audio out buffer size tests passed");
         return 0;
