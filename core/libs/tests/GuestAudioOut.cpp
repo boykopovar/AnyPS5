@@ -215,6 +215,7 @@ void TestSurround71DownmixingValidation() {
             Require(handle >= 1 && handle <= 32);
 
             AudioOutPortState state{};
+            std::uint64_t lastTime = 0;
             Require(sceAudioOutGetPortState(handle, &state) == 0);
             Require(state.output == 1);
             Require(state.channel == 2);
