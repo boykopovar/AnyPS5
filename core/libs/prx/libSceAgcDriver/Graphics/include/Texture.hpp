@@ -41,6 +41,14 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
 VkFormat HostStorageFormat(const Context& context, VkFormat format);
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
 std::uint64_t SampledTextureMemory();
+
+struct SparseLevelBinds {
+    std::vector<VkSparseImageMemoryBind> levels;
+    std::vector<VkSparseMemoryBind> tails;
+    VkDeviceSize bytes = 0;
+};
+
+std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel);
 bool ClearKeepsDenormals(const Context& context, VkFormat format);
 bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear);
 
@@ -495,6 +503,7 @@ public:
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
     static std::uint64_t PaddingSeedCopies();
+    static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
