@@ -620,6 +620,27 @@ void TestRingBufBounds() {
     Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 1, out, SIZE_MAX) == NoSpace && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 3,
         "a peek whose size wraps the offset sum is refused");
     _ZN3sce2np7RingBuf7DestroyEv(&ring);
+
+    NpRingBuf empty {};
+    _ZN3sce2np7RingBufC1Ev(&empty);
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&empty, storage, sizeof(storage)) == 0, "an empty ring buffer takes the storage");
+    bool refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, 9);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write past the end of the storage leaves the ring unchanged");
+    refused = false;
+    try {
+        _ZN3sce2np7RingBuf15CheckinForWriteEm(&empty, SIZE_MAX - 7);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
+        "a checkin for write whose size wraps the write pointer is refused");
+    _ZN3sce2np7RingBuf7DestroyEv(&empty);
 }
 
 void TestTitleIdObjects() {
