@@ -1895,10 +1895,6 @@ int APS5_VABI sceKernelSetUpdatemodeDirect() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled2() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceKernelTraceAutoCaptureCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
