@@ -237,8 +237,13 @@ class RegistrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
             (build / "nested").mkdir()
-            os.symlink("second", build / "first")
-            os.symlink("first", build / "second")
+            try:
+                os.symlink("second", build / "first")
+                os.symlink("first", build / "second")
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("creating symlinks requires Windows privileges")
+                raise
             (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
             (build / "nested/CTestTestfile.cmake").write_text(
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
