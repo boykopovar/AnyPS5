@@ -1,4 +1,6 @@
 #include "prx/libSceUlt/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdio>
@@ -8,6 +10,7 @@
 #include <chrono>
 #include <thread>
 #include <stdexcept>
+#include <semaphore>
 
 struct UltConditionVariableInfo;
 struct UltWaitingThreadInfo;
@@ -45,6 +48,85 @@ static std::int32_t APS5_VABI Immediate(std::uint64_t arg) {
 
 struct alignas(8) Runtime { std::uint8_t bytes[4096]{}; };
 struct alignas(8) Thread { std::uint8_t bytes[512]{}; };
+
+static std::binary_semaphore gTargetStarted{0};
+static std::binary_semaphore gTargetRelease{0};
+static std::binary_semaphore gJoinStart{0};
+
+static std::int32_t APS5_VABI GatedTarget(std::uint64_t argument) {
+    gTargetStarted.release();
+    CHECK(gTargetRelease.try_acquire_for(std::chrono::seconds(4)));
+    return static_cast<std::int32_t>(argument);
+}
+
+static void* APS5_VABI JoinTarget(void* argument) {
+    CHECK(gJoinStart.try_acquire_for(std::chrono::seconds(4)));
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(argument, &status) == Ok && status == 91);
+    return nullptr;
+}
+
+static void AwaitJoinWait(Pthread caller) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+        {
+            std::lock_guard lock(caller->cancelLock);
+            if (caller->cancelWait != nullptr) return;
+        }
+        CHECK(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+}
+
+static void CanceledJoin(bool pending) {
+    Runtime runtime;
+    Thread thread;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "target", GatedTarget, 91, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    CHECK(gTargetStarted.try_acquire_for(std::chrono::seconds(2)));
+    Pthread caller = nullptr;
+    CHECK(scePthreadCreate(&caller, nullptr, JoinTarget, &thread, "joiner") == 0);
+    if (!pending) {
+        gJoinStart.release();
+        AwaitJoinWait(caller);
+    }
+    CHECK(scePthreadCancel(caller) == 0);
+    if (pending) gJoinStart.release();
+    void* canceled = nullptr;
+    CHECK(scePthreadJoin(caller, &canceled) == 0);
+    CHECK(canceled == reinterpret_cast<void*>(std::uintptr_t{1}));
+    Pthread replacement = nullptr;
+    CHECK(scePthreadCreate(&replacement, nullptr, JoinTarget, &thread, "replacement") == 0);
+    gJoinStart.release();
+    AwaitJoinWait(replacement);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
+    CHECK(sceUltFinalize() == Busy);
+    gTargetRelease.release();
+    CHECK(scePthreadJoin(replacement, nullptr) == 0);
+    CHECK(sceUltUlthreadJoin(&thread, nullptr) == State);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
+
+static std::int32_t APS5_VABI SelfJoin(std::uint64_t) {
+    void* self = nullptr;
+    CHECK(sceUltUlthreadGetSelf(&self) == Ok);
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(self, &status) == State && status == -1);
+    CHECK(sceUltUlthreadTryJoin(self, &status) == Again && status == -1);
+    return 91;
+}
+
+static void SelfJoin() {
+    Runtime runtime;
+    Thread thread;
+    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadCreate(&thread, "self", SelfJoin, 0, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    std::int32_t status = -1;
+    CHECK(sceUltUlthreadJoin(&thread, &status) == Ok && status == 91);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltFinalize() == Ok);
+}
 
 static void Outstanding() {
     Runtime runtime;
@@ -269,5 +351,8 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "tryjoin") == 0) TryJoin();
     else if (std::strcmp(argv[1], "destroy") == 0) Destroy();
     else if (std::strcmp(argv[1], "underscoredcreate") == 0) UnderscoredCreate();
+    else if (std::strcmp(argv[1], "cancel-blocked") == 0) CanceledJoin(false);
+    else if (std::strcmp(argv[1], "cancel-pending") == 0) CanceledJoin(true);
+    else if (std::strcmp(argv[1], "self-join") == 0) SelfJoin();
     else CHECK(false);
 }

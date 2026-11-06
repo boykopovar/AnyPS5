@@ -3,9 +3,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestWorkMark.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
@@ -49,7 +52,14 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
 
 }
 
-Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : Buffer(context, size, usage, properties, false) {}
+
+std::shared_ptr<Buffer> Buffer::WithinDeviceLocalHeadroom(const Context& context, std::size_t size, VkBufferUsageFlags usage) {
+    std::shared_ptr<Buffer> buffer(new Buffer(context, size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true));
+    return buffer->ready ? buffer : nullptr;
+}
+
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, bool headroom) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
     const bool addressable = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
     Require(!addressable || context.bufferDeviceAddress, "buffer device address is not enabled");
@@ -98,6 +108,11 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         // write-combined memory, so the default host properties prefer cached host memory.
         const bool useSlab = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 && BufferPool::SlabEligible(capacity, requirements.alignment, requirements.size, context.limits.nonCoherentAtomSize);
         allocation.memoryTypeIndex = context.BufferMemoryType(requirements.memoryTypeBits, properties, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize);
+        if (headroom && !context.DeviceLocalHeadroom(allocation.memoryTypeIndex, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize)) {
+            context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+            return;
+        }
         if (useSlab) {
             const auto slot = cache->TakeSlot(context, allocation.memoryTypeIndex, capacity, addressable);
             memory = slot.memory;
@@ -164,12 +179,21 @@ void Buffer::Invalidate() {
 DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
     Require(size != 0, "zero-sized device buffer");
     cache = GetBufferPool(context);
-    if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer")) {
-        buffer = allocation->buffer;
-        memory = allocation->memory;
-        allocationBytes = allocation->allocationBytes;
-        capacity = allocation->bytes;
-        if (allocation->bufferBytes == size) {
+    auto pooled = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer");
+    if (!pooled) {
+        pooled = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer", true);
+        if (pooled && context.DeviceLocalFits(~0u, capacity)) {
+            cache->Put(*pooled);
+            pooled.reset();
+        }
+    }
+    if (pooled) {
+        hostPlaced = pooled->hostPlaced;
+        buffer = pooled->buffer;
+        memory = pooled->memory;
+        allocationBytes = pooled->allocationBytes;
+        capacity = pooled->bytes;
+        if (pooled->bufferBytes == size) {
             ready = true;
             return;
         }
@@ -213,8 +237,10 @@ DeviceBuffer::~DeviceBuffer() {
 }
 
 void DeviceBuffer::release() noexcept {
-    if (ready && buffer && memory && cache && !hostPlaced) {
-        cache->Put({buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size});
+    if (ready && buffer && memory && cache) {
+        BufferAllocation allocation{buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size};
+        allocation.hostPlaced = hostPlaced;
+        cache->Put(allocation);
         return;
     }
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
@@ -312,7 +338,8 @@ RenderTarget::RenderTarget(const Context& context, const ColorTarget& target, bo
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory render target");
+        memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory render target", &memoryType);
+        memoryBytes = allocation.allocationSize;
         Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory");
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = image;
@@ -333,7 +360,7 @@ RenderTarget::~RenderTarget() {
 void RenderTarget::release() noexcept {
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    if (memory) MemoryAccounting::Free(context, memory);
+    ReleaseImageMemory(context, memory, memoryBytes, memoryType);
 }
 
 VkImage RenderTarget::Image() const {
@@ -342,6 +369,10 @@ VkImage RenderTarget::Image() const {
 
 VkImageView RenderTarget::View() const {
     return view;
+}
+
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands) {
+    GuestWorkMark::Note(commands);
 }
 
 CommandBatch::CommandBatch(const Context& context) : context(context) {
@@ -373,6 +404,7 @@ CommandBatch::~CommandBatch() {
 }
 
 void CommandBatch::release() noexcept {
+    GuestWorkMark::Forget(commands);
     if (pending) {
         auto result = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, fence);
         if (result == VK_NOT_READY) result = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
@@ -404,6 +436,7 @@ void CommandBatch::Submit() {
     pending = true;
     submitted = true;
     timing.Mark("queue_submit");
+    if (GuestWorkMark::Take(commands)) LibcRunReportMilestone_nid_no_patch(2);
 }
 
 void CommandBatch::Wait() {
