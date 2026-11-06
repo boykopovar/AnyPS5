@@ -2078,8 +2078,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             bool patched = false;
             if (spaceHeld && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
-            const bool valid = spaceHeld && (recorder == nullptr || moved.has_value()) && cached->Revalidate(shaders, nullptr, moved ? std::span<const ShaderResources::MovedBuffer>(*moved) : std::span<const ShaderResources::MovedBuffer>{});
-            if (counted && spaceHeld && !valid) reuse = AddressDrawReuse::Revalidation;
+            const bool moveRefused = spaceHeld && recorder != nullptr && !moved.has_value();
+            const bool valid = spaceHeld && !moveRefused && cached->Revalidate(shaders, nullptr, moved ? std::span<const ShaderResources::MovedBuffer>(*moved) : std::span<const ShaderResources::MovedBuffer>{});
+            if (counted && spaceHeld && !valid && !moveRefused) reuse = AddressDrawReuse::Revalidation;
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
@@ -2089,9 +2090,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
                 if (counted) reuse = AddressDrawReuse::Reused;
-            } else if (valid || inUse) {
-                if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
-                if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
+            } else if (valid || moveRefused || inUse) {
+                if ((valid || moveRefused) && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
+                if ((valid || moveRefused) && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
