@@ -1,9 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <thread>
 #include <initializer_list>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -132,16 +134,33 @@ int main() {
 #else
         setenv("APS5_NET_DISCONNECTED", "1", 1);
 #endif
+        Http2AsyncOption bad_option = option;
+        bad_option.equeue = -1;
+        std::atomic<bool> thread_started{false};
+        std::atomic<bool> waiter_consumed{false};
+        std::thread waiter([&] {
+            thread_started = true;
+            KernelEvent event_wait{};
+            int count_wait = 0;
+            const KernelUseconds poll_wait = 1000000;
+            if (sceKernelWaitEqueue(eq, &event_wait, 1, &count_wait, &poll_wait) == 0 && count_wait == 1) {
+                Http2AsyncResult result_wait{};
+                std::uint32_t timeout_wait = 500;
+                if (sceHttp2WaitAsync(request, &result_wait, &timeout_wait, nullptr) == 0) {
+                    if (result_wait.req_id == request && result_wait.result == static_cast<int>(0x80436063)) {
+                        waiter_consumed = true;
+                    }
+                }
+            }
+        });
+        while (!thread_started) std::this_thread::yield();
+        Require(Throws([&] { sceHttp2SendRequestAsync(request, nullptr, 0, &bad_option, nullptr); }));
         Require(sceHttp2SendRequestAsync(request, nullptr, 0, &option, nullptr) == 0);
-        KernelEvent event_dc{};
-        int count_dc = 0;
-        const KernelUseconds poll_dc = 0;
-        Require(sceKernelWaitEqueue(eq, &event_dc, 1, &count_dc, &poll_dc) == 0);
-        Require(count_dc == 1);
-        Http2AsyncResult result_dc{};
+        waiter.join();
+        Require(waiter_consumed);
+        Http2AsyncResult leftover{};
         std::uint32_t timeout_dc = 500;
-        Require(sceHttp2WaitAsync(request, &result_dc, &timeout_dc, nullptr) == 0);
-        Require(result_dc.req_id == request && result_dc.result == static_cast<int>(0x80436063));
+        Require(Throws([&] { sceHttp2WaitAsync(request, &leftover, &timeout_dc, nullptr); }));
 #ifdef _WIN32
         _putenv("APS5_NET_DISCONNECTED=");
 #else

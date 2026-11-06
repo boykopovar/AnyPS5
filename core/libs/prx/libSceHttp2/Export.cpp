@@ -84,28 +84,19 @@ static int CompleteAsync(const char* function, int req_id, const Http2AsyncOptio
         NotImplemented_nid_no_patch(function);
         return 0;
     }
-    bool queued = false;
-    {
-        std::lock_guard handlesLock(g_handlesMutex);
-        if (FindHandle(req_id, Http2Kind::Request) != nullptr) {
-            std::lock_guard completionsLock(g_completionsMutex);
-            Http2AsyncResult completion{};
-            completion.req_id = req_id;
-            completion.result = ERROR_NETWORK;
-            g_completions[req_id].push_back(completion);
-            queued = true;
+    std::lock_guard handlesLock(g_handlesMutex);
+    if (FindHandle(req_id, Http2Kind::Request) == nullptr) return ERROR_INVALID_ID;
+    std::lock_guard completionsLock(g_completionsMutex);
+    if (kqueue_option != nullptr) {
+        if (sceKernelTriggerUserEvent(kqueue_option->equeue, kqueue_option->user_event_id, kqueue_option->user_data) != 0) {
+            NotImplemented_nid_no_patch(function);
+            return 0;
         }
     }
-    if (!queued) return ERROR_INVALID_ID;
-    if (kqueue_option == nullptr) return 0;
-    if (sceKernelTriggerUserEvent(kqueue_option->equeue, kqueue_option->user_event_id, kqueue_option->user_data) != 0) {
-        {
-            std::lock_guard lock(g_completionsMutex);
-            auto pending = g_completions.find(req_id);
-            if (pending != g_completions.end() && !pending->second.empty()) pending->second.pop_back();
-        }
-        NotImplemented_nid_no_patch(function);
-    }
+    Http2AsyncResult completion{};
+    completion.req_id = req_id;
+    completion.result = ERROR_NETWORK;
+    g_completions[req_id].push_back(completion);
     return 0;
 }
 
