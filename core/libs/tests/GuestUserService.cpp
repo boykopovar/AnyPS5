@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int SCE_USER_SERVICE_ERROR_INVALID_USER_ID = USER_SERVICE_ERROR_UNKNOWN_USER;
+
 void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
@@ -53,6 +55,17 @@ int main() {
     int color = -1;
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserColor(123, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_USER_ID_INVALID, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID - 1, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0x20000000, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_USER_ID_INVALID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID - 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0x20000000, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(color == -1);
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, &color) == USER_SERVICE_OK);
 
     SetLanguage(nullptr);
@@ -112,7 +125,7 @@ int main() {
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetNpAccountId(123, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(account_id == 0xdeadbeefu);
-    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &account_id) == USER_SERVICE_OK);
     Require(account_id == 0);
 
@@ -130,7 +143,7 @@ int main() {
         account_id = 0xdeadbeefu;
         Require(sceUserServiceGetNpAccountId(user_id, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
         Require(account_id == 0xdeadbeefu);
-        Require(sceUserServiceGetNpAccountId(user_id, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
@@ -190,6 +203,10 @@ int main() {
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(0x10000004, name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
+    Require(sceUserServiceGetUserName(static_cast<int>(0xFFFFFFFFu), name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(USER_SERVICE_USER_ID_INVALID, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 5) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "Player") == 0);
@@ -207,6 +224,28 @@ int main() {
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + 1, &color) == USER_SERVICE_OK);
     Require(color == 1);
 
+    char homePath[64]{};
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(std::strstr(homePath, "/priv/home/10000000") != nullptr);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, nullptr, 37) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 36) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 37) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 38) == USER_SERVICE_OK);
+    Require(std::strlen(homePath) == 36);
+    Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceSetUserGroupIndex(-2) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceSetUserGroupIndex(129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupName(0, nullptr, 129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupName(0, homePath, 128) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    char oversizedGroupName[256]{};
+    Require(sceUserServiceGetUserGroupName(0, oversizedGroupName, sizeof(oversizedGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     privacy = 0x5a5a;
@@ -216,7 +255,7 @@ int main() {
     account_id = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(account_id == 0xdeadbeefu);
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
@@ -267,7 +306,7 @@ int main() {
     account_id = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(account_id == 0xdeadbeefu);
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);

@@ -14,7 +14,17 @@ from functools import cache
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "anyps5-hw-oracle")
+
+
+def cache_directory(environment):
+    if environment.get("HW_ORACLE_CACHE"):
+        return Path(environment["HW_ORACLE_CACHE"])
+    xdg = environment.get("XDG_CACHE_HOME", "")
+    root = Path(xdg) if xdg and Path(xdg).is_absolute() else Path.home() / ".cache"
+    return root / "anyps5-hw-oracle"
+
+
+CACHE = cache_directory(os.environ)
 ROWS_PER_DISPATCH = 1024
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
@@ -70,7 +80,12 @@ def oracle():
     if root is not None:
         root = root.resolve()
     executable = shutil.which(compiler[0])
-    selected = str(Path(executable).resolve()) if executable is not None else None
+    if executable is None:
+        selected = None
+    else:
+        path = Path(executable).resolve()
+        status = path.stat()
+        selected = (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
     configuration = repr((compiler, selected, str(root))).encode("utf-8")
     key = hashlib.sha256(source.read_bytes() + configuration).hexdigest()
     directory = CACHE / key
@@ -169,7 +184,10 @@ def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, de
         rows_per_dispatch = ROWS_PER_DISPATCH // 2 if wave64 else ROWS_PER_DISPATCH
         for start in range(0, len(padded), rows_per_dispatch):
             chunk = padded[start:start + rows_per_dispatch]
-            payload = b"".join(struct.pack("<4I", *r) for r in chunk) + extra
+            payload = b"".join(struct.pack("<4I", *r) for r in chunk)
+            if extra and len(padded) > rows_per_dispatch:
+                payload += bytes((rows_per_dispatch - len(chunk)) * 16)
+            payload += extra
             if runtime() == "hip":
                 data = hip_runtime().dispatch(Path(code).read_bytes(), len(chunk), payload, 16, coarse)
             else:
