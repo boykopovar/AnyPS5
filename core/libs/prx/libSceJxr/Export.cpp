@@ -468,8 +468,21 @@ int APS5_VABI detachISRead_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI detachISWrite_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI detachISWrite_nid_postfix(void* codec, Jxr::BitIo* io) {
+    if (!io) APS5_INVALID_ARG_EX;
+    if ((io->bitsUsed & 7) != 0) APS5_INVALID_ARG_EX;
+    const auto result = writeIS_nid_postfix(codec, io);
+    if (result < 0) return result;
+    if (!io->stream || !io->stream->write || !io->start || !io->current) APS5_INVALID_ARG_EX;
+    const auto start = reinterpret_cast<std::uintptr_t>(io->start);
+    const auto current = reinterpret_cast<std::uintptr_t>(io->current);
+    const auto byteCount = static_cast<std::uintptr_t>(io->bitsUsed / 8);
+    if (current > UINTPTR_MAX - byteCount) APS5_INVALID_ARG_EX;
+    const auto end = current + byteCount;
+    const auto writeResult = io->stream->write(io->stream, io->start, end - start);
+    if (writeResult < 0) return writeResult;
+    io->stream = nullptr;
+    return writeResult;
 }
 
 int APS5_VABI detach_SB_nid_postfix() {
