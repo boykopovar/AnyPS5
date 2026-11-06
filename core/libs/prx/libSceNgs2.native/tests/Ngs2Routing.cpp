@@ -1,10 +1,14 @@
 #include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
+#ifdef APS5_NGS2_PS4_LIBRARY
+#include "tests/ProcessParametersFixture.hpp"
+#endif
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <numbers>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -275,24 +279,12 @@ static void TestSubmixerFilterOff() {
         filter.level = 1.0f;
         Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER, filter);
     }
-#ifdef APS5_NGS2_PS4_LIBRARY
-    Ngs2SubmixerVoiceCompressorParam enabled{{}, 0, 0.1f, 0.01f, 0.0f, 0.001f, 0.01f, 1.0f, 0};
-    enabled.header = {static_cast<std::uint16_t>(sizeof(enabled)), 0, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR};
-    bool refused = false;
-    try {
-        sceNgs2VoiceControl(submixer, &enabled.header);
-    } catch (const std::runtime_error&) {
-        refused = true;
-    }
-    Require(refused);
-#endif
     Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, 1, 0.1f, 0.01f, 0.0f, 0.0f, 0.0f, 1.0f, 0});
     Render(system, {0.25f}, 2, Grain, true);
     Render(system, {0.25f});
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-#ifndef APS5_NGS2_PS4_LIBRARY
 static std::int32_t APS5_VABI Steady(Ngs2UserFxProcessContext* context) {
     const auto* signal = reinterpret_cast<const float*>(context->user_data0);
     for (std::uint32_t c = 0; c < context->num_channels; c++) {
@@ -343,6 +335,14 @@ struct CompressorGraph {
     }
 };
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+alignas(16) static std::array<std::byte, 0x40> processParameters{};
+
+static void SetCompiledSdkVersion(std::uint32_t version) {
+    std::memcpy(processParameters.data() + 0x10, &version, sizeof(version));
+}
+#endif
+
 static void TestSubmixerCompressor() {
     {
         CompressorGraph graph({0.8f, 0.8f});
@@ -362,16 +362,9 @@ static void TestSubmixerCompressor() {
         graph.Expect({0.3f, 0.3f});
     }
     {
-        CompressorGraph graph({0.8f, 0.8f});
-        graph.Set(0x8);
-        graph.Expect({0.65f, 0.65f});
-    }
-    {
         CompressorGraph graph({0.8f, 0.8f}, true);
         graph.Set(0x2);
         graph.Expect({0.8f * 0.941942f, 0.8f * 0.941942f}, true);
-        graph.Set(0x4);
-        graph.Expect({0.65f, 0.65f}, true);
         graph.Set(0);
         graph.Expect({0.65f, 0.65f}, true);
     }
@@ -379,37 +372,21 @@ static void TestSubmixerCompressor() {
         CompressorGraph graph({0.8f, 0.2f});
         graph.Set(0);
         graph.Expect({0.65f, 0.1625f});
-        graph.Set(0x20);
-        graph.Expect({0.65f, 0.2f});
-        graph.Set(0x10);
-        graph.Expect({0.65f, 0.1625f});
     }
     {
         CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.8f, 0.2f, 0.2f});
-        graph.Set(0x10);
-        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
         graph.Set(0);
         graph.Expect({0.1625f, 0.1625f, 0.1625f, 0.65f, 0.1625f, 0.1625f});
-    }
-    {
-        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.2f, 0.8f, 0.2f});
-        graph.Set(0x10);
-        graph.Expect({0.1625f, 0.1625f, 0.1625f, 0.2f, 0.65f, 0.1625f});
-    }
-    {
-        CompressorGraph graph({0.45f, 0.45f});
-        graph.Set(0, 0.0f, 1.0f, 0.4f);
-        graph.Expect({0.44375f, 0.44375f});
-    }
-    {
-        CompressorGraph graph({0.3f, 0.3f});
-        graph.Set(0, 0.0f, 1.0f, 0.4f);
-        graph.Expect({0.3f, 0.3f});
     }
     {
         CompressorGraph graph({0.8f, 0.8f});
         graph.Set(0, 0.0f, 1.0f, 0.4f);
         graph.Expect({0.65f, 0.65f});
+    }
+    {
+        CompressorGraph graph({0.3f, 0.3f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.3f, 0.3f});
     }
     {
         CompressorGraph graph({0.8f, 0.8f});
@@ -423,19 +400,80 @@ static void TestSubmixerCompressor() {
         }
         Require(std::fabs(gain - 0.987908f) <= 0.00001f);
     }
-}
+#ifdef APS5_NGS2_PS4_LIBRARY
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.8f, 0.2f, 0.2f});
+        graph.Set(0x8);
+        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
+        graph.Set(0xa);
+        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.2f});
+        graph.Set(0x20);
+        graph.Expect({0.65f, 0.1625f});
+        graph.Set(0x10);
+        graph.Expect({0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.45f, 0.45f});
+        SetCompiledSdkVersion(0x1700000);
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.44375f, 0.44375f});
+        SetCompiledSdkVersion(0x16fffff);
+        graph.Expect({0.45f, 0.45f});
+    }
+#else
+    {
+        CompressorGraph graph({0.8f, 0.8f});
+        graph.Set(0x8);
+        graph.Expect({0.65f, 0.65f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.8f}, true);
+        graph.Set(0x4);
+        graph.Expect({0.65f, 0.65f}, true);
+    }
+    {
+        CompressorGraph graph({0.8f, 0.2f});
+        graph.Set(0x20);
+        graph.Expect({0.65f, 0.2f});
+        graph.Set(0x10);
+        graph.Expect({0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.8f, 0.2f, 0.2f});
+        graph.Set(0x10);
+        graph.Expect({0.2f, 0.2f, 0.2f, 0.65f, 0.2f, 0.2f});
+    }
+    {
+        CompressorGraph graph({0.2f, 0.2f, 0.2f, 0.2f, 0.8f, 0.2f});
+        graph.Set(0x10);
+        graph.Expect({0.1625f, 0.1625f, 0.1625f, 0.2f, 0.65f, 0.1625f});
+    }
+    {
+        CompressorGraph graph({0.45f, 0.45f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.44375f, 0.44375f});
+    }
 #endif
+}
 
 int main() {
+#ifdef APS5_NGS2_PS4_LIBRARY
+    const std::uint64_t processSize = processParameters.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    std::memcpy(processParameters.data(), &processSize, sizeof(processSize));
+    std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
+    Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()));
+#endif
     TestNoModules(1, {0.25f});
     TestNoModules(2, {-0.75f, 0.25f});
     TestNoModules(3, {0.0f, -0.75f, 0.25f});
     TestNoModules(4, {0.0f, 0.0f, -0.75f, 0.25f});
     TestGainRouting();
     TestSubmixerFilterOff();
-#ifndef APS5_NGS2_PS4_LIBRARY
     TestSubmixerCompressor();
-#endif
     TestUnityCopy();
     for (std::uint32_t channels = 1; channels <= 8; channels++) TestIndependentVoicesAndSilentRamp(channels);
     return 0;

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
@@ -358,6 +359,15 @@ static float CompressorCoefficient(float seconds, std::uint32_t sampleRate) {
     return samples == 0 ? 0.0f : std::exp(-1.0f / static_cast<float>(samples));
 }
 
+static bool CompressorKnee(float knee) {
+    if (knee == 0.0f) return false;
+    if (!PS4_LIBRARY) return true;
+    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, processParameters + 0x10, sizeof(sdkVersion));
+    return sdkVersion >= 0x1700000;
+}
+
 static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
     auto& compressor = voice.compressor;
     if (!compressor.configured) return;
@@ -370,6 +380,7 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
     const auto channels = std::min<std::uint32_t>(voice.channels, NGS2_MAX_CHANNELS);
     const float attack = CompressorCoefficient(param.attack_time, sampleRate);
     const float release = CompressorCoefficient(param.release_time, sampleRate);
+    const bool knee = CompressorKnee(param.knee);
     std::array<float, NGS2_MAX_CHANNELS> level{};
     for (std::uint32_t start = 0; start < grain; start += 32) {
         const auto count = std::min<std::uint32_t>(32, grain - start);
@@ -384,8 +395,8 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
             }
             level[channel] = value;
         }
-        if ((param.flags & 0x20u) == 0) {
-            const bool lfeApart = (param.flags & 0x10u) != 0;
+        if (PS4_LIBRARY || (param.flags & 0x20u) == 0) {
+            const bool lfeApart = (param.flags & (PS4_LIBRARY ? 0x8u : 0x10u)) != 0;
             float loudest = 0.0f;
             for (std::uint32_t channel = 0; channel < channels; channel++) {
                 if (!lfeApart || channel != 3) loudest = std::max(loudest, level[channel]);
@@ -394,7 +405,7 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
                 if (!lfeApart || channel != 3) level[channel] = loudest;
             }
         }
-        const float kneeStart = param.threshold * (1.0f - param.knee * 0.5f);
+        const float kneeStart = knee ? param.threshold * (1.0f - param.knee * 0.5f) : param.threshold;
         const float kneeWidth = param.threshold - kneeStart;
         for (std::uint32_t channel = 0; channel < channels; channel++) {
             const float x = level[channel];

@@ -558,13 +558,13 @@ static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFi
 
 static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
     const auto flags = param.flags;
-    if (PS4_LIBRARY && (flags & 1u) == 0) throw std::runtime_error("NGS2: an enabled submixer compressor (flags " + Ngs2Hex(flags) + ") is not implemented");
-    if (!PS4_LIBRARY && ((flags & ~0x3fu) != 0 || (flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u)) {
+    if (PS4_LIBRARY && (flags & 1u) != 0) return;
+    if ((flags & ~0x3fu) != 0 || (PS4_LIBRARY ? (flags & 4u) != 0 : ((flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u))) {
         throw std::runtime_error("NGS2: submixer compressor flags " + Ngs2Hex(flags) + " are not implemented");
     }
-    if (PS4_LIBRARY || (flags & 1u) != 0) return;
+    if ((flags & 1u) != 0) return;
     if (!(param.knee >= 0.0f && param.knee <= 2.0f)) throw std::runtime_error("NGS2: a submixer compressor knee outside 0 to 2 is not implemented");
-    if ((flags & 8u) != 0 && voice.rack->maxInputs > 1) throw std::runtime_error("NGS2: a submixer compressor side-chain from a second input is not implemented");
+    if (!PS4_LIBRARY && (flags & 8u) != 0 && voice.rack->maxInputs > 1) throw std::runtime_error("NGS2: a submixer compressor side-chain from a second input is not implemented");
     if (!(param.threshold > 0.0f) || !std::isfinite(param.threshold) || !std::isfinite(param.ratio) || !std::isfinite(param.level) ||
         !(param.attack_time >= 0.0f) || !std::isfinite(param.attack_time) || !(param.release_time >= 0.0f) || !std::isfinite(param.release_time)) {
         throw std::runtime_error("NGS2: submixer compressor values outside the measured range are not implemented");
@@ -1083,7 +1083,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
                 const auto& compressor = ParamAs<Ngs2SubmixerVoiceCompressorParam>(param);
                 CheckSubmixerCompressor(voice, compressor);
-                if (!PS4_LIBRARY) SetSubmixerCompressor(voice, compressor);
+                SetSubmixerCompressor(voice, compressor);
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
