@@ -29,6 +29,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Security origins](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKSecurityOriginCopyDatabaseIdentifier` still throws pending `encodeForFileName` (#14858). `WKSecurityOriginCreateFromString` and `WKSecurityOriginCreateFromDatabaseIdentifier` still throw; URL parsing and default-port normalization (#13766) are not wired into origin creation. Value objects follow [the pinned WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source); console execution and ABI are unverified.
 - [Field setters](../../../core/libs/prx/libSceNKWebKit/src/FieldSetters.cpp) (libSceNKWebKit) - 55 exports store an argument into a fixed field of the object in the PS5 11.00 module: 43 store the second argument at offset 0, 9 store it at offsets 8 to 56, and 3 store a 32-bit value at offsets 8, 16 and 32. The bodies, sizes and offsets come from the 11.00 `libSceNKWebKit.sprx`; object layouts, field meanings, wider values and other ABI cases are unverified. Only the measured store width is covered.
 
+- [No-op exports](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - 154 exports whose 11.00 body is a bare `ret` have a known `void` contract and are empty functions: 113 destructors and 2 constructors (the Itanium ABI fixes their return type) and 39 the current WebKit C API headers declare `void`. From the 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`), each NID recomputed from the declared symbol. The other 203 with the same body keep throwing: 152 C++ and 51 C API functions with no evidence of a void return, so returning zero would be this library's choice, not the module's. Only 11.00 was measured.
+
 - [Forwarded exports](../../../core/libs/prx/libSceNKWebKit/src/ForwardExports.cpp) (libSceNKWebKit) - 275 exports are the same function under another name in the PS5 11.00 module: the body at their address is a `jmp rel32` into another export (26 distinct targets), implemented as an assembly tail jump. The jump keeps every register, so the return type and arguments are the target's: 201 reach an implemented export (104 delete-family to `WTF::fastFree`, 92 new-family to `WTF::fastMalloc`, 2 to `WKMutableArrayCreate`, 2 to a WebCore::Region constructor and 1 to `WebCore::MIMETypeRegistry::isSupportedImageMIMEType`) and 74 reach an export that still throws, so they throw too; no prototype is claimed. From the 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`), each NID recomputed from the name; only 11.00 measured.
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
@@ -58,7 +60,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6714 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6561 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -76,7 +78,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKAccessibilityEnhancedAccessibilityEnabled` | `b5bQfU9tUKo` |
 | `WKAccessibilityFocusedObject` | `WqnB6ITORdg` |
 | `WKAccessibilityRootObject` | `LGfu3uVGjDY` |
-| `WKAddMockMediaDevice` | `OI-UUz7zMzo` |
 | `WKApplicationCacheManagerDeleteAllEntries` | `RHV1W6LLOZQ` |
 | `WKApplicationCacheManagerDeleteEntriesForOrigin` | `RNqLyINmGek` |
 | `WKApplicationCacheManagerGetApplicationCacheOrigins` | `fquLkyv1zr4` |
@@ -110,7 +111,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleDOMWindowExtensionCreate` | `fI5-EhJqxeA` |
 | `WKBundleDOMWindowExtensionGetFrame` | `VN5TX+cUFf4` |
 | `WKBundleDOMWindowExtensionGetScriptWorld` | `CFtAcs7A434` |
-| `WKBundleExtendClassesForParameterCoder` | `11DvPWLfwtU` |
 | `WKBundleFrameAllowsFollowingLink` | `pmZi4yM8pxM` |
 | `WKBundleFrameCallShouldCloseOnWebView` | `N+icA-jvTHs` |
 | `WKBundleFrameClearOpener` | `5XkPh73uOas` |
@@ -194,7 +194,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleNodeHandleGetRenderRect` | `TBGBVDzPzh0` |
 | `WKBundleNodeHandleSetHTMLInputElementAutoFillAvailable` | `xWvs8ZzLQSI` |
 | `WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabledWithButtonType` | `F6hnPpozF2M` |
-| `WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled` | `w07dR+ym+z8` |
 | `WKBundleNodeHandleSetHTMLInputElementAutoFilledAndViewable` | `QflGzVw8KlA` |
 | `WKBundleNodeHandleSetHTMLInputElementAutoFilled` | `nO8W67-kbko` |
 | `WKBundleNodeHandleSetHTMLInputElementAutofilled` | `WdBxzIdie+w` |
@@ -210,7 +209,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundlePageClearApplicationCacheForOrigin` | `fR7EjbzyBiI` |
 | `WKBundlePageClearApplicationCache` | `aVtHmPYrANg` |
 | `WKBundlePageClearMainFrameName` | `iP5usIxGDAI` |
-| `WKBundlePageClickMenuItem` | `loO7FEttses` |
 | `WKBundlePageClose` | `Y9OWNvuSVJg` |
 | `WKBundlePageConfirmComposition` | `T4vOLGegdvQ` |
 | `WKBundlePageConfirmCompositionWithText` | `4eheJycBxI0` |
@@ -269,9 +267,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundlePageResetTrackedRepaints` | `6IFQEEuM7Yg` |
 | `WKBundlePageSetAppCacheMaximumSize` | `sSb3te485KU` |
 | `WKBundlePageSetApplicationCacheOriginQuota` | `d1bcQFkjzUE` |
-| `WKBundlePageSetBottomOverhangImage` | `8KiOeSAspEg` |
 | `WKBundlePageSetComposition` | `xFnlhQw0Zfc` |
-| `WKBundlePageSetContextMenuClient` | `5zSE85dlaJM` |
 | `WKBundlePageSetDefersLoading` | `Rm6Y9lnzm3c` |
 | `WKBundlePageSetEditorClient` | `TLWK+2sKnf8` |
 | `WKBundlePageSetEventThrottlingBehaviorOverride` | `e2FFaTvxUkI` |
@@ -281,12 +277,10 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundlePageSetHeaderBanner` | `dzrr2-LTKnA` |
 | `WKBundlePageSetPageLoaderClient` | `fE-UQfy62Jk` |
 | `WKBundlePageSetPageZoomFactor` | `ijPJrSMtqIY` |
-| `WKBundlePageSetPaintedObjectsCounterThreshold` | `Z8ZrDDxJDjY` |
 | `WKBundlePageSetPolicyClient` | `kl9cnbrBzrA` |
 | `WKBundlePageSetResourceLoadClient` | `o1r9YJZRP+Y` |
 | `WKBundlePageSetScaleAtOrigin` | `wnMuJEY0ZwE` |
 | `WKBundlePageSetTextZoomFactor` | `2YvlXyxJyaE` |
-| `WKBundlePageSetTopOverhangImage` | `cfnEnkthkGo` |
 | `WKBundlePageSetTracksRepaints` | `K57m00RjFaQ` |
 | `WKBundlePageSetUIClient` | `XsDPaQ2pLiY` |
 | `WKBundlePageSetUseDarkAppearance` | `3csGEmgGKTs` |
@@ -326,11 +320,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKClearMockMediaDevices` | `ogjjVYnBJR8` |
 | `WKConnectionPostMessage` | `HRkYAo+HK5w` |
 | `WKConnectionSetConnectionClient` | `YRlm9YSeOYE` |
-| `WKContextAddSupportedPlugin` | `REZbDZa4btY` |
 | `WKContextAddVisitedLink` | `AtKeeOk+CQI` |
 | `WKContextAllowSpecificHTTPSCertificateForHost` | `Wb5DMLak0yg` |
 | `WKContextClearCurrentModifierStateForTesting` | `Yk2qJg3VRBY` |
-| `WKContextClearSupportedPlugins` | `XIckVUXyJsE` |
 | `WKContextClearVisitedLinks` | `HiehcAiEDCc` |
 | `WKContextCreate` | `EnYKPlIQ0DA` |
 | `WKContextCreateWithConfiguration` | `XgehYXFKMDs` |
@@ -343,21 +335,16 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextGetGeolocationManager` | `GJsL9usTdig` |
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
 | `WKContextGetNotificationManager` | `ZGEEHCN2FvE` |
-| `WKContextGetStatisticsWithOptions` | `lihFGjz1c-c` |
-| `WKContextGetStatistics` | `dNMdheP8oUQ` |
 | `WKContextGetUsesSingleWebProcess` | `qZDRsY7kQ0s` |
 | `WKContextJavaScriptConfigurationFileEnabled` | `efD5N1zaabU` |
-| `WKContextMenuItemSetUserData` | `nsNNFzmax7s` |
 | `WKContextPostMessageToInjectedBundle` | `N93Nb5-YJsw` |
 | `WKContextPreconnectToServer` | `MQI+nL6CJkU` |
-| `WKContextRefreshPlugIns` | `F+7llwLcYHI` |
 | `WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy` | `FTDt5KHGsco` |
 | `WKContextRegisterURLSchemeAsCachePartitioned` | `DHbAda1fa1k` |
 | `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest` | `rAU9SRsnG3E` |
 | `WKContextRegisterURLSchemeAsEmptyDocument` | `ad1-t6xKVtA` |
 | `WKContextRegisterURLSchemeAsSecure` | `6P04fQkPVec` |
 | `WKContextSetAccessibilityEnabled` | `05HZtE0FPg0` |
-| `WKContextSetAdditionalPluginsDirectory` | `BFnY5ZzK7-Q` |
 | `WKContextSetAlwaysUsesComplexTextCodePath` | `Y3Z2695WJ8E` |
 | `WKContextSetCacheModel` | `4mVOglFcW8E` |
 | `WKContextSetCanHandleHTTPSServerTrustEvaluation` | `L205EzJvP-Q` |
@@ -369,7 +356,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextSetFontAllowList` | `MhG9BMS7pSQ` |
 | `WKContextSetHTTPPipeliningEnabled` | `JephqDWR6Pc` |
 | `WKContextSetHistoryClient` | `voUp4sJ5mfU` |
-| `WKContextSetIconDatabasePath` | `b9TiSloCiTs` |
 | `WKContextSetInitializationUserDataForInjectedBundle` | `lAIOtUCPCdo` |
 | `WKContextSetInjectedBundleClient` | `VULFTpwEXW0` |
 | `WKContextSetInvalidMessageFunction` | `v+TCMUBUWog` |
@@ -377,25 +363,18 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextSetJavaScriptGarbageCollectorTimerEnabled` | `CDa5R6cq2+M` |
 | `WKContextSetMaximumNumberOfProcesses` | `zgt5jBUZjPw` |
 | `WKContextSetMemoryCacheDisabled` | `Gy--AnYjtr8` |
-| `WKContextSetPlugInAutoStartOriginHashes` | `TrdyIAAxZHw` |
-| `WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime` | `l1XmBaP5k6w` |
-| `WKContextSetPlugInAutoStartOrigins` | `d-GQB0t83+s` |
 | `WKContextSetPrewarmsProcessesAutomatically` | `9LzZhiXxOL8` |
-| `WKContextSetPrimaryWebsiteDataStore` | `Kk9wy--VFwo` |
 | `WKContextSetUseSeparateServiceWorkerProcess` | `nd01aT+29+Y` |
-| `WKContextSetUsesNetworkProcess` | `5yZOVXSHWpo` |
 | `WKContextSetUsesSingleWebProcess` | `kIR9uG8dfTY` |
 | `WKContextStartMemorySampler` | `xXWslPRXf9Y` |
 | `WKContextStopMemorySampler` | `4k3e7qWpRcU` |
 | `WKContextTerminateServiceWorkers` | `i8HHFDiCd4U` |
 | `WKContextWarmInitialProcess` | `MmCFL5GXGL8` |
-| `WKCookieManagerDeleteAllCookies` | `HuqEAwuDxe8` |
 | `WKCookieManagerDeleteAllCookiesModifiedAfterDate` | `iEypYwTA7F0` |
 | `WKCookieManagerDeleteCookiesForHostname` | `4gJ2MFHUsvY` |
 | `WKCookieManagerGetHTTPCookieAcceptPolicy` | `d9tCx7OTo00` |
 | `WKCookieManagerGetHostnamesWithCookies` | `FNCVZgUSgfw` |
 | `WKCookieManagerSetClient` | `q-Hwxr4yls0` |
-| `WKCookieManagerSetHTTPCookieAcceptPolicy` | `a7yz7vOyBxk` |
 | `WKCookieManagerStartObservingCookieChanges` | `vyOiJyvWOik` |
 | `WKCookieManagerStopObservingCookieChanges` | `ebPeu+4eyj8` |
 | `WKErrorCopyDomain` | `CbWxMDgV5WQ` |
@@ -437,15 +416,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKHTTPCookieStoreDeleteAllCookies` | `mVoWS3zTfxs` |
 | `WKHTTPCookieStoreSetCookieForHostname` | `bXKJvpaEKpk` |
 | `WKHTTPCookieStoreSetHTTPCookieAcceptPolicy` | `AP4g3QKWeFg` |
-| `WKIconDatabaseCheckIntegrityBeforeOpening` | `Q6e57L2Vat8` |
-| `WKIconDatabaseClose` | `D6zZXKyK2XI` |
-| `WKIconDatabaseEnableDatabaseCleanup` | `Fg2BRITDYDg` |
-| `WKIconDatabaseReleaseIconForURL` | `pKUEWyAWkeI` |
-| `WKIconDatabaseRemoveAllIcons` | `LMXftlH0v2Y` |
-| `WKIconDatabaseRetainIconForURL` | `0parhLSAuME` |
-| `WKIconDatabaseSetIconDataForIconURL` | `djSqL8eVr2s` |
-| `WKIconDatabaseSetIconDatabaseClient` | `onHPS6AKnl0` |
-| `WKIconDatabaseSetIconURLForPageURL` | `jUMADs-SOQc` |
 | `WKImageCreate` | `AxkrIoArfIs` |
 | `WKImageCreateCairoSurface` | `1QfyjHj40es` |
 | `WKImageCreateFromCairoSurface` | `jJePHioTWw0` |
@@ -689,8 +659,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageValidateCommand` | `K82wly5zJoc` |
 | `WKPageVerticalRubberBandingIsEnabled` | `p-jMGxCpEF4` |
 | `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
-| `WKPreferencesSetAccelerated2DCanvasEnabled` | `UEBk9iGqhPo` |
-| `WKPreferencesSetQTKitEnabled` | `6jkxaKVf01A` |
 | `WKProtectionSpaceCopyCertificateInfo` | `FdhooB4MqkE` |
 | `WKProtectionSpaceCopyHost` | `U0xPrr5rnH4` |
 | `WKProtectionSpaceCopyRealm` | `osSHWP92dx4` |
@@ -779,7 +747,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKViewValueChangedForPopupMenu` | `rr8g0GkA+GE` |
 | `WKViewWillEnterFullScreen` | `Qv917g7goow` |
 | `WKViewWillExitFullScreen` | `6o4itIbqsY8` |
-| `WKWebsiteDataStoreClearAllDeviceOrientationPermissions` | `4go6vGk6E+A` |
 | `WKWebsiteDataStoreClearAppBoundSession` | `YujMtLJPOok` |
 | `WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess` | `Mrp3OVQ9jI4` |
 | `WKWebsiteDataStoreCreateNonPersistentDataStore` | `hzBAQGt4hMw` |
@@ -804,7 +771,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKWebsiteDataStoreIsStatisticsRegisteredAsSubFrameUnder` | `XsfCncK1ixk` |
 | `WKWebsiteDataStoreIsStatisticsRegisteredAsSubresourceUnder` | `KlpVs+cuiKk` |
 | `WKWebsiteDataStoreIsStatisticsVeryPrevalentResource` | `cNJLCdCvpRs` |
-| `WKWebsiteDataStoreReinitializeAppBoundDomains` | `pVYj0EAFKIU` |
 | `WKWebsiteDataStoreRemoveAllFetchCaches` | `rxZjrt0XJUc` |
 | `WKWebsiteDataStoreRemoveAllIndexedDatabases` | `2s+Z9J73DSA` |
 | `WKWebsiteDataStoreRemoveAllServiceWorkerRegistrations` | `scGRzF-d0Cs` |
@@ -813,10 +779,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKWebsiteDataStoreRemoveLocalStorage` | `5ti4Vc-Mp6I` |
 | `WKWebsiteDataStoreResetQuota` | `zdKa8rNTi2s` |
 | `WKWebsiteDataStoreSetAdditionalRootCA` | `vTcRCX6SQVo` |
-| `WKWebsiteDataStoreSetAppBoundDomainsForTesting` | `SDZK3XYrvkk` |
 | `WKWebsiteDataStoreSetCacheModelSynchronouslyForTesting` | `SirJwzKHMmQ` |
 | `WKWebsiteDataStoreSetClientCertificate` | `9dwA+t5a9BU` |
-| `WKWebsiteDataStoreSetPerOriginStorageQuota` | `qqKbZiXA178` |
 | `WKWebsiteDataStoreSetResourceLoadStatisticsDebugModeWithCompletionHandler` | `CRR5HsrCpXA` |
 | `WKWebsiteDataStoreSetResourceLoadStatisticsDebugMode` | `Zdtwqk-44gU` |
 | `WKWebsiteDataStoreSetResourceLoadStatisticsEnabled` | `E3r6Cg7w4XM` |
@@ -892,8 +856,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC11ArrayBuffer9tryCreateERS0_` | `WQbjb+C736Q` |
 | `_ZN3JSC11FuzzerAgent13getPredictionEPNS_9CodeBlockERKNS_10CodeOriginEm` | `bPu4g9cnHTE` |
 | `_ZN3JSC11FuzzerAgentD0Ev` | `SUbGVeFQQns` |
-| `_ZN3JSC11FuzzerAgentD1Ev` | `lcpUikuxzYU` |
-| `_ZN3JSC11FuzzerAgentD2Ev` | `h0tRdxavoc0` |
 | `_ZN3JSC11IsoSubspaceD0Ev` | `2nw7QLyE9FA` |
 | `_ZN3JSC11IsoSubspaceD1Ev` | `tI5IAnzhn2U` |
 | `_ZN3JSC11IsoSubspaceD2Ev` | `mll5UrllME0` |
@@ -946,12 +908,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC12HeapAnalyzerC2Ev` | `cCJNCoH0AOY` |
 | `_ZN3JSC12HeapAnalyzerD0Ev` | `Un28DpZj4ec` |
 | `_ZN3JSC12HeapAnalyzerD1Ev` | `uvkGGQN9d2A` |
-| `_ZN3JSC12HeapAnalyzerD2Ev` | `E4iOn3dUTKg` |
 | `_ZN3JSC12HeapAnalyzeraSERKS0_` | `liOD0-XlX-c` |
 | `_ZN3JSC12HeapCellTypeC1ENS_14CellAttributesE` | `4ISBwqOsxVU` |
 | `_ZN3JSC12HeapCellTypeC2ENS_14CellAttributesE` | `GPFmSUAPZNU` |
-| `_ZN3JSC12HeapCellTypeD1Ev` | `oxwcZIHAevA` |
-| `_ZN3JSC12HeapCellTypeD2Ev` | `8kAjbRlEC5I` |
 | `_ZN3JSC12HeapVerifier12validateCellEPNS_8HeapCellEPNS_2VME` | `HaJZszqZGWU` |
 | `_ZN3JSC12HeapVerifier15checkIfRecordedEm` | `DWNSBXMqW64` |
 | `_ZN3JSC12JSLockHolderC1EPNS_14JSGlobalObjectE` | `X1QtBligH2Y` |
@@ -1018,8 +977,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE` | `qgS+x1WhS-c` |
 | `_ZN3JSC14ProtoCallFrame15clearCurrentVPCEv` | `qiuiYDTTSv0` |
 | `_ZN3JSC14ProtoCallFrame8argumentEm` | `sq4hb-Vo1+0` |
-| `_ZN3JSC14ProtoCallFrameC1Ev` | `CIszVLmspgo` |
-| `_ZN3JSC14ProtoCallFrameC2Ev` | `SJJia2hm2ig` |
 | `_ZN3JSC14ProtoCallFrameaSERKS0_` | `WfbtnyN65i0` |
 | `_ZN3JSC14SourceProvider5getIDEv` | `1maKcwFOk3E` |
 | `_ZN3JSC14SourceProviderD0Ev` | `4AeMF+7VG38` |
@@ -1045,8 +1002,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC15WeakHandleOwnerC2ERKS0_` | `M+HQlnym0PY` |
 | `_ZN3JSC15WeakHandleOwnerC2Ev` | `ZsUOENm0Vc8` |
 | `_ZN3JSC15WeakHandleOwnerD0Ev` | `zkbV8yksKAg` |
-| `_ZN3JSC15WeakHandleOwnerD1Ev` | `pVUPcUmtmck` |
-| `_ZN3JSC15WeakHandleOwnerD2Ev` | `a3dbw1f68PQ` |
 | `_ZN3JSC15constructNumberEPNS_14JSGlobalObjectENS_7JSValueE` | `7rxnZJsitOo` |
 | `_ZN3JSC15constructStringERNS_2VMEPNS_14JSGlobalObjectENS_7JSValueE` | `dEhwVd9TAi8` |
 | `_ZN3JSC15createEvalErrorEPNS_14JSGlobalObjectERKN3WTF6StringE` | `sv84XKn8F-Q` |
@@ -1173,8 +1128,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC19numberOfDFGCompilesEPK15OpaqueJSContextPK13OpaqueJSValue` | `78B+yM0R6Dc` |
 | `_ZN3JSC19reifyStaticAccessorERNS_2VMERKNS_14HashTableValueERNS_8JSObjectENS_12PropertyNameE` | `OBxd2d6mdOA` |
 | `_ZN3JSC20TypedArrayControllerD0Ev` | `dfRy73zK7WU` |
-| `_ZN3JSC20TypedArrayControllerD1Ev` | `RdP7GBs5Bhc` |
-| `_ZN3JSC20TypedArrayControllerD2Ev` | `ChYUCyXH4LU` |
 | `_ZN3JSC20createReferenceErrorEPNS_14JSGlobalObjectERKN3WTF6StringE` | `rA7E7LfU7Sk` |
 | `_ZN3JSC20failNextNewCodeBlockEPK15OpaqueJSContext` | `qdvU43se+yY` |
 | `_ZN3JSC20failNextNewCodeBlockEPNS_14JSGlobalObjectE` | `w00D0ddSQLA` |
@@ -1244,7 +1197,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC29ensureGlobalFuzzerPredictionsEv` | `C+nqkA-1ro0` |
 | `_ZN3JSC29getUint8ClampedArrayClassInfoEv` | `Habqtw0NHUI` |
 | `_ZN3JSC2VM10ClientDataD0Ev` | `aNZOcfGHsDI` |
-| `_ZN3JSC2VM10ClientDataD2Ev` | `ZrCNEgNghCU` |
 | `_ZN3JSC2VM13deleteAllCodeENS_19DeleteAllCodeEffortE` | `I0gE8x3npgg` |
 | `_ZN3JSC2VM14throwExceptionEPNS_14JSGlobalObjectENS_7JSValueE` | `pgTUnz0y0Z4` |
 | `_ZN3JSC2VM14throwExceptionEPNS_14JSGlobalObjectEPNS_8JSObjectE` | `QEHeEZGfFs4` |
@@ -1445,8 +1397,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3PAL12CryptoDigestD1Ev` | `OT1pwqHrDKg` |
 | `_ZN3PAL12CryptoDigestD2Ev` | `Qni0CoOBDkU` |
 | `_ZN3PAL13SleepDisablerD0Ev` | `QfBibggI2M0` |
-| `_ZN3PAL13SleepDisablerD1Ev` | `yyuK50fsLYY` |
-| `_ZN3PAL13SleepDisablerD2Ev` | `wIua3QUWZ10` |
 | `_ZN3PAL19fileSizeDescriptionEm` | `Pbp5FkR35mI` |
 | `_ZN3PAL8KillRing16setToYankedStateEv` | `Zys2AhUVVN4` |
 | `_ZN3PAL8KillRing16startNewSequenceEv` | `OVuwx4R7Rxc` |
@@ -1496,8 +1446,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF11OSAllocator23hintMemoryNotNeededSoonEPvm` | `XhrUc+9K1xQ` |
 | `_ZN3WTF11OSAllocator6commitEPvmbb` | `NeYe5cZQXg8` |
 | `_ZN3WTF11OSAllocator8decommitEPvm` | `CFjj7pKSrS4` |
-| `_ZN3WTF11Persistence7DecoderD1Ev` | `KwtehBFKMNY` |
-| `_ZN3WTF11Persistence7DecoderD2Ev` | `1lehOfA09zk` |
 | `_ZN3WTF11PrintStream20printfVariableFormatEPKcz` | `wdbdMn2JHZc` |
 | `_ZN3WTF11PrintStream3endEv` | `FyOMUdXa5Tc` |
 | `_ZN3WTF11PrintStream5beginEv` | `EMO8fbfieRI` |
@@ -1645,8 +1593,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE` | `g6gKfjgJEGU` |
 | `_ZN3WTF18FunctionDispatcherC2Ev` | `YsRNfwMQmtQ` |
 | `_ZN3WTF18FunctionDispatcherD0Ev` | `5qqjEdxEeeU` |
-| `_ZN3WTF18FunctionDispatcherD1Ev` | `m9d0vmu44PI` |
-| `_ZN3WTF18FunctionDispatcherD2Ev` | `GagczbmtfhI` |
 | `_ZN3WTF18ParallelHelperPool13doSomeHelpingEv` | `Jn3pDwHhNS0` |
 | `_ZN3WTF18ParallelHelperPool13ensureThreadsEj` | `OpcGwZFMmHs` |
 | `_ZN3WTF18ParallelHelperPoolC1EONS_7CStringE` | `iXrXlr3XK4w` |
@@ -1687,8 +1633,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF21RefCountedLeakCounter9incrementEv` | `FpxnD+vtdFQ` |
 | `_ZN3WTF21RefCountedLeakCounterC1EPKc` | `7l4jBeWiHI4` |
 | `_ZN3WTF21RefCountedLeakCounterC2EPKc` | `opqf3CJzhms` |
-| `_ZN3WTF21RefCountedLeakCounterD1Ev` | `huPt1cKM3Ws` |
-| `_ZN3WTF21RefCountedLeakCounterD2Ev` | `dbty069DxEI` |
 | `_ZN3WTF21bootSessionUUIDStringEv` | `8Wal1MC0Llo` |
 | `_ZN3WTF21currentSearchLocaleIDEv` | `D0gLApZm36c` |
 | `_ZN3WTF21makeRFC2822DateStringEjjjjjjji` | `uj+HLgqmsTY` |
@@ -1953,8 +1897,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore11FileChooser11chooseFilesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEES8_` | `MosmRj5LPwY` |
 | `_ZN7WebCore11FileChooserD1Ev` | `KXMqfl+qPpU` |
 | `_ZN7WebCore11FileChooserD2Ev` | `yPni3AwPKpg` |
-| `_ZN7WebCore11FileMonitorD1Ev` | `p367GVhNpE4` |
-| `_ZN7WebCore11FileMonitorD2Ev` | `CDjDlxkoWhU` |
 | `_ZN7WebCore11FontCascade11setCodePathENS0_8CodePathE` | `BfT4dv3a02o` |
 | `_ZN7WebCore11FontCascadeC1EONS_22FontCascadeDescriptionEff` | `vDAAek4FGdM` |
 | `_ZN7WebCore11FontCascadeC1Ev` | `g+MtnvgmCMk` |
@@ -2162,8 +2104,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore12BlobRegistryC2ERKS0_` | `Dys3YgSazRQ` |
 | `_ZN7WebCore12BlobRegistryC2Ev` | `pmZ0xgBMeqo` |
 | `_ZN7WebCore12BlobRegistryD0Ev` | `GKDQvZF6sRk` |
-| `_ZN7WebCore12BlobRegistryD1Ev` | `BDv+BtxRrDw` |
-| `_ZN7WebCore12BlobRegistryD2Ev` | `HeTyl3dKJxs` |
 | `_ZN7WebCore12CSSStyleRule15setSelectorTextERKN3WTF6StringE` | `Dn4hfvMyAFQ` |
 | `_ZN7WebCore12CSSStyleRule5styleEv` | `YW1tv-1DCUw` |
 | `_ZN7WebCore12CryptoKeyAES9importRawENS_25CryptoAlgorithmIdentifierEON3WTF6VectorIhLm0ENS2_15CrashOnOverflowELm16ENS2_10FastMallocEEEbi` | `K6ZnlaOFL+0` |
@@ -2379,8 +2319,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore13MediaStrategyC2ERKS0_` | `w3lhMQ7YIM8` |
 | `_ZN7WebCore13MediaStrategyC2Ev` | `O+e+IS12924` |
 | `_ZN7WebCore13MediaStrategyD0Ev` | `HSQ3lpRwL2E` |
-| `_ZN7WebCore13MediaStrategyD1Ev` | `p480YiSI5ME` |
-| `_ZN7WebCore13MediaStrategyD2Ev` | `Tp34V5MfLI4` |
 | `_ZN7WebCore13MutationEvent17initMutationEventERKN3WTF10AtomStringEbbPNS_4NodeERKNS1_6StringES9_S9_t` | `EpmkRKzqbXw` |
 | `_ZN7WebCore13NodeTraversal13deepLastChildERNS_4NodeE` | `YMdfx4CK+Jo` |
 | `_ZN7WebCore13NodeTraversal19nextAncestorSiblingERKNS_4NodeE` | `E0o0m00RS1E` |
@@ -2476,8 +2414,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14LoaderStrategyC2ERKS0_` | `jSddVL0G9xk` |
 | `_ZN7WebCore14LoaderStrategyC2Ev` | `k4-n-E3wOE4` |
 | `_ZN7WebCore14LoaderStrategyD0Ev` | `EHrOTTgMxXo` |
-| `_ZN7WebCore14LoaderStrategyD1Ev` | `DBfLmGdgef0` |
-| `_ZN7WebCore14LoaderStrategyD2Ev` | `UE3oF6rx8nk` |
 | `_ZN7WebCore14LoggedInStatus13setTimeToLiveEN3WTF7SecondsE` | `3DFYSB4Xk68` |
 | `_ZN7WebCore14LoggedInStatus6createERKNS_17RegistrableDomainERKN3WTF6StringENS0_19CredentialTokenTypeENS0_18AuthenticationTypeE` | `NDfv8voZjPU` |
 | `_ZN7WebCore14LoggedInStatus6createERKNS_17RegistrableDomainERKN3WTF6StringENS0_19CredentialTokenTypeENS0_18AuthenticationTypeENS4_7SecondsE` | `iZ+sJFzLU7U` |
@@ -2543,8 +2479,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14SecurityPolicy29addOriginAccessAllowlistEntryERKNS_14SecurityOriginERKN3WTF6StringES7_b` | `UjUPSlx8Hzc` |
 | `_ZN7WebCore14SecurityPolicy32removeOriginAccessAllowlistEntryERKNS_14SecurityOriginERKN3WTF6StringES7_b` | `JIHFGaq4brI` |
 | `_ZN7WebCore14SocketProviderC2Ev` | `3tUO7QWZzvo` |
-| `_ZN7WebCore14SocketProviderD1Ev` | `LIB9DiyTbJk` |
-| `_ZN7WebCore14SocketProviderD2Ev` | `mYw-ELNDTOg` |
 | `_ZN7WebCore14StaticNodeListD0Ev` | `rbngEtORXxs` |
 | `_ZN7WebCore14StaticNodeListD1Ev` | `eg2lXvjFIPQ` |
 | `_ZN7WebCore14StaticNodeListD2Ev` | `S6Sf-zsPTgc` |
@@ -2644,8 +2578,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore15HitTestLocationC1Ev` | `FtC9uKqXDjg` |
 | `_ZN7WebCore15HitTestLocationC2ERKS0_` | `oliwAKLVWgM` |
 | `_ZN7WebCore15HitTestLocationC2Ev` | `7rCiCCIa8Jo` |
-| `_ZN7WebCore15HitTestLocationD1Ev` | `KpbPWzWAgCM` |
-| `_ZN7WebCore15HitTestLocationD2Ev` | `5WZsWfoc3GQ` |
 | `_ZN7WebCore15JSDOMWindowBase14finishCreationERN3JSC2VMEPNS_13JSWindowProxyE` | `W-cGzhINllg` |
 | `_ZN7WebCore15JSDOMWindowBase14updateDocumentEv` | `LBzty5qElcE` |
 | `_ZN7WebCore15JSDOMWindowBase15createStructureERN3JSC2VMENS1_7JSValueE` | `GEjhu-eMbeY` |
@@ -2717,8 +2649,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore15XPathExpressionD2Ev` | `RhG8+YJU75Q` |
 | `_ZN7WebCore15XPathNSResolverC2Ev` | `FPwp7ypjzlc` |
 | `_ZN7WebCore15XPathNSResolverD0Ev` | `MhXub7fXkKw` |
-| `_ZN7WebCore15XPathNSResolverD1Ev` | `61IVWsR1+yw` |
-| `_ZN7WebCore15XPathNSResolverD2Ev` | `138vohStwzY` |
 | `_ZN7WebCore15addToBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObjectENS0_7JSValueE` | `cvfT6ImYn30` |
 | `_ZN7WebCore15clearBackingMapERN3JSC14JSGlobalObjectERNS0_8JSObjectE` | `fVGDgMU9zbw` |
 | `_ZN7WebCore15clearBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObjectE` | `vOwhzBrEV4E` |
@@ -2764,8 +2694,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16DOMGuardedObjectD2Ev` | `G4yQyiIWb2s` |
 | `_ZN7WebCore16DatabaseProviderC2Ev` | `ycSZmq4JInA` |
 | `_ZN7WebCore16DatabaseProviderD0Ev` | `mRQXgXKYsCo` |
-| `_ZN7WebCore16DatabaseProviderD1Ev` | `x0rDFBY8wus` |
-| `_ZN7WebCore16DatabaseProviderD2Ev` | `sfyZ8ToBf0M` |
 | `_ZN7WebCore16DeviceMotionData6createEv` | `nRNa+ZeFvnY` |
 | `_ZN7WebCore16FileReaderLoader5startEPNS_22ScriptExecutionContextERNS_4BlobE` | `w9LQhp4wNfE` |
 | `_ZN7WebCore16FileReaderLoader6cancelEv` | `zRiYco2OGYk` |
@@ -2916,7 +2844,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16TrackPrivateBaseC2Ev` | `kU02TR5VIpU` |
 | `_ZN7WebCore16TrackPrivateBaseD0Ev` | `s1DS0Vvz-18` |
 | `_ZN7WebCore16TrackPrivateBaseD1Ev` | `tXwdR3KKGTY` |
-| `_ZN7WebCore16TrackPrivateBaseD2Ev` | `Bf-1cIE-brw` |
 | `_ZN7WebCore16TrackPrivateBasenaEmPv` | `vZaJVJV+K7M` |
 | `_ZN7WebCore16TrackPrivateBasenwEm10NotNullTagPv` | `jm8YSQFNhDk` |
 | `_ZN7WebCore16TrackPrivateBasenwEmPv` | `oxVasBZxFVE` |
@@ -3093,8 +3020,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18ImageBufferBackend19sinkIntoNativeImageEv` | `Y2qIwrc5PnQ` |
 | `_ZN7WebCore18ImageBufferBackend22convertToLuminanceMaskEv` | `ZcXGHz0Se7k` |
 | `_ZN7WebCore18ImageBufferBackendD0Ev` | `suczT1Sa7kc` |
-| `_ZN7WebCore18ImageBufferBackendD1Ev` | `pfBItkEwD0U` |
-| `_ZN7WebCore18ImageBufferBackendD2Ev` | `LwfoWagdxPw` |
 | `_ZN7WebCore18InspectorPageAgent7frameIdEPNS_5FrameE` | `Flv4OG+-cjQ` |
 | `_ZN7WebCore18JSHTMLImageElement14getConstructorERN3JSC2VMEPKNS1_14JSGlobalObjectE` | `fKMBLdIP74k` |
 | `_ZN7WebCore18JSHTMLImageElement15createPrototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE` | `HhyDCyUZAGE` |
@@ -3367,8 +3292,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore20ISOOriginalFormatBoxaSERKS0_` | `rIT2ClXDu7Q` |
 | `_ZN7WebCore20LowPowerModeNotifierC1EON3WTF8FunctionIFvbEEE` | `iraaucgzhMA` |
 | `_ZN7WebCore20LowPowerModeNotifierC2EON3WTF8FunctionIFvbEEE` | `-N8JU4FqoZg` |
-| `_ZN7WebCore20LowPowerModeNotifierD1Ev` | `OBbhBuxmNpQ` |
-| `_ZN7WebCore20LowPowerModeNotifierD2Ev` | `t9F9hDCrx8s` |
 | `_ZN7WebCore20NetworkStateNotifier11addListenerEON3WTF8FunctionIFvbEEE` | `7pOP1-HcGd8` |
 | `_ZN7WebCore20NetworkStateNotifier6onLineEv` | `N7xnOTDMh1s` |
 | `_ZN7WebCore20NetworkStateNotifier9singletonEv` | `u2gfAW6xw8k` |
@@ -3393,8 +3316,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore20PasteboardCustomDataD1Ev` | `jgrJPZW1x8o` |
 | `_ZN7WebCore20PasteboardCustomDataD2Ev` | `KOgTsORWgd4` |
 | `_ZN7WebCore20PasteboardCustomDataaSERKS0_` | `CbNwLqSqKDw` |
-| `_ZN7WebCore20PasteboardWriterData10WebContentD1Ev` | `4rn5Ptg2kuE` |
-| `_ZN7WebCore20PasteboardWriterData10WebContentD2Ev` | `qMwyrQPxwc4` |
 | `_ZN7WebCore20PasteboardWriterDataC1Ev` | `KhG5XEHZYsM` |
 | `_ZN7WebCore20PasteboardWriterDataC2Ev` | `H-PxK0DNH70` |
 | `_ZN7WebCore20PasteboardWriterDataD1Ev` | `EDHPIv3WKb0` |
@@ -3403,8 +3324,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore20RenderEmbeddedObject37setUnavailablePluginIndicatorIsHiddenEb` | `Snq9yuqDfvY` |
 | `_ZN7WebCore20RenderEmbeddedObject44setPluginUnavailabilityReasonWithDescriptionENS0_26PluginUnavailabilityReasonERKN3WTF6StringE` | `VVKQCCyv0Hc` |
 | `_ZN7WebCore20ResourceHandleClientC2Ev` | `VUHgtZo50Xo` |
-| `_ZN7WebCore20ResourceHandleClientD1Ev` | `QfgcM9i1GVI` |
-| `_ZN7WebCore20ResourceHandleClientD2Ev` | `K3HAYA0cG6w` |
 | `_ZN7WebCore20ResourceLoadObserver14sharedIfExistsEv` | `wwNmjWmlsls` |
 | `_ZN7WebCore20ResourceLoadObserver6sharedEv` | `IClE1UosCoM` |
 | `_ZN7WebCore20ResourceLoadObserver9setSharedERS0_` | `TXmUfk23SAk` |
@@ -3487,8 +3406,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore21InspectorFrontendHost28addSelfToGlobalObjectInWorldERNS_15DOMWrapperWorldE` | `f0uoqUwlUG4` |
 | `_ZN7WebCore21InspectorFrontendHostC1EPNS_23InspectorFrontendClientEPNS_4PageE` | `-KdbpcGgEXU` |
 | `_ZN7WebCore21InspectorFrontendHostC2EPNS_23InspectorFrontendClientEPNS_4PageE` | `Sdm1lxP+5yA` |
-| `_ZN7WebCore21InspectorFrontendHostD1Ev` | `fN7BnrWdcd0` |
-| `_ZN7WebCore21InspectorFrontendHostD2Ev` | `7UdG6FtbrJg` |
 | `_ZN7WebCore21JSCSSStyleDeclaration14getConstructorERN3JSC2VMEPKNS1_14JSGlobalObjectE` | `eqpr6i37N7Q` |
 | `_ZN7WebCore21JSCSSStyleDeclaration15createPrototypeERN3JSC2VMERNS_17JSDOMGlobalObjectE` | `T327+NdBshc` |
 | `_ZN7WebCore21JSCSSStyleDeclaration15createStructureERN3JSC2VMEPNS1_14JSGlobalObjectENS1_7JSValueE` | `f+00KPkkmWE` |
@@ -3517,8 +3434,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore21MediaRecorderProviderC1Ev` | `yZ6tARqyAas` |
 | `_ZN7WebCore21MediaRecorderProviderC2ERKS0_` | `5euVemDnv+M` |
 | `_ZN7WebCore21MediaRecorderProviderC2Ev` | `NpFXqFyIxOY` |
-| `_ZN7WebCore21MediaRecorderProviderD1Ev` | `xEjBSjulggc` |
-| `_ZN7WebCore21MediaRecorderProviderD2Ev` | `sN-LluSZTCQ` |
 | `_ZN7WebCore21MediaRecorderProvideraSERKS0_` | `n1fVBauLrig` |
 | `_ZN7WebCore21MediaRecorderProvidernaEmPv` | `glOjchjSBHQ` |
 | `_ZN7WebCore21MediaRecorderProvidernwEmPv` | `cO+5GDZdVq8` |
@@ -3585,8 +3500,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22CanvasRenderingContext5derefEv` | `ASfhwEyh1cI` |
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformDecryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `lC6NyPIlPns` |
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformEncryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `D4Jb9-xqqBk` |
-| `_ZN7WebCore22DefaultFilterOperationD1Ev` | `FDStlKcia7Y` |
-| `_ZN7WebCore22DefaultFilterOperationD2Ev` | `ifjgccZulhg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient10sendH2PingERKN3WTF3URLEONS1_17CompletionHandlerIFvONSt12experimental15fundamentals_v38expectedINS1_7SecondsENS_13ResourceErrorEEEEEE` | `aQZkTZSB9Q4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient11prefetchDNSERKN3WTF6StringE` | `mkI7vGRy-U4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient12dispatchShowEv` | `ysdXgAoy-XY` |
@@ -3646,8 +3559,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClientC1Ev` | `GcUPkO7ruRw` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC2ERKS0_` | `YQZ9c5jMwJc` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC2Ev` | `DrzwGvqQVZc` |
-| `_ZN7WebCore22EmptyFrameLoaderClientD1Ev` | `2wiYanBFmKc` |
-| `_ZN7WebCore22EmptyFrameLoaderClientD2Ev` | `mgFnQx7tp0M` |
 | `_ZN7WebCore22EmptyFrameLoaderClientaSERKS0_` | `M+XOGquY4SY` |
 | `_ZN7WebCore22FontCascadeDescriptionC1Ev` | `q1GAmySAovY` |
 | `_ZN7WebCore22FontCascadeDescriptionC2Ev` | `zkLhehDz0Mc` |
@@ -3878,7 +3789,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore27ContentSecurityPolicyClientC2Ev` | `dQ3p09wGMvQ` |
 | `_ZN7WebCore27ContentSecurityPolicyClientD0Ev` | `UoaDfV72Frw` |
 | `_ZN7WebCore27ContentSecurityPolicyClientD1Ev` | `cMEdJ1S+9Pk` |
-| `_ZN7WebCore27ContentSecurityPolicyClientD2Ev` | `9loQX1sfAyo` |
 | `_ZN7WebCore27ContentSecurityPolicyClientaSERKS0_` | `YrDZBurK+Fc` |
 | `_ZN7WebCore27DeviceOrientationClientMockC1Ev` | `Tr-khnFGJqA` |
 | `_ZN7WebCore27DeviceOrientationClientMockC2Ev` | `E0QCvEG2ONQ` |
@@ -3941,8 +3851,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsC1Ev` | `WvNZUdSvf6E` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsC2ERKS1_` | `1KYfLN5YfnI` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsC2Ev` | `SrZqj8GEkmM` |
-| `_ZN7WebCore28InspectorFrontendClientLocal8SettingsD1Ev` | `i0Ipda+ehgc` |
-| `_ZN7WebCore28InspectorFrontendClientLocal8SettingsD2Ev` | `WpOA+METUbw` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsaSERKS1_` | `8S2712b7L7o` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsnaEmPv` | `wWhSR9TfAr4` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsnwEmPv` | `F+EdH4XRvTw` |
@@ -3972,8 +3880,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore30InvertLightnessFilterOperation6createEv` | `hw4Jl+IMDhA` |
 | `_ZN7WebCore30InvertLightnessFilterOperationC1Ev` | `Xorc5+tFQm8` |
 | `_ZN7WebCore30InvertLightnessFilterOperationC2Ev` | `Ug6uMIR1xcs` |
-| `_ZN7WebCore30InvertLightnessFilterOperationD1Ev` | `9qmxcoe8Y4A` |
-| `_ZN7WebCore30InvertLightnessFilterOperationD2Ev` | `AhNHpLBVqAI` |
 | `_ZN7WebCore30closestWordBoundaryForPositionERKNS_15VisiblePositionE` | `wGksbXEKspk` |
 | `_ZN7WebCore30forwardForEachCallToBackingMapERNS_17JSDOMGlobalObjectERN3JSC9CallFrameERNS2_8JSObjectE` | `ohECoBXM0fg` |
 | `_ZN7WebCore30forwardForEachCallToBackingSetERNS_17JSDOMGlobalObjectERN3JSC9CallFrameERNS2_8JSObjectE` | `JMwBt9GFCBo` |
@@ -3981,8 +3887,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore30rejectPromiseWithThisTypeErrorERN3JSC14JSGlobalObjectEPKcS4_` | `dLvYqphQ+l8` |
 | `_ZN7WebCore30rejectPromiseWithThisTypeErrorERNS_15DeferredPromiseEPKcS3_` | `KAC-e9-fPB0` |
 | `_ZN7WebCore30throwArgumentMustBeObjectErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEjPKcS6_S6_` | `nL9HXk4CVXY` |
-| `_ZN7WebCore31BasicColorMatrixFilterOperationD1Ev` | `u5QsY4w3PH4` |
-| `_ZN7WebCore31BasicColorMatrixFilterOperationD2Ev` | `eYib7znGCTY` |
 | `_ZN7WebCore31CrossOriginPreflightResultCache5clearEv` | `KVJX+ztPuYI` |
 | `_ZN7WebCore31CrossOriginPreflightResultCache9singletonEv` | `ZJYGaq4z9Pc` |
 | `_ZN7WebCore31MediaEngineConfigurationFactory10enableMockEv` | `0lZViUngUpg` |
@@ -4017,8 +3921,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE` | `2sTzwlghBUU` |
 | `_ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv` | `XTRBMujlKzo` |
 | `_ZN7WebCore36visiblePositionForPositionWithOffsetERKNS_15VisiblePositionEi` | `GwfKLihv7-o` |
-| `_ZN7WebCore37BasicComponentTransferFilterOperationD1Ev` | `gE+nHqJuNlU` |
-| `_ZN7WebCore37BasicComponentTransferFilterOperationD2Ev` | `tcVeGFc80oQ` |
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisabler39setCrossOriginAccessControlCheckEnabledEb` | `ludyUJShlO0` |
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisabler9singletonEv` | `0TEnTEgQABA` |
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisablerC1ERKS0_` | `Fl4Z1PFgaro` |
@@ -4026,8 +3928,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisablerC2ERKS0_` | `PAZLRuN7rC8` |
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisablerC2Ev` | `gev25uQduyQ` |
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisablerD0Ev` | `UMkUmoECbCc` |
-| `_ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev` | `du6k+jO8Pno` |
-| `_ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev` | `cAaLgTefBKE` |
 | `_ZN7WebCore37CrossOriginAccessControlCheckDisableraSERKS0_` | `q+SQjILxj1o` |
 | `_ZN7WebCore37WidgetHierarchyUpdatesSuspensionScope11moveWidgetsEv` | `XDdMkcoXOGE` |
 | `_ZN7WebCore37computeFreshnessLifetimeForHTTPFamilyERKNS_16ResourceResponseEN3WTF8WallTimeE` | `bbkcYO2xEa8` |
@@ -4045,8 +3945,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore4FontD1Ev` | `v9N11LJEe1M` |
 | `_ZN7WebCore4FontD2Ev` | `MxmYa9wUIWk` |
 | `_ZN7WebCore4Icon18createIconForFilesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE` | `KJgvss90XpU` |
-| `_ZN7WebCore4IconD1Ev` | `uFupHs7z5AI` |
-| `_ZN7WebCore4IconD2Ev` | `NPbIhNzp7tY` |
 | `_ZN7WebCore4Node10childNodesEv` | `AChB3w1OeOg` |
 | `_ZN7WebCore4Node10renderRectEPb` | `X8YZWdgpCTs` |
 | `_ZN7WebCore4Node11appendChildERS0_` | `nKaqdLF-yoo` |
@@ -4689,8 +4587,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc11IsoPageBase18allocatePageMemoryEv` | `ahGKKIJ8ZTg` |
 | `_ZN7bmalloc11IsoTLSEntryC2Em` | `6-GmQWtFE6Y` |
 | `_ZN7bmalloc11IsoTLSEntryD0Ev` | `psjVBg5y6OM` |
-| `_ZN7bmalloc11IsoTLSEntryD1Ev` | `JmOEMbPsk8A` |
-| `_ZN7bmalloc11IsoTLSEntryD2Ev` | `r4zVk342NH4` |
 | `_ZN7bmalloc11IsoTLSEntrydlEPv` | `Dg05dR7Cut0` |
 | `_ZN7bmalloc11IsoTLSEntrynaEmPv` | `v3EVw6+3tLM` |
 | `_ZN7bmalloc11IsoTLSEntrynaEm` | `vMsePZhPOLY` |
@@ -4709,8 +4605,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc15IsoHeapImplBase9footprintEv` | `HorGWGukVpo` |
 | `_ZN7bmalloc15IsoHeapImplBaseC2ERNS_5MutexE` | `PyFQ+tpKjuc` |
 | `_ZN7bmalloc15IsoHeapImplBaseD0Ev` | `mLfgWSYY3pY` |
-| `_ZN7bmalloc15IsoHeapImplBaseD1Ev` | `lkqZwKJZ0oo` |
-| `_ZN7bmalloc15IsoHeapImplBaseD2Ev` | `Tv53+aRRcwY` |
 | `_ZN7bmalloc15IsoHeapImplBasedlEPv` | `3Xsf6cttiRo` |
 | `_ZN7bmalloc15IsoHeapImplBasenaEmPv` | `T4RZ2R4QNj8` |
 | `_ZN7bmalloc15IsoHeapImplBasenaEm` | `lekMQNRdlRs` |
@@ -4726,7 +4620,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc5Cache8scavengeENS_8HeapKindE` | `Z+-FesiIsPQ` |
 | `_ZN7bmalloc6IsoTLS13ensureEntriesEj` | `XNux2a0QhQ8` |
 | `_ZN7bmalloc6IsoTLS8scavengeEv` | `4Lq+4mBCicA` |
-| `_ZN7bmalloc8FreeListD1Ev` | `nun+WRYNLXM` |
 | `_ZN7bmalloc9Allocator12allocateImplEmmNS_13FailureActionE` | `CYJC0YsH4u4` |
 | `_ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm` | `e6cCjttumPM` |
 | `_ZN7bmalloc9Scavenger8scheduleEm` | `KYfHQoyY9Uc` |
@@ -4815,8 +4708,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector15RemoteInspector6ClientC2ERKS1_` | `fm5iMf1GSvg` |
 | `_ZN9Inspector15RemoteInspector6ClientC2Ev` | `VwdSDjyPJ6s` |
 | `_ZN9Inspector15RemoteInspector6ClientD0Ev` | `qM6EjseJ7ro` |
-| `_ZN9Inspector15RemoteInspector6ClientD1Ev` | `Zt2jWHJQ3OA` |
-| `_ZN9Inspector15RemoteInspector6ClientD2Ev` | `e90ZQRXzAXE` |
 | `_ZN9Inspector15RemoteInspector7connectEj` | `4TuXOTNLRZ0` |
 | `_ZN9Inspector15RemoteInspectorC1Ev` | `XK+J28qoso8` |
 | `_ZN9Inspector15RemoteInspectorC2Ev` | `9GV+bfjgtYw` |
@@ -5159,13 +5050,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector27CSSBackendDispatcherHandlerC2ERKS0_` | `EgHudGJawMs` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerC2Ev` | `CEQjJzzBB+M` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerD0Ev` | `k801tcAVuJg` |
-| `_ZN9Inspector27CSSBackendDispatcherHandlerD1Ev` | `e2jQsb44n7g` |
-| `_ZN9Inspector27CSSBackendDispatcherHandlerD2Ev` | `X33tJyO5k+E` |
 | `_ZN9Inspector27DOMBackendDispatcherHandlerC2ERKS0_` | `6ZXtFYaM5Os` |
 | `_ZN9Inspector27DOMBackendDispatcherHandlerC2Ev` | `I+pR0r79q1A` |
 | `_ZN9Inspector27DOMBackendDispatcherHandlerD0Ev` | `Nj40sbvN+pk` |
-| `_ZN9Inspector27DOMBackendDispatcherHandlerD1Ev` | `ne3CqrAouMo` |
-| `_ZN9Inspector27DOMBackendDispatcherHandlerD2Ev` | `zINGw6gUtWg` |
 | `_ZN9Inspector27DOMStorageBackendDispatcher6createERNS_17BackendDispatcherEPNS_34DOMStorageBackendDispatcherHandlerE` | `IU2hAFuSeo0` |
 | `_ZN9Inspector27DOMStorageBackendDispatcherC1ERNS_17BackendDispatcherEPNS_34DOMStorageBackendDispatcherHandlerE` | `61EC2LTV350` |
 | `_ZN9Inspector27DOMStorageBackendDispatcherC2ERNS_17BackendDispatcherEPNS_34DOMStorageBackendDispatcherHandlerE` | `KP5mNSzvl9M` |
@@ -5194,8 +5081,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector28HeapBackendDispatcherHandlerC2ERKS0_` | `IDYAnLE0+kM` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerC2Ev` | `tai-HSaPBZU` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerD0Ev` | `k4HfprWhc0Q` |
-| `_ZN9Inspector28HeapBackendDispatcherHandlerD1Ev` | `LzcJ0RIItxI` |
-| `_ZN9Inspector28HeapBackendDispatcherHandlerD2Ev` | `BLbG44GXk8c` |
 | `_ZN9Inspector28InspectorScriptProfilerAgent16trackingCompleteEv` | `L7naR6ftYz4` |
 | `_ZN9Inspector28InspectorScriptProfilerAgent17didEvaluateScriptEN3WTF7SecondsEN3JSC15ProfilingReasonE` | `2SiHIPaxvxw` |
 | `_ZN9Inspector28InspectorScriptProfilerAgent18willEvaluateScriptEv` | `hgbtIqjf5jo` |
@@ -5213,13 +5098,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector28PageBackendDispatcherHandlerC2ERKS0_` | `Eh7uskcjFl4` |
 | `_ZN9Inspector28PageBackendDispatcherHandlerC2Ev` | `xAE5zO3kEi0` |
 | `_ZN9Inspector28PageBackendDispatcherHandlerD0Ev` | `AEnBqqmNJBA` |
-| `_ZN9Inspector28PageBackendDispatcherHandlerD1Ev` | `P9vsWZVDqJ8` |
-| `_ZN9Inspector28PageBackendDispatcherHandlerD2Ev` | `Yp89fv3xmKU` |
 | `_ZN9Inspector29AuditBackendDispatcherHandlerC2ERKS0_` | `SZRzgfkPiGA` |
 | `_ZN9Inspector29AuditBackendDispatcherHandlerC2Ev` | `4hsvw3h04JU` |
 | `_ZN9Inspector29AuditBackendDispatcherHandlerD0Ev` | `m+Ju06sMg5k` |
-| `_ZN9Inspector29AuditBackendDispatcherHandlerD1Ev` | `AUqKSgnOwRc` |
-| `_ZN9Inspector29AuditBackendDispatcherHandlerD2Ev` | `3AWH2FaJfxE` |
 | `_ZN9Inspector29SupplementalBackendDispatcherC2ERNS_17BackendDispatcherE` | `r2RAGCixu6c` |
 | `_ZN9Inspector29SupplementalBackendDispatcherD0Ev` | `WmpYOowrcIE` |
 | `_ZN9Inspector29SupplementalBackendDispatcherD1Ev` | `AjSWJSHcOIk` |
@@ -5227,40 +5108,26 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector30CanvasBackendDispatcherHandlerC2ERKS0_` | `60+np84nu94` |
 | `_ZN9Inspector30CanvasBackendDispatcherHandlerC2Ev` | `eNLB1x1rwMk` |
 | `_ZN9Inspector30CanvasBackendDispatcherHandlerD0Ev` | `Rcqpep1AOTM` |
-| `_ZN9Inspector30CanvasBackendDispatcherHandlerD1Ev` | `hExkzfpmDKw` |
-| `_ZN9Inspector30CanvasBackendDispatcherHandlerD2Ev` | `MWQQeS9F9Hg` |
 | `_ZN9Inspector30TargetBackendDispatcherHandlerC2ERKS0_` | `9RYsSzqyNrM` |
 | `_ZN9Inspector30TargetBackendDispatcherHandlerC2Ev` | `vfXUizQrSRo` |
 | `_ZN9Inspector30TargetBackendDispatcherHandlerD0Ev` | `qjHCYVd2NH0` |
-| `_ZN9Inspector30TargetBackendDispatcherHandlerD1Ev` | `jS5DA4y606Q` |
-| `_ZN9Inspector30TargetBackendDispatcherHandlerD2Ev` | `2yAjfzUQhYU` |
 | `_ZN9Inspector30WorkerBackendDispatcherHandlerC2ERKS0_` | `3fxY0RvS5h0` |
 | `_ZN9Inspector30WorkerBackendDispatcherHandlerC2Ev` | `JZZchPyTk2k` |
 | `_ZN9Inspector30WorkerBackendDispatcherHandlerD0Ev` | `MPv4gGj4a4I` |
-| `_ZN9Inspector30WorkerBackendDispatcherHandlerD1Ev` | `l7Am6d7QKnE` |
-| `_ZN9Inspector30WorkerBackendDispatcherHandlerD2Ev` | `1ktwPRAf19w` |
 | `_ZN9Inspector31BrowserBackendDispatcherHandlerC2ERKS0_` | `Uj4E1Axicy4` |
 | `_ZN9Inspector31BrowserBackendDispatcherHandlerC2Ev` | `bAc0bWqJiE0` |
 | `_ZN9Inspector31BrowserBackendDispatcherHandlerD0Ev` | `w4tKwcFJp-c` |
-| `_ZN9Inspector31BrowserBackendDispatcherHandlerD1Ev` | `gayqtDapH2w` |
-| `_ZN9Inspector31BrowserBackendDispatcherHandlerD2Ev` | `RP9i-bN+790` |
 | `_ZN9Inspector31ConsoleBackendDispatcherHandlerC2ERKS0_` | `F3ILcSPTa-c` |
 | `_ZN9Inspector31ConsoleBackendDispatcherHandlerC2Ev` | `iBQ6lAQw5Hw` |
 | `_ZN9Inspector31ConsoleBackendDispatcherHandlerD0Ev` | `cEcdsDQcKXU` |
-| `_ZN9Inspector31ConsoleBackendDispatcherHandlerD1Ev` | `tPkqsYtozCE` |
-| `_ZN9Inspector31ConsoleBackendDispatcherHandlerD2Ev` | `qPaL89nLj2M` |
 | `_ZN9Inspector31NetworkBackendDispatcherHandler20LoadResourceCallback11sendSuccessERKN3WTF6StringES5_i` | `g3ladeyxtWk` |
 | `_ZN9Inspector31NetworkBackendDispatcherHandler20LoadResourceCallbackD1Ev` | `6nkw2jvWJUY` |
 | `_ZN9Inspector31NetworkBackendDispatcherHandlerC2ERKS0_` | `wFpxQmjDScM` |
 | `_ZN9Inspector31NetworkBackendDispatcherHandlerC2Ev` | `zm2i2w7R9tU` |
 | `_ZN9Inspector31NetworkBackendDispatcherHandlerD0Ev` | `6eATaUH-V4Q` |
-| `_ZN9Inspector31NetworkBackendDispatcherHandlerD1Ev` | `cJkb9aUGrzA` |
-| `_ZN9Inspector31NetworkBackendDispatcherHandlerD2Ev` | `WKLgUAHhFxs` |
 | `_ZN9Inspector31RuntimeBackendDispatcherHandlerC2ERKS0_` | `ZVwY7ywc-0U` |
 | `_ZN9Inspector31RuntimeBackendDispatcherHandlerC2Ev` | `fK+DFgxPnbY` |
 | `_ZN9Inspector31RuntimeBackendDispatcherHandlerD0Ev` | `P01hbLcSwL8` |
-| `_ZN9Inspector31RuntimeBackendDispatcherHandlerD1Ev` | `psL2NgHxoHk` |
-| `_ZN9Inspector31RuntimeBackendDispatcherHandlerD2Ev` | `6rB5RFDqlLw` |
 | `_ZN9Inspector31ScriptProfilerBackendDispatcher6createERNS_17BackendDispatcherEPNS_38ScriptProfilerBackendDispatcherHandlerE` | `pvAkZRnxwHg` |
 | `_ZN9Inspector31ScriptProfilerBackendDispatcherC1ERNS_17BackendDispatcherEPNS_38ScriptProfilerBackendDispatcherHandlerE` | `3i2WgunIGIQ` |
 | `_ZN9Inspector31ScriptProfilerBackendDispatcherC2ERNS_17BackendDispatcherEPNS_38ScriptProfilerBackendDispatcherHandlerE` | `HVKPCah7GPU` |
@@ -5271,23 +5138,17 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector32DatabaseBackendDispatcherHandlerC2ERKS0_` | `B1a1QgRyfug` |
 | `_ZN9Inspector32DatabaseBackendDispatcherHandlerC2Ev` | `PL2LcQggy9Q` |
 | `_ZN9Inspector32DatabaseBackendDispatcherHandlerD0Ev` | `8XCozccg+jU` |
-| `_ZN9Inspector32DatabaseBackendDispatcherHandlerD1Ev` | `5dj7CsbAu2w` |
-| `_ZN9Inspector32DatabaseBackendDispatcherHandlerD2Ev` | `a7k0prJJpKA` |
 | `_ZN9Inspector32DatabaseBackendDispatcherHandleraSERKS0_` | `md5zoSWseNM` |
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerC2ERKS0_` | `JhsJWxsvkZg` |
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerC2Ev` | `tGIL+vkTlJA` |
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerD0Ev` | `TI5ES3rnuTI` |
-| `_ZN9Inspector32DebuggerBackendDispatcherHandlerD1Ev` | `Ea6Vodkv13Q` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcher13trackingStartEd` | `wf6EuM9IZW0` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatchernaEmPv` | `eIWOmJNeKUs` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatchernwEmPv` | `lcKHRKrE2sY` |
 | `_ZN9Inspector32TimelineBackendDispatcherHandlerC2ERKS0_` | `kFw-B-SsQUM` |
-| `_ZN9Inspector32TimelineBackendDispatcherHandlerD2Ev` | `WRfSxgIk43M` |
 | `_ZN9Inspector33AnimationBackendDispatcherHandlerC2ERKS0_` | `ueohGT35aPU` |
 | `_ZN9Inspector33AnimationBackendDispatcherHandlerC2Ev` | `Az0wDZ2JLeY` |
 | `_ZN9Inspector33AnimationBackendDispatcherHandlerD0Ev` | `sHIZ2KSx1C4` |
-| `_ZN9Inspector33AnimationBackendDispatcherHandlerD1Ev` | `fksEUwl6bJ8` |
-| `_ZN9Inspector33AnimationBackendDispatcherHandlerD2Ev` | `8LVL407LqN8` |
 | `_ZN9Inspector33ApplicationCacheBackendDispatcher6createERNS_17BackendDispatcherEPNS_40ApplicationCacheBackendDispatcherHandlerE` | `40j-usQaBwE` |
 | `_ZN9Inspector33ApplicationCacheBackendDispatcherC1ERNS_17BackendDispatcherEPNS_40ApplicationCacheBackendDispatcherHandlerE` | `DS4MYWsBtZM` |
 | `_ZN9Inspector33ApplicationCacheBackendDispatcherC2ERNS_17BackendDispatcherEPNS_40ApplicationCacheBackendDispatcherHandlerE` | `NDsGZA8ppAQ` |
@@ -5295,13 +5156,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector33InspectorBackendDispatcherHandlerC2ERKS0_` | `RSa71yEfRqU` |
 | `_ZN9Inspector33InspectorBackendDispatcherHandlerC2Ev` | `psb-WHk17uM` |
 | `_ZN9Inspector33InspectorBackendDispatcherHandlerD0Ev` | `REOBGOfo4WE` |
-| `_ZN9Inspector33InspectorBackendDispatcherHandlerD1Ev` | `CBNZ5OjzUdo` |
-| `_ZN9Inspector33InspectorBackendDispatcherHandlerD2Ev` | `Vt1kIfFn28M` |
 | `_ZN9Inspector33LayerTreeBackendDispatcherHandlerC2ERKS0_` | `p+K1iHfbEbY` |
 | `_ZN9Inspector33LayerTreeBackendDispatcherHandlerC2Ev` | `xnIArSSzecM` |
 | `_ZN9Inspector33LayerTreeBackendDispatcherHandlerD0Ev` | `ClO-QNFpK2k` |
-| `_ZN9Inspector33LayerTreeBackendDispatcherHandlerD1Ev` | `QOYZRDPTq94` |
-| `_ZN9Inspector33LayerTreeBackendDispatcherHandlerD2Ev` | `PYfXsUMOaic` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcher19networkStateUpdatedEb` | `hMmahzTAYpo` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcher29applicationCacheStatusUpdatedERKN3WTF6StringES4_i` | `WuHl28C+7k0` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatchernaEmPv` | `eaUO-kQF49o` |
@@ -5309,24 +5166,16 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerC2ERKS0_` | `ti05wqo4hwA` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerC2Ev` | `8Y6RLatuTeM` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerD0Ev` | `kfT6hC5SF+g` |
-| `_ZN9Inspector34DOMStorageBackendDispatcherHandlerD1Ev` | `8O9hi9-+3kE` |
-| `_ZN9Inspector34DOMStorageBackendDispatcherHandlerD2Ev` | `JNUH68bpuxI` |
 | `_ZN9Inspector34createScriptCallStackFromExceptionEPN3JSC14JSGlobalObjectEPNS0_9ExceptionEm` | `ynJ1rTAPsZU` |
 | `_ZN9Inspector35DOMDebuggerBackendDispatcherHandlerC2ERKS0_` | `NlMX-au+A9M` |
 | `_ZN9Inspector35DOMDebuggerBackendDispatcherHandlerC2Ev` | `54Tc57Y9FUA` |
 | `_ZN9Inspector35DOMDebuggerBackendDispatcherHandlerD0Ev` | `VF5HDDm3ZMk` |
-| `_ZN9Inspector35DOMDebuggerBackendDispatcherHandlerD1Ev` | `eV5igYrwsy0` |
-| `_ZN9Inspector35DOMDebuggerBackendDispatcherHandlerD2Ev` | `jcwLN-bFEMA` |
 | `_ZN9Inspector38ScriptProfilerBackendDispatcherHandlerC2ERKS0_` | `HK0XarL0FJ0` |
 | `_ZN9Inspector38ScriptProfilerBackendDispatcherHandlerC2Ev` | `4dhx-ioq00U` |
 | `_ZN9Inspector38ScriptProfilerBackendDispatcherHandlerD0Ev` | `yaBlj3xh9TA` |
-| `_ZN9Inspector38ScriptProfilerBackendDispatcherHandlerD1Ev` | `A+sAjT9zHM8` |
-| `_ZN9Inspector38ScriptProfilerBackendDispatcherHandlerD2Ev` | `pQktOxWPJUs` |
 | `_ZN9Inspector40ApplicationCacheBackendDispatcherHandlerC2ERKS0_` | `jHgwTMWTHPc` |
 | `_ZN9Inspector40ApplicationCacheBackendDispatcherHandlerC2Ev` | `YUU0Q9XyjqE` |
 | `_ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD0Ev` | `pbs5-GMRRKY` |
-| `_ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD1Ev` | `b2xdRCXjUlk` |
-| `_ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD2Ev` | `LVjM0Tcnov0` |
 | `_ZN9Inspector8Protocol13BindingTraitsINS0_7Runtime12EntryPreviewEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE` | `SHKtkCDxH6c` |
 | `_ZN9Inspector8Protocol13BindingTraitsINS0_7Runtime12RemoteObject4TypeEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE` | `kY+dD6kxIkY` |
 | `_ZN9Inspector8Protocol13BindingTraitsINS0_7Runtime12RemoteObject7SubtypeEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE` | `XWyKAz4u0EU` |
