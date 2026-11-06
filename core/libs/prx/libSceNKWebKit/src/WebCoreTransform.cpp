@@ -29,16 +29,6 @@ int ClampToInteger(float value) {
     return static_cast<int>(value);
 }
 
-int RoundToInteger(double value) {
-    if (value >= static_cast<double>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<double>(std::numeric_limits<int>::min()))) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(std::lround(value));
-}
-
 IntRect EnclosingIntRect(const FloatRect& rect) {
     int x = ClampToInteger(std::floor(rect.m_location.m_x));
     int y = ClampToInteger(std::floor(rect.m_location.m_y));
@@ -316,8 +306,8 @@ WebCore::IntSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_7IntSizeE(
     double width2 = static_cast<double>(size.m_width) * _ZNK7WebCore15AffineTransform6xScaleEv(self);
     double height2 = static_cast<double>(size.m_height) * _ZNK7WebCore15AffineTransform6yScaleEv(self);
     return WebCore::IntSize{
-        WebCore::RoundToInteger(width2),
-        WebCore::RoundToInteger(height2)
+        static_cast<int>(std::lround(width2)),
+        static_cast<int>(std::lround(height2))
     };
 }
 
@@ -344,8 +334,8 @@ WebCore::IntPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_8IntPoin
     double x2 = self->m_transform[0] * x + self->m_transform[2] * y + self->m_transform[4];
     double y2 = self->m_transform[1] * x + self->m_transform[3] * y + self->m_transform[5];
     return WebCore::IntPoint{
-        WebCore::RoundToInteger(x2),
-        WebCore::RoundToInteger(y2)
+        static_cast<int>(std::lround(x2)),
+        static_cast<int>(std::lround(y2))
     };
 }
 
