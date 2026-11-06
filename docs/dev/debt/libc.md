@@ -113,6 +113,7 @@
 - [ungetwc, fgetwc, fputwc, fputws and fgetws](../../../core/libs/prx/libc/src/StandardStreams.cpp) (libc) - a null stream returns -1 (or null) with errno set to `EINVAL` (22), aligning with wide stream defensive parameter checks. In the `libc.prx` shipped by titles (measured on PPSA07923), the console does not validate the stream pointer and faults with an access violation on `ungetwc`, `fgetwc`, `fputwc`, `fputws` and `fgetws` when passed a null stream.
 - [std::_Throw_C_error](../../../core/libs/prx/libc/src/RuntimeSupport.cpp) (libc) follows disassembly of a bundled PS5 `libc.prx`: maps 1 and 2 to generic error 35 (`resource_unavailable_try_again`), 3 to 16 (`device_or_resource_busy`), 4 to 22 (`invalid_argument`), and 5 to 1 (`operation_not_permitted`), throwing a guest `std::system_error` through the existing C++ error helper. Other values return without throwing. Other SDK versions have not been inspected
 
+
 - [snprintf and vsnprintf](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) accept any size up to `SIZE_MAX`, as a payload process on a PS5 (firmware 13.60) does. A null buffer with a nonzero size throws here, where the console writes through it, and a result longer than `INT_MAX` throws, which was not measured
 
 - [fpurge](../../../core/libs/prx/libc/src/StreamPurge.cpp) follows FreeBSD 11.4 [fpurge.c](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/stdio/fpurge.c): discard buffered input, pushback and output without writing or seeking, preserving EOF and error status, and report `EBADF` for a closed stream. Console behavior is unverified. The Windows path resets the existing host UCRT buffer representation; Linux and macOS use their native purge operations. Null streams throw as existing stream wrappers do.
@@ -124,6 +125,8 @@
 - [HostOpenName, fopen, opendir, rename](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc) - on Windows, paths with DOS device names (CON, PRN, AUX, NUL, COM1-9, COM¹-³, LPT1-9, LPT¹-³, CONIN$, CONOUT$) or trailing dots/spaces are prefixed with the `\\?\` verbatim prefix to prevent Win32 normalization from rewriting or stripping them. Host NTFS/FAT filesystems still reject POSIX-valid characters disallowed by Windows (`\`, `/`, `:`, `*`, `?`, `"`, `<`, `>`, `|`), and relative paths are normalized against the process current directory before verbatim prefixing.
 
 ### Functional
+
+- [insque and remque](../../../core/libs/prx/libc/src/Queue.cpp) (libc) have not been verified on a console. A null element throws; behavior with corrupted links is unverified. Otherwise, the queue operations follow FreeBSD 11.4 [insque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/insque.c) and [remque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/remque.c).
 
 - [Call tracing](../../../core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp) (libc) - an unlabeled import whose function has no loaded host image, such as a generated code address, retains an empty library label; `all` still records it. Otherwise missing labels use the defining host module filename; supplied labels are retained.
 
