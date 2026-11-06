@@ -34,11 +34,6 @@ int APS5_VABI freetypeLegacyGetBDFProperty_nid_no_patch() {
 }
 APS5_EXPORT("4kVFLShKGkQ", freetypeLegacyGetBDFProperty_nid_no_patch);
 
-int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("C3-qsnriefE", freetypeLegacyBitmapBlend_nid_no_patch);
-
 int APS5_VABI freetypeLegacyFtcManagerNew_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
