@@ -641,6 +641,25 @@ void TestRingBufBounds() {
     Require(refused && empty.writePointer == empty.buf && _ZNK3sce2np7RingBuf11GetDataSizeEv(&empty) == 0,
         "a checkin for write whose size wraps the write pointer is refused");
     _ZN3sce2np7RingBuf7DestroyEv(&empty);
+
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-expand") == 0, "a memory heap is created for expansion");
+    NpAllocatorEx heapAllocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1235, &heapAllocator);
+    NpRingBufMemory expanding {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&expanding, &heapAllocator);
+    Require(_ZN3sce2np13RingBufMemory4InitEm(&expanding, 4) == 0, "a memory ring buffer is initialized for expansion");
+    std::uint8_t* const original = expanding.ringBuf.buf;
+    refused = false;
+    try {
+        _ZN3sce2np13RingBufMemory6ExpandEm(&expanding, SIZE_MAX - 2);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && expanding.ringBuf.bufSize == 4 && expanding.ringBuf.buf == original,
+        "an expansion whose new size overflows is refused before the storage is reallocated");
+    _ZN3sce2np13RingBufMemory7DestroyEv(&expanding);
+    sceNpMemoryHeapDestroy(&memoryHeap);
 }
 
 void TestTitleIdObjects() {
