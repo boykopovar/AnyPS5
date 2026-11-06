@@ -59,9 +59,28 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 
+#include <cstring>
 #include <stdexcept>
 
+namespace {
+
+using PkeyBitsFunction = int (APS5_VABI *)(const LibreSsl3EvpPkey*);
+constexpr std::size_t PkeyBitsOffset = 104;
+
+static_assert(sizeof(PkeyBitsFunction) == 8);
+static_assert(offsetof(LibreSsl3EvpPkey, method) == 8);
+
+} // namespace
+
 extern "C" {
+
+int APS5_VABI EVP_PKEY_bits_nid_postfix(const LibreSsl3EvpPkey* key) {
+    if (!key || !key->method)
+        return 0;
+    PkeyBitsFunction bits;
+    std::memcpy(&bits, static_cast<const unsigned char*>(key->method) + PkeyBitsOffset, sizeof(bits));
+    return bits ? bits(key) : 0;
+}
 
 int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key) {
     if (!key)
@@ -85,6 +104,12 @@ int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
     if (!ctx)
         throw std::invalid_argument("SSL_CTX_up_ref requires a context");
     return Retain_nid_no_patch(ctx->references);
+}
+
+int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl3Bio* bio) {
+    if (!bio)
+        throw std::invalid_argument("BIO_up_ref requires a BIO");
+    return Retain_nid_no_patch(bio->references);
 }
 
 void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q) {
