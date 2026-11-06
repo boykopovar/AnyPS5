@@ -30,6 +30,7 @@
 - [EVP digest helpers](../../../core/libs/prx/libSceLibreSsl3/src/EvpDigest.cpp) - host fallback differs from [13.42 native-module emulation](https://github.com/boykopovar/AnyPS5/pull/10960#issuecomment-6402692742): independent modules use 48/40-byte contexts and state-size offsets 0x68/0x44. Host ELF lookup instead shares legacy 120/48-byte records with the opaque l3 types. Custom methods require this layout and SysV callbacks; untagged foreign layouts cannot be detected. Our new/init/free helpers follow [4.0 operation order](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_digest.c). Fallback version, error-queue and retry behaviour remain legacy; full 4.0 equivalence is unverified. Windows parent-NID aliases provide legacy forwarders, but mixed Windows execution and native layout/routing interoperability are unverified. macOS execution, physical-console behaviour and other firmware layouts/routing remain unverified.
 - [Common EVP imports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) require implemented legacy providers and retain their version, error-queue and retry semantics; full LibreSSL 4.0.0 API parity is unverified. ELF dependency lookup supplies these providers; Windows uses the parent-NID aliases in `ParentExports.cpp`. `HMAC_Init` has no Windows alias and its firmware 13.42 availability is unknown. Mixed Windows execution and native layout/routing interoperability remain unverified.
 - [EVP_MD_CTX_free and EVP_DigestInit](../../../core/libs/prx/libSceLibreSsl3/src/EvpDigest.cpp) - non-null engine ownership is unknown and throws, including an engine installed by cleanup. Owned non-null `EVP_PKEY_CTX` destruction is unknown and throws after digest cleanup; `KEEP_PKEY_CTX` preserves caller ownership. Digest-state allocation failure and negative initialization sizes throw instead of returning zero with an allocation error. Free accepts a negative-size descriptor when it has no owned data to release; releasing non-null data with a negative size throws after cleanup. Null contexts/types and missing initialization callbacks throw. `EVP_DigestInit` clears the context without freeing previous state, as upstream does; callers must release previous state first to avoid a leak.
+- [EVP_get_digestbyname](../../../core/libs/prx/libSceLibreSsl3/src/DigestNames.cpp) (libSceLibreSsl3) - the 48 names of digests this library does not implement (MD4, MD5-SHA1, RIPEMD-160, SHA-512/224, SHA-512/256, SHA-3 and SM3) throw through `NotImplemented_nid_no_patch`, and nothing is checked on the console. The other 43 return the existing `EVP_md5`, `EVP_sha1`, `EVP_sha224`, `EVP_sha256`, `EVP_sha384` and `EVP_sha512` objects. The 91-name table, its exact `strcmp` lookup and the null result for a null or unknown name follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_names.c) `evp_names.c`, with the names taken from `objects.txt`. Its `OPENSSL_init_crypto` call is left out: it fails only after `OPENSSL_cleanup`, which neither library exports. Closes when: those digests exist and the names are compared with the console.
 - [RSA_get0_factors and RSA_get0_crt_params](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console RSA layout and behaviour are unverified. They read the existing 152-byte RSA layout at offsets 48, 56, 64, 72 and 80, following [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/rsa/rsa_lib.c) `rsa_lib.c` and `rsa_local.h`. A null RSA with any requested output, which upstream dereferences, throws without writing outputs. Closes when: compared with the console.
 
 - [EVP_PKEY_bits](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) has no console ABI or behavior verification; the console module's LibreSSL revision is unknown. Its `int (const EVP_PKEY*)` signature and dispatch assume [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c): a null key, method or callback returns 0; otherwise it calls `pkey_bits` with the original key and returns its result. The method pointer at offset 8 uses the existing 32-byte key model. The callback offset 104 assumes that revision's LP64 `EVP_PKEY_ASN1_METHOD` layout in `evp_local.h`; another revision or layout may require a different offset. Tests use caller-owned keys and methods; native layouts and interoperability with real key constructors remain unverified. Closes when: measured on a PS5.
@@ -55,7 +56,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare the remaining callable exports. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 159 remaining callable exports: 149 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -75,7 +76,6 @@
 | `EVP_chacha20_poly1305` | `3m4CmAyOXwQ` |
 | `BIO_clear_flags` | `3sypCuBDdQs` |
 | `EVP_chacha20` | `3tGgkjBQ82A` |
-| `ASN1_INTEGER_set` | `3v2Omd4sqcU` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `BIO_get_shutdown` | `44M+SEbpNdQ` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
@@ -118,7 +118,6 @@
 | `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
 | `RSAPublicKey_dup` | `JSqFTYGaWhU` |
 | `AES_unwrap_key` | `JvoQz7GYOMo` |
-| `ASN1_OCTET_STRING_cmp` | `Jzebx477Q3M` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
 | `tls_config_free` | `LL8N+X6DA-4` |
@@ -148,7 +147,6 @@
 | `ASN1_TIME_new` | `UmAPG5bxYYk` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
 | `ERR_func_error_string` | `VXuysR7ySzw` |
-| `EVP_get_digestbyname` | `Wm24hhTLqWM` |
 | `SSL_SESSION_set_time` | `XG3hIzt9VXY` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
 | `HMAC_CTX_free` | `YAxGqtnKQFY` |
@@ -172,7 +170,6 @@
 | `tls_write` | `fZJr2OF+KGw` |
 | `X509_ALGOR_get0` | `fdvZNUHm-dE` |
 | `BIO_set_shutdown` | `fq1vAGKJNrI` |
-| `ASN1_STRING_set` | `gavhu7SX2FI` |
 | `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
 | `EVP_PKEY_assign` | `gp5dGS14-pI` |
 | `OPENSSL_init_ssl` | `hGiyDq-l4AE` |
@@ -210,7 +207,6 @@
 | `tls_config_verify_client` | `v1vHv4jOJxQ` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
-| `ASN1_OCTET_STRING_free` | `vo-cv5gnPUA` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
 | `tls_config_insecure_noverifyname` | `wNQT6Zn4UG4` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |

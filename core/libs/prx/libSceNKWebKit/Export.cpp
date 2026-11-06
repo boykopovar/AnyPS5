@@ -13462,9 +13462,6 @@ int APS5_VABI WKBundleScriptWorldClearWrappers() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleScriptWorldCopyName() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleScriptWorldCreateWorld() {
     NotImplemented_nid_no_patch(__func__);
@@ -13478,9 +13475,6 @@ int APS5_VABI WKBundleScriptWorldMakeAllShadowRootsOpen() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleScriptWorldNormalWorld() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleSetClient() {
     NotImplemented_nid_no_patch(__func__);
@@ -13984,22 +13978,6 @@ int APS5_VABI WKInspectorToggleElementSelection() {
 }
 
 int APS5_VABI WKInspectorTogglePageProfiling() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKKeyValueStorageManagerDeleteAllEntries() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKKeyValueStorageManagerDeleteEntriesForOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKKeyValueStorageManagerGetKeyValueStorageOrigins() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKKeyValueStorageManagerGetStorageDetailsByOrigin() {
     NotImplemented_nid_no_patch(__func__);
 }
 
