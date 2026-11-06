@@ -12,7 +12,7 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Verif
 if(WIN32)
     target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ParentExports.cpp)
 endif()
-target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyGetters.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyGetters.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyLifecycle.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp)
 
 if(BUILD_TESTING)
@@ -293,4 +293,30 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_pkey_queries PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+endif()
+
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(pkeyLifecycleDirectory ${CMAKE_CURRENT_BINARY_DIR}/pkey-lifecycle-libs)
+    add_custom_target(libressl3_pkey_lifecycle_modules
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${pkeyLifecycleDirectory}
+        COMMAND $<TARGET_FILE:nid_patcher> --write-export-list $<TARGET_FILE:libc> ${pkeyLifecycleDirectory}/libc.exports
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libc> ${pkeyLifecycleDirectory}/libc.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libc ${pkeyLifecycleDirectory}/libc.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libkernel> ${pkeyLifecycleDirectory}/libkernel.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libkernel --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libkernel.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceNetCtl> ${pkeyLifecycleDirectory}/libSceNetCtl.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceNetCtl --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceNetCtl.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceNet> ${pkeyLifecycleDirectory}/libSceNet.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceNet --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceNet.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceLibreSsl> ${pkeyLifecycleDirectory}/libSceLibreSsl.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceLibreSsl --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceLibreSsl.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceLibreSsl3> ${pkeyLifecycleDirectory}/libSceLibreSsl3.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceLibreSsl3 --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceLibreSsl3.prx
+        DEPENDS nid_patcher libc libkernel libSceNetCtl libSceNet libSceLibreSsl libSceLibreSsl3
+        VERBATIM)
+    add_test_executable(guest_libressl3_pkey_lifecycle_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyLifecycle.cpp)
+    add_dependencies(guest_libressl3_pkey_lifecycle_tests libressl3_pkey_lifecycle_modules)
+    target_link_libraries(guest_libressl3_pkey_lifecycle_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME guest_libressl3_pkey_lifecycle COMMAND guest_libressl3_pkey_lifecycle_tests ${pkeyLifecycleDirectory})
+    set_tests_properties(guest_libressl3_pkey_lifecycle PROPERTIES TIMEOUT 20)
 endif()
