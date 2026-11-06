@@ -5,6 +5,17 @@ configure_windows_unwind(libSceUserService)
 target_sources(libSceUserService PRIVATE LegacyExports.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_user_service_group_io_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceGroupIo.cpp Export.cpp)
+    target_include_directories(guest_user_service_group_io_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_group_io_tests PRIVATE libSceSystemService libc libkernel)
+    configure_windows_unwind(guest_user_service_group_io_tests)
+    add_test(NAME guest_user_service_group_io COMMAND guest_user_service_group_io_tests)
+    set_tests_properties(guest_user_service_group_io PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_group_io PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+
     add_test_executable(guest_user_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserService.cpp)
     target_include_directories(guest_user_service_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_user_service_tests PRIVATE libSceUserService libSceSystemService libc)
