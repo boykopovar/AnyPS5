@@ -278,6 +278,7 @@ void Driver::execute(Submission& submission) {
         }
     } settleFinisher{submission.queue == 0};
     std::size_t nextSegment = 0;
+    auto* const executingPacket = workerPacket();
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
@@ -294,6 +295,7 @@ void Driver::execute(Submission& submission) {
         const auto count = Pm4::PacketWords(header);
         const auto packet = std::span(submission.commands).subspan(cursor, count);
         const auto opcode = (header >> 8u) & 0xffu;
+        if (executingPacket != nullptr) executingPacket->store((static_cast<std::uint64_t>(cursor + 1) << 8u) | opcode, std::memory_order_relaxed);
         auto nextCursor = cursor + count;
         const bool predicated = Pm4::Predicated(header) && queue.predication.operation != 0;
         if (submission.queue == 0 && DrawFinisher::Busy() && !keepsDrawFinisher(header, opcode)) {

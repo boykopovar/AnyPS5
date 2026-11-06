@@ -1487,6 +1487,31 @@ static std::uint32_t NormalizedChannelMask(VkFormat format) {
     }
 }
 
+namespace {
+
+std::vector<std::uint32_t> ColorExportSlots(std::uint32_t shaderMask) {
+    std::vector<std::uint32_t> slots;
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) slots.push_back(slot);
+    }
+    return slots;
+}
+
+std::uint32_t ColorExportCount(const Registers& context, std::uint32_t written, const std::vector<std::uint32_t>& slots) {
+    const auto formatEntry = find(context, 0x1c5);
+    const auto format = formatEntry == context.end() ? 0u : formatEntry->second;
+    std::uint32_t count = 0;
+    for (std::uint32_t index = 0; index < slots.size(); ++index) {
+        if (((written >> (4u * slots[index])) & 0xfu) == 0) continue;
+        if (((format >> (4u * index)) & 0xfu) == 0) continue;
+        count = index + 1;
+    }
+    if (((read(context, 0x202) >> 4u) & 7u) == 0u) count = 0;
+    return count;
+}
+
+}
+
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     const auto& cx = queue.context;
@@ -1641,16 +1666,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     // matters where the shader exports.
     const auto targetMask = ColorWriteMask(cx);
     APS5_LOG_OUT_DEBUG("CB_TARGET_MASK=0x%x CB_SHADER_MASK=0x%x", targetMask, shaderMask);
-    std::vector<std::uint32_t> exportSlots;
-    for (std::uint32_t slot = 0; slot < 8; ++slot) {
-        if (((shaderMask >> (4u * slot)) & 0xfu) != 0) exportSlots.push_back(slot);
-    }
-    const auto written = [&](std::uint32_t slot) { return ((targetMask >> (4u * slot)) & 0xfu) != 0; };
-    std::uint32_t exportCount = 0;
-    for (std::uint32_t index = 0; index < exportSlots.size(); ++index) {
-        if (written(exportSlots[index])) exportCount = index + 1;
-    }
-    if (((read(cx, 0x202) >> 4u) & 7u) == 0u) exportCount = 0;
+    const auto exportFormatEntry = find(cx, 0x1c5);
+    const auto exportFormat = exportFormatEntry == cx.end() ? 0u : exportFormatEntry->second;
+    const auto exportSlots = ColorExportSlots(shaderMask);
+    const auto exportCount = ColorExportCount(cx, targetMask, exportSlots);
     result.hasColorTarget = exportCount != 0;
     APS5_LOG_OUT_DEBUG("hasColorTarget=%u exports=%u", result.hasColorTarget ? 1u : 0u, exportCount);
 
@@ -1658,19 +1677,23 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget)) throw std::runtime_error(colorControlMessage(colorControl));
     if (const auto colorControl = read(cx, 0x202); ((colorControl >> 4u) & 7u) == 1u) result.colorRop = static_cast<std::uint8_t>(colorControl >> 16u);
     zero(cx, 0x1c4, zFormatSupported(read(cx, 0x1c4)) ? 0u : ~0u, "depth or sample-mask export");
-    const auto exportFormat = result.hasColorTarget ? read(cx, 0x1c5) : 0u;
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
     // SPI_SHADER_POS_FORMAT: POS0 must be a 4-component position; later vectors carry the misc/clip
     // exports that PA_CL_VS_OUT_CNTL validation above already limits to ignored layer/viewport data.
     Require((read(cx, 0x1c3) & 0xfu) == 4, "additional position exports are unsupported");
     for (std::uint32_t index = 0; index < exportCount; ++index) {
         const auto slot = exportSlots[index];
-        if (!written(slot)) continue;
+        if (((targetMask >> (4u * slot)) & 0xfu) == 0) continue;
         // Export formats only matter for the targets the draw writes.
         const auto slotExport = (exportFormat >> (4u * index)) & 0xfu;
-        if (slotExport == 0 || slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
+        if (slotExport == 0) continue;
+        if (slotExport == 8 || slotExport > 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " is unsupported");
         auto color = DecodeColorBuffer(cx, slot);
-        if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
+        if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) {
+            const auto alias = Uint16ExportAlias(color.format);
+            if (alias == VK_FORMAT_UNDEFINED) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
+            color.format = alias;
+        }
         color.exportIndex = index;
         color.uintExport = slotExport == 7;
         if (color.uintExport && color.packing == ShaderRecompiler::ColorExportPacking::Uint) color.packing = ShaderRecompiler::ColorExportPacking::None;
@@ -2121,7 +2144,8 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
-    Require((view & 0x7ffu) == 0 && ((view >> 13u) & 0x7ffu) == 0, "GCN color array slices are not implemented");
+    const auto slice = view & 0x7ffu;
+    Require(((view >> 13u) & 0x7ffu) == slice, "GCN color views of several array slices are not implemented");
     const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
     const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
     color.extent = {pitch, sliceElements / pitch};
@@ -2135,11 +2159,12 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
         default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
     }
+    Require(slice == 0 || (color.tileMode != ColorTileMode::GcnDisplay2D && color.tileMode != ColorTileMode::GcnThin2D), "GCN color views of a later slice of a 2D-tiled array, whose banks rotate per slice, are not implemented");
     color.mipCount = 1;
-    color.surfaceAddress = static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u;
-    color.address = color.surfaceAddress;
     const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
+    color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes();
+    color.address = color.surfaceAddress;
     color.bytes = layout.Bytes();
     color.format = decoded.format;
     color.componentMapping = decoded.componentMapping;
@@ -2564,7 +2589,10 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
     if (auto reason = nonzero(cx, 0x204, ClipControlMask, "a PA_CL_CLIP_CNTL flag"); !reason.empty()) return reason;
     std::uint32_t targetMask = 0, shaderMask = 0;
-    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word) && !colorControlSupported(word, ColorWriteMask(cx) != 0)) return colorControlMessage(word);
+    if (value(cx, 0x8e, targetMask) && value(cx, 0x8f, shaderMask) && value(cx, 0x202, word)) {
+        const auto slots = ColorExportSlots(shaderMask);
+        if (!colorControlSupported(word, ColorExportCount(cx, ColorWriteMask(cx), slots) != 0)) return colorControlMessage(word);
+    }
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
     if (PixelProgramSkipped(queue)) return NullPixelProgramRejection(queue);
     for (const auto offset : {0x1b3u, 0x1b4u, 0x1c5u}) {

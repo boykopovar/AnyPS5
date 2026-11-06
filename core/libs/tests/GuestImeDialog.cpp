@@ -123,6 +123,7 @@ int main() {
     Press(SDL_SCANCODE_RETURN);
     Require(sceImeDialogGetStatus() == StatusFinished);
     Require(!ImeCapturesKeyboard_nid_postfix());
+    Require(sceImeDialogGetResult(reinterpret_cast<Result*>(1)) == ErrorNotOpened);
     Require(EndStatus() == EndStatusOk);
     Require(std::u16string(buffer) == u"Hi\u00e9\U0001F600");
     Require(sceImeDialogAbort() == ErrorNotOpened);
