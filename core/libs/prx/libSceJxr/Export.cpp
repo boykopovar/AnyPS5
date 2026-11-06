@@ -449,14 +449,6 @@ int APS5_VABI allocateTileInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI attachISRead_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI attachISWrite_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI attach_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
