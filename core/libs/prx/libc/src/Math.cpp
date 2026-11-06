@@ -1655,14 +1655,58 @@ double APS5_VABI erfc_nid_postfix(double x) { return std::erfc(x); }
 float APS5_VABI erfcf_nid_postfix(float x) { return std::erfc(x); }
 int signgam_nid_postfix = 0;
 
-double APS5_VABI lgamma_nid_postfix(double x) {
+namespace {
+
+int LgammaSign(double x) {
     const double whole = std::floor(x);
-    if (x == 0) signgam_nid_postfix = std::signbit(x) ? -1 : 1;
-    else signgam_nid_postfix = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    if (x == 0) return std::signbit(x) ? -1 : 1;
+    return x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+}
+
+double GuestLgammaR(double x, int* sign) {
+    if (sign != nullptr) *sign = LgammaSign(x);
     const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     if (magnitude != 0 && magnitude < 0x3c70000000000000ull) return -std::log(std::fabs(x));
     return std::lgamma(x);
 }
+
+float GuestLgammaRf(float x, int* sign) {
+    if (sign != nullptr) *sign = LgammaSign(x);
+    const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    if (magnitude != 0 && magnitude <= 0x34ffffffu) return static_cast<float>(-std::log(std::fabs(x)));
+    return static_cast<float>(std::lgamma(static_cast<double>(x)));
+}
+
+double GuestTgamma(double x) {
+    const int savedErrno = errno;
+    const double result = std::tgamma(x);
+    errno = std::isfinite(x) && x < 0.0 && std::trunc(x) == x ? EDOM : savedErrno;
+    if (std::isnan(result) && !std::isnan(x)) return std::bit_cast<double>(0xfff8000000000000ull);
+    if (result != 0.0 || !std::isfinite(x) || x >= 0.0 || std::trunc(x) == x) return result;
+    const double interval = std::floor(-x);
+    const bool negative = std::fmod(interval, 2.0) == 0.0;
+    return std::copysign(0.0, negative ? -1.0 : 1.0);
+}
+
+}
+
+double APS5_VABI lgamma_r_nid_postfix(double x, int* sign) { return GuestLgammaR(x, sign); }
+
+double APS5_VABI lgamma_nid_postfix(double x) { return lgamma_r_nid_postfix(x, &signgam_nid_postfix); }
+
+float APS5_VABI lgammaf_r_nid_postfix(float x, int* sign) { return GuestLgammaRf(x, sign); }
+
+float APS5_VABI lgammaf_nid_postfix(float x) { return lgammaf_r_nid_postfix(x, &signgam_nid_postfix); }
+
+double APS5_VABI gamma_r_nid_postfix(double x, int* sign) { return lgamma_r_nid_postfix(x, sign); }
+
+double APS5_VABI gamma_nid_postfix(double x) { return gamma_r_nid_postfix(x, &signgam_nid_postfix); }
+
+float APS5_VABI gammaf_r_nid_postfix(float x, int* sign) { return lgammaf_r_nid_postfix(x, sign); }
+
+float APS5_VABI gammaf_nid_postfix(float x) { return gammaf_r_nid_postfix(x, &signgam_nid_postfix); }
+
+double APS5_VABI tgamma_nid_postfix(double x) { return GuestTgamma(x); }
 
 static const std::int32_t RemPio2Ipio2[] = {
     0xA2F983, 0x6E4E44, 0x1529FC, 0x2757D1, 0xF534DD, 0xC0DB62, 0x95993C, 0x439041, 0xFE5163, 0xABDEBB, 0xC561B7, 0x246E3A,
