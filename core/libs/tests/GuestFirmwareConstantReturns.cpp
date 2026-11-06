@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 namespace {
 
@@ -43,6 +44,38 @@ void CheckAvSettingCallbackFuncs() {
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInit_, 0x20);
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc, 0x10);
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc_, 0x10);
+}
+
+void CheckAvSettingModeHelpers() {
+    constexpr std::uint8_t Fill = 0xaa;
+    const auto check = [Fill](void (APS5_VABI* helper)(void*, std::int32_t), std::uint8_t fill) {
+        std::array<std::uint8_t, 8> buffer{};
+        buffer.fill(Fill);
+        helper(buffer.data(), 8);
+        Require(buffer[0] == 8 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0);
+        for (std::size_t i = 4; i < buffer.size(); ++i) Require(buffer[i] == fill);
+        buffer.fill(Fill);
+        helper(buffer.data(), 4);
+        Require(buffer[0] == 4 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0);
+        for (std::size_t i = 4; i < buffer.size(); ++i) Require(buffer[i] == Fill);
+        buffer.fill(Fill);
+        helper(buffer.data(), 0);
+        for (std::size_t i = 0; i < 4; ++i) Require(buffer[i] == 0);
+        for (std::size_t i = 4; i < buffer.size(); ++i) Require(buffer[i] == Fill);
+        buffer.fill(Fill);
+        helper(nullptr, 8);
+        for (const auto value : buffer) Require(value == Fill);
+    };
+    check(sceAvSettingSetAudioOutModeAny_, 0xff);
+    check(sceAvSettingSetAudioOutModeInvalid_, 0x00);
+    check(sceAvSettingSetVideoOutModeAny_, 0xff);
+    check(sceAvSettingSetVideoOutModeInvalid_, 0x00);
+    std::int32_t source = 0x12345678;
+    sceAvSettingSetVideoOutSource(&source, 7);
+    Require(source == 7);
+    source = 0x12345678;
+    sceAvSettingSetVideoOutSource(nullptr, 7);
+    Require(source == 0x12345678);
 }
 
 void CheckComposite() {
@@ -81,6 +114,35 @@ void CheckSdma() {
 void CheckSsl() {
     Require(CRYPTO_uninitAsymmetricKey() == 0);
     Require(VLONG_freeVlongQueue() == 0);
+
+    for (const int context : {0, 1, -1, 0x7fffffff, static_cast<int>(0x80000000u)}) {
+        int moduleId = 0x5a5a5a5a;
+        Require(sceSslGetNanoSSLModuleId(context, &moduleId) == 0);
+        Require(moduleId == context);
+        Require(sceSslGetNanoSSLModuleId(context, nullptr) == 0);
+    }
+
+    constexpr int InvalidArgument = static_cast<int>(0x8095177a);
+    unsigned char key[24];
+    const unsigned char blob[4] = {1, 2, 3, 4};
+    std::memset(key, 0xa5, sizeof(key));
+    Require(CA_MGMT_extractKeyBlobEx(0, nullptr, 4, key) == InvalidArgument);
+    Require(CA_MGMT_extractKeyBlobEx(0, blob, 4, nullptr) == InvalidArgument);
+    Require(CA_MGMT_extractKeyBlobEx(0, nullptr, 0, nullptr) == InvalidArgument);
+    for (unsigned char byte : key) Require(byte == 0xa5);
+    Require(CA_MGMT_extractKeyBlobEx(-1, blob, 0, key) == 0);
+    const void* stored = nullptr;
+    std::memcpy(&stored, key + 8, sizeof(stored));
+    Require(stored == blob);
+    for (int index = 0; index < 8; ++index) Require(key[index] == 0xa5);
+    for (int index = 16; index < 24; ++index) Require(key[index] == 0xa5);
+
+    std::memset(key, 0xa5, sizeof(key));
+    Require(CRYPTO_initAsymmetricKey(key) == 0);
+    std::uint32_t initialized = 0;
+    std::memcpy(&initialized, key, sizeof(initialized));
+    Require(initialized == 1);
+    for (int index = 4; index < 24; ++index) Require(key[index] == 0xa5);
 }
 
 void CheckVisionManager() {
@@ -175,6 +237,7 @@ void CheckDebugSyscore() {
 int main() {
     CheckAvSetting();
     CheckAvSettingCallbackFuncs();
+    CheckAvSettingModeHelpers();
     CheckComposite();
     CheckFsInternal();
     CheckHttpCacheAndPlayReady();

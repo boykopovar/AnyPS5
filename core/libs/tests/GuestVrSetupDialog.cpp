@@ -54,11 +54,15 @@ int main() {
     Require(sceVrSetupDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceVrSetupDialogOpen(nullptr) == static_cast<int>(0x8A7C0003u));
+    Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogGetResult(result) == kErrNotFinished);
-    Require(result[0] == kResultUserCanceled && result[1] == -1);
+    Require(result[0] == kResultUserCanceled);
+    Require(result[1] == -1);
 
-    param.size = 55;
-    Require(sceVrSetupDialogOpen(&param) == static_cast<int>(0x8A7C0003u));
+    param.size = sizeof(param) - 1;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param) + 1;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
     param.size = sizeof(param);
     param.reserved8 = 1;
     Require(sceVrSetupDialogOpen(&param) == static_cast<int>(0x8A7C0003u));
