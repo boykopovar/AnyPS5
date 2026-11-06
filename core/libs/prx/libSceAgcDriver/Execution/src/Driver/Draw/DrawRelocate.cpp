@@ -152,7 +152,7 @@ bool Driver::rebindVariantTape(const DispatchVariant& variant, std::span<const s
     const auto& tape = *variant.tape;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
     std::vector<std::uint32_t> flat;
-    if (!ReplayVariantTape(tape, oldUser, newUser, variant.words, runs, flat)) return false;
+    if (!ReplayVariantTape(tape, newUser, runs, flat)) return false;
     // Field-by-field copy: DispatchVariant holds an atomic and is not copy-assignable.
     auto copy = std::make_shared<DispatchVariant>();
     copy->runs = runs;
@@ -190,7 +190,9 @@ bool Driver::rebindVariantTape(const DispatchVariant& variant, std::span<const s
         if (w0 + count > copy->words.size()) return false;
         if (GuestMemory::CopyMapped(runs[r].first, std::as_writable_bytes(std::span(copy->words).subspan(w0, count))) != GuestMemory::Compare::Equal) return false;
     }
-    RebindPatches(tape, oldUser, newUser, variant.valueSlots, variant.compiled->shaderDataUserWords, copy->descriptorPatches, copy->shaderDataPatches);
+    // RebindPatches compares the tape's own snapshot with the new user words, so a
+    // cached rebound copy stays rebindable even though its words moved.
+    RebindPatches(tape, tape.oldUserData, newUser, variant.valueSlots, variant.compiled->shaderDataUserWords, copy->descriptorPatches, copy->shaderDataPatches);
     outRegions.reserve(runs.size());
     std::uint32_t offset = 0;
     for (std::size_t r = 0; r < runs.size(); ++r) {

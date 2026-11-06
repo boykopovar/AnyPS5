@@ -243,6 +243,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             }
         } else if (dataEntry != nullptr && graphics.stages.path == Graphics::ShaderPath::Vertex && dataEntry->stages.size() == programs.size() && dataEntry->decode->programs.size() == programs.size()) {
             std::uint64_t imagesFlushed = 0, runsSynced = 0;
+            std::uint64_t rebindTried = 0, rebindAccepted = 0, rebindRejectedReplay = 0, rebindRejectedValidate = 0, rebindIneligible = 0;
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;
             for (std::size_t i = 0; i < programs.size(); ++i) {
@@ -252,32 +253,47 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 auto& candidates = dataCandidates[i];
                 for (const auto& variant : dataEntry->stages[i]) {
                     if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
-                    bool usedEqual = true;
-                    bool tapeCovered = false;
-                    for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
-                        if (now[w] == was[w] || (w < 64u && ((variant->userDataMask >> w) & 1u) == 0)) continue;
-                        if (layoutVariantsEnabled() && variant->tape != nullptr && TapeCoversUserWord(*variant->tape, static_cast<std::uint32_t>(w))) {
-                            tapeCovered = true;
-                            continue;
-                        }
-                        usedEqual = false;
+                    // Shape key: a draw whose only changed words are covered by the
+                    // tape reuses this shape's entry; any other changed word keeps the
+                    // exact-key path (fail-closed to the current behaviour).
+                    const auto eligibility = RebindEligibilityOf(layoutVariantsEnabled() ? variant->tape.get() : nullptr, was, now, variant->userDataMask);
+                    if (eligibility == RebindEligibility::UncoveredWord) {
+                        ++rebindIneligible;
+                        continue;
                     }
-                    if (!usedEqual) continue;
                     if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
                     std::vector<ShaderRecompiler::MemoryRegion> regions;
                     std::shared_ptr<DispatchVariant> candidate = variant;
-                    if (tapeCovered) {
+                    if (eligibility == RebindEligibility::CoveredByTape) {
                         // Rebind through the SRT-walk tape: re-derive the regions from the new
                         // user words and validate those, never the stored (stale) regions.
                         // Fail-closed: an unrepresentable step keeps the candidate out.
-                        if (!rebindVariantTape(*variant, was, now, candidate, regions)) continue;
+                        ++rebindTried;
+                        if (!rebindVariantTape(*variant, was, now, candidate, regions)) {
+                            ++rebindRejectedReplay;
+                            continue;
+                        }
                     } else {
                         appendEntryRegions(*variant, regions);
                     }
                     auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling);
                     if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling);
-                    if (result == EntryOutcome::Equal || result == EntryOutcome::EqualData) candidates.emplace_back(candidate, std::move(regions));
+                    if (result == EntryOutcome::Equal || result == EntryOutcome::EqualData) {
+                        if (eligibility == RebindEligibility::CoveredByTape) ++rebindAccepted;
+                        candidates.emplace_back(candidate, std::move(regions));
+                    } else if (eligibility == RebindEligibility::CoveredByTape) {
+                        ++rebindRejectedValidate;
+                    }
                 }
+            }
+            {
+                std::lock_guard cacheLock(drawCacheMutex);
+                auto& counters = drawEntryCounters;
+                counters.rebindTried += rebindTried;
+                counters.rebindAccepted += rebindAccepted;
+                counters.rebindRejectedReplay += rebindRejectedReplay;
+                counters.rebindRejectedValidate += rebindRejectedValidate;
+                counters.rebindIneligible += rebindIneligible;
             }
         }
         phaseTiming.Phase(DrawRowKeyLookupValidate);

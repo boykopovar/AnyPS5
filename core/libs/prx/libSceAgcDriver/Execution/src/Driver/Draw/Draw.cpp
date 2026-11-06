@@ -461,11 +461,17 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 else ++counters.absentNewRegisters;
             }
             if (decode == nullptr && drawDataHits() && !drawParameters.indirect) {
+                ++drawEntryCounters.shapeLookups;
                 if (const auto shape = drawShapes.find(shapeKey); shape != drawShapes.end()) {
                     const auto kept = drawCache.find(shape->second);
                     if (kept != drawCache.end() && kept->second->decode != nullptr && kept->second->shape == shapeKey) dataEntry = kept->second;
                 }
-                if (dataEntry != nullptr) ++drawEntryCounters.dataHits;
+                if (dataEntry != nullptr) {
+                    ++drawEntryCounters.dataHits;
+                    ++drawEntryCounters.shapeHits;
+                } else {
+                    ++drawEntryCounters.shapeMisses;
+                }
             }
         }
         if (traceDrawCache()) traceDrawKeyLookup(drawKeyComponents, found == drawCache.end());
@@ -822,7 +828,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     auto& dataCandidates = tail.dataCandidates;
     auto& reused = tail.reused;
     auto& stageData = tail.stageData;
-    std::uint64_t dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
+    std::uint64_t dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0, dataSplitOnly = 0;
     auto& drawHit = tail.drawHit;
     auto& verifyHit = tail.verifyHit;
     const bool stageEntries = tail.stageEntries;
@@ -884,8 +890,25 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         std::vector<std::uint32_t> words;
         freshRuns(i, runs, words);
         const auto& compiled = *stageCaptures[i].compiled;
-        const char* what = runs != kept.runs ? "runs" : words != kept.words ? "words" : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
+        // The GPU gets (address, bytes) regions; where a contiguous region is split
+        // is internal bookkeeping (tagVariantRuns splits at user-word origins). Compare
+        // byte coverage, so a rebind that reproduces the same bytes at the same
+        // addresses passes while any real content or address difference still fails.
+        const auto sameCoverage = [](const auto& leftRuns, const auto& leftWords, const auto& rightRuns, const auto& rightWords) {
+            if (leftRuns == rightRuns && leftWords == rightWords) return true;
+            const auto flatten = [](const auto& runs, const auto& words) {
+                std::map<std::uint64_t, std::uint32_t> flat;
+                std::size_t word = 0;
+                for (const auto& [begin, end] : runs) {
+                    for (auto address = begin; address < end && word < words.size(); address += sizeof(std::uint32_t)) flat[address] = words[word++];
+                }
+                return flat;
+            };
+            return flatten(leftRuns, leftWords) == flatten(rightRuns, rightWords);
+        };
+        const char* what = runs != kept.runs ? (sameCoverage(runs, words, kept.runs, kept.words) ? nullptr : "runs") : words != kept.words ? (sameCoverage(runs, words, kept.runs, kept.words) ? nullptr : "words") : vertexInfos[i].has_value() != (kept.vertexInfo != nullptr) || (vertexInfos[i] && !sameVertexInfo(*vertexInfos[i], *kept.vertexInfo)) ? "vertex stage info" : compiled.variantId != kept.compiled->variantId ? "variant" : compiled.pushConstants != kept.compiled->pushConstants ? "push constants" : nullptr;
         ++dataVerified;
+        if (runs != kept.runs && what == nullptr) ++dataSplitOnly;
         if (what == nullptr) return;
         char message[320];
         std::snprintf(message, sizeof(message), "APS5_VERIFY_DRAW_DATA_HITS: stage %zu (program 0x%llx) of a data-only hit differs from its full build in its %s (%zu runs / %zu words kept, %zu / %zu fresh; variant 0x%llx / 0x%llx; key 0x%llx, shape 0x%llx)", i, static_cast<unsigned long long>(programs[i].binary.codeAddress), what, kept.runs.size(), kept.words.size(), runs.size(), words.size(), static_cast<unsigned long long>(kept.compiled->variantId), static_cast<unsigned long long>(compiled.variantId), static_cast<unsigned long long>(drawKey), static_cast<unsigned long long>(shapeKey));
@@ -979,8 +1002,9 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         drawEntryCounters.dataStagesReused += dataStagesReused;
         drawEntryCounters.dataStagesCompiled += dataStagesCompiled;
         drawEntryCounters.dataVerified += dataVerified;
+        drawEntryCounters.dataSplitOnly += dataSplitOnly;
     }
-    const bool shapeRefresh = Graphics::DrawPipelineEnabled();
+    const bool shapeRefresh = Graphics::DrawPipelineEnabled() || layoutVariantsEnabled();
     const auto refreshSeenTwice = [&] {
         std::uint64_t data = shapeKey;
         bool stored = false;
