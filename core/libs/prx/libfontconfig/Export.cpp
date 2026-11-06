@@ -8,12 +8,6 @@
 #include <map>
 #include <new>
 
-using CharSetLeaf = std::array<uint32_t, 8>;
-
-struct FcCharSet {
-    std::map<uint16_t, CharSetLeaf> leaves;
-};
-
 static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
     for (const auto& [number, leaf] : subset.leaves) {
         const auto found = superset.leaves.find(number);

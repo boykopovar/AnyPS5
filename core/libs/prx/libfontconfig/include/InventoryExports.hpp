@@ -1,9 +1,15 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <array>
 #include <cstdint>
+#include <map>
 
-struct FcCharSet;
+using CharSetLeaf = std::array<uint32_t, 8>;
+
+struct FcCharSet {
+    std::map<uint16_t, CharSetLeaf> leaves;
+};
 
 struct FcMatrix {
     double xx;
