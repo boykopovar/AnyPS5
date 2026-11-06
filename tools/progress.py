@@ -24,6 +24,16 @@ PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 ISA_FORMS = Path(__file__).resolve().parent / "rdna2_isa_forms.txt"
+RDNA2_UNSUPPORTED_ISA_ENCODINGS = {
+    ("IMAGE_GATHER8H_PCK", "ENC_MIMG", 99),
+    ("IMAGE_GATHER8H_PCK", "MIMG_NSA1", 99),
+    ("IMAGE_GATHER8H_PCK", "MIMG_NSA2", 99),
+    ("IMAGE_GATHER8H_PCK", "MIMG_NSA3", 99),
+}
+INSTRUCTION_ENCODINGS = re.compile(r"(<InstructionName>(?P<name>\w+)</InstructionName>[\s\S]*?<InstructionEncodings>)(?P<encodings>[\s\S]*?)(</InstructionEncodings>)")
+ENCODING = re.compile(r"<InstructionEncoding>[\s\S]*?</InstructionEncoding>")
+ENCODING_NAME = re.compile(r"<EncodingName>(\w+)</EncodingName>")
+ENCODING_OPCODE = re.compile(r'<Opcode Radix="10">(\d+)</Opcode>')
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
@@ -748,9 +758,27 @@ def validate_snapshot(snapshot):
                     raise ValueError(f"{location}.{field} must be a list of strings")
 
 
+def exclude_unsupported_rdna2_isa_encodings(xml):
+    def filter_instruction(instruction):
+        name = instruction.group("name")
+        if name != "IMAGE_GATHER8H_PCK":
+            return instruction.group()
+
+        def filter_encoding(encoding):
+            encoding_name = ENCODING_NAME.search(encoding.group()).group(1)
+            opcode = int(ENCODING_OPCODE.search(encoding.group()).group(1))
+            return "" if (name, encoding_name, opcode) in RDNA2_UNSUPPORTED_ISA_ENCODINGS else encoding.group()
+
+        encodings = ENCODING.sub(filter_encoding, instruction.group("encodings"))
+        return instruction.group(1) + encodings + instruction.group(4)
+
+    return INSTRUCTION_ENCODINGS.sub(filter_instruction, xml)
+
+
 def regenerate_isa_forms(xml):
     header = [line for line in ISA_FORMS.read_text(encoding="utf-8").splitlines() if line.startswith("#")]
-    forms = shader_scan.parse_isa_xml(xml.read_text(encoding="utf-8"))
+    xml_text = exclude_unsupported_rdna2_isa_encodings(xml.read_text(encoding="utf-8"))
+    forms = shader_scan.parse_isa_xml(xml_text)
     ISA_FORMS.write_text("\n".join(header + [" ".join(map(str, form)) for form in forms]) + "\n", encoding="utf-8")
     print(f"{ISA_FORMS}: {len(forms)} forms")
     return 0

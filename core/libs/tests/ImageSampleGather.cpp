@@ -153,12 +153,10 @@ int main() {
     CheckPck(0x62u, RdnaOpcode::ImageGather4hPck, 0x1u, 1u);
     CheckPck(0x62u, RdnaOpcode::ImageGather4hPck, 0x3u, 2u);
     CheckPck(0x62u, RdnaOpcode::ImageGather4hPck, 0xFu, 4u);
-    CheckPck(0x63u, RdnaOpcode::ImageGather8hPck, 0x1u, 1u);
-    CheckPck(0x63u, RdnaOpcode::ImageGather8hPck, 0xFu, 4u);
     CheckPckRejectsZeroMask(0x62u);
-    CheckPckRejectsZeroMask(0x63u);
     CheckGatherCompareAdjust(0xf1200109u, 0xc8u, RdnaOpcode::ImageGather4C, RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, 3u);
     CheckGatherCompareAdjust(0xf1600109u, 0xd8u, RdnaOpcode::ImageGather4CO, RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, 4u);
     CheckUnsupportedOpcodeDiagnostic(0x06u, "MIMG opcode 0x06");
+    CheckUnsupportedOpcodeDiagnostic(0x63u, "MIMG opcode 0x63");
     CheckUnsupportedOpcodeDiagnostic(0xffu, "MIMG opcode 0xff");
 }

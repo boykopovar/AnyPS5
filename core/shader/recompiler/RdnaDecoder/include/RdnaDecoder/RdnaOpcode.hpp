@@ -1016,7 +1016,6 @@ enum class RdnaOpcode : std::uint16_t {
     ImageGather4CLzO,
     ImageGather4h,
     ImageGather4hPck,
-    ImageGather8hPck,
     ImageGather4,
     ImageGather4B,
     ImageGather4BCl,

@@ -156,6 +156,48 @@ class IsaTests(unittest.TestCase):
             self.assertEqual(shader_scan.load_isa_forms(table), shader_scan.parse_isa_xml(ISA_XML))
             self.assertTrue(table.read_text(encoding="utf-8").startswith("# header\n"))
 
+    def test_regeneration_excludes_rdna2_gather8h_pck_and_keeps_gather4h_pck(self):
+        gather_forms = """<Instruction><InstructionName>IMAGE_GATHER4H_PCK</InstructionName><InstructionEncodings>
+  <InstructionEncoding><EncodingName>ENC_MIMG</EncodingName><Opcode Radix="10">98</Opcode></InstructionEncoding>
+</InstructionEncodings></Instruction>
+<Instruction><InstructionName>IMAGE_GATHER8H_PCK</InstructionName><InstructionEncodings>
+  <InstructionEncoding><EncodingName>ENC_MIMG</EncodingName><Opcode Radix="10">99</Opcode></InstructionEncoding>
+  <InstructionEncoding><EncodingName>MIMG_NSA1</EncodingName><Opcode Radix="10">99</Opcode></InstructionEncoding>
+  <InstructionEncoding><EncodingName>MIMG_NSA2</EncodingName><Opcode Radix="10">99</Opcode></InstructionEncoding>
+  <InstructionEncoding><EncodingName>MIMG_NSA3</EncodingName><Opcode Radix="10">99</Opcode></InstructionEncoding>
+</InstructionEncodings></Instruction>"""
+        xml_text = ISA_XML.replace("</Instructions>", gather_forms + "</Instructions>")
+        parsed = shader_scan.parse_isa_xml(xml_text)
+        self.assertEqual(
+            [form for form in parsed if form[0] == "IMAGE_GATHER8H_PCK"],
+            [("IMAGE_GATHER8H_PCK", "MIMG", "base", 99)],
+        )
+        filtered_xml = progress.exclude_unsupported_rdna2_isa_encodings(xml_text)
+        gather8h = re.search(
+            r"<InstructionName>IMAGE_GATHER8H_PCK</InstructionName>[\s\S]*?</InstructionEncodings>",
+            filtered_xml,
+        ).group()
+        for encoding in ("ENC_MIMG", "MIMG_NSA1", "MIMG_NSA2", "MIMG_NSA3"):
+            self.assertNotIn(f"<EncodingName>{encoding}</EncodingName>", gather8h)
+        self.assertEqual(
+            [form for form in shader_scan.parse_isa_xml(filtered_xml) if form[0] == "IMAGE_GATHER8H_PCK"],
+            [],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            xml = Path(directory) / "isa.xml"
+            xml.write_text(xml_text, encoding="utf-8")
+            table = Path(directory) / "forms.txt"
+            table.write_text("# header\n", encoding="utf-8")
+            old = progress.ISA_FORMS
+            progress.ISA_FORMS = table
+            try:
+                self.assertEqual(progress.regenerate_isa_forms(xml), 0)
+            finally:
+                progress.ISA_FORMS = old
+            forms = shader_scan.load_isa_forms(table)
+        self.assertIn(("IMAGE_GATHER4H_PCK", "MIMG", "base", 98), forms)
+        self.assertNotIn(("IMAGE_GATHER8H_PCK", "MIMG", "base", 99), forms)
+
 
 class ScanTests(unittest.TestCase):
     def test_known_answers_on_a_small_tree(self):
