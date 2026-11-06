@@ -32,6 +32,7 @@ std::int64_t APS5_VABI GetImageDecodeIID_nid_postfix(const char* extension, cons
 std::int64_t APS5_VABI GetImageEncodeIID_nid_postfix(const char* extension, const std::uint32_t** iid);
 const void* APS5_VABI GetPixelFormatFromHash_nid_postfix(std::uint8_t hash);
 std::int32_t APS5_VABI IDPEmpty_nid_postfix(void* codec);
+std::int32_t APS5_VABI setBitIOPointers_nid_postfix(void* codec);
 std::int64_t APS5_VABI PKAllocAligned_nid_postfix(void** memory, std::size_t size, std::size_t alignment);
 std::int64_t APS5_VABI PKFreeAligned_nid_postfix(void** memory);
 void APS5_VABI remapQP_nid_postfix(void* quantizer, std::int32_t shift, std::int32_t scaled);
@@ -137,7 +138,6 @@ int APS5_VABI initMRPtr_nid_postfix();
 int APS5_VABI initPostProc_nid_postfix();
 int APS5_VABI postProcBlock_nid_postfix();
 int APS5_VABI postProcMB_nid_postfix();
-int APS5_VABI setBitIOPointers_nid_postfix();
 int APS5_VABI setUniformQuantizer_nid_postfix();
 int APS5_VABI slideOneMBRow_nid_postfix();
 int APS5_VABI swapMRPtr_nid_postfix();

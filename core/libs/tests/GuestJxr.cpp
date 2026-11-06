@@ -10,6 +10,15 @@
 #include <cstdio>
 #include <stdexcept>
 
+extern "C" {
+void* JxrBitIoFixtureReset(std::int32_t format, std::size_t bitIOCount, std::uint8_t subbands, std::uint32_t sliceCount);
+void* JxrBitIoFixtureField(std::size_t context, std::size_t field);
+void* JxrBitIoFixtureInput(std::size_t index);
+void* JxrBitIoFixtureSentinel(std::size_t context, std::size_t field);
+void* JxrBitIoFixtureHeader();
+int JxrBitIoFixtureGuardsAndCodecIntact(void* codec);
+}
+
 namespace {
 
 void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
@@ -72,6 +81,47 @@ void InitializeHeap() {
 
 }
 
+void TestSetBitIOPointers() {
+    bool threw = false;
+    try { setBitIOPointers_nid_postfix(nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+
+    auto* codec = JxrBitIoFixtureReset(0, 1, 4, 1);
+    Require(setBitIOPointers_nid_postfix(codec) == 0);
+    for (std::size_t context = 0; context < 4; ++context) {
+        for (std::size_t field = 0; field < 4; ++field) {
+            auto* expected = context < 2 ? JxrBitIoFixtureInput(context) : JxrBitIoFixtureSentinel(context, field);
+            Require(JxrBitIoFixtureField(context, field) == expected);
+        }
+    }
+    Require(JxrBitIoFixtureGuardsAndCodecIntact(codec));
+
+    for (std::uint8_t subbands = 0; subbands <= 5; ++subbands) {
+        codec = JxrBitIoFixtureReset(1, 1, subbands, 1);
+        Require(setBitIOPointers_nid_postfix(codec) == 0);
+        for (std::size_t context = 0; context < 4; ++context) {
+            for (std::size_t field = 0; field < 4; ++field) {
+                void* expected = JxrBitIoFixtureSentinel(context, field);
+                if (context < 2 && (field == 0 || field < subbands))
+                    expected = JxrBitIoFixtureInput(context * subbands + field);
+                Require(JxrBitIoFixtureField(context, field) == expected);
+            }
+        }
+        Require(JxrBitIoFixtureGuardsAndCodecIntact(codec));
+    }
+
+    codec = JxrBitIoFixtureReset(1, 0, 3, 1);
+    Require(setBitIOPointers_nid_postfix(codec) == 0);
+    for (std::size_t context = 0; context < 4; ++context) {
+        for (std::size_t field = 0; field < 4; ++field) {
+            auto* expected = context == 0 ? JxrBitIoFixtureHeader() : JxrBitIoFixtureSentinel(context, field);
+            Require(JxrBitIoFixtureField(context, field) == expected);
+        }
+    }
+    Require(JxrBitIoFixtureGuardsAndCodecIntact(codec));
+}
+
 int main() {
     InitializeHeap();
     void* memory = malloc_nid_postfix(64);
@@ -111,5 +161,6 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    TestSetBitIOPointers();
     return 0;
 }

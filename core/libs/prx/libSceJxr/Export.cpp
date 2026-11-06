@@ -524,10 +524,6 @@ int APS5_VABI postProcMB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI setBitIOPointers_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI setUniformQuantizer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
