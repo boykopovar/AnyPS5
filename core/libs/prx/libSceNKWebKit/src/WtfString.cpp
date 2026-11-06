@@ -1116,6 +1116,27 @@ bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL*
     return EqualViews(ViewWithoutFragment(first), ViewWithoutFragment(second));
 }
 
+bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    unsigned schemeEndA = first.bits >> 6;
+    unsigned schemeEndB = second.bits >> 6;
+    if (schemeEndA != schemeEndB) return false;
+    unsigned hostStartA = HostStart(first);
+    unsigned hostStartB = HostStart(second);
+    if (first.hostEnd < hostStartA || second.hostEnd < hostStartB) return false;
+    unsigned hostLengthA = first.hostEnd - hostStartA;
+    unsigned hostLengthB = second.hostEnd - hostStartB;
+    if (hostLengthA != hostLengthB) return false;
+    auto viewA = View(first.impl);
+    auto viewB = View(second.impl);
+    if (schemeEndA > viewA.length || schemeEndB > viewB.length) return false;
+    if (hostStartA + hostLengthA > viewA.length || hostStartB + hostLengthB > viewB.length) return false;
+    if (!EqualViews(Slice(viewA, 0, schemeEndA), Slice(viewB, 0, schemeEndB), true)) return false;
+    if (!EqualViews(Slice(viewA, hostStartA, hostLengthA), Slice(viewB, hostStartB, hostLengthB), true)) return false;
+    return URLPort(first) == URLPort(second);
+}
+
 void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
     auto& url = Checked(self);
     url.bits = 0;

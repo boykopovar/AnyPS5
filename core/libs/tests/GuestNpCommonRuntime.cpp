@@ -1323,6 +1323,8 @@ void TestBase64() {
     Require(sceNpBase64UrlGetDecodeSize("+w==", 4) == NpInvalidCharacter, "base64url refuses the standard alphabet");
     Require(sceNpBase64UrlDecoder("-wA", 3, bytes, 2) == 2 && bytes[0] == 0xFB && bytes[1] == 0, "base64url decodes a short tail");
     Require(sceNpBase64UrlDecoder("-w", 2, bytes, 0) == NpInvalidFormat, "base64url decoding refuses a short buffer");
+    Require(sceNpBase64UrlGetDecodeSize(nullptr, 0) == NpInvalidCharacter && sceNpBase64UrlDecoder(nullptr, 0, bytes, sizeof(bytes)) == NpInvalidCharacter,
+        "base64url decoding of a null source with no length behaves like an empty one");
 }
 
 void TestNumbers() {

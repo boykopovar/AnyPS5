@@ -153,6 +153,10 @@ constexpr int NET_SOCK_RAW = 3;
 constexpr int NET_EPOLL_CTL_ADD = 1;
 constexpr int NET_EPOLL_CTL_MOD = 2;
 constexpr int NET_EPOLL_CTL_DEL = 3;
+constexpr std::uint32_t NET_EPOLLIN = 0x1;
+constexpr std::uint32_t NET_EPOLLHUP = 0x10;
+constexpr std::uint32_t NET_EPOLLDESCID = 0x10000;
+constexpr int NET_RESOLVER_ASYNC = 0x1;
 constexpr int NET_SOL_SOCKET = 0xFFFF;
 constexpr int NET_IPPROTO_TCP = 6;
 constexpr int NET_IPPROTO_IPV6 = 41;
@@ -383,12 +387,16 @@ struct Resolver {
     std::uint64_t aborts = 0;
     bool abort_ntoa = false;
     bool abort_aton = false;
+    std::uint64_t completions = 0;
+    bool hangup = false;
 };
 std::map<int, Resolver> g_resolvers;
+std::map<int, std::map<int, std::uint64_t>> g_epoll_resolvers_reported;
 int g_next_sock = 32;
 int g_next_epoll = 0x4000;
 int g_next_pool = 1;
-int g_next_resolver = 0x100;
+constexpr int NET_RESOLVER_ID_FIRST = 1024;
+constexpr int NET_RESOLVER_ID_END = 0x4000;
 bool g_net_inited = false;
 bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
@@ -538,6 +546,17 @@ int end_lookup(int rid, std::uint64_t generation, int error) {
     if (resolver->second.aborts != generation) error = fail(NET_EINTR);
     resolver->second.error = error;
     return error;
+}
+
+int complete_async_lookup(int rid, int error) {
+    std::lock_guard lk(g_mutex);
+    const auto resolver = g_resolvers.find(rid);
+    if (resolver == g_resolvers.end()) return error;
+    resolver->second.error = error;
+    resolver->second.hangup = error == (NET_ERROR_BASE | NET_EINTR);
+    ++resolver->second.completions;
+    g_cv.NotifyAll();
+    return 0;
 }
 
 void log_soft(const char* func, const char* what) {
@@ -1035,6 +1054,17 @@ bool ControlSocketStatusForKernel(int descriptor, int command, int flags, int* r
 }
 
 const bool g_socketStatusControlRegistered = (KernelSetSocketStatusControl_nid_no_patch(&ControlSocketStatusForKernel), true);
+
+bool ControlSocketIoctlForKernel(int descriptor, std::uint32_t request, void* argument, int* error) {
+    {
+        std::lock_guard lk(g_mutex);
+        if (g_socks.find(descriptor) == g_socks.end()) return false;
+    }
+    *error = sceNetIoctl(descriptor, request, argument) == 0 ? 0 : *errno_slot();
+    return true;
+}
+
+const bool g_socketIoctlControlRegistered = (KernelSetSocketIoctlControl_nid_no_patch(&ControlSocketIoctlForKernel), true);
 
 bool FindSocketNativeForKernel(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native) {
     std::lock_guard lk(g_mutex);
@@ -2293,6 +2323,7 @@ int APS5_VABI sceNetEpollDestroy(int eid) {
     }
     g_epoll_names.erase(eid);
     g_epoll_socks.erase(eid);
+    g_epoll_resolvers_reported.erase(eid);
     g_epoll_aborted.erase(eid);
     g_cv.NotifyAll();
     return 0;
@@ -2322,13 +2353,16 @@ int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* e
     }
     if (op != NET_EPOLL_CTL_ADD && op != NET_EPOLL_CTL_MOD && op != NET_EPOLL_CTL_DEL) return fail(NET_EINVAL);
     if (op != NET_EPOLL_CTL_DEL && !event) return fail(NET_EINVAL);
-    if (!kernel && g_socks.count(id) == 0) return fail(NET_EBADF);
+    const bool resolver = g_resolvers.count(id) != 0;
+    if (!kernel && !resolver && g_socks.count(id) == 0) return fail(NET_EBADF);
     auto& registrations = g_epoll_socks[eid];
     if (op == NET_EPOLL_CTL_ADD) {
         if (registrations.count(id) != 0) return fail(NET_EADDRINUSE);
         registrations.emplace(id, std::make_shared<const NetEpollEvent>(*event));
+        if (resolver) g_epoll_resolvers_reported[eid][id] = 0;
     } else if (op == NET_EPOLL_CTL_DEL) {
         if (registrations.erase(id) == 0) return fail(NET_ENOENT);
+        g_epoll_resolvers_reported[eid].erase(id);
     } else {
         auto registration = registrations.find(id);
         if (registration == registrations.end()) return fail(NET_ENOENT);
@@ -2359,7 +2393,22 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
             if (g_epoll_aborted.erase(eid) != 0) return fail(NET_ECONNABORTED);
             const auto registration = g_epoll_socks.find(eid);
             if (registration != g_epoll_socks.end()) {
+                int count = 0;
+                auto& reported = g_epoll_resolvers_reported[eid];
                 for (const auto& entry : registration->second) {
+                    const auto resolver = g_resolvers.find(entry.first);
+                    if (resolver == g_resolvers.end() || count >= maxevents) continue;
+                    if ((entry.second->events & NET_EPOLLIN) == 0 || reported[entry.first] == resolver->second.completions) continue;
+                    reported[entry.first] = resolver->second.completions;
+                    events[count] = *entry.second;
+                    events[count].ident = static_cast<std::uint64_t>(entry.first);
+                    events[count].reserved = 0;
+                    events[count].events = NET_EPOLLIN | NET_EPOLLDESCID | (resolver->second.hangup ? NET_EPOLLHUP : 0u);
+                    ++count;
+                }
+                if (count > 0) return count;
+                for (const auto& entry : registration->second) {
+                    if (g_resolvers.count(entry.first) != 0) continue;
                     const auto socket = g_socks.find(entry.first);
                     if (socket == g_socks.end()) kernelWatches.push_back({entry.first, entry.second, Sock{}, nullptr, INVALID_NATIVE_SOCKET});
                     else watches.push_back({entry.first, entry.second, socket->second, nullptr, socket->second.native->value});
@@ -2586,14 +2635,19 @@ int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)memid;
     if (flags != 0) return fail(NET_EINVAL);
     std::lock_guard lk(g_mutex);
-    const int id = g_next_resolver++;
+    int id = NET_RESOLVER_ID_FIRST;
+    for (auto it = g_resolvers.lower_bound(id); it != g_resolvers.end() && it->first == id; ++it) ++id;
+    if (id >= NET_RESOLVER_ID_END) throw std::runtime_error("sceNetResolverCreate: more than " + std::to_string(NET_RESOLVER_ID_END - NET_RESOLVER_ID_FIRST) + " live resolvers are not implemented");
     g_resolvers[id] = {};
     return id;
 }
 
 int APS5_VABI sceNetResolverDestroy(int rid) {
     std::lock_guard lk(g_mutex);
-    return g_resolvers.erase(rid) != 0 ? 0 : fail(NET_EBADF);
+    if (g_resolvers.erase(rid) == 0) return fail(NET_EBADF);
+    for (auto& epoll : g_epoll_socks) epoll.second.erase(rid);
+    for (auto& epoll : g_epoll_resolvers_reported) epoll.second.erase(rid);
+    return 0;
 }
 
 int lookup_host(int rid, const char* hostname, const char* func, int family, std::vector<std::array<std::uint8_t, 16>>& addresses) {
@@ -2649,9 +2703,9 @@ int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr,
         return fail(NET_EINVAL);
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
-    if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
-    std::memcpy(addr, addresses.data(), sizeof(addresses[0]));
-    return 0;
+    int error = lookup_ipv4(rid, hostname, __func__, addresses);
+    if (error == 0) std::memcpy(addr, addresses.data(), sizeof(addresses[0]));
+    return (flags & NET_RESOLVER_ASYNC) != 0 ? complete_async_lookup(rid, error) : error;
 }
 
 int APS5_VABI sceNetResolverStartNtoa6(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
@@ -3785,13 +3839,15 @@ int APS5_VABI sceNetDumpRead(std::int32_t dumpId, void* buffer, std::int32_t buf
 }
 
 int APS5_VABI sceNetEmulationDebugSettingsSet(const NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)flags;
+    return fail(NET_EOPNOTSUPP);
 }
 
 int APS5_VABI sceNetEmulationDebugSettingsGet(NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)flags;
+    return fail(NET_EOPNOTSUPP);
 }
 
 int APS5_VABI sceNetEmulationSet(const NetEmulationParameter*, std::uint32_t) {
