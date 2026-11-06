@@ -21,6 +21,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Functional
 - [WKURL URL component and comparison helpers](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKURLCopyHostName`, `WKURLCopyPath`, `WKURLCopyScheme`, `WKURLCopyLastPathComponent`, `WKURLCreateWithBaseURL` and `WKURLIsEqual` create and inspect `WKURLRef` host objects, resolving relative URLs against base URLs and comparing canonical URL strings; console execution is unverified.
 
+- [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
+
 - [User content URL pattern matching](../../../core/libs/prx/libSceNKWebKit/src/UserContentURLPattern.cpp) (libSceNKWebKit) - `WKUserContentURLPatternMatchesURL` parses pattern components (scheme, host, path) and evaluates wildcard patterns against candidate URLs per WebKit `UserContentURLPattern` semantics; port matching, non-standard schemes and console execution are unverified.
 
 - [HitTestResult getters](../../../core/libs/prx/libSceNKWebKit/src/HitTestResult.cpp) (libSceNKWebKit) - WKHitTestResult* getters return image/link/media/PDF URLs, link text, bounding box and content editable flag from the host object.
@@ -56,7 +58,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6986 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6982 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1536,7 +1538,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF11setNonBlockEi` | `ZH232ViZnko` |
 | `_ZN3WTF12CountingLock10unlockSlowEv` | `y9CL7tutRKQ` |
 | `_ZN3WTF12CountingLock8lockSlowEv` | `QSRjO+sqoFU` |
-| `_ZN3WTF12isMainThreadEv` | `MKhFWAdCyCw` |
 | `_ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm` | `RPLKRR7vgYE` |
 | `_ZN3WTF13MetaAllocator17currentStatisticsERKNS_6LockerINS_4LockEEE` | `3SW2Rs+BCYE` |
 | `_ZN3WTF13MetaAllocator17freeFreeSpaceNodeEPNS0_13FreeSpaceNodeE` | `sIQ2j-9PjgU` |
@@ -1553,7 +1554,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF13ReadWriteLock9writeLockEv` | `cKaXv3V+n+k` |
 | `_ZN3WTF13aboutBlankURLEv` | `3nmBMeZtd+Y` |
 | `_ZN3WTF13dumpCharacterERNS_11PrintStreamEc` | `rpsD9ynfjc0` |
-| `_ZN3WTF13isMainRunLoopEv` | `5K-9Y7aFV60` |
 | `_ZN3WTF13normalizedNFCENS_10StringViewE` | `bgrxJM-HmMM` |
 | `_ZN3WTF13normalizedNFCERKNS_6StringE` | `2LUk8Ch0mJY` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE` | `DwwpqTcKG0Q` |
@@ -1699,7 +1699,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF20ParallelHelperClient6finishEv` | `X+GUHRxWSq4` |
 | `_ZN3WTF20ParallelHelperClientD1Ev` | `pCPHOY0VhUY` |
 | `_ZN3WTF20ParallelHelperClientD2Ev` | `80LTtL71Ics` |
-| `_ZN3WTF20initializeMainThreadEv` | `IDANRncW4HU` |
 | `_ZN3WTF20resetAccumulatedLogsEv` | `v4r2uz0R1ys` |
 | `_ZN3WTF21MemoryPressureHandler12setPageCountEj` | `AAkVf-cyiwM` |
 | `_ZN3WTF21MemoryPressureHandler13releaseMemoryENS_8CriticalENS_11SynchronousE` | `LiJyR7R9j9s` |
@@ -1731,7 +1730,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF22CrossThreadTaskHandlerD1Ev` | `RQGUZHWVCLY` |
 | `_ZN3WTF22CrossThreadTaskHandlerD2Ev` | `F9bDxOEGeA8` |
 | `_ZN3WTF22TextBreakIteratorCache9singletonEv` | `m9nEKMAp80k` |
-| `_ZN3WTF22isMainThreadOrGCThreadEv` | `UHbf2fZIrxk` |
 | `_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE` | `95FhkfvoGQM` |
 | `_ZN3WTF24AutomaticThreadCondition4waitERNS_4LockE` | `4Xe0NrWsndM` |
 | `_ZN3WTF24AutomaticThreadCondition7waitForERNS_4LockENS_7SecondsE` | `6VIC0pMsv30` |
