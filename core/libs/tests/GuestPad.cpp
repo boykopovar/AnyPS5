@@ -4,6 +4,7 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <initializer_list>
 #include <vector>
 #include <set>
 #include <atomic>
@@ -875,17 +876,23 @@ static void CheckTriggerEffect(int user, int handle) {
     Require(scePadGetTriggerEffectState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetTriggerEffectState(handle, &info) == PAD_OK);
     std::array<std::uint8_t, 120> param{};
-    const auto command = [&](int trigger, std::uint32_t mode, const std::array<std::uint8_t, 3>& data) {
+    const auto command = [&](int trigger, std::uint32_t mode, const std::initializer_list<std::uint8_t>& data) {
+        std::fill_n(param.begin() + 8 + 56 * trigger, 56, 0);
         std::memcpy(param.data() + 8 + 56 * trigger, &mode, sizeof(mode));
         std::copy(data.begin(), data.end(), param.begin() + 16 + 56 * trigger);
     };
     const std::array<std::uint8_t, 11> weapon{0x25, 0x24, 0x00, 0x07};
     const std::array<std::uint8_t, 11> feedback{0x21, 0x80, 0x03, 0x00, 0x00, 0x40, 0x12};
+    const std::array<std::uint8_t, 11> vibration{0x26, 0x80, 0x03, 0x00, 0x00, 0x40, 0x12, 0x00, 0x00, 40, 0x00};
+    const std::array<std::uint8_t, 11> multiFeedback{0x21, 0xFF, 0x00, 0x88, 0xC6, 0xFA, 0x00, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> slopeRising{0x21, 0xFE, 0x03, 0x88, 0xC6, 0xB6, 0x2D, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> slopeFalling{0x21, 0xFC, 0x03, 0x80, 0xCB, 0x49, 0x12, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> multiVibration{0x26, 0x0F, 0x00, 0x59, 0x0F, 0x00, 0x00, 0x00, 0x00, 60, 0x00};
     const std::array<std::uint8_t, 11> off{0x05};
     Require(scePadSetTriggerEffect(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, param.data()) == PAD_ERROR_INVALID_HANDLE);
     for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, nullptr) == PAD_ERROR_INVALID_HANDLE);
-    for (const std::uint8_t invalidMask : {0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x0c, 0xff}) {
+    for (const std::uint8_t invalidMask : {0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x0c, 0xfc, 0xff}) {
         param[0] = invalidMask;
         Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
     }
@@ -930,6 +937,33 @@ static void CheckTriggerEffect(int user, int handle) {
     command(0, 0, {0, 0, 0});
     param[0] = 0x1;
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK);
+    param[0] = 0x1;
+    command(0, 3, {7, 3, 40});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 3, vibration, 96));
+    command(0, 3, {7, 3, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 3, off, 0));
+    command(0, 4, {1, 2, 3, 4, 5, 6, 7, 8, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 4, multiFeedback, 255));
+    command(0, 4, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 4, off, 0));
+    command(0, 5, {1, 5, 2, 6});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 5, slopeRising, 192));
+    command(0, 5, {2, 6, 7, 3});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 5, slopeFalling, 224));
+    command(0, 5, {9, 5, 2, 6});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 5, off, 0));
+    command(0, 5, {4, 4, 2, 6});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 5, off, 0));
+    command(0, 6, {60, 2, 4, 6, 8, 0, 0, 0, 0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 6, multiVibration, 255));
+    command(0, 6, {0, 2, 4, 6, 8, 0, 0, 0, 0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 6, off, 0));
+    command(0, 0, {0, 0, 0});
+    param[0] = 0x1;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 0, off, 0));
+    Require(scePadDisableTriggerEffect(handle, true) == PAD_OK);
+    Require(scePadDisableTriggerEffect(handle, false) == PAD_OK);
+    for (const int other : {handle + 1, 0x999, -1}) Require(scePadDisableTriggerEffect(other, true) == PAD_ERROR_INVALID_HANDLE);
     const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special >= PAD_SPECIAL_HANDLE);
     command(0, 2, {2, 5, 8});
