@@ -7,8 +7,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include "mbedtls/des.h"
 
@@ -16,6 +18,88 @@ namespace {
 
 constexpr std::size_t DesScheduleBytes = 128;
 constexpr int CryptoNumLocks = 41;
+constexpr int ErrorLibBuffer = 7;
+constexpr int ErrorLibBio = 32;
+constexpr int ErrorLibPem = 9;
+constexpr int ErrorFunctionUnknown = 0xfff;
+constexpr int ErrorMallocFailure = 65;
+constexpr int BioErrorUninitialized = 120;
+constexpr int BioErrorUnsupportedMethod = 121;
+constexpr int PemErrorNoStartLine = 108;
+constexpr int BioCallbackGets = 0x05;
+constexpr int BioCallbackReturn = 0x80;
+
+struct PemBuffer {
+    std::size_t length;
+    char* data;
+    std::size_t capacity;
+};
+
+static_assert(sizeof(PemBuffer) == 24);
+
+PemBuffer* NewPemBuffer() {
+    auto* const buffer = static_cast<PemBuffer*>(calloc_nid_postfix(1, sizeof(PemBuffer)));
+    if (!buffer) LibreSslPutError_nid_no_patch(ErrorLibBuffer, ErrorFunctionUnknown, ErrorMallocFailure, __FILE__, __LINE__);
+    return buffer;
+}
+
+void FreePemBuffer(PemBuffer* buffer) {
+    if (!buffer) return;
+    if (buffer->data) {
+        auto* bytes = reinterpret_cast<volatile unsigned char*>(buffer->data);
+        for (std::size_t i = 0; i < buffer->capacity; ++i) bytes[i] = 0;
+        free_nid_postfix(buffer->data);
+    }
+    free_nid_postfix(buffer);
+}
+
+void FreePemBuffers(PemBuffer* name, PemBuffer* header, PemBuffer* data) {
+    FreePemBuffer(name);
+    FreePemBuffer(header);
+    FreePemBuffer(data);
+}
+
+bool GrowPemBuffer(PemBuffer* buffer, std::size_t length) {
+    if (buffer->length >= length) {
+        buffer->length = length;
+        return true;
+    }
+    if (buffer->capacity >= length) {
+        buffer->length = length;
+        return true;
+    }
+    if (length > 0x5ffffffc) {
+        LibreSslPutError_nid_no_patch(ErrorLibBuffer, ErrorFunctionUnknown, ErrorMallocFailure, __FILE__, __LINE__);
+        return false;
+    }
+    const std::size_t capacity = ((length + 3) / 3) * 4;
+    auto* const grown = static_cast<char*>(recallocarray_nid_postfix(buffer->data, buffer->capacity, capacity, 1));
+    if (!grown) {
+        LibreSslPutError_nid_no_patch(ErrorLibBuffer, ErrorFunctionUnknown, ErrorMallocFailure, __FILE__, __LINE__);
+        return false;
+    }
+    buffer->data = grown;
+    buffer->capacity = capacity;
+    buffer->length = length;
+    return true;
+}
+
+int BioGets(LibreSsl::Bio* bio, char* buffer, int size) {
+    if (!bio || !bio->method || !bio->method->gets) {
+        LibreSslPutError_nid_no_patch(ErrorLibBio, ErrorFunctionUnknown, BioErrorUnsupportedMethod, __FILE__, __LINE__);
+        return -2;
+    }
+    const auto callback = bio->callback;
+    int result = 0;
+    if (callback && (result = static_cast<int>(callback(bio, BioCallbackGets, buffer, size, 0, 1))) <= 0) return result;
+    if (!bio->initialized) {
+        LibreSslPutError_nid_no_patch(ErrorLibBio, ErrorFunctionUnknown, BioErrorUninitialized, __FILE__, __LINE__);
+        return -2;
+    }
+    result = bio->method->gets(bio, buffer, size);
+    if (callback) result = static_cast<int>(callback(bio, BioCallbackGets | BioCallbackReturn, buffer, size, 0, result));
+    return result;
+}
 
 static_assert(sizeof(CryptoThreadId) == 16);
 
@@ -297,9 +381,61 @@ int APS5_VABI PEM_read_bio_X509_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+LibreSslX509* APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
+    LibreSslPemPasswordCallback callback, void* userData) {
+    static_cast<void>(certificate);
+    static_cast<void>(callback);
+    static_cast<void>(userData);
+    auto* const name = NewPemBuffer();
+    auto* const header = NewPemBuffer();
+    auto* const data = NewPemBuffer();
+    if (!name || !header || !data) {
+        FreePemBuffers(name, header, data);
+        LibreSslPutError_nid_no_patch(ErrorLibPem, ErrorFunctionUnknown, ErrorMallocFailure, __FILE__, __LINE__);
+        return nullptr;
+    }
+
+    char line[256]{};
+    line[254] = '\0';
+    for (;;) {
+        const int result = BioGets(bio, line, 254);
+        if (result <= 0) {
+            LibreSslPutError_nid_no_patch(ErrorLibPem, ErrorFunctionUnknown, PemErrorNoStartLine, __FILE__, __LINE__);
+            FreePemBuffers(name, header, data);
+            return nullptr;
+        }
+        if (result > 254) {
+            FreePemBuffers(name, header, data);
+            NotImplemented_nid_no_patch(__func__);
+        }
+        int length = result;
+        while (length >= 0 && line[length] <= ' ') --length;
+        line[++length] = '\n';
+        line[++length] = '\0';
+        if (std::strncmp(line, "-----BEGIN ", 11) != 0) continue;
+        const std::size_t labelLength = std::strlen(line + 11);
+        if (labelLength < 6) {
+            FreePemBuffers(name, header, data);
+            NotImplemented_nid_no_patch(__func__);
+        }
+        const auto end = line + 11 + labelLength - 6;
+        if (std::strncmp(end, "-----\n", 6) != 0) continue;
+        if (!GrowPemBuffer(name, labelLength + 9)) {
+            LibreSslPutError_nid_no_patch(ErrorLibPem, ErrorFunctionUnknown, ErrorMallocFailure, __FILE__, __LINE__);
+            FreePemBuffers(name, header, data);
+            return nullptr;
+        }
+        std::memcpy(name->data, line + 11, labelLength - 6);
+        name->data[labelLength - 6] = '\0';
+        if (!GrowPemBuffer(header, 256)) {
+            LibreSslPutError_nid_no_patch(ErrorLibPem, ErrorFunctionUnknown, ErrorMallocFailure, __FILE__, __LINE__);
+            FreePemBuffers(name, header, data);
+            return nullptr;
+        }
+        header->data[0] = '\0';
+        FreePemBuffers(name, header, data);
+        NotImplemented_nid_no_patch(__func__);
+    }
 }
 
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void) {
