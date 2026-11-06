@@ -2414,7 +2414,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
     if (!image.depthCompare && !storage && !image.packed) {
         const auto count = modes.size();
         for (std::size_t index = 0; index < count; ++index) {
-            const auto& base = modes[index];
+            const auto base = modes[index];
             if (base.numericClass != IrTextureNumericClass::Float || base.conversionFormat != IrBufferFormat::Invalid || base.packedFormat != IrBufferFormat::Invalid || base.depthBits || base.srgbDecode || (base.emulatedCompare & EmulatedCompare::Enabled) != 0u) continue;
             for (const auto bits : {8u, 16u}) {
                 auto mode = base;
