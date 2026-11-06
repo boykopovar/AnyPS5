@@ -110,6 +110,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset, std::uint32_
     Output.fill(Fill);
     auto* output = reinterpret_cast<std::uint8_t*>(Output.data());
     const auto* view = Input.data() + viewOffset;
+    const auto* alignedView = view - (viewOffset & 3u);
     std::vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(Input.data(), InputBytes), BufferDescriptor(view, ViewBytes), BufferDescriptor(Output.data(), ResultBytes), BufferDescriptor(output + ResultBytes + storeOffset, StoredBytes)}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
@@ -124,7 +125,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset, std::uint32_
         std::memcpy(&aligned, Input.data() + lane * 4u, sizeof(aligned));
         std::uint32_t scalar = 0;
         std::memcpy(&scalar, Input.data() + (viewOffset & ~3u) + 4u, sizeof(scalar));
-        const std::uint32_t expected[Checked] = {aligned, ViewDword(view, lane), ViewDword(view, lane + 1u), ViewDword(view, lane + 2u), ViewField(view, lane * 2u + 2u, 0xffffu), ViewField(view, lane * 3u + 1u, 0xffu), scalar, ViewField(view, lane * 4u + 2u, 0xffu)};
+        const std::uint32_t expected[Checked] = {aligned, ViewDword(alignedView, lane), ViewDword(alignedView, lane + 1u), ViewDword(alignedView, lane + 2u), ViewField(view, lane * 2u + 2u, 0xffffu), ViewField(view, lane * 3u + 1u, 0xffu), scalar, ViewField(view, lane * 4u + 2u, 0xffu)};
         for (std::uint32_t slot = 0; slot < Checked; ++slot) {
             const auto actual = Output[lane * Slots + slot];
             Require(actual == expected[slot], "buffer unaligned base " + run + ": lane " + std::to_string(lane) + " " + Names[slot] + " is " + Hex(actual) + ", expected " + Hex(expected[slot]));
@@ -132,15 +133,15 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset, std::uint32_
     }
     for (std::size_t offset = ResultBytes; offset < Output.size() * 4u; ++offset) {
         const auto relative = static_cast<std::int64_t>(offset) - static_cast<std::int64_t>(ResultBytes + storeOffset);
+        const auto dword = relative + static_cast<std::int64_t>(storeOffset & 3u);
         auto expected = FillByte(offset);
-        if (relative >= 0 && relative < StoredBytes) {
+        if (relative >= 0 && relative < StoredBytes && relative % 8 >= 4) {
             const auto lane = static_cast<std::uint32_t>(relative / 8);
             const auto byte = static_cast<std::uint32_t>(relative % 8);
-            if (byte < 4u) expected = static_cast<std::uint8_t>((0xa1b2c300u + lane) >> (byte * 8u));
-            else if (byte == 4u) expected = static_cast<std::uint8_t>(0x91u + lane);
+            if (byte == 4u) expected = static_cast<std::uint8_t>(0x91u + lane);
             else if (byte == 5u) expected = static_cast<std::uint8_t>(0x3cu + lane);
-            else if (byte >= 6u) expected = static_cast<std::uint8_t>((0xbe00u + lane) >> ((byte - 6u) * 8u));
-        }
+            else expected = static_cast<std::uint8_t>((0xbe00u + lane) >> ((byte - 6u) * 8u));
+        } else if (relative >= 0 && dword < StoredBytes && dword % 8 < 4) expected = static_cast<std::uint8_t>((0xa1b2c300u + static_cast<std::uint32_t>(dword / 8)) >> ((dword % 8) * 8u));
         Require(output[offset] == expected, "buffer unaligned base " + run + ": stored byte " + std::to_string(offset - ResultBytes) + " is " + Hex(output[offset]) + ", expected " + Hex(expected));
     }
 }
@@ -167,7 +168,7 @@ void RunPair(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         for (std::uint32_t half = 0; half < 2u; ++half) {
             const auto actual = Output[lane * 2u + half];
-            const auto expected = ViewDword(view, lane / 4u + half);
+            const auto expected = ViewDword(view - (viewOffset & 3u), lane / 4u + half);
             Require(actual == expected, run + ": lane " + std::to_string(lane) + " dword " + std::to_string(half) + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
