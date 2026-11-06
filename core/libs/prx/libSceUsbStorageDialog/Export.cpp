@@ -53,7 +53,7 @@ int APS5_VABI sceUsbStorageDialogOpen(const UsbStorageDialogParam* param) {
         return COMMON_DIALOG_ERROR_ARG_NULL;
     }
     errno = savedErrno;
-    if (!ValidateCommonDialogBaseParam(local.base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    if (!ValidateCommonDialogBaseParam(local.base, reinterpret_cast<std::uintptr_t>(param))) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     UserServiceLoginUserIdList users{};
