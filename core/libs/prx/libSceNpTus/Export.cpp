@@ -348,12 +348,16 @@ int APS5_VABI sceNpTusDeleteMultiSlotVariableVUser(int reqId, const NpOnlineId* 
 }
 
 int APS5_VABI sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option) {
-    (void)targetVirtualUserId;
     if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
     for (int index = 0; index < arrayLen; ++index) {
         if (slotIds[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
+    if (!targetVirtualUserId) {
+        std::lock_guard lock(tusMutex);
+        if (requests.find(reqId) == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+        return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     }
     return StartOffline(reqId);
 }

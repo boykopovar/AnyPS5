@@ -288,7 +288,8 @@ int main() {
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, manySlots, 65, nullptr) == TooManySlotId, "sceNpTusDeleteMultiSlotDataVUserAsync", "65 slots were taken");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, negative, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "a negative slot id was taken");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, -1, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "an array length of -1 was refused");
-        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, nullptr, slots, 2, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "a null virtual user was refused");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, nullptr, slots, 2, nullptr) == InsufficientArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "a null virtual user was taken");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(9999, nullptr, slots, 2, nullptr) == InvalidId, "sceNpTusDeleteMultiSlotDataVUserAsync", "the request was not looked up before the null virtual user");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &emptyUser, slots, 2, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "an empty virtual user was refused");
         sceNpTusDeleteRequest(req);
 
