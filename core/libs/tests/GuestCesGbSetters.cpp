@@ -89,7 +89,9 @@ constexpr Measured measured[] = {
     {Gbk, Uda, 1, 0x86E1BFB5FD199896ULL, 0x56AD86AE6D820329ULL},
 };
 
-void* (*const inits[ProfileCount])(void*) = {
+using ProfileInit = void* (APS5_VABI*)(void*);
+
+constexpr ProfileInit inits[ProfileCount] = {
     sceCesUcsProfileInitGb18030_2000, sceCesUcsProfileInitGb18030_2005, sceCesUcsProfileInitGbkCp936, sceCesUcsProfileInitEucCnGb2312,
 };
 
