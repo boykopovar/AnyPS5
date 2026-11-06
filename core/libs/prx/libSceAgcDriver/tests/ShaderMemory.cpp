@@ -11456,6 +11456,16 @@ void verifyScaledUnormModes() {
         const auto& mode = modes[ResourceMaterializer::RuntimeImageMode(image, descriptor(format), modes)];
         require(mode.numericClass == IrTextureNumericClass::Float && mode.scaledUnormBits == bits && mode.conversionFormat == IrBufferFormat::Invalid, "an unsigned scaled image did not select a float mode that scales its UNORM view back by its component width");
     }
+    for (const auto format : {3u, 9u, 16u, 25u}) {
+        auto selectsAlpha = descriptor(format);
+        selectsAlpha.dwords[3] = 0x90000facu;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, selectsAlpha, modes)); }, "selects the alpha a scaled image format does not have", "a one- or two-channel scaled image whose T# selects the alpha it does not have was accepted");
+    }
+    for (const auto format : {58u, 67u}) {
+        auto selectsAlpha = descriptor(format);
+        selectsAlpha.dwords[3] = 0x90000facu;
+        require(modes[ResourceMaterializer::RuntimeImageMode(image, selectsAlpha, modes)].scaledUnormBits != 0u, "a four-channel scaled image whose T# selects its alpha did not select a scaled mode");
+    }
     require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor(1u), modes)].scaledUnormBits == 0u, "an 8_UNORM image selected a scaled mode");
     ImageResource store = image;
     store.resourceClass = ImageResourceClass::Storage;

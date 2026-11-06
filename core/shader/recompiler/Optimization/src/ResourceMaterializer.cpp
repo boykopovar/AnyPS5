@@ -342,6 +342,11 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (decoded.scaledUnormBits != 0u && (storage || base.depthCompare || base.packed)) {
         return rejectImage(PoisonReason::NumericClass, storage ? "storage image descriptor uses an unsupported format" : "compares or packs a scaled image, which is not implemented");
     }
+    if (decoded.scaledUnormBits != 0u && format != IrBufferFormat::Format8_8_8_8UScaled && format != IrBufferFormat::Format16_16_16_16UScaled) {
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::NumericClass, "selects the alpha a scaled image format does not have, which is not implemented");
+        }
+    }
     if (storage || decoded.conversionFormat != IrBufferFormat::Invalid) {
         decoded.shaderSwizzle = descriptorImageSwizzle(descriptor);
     }

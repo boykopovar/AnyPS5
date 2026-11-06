@@ -653,8 +653,17 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     return result;
 }
 
-std::uint32_t ScaleUnormTexel(SpirvEmitterState& state, std::uint32_t texel, std::uint32_t bits) {
-    return Binary(state, spv::OpVectorTimesScalar, TypeF32Vector(state, 4), texel, ConstantF32Value(state, static_cast<float>((1u << bits) - 1u)));
+std::uint32_t ScaledUnormFactor(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t component) {
+    const auto one = Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, access.mem.resource, component), ConstantU32(state, 1u));
+    return Select(state, TypeF32(state), one, ConstantF32Value(state, 1.0f), ConstantF32Value(state, static_cast<float>((1u << access.image.scaledUnormBits) - 1u)));
+}
+
+std::uint32_t ScaleUnormTexel(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t texel) {
+    std::uint32_t factors[4] = {};
+    for (std::uint32_t component = 0; component < 4u; component++) factors[component] = ScaledUnormFactor(state, access, component);
+    const auto factor = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4), factor, factors[0], factors[1], factors[2], factors[3]);
+    return Binary(state, spv::OpFMul, TypeF32Vector(state, 4), texel, factor);
 }
 
 std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
@@ -663,7 +672,7 @@ std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
         return DecodeSrgbTexel(state, texel);
     }
     if (access.image.scaledUnormBits != 0u) {
-        return ScaleUnormTexel(state, texel, access.image.scaledUnormBits);
+        return ScaleUnormTexel(state, access, texel);
     }
     if (access.image.conversionFormat == FmaskExpansion) {
         return ExpandFmaskTexel(state, access, texel);
@@ -773,7 +782,7 @@ std::uint32_t PackedImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
 std::uint32_t UnpackImageGather(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t gathered) {
     auto& state = ctx.state;
     if (access.image.scaledUnormBits != 0u) {
-        return ScaleUnormTexel(state, gathered, access.image.scaledUnormBits);
+        return Binary(state, spv::OpVectorTimesScalar, TypeF32Vector(state, 4), gathered, ScaledUnormFactor(state, access, ImageGatherComponent(EffectiveDmask(access.mem))));
     }
     const auto info = ImageConversionFormat(access.image);
     if (info.format == IrBufferFormat::Invalid) {
