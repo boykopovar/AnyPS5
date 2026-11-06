@@ -303,8 +303,10 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
     static int sweepState = 0;
     static DWORD sweepOwner = 0;
-    thread_local std::vector<HMODULE> resolving;
-    thread_local std::map<HMODULE, int> startedResults;
+    struct ResolvingStorage {};
+    struct StartedResultsStorage {};
+    auto& resolving = HostThreadLocal<std::vector<HMODULE>, ResolvingStorage>();
+    auto& startedResults = HostThreadLocal<std::map<HMODULE, int>, StartedResultsStorage>();
     thread_local int depth = 0;
     struct Depth {
         int& value;
