@@ -1,0 +1,15 @@
+add_library(libSceFsInternalForVsh SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceFsInternalForVsh PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceFsInternalForVsh)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_fs_internal_for_vsh_tests ${LIBS_INCLUDE_DIR}/tests/GuestFsInternalForVsh.cpp)
+    target_include_directories(guest_fs_internal_for_vsh_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fs_internal_for_vsh_tests PRIVATE libSceFsInternalForVsh libc)
+    configure_windows_unwind(guest_fs_internal_for_vsh_tests)
+    add_test(NAME guest_fs_internal_for_vsh COMMAND guest_fs_internal_for_vsh_tests)
+    if(WIN32)
+        set_tests_properties(guest_fs_internal_for_vsh PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>")
+    endif()
+endif()
