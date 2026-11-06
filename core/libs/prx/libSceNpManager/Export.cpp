@@ -103,6 +103,19 @@ struct StateCallback {
 std::mutex stateMutex;
 std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> stateCallbacksA;
 StateCallback stateCallback;
+
+constexpr int NP_GAME_PRESENCE_CALLBACK_MAX = 8;
+
+struct GamePresenceCallbackEntry {
+    int handle = 0;
+    void* callback = nullptr;
+    void* userdata = nullptr;
+    bool inUse = false;
+};
+
+std::mutex gamePresenceMutex;
+std::array<GamePresenceCallbackEntry, NP_GAME_PRESENCE_CALLBACK_MAX> gamePresenceCallbacksA{};
+int nextGamePresenceHandle = 0;
 }
 
 extern "C" {
@@ -929,6 +942,31 @@ int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
     (void)callback;
     (void)userdata;
+}
+
+int APS5_VABI sceNpRegisterGamePresenceCallbackA(void* callback, void* userdata) {
+    if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(gamePresenceMutex);
+    for (auto& entry : gamePresenceCallbacksA) {
+        if (entry.inUse) continue;
+        entry.handle = ++nextGamePresenceHandle;
+        entry.callback = callback;
+        entry.userdata = userdata;
+        entry.inUse = true;
+        return entry.handle;
+    }
+    return SCE_NP_ERROR_CALLBACK_MAX;
+}
+
+int APS5_VABI sceNpUnregisterGamePresenceCallbackA(int callbackId) {
+    std::lock_guard lock(gamePresenceMutex);
+    for (auto& entry : gamePresenceCallbacksA) {
+        if (entry.inUse && entry.handle == callbackId) {
+            entry = {};
+            return 0;
+        }
+    }
+    return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
