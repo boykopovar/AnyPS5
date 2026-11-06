@@ -10296,10 +10296,6 @@ int APS5_VABI JSRemoteInspectorSetLogToSystemConsole() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI JSRemoteInspectorSetParentProcessInformation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI JSRemoteInspectorStart() {
     NotImplemented_nid_no_patch(__func__);
 }
