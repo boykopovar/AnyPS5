@@ -29,9 +29,139 @@ void Write(std::uint8_t* object, const std::size_t offset, const T value) {
     std::memcpy(object + offset, &value, sizeof(value));
 }
 
+constexpr auto CreateRemovedPlayer = _ZN3sce2Np9CppWebApi7Matches2V120RemovedPlayerFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_13RemovedPlayerEEE;
+constexpr auto ReleaseRemovedPlayer = _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V113RemovedPlayerEED1Ev;
+constexpr auto ConstructRemovedPlayers = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RemovedPlayerEEEEC1EPNS2_10LibContextE;
+constexpr auto PushRemovedPlayer = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RemovedPlayerEEEE8pushBackERKS8_;
+constexpr auto DestroyRemovedPlayers = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RemovedPlayerEEEED1Ev;
+constexpr auto CreateMember = _ZN3sce2Np9CppWebApi7Matches2V120RequestMemberFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_13RequestMemberEEE;
+constexpr auto ReleaseMember = _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V113RequestMemberEED1Ev;
+constexpr auto ConstructMembers = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEEC1EPNS2_10LibContextE;
+constexpr auto PushMember = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEE8pushBackERKS8_;
+constexpr auto DestroyMembers = _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEED1Ev;
+constexpr auto CreateTeam = _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_16RequestMatchTeamEEE;
+constexpr auto SetTeamMembers = _ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam10setMembersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_13RequestMemberEEEEE;
+constexpr auto ReleaseTeam = _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEED1Ev;
+
+void (APS5_VABI* originalDeleter)(void*);
+void* trackedObject;
+void* trackedContext;
+IntrusivePtr* observedOutput;
+int deletionCount;
+
+void APS5_VABI TrackDeletion(void* object) {
+    Require(object == trackedObject);
+    if (observedOutput != nullptr) {
+        Require(observedOutput->object == object);
+        Require(observedOutput->libContext == trackedContext);
+    }
+    ++deletionCount;
+    originalDeleter(object);
 }
 
-int main() {
+void ObserveDeletion(IntrusivePtr* handle, bool observeOutput = false) {
+    Require(handle->object != nullptr && handle->deleter != nullptr);
+    originalDeleter = handle->deleter;
+    trackedObject = handle->object;
+    trackedContext = handle->libContext;
+    observedOutput = observeOutput ? handle : nullptr;
+    deletionCount = 0;
+    handle->deleter = &TrackDeletion;
+}
+
+void TestOwnedFactoryOutput() {
+    std::uint64_t firstContext = 1;
+    std::uint64_t nextContext = 2;
+    IntrusivePtr output{};
+    Require(CreateRemovedPlayer(&firstContext, "first", &output) == 0);
+    ObserveDeletion(&output, true);
+    Require(CreateRemovedPlayer(&nextContext, "second", &output) == 0);
+    Require(deletionCount == 1);
+    Require(output.object != nullptr && output.object != trackedObject);
+    Require(output.deleter != &TrackDeletion && output.libContext == &nextContext);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
+    Require(std::strcmp(Read<const char*>(static_cast<std::uint8_t*>(output.object), 24), "second") == 0);
+    ReleaseRemovedPlayer(&output);
+    Require(output.object == nullptr);
+}
+
+void TestSharedFactoryOutput() {
+    std::uint64_t context = 1;
+    IntrusivePtr output{};
+    IntrusivePtr owners{};
+    Require(CreateRemovedPlayer(&context, "shared", &output) == 0);
+    ObserveDeletion(&output);
+    ConstructRemovedPlayers(&owners, &context);
+    Require(PushRemovedPlayer(&owners, &output) == 0);
+    Require(CreateRemovedPlayer(&context, "replacement", &output) == 0);
+    Require(deletionCount == 0);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(trackedObject), 0) == 1);
+    ReleaseRemovedPlayer(&output);
+    DestroyRemovedPlayers(&owners);
+    Require(deletionCount == 1);
+}
+
+void TestRejectedFactoryArguments() {
+    std::uint64_t context = 1;
+    IntrusivePtr output{};
+    Require(CreateRemovedPlayer(&context, "kept", &output) == 0);
+    ObserveDeletion(&output, true);
+    const IntrusivePtr before = output;
+    Require(CreateRemovedPlayer(nullptr, "unused", &output) == static_cast<int>(0x80553503));
+    Require(CreateRemovedPlayer(&context, "unused", nullptr) == static_cast<int>(0x80553503));
+    Require(output.object == before.object && output.deleter == before.deleter && output.libContext == before.libContext);
+    Require(deletionCount == 0);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
+    ReleaseRemovedPlayer(&output);
+    Require(deletionCount == 1);
+}
+
+void TestFailedFactoryPayload() {
+    std::uint64_t context = 1;
+    IntrusivePtr output{};
+    Require(CreateRemovedPlayer(&context, "previous", &output) == 0);
+    ObserveDeletion(&output, true);
+    Require(CreateRemovedPlayer(&context, nullptr, &output) == static_cast<int>(0x80553503));
+    Require(deletionCount == 1);
+    Require(output.object != nullptr && output.object != trackedObject);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(output.object), 0) == 1);
+    Require(Read<const char*>(static_cast<std::uint8_t*>(output.object), 24) == nullptr);
+    ReleaseRemovedPlayer(&output);
+}
+
+void TestFactoryReleasesMembers() {
+    std::uint64_t context = 1;
+    IntrusivePtr member{};
+    IntrusivePtr members{};
+    IntrusivePtr team{};
+    Require(CreateMember(&context, "member", &member) == 0);
+    ConstructMembers(&members, &context);
+    Require(PushMember(&members, &member) == 0);
+    ObserveDeletion(&members);
+    Require(CreateTeam(&context, "first team", &team) == 0);
+    Require(SetTeamMembers(team.object, &members) == 0);
+    Require(CreateTeam(&context, "next team", &team) == 0);
+    Require(deletionCount == 0);
+    DestroyMembers(&members);
+    Require(deletionCount == 1);
+    Require(Read<std::int32_t>(static_cast<std::uint8_t*>(member.object), 0) == 1);
+    ReleaseMember(&member);
+    ReleaseTeam(&team);
+}
+
+void RunFactoryOwnershipChecks() {
+    TestOwnedFactoryOutput();
+    TestSharedFactoryOutput();
+    TestRejectedFactoryArguments();
+    TestFailedFactoryPayload();
+    TestFactoryReleasesMembers();
+}
+
+}
+
+int main(int argc, char** argv) {
+    RunFactoryOwnershipChecks();
+    if (argc == 2 && std::strcmp(argv[1], "factory-ownership") == 0) return 0;
     alignas(8) std::array<std::uint8_t, 0x200> request{};
     std::memset(request.data(), 0, request.size());
     Require(_ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer12setAccountIdEPKc(request.data(), "value") == 0);
