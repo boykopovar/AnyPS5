@@ -4116,6 +4116,7 @@ static int MatchesFactoryCreate(const void* context, IntrusivePtr* out, const st
     if (context == nullptr || out == nullptr) return ParameterInvalidArgument;
     void* object = std::calloc(1, size);
     if (object == nullptr) return MatchesOutOfMemory;
+    *reinterpret_cast<const void**>(static_cast<std::uint8_t*>(object) + 0x08) = context;
     ReferenceCount(object, ReferenceCountOffset).store(1);
     out->object = object;
     out->deleter = deleter;
