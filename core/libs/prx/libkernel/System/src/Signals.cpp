@@ -857,11 +857,4 @@ namespace {
     JumpBuffer::GuestSigprocmaskRegister_nid_no_patch(sigprocmask_nid_postfix);
     return true;
 }();
-
-struct RegisterSignalsOnLoad {
-    RegisterSignalsOnLoad() {
-        RegisterSigaction_nid_no_patch(reinterpret_cast<SigactionFn_nid_no_patch>(sigaction_nid_postfix), _sigintr_nid_postfix.bits);
-    }
-};
-const RegisterSignalsOnLoad gRegisterSignals;
 }

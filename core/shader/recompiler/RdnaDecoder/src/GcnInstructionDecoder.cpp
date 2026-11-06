@@ -30,7 +30,7 @@ std::optional<std::uint32_t> mapOpcode(const std::array<std::pair<std::uint16_t,
 }
 
 [[noreturn]] void unsupported(const char* family, std::uint32_t opcode, std::uint32_t programCounter) {
-    throw UnsupportedInstructionError(std::string("GCN ") + family + " opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " is not implemented");
+    throw UnsupportedInstructionError(std::string("GCN ") + family + " opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " is not implemented", family, opcode, __FILE__, __LINE__);
 }
 
 std::uint32_t replaceBits(std::uint32_t word, std::uint32_t shift, std::uint32_t width, std::uint32_t value) {

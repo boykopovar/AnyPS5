@@ -8,6 +8,7 @@
 #endif
 
 #include "Transport.hpp"
+#include "Cookies.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 
 #include "zlib.h"
@@ -302,13 +303,13 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
 
 struct Request::State {
     const int id;
+    Url url;
     const int version;
     int sslContext;
     const std::shared_ptr<Capacity> capacity;
     bool acquired = false;
     Settings settings;
     std::string method;
-    Url url;
     std::mutex mutex;
     std::atomic<bool> cancelled{false};
     bool started = false;
@@ -319,7 +320,13 @@ struct Request::State {
     int status = 0;
     std::string contentEncoding;
     bool inflatedGzip = false;
+    std::vector<std::pair<std::string, std::string>> blockHeaders;
+    std::string allHeaders;
+    std::string trailerHeaders;
+    bool trailerBlock = false;
     int blockStatus = 0;
+    bool hasAuthChallenge = false;
+    bool hasProxyAuthChallenge = false;
     std::string location;
     bool hasLocation = false;
     int networkResult = 0;
@@ -349,16 +356,18 @@ struct Request::State {
     Clock::time_point totalDeadline;
 
     State(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
-        : id(id), version(version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), url(Parse(target)) {
+        : id(id), url(Parse(target)), version(version == 3 && !url.secure ? 2 : version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)) {
         Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()),
             "sceHttp2CreateRequestWithURL: invalid method");
-        Require(version >= 1 && version <= 3 && (version != 3 || url.secure), "sceHttp2: unsupported version or cleartext HTTP/2");
+        Require(version >= 1 && version <= 3, "sceHttp2: unsupported version");
         Require(method != "CONNECT", "sceHttp2: CONNECT is not implemented");
         Require(nghttp2_check_header_value_rfc9113(reinterpret_cast<const std::uint8_t*>(settings.userAgent.data()), settings.userAgent.size()),
             "sceHttp2: invalid user agent");
     }
 
     ~State() { Close(); }
+
+    std::string Address() const { return std::string(url.secure ? "https://" : "http://") + url.authority + url.path; }
 
     void Close() {
         callbackLock = nullptr;
@@ -425,48 +434,70 @@ struct Request::State {
     void InflateGzip() {
         if (inflatedGzip || !Inflating() || body.empty()) return;
         inflatedGzip = true;
-        const std::uint8_t* data = body.data();
-        const std::size_t size = body.size();
-        Require(size >= 18 && data[0] == 0x1f && data[1] == 0x8b && data[2] == 8, "sceHttp2: malformed gzip header");
-        const std::uint8_t flags = data[3];
-        Require((flags & 0xe0) == 0, "sceHttp2: unknown gzip header flags");
-        std::size_t offset = 10;
-        const auto skip = [&](std::size_t count) { Require(offset + count <= size - 8, "sceHttp2: truncated gzip header"); offset += count; };
-        if (flags & 4) {
-            Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip extra field");
-            const std::size_t extra = static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
-            skip(2 + extra);
-        }
-        if (flags & 8) while (skip(1), data[offset - 1] != 0) {}
-        if (flags & 16) while (skip(1), data[offset - 1] != 0) {}
-        if (flags & 2) skip(2);
+        Require(body.size() <= MaxGzipBytes, "sceHttp2: encoded gzip response exceeds the host limit");
+        const auto* data = body.data();
+        const auto size = body.size();
         z_stream inflater{};
         Require(inflateInit2(&inflater, -15) == Z_OK, "sceHttp2: gzip inflate initialization failed");
         struct End {
             z_stream* stream;
             ~End() { inflateEnd(stream); }
         } end{&inflater};
-        inflater.next_in = const_cast<std::uint8_t*>(data + offset);
-        inflater.avail_in = static_cast<uInt>(size - offset - 8);
         std::vector<std::uint8_t> output;
-        std::uint8_t chunk[16384];
-        int result = Z_OK;
-        while (result != Z_STREAM_END) {
-            inflater.next_out = chunk;
-            inflater.avail_out = sizeof(chunk);
-            result = inflate(&inflater, Z_NO_FLUSH);
-            Require(result == Z_OK || result == Z_STREAM_END, "sceHttp2: gzip inflate failed");
-            output.insert(output.end(), chunk, chunk + (sizeof(chunk) - inflater.avail_out));
-            Require(result == Z_STREAM_END || inflater.avail_in != 0 || inflater.avail_out == 0, "sceHttp2: truncated gzip stream");
-            Require(output.size() <= MaxGzipBytes, "sceHttp2: inflated response exceeds the host limit");
-        }
-        Require(inflater.avail_in == 0, "sceHttp2: concatenated gzip members are not implemented");
+        std::size_t offset = 0;
         const auto readLe32 = [&](std::size_t position) {
             return static_cast<std::uint32_t>(data[position]) | (static_cast<std::uint32_t>(data[position + 1]) << 8) |
                 (static_cast<std::uint32_t>(data[position + 2]) << 16) | (static_cast<std::uint32_t>(data[position + 3]) << 24);
         };
-        Require(crc32(0, output.data(), static_cast<uInt>(output.size())) == readLe32(size - 8), "sceHttp2: gzip checksum mismatch");
-        Require(static_cast<std::uint32_t>(output.size()) == readLe32(size - 4), "sceHttp2: gzip size mismatch");
+        while (offset < size) {
+            const auto header = offset;
+            Require(size - offset >= 18 && data[offset] == 0x1f && data[offset + 1] == 0x8b && data[offset + 2] == 8,
+                "sceHttp2: malformed gzip header");
+            const auto flags = data[offset + 3];
+            Require((flags & 0xe0) == 0, "sceHttp2: unknown gzip header flags");
+            offset += 10;
+            const auto skip = [&](std::size_t count) {
+                Require(offset <= size - 8 && count <= size - 8 - offset, "sceHttp2: truncated gzip header");
+                offset += count;
+            };
+            if (flags & 4) {
+                Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip extra field");
+                const auto extra = static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
+                skip(2 + extra);
+            }
+            if (flags & 8) while (skip(1), data[offset - 1] != 0) {}
+            if (flags & 16) while (skip(1), data[offset - 1] != 0) {}
+            if (flags & 2) {
+                Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip header checksum");
+                const auto expected = static_cast<std::uint32_t>(data[offset]) | (static_cast<std::uint32_t>(data[offset + 1]) << 8);
+                Require((crc32(0, data + header, static_cast<uInt>(offset - header)) & 0xffffu) == expected,
+                    "sceHttp2: gzip header checksum mismatch");
+                offset += 2;
+            }
+            inflater.next_in = const_cast<std::uint8_t*>(data + offset);
+            inflater.avail_in = static_cast<uInt>(size - offset);
+            const auto begin = output.size();
+            std::uint8_t chunk[16384];
+            int result = Z_OK;
+            while (result != Z_STREAM_END) {
+                inflater.next_out = chunk;
+                inflater.avail_out = sizeof(chunk);
+                result = inflate(&inflater, Z_NO_FLUSH);
+                Require(result == Z_OK || result == Z_STREAM_END, "sceHttp2: gzip inflate failed");
+                const auto count = sizeof(chunk) - inflater.avail_out;
+                Require(count <= MaxGzipBytes - output.size(), "sceHttp2: inflated response exceeds the host limit");
+                output.insert(output.end(), chunk, chunk + count);
+                Require(result == Z_STREAM_END || inflater.avail_in != 0 || inflater.avail_out == 0, "sceHttp2: truncated gzip stream");
+            }
+            offset = size - inflater.avail_in;
+            Require(size - offset >= 8, "sceHttp2: truncated gzip trailer");
+            const auto length = output.size() - begin;
+            Require(crc32(0, length ? output.data() + begin : nullptr, static_cast<uInt>(length)) == readLe32(offset),
+                "sceHttp2: gzip checksum mismatch");
+            Require(static_cast<std::uint32_t>(length) == readLe32(offset + 4), "sceHttp2: gzip size mismatch");
+            offset += 8;
+            if (offset < size) Require(inflateReset(&inflater) == Z_OK, "sceHttp2: gzip member reset failed");
+        }
         body = std::move(output);
         bodyOffset = 0;
         contentLength = body.size();
@@ -628,7 +659,7 @@ struct Request::State {
             Require(sceHttpParseStatusLine(rawHeaders.data(), rawHeaders.size(), &major, &minor, &code, &reason, &reasonSize) >= 0 && major == 1 && minor >= 0 && minor <= 1,
                 "sceHttp2: malformed or unsupported HTTP1 status line");
             status = code;
-            hasLength = chunked = hasLocation = false;
+            hasLength = chunked = hasLocation = hasAuthChallenge = hasProxyAuthChallenge = false;
             contentEncoding.clear();
             contentLength = 0;
             location.clear();
@@ -652,6 +683,12 @@ struct Request::State {
                     Require(!hasLocation, "sceHttp2: duplicate HTTP1 Location");
                     hasLocation = true;
                     location = value;
+                } else if (name == "set-cookie" && settings.cookieBox != 0) {
+                    Http2StoreResponseCookie(settings.cookieBox, Address(), value);
+                } else if (name == "www-authenticate") {
+                    hasAuthChallenge = true;
+                } else if (name == "proxy-authenticate") {
+                    hasProxyAuthChallenge = true;
                 }
             }
             if (status >= 100 && status < 200) {
@@ -659,7 +696,8 @@ struct Request::State {
                 return;
             }
             Require(status >= 200 && status <= 599 && !(hasLength && chunked), "sceHttp2: invalid or ambiguous HTTP1 framing");
-            Require(!settings.auth || (status != 401 && status != 407), "sceHttp2: authentication is not implemented");
+            const bool authenticationChallenge = (status == 401 && hasAuthChallenge) || (status == 407 && hasProxyAuthChallenge);
+            Require(!settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
             remaining = contentLength;
             ready = true;
             ended = method == "HEAD" || status == 204 || status == 304 || (hasLength && remaining == 0);
@@ -675,7 +713,23 @@ struct Request::State {
         header += "Host: " + authority + "\r\nConnection: close\r\n";
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& field) { return field.first == "user-agent"; }))
             header += "User-Agent: " + settings.userAgent + "\r\n";
-        for (const auto& [name, value] : settings.headers) if (name != "host") header += name + ": " + value + "\r\n";
+        std::string cookies;
+        bool hasCookie = false;
+        for (const auto& [name, value] : settings.headers) {
+            if (name == "cookie") {
+                if (!cookies.empty() && !value.empty()) cookies += "; ";
+                cookies += value;
+                hasCookie = true;
+            } else if (name != "host") header += name + ": " + value + "\r\n";
+        }
+        if (settings.cookieBox != 0) {
+            if (const auto stored = Http2CookieHeader(settings.cookieBox, Address())) {
+                if (!cookies.empty()) cookies += "; ";
+                cookies += *stored;
+                hasCookie = true;
+            }
+        }
+        if (hasCookie) header += "cookie: " + cookies + "\r\n";
         const bool chunkUpload = settings.noContentLength && size;
         if (chunkUpload) header += "Transfer-Encoding: chunked\r\n";
         else if (!settings.noContentLength) header += "Content-Length: " + std::to_string(size) + "\r\n";
@@ -760,8 +814,14 @@ struct Request::State {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
             if (frame->hd.stream_id == state.stream) {
-                Require(!state.ready, "sceHttp2: response trailers are not implemented");
+                if (state.ready) {
+                    state.trailerBlock = true;
+                    state.blockHeaders.clear();
+                    return;
+                }
                 state.blockStatus = 0;
+                state.blockHeaders.clear();
+                state.hasAuthChallenge = state.hasProxyAuthChallenge = false;
                 state.hasLength = false;
                 state.contentLength = 0;
                 state.location.clear();
@@ -780,7 +840,13 @@ struct Request::State {
             state.headerBytes += nameSize + valueSize;
             const std::string_view key(reinterpret_cast<const char*>(name), nameSize);
             const std::string_view text(reinterpret_cast<const char*>(value), valueSize);
+            if (state.trailerBlock) {
+                state.blockHeaders.emplace_back(std::string(key), std::string(text));
+                return;
+            }
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
+            if (key == "www-authenticate") state.hasAuthChallenge = true;
+            if (key == "proxy-authenticate") state.hasProxyAuthChallenge = true;
             if (key == "location") {
                 Require(!state.hasLocation, "sceHttp2: duplicate redirect location; console error mapping is unknown");
                 state.location = text;
@@ -790,7 +856,9 @@ struct Request::State {
                 state.contentLength = Number(text);
                 state.hasLength = true;
             }
+            if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
+            if (key != ":status") state.blockHeaders.emplace_back(std::string(key), std::string(text));
         });
     }
 
@@ -801,10 +869,19 @@ struct Request::State {
                 Require(frame->goaway.error_code == NGHTTP2_NO_ERROR && frame->goaway.last_stream_id >= state.stream,
                     "sceHttp2: GOAWAY rejected request");
             if (frame->hd.stream_id != state.stream) return;
-            if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
+            if (frame->hd.type == NGHTTP2_HEADERS && state.trailerBlock) {
+                state.trailerHeaders.clear();
+                for (const auto& [key, value] : state.blockHeaders) state.trailerHeaders += key + ": " + value + "\r\n";
+                state.trailerHeaders += "\r\n";
+                state.trailerBlock = false;
+            } else if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
-                Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
+                const bool authenticationChallenge = (state.status == 401 && state.hasAuthChallenge) || (state.status == 407 && state.hasProxyAuthChallenge);
+                Require(!state.settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
                 state.ready = true;
+                state.allHeaders = "HTTP/2.0 " + std::to_string(state.status) + " HTTP2 NO PHRASE\r\n";
+                for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";
+                state.allHeaders += "\r\n";
             }
             if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
                 (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
@@ -872,6 +949,9 @@ struct Request::State {
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& header) { return header.first == "user-agent"; }))
             fields.emplace_back("user-agent", settings.userAgent);
         for (const auto& header : settings.headers) if (header.first != "host") fields.push_back(header);
+        if (settings.cookieBox != 0) {
+            if (auto cookie = Http2CookieHeader(settings.cookieBox, Address())) fields.emplace_back("cookie", std::move(*cookie));
+        }
         if (!settings.noContentLength) fields.emplace_back("content-length", std::to_string(settings.contentLength));
         std::vector<nghttp2_nv> headers;
         for (auto& [name, value] : fields) headers.push_back({reinterpret_cast<std::uint8_t*>(name.data()),
@@ -1085,9 +1165,23 @@ int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
-    Require(state->version < 3, "sceHttp2GetAllResponseHeaders: HTTP2 header representation is unimplemented");
-    *header = state->rawHeaders.data();
-    *size = state->rawHeaders.size();
+    if (state->version < 3) {
+        *header = state->rawHeaders.data();
+        *size = state->rawHeaders.size();
+    } else {
+        *header = state->allHeaders.data();
+        *size = state->allHeaders.size();
+    }
+    return 0;
+}
+
+int Request::TrailingHeaders(char** header, std::size_t* size) {
+    auto lock = state->Lock();
+    if (state->networkResult) return state->networkResult;
+    Require(header && size && state->ready && state->ended, "sceHttp2GetAllTrailingHeaders: null output or response unavailable");
+    Require(!state->trailerHeaders.empty(), "sceHttp2GetAllTrailingHeaders: response has no trailers");
+    *header = state->trailerHeaders.data();
+    *size = state->trailerHeaders.size();
     return 0;
 }
 

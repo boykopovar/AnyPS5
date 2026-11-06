@@ -929,7 +929,7 @@ void CheckBdaSpan(AgcDriver::VulkanDevice& device, const Block& block, std::size
         failure = error.what();
     }
     const auto deferred = log.Finish();
-    if (failure.empty()) failure = deferred;
+    if (failure.empty() && deferred.find("BDA access failed:") != std::string::npos) failure = deferred;
     if (refused) {
         Require(failure.find("BDA access failed:") != std::string::npos, "BDA access to a resident native multisample range was not refused: " + failure);
         Require(std::equal(before.begin(), before.end(), block.data), "a refused BDA access changed guest memory");

@@ -1,0 +1,11 @@
+add_library(libfontconfig SHARED EXCLUDE_FROM_ALL Export.cpp Sets.cpp)
+target_include_directories(libfontconfig PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libfontconfig)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_fontconfig_sets_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontconfigSets.cpp Sets.cpp)
+    target_include_directories(guest_fontconfig_sets_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_windows_unwind(guest_fontconfig_sets_tests)
+    add_test(NAME guest_fontconfig_sets COMMAND guest_fontconfig_sets_tests)
+    set_tests_properties(guest_fontconfig_sets PROPERTIES TIMEOUT 20)
+endif()
