@@ -25,6 +25,8 @@ constexpr int ContextAlreadyExists = static_cast<int>(0x80551613u);
 constexpr int InvalidTrpFileFormat = static_cast<int>(0x80551616u);
 constexpr int TitleConfNotInstalled = static_cast<int>(0x80551626u);
 constexpr int TrophyNotUnlocked = static_cast<int>(0x8055161au);
+constexpr int InvalidGroupId = static_cast<int>(0x8055160bu);
+constexpr int IconFileNotFound = static_cast<int>(0x80551614u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -127,6 +129,23 @@ int main() {
 
     std::uint32_t flags[4] = {}, count = 0;
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == NotRegistered, "state before registration");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, nullptr, &count) == InvalidArgument, "null unlock flags");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), nullptr) == InvalidArgument, "null unlock count");
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, nullptr) == InvalidArgument, "null platinum id");
+    GameDetails gameDetails{};
+    gameDetails.size = sizeof(gameDetails);
+    GroupDetails groupDetails{};
+    groupDetails.size = sizeof(groupDetails);
+    TrophyDetails trophyDetails{};
+    trophyDetails.size = sizeof(trophyDetails);
+    char unregisteredIcon[16] = {};
+    std::uint64_t unregisteredSize = sizeof(unregisteredIcon);
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == NotRegistered, "unlock before registration");
+    Require(sceNpTrophyGetGameIcon(context, handle, unregisteredIcon, &unregisteredSize) == NotRegistered, "game icon before registration");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, unregisteredIcon, &unregisteredSize) == NotRegistered, "group icon before registration");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 0, unregisteredIcon, &unregisteredSize) == NotRegistered, "trophy icon before registration");
+    Require(sceNpTrophyGetGroupInfo(context, handle, -1, &groupDetails, nullptr) == NotRegistered, "group info before registration");
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, &trophyDetails, nullptr) == NotRegistered, "trophy info before registration");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "register the context");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == AlreadyRegistered, "register twice");
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
@@ -147,6 +166,20 @@ int main() {
     Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == 0 && size == 6 && std::memcmp(icon, "second", 6) == 0, "icon of the unlocked trophy");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 2, icon, &size) == InvalidTrophyId, "icon of a trophy past the count");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, -1, icon, &size) == InvalidTrophyId, "icon of a negative trophy id");
+    Require(sceNpTrophyGetGroupIcon(context, handle, -1, icon, &size) == InvalidGroupId, "icon of a negative group id");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, &size) == IconFileNotFound, "icon of a group the package lacks");
+    Require(sceNpTrophyGetGameInfo(context + 100, handle, &gameDetails, nullptr) == InvalidContext, "game info for an unknown context");
+    Require(sceNpTrophyGetGameInfo(context, handle + 100, &gameDetails, nullptr) == InvalidHandle, "game info for an unknown handle");
+    Require(sceNpTrophyGetGameInfo(context + 100, handle + 100, &gameDetails, nullptr) == InvalidContext, "the context is checked before the handle");
+    Require(sceNpTrophyGetGroupIcon(-1, handle, 0, icon, &size) == InvalidContext, "group icon for the invalid context id");
+    GroupData badGroupData{};
+    badGroupData.size = 1;
+    Require(sceNpTrophyGetGroupInfo(context, handle, -1, nullptr, &badGroupData) == InvalidArgument, "invalid group data size");
+    TrophyData badTrophyData{};
+    badTrophyData.size = 1;
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 1, nullptr, &badTrophyData) == InvalidArgument, "invalid trophy data size");
     int saved = -1;
     {
         std::ifstream state(root / "_trophy/trophy00.1");
