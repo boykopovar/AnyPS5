@@ -107,4 +107,4 @@
 
 ### Stroker count outputs
 
-- Read-only-output handling in `FT_Stroker_GetCounts` and `FT_Stroker_GetBorderCounts` is not measured on a console. After the native query, a refused `GuestArena::HostWrite` leaves both outputs unchanged and returns the native error if one occurred, otherwise `FT_Err_Invalid_Argument`; the native query still updates private border validity. Writable outputs retain native zero-on-error and points-before-contours alias behavior.
+- Read-only-output handling in [FT_Stroker_GetCounts and FT_Stroker_GetBorderCounts](../../../core/libs/prx/libSceFreeType/src/Stroker.cpp) is not measured on a console. After the native query, a refused `GuestArena::HostWrite` leaves both outputs unchanged and returns the native error if one occurred, otherwise `FT_Err_Invalid_Argument`; the native query still updates private border validity. Writable outputs retain native zero-on-error and points-before-contours alias behavior.
