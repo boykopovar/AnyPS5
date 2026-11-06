@@ -1195,6 +1195,25 @@ static void CheckIoctl() {
     Require(Failed(sceNetIoctl(socket, 0x4004667f, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
     Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
+    for (const int value : {0, 3}) {
+        int request = value;
+        Require(ioctl_nid_postfix(socket, 0x8004667e, &request) == 0);
+        int nonblocking = -1;
+        std::uint32_t length = sizeof(nonblocking);
+        Require(sceNetGetsockopt(socket, 0xffff, 0x1200, &nonblocking, &length) == 0 && nonblocking == (value != 0 ? 1 : 0));
+        Require(fcntl_nid_postfix(socket, 3) == (value != 0 ? 2 | 4 : 2));
+    }
+    Require(sceNetSendto(socket, payload, sizeof(payload), 0, address.data(), address.size()) == sizeof(payload));
+    entry.revents = 0;
+    Require(poll_nid_postfix(&entry, 1, 1000) == 1 && entry.revents == 1);
+    readable = -1;
+    Require(ioctl_nid_postfix(socket, 0x4004667f, &readable) == 0 && readable == sizeof(payload));
+    Require(sceNetRecv(socket, buffer, sizeof(buffer), 0) == sizeof(payload));
+    Require(ioctl_nid_postfix(socket, 0x4004667f, &readable) == 0 && readable == 0);
+    *__error_nid_postfix() = 0;
+    Require(ioctl_nid_postfix(socket, 0x4004667f, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(ioctl_nid_postfix(socket, 0x8004667e, nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(sceNetSocketClose(socket) == 0);
     Require(Failed(sceNetIoctl(socket, 0x8004667e, &enabled), 9));
     Require(Failed(sceNetIoctl(-1, 0x4004667f, &readable), 9));

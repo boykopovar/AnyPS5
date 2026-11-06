@@ -8,17 +8,7 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI ASN1_INTEGER_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ASN1_OBJECT_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ASN1_STRING_get0_data_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -135,11 +125,6 @@ int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_PKEY_set1_EC_KEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_size_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
