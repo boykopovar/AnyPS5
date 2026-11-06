@@ -103,6 +103,9 @@ struct StateCallback {
 std::mutex stateMutex;
 std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> stateCallbacksA;
 StateCallback stateCallback;
+
+NpStateCallbackForToolkit toolkitCallback = nullptr;
+void* toolkitUserdata = nullptr;
 }
 
 extern "C" {
@@ -1011,6 +1014,21 @@ int APS5_VABI sceNpUnregisterStateCallback(void) {
     std::lock_guard lock(stateMutex);
     if (!stateCallback.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
     stateCallback = {};
+    return 0;
+}
+
+int APS5_VABI sceNpRegisterStateCallbackForToolkit(NpStateCallbackForToolkit callback, void* userdata) {
+    std::lock_guard lock(stateMutex);
+    toolkitCallback = callback;
+    toolkitUserdata = userdata;
+    return 0;
+}
+
+int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
+    std::lock_guard lock(stateMutex);
+    if (!toolkitCallback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    toolkitCallback = nullptr;
+    toolkitUserdata = nullptr;
     return 0;
 }
 
