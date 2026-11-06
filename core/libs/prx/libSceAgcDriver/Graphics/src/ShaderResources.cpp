@@ -183,6 +183,10 @@ struct TextureCache {
     std::unordered_map<TextureKey, CachedTexture, TextureKeyHash> transient;
     std::uint64_t transientPresent = 0;
     std::uint64_t transientBytes = 0;
+    std::uint64_t transientAccounted = 0;
+    std::uint64_t transientRoom = std::numeric_limits<std::uint64_t>::max();
+    VkPhysicalDevice roomDevice = VK_NULL_HANDLE;
+    std::chrono::steady_clock::time_point roomRead{};
     std::vector<std::pair<std::vector<std::byte>, std::uint64_t>> spare;
     std::uint64_t spareBytes = 0;
     std::uint64_t bytes = 0;
@@ -197,6 +201,7 @@ struct TextureCache {
         std::uint64_t passed = 0;
         std::uint64_t stale = 0;
         std::uint64_t transientHits = 0;
+        std::uint64_t transientRefused = 0;
     } counts;
     std::chrono::steady_clock::time_point countsReported = std::chrono::steady_clock::now();
     VkPhysicalDevice budgetDevice = VK_NULL_HANDLE;
@@ -298,6 +303,7 @@ void dropTransient(TextureCache& cache, VkDevice device = VK_NULL_HANDLE) {
             continue;
         }
         cache.transientBytes -= it->second.bytes.size();
+        cache.transientAccounted -= it->second.accounted;
         if (it->second.texture.use_count() > 1) noteReleased(it->second.texture);
         it = cache.transient.erase(it);
     }
@@ -310,6 +316,7 @@ void dropTransientBefore(TextureCache& cache, std::uint64_t present) {
             continue;
         }
         cache.transientBytes -= it->second.bytes.size();
+        cache.transientAccounted -= it->second.accounted;
         if (it->second.texture.use_count() > 1) noteReleased(it->second.texture);
         it = cache.transient.erase(it);
     }
@@ -415,7 +422,7 @@ void reportCacheCounts(TextureCache& cache, std::uint64_t budget) {
     if (now - cache.countsReported < std::chrono::seconds(10)) return;
     cache.countsReported = now;
     const auto counts = std::exchange(cache.counts, {});
-    AgcDriver::ProfilePrint_nid_no_patch("[texture-cache] (10 s): %llu textures cached, %llu used uncached (first use this frame with the least recently used entry used this frame or the last, or a later use with it used this frame), %llu evicted, %llu held ones passed over, %llu found changed; %llu MiB in %zu entries, budget %llu MiB, frame %llu\n", static_cast<unsigned long long>(counts.inserted), static_cast<unsigned long long>(counts.uncached), static_cast<unsigned long long>(counts.evicted), static_cast<unsigned long long>(counts.passed), static_cast<unsigned long long>(counts.stale), static_cast<unsigned long long>(cache.bytes >> 20u), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(Recorder::Presents()));
+    AgcDriver::ProfilePrint_nid_no_patch("[texture-cache] (10 s): %llu textures cached, %llu used uncached (first use this frame with the least recently used entry used this frame or the last, or a later use with it used this frame), %llu evicted, %llu held ones passed over, %llu found changed; %llu MiB in %zu entries, budget %llu MiB, frame %llu; kept until the next present: %llu MiB in %zu, %llu reused, %llu released past the budget or the device's room\n", static_cast<unsigned long long>(counts.inserted), static_cast<unsigned long long>(counts.uncached), static_cast<unsigned long long>(counts.evicted), static_cast<unsigned long long>(counts.passed), static_cast<unsigned long long>(counts.stale), static_cast<unsigned long long>(cache.bytes >> 20u), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(Recorder::Presents()), static_cast<unsigned long long>(cache.transientAccounted >> 20u), cache.transient.size(), static_cast<unsigned long long>(counts.transientHits), static_cast<unsigned long long>(counts.transientRefused));
 }
 
 struct ImageMemoEntry {
@@ -733,15 +740,39 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
     return cached.budget;
 }
 
+void noteTransientRoom(const Context& context, TextureCache& cache, const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, std::chrono::steady_clock::time_point now) {
+    cache.roomDevice = context.physical;
+    cache.roomRead = now;
+    const auto heap = largestDeviceLocalHeap(context.memory);
+    if (!heap || reported.heapBudget[*heap] == 0) {
+        cache.transientRoom = std::numeric_limits<std::uint64_t>::max();
+        return;
+    }
+    const auto limit = reported.heapBudget[*heap] - reported.heapBudget[*heap] / 8u;
+    const auto usage = reported.heapUsage[*heap];
+    cache.transientRoom = cache.transientAccounted + (limit > usage ? limit - usage : 0u);
+}
+
 std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
-    if (const auto forced = forcedCacheBudget(); forced != 0) return forced;
-    if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return TextureCacheBudget(context.memory);
+    const bool queryable = context.memoryProperties2 != nullptr && context.physical != VK_NULL_HANDLE;
     const auto now = std::chrono::steady_clock::now();
+    if (const auto forced = forcedCacheBudget(); forced != 0) {
+        if (queryable && (cache.roomDevice != context.physical || now - cache.roomRead >= std::chrono::seconds(1))) {
+            VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+            VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+            properties.pNext = &reported;
+            context.memoryProperties2(context.physical, &properties);
+            noteTransientRoom(context, cache, reported, now);
+        }
+        return forced;
+    }
+    if (!queryable) return TextureCacheBudget(context.memory);
     if (cache.budgetDevice == context.physical && now - cache.budgetRead < std::chrono::seconds(1)) return cache.budget;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     properties.pNext = &reported;
     context.memoryProperties2(context.physical, &properties);
+    noteTransientRoom(context, cache, reported, now);
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
     const auto budget = SampledTextureBudget(context.memory, &reported, sampled + storage, storage);
@@ -1116,6 +1147,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             if (admitTexture(cache, key, found->second.accounted, sampledBudget(context, cache))) {
                 auto entry = std::move(found->second);
                 cache.transientBytes -= entry.bytes.size();
+                cache.transientAccounted -= entry.accounted;
                 cache.transient.erase(found);
                 cache.bytes += entry.accounted;
                 entry.present = Recorder::Presents();
@@ -1130,6 +1162,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             return texture;
         }
         cache.transientBytes -= found->second.bytes.size();
+        cache.transientAccounted -= found->second.accounted;
         if (found->second.texture.use_count() > 1) noteReleased(found->second.texture);
         cache.transient.erase(found);
     }
@@ -1193,8 +1226,14 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         reportCacheCounts(cache, budget);
         reportTextureCounters();
         if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
+        if (cache.transientAccounted + entry.accounted > std::min(budget, cache.transientRoom)) {
+            ++cache.counts.transientRefused;
+            noteReleased(texture);
+            return texture;
+        }
         if (cache.transientBytes + entry.bytes.size() > TransientSnapshotBytes) parkSnapshot(cache, entry.bytes);
         cache.transientBytes += entry.bytes.size();
+        cache.transientAccounted += entry.accounted;
         entry.present = Recorder::Presents();
         cache.transient.insert_or_assign(key, std::move(entry));
         return texture;
@@ -1618,6 +1657,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                 freed += it->second.texture->AllocationBytes();
                 ++sampledEntries;
                 cache.transientBytes -= it->second.bytes.size();
+                cache.transientAccounted -= it->second.accounted;
                 it = cache.transient.erase(it);
             }
             for (auto it = cache.entries.end(); it != cache.entries.begin() && freed < bytes;) {

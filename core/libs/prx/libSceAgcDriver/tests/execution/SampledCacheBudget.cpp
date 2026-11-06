@@ -901,7 +901,12 @@ void frameTests(const Context& context) {
     Recorder::CountPresent();
     std::vector<std::weak_ptr<Texture>> moved(frame);
     for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
-    for (std::size_t surface = 0; surface < frame; ++surface) Require(!moved[surface].expired(), "surface " + std::to_string(frame + surface) + ", first used in the frame after the cached textures were, was not kept for the rest of the frame");
+    std::uint64_t movedKept = 0;
+    for (const auto& texture : moved) {
+        if (const auto held = texture.lock()) movedKept += held->AllocationBytes();
+    }
+    Require(!moved[0].expired(), "surface " + std::to_string(frame) + ", the first used in the frame after the cached textures were, was not kept for the rest of the frame");
+    Require(movedKept <= Budget, "a frame of " + std::to_string(frame) + " textures the full cache refused kept " + std::to_string(movedKept >> 10u) + " KiB of them, past the " + std::to_string(Budget >> 10u) + " KiB budget");
     Require(TextureCacheUsage().sampledEntries == capacity, "a frame over other textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " of the previous frame's textures cached");
     Recorder::CountPresent();
     for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
@@ -1004,6 +1009,32 @@ void refusedReuseTests(const Context& context) {
     Recorder::CountPresent();
     Sampled(context, block.Surface(0));
     Require(changed->Released(), "a refused texture no frame used since was not marked released when the next frame ended");
+    ClearCachedTextures(context.device);
+}
+
+void refusedBudgetTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && (Surfaces - capacity) * bytes > Budget, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    std::vector<std::weak_ptr<Texture>> refused;
+    for (std::size_t surface = capacity; surface < Surfaces; ++surface) refused.push_back(Sampled(context, block.Surface(surface)));
+    std::uint64_t kept = 0;
+    std::size_t live = 0;
+    for (const auto& texture : refused) {
+        if (const auto held = texture.lock()) {
+            kept += held->AllocationBytes();
+            ++live;
+        }
+    }
+    Require(kept <= Budget, "a frame that refused " + std::to_string(refused.size()) + " textures kept " + std::to_string(live) + " of them alive, " + std::to_string(kept >> 10u) + " KiB, past the " + std::to_string(Budget >> 10u) + " KiB budget");
+    Require(live != 0u && live < refused.size(), "a frame that refused " + std::to_string(refused.size()) + " textures over the budget kept " + std::to_string(live) + " of them, expected some but not all");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "refusing a frame of textures past the kept budget took the cache over its budget");
     ClearCachedTextures(context.device);
 }
 
@@ -1144,6 +1175,37 @@ void VKAPI_PTR ReportPressure(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties
 std::uint64_t ReadStorageBudget(const Context& context) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     return StorageTextureCacheBudget(context);
+}
+
+void VKAPI_PTR ReportFull(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        reported->heapBudget[heap] = ReportedBudget;
+        reported->heapUsage[heap] = ReportedBudget;
+    }
+}
+
+void refusedPressureTests(Context context) {
+    const auto unpressed = context;
+    context.memoryProperties2 = &ReportFull;
+    Block block(context);
+    ClearCachedTextures(context.device);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity < Surfaces, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    std::vector<std::weak_ptr<Texture>> refused;
+    for (std::size_t surface = capacity; surface < Surfaces; ++surface) refused.push_back(Sampled(context, block.Surface(surface)));
+    std::size_t live = 0;
+    for (const auto& texture : refused) live += !texture.expired();
+    Require(live == 0u, "a device that reports its memory budget used up kept " + std::to_string(live) + " of " + std::to_string(refused.size()) + " refused textures alive past their use");
+    ClearCachedTextures(context.device);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    SampledTextureCacheBudget(unpressed);
 }
 
 void memoryTests(Context context) {
@@ -1487,6 +1549,8 @@ int main(int argc, char** argv) {
             shrinkTests(context);
             secondUseTests(context);
             refusedReuseTests(context);
+            refusedBudgetTests(context);
+            refusedPressureTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
             spareAgeTests(context);
