@@ -35,8 +35,4 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPke
     NotImplemented_nid_no_patch("EVP_PKEY_copy_parameters of native LibreSSL3 algorithm data");
 }
 
-LibreSsl3EvpPkey* APS5_VABI SSL_get_privatekey_nid_disambig1_nid_postfix(const void*) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }

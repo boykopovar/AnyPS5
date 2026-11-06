@@ -146,7 +146,6 @@ void* APS5_VABI EVP_PKEY_get0_DSA_nid_postfix(LibreSsl3EvpPkey* key);
 LibreSsl3Rsa* APS5_VABI EVP_PKEY_get0_RSA_nid_postfix(LibreSsl3EvpPkey* key);
 int APS5_VABI EVP_PKEY_get1_RSA_nid_disambig1_nid_postfix(void);
 LibreSsl3EvpPkey* APS5_VABI EVP_PKEY_new_nid_disambig1_nid_postfix(void);
-LibreSsl3EvpPkey* APS5_VABI SSL_get_privatekey_nid_disambig1_nid_postfix(const void* ssl);
 void APS5_VABI EVP_PKEY_free_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key);
 int APS5_VABI EVP_PKEY_set1_RSA_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* key, LibreSsl3Rsa* rsa);
 int APS5_VABI EVP_PKEY_copy_parameters_nid_disambig1_nid_postfix(LibreSsl3EvpPkey* to, const LibreSsl3EvpPkey* from);

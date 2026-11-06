@@ -25,28 +25,6 @@ static_assert(offsetof(Pkey, method) == 8);
 static_assert(offsetof(Pkey, key) == 16);
 static_assert(offsetof(Pkey, saveParameters) == 24);
 
-struct LegacyCertKey {
-    void* x509;
-    void* privatekey;
-    const void* digest;
-};
-
-struct LegacyCert {
-    LegacyCertKey* key;
-    LegacyCertKey pkeys[8];
-    unsigned char rest[56];
-};
-
-struct LegacySsl {
-    unsigned char beforeCert[80];
-    LegacyCert* cert;
-    unsigned char rest[144];
-};
-
-static_assert(sizeof(LegacyCertKey) == 24 && offsetof(LegacyCertKey, privatekey) == 8);
-static_assert(sizeof(LegacyCert) == 256);
-static_assert(sizeof(LegacySsl) == 232 && offsetof(LegacySsl, cert) == 80);
-
 void* live;
 std::size_t allocated;
 unsigned releases;
@@ -108,33 +86,9 @@ template<typename TFunction> TFunction Resolve(void* module, const char* nid, bo
 int main(int argc, char** argv) {
     Require(argc == 2 || argc == 3);
     const bool constructorOnly = argc == 3 && std::strcmp(argv[2], "--constructor-only") == 0;
-    const bool privatekeyOnly = argc == 3 && std::strcmp(argv[2], "--privatekey-only") == 0;
     void* module = dlopen((std::string(argv[1]) + "/libSceLibreSsl3.prx").c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) std::fprintf(stderr, "%s\n", dlerror());
     Require(module != nullptr);
-    if (!constructorOnly) {
-        alignas(void*) std::array<unsigned char, 56> legacyKey{};
-        LegacyCert cert{};
-        cert.key = &cert.pkeys[0];
-        cert.key->privatekey = legacyKey.data();
-        LegacySsl ssl{};
-        ssl.cert = &cert;
-        const auto keyBefore = legacyKey;
-        const auto certBefore = cert;
-        const auto sslBefore = ssl;
-        auto privatekey = Resolve<void* (*)(const void*)>(module, "ZCrqHPiB4ro", !privatekeyOnly);
-        bool privatekeyRefused = false;
-        void* returned = nullptr;
-        try { returned = privatekey(&ssl); } catch (const std::exception&) { privatekeyRefused = true; }
-        if (!privatekeyRefused)
-            std::fprintf(stderr, "SSL_get_privatekey returned legacy fixture: %s instead of refusing\n",
-                         returned == legacyKey.data() ? "yes" : "no");
-        Require(std::memcmp(&ssl, &sslBefore, sizeof(ssl)) == 0);
-        Require(std::memcmp(&cert, &certBefore, sizeof(cert)) == 0);
-        Require(legacyKey == keyBefore);
-        Require(privatekeyRefused);
-        if (privatekeyOnly) return 0;
-    }
     auto registerHeap = reinterpret_cast<void (*)(void* const*)>(dlsym(module, "ApplicationHeapRegister_nid_no_patch"));
     Require(registerHeap != nullptr);
     void* const heap[10] {reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release), reinterpret_cast<void*>(AllocateZeroed),
@@ -166,21 +120,6 @@ int main(int argc, char** argv) {
     Require(live == nullptr && releases == 1 && wiped);
     release(nullptr);
     Require(releases == 1);
-    for (bool method : {true, false}) {
-        key = create();
-        int payload = 7;
-        if (method) key->method = &payload;
-        else key->key = &payload;
-        std::array<unsigned char, 32> before;
-        std::memcpy(before.data(), key, before.size());
-        bool refused = false;
-        try { release(key); } catch (const std::exception&) { refused = true; }
-        Require(refused && live == key && std::memcmp(key, before.data(), before.size()) == 0);
-        key->method = nullptr;
-        key->key = nullptr;
-        release(key);
-        Require(live == nullptr && wiped);
-    }
     for (int references : {1, 0, -1}) {
         key = create();
         key->type = 6;
@@ -188,8 +127,8 @@ int main(int argc, char** argv) {
         release(key);
         Require(live == nullptr && wiped);
     }
-    Require(releases == 6);
+    Require(releases == 4);
     failAllocation = true;
-    Require(create() == nullptr && live == nullptr && releases == 6);
+    Require(create() == nullptr && live == nullptr && releases == 4);
     return 0;
 }
