@@ -928,6 +928,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 stageCaptures[i].registeredViews = matched[i]->registeredViews;
                 matchedRegions[i] = std::move(candidate->second);
                 reused[i] = true;
+                // A tape-rebound candidate carries descriptor/shader-data patches for the new
+                // addresses; bake them into its compiled result now (the loop above ran before
+                // the candidate was adopted).
+                if (!matched[i]->shaderDataPatches.empty() || !matched[i]->descriptorPatches.empty()) applyShaderDataPatches(*matched[i]);
                 programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
                 memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
             } else {

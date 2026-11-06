@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DISPATCHCACHE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DISPATCHCACHE_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/RegionTape.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -81,6 +82,7 @@ struct DispatchVariant {
     std::shared_ptr<ShaderMemory> memory;
     std::vector<ShaderRecompiler::MemoryRegion> captured;
     std::vector<std::pair<std::uint64_t, std::size_t>> spans;
+    std::shared_ptr<const VariantTape> tape; // SRT-walk derivation per run; null when not recorded (APS5_DRAW_LAYOUT_VARIANTS)
     std::atomic<std::uint64_t> generation{0};
 };
 

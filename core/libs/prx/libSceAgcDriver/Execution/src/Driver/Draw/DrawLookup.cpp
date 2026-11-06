@@ -253,16 +253,30 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 for (const auto& variant : dataEntry->stages[i]) {
                     if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                     bool usedEqual = true;
+                    bool tapeCovered = false;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
-                        if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;
+                        if (now[w] == was[w] || (w < 64u && ((variant->userDataMask >> w) & 1u) == 0)) continue;
+                        if (layoutVariantsEnabled() && variant->tape != nullptr && TapeCoversUserWord(*variant->tape, static_cast<std::uint32_t>(w))) {
+                            tapeCovered = true;
+                            continue;
+                        }
+                        usedEqual = false;
                     }
                     if (!usedEqual) continue;
                     if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
                     std::vector<ShaderRecompiler::MemoryRegion> regions;
-                    appendEntryRegions(*variant, regions);
-                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (result == EntryOutcome::Equal) candidates.emplace_back(variant, std::move(regions));
+                    std::shared_ptr<DispatchVariant> candidate = variant;
+                    if (tapeCovered) {
+                        // Rebind through the SRT-walk tape: re-derive the regions from the new
+                        // user words and validate those, never the stored (stale) regions.
+                        // Fail-closed: an unrepresentable step keeps the candidate out.
+                        if (!rebindVariantTape(*variant, was, now, candidate, regions)) continue;
+                    } else {
+                        appendEntryRegions(*variant, regions);
+                    }
+                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling);
+                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *candidate, regions, imagesFlushed, runsSynced, sampling);
+                    if (result == EntryOutcome::Equal || result == EntryOutcome::EqualData) candidates.emplace_back(candidate, std::move(regions));
                 }
             }
         }

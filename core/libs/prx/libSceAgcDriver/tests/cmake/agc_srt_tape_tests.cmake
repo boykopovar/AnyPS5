@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    if(WIN32)
+        add_test_executable(agc_srt_tape_tests tests/SrtTape.cpp)
+        target_include_directories(agc_srt_tape_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(agc_srt_tape_tests PRIVATE libc)
+        set_target_properties(agc_srt_tape_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(agc_srt_tape_tests)
+        add_test(NAME agc_srt_tape COMMAND agc_srt_tape_tests)
+        set_tests_properties(agc_srt_tape PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
