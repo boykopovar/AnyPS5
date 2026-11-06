@@ -107,6 +107,7 @@ struct MultisampleColorSnapshot {
 
 std::vector<std::byte> ReadMultisampleTargetSamples_nid_no_patch(const Context& context, const ColorTarget& target);
 MultisampleColorSnapshot ReadMultisampleTargetColorSnapshot_nid_no_patch(const Context& context, const ColorTarget& target);
+void PublishMultisampleTargetColor_nid_no_patch(const Context& context, const ColorTarget& target);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image = nullptr);
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
 void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
