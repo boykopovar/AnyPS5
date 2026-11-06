@@ -1145,6 +1145,111 @@ static void CheckVolumeGainBounds() {
     }
 }
 
+static void CheckLightBarColorFadeInterpolation() {
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    const auto lerpChannel = [](std::uint8_t a, std::uint8_t b, float t) -> std::uint8_t {
+        const float clamped = std::clamp(t, 0.0f, 1.0f);
+        const float val = static_cast<float>(a) + clamped * static_cast<float>(static_cast<int>(b) - static_cast<int>(a));
+        return static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::round(val)), 0, 255));
+    };
+    const auto lerpColor = [&](const PadLightBarParam& from, const PadLightBarParam& to, float t) -> PadLightBarParam {
+        return PadLightBarParam{
+            lerpChannel(from.r, to.r, t),
+            lerpChannel(from.g, to.g, t),
+            lerpChannel(from.b, to.b, t)
+        };
+    };
+    const PadLightBarParam black{0, 0, 0};
+    const PadLightBarParam white{255, 255, 255};
+    Require(lerpColor(black, white, -1.0f).r == 0);
+    Require(lerpColor(black, white, 0.0f).r == 0);
+    Require(lerpColor(black, white, 0.25f).r == 64);
+    Require(lerpColor(black, white, 0.5f).r == 128);
+    Require(lerpColor(black, white, 0.75f).r == 191);
+    Require(lerpColor(black, white, 1.0f).r == 255);
+    Require(lerpColor(black, white, 2.0f).r == 255);
+
+    const std::array<PadLightBarParam, PAD_MAX_CONTROLLERS> startColors{
+        PadLightBarParam{255, 0, 0},
+        PadLightBarParam{0, 255, 0},
+        PadLightBarParam{0, 0, 255},
+        PadLightBarParam{255, 255, 255}
+    };
+    const std::array<PadLightBarParam, PAD_MAX_CONTROLLERS> targetColors{
+        PadLightBarParam{0, 255, 0},
+        PadLightBarParam{0, 0, 255},
+        PadLightBarParam{255, 128, 0},
+        PadLightBarParam{0, 0, 0}
+    };
+    for (float step : {-0.25f, 0.0f, 0.2f, 0.4f, 0.5f, 0.6f, 0.8f, 1.0f, 1.25f}) {
+        std::array<PadLightBarParam, PAD_MAX_CONTROLLERS> expected{};
+        for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+            expected[p] = lerpColor(startColors[p], targetColors[p], step);
+            Require(scePadSetLightBar(handles[p], &expected[p]) == PAD_OK);
+        }
+        for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+            Require(LightBarIs(p, true, expected[p].r, expected[p].g, expected[p].b));
+        }
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const PadLightBarParam c0{0, 0, 0};
+        const PadLightBarParam c1{1, 1, 1};
+        const auto mid01 = lerpColor(c0, c1, 0.5f);
+        Require(scePadSetLightBar(handles[p], &mid01) == PAD_OK && LightBarIs(p, true, mid01.r, mid01.g, mid01.b));
+
+        const PadLightBarParam c127{127, 127, 127};
+        const PadLightBarParam c128{128, 128, 128};
+        const auto mid127 = lerpColor(c127, c128, 0.5f);
+        Require(scePadSetLightBar(handles[p], &mid127) == PAD_OK && LightBarIs(p, true, mid127.r, mid127.g, mid127.b));
+
+        const PadLightBarParam c254{254, 254, 254};
+        const PadLightBarParam c255{255, 255, 255};
+        const auto mid254 = lerpColor(c254, c255, 0.5f);
+        Require(scePadSetLightBar(handles[p], &mid254) == PAD_OK && LightBarIs(p, true, mid254.r, mid254.g, mid254.b));
+    }
+    const auto midP0 = lerpColor(startColors[0], targetColors[0], 0.5f);
+    const auto midP1 = lerpColor(startColors[1], targetColors[1], 0.5f);
+    const auto midP2 = lerpColor(startColors[2], targetColors[2], 0.5f);
+    const auto midP3 = lerpColor(startColors[3], targetColors[3], 0.5f);
+    Require(scePadSetLightBar(handles[0], &midP0) == PAD_OK);
+    Require(scePadSetLightBar(handles[1], &midP1) == PAD_OK);
+    Require(scePadSetLightBar(handles[2], &midP2) == PAD_OK);
+    Require(scePadSetLightBar(handles[3], &midP3) == PAD_OK);
+    Require(LightBarIs(0, true, midP0.r, midP0.g, midP0.b));
+    Require(LightBarIs(1, true, midP1.r, midP1.g, midP1.b));
+    Require(LightBarIs(2, true, midP2.r, midP2.g, midP2.b));
+    Require(LightBarIs(3, true, midP3.r, midP3.g, midP3.b));
+
+    Require(scePadResetLightBar(handles[1]) == PAD_OK);
+    Require(LightBarIs(1, false, 0, 0, 0));
+    Require(LightBarIs(0, true, midP0.r, midP0.g, midP0.b));
+    Require(LightBarIs(2, true, midP2.r, midP2.g, midP2.b));
+    Require(LightBarIs(3, true, midP3.r, midP3.g, midP3.b));
+
+    Require(scePadSetLightBar(handles[1], &midP1) == PAD_OK);
+    Require(LightBarIs(1, true, midP1.r, midP1.g, midP1.b));
+
+    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK);
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(LightBarIs(p, false, 0, 0, 0));
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadSetLightBar(handles[p], nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadSetLightBar(invHandle, &white) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetLightBar(invHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadResetLightBar(invHandle) == PAD_ERROR_INVALID_HANDLE);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1464,5 +1569,6 @@ int main() {
     CheckAudioOutPathRouting();
     CheckAudioHapticsPortMapping();
     CheckVolumeGainBounds();
+    CheckLightBarColorFadeInterpolation();
     CheckPortZeroWithdrawn();
 }
