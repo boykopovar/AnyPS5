@@ -615,6 +615,10 @@ public:
         if (colorBytes != 0 && offset <= bytes && colorBytes <= bytes - offset) paddingFill = pattern;
     }
 
+    bool CanPublishColor() const {
+        return target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0u && target.cmaskAddress == 0u && !guestColorBaseline.empty();
+    }
+
     MultisampleColorSnapshot ColorSnapshot() {
         Require(target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0 && target.cmaskAddress == 0, "guest color snapshots with unsupported tiling or multisample metadata are not implemented");
         Require(!guestColorBaseline.empty(), "guest color snapshot has no initial footprint");
@@ -1846,8 +1850,10 @@ void SynchronizeMultisampleTargetRead_nid_no_patch(std::uint64_t address, std::s
             if (std::find(overlapping.begin(), overlapping.end(), target->active) != overlapping.end()) owners.push_back(target);
         }
     }
-    for (const auto& owner : owners) PublishMultisampleTargetColor_nid_no_patch(owner->context, owner->target);
-    RequireNoMultisampleTarget(address, bytes, "a synchronized guest read");
+    for (const auto& owner : owners) {
+        if (owner->CanPublishColor()) PublishMultisampleTargetColor_nid_no_patch(owner->context, owner->target);
+    }
+    RequireNoMultisampleTarget(address, bytes, "a CPU read");
 }
 
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {

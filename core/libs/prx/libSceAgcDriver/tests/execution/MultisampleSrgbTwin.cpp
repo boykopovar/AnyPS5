@@ -61,6 +61,7 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
+    std::span<std::byte> Bytes() const { return {block, BlockBytes}; }
 
 private:
     std::byte* block = nullptr;
@@ -82,6 +83,7 @@ ColorTarget MultisampledTarget(const GuestBlock& color, VkFormat format) {
     target.elementBytes = 4;
     target.bytes = BlockBytes / 4;
     target.samples = 4;
+    target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
     return target;
 }
 
