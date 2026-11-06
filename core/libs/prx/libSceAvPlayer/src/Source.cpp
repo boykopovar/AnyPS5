@@ -3,6 +3,7 @@
 
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libSceAvPlayer/include/HttpStream.hpp"
+#include "prx/libSceAvPlayer/include/FileReplacementStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 
@@ -39,7 +40,6 @@ constexpr std::uint32_t UnsyncedVideoDecodeAheadFrames = 12;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
-constexpr int AvioBufferSize = 64 * 1024;
 
 std::uint32_t AlignUp(std::uint32_t value, std::uint32_t alignment) {
     return (value + alignment - 1) / alignment * alignment;
@@ -75,68 +75,6 @@ bool HasAspect(AVRational sampleAspect) {
 float SampleAspect(AVRational sampleAspect) {
     return HasAspect(sampleAspect) ? static_cast<float>(av_q2d(sampleAspect)) : 0.0f;
 }
-
-class FileReplacementStream {
-public:
-    explicit FileReplacementStream(const AvPlayerFileReplacement& callbacks) : file(callbacks) {}
-
-    ~FileReplacementStream() {
-        if (context) {
-            av_freep(&context->buffer);
-            avio_context_free(&context);
-        }
-        if (opened) file.close(file.object_ptr);
-    }
-
-    FileReplacementStream(const FileReplacementStream&) = delete;
-    FileReplacementStream& operator=(const FileReplacementStream&) = delete;
-
-    bool Open(const std::string& path) {
-        if (file.open(file.object_ptr, path.c_str()) < 0) return false;
-        opened = true;
-        size = file.size(file.object_ptr);
-        auto* buffer = static_cast<std::uint8_t*>(av_malloc(AvioBufferSize));
-        if (!buffer) return false;
-        context = avio_alloc_context(buffer, AvioBufferSize, 0, this, &FileReplacementStream::read, nullptr, &FileReplacementStream::seek);
-        if (!context) av_free(buffer);
-        return context != nullptr;
-    }
-
-    AVIOContext* Context() const { return context; }
-
-private:
-    static int read(void* opaque, std::uint8_t* buffer, int size) {
-        auto* self = static_cast<FileReplacementStream*>(opaque);
-        if (self->position >= self->size) return AVERROR_EOF;
-        const auto length = static_cast<std::uint32_t>(std::min<std::uint64_t>(static_cast<std::uint64_t>(size), self->size - self->position));
-        const auto read = self->file.read_offset(self->file.object_ptr, buffer, self->position, length);
-        if (read < 0) return AVERROR(EIO);
-        if (read == 0) return AVERROR_EOF;
-        self->position += static_cast<std::uint64_t>(read);
-        return read;
-    }
-
-    static std::int64_t seek(void* opaque, std::int64_t offset, int whence) {
-        auto* self = static_cast<FileReplacementStream*>(opaque);
-        if (whence & AVSEEK_SIZE) return static_cast<std::int64_t>(self->size);
-        std::int64_t base = 0;
-        switch (whence & ~AVSEEK_FORCE) {
-        case SEEK_SET: base = 0; break;
-        case SEEK_CUR: base = static_cast<std::int64_t>(self->position); break;
-        case SEEK_END: base = static_cast<std::int64_t>(self->size); break;
-        default: return -1;
-        }
-        const auto target = std::clamp<std::int64_t>(base + offset, 0, static_cast<std::int64_t>(self->size));
-        self->position = static_cast<std::uint64_t>(target);
-        return target;
-    }
-
-    AvPlayerFileReplacement file;
-    bool opened = false;
-    std::uint64_t size = 0;
-    std::uint64_t position = 0;
-    AVIOContext* context = nullptr;
-};
 
 class Clock {
 public:
