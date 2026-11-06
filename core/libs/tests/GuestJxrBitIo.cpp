@@ -1,9 +1,12 @@
 #include "prx/libSceJxr/include/Api.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -86,6 +89,70 @@ std::uint32_t Guest(int operation, Jxr::BitIo* io, std::uint32_t value, std::uin
     case 13: return getSizeWrite_nid_postfix(io);
     default: return 0xffffffffu;
     }
+}
+
+Jxr::BitIo* attachingIo = nullptr;
+Jxr::Stream* attachingStream = nullptr;
+std::int64_t positionResult = 0;
+bool storePosition = true;
+bool throwPosition = false;
+int positionCalls = 0;
+
+std::int64_t APS5_VABI AttachmentPosition(Jxr::Stream* stream, std::size_t* position) {
+    Require(stream == attachingStream, "attachment forwards original stream");
+    Require(position == &attachingIo->referenceOffset, "attachment forwards original offset field");
+    Require(attachingIo->bitsUsed == 13 && attachingIo->mask == 37,
+            "position callback precedes bit-state initialization");
+    ++positionCalls;
+    if (throwPosition) throw std::invalid_argument("position callback failure");
+    if (storePosition) *position = std::numeric_limits<std::size_t>::max() - 17;
+    attachingIo->shadow = 0x76543210;
+    return positionResult;
+}
+
+void RunAttachWrite() {
+    alignas(Jxr::BitIo) std::array<std::uint8_t, 8192 + sizeof(Jxr::BitIo) + 16> storage;
+    storage.fill(0xa5);
+    auto* io = std::construct_at(reinterpret_cast<Jxr::BitIo*>(storage.data() + 8192));
+    Jxr::Stream stream{};
+    stream.getPosition = &AttachmentPosition;
+    attachingIo = io;
+    attachingStream = &stream;
+    for (const auto result : {std::int64_t{0}, std::int64_t{1} << 40, -(std::int64_t{1} << 40)}) {
+        for (const bool store : {false, true}) {
+            std::memset(io, 0x5c, sizeof(*io));
+            io->bitsUsed = 13;
+            io->mask = 37;
+            io->referenceOffset = 12345;
+            positionResult = result;
+            storePosition = store;
+            positionCalls = 0;
+            Require(attachISWrite_nid_postfix(io, &stream) == 0, "attachment ignores position callback result");
+            Require(positionCalls == 1, "attachment queries position once");
+            Require(io->referenceOffset == (store ? std::numeric_limits<std::size_t>::max() - 17 : 12345),
+                    "attachment preserves callback offset effect");
+            Require(io->shadow == 0x76543210, "attachment preserves untouched shadow field");
+            Require(io->start == storage.data() && io->current == storage.data(), "attachment locates preceding buffer");
+            Require(io->accumulator == 0 && io->bitsUsed == 0 && io->mask == WriteMask && io->stream == &stream,
+                    "attachment initializes writer state");
+            for (std::size_t i = 0; i < 8192; ++i) Require(storage[i] == 0xa5, "attachment keeps buffer bytes");
+            for (std::size_t i = 8192 + sizeof(*io); i < storage.size(); ++i)
+                Require(storage[i] == 0xa5, "attachment keeps trailing guard bytes");
+        }
+    }
+    io->bitsUsed = 13;
+    io->mask = 37;
+    std::array<std::byte, sizeof(*io)> before;
+    std::memcpy(before.data(), io, sizeof(*io));
+    throwPosition = true;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment propagates callback exceptions");
+    Require(std::memcmp(before.data(), io, sizeof(*io)) == 0, "throwing position callback prevents initialization");
+    throwPosition = false;
+    stream.getPosition = nullptr;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment needs a position callback");
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, nullptr); }, "attachment needs a stream");
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(nullptr, &stream); }, "attachment needs bit state");
+    std::destroy_at(io);
 }
 
 void RunReads() {
@@ -249,6 +316,7 @@ void RunEdges() {
 } // namespace
 
 int main() {
+    RunAttachWrite();
     RunReads();
     RunWrites();
     RunEdges();

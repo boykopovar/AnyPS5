@@ -4,7 +4,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
-        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp
+        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp src/OutlineTransform.cpp
         src/GuestObjects.cpp
         src/Names.cpp
         src/Trigonometry.cpp
@@ -231,6 +231,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_freetype_module_management PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
+    add_test_executable(guest_freetype_outline_transform_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineTransform.cpp)
+    target_include_directories(guest_freetype_outline_transform_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_outline_transform_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_outline_transform_tests)
+    add_test(NAME guest_freetype_outline_transform COMMAND guest_freetype_outline_transform_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_outline_transform PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
     target_include_directories(guest_freetype_charmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
@@ -282,3 +291,5 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/MemoryRecord.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")
+
+include("${CMAKE_CURRENT_LIST_DIR}/StrokerOutputs.cmake")
