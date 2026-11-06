@@ -86,6 +86,7 @@ bool Driver::findWaitProducer(std::uint64_t address, std::size_t bytes, std::uin
                 std::uint64_t motion = worker.executingPacket.load(std::memory_order_relaxed) & 0xffffffffull;
                 motion |= static_cast<std::uint64_t>(worker.pending.size() & 0xffu) << 32;
                 motion |= static_cast<std::uint64_t>(queue & 0xffu) << 40;
+                motion *= 0x9e3779b97f4a7c15ull + 2ull * queue;
                 const auto shift = depth * 8;
                 token ^= shift == 0 ? motion : ((motion << shift) | (motion >> (64 - shift)));
                 if (queue != 0 && (queue < 0x20 || queue > SubmissionQueueEnd)) continue;

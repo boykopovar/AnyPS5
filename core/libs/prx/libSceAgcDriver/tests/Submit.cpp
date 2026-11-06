@@ -1144,6 +1144,23 @@ void testWaitProducerChain() {
     waitFor(&scratch2, 1, "queue 0x22 never advanced behind queue 0x21's blocked label");
     waitFor(&label, 0xAA, "the producer chain never wrote the awaited label");
 
+    alignas(64) static volatile std::uint32_t gateStep1 = 0, gateStep2 = 0, labelPair = 0;
+    submit(0x23, commands(waitEqual(&gateStep1, 1), waitEqual(&gateStep2, 1), writeData(&labelPair, 0xBB)));
+    submit(0x24, commands(waitEqual(&gateStep1, 1), waitEqual(&gateStep2, 1), writeData(&labelPair, 0xBB)));
+    awaitedIs(&gateStep1, 0x23, "queue 0x23 never reached the shared first gate");
+    awaitedIs(&gateStep1, 0x24, "queue 0x24 never reached the shared first gate");
+    const auto pairAddress = reinterpret_cast<std::uintptr_t>(&labelPair);
+    std::uint64_t tokenA = 0;
+    check(DriverTestAccess::FindWaitProducer(pairAddress, 4, tokenA) && tokenA != 0, "no producers seen for the paired wait");
+    gateStep1 = 1;
+    awaitedIs(&gateStep2, 0x23, "queue 0x23 never reached the shared second gate");
+    awaitedIs(&gateStep2, 0x24, "queue 0x24 never reached the shared second gate");
+    std::uint64_t tokenB = 0;
+    check(DriverTestAccess::FindWaitProducer(pairAddress, 4, tokenB), "paired producers were lost from the lookup");
+    check(tokenB != tokenA, "identical in-step progress on queues 0x23 and 0x24 was cancelled out of the motion token");
+    gateStep2 = 1;
+    waitFor(&labelPair, 0xBB, "the paired producers never wrote their awaited label");
+
     gateFrozen = 1;
     AgcDriverWaitIdle_nid_postfix();
 }
