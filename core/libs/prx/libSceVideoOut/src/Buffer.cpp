@@ -260,9 +260,6 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, c
     if (attribute->option != 0) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
-    if (attribute->tiling_mode != 1) {
-        throw std::runtime_error(std::string(__func__) + ": PS4 tiled display buffers are not implemented");
-    }
     auto group = cfg->groups[setIndex];
     group.attribute = VideoOutBufferAttribute2{};
     group.attribute.pixel_format = Ps5PixelFormat(attribute->pixel_format);
@@ -270,7 +267,8 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, c
     group.attribute.aspect_ratio = attribute->aspect_ratio;
     group.attribute.width = attribute->width;
     group.attribute.height = attribute->height;
-    group.attribute.pitch_in_pixel = attribute->pitch_in_pixel;
+    group.attribute.pitch_in_pixel = attribute->tiling_mode == 0 ? 0 : attribute->pitch_in_pixel;
+    group.ps4Pitch = Ps4TiledPitch(attribute->tiling_mode, attribute->width, attribute->pitch_in_pixel);
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
         if (cfg->buffers[i].groupIndex != setIndex) continue;
         const auto display = DescribeVideoOutBuffer(cfg->buffers[i], group);

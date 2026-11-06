@@ -244,7 +244,7 @@ void testPs4Buffers() {
         std::lock_guard lock(cfg->mutex);
         const auto& group = cfg->groups[0];
         const auto& value = group.attribute;
-        check(group.ps4 && group.occupied && group.category == VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED, "the changed group lost its legacy flags");
+        check(group.ps4 && group.occupied && group.category == VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED && group.ps4Pitch == 0, "the changed group lost its legacy flags");
         check(value.pixel_format == 0x8000000022000000ull && value.width == 40 && value.height == 24 && value.pitch_in_pixel == 72 && value.tiling_mode == 1 && value.aspect_ratio == 0 && value.option == 0 && value.reserved0 == 0 && value.pad0 == 0 && value.reserved1[0] == 0 && value.reserved1[1] == 0 && value.reserved1[2] == 0 && value.dcc_control == 0 && value.dcc_cb_register_clear_color == 0, "the legacy change converted fields wrongly");
         const auto& other = cfg->groups[1];
         check(other.ps4 && other.occupied && other.category == VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED && other.attribute.pixel_format == 0x8000000000000000ull && other.attribute.width == 48 && other.attribute.height == 32 && other.attribute.pitch_in_pixel == 80 && other.attribute.tiling_mode == 1 && other.attribute.aspect_ratio == 0 && other.attribute.option == 0, "the legacy change modified its neighbouring group");
@@ -285,10 +285,24 @@ void testPs4Buffers() {
         check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid) == error, "the legacy change returned the wrong validation error");
         unchanged();
     }
+    auto legacyTiled = changed;
+    legacyTiled.tiling_mode = 0;
+    legacyTiled.pitch_in_pixel = 0;
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &legacyTiled) == VIDEO_OUT_ERROR_INVALID_PITCH, "the legacy change accepted a tiled pitch below its width");
+    unchanged();
+    for (uint32_t pitch : {128u, 256u}) {
+        legacyTiled.pitch_in_pixel = pitch;
+        check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &legacyTiled) == 0, "the legacy change to a tiled buffer failed");
+        std::lock_guard lock(cfg->mutex);
+        const auto& group = cfg->groups[0];
+        const auto display = DescribeVideoOutBuffer(cfg->buffers[1], group);
+        check(group.ps4 && group.attribute.tiling_mode == 0 && group.attribute.pitch_in_pixel == 0 && group.attribute.width == 40 && group.attribute.height == 24 && group.attribute.pixel_format == 0x8000000022000000ull && group.ps4Pitch == pitch && display.tilingMode == AgcDriver::DisplayTilingGcn && display.pitchInPixel == pitch && display.alignment == 4096 && display.address == reinterpret_cast<uint64_t>(pair[1]), "the legacy change to a tiled buffer is not a GCN display buffer with its pitch");
+        const auto& other = cfg->groups[1];
+        check(other.attribute.tiling_mode == 1 && other.attribute.pitch_in_pixel == 80 && other.ps4Pitch == 0, "the legacy change to a tiled buffer modified its neighbouring group");
+    }
+    check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy change back to a linear buffer failed");
+    unchanged();
     auto invalid = changed;
-    invalid.tiling_mode = 0;
-    rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "tiled display buffers are not implemented");
-    invalid = changed;
     invalid.pixel_format = 0x88060000u;
     rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "unsupported PS4 pixel format");
     invalid = changed;
