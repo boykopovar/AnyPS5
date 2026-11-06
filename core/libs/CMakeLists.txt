@@ -152,7 +152,8 @@ add_custom_command(
         COMMENT "Patching NIDs for libc"
 )
 
-file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+file(GLOB LIBS_DIRS LIST_DIRECTORIES true CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+file(GLOB LIBS_CMAKE_LISTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/prx/*/CMakeLists.txt)
 list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
 
 set(PATCHED_OUTPUTS ${LIBC_PATCHED})
@@ -235,6 +236,16 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_system_logger_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestSystemLogger.cpp)
+    target_include_directories(guest_system_logger_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_system_logger_tests PRIVATE libSceSystemLogger libc libkernel)
+    configure_windows_unwind(guest_system_logger_tests)
+    add_test(NAME guest_system_logger COMMAND guest_system_logger_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_logger PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemLogger>")
+    endif()
+
     add_test_executable(guest_webrtc_vad_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcVad.cpp)
     target_include_directories(guest_webrtc_vad_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_webrtc_vad_tests PRIVATE libwebrtc fvad)
@@ -289,13 +300,14 @@ if(TARGET mimalloc AND WIN32)
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
 elseif(TARGET mimalloc)
+    set(MIMALLOC_NAME ${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
     add_custom_command(
-            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            OUTPUT ${PATCHED_DIR}/${MIMALLOC_NAME}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/${MIMALLOC_NAME}
             DEPENDS mimalloc
-            COMMENT "Copying libmimalloc.dylib beside the libraries"
+            COMMENT "Copying ${MIMALLOC_NAME} beside the libraries"
     )
-    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/${MIMALLOC_NAME})
 endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
@@ -606,6 +618,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
     endif()
+    add_test_executable(guest_bemp2sys_tests tests/GuestBemp2sys.cpp)
+    target_include_directories(guest_bemp2sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_bemp2sys_tests PRIVATE libSceBemp2sys libkernel libc)
+    configure_windows_unwind(guest_bemp2sys_tests)
+    add_test(NAME guest_bemp2sys COMMAND guest_bemp2sys_tests)
+    set_tests_properties(guest_bemp2sys PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_bemp2sys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBemp2sys>")
+    endif()
     add_test_executable(guest_playready_tests tests/GuestPlayReady.cpp)
     target_include_directories(guest_playready_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_playready_tests PRIVATE libScePlayReady libkernel libc)
@@ -915,6 +937,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
     endif()
 
+    add_test_executable(guest_xml_initializer_tests tests/GuestXmlInitializer.cpp)
+    target_include_directories(guest_xml_initializer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_xml_initializer_tests PRIVATE libSceXml libkernel libc)
+    configure_windows_unwind(guest_xml_initializer_tests)
+    add_test(NAME guest_xml_initializer COMMAND guest_xml_initializer_tests)
+    set_tests_properties(guest_xml_initializer PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_xml_initializer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
+    endif()
+
     add_test_executable(guest_offline_imports_tests tests/GuestOfflineImports.cpp)
     target_include_directories(guest_offline_imports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_offline_imports_tests PRIVATE libSceHttp libSceNpEntitlementAccess libSceRudp libSceVideoRecordingP libc)
@@ -1110,16 +1143,6 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_gesture PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
-    endif()
-
-    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
-    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
-    configure_windows_unwind(guest_sys_util_notification_tests)
-    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
-    if(WIN32)
-        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
     endif()
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
