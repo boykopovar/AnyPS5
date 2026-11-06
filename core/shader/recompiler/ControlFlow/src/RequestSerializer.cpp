@@ -496,7 +496,7 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
         info.depthExportMin = std::bit_cast<float>(reader.ReadU32());
         info.depthExportMax = std::bit_cast<float>(reader.ReadU32());
     }
-    if (version >= 54u) {
+    if (version >= 55u) {
         info.depthBoundsDiscard.enabled = reader.ReadBool();
         for (std::uint32_t& word : info.depthBoundsDiscard.descriptor) word = reader.ReadU32();
     }
@@ -904,7 +904,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(54u);
+    writer.WriteU32(55u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -949,6 +949,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.tessellationEvaluationSubgroups);
     writer.WriteBool(request.target.hostInterpolationFirst);
     writer.WriteBool(request.target.shaderImageMinLod);
+    writer.WriteBool(request.target.float16WidenNans);
+    writer.WriteBool(request.target.float16NarrowNans);
     return base64Encode(buffer);
 }
 
@@ -957,7 +959,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 54u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 55u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1020,6 +1022,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 51u) result.request.target.tessellationEvaluationSubgroups = reader.ReadBool();
     if (version >= 52u) result.request.target.hostInterpolationFirst = reader.ReadBool();
     if (version >= 53u) result.request.target.shaderImageMinLod = reader.ReadBool();
+    if (version >= 54u) {
+        result.request.target.float16WidenNans = reader.ReadBool();
+        result.request.target.float16NarrowNans = reader.ReadBool();
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }
