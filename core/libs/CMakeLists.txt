@@ -152,7 +152,8 @@ add_custom_command(
         COMMENT "Patching NIDs for libc"
 )
 
-file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+file(GLOB LIBS_DIRS LIST_DIRECTORIES true CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+file(GLOB LIBS_CMAKE_LISTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/prx/*/CMakeLists.txt)
 list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
 
 set(PATCHED_OUTPUTS ${LIBC_PATCHED})
@@ -289,13 +290,14 @@ if(TARGET mimalloc AND WIN32)
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
 elseif(TARGET mimalloc)
+    set(MIMALLOC_NAME ${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
     add_custom_command(
-            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            OUTPUT ${PATCHED_DIR}/${MIMALLOC_NAME}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/${MIMALLOC_NAME}
             DEPENDS mimalloc
-            COMMENT "Copying libmimalloc.dylib beside the libraries"
+            COMMENT "Copying ${MIMALLOC_NAME} beside the libraries"
     )
-    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/${MIMALLOC_NAME})
 endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
@@ -535,6 +537,46 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_kernel_sys_barrier_tests)
     add_test(NAME guest_kernel_sys_barrier COMMAND guest_kernel_sys_barrier_tests)
     set_tests_properties(guest_kernel_sys_barrier PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_kernel_sys_execve_tests tests/GuestKernelSysExecve.cpp)
+    target_include_directories(guest_kernel_sys_execve_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_execve_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_execve_tests)
+    add_test(NAME guest_kernel_sys_execve COMMAND guest_kernel_sys_execve_tests)
+    set_tests_properties(guest_kernel_sys_execve PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_execve PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_execvpe_tests tests/GuestKernelSysExecvpe.cpp)
+    target_include_directories(guest_kernel_sys_execvpe_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_execvpe_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_execvpe_tests)
+    add_test(NAME guest_kernel_sys_execvpe COMMAND guest_kernel_sys_execvpe_tests)
+    set_tests_properties(guest_kernel_sys_execvpe PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_execvpe PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_nanosleep_tests tests/GuestKernelSysNanosleep.cpp)
+    target_include_directories(guest_kernel_sys_nanosleep_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_nanosleep_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_nanosleep_tests)
+    add_test(NAME guest_kernel_sys_nanosleep COMMAND guest_kernel_sys_nanosleep_tests)
+    set_tests_properties(guest_kernel_sys_nanosleep PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_nanosleep PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_adjtime_tests tests/GuestKernelSysAdjtime.cpp)
+    target_include_directories(guest_kernel_sys_adjtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_adjtime_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_adjtime_tests)
+    add_test(NAME guest_kernel_sys_adjtime COMMAND guest_kernel_sys_adjtime_tests)
+    set_tests_properties(guest_kernel_sys_adjtime PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_adjtime PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
     add_test_executable(guest_kernel_sys_pthread_tests tests/GuestKernelSysPthread.cpp)
     target_include_directories(guest_kernel_sys_pthread_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_pthread_tests PRIVATE libkernel_sys libkernel libc)
@@ -1072,16 +1114,6 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
     endif()
 
-    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
-    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
-    configure_windows_unwind(guest_sys_util_notification_tests)
-    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
-    if(WIN32)
-        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
-    endif()
-
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
         add_subdirectory(tests/register_context)
     endif()
@@ -1155,6 +1187,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_np_cpp_web_api_intrusive_ptr COMMAND guest_np_cpp_web_api_intrusive_ptr_tests)
     if(WIN32)
         set_tests_properties(guest_np_cpp_web_api_intrusive_ptr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
+    endif()
+
+    add_test_executable(guest_np_cpp_web_api_friends_tests tests/GuestNpCppWebApiFriends.cpp)
+    target_include_directories(guest_np_cpp_web_api_friends_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_friends_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_friends_tests)
+    add_test(NAME guest_np_cpp_web_api_friends COMMAND guest_np_cpp_web_api_friends_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_friends PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
     endif()
 
