@@ -910,7 +910,31 @@ constexpr auto g_sceV2CtypeUshortVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeF
 constexpr auto g_sceV2NumGetCharVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 constexpr auto g_sceV2NumGetWideVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
-constexpr auto g_sceV2NumPutCharVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
+struct SceV2NumPutCharVtable {
+    GuestLocale::FacetVtable facet;
+    GuestLocale::OutputIterator (APS5_VABI *putBool)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, unsigned char value);
+    GuestLocale::OutputIterator (APS5_VABI *putLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::int64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putUnsignedLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::uint64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putLongLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::int64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putUnsignedLongLong)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::uint64_t value);
+    GuestLocale::OutputIterator (APS5_VABI *putDouble)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, double value);
+    GuestLocale::OutputIterator (APS5_VABI *putLongDouble)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, long double value);
+    GuestLocale::OutputIterator (APS5_VABI *putPointer)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const void* value);
+};
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, unsigned char value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::int64_t value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::uint64_t value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::int64_t value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::uint64_t value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, double value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, long double value);
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutPointer_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const void* value);
+
+const SceV2NumPutCharVtable g_sceV2NumPutCharVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2NumPutBool_nid_no_patch, SceV2NumPutLong_nid_no_patch, SceV2NumPutUnsignedLong_nid_no_patch, SceV2NumPutLongLong_nid_no_patch,
+    SceV2NumPutUnsignedLongLong_nid_no_patch, SceV2NumPutDouble_nid_no_patch, SceV2NumPutLongDouble_nid_no_patch, SceV2NumPutPointer_nid_no_patch};
 constexpr auto g_sceV2NumPutWideVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
 constexpr auto g_sceV2NumPutUshortVtable = MakeSceV2FacetVtable<8, g_sceV2NumPutFamily>();
 constexpr auto g_sceV2NumpunctWideVtable = MakeSceV2FacetVtable<5, g_sceV2NumpunctFamily>();
@@ -1803,6 +1827,173 @@ template<std::size_t Count> void InstallSceV2Facets(const SceV2FacetStep (&steps
             : BuildSceV2Facet(kind, static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(kind.size)), false);
         if (!AddSceV2Facet(self, facet, SceV2FacetId(*kind.id))) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
     }
+}
+
+constexpr std::int32_t SceV2IosUppercase = 0x4;
+constexpr std::int32_t SceV2IosShowBase = 0x8;
+constexpr std::int32_t SceV2IosShowPoint = 0x10;
+constexpr std::int32_t SceV2IosShowPos = 0x20;
+constexpr std::int32_t SceV2IosLeft = 0x40;
+constexpr std::int32_t SceV2IosInternal = 0x100;
+constexpr std::int32_t SceV2IosAdjustField = 0x1c0;
+constexpr std::int32_t SceV2IosOct = 0x400;
+constexpr std::int32_t SceV2IosHex = 0x800;
+constexpr std::int32_t SceV2IosBaseField = 0xe00;
+constexpr std::int32_t SceV2IosScientific = 0x1000;
+constexpr std::int32_t SceV2IosFixed = 0x2000;
+constexpr std::int32_t SceV2IosFloatField = 0x3000;
+constexpr std::int32_t SceV2IosBoolAlpha = 0x4000;
+
+void PutSceV2Character(GuestLocale::OutputIterator& out, char character) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    char* next = *buffer->putNext;
+    auto* count = static_cast<std::int32_t*>(const_cast<void*>(buffer->reservedCounts[2]));
+    if (next != nullptr && *count > 0) {
+        --*count;
+        *buffer->putNext = next + 1;
+        *next = character;
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, static_cast<unsigned char>(character)) == -1) out.failed = true;
+}
+
+GuestLocale::OutputIterator PutSceV2Field(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const std::string& text, std::size_t prefix) {
+    const std::int64_t width = stream->width;
+    std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
+    const std::int32_t adjust = stream->flags & SceV2IosAdjustField;
+    if (adjust != SceV2IosLeft && adjust != SceV2IosInternal) {
+        for (; fillCount != 0; --fillCount) PutSceV2Character(out, fill);
+    }
+    for (std::size_t index = 0; index < prefix; ++index) PutSceV2Character(out, text[index]);
+    if (adjust == SceV2IosInternal) {
+        for (; fillCount != 0; --fillCount) PutSceV2Character(out, fill);
+    }
+    for (std::size_t index = prefix; index < text.size(); ++index) PutSceV2Character(out, text[index]);
+    stream->width = 0;
+    for (; fillCount != 0; --fillCount) PutSceV2Character(out, fill);
+    return out;
+}
+
+std::string TakeSceV2String(SceV2String* (APS5_VABI* method)(SceV2String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
+    SceV2String value{};
+    method(&value, AsNumpunct(facet));
+    const bool onHeap = value.capacity > GuestStringInlineCapacity;
+    std::string text(onHeap ? value.pointer : value.buffer, value.size);
+    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    return text;
+}
+
+const SceV2NumpunctCharVtable& SceV2Punctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const SceV2NumpunctCharVtable*>(facet->vtable);
+}
+
+std::string WidenSceV2Digits(const GuestLocale::SceV2IosBase* stream, const char* digits, int count) {
+    if (count < 0) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
+    const GuestLocale::Facet* ctype = UseSceV2Facet(g_sceV2CtypeChar, *stream->locale);
+    std::string text(static_cast<std::size_t>(count), '\0');
+    reinterpret_cast<const SceV2CtypeCharVtable*>(ctype->vtable)->widenRange(ctype, digits, digits + count, text.data());
+    return text;
+}
+
+GuestLocale::OutputIterator PutSceV2IntegerDigits(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const char* digits, int count) {
+    const std::size_t size = count < 0 ? 0 : static_cast<std::size_t>(count);
+    std::size_t prefix = SignPrefix(digits, size);
+    if ((stream->flags & SceV2IosBaseField) == SceV2IosHex && HexPrefix(digits, prefix, size)) prefix += 2;
+    std::string text = WidenSceV2Digits(stream, digits, count);
+    const GuestLocale::Facet* punct = UseSceV2Facet(g_sceV2NumpunctChar, *stream->locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation(punct).grouping, punct);
+    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, SceV2Punctuation(punct).thousandsSep(AsNumpunct(punct)), size, prefix);
+    return PutSceV2Field(out, stream, fill, text, prefix);
+}
+
+template<typename Value> GuestLocale::OutputIterator PutSceV2Integer(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const char* qualifier, char decimal, Value value) {
+    const std::int32_t flags = stream->flags;
+    const std::int32_t base = flags & SceV2IosBaseField;
+    const char conversion = base == SceV2IosOct ? 'o' : base != SceV2IosHex ? decimal : (flags & SceV2IosUppercase) != 0 ? 'X' : 'x';
+    const std::string format = std::string("%") + ((flags & SceV2IosShowPos) != 0 ? "+" : "") + ((flags & SceV2IosShowBase) != 0 ? "#" : "") + qualifier + conversion;
+    char digits[64];
+    return PutSceV2IntegerDigits(out, stream, fill, digits, sprintf_s_nid_postfix(digits, sizeof(digits), format.c_str(), value));
+}
+
+GuestLocale::OutputIterator PutSceV2FloatingDigits(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const char* digits, int count, bool finite) {
+    const std::size_t size = count < 0 ? 0 : static_cast<std::size_t>(count);
+    const std::size_t sign = SignPrefix(digits, size);
+    const bool hex = (stream->flags & SceV2IosFloatField) == SceV2IosFloatField;
+    const std::size_t prefix = hex && HexPrefix(digits, sign, size) ? sign + 2 : sign;
+    const std::size_t exponent = std::strcspn(digits, hex ? "pP" : "eE");
+    const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
+    const std::size_t pointOffset = std::strcspn(digits, point);
+    std::string text = WidenSceV2Digits(stream, digits, count);
+    const GuestLocale::Facet* punct = UseSceV2Facet(g_sceV2NumpunctChar, *stream->locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation(punct).grouping, punct);
+    const char separator = SceV2Punctuation(punct).thousandsSep(AsNumpunct(punct));
+    if (pointOffset != size) text[pointOffset] = SceV2Punctuation(punct).decimalPoint(AsNumpunct(punct));
+    if (finite) InsertSeparators(text, grouping, separator, pointOffset != size ? pointOffset : exponent, prefix);
+    return PutSceV2Field(out, stream, fill, text, prefix);
+}
+
+template<typename Value> GuestLocale::OutputIterator PutSceV2Floating(GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const char* qualifier, std::int64_t hexDigits, bool finite, Value value) {
+    const std::int32_t field = stream->flags & SceV2IosFloatField;
+    std::int64_t size = hexDigits;
+    std::int64_t precision = -1;
+    if (field != SceV2IosFloatField) {
+        precision = stream->precision;
+        size = precision > 0 ? static_cast<std::int32_t>(precision) : precision < 0 ? 6 : field == 0 ? 1 : 0;
+        if (field == SceV2IosFixed && std::fabs(value) > Value(1e10)) {
+            int exponent = 0;
+            std::frexp(value, &exponent);
+            size += static_cast<std::int64_t>(std::abs(exponent)) * 30103 / 100000;
+        }
+    }
+    size += 50;
+    if (size < 0) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
+    const std::int32_t flags = finite ? stream->flags : stream->flags & ~SceV2IosShowPoint;
+    const char conversion = field == SceV2IosFloatField ? 'a' : field == SceV2IosFixed ? 'f' : field == SceV2IosScientific ? 'e' : 'g';
+    const bool upper = (flags & SceV2IosUppercase) != 0 && field != SceV2IosFixed;
+    const std::string format = std::string("%") + ((flags & SceV2IosShowPos) != 0 ? "+" : "") + ((flags & SceV2IosShowPoint) != 0 ? "#" : "") + ".*" + qualifier + static_cast<char>(upper ? conversion - 'a' + 'A' : conversion);
+    std::string digits(static_cast<std::size_t>(size), '\0');
+    const int count = sprintf_s_nid_postfix(digits.data(), digits.size(), format.c_str(), static_cast<int>(precision), value);
+    if (count >= size) _ZNSt8__sce_v214_Xlength_errorEPKc_nid_postfix("string too long");
+    return PutSceV2FloatingDigits(out, stream, fill, digits.c_str(), count, finite);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, unsigned char value) {
+    if ((stream->flags & SceV2IosBoolAlpha) == 0) return reinterpret_cast<const SceV2NumPutCharVtable*>(self->vtable)->putLong(self, out, stream, fill, value);
+    const GuestLocale::Facet* punct = UseSceV2Facet(g_sceV2NumpunctChar, *stream->locale);
+    return PutSceV2Field(out, stream, fill, TakeSceV2String(value != 0 ? SceV2Punctuation(punct).truename : SceV2Punctuation(punct).falsename, punct), 0);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::int64_t value) {
+    return PutSceV2Integer(out, stream, fill, "l", 'd', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::uint64_t value) {
+    return PutSceV2Integer(out, stream, fill, "l", 'u', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::int64_t value) {
+    return PutSceV2Integer(out, stream, fill, "ll", 'd', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, std::uint64_t value) {
+    return PutSceV2Integer(out, stream, fill, "ll", 'u', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutDouble_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, double value) {
+    return PutSceV2Floating(out, stream, fill, "", 13, __isfinite_nid_postfix(value) != 0, value);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongDouble_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, long double value) {
+    return PutSceV2Floating(out, stream, fill, "L", 16, __isfinitel_nid_postfix(value) != 0, value);
+}
+
+GuestLocale::OutputIterator APS5_VABI SceV2NumPutPointer_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, char fill, const void* value) {
+    char digits[64];
+    return PutSceV2IntegerDigits(out, stream, fill, digits, sprintf_s_nid_postfix(digits, sizeof(digits), "%p", value));
 }
 
 }
