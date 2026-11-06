@@ -71,6 +71,7 @@ const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
 std::uint32_t APS5_VABI WKFrameGetTypeID();
+std::uint64_t APS5_VABI WKFrameHandleGetFrameID(const void* frameHandleRef);
 std::uint32_t APS5_VABI WKFrameHandleGetTypeID();
 std::uint32_t APS5_VABI WKFrameInfoGetTypeID();
 std::uint32_t APS5_VABI WKFramePolicyListenerGetTypeID();
