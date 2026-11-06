@@ -4817,10 +4817,6 @@ int APS5_VABI _ZN6icu_6817UCharsTrieBuilder17writeValueAndTypeEaii_nid_postfix()
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucnv_resetToUnicode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI umutablecptrie_fromUCPMap_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5559,10 +5555,6 @@ int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator16refreshInputTextEP5UTextR10UEr
 }
 
 int APS5_VABI _ZNK6icu_6816LocaleKeyFactory6createERKNS_13ICUServiceKeyEPKNS_10ICUServiceER10UErrorCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_resetFromUnicode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7698,10 +7690,6 @@ int APS5_VABI utrace_getLevel_nid_postfix() {
 }
 
 int APS5_VABI utext_setNativeIndex_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ucnv_fromUChars_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

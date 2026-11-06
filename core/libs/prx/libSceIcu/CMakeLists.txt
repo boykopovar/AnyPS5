@@ -12,6 +12,7 @@ target_sources(libSceIcu PRIVATE Resource.cpp)
 target_sources(libSceIcu PRIVATE Locale.cpp)
 target_sources(libSceIcu PRIVATE Properties.cpp CaseMapping.cpp)
 target_link_libraries(libSceIcu PRIVATE icu_common)
+target_sources(libSceIcu PRIVATE Converter.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_locale_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Locale.cpp)
@@ -23,6 +24,19 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_icu_locale PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_converter_native_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Converter.cpp)
+    target_include_directories(guest_icu_converter_native_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_converter_native_tests PRIVATE libSceIcu icu_common libc)
+    configure_windows_unwind(guest_icu_converter_native_tests)
+    add_test(NAME guest_icu_converter_native COMMAND guest_icu_converter_native_tests)
+    set_tests_properties(guest_icu_converter_native PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_converter_native PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 

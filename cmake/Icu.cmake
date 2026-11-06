@@ -77,6 +77,32 @@ if(WIN32)
         ${ICU_SOURCE_DIR}/common/utypes.cpp
         ${ICU_SOURCE_DIR}/common/wintz.cpp)
 endif()
+target_sources(icu_common PRIVATE
+    ${ICU_SOURCE_DIR}/common/ucnv.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv2022.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvbocu.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvdisp.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvhz.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvisci.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvlat1.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvmbcs.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvscsu.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvsel.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_bld.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_cb.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_cnv.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_ct.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_err.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_ext.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_io.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_lmb.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_set.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u16.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u32.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u7.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u8.cpp
+    ${ICU_SOURCE_DIR}/common/ustr_cnv.cpp
+    ${ICU_SOURCE_DIR}/common/ustrfmt.cpp)
 target_include_directories(icu_common SYSTEM PUBLIC ${ICU_SOURCE_DIR}/common)
 target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1)
 target_compile_features(icu_common PUBLIC cxx_std_17)
