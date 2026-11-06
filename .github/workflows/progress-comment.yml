@@ -23,10 +23,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_REF: ${{ github.event.workflow_run.head_branch }}
+          RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
         run: |
           pr=$(cat pr)
           [[ $pr =~ ^[0-9]+$ ]] || exit 1
-          [ "$(gh pr view "$pr" --json headRefOid --jq .headRefOid)" = "$RUN_SHA" ] || exit 0
+          identity=$(gh pr view "$pr" --json headRefOid,headRefName,headRepositoryOwner,headRepository --jq '[.headRefOid, .headRefName, .headRepositoryOwner.login + "/" + .headRepository.name] | @tsv') || identity=""
+          [ "$identity" = "$(printf '%s\t%s\t%s' "$RUN_SHA" "$RUN_REF" "$RUN_REPO")" ] || exit 0
           marker='<!-- progress-report -->'
           id=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)
