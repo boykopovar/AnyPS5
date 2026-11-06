@@ -1672,9 +1672,7 @@ int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14Mappe
 int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev();
 int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev();
 int APS5_VABI _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_();
-int APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_();
-int APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi();
@@ -1687,7 +1685,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl27isSafeToUseMemoryMapForPathERKNS_6StringE
 int APS5_VABI _ZN3WTF14FileSystemImpl29makeSafeToUseMemoryMapForPathERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi();
 int APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc();
-int APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb();
@@ -1837,7 +1834,6 @@ int APS5_VABI _ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOve
 int APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE();
 int APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv();
 int APS5_VABI _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE();
-int APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_();
 int APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE();
 int APS5_VABI _ZN3WTF28normalizeLineEndingsToNativeEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE();
 int APS5_VABI _ZN3WTF30numCodeUnitsInGraphemeClustersENS_10StringViewEj();
@@ -5154,10 +5150,6 @@ int APS5_VABI _ZN7bmalloc5Cache30tryReallocateSlowCaseNullCacheENS_8HeapKindEPvm
 int APS5_VABI _ZN7bmalloc5Cache8scavengeENS_8HeapKindE();
 int APS5_VABI _ZN7bmalloc6IsoTLS13ensureEntriesEj();
 int APS5_VABI _ZN7bmalloc6IsoTLS8scavengeEv();
-int APS5_VABI _ZN7bmalloc8FreeList14initializeBumpEPcj();
-int APS5_VABI _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj();
-int APS5_VABI _ZN7bmalloc8FreeList5clearEv();
-int APS5_VABI _ZN7bmalloc8FreeListC1Ev();
 int APS5_VABI _ZN7bmalloc8FreeListD1Ev();
 int APS5_VABI _ZN7bmalloc9Allocator12allocateImplEmmNS_13FailureActionE();
 int APS5_VABI _ZN7bmalloc9Scavenger29scheduleIfUnderMemoryPressureEm();
