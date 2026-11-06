@@ -227,7 +227,7 @@ int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix();
 int APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix();
 int APS5_VABI EVP_PKEY_verify_nid_postfix();
 int APS5_VABI EVP_PKEY_verify_init_nid_postfix();
-int APS5_VABI EVP_get_digestbyname_nid_postfix();
+const void* APS5_VABI EVP_get_digestbyname_nid_postfix(const char* name);
 int APS5_VABI EVP_sha512_256_nid_postfix();
 int APS5_VABI HKDF_nid_postfix();
 int APS5_VABI HMAC_CTX_free_nid_postfix();
