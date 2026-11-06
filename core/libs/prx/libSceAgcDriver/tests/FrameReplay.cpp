@@ -318,45 +318,6 @@ void testConcurrentCopies(const std::filesystem::path& tool) {
     }
 }
 
-void testReservationError(const std::filesystem::path& tool) {
-    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
-    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
-    const std::filesystem::path capture(directory);
-    std::uintptr_t base = 0;
-    std::size_t size = 0;
-    GuestArena::GuestArenaRange_nid_postfix(&base, &size);
-    AgcDriver::FrameCaptureWriter writer(capture);
-    AgcDriver::FrameCall output;
-    output.kind = FrameCallKind::RegisterVideoOutput;
-    output.values = {Handle};
-    writer.WriteCall(output);
-    AgcDriver::FrameCall reservation;
-    reservation.kind = FrameCallKind::ReserveEopFlip;
-    reservation.values = {Handle, static_cast<std::uint64_t>(-1), 1, 0, AgcDriver::EopFlipTokenBase};
-    writer.WriteCall(reservation);
-    AgcDriver::FrameCall start;
-    start.kind = FrameCallKind::FrameStart;
-    writer.WriteCall(start);
-    output.kind = FrameCallKind::UnregisterVideoOutput;
-    writer.WriteCall(output);
-    output.kind = FrameCallKind::RegisterVideoOutput;
-    writer.WriteCall(output);
-    reservation.values[3] = 1;
-    writer.WriteCall(reservation);
-    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
-    const auto result = capture / "reservation error.json";
-    const auto log = capture / "reservation error.log";
-    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --repeat 2 --strict > \"" + result.string() + "\" 2> \"" + log.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\"";
-#endif
-    check(std::system(command.c_str()) != 0, "the replay accepted an incompatible reservation on the second pass");
-    const auto errors = readFile(log);
-    check(std::string(reinterpret_cast<const char*>(errors.data()), errors.size()).find("EOP flip token is reserved for a different flip") != std::string::npos, "the repeated replay did not report the incompatible reservation");
-    const auto report = readFile(result);
-    check(std::string(reinterpret_cast<const char*>(report.data()), report.size()).find("\"p50\"") == std::string::npos, "a failed repeated reservation produced a successful replay report");
-}
-
 void testParkedRewindReplays(const std::filesystem::path& tool) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
     check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
@@ -404,6 +365,45 @@ void testParkedRewindReplays(const std::filesystem::path& tool) {
     const auto code = std::system(command.c_str());
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     check(readFile(dump) == copied, "the replay did not run the copy chained from the released REWIND tail");
+}
+
+void testReservationError(const std::filesystem::path& tool) {
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    std::uintptr_t base = 0;
+    std::size_t size = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &size);
+    AgcDriver::FrameCaptureWriter writer(capture);
+    AgcDriver::FrameCall output;
+    output.kind = FrameCallKind::RegisterVideoOutput;
+    output.values = {Handle};
+    writer.WriteCall(output);
+    AgcDriver::FrameCall reservation;
+    reservation.kind = FrameCallKind::ReserveEopFlip;
+    reservation.values = {Handle, static_cast<std::uint64_t>(-1), 1, 0, AgcDriver::EopFlipTokenBase};
+    writer.WriteCall(reservation);
+    AgcDriver::FrameCall start;
+    start.kind = FrameCallKind::FrameStart;
+    writer.WriteCall(start);
+    output.kind = FrameCallKind::UnregisterVideoOutput;
+    writer.WriteCall(output);
+    output.kind = FrameCallKind::RegisterVideoOutput;
+    writer.WriteCall(output);
+    reservation.values[3] = 1;
+    writer.WriteCall(reservation);
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const auto result = capture / "reservation error.json";
+    const auto log = capture / "reservation error.log";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --repeat 2 --strict > \"" + result.string() + "\" 2> \"" + log.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    check(std::system(command.c_str()) != 0, "the replay accepted an incompatible reservation on the second pass");
+    const auto errors = readFile(log);
+    check(std::string(reinterpret_cast<const char*>(errors.data()), errors.size()).find("EOP flip token is reserved for a different flip") != std::string::npos, "the repeated replay did not report the incompatible reservation");
+    const auto report = readFile(result);
+    check(std::string(reinterpret_cast<const char*>(report.data()), report.size()).find("\"p50\"") == std::string::npos, "a failed repeated reservation produced a successful replay report");
 }
 
 CommandBuffer commands(std::uint32_t* words) {
