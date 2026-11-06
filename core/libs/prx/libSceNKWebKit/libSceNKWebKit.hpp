@@ -19,4 +19,5 @@
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/include/FilterOperationExports.hpp"
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
