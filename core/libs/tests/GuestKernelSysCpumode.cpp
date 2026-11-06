@@ -37,6 +37,7 @@ int main() {
     Require(Throws([] { sceKernelSetCpumodeGame(8); }), "an unmeasured mode did not throw");
     Require(Throws([] { sceKernelSetCpumodeGame(-1); }), "a negative mode did not throw");
     Require(Throws([] { sceKernelGetCpumodeGame(nullptr); }), "a null output did not throw");
+    Require(sceKernelGetCpumodeGame(reinterpret_cast<int*>(0x10)) == static_cast<int>(0x8002000Eu), "unwritable mode did not return EFAULT");
     std::puts("game CPU mode tests passed");
     return 0;
 }

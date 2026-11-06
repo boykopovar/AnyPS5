@@ -1,7 +1,5 @@
 # libSceNpManager technical debt
 
-- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
-
 ### Push lifecycle
 
 - [The Push and Push2 lifecycle](../../../core/libs/prx/libSceNpManager/Push.cpp) (libSceNpManager) follows firmware 11.00 `libSceNpManager.sprx`: `sceNpPushInit` returns `0x8055A001` when already initialized, `sceNpPushTerm` returns `0x8055A002` when not initialized, and `sceNpPushCheckCallback` returns `0x8055A002` or 0 because no notification is queued. `sceNpPush2Init` takes a 0x18-byte parameter block, requires the field at 0x10 to be at most 1 and the one at 0x14 to be 1..5, and hands out 1-based context slots up to 32 (returning the slot or `0x8055C005` when full); `sceNpPush2Term` clears one context and returns 0 as the firmware wrapper does. `sceNpPush2IsInit`, `sceNpPush2SetGlobalMutex`, `sceNpPush2OptionalCheckCallback` and `sceNpPush2TriggerEmptyUserEvent` cover the remaining state queries, and `sceNpPushIntGetConnectionState` writes 0 (disconnected). The null-argument code `0x8055A003` is inferred; `0x8055C002`, `0x8055C003` and `0x8055C005` are measured. The notification transport, callbacks, data types, filters, communication id, user contexts, start/stop and the inactivity calls still throw.
@@ -15,6 +13,7 @@
 
 ### Unknown function info
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
 - [libSceNpManager additional exports](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) - 148 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded.
 
 | Name | NID |
