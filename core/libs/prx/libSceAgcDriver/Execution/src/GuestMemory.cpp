@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -223,8 +224,8 @@ struct ThreadMemoryCounters {
 
 MemoryCounter& CounterFor(MemoryCounterKind kind) {
     if (SharedMemoryCounters()) return Profile().shared.counters[kind];
-    thread_local ThreadMemoryCounters* thread = nullptr;
-    return ShaderRecompiler::ThreadOwned(thread).counters.counters[kind];
+    struct Slot {};
+    return ThreadScratch<ThreadMemoryCounters, Slot>().counters.counters[kind];
 }
 
 // Every thread's counters, the retired and the shared ones summed: calls, bytes, nanoseconds per kind.
@@ -891,7 +892,8 @@ bool onOwnLiveStack(std::uintptr_t address, std::size_t bytes) {
 #endif
         }
     };
-    thread_local const Bounds bounds;
+    struct Slot {};
+    const auto& bounds = ThreadScratch<Bounds, Slot>();
     const auto frame = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     return bounds.high != 0 && frame >= bounds.low && frame < bounds.high && address >= frame && address < bounds.high && bytes <= bounds.high - address;
 }
@@ -1611,8 +1613,8 @@ struct EpochCollectMap {
 };
 
 EpochCollectMap& epochCollectMap(std::uint64_t epoch) {
-    thread_local EpochCollectMap* slot = nullptr;
-    auto& map = ShaderRecompiler::ThreadOwned(slot);
+    struct Slot {};
+    auto& map = ThreadScratch<EpochCollectMap, Slot>();
     if (map.epoch != epoch) {
         map.ranges.clear();
         map.epoch = epoch;

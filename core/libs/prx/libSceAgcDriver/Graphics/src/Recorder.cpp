@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
@@ -144,10 +145,10 @@ AgcDriver::Mutex threadSyncsMutex;
 
 // This thread's fence and timeline waits in total (Recorder::ThreadWaitedMs): a caller times a span
 // of its own work and reads the difference to learn how much of it was waiting for the GPU.
-thread_local double threadWaitedMs = 0;
+struct ThreadWaitedSlot {};
 
 void CountThreadSync(int source, double ms) {
-    threadWaitedMs += ms;
+    HostThreadSlot<double, ThreadWaitedSlot>::Set(HostThreadSlot<double, ThreadWaitedSlot>::Get() + ms);
     const auto tag = GuestMemory::GpuLockThreadTag();
     std::lock_guard lock(threadSyncsMutex);
     auto it = std::find_if(threadSyncs.begin(), threadSyncs.end(), [&](const ThreadSyncs& thread) { return thread.tag == tag; });
@@ -249,7 +250,11 @@ bool RecorderAlive(std::uint64_t id) {
 
 // Completion actions in progress on this thread (finish()): a pending-write sync the flush hook
 // makes from inside one (a copied buffer's write-back store) is skipped, see SyncThrough.
-thread_local int completionDepth = 0;
+struct CompletionDepthSlot {};
+
+int completionDepth() {
+    return HostThreadSlot<int, CompletionDepthSlot>::Get();
+}
 // This thread's hook syncs that waited for an unsignaled target (Recorder::ThreadHookWaits).
 thread_local std::uint64_t hookRealWaits = 0;
 
@@ -260,7 +265,7 @@ bool Recorder::Alive(std::uint64_t id) {
 }
 
 bool Recorder::InCompletion() {
-    return completionDepth != 0;
+    return completionDepth() != 0;
 }
 
 namespace {
@@ -1041,7 +1046,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     // rest of this one's, and this queue's queued label follows every batch of its own in flight
     // anyway, so the write-back landing first is the order the hardware gives.
     if (!QueuedLabelRanges().empty() && QueuedLabelOverlaps(address, bytes)) {
-        if (completionDepth != 0 && HookCompletionGuard()) {
+        if (completionDepth() != 0 && HookCompletionGuard()) {
             queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
         } else if (auto* record = queuedLabelRecorder.load(std::memory_order_acquire); record != nullptr) {
             queuedLabelHookRecords.fetch_add(1, std::memory_order_relaxed);
@@ -1062,7 +1067,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     }
     const auto site = GuestMemory::CurrentReadSite();
     const auto scope = site != GuestMemory::ReadSite::Store ? PublishScope::Whole : PublishScope::PartialUnits;
-    const bool waited = completionDepth != 0;
+    const bool waited = completionDepth() != 0;
     bool published = false;
     // The classification is made before the store (the store changes what it measures); profile only.
     StorageTexture::AccessClassification classification{};
@@ -1082,7 +1087,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     } else {
         stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
     }
-    if (stored || published || (completionDepth == 0 && SnapshotOverlaps(address, bytes))) {
+    if (stored || published || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
         // Stores into imported memory were only recorded; the CPU is about to read them. The wait
         // targets the batch holding them (the open one: SyncThrough submits it) and runs with the
         // mutex released when this acquisition is the outermost; a nested hook waits locked through
@@ -1094,7 +1099,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr) {
             const RecordedStoreSyncScope attribution(*recorder, address, bytes, classification, stored, HookSyncProfiled() ? RecordedStoreKey() : HookSyncKey{});
             Recorder::CountSync(2);
-            if (HookFullSync() || completionDepth != 0) recorder->Sync();
+            if (HookFullSync() || completionDepth() != 0) recorder->Sync();
             else recorder->SyncThrough(address, bytes, true);
         }
     }
@@ -1807,7 +1812,7 @@ void Recorder::AnnounceSyncSite(const void* site) {
 }
 
 double Recorder::ThreadWaitedMs() {
-    return threadWaitedMs;
+    return HostThreadSlot<double, ThreadWaitedSlot>::Get();
 }
 
 std::uint64_t Recorder::ReapsWithWork() {
@@ -4355,7 +4360,7 @@ void Recorder::FlushDeferredReleases() {
 void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked) {
     if (bytes == 0) return;
     const auto end = address + bytes;
-    if (completionDepth != 0 && !CompletionStoreSyncs()) {
+    if (completionDepth() != 0 && !CompletionStoreSyncs()) {
         // A store made by a completion action (a copied buffer's write-back, GuestBufferMemory::
         // WriteBack) reached the flush hook, and a batch still in flight notes the range. Every
         // batch in flight now was recorded after the completing one (finish runs front to back),
@@ -4371,8 +4376,8 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         ++holdCounters.completionSyncsSkipped;
         return;
     }
-    if (completionDepth != 0) ++holdCounters.completionSyncsWaited;
-    const auto completionWaitStart = completionDepth != 0 && DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    if (completionDepth() != 0) ++holdCounters.completionSyncsWaited;
+    const auto completionWaitStart = completionDepth() != 0 && DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     struct CompletionWait {
         std::chrono::steady_clock::time_point start;
         ~CompletionWait() {
@@ -4385,7 +4390,7 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         const void* site = announcedSite != nullptr ? announcedSite : __builtin_return_address(0);
         if (syncThroughUnlocked(address, end, source, site)) return;
         // A completion-store wait (kill switch above) is already counted as 'waited'.
-        if (completionDepth == 0) ++holdCounters.hookLockedWaits;
+        if (completionDepth() == 0) ++holdCounters.hookLockedWaits;
     }
     if (!SyncThroughEnabled() || (open != nullptr && overlaps(*open, address, end))) {
         // The announced site (or this call's caller) names the sync, not this function.
@@ -4731,8 +4736,8 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
     const auto completionStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     {
         struct InCompletion {
-            InCompletion() { ++completionDepth; }
-            ~InCompletion() { --completionDepth; }
+            InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() + 1); }
+            ~InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() - 1); }
         } inCompletion;
         for (auto& action : batch->completions) {
             try {

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -3218,7 +3219,8 @@ bool DepthPlanesStale() {
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope) {
-    static thread_local bool flushing = false;
+    struct FlushingSlot {};
+    const bool flushing = HostThreadSlot<bool, FlushingSlot>::Get();
     const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
     if (flushing || !overlapsStalePlane(address, end)) return {};
     if (scope == DepthPlaneScope::Overlapped) {
@@ -3233,9 +3235,9 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
         };
         if (std::none_of(surfaces().begin(), surfaces().end(), staleInRange)) return {};
     }
-    flushing = true;
+    HostThreadSlot<bool, FlushingSlot>::Set(true);
     struct Reset {
-        ~Reset() { flushing = false; }
+        ~Reset() { HostThreadSlot<bool, FlushingSlot>::Set(false); }
     } reset;
     struct Stored {
         DepthSurface* surface;
