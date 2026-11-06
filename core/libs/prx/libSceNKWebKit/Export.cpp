@@ -45,30 +45,6 @@ int APS5_VABI WKURLRequestCopySettingHTTPBody() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKURLResponseCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseCopyMIMEType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseHTTPStatusCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseCopySuggestedFilename() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseIsAttachment() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseGetExpectedContentLength() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKSecurityOriginCopyDatabaseIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14378,13 +14354,7 @@ int APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKOpenPanelResultListenerCancel() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI WKOpenPanelResultListenerChooseFiles() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageAreScrollbarAnimationsSuppressed() {
     NotImplemented_nid_no_patch(__func__);

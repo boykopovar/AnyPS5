@@ -1,5 +1,9 @@
 # libSceNpCppWebApi technical debt
 
+### Functional
+
+- [Matches factory output release](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) - releasing the last reference of an occupied output with a null deleter still throws through the shared `IntrusivePtr` release path. The bundled modules instead use the stored `LibContext` allocator and model destructor in that case; the host allocator remains in use, and that fallback is unimplemented.
+
 ### Silent stubs
 
 - [sce::Np::CppWebApi title-imported parameter bookkeeping](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - the `SessionManager::V1` `GameSessionsApi` `ParameterTo*` constructors, destructors, `initialize` and `terminate`, the `RequestGameSession*`/`Patch*RequestBody`/`RequestMatch*`/`Added*`/`Removed*`/`RequestPlayer*`/`RequestTeam*`/`RequestMember*`/`RequestResults*` setters, and the Common `IntrusivePtr`/`Vector`/`Transaction` constructors, destructors and bookkeeping calls over the new families succeed without keeping state or contacting the network. The values are never read because a request is never started. Behaviour beyond the signatures has no source.

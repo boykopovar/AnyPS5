@@ -247,6 +247,20 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
     set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
 endif()
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RsaSetters.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_rsa_setters_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RsaSetters.cpp)
+    target_include_directories(guest_libressl3_rsa_setters_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_rsa_setters_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_rsa_setters_tests)
+    add_test(NAME guest_libressl3_rsa_setters COMMAND guest_libressl3_rsa_setters_tests)
+    set_tests_properties(guest_libressl3_rsa_setters PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_rsa_setters PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyQueries.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_pkey_queries_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyQueries.cpp)
