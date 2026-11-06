@@ -63,5 +63,8 @@ int main() {
     Require(sceVrTracker2UnregisterDevice(2) == NotInitialized, "unregister device before initialization");
     Require(sceVrTracker2SetCoordinateSystem(1) == NotInitialized, "set coordinate system before initialization");
     Require(sceVrTracker2ResetLocalCoordinate(2) == NotInitialized, "reset local coordinate before initialization");
+    Require(sceVrTracker2GetRawCameraMeshSize(reinterpret_cast<VrTracker2MeshRequirement*>(output.bytes), 0) == NotInitialized,
+            "get raw camera mesh size before initialization");
+    Require(output.Untouched(), "get raw camera mesh size wrote nothing");
     return 0;
 }

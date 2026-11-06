@@ -2454,6 +2454,82 @@ void verifyAllocationChurnSnapshot() {
     }
 }
 
+void verifyRegisteredViewsUnderUnrelatedChurn() {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t RangeBytes = 65536u;
+    constexpr std::uint32_t Checks = 20000u;
+    alignas(4096) static std::array<std::uint8_t, RangeBytes> texels{};
+    alignas(4096) static std::array<std::uint8_t, 4096> unrelated{};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels.data(), texels.size(), true, false, true);
+    }
+    const auto view = [] {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(texels.data()), false);
+        require(range != nullptr, "registered view churn: the image range was not registered");
+        RegisteredImageView captured;
+        captured.address = reinterpret_cast<std::uintptr_t>(texels.data()) + 256u;
+        captured.hasRange = true;
+        captured.rangeAddress = range->address;
+        captured.rangeBytes = range->bytes;
+        captured.allocationAddress = range->allocationAddress;
+        captured.allocationBytes = range->allocationBytes;
+        captured.backingSerial = range->backingSerial;
+        captured.readable = range->readable;
+        captured.writable = range->writable;
+        captured.gpu = range->gpu;
+        return captured;
+    }();
+    std::array<RegisteredImageView, 3> views{view, view, view};
+    views[1].address = view.address + 4096u;
+    views[2].address = view.address + 8192u;
+    const auto generationBefore = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> mutations{0};
+    std::thread churn([&] {
+        while (!stop.load(std::memory_order_acquire)) {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Add(unrelated.data(), unrelated.size(), true, true, true);
+            }
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(unrelated.data());
+            }
+            mutations.fetch_add(2u, std::memory_order_relaxed);
+        }
+    });
+    std::uint32_t rejected = 0u;
+    while (mutations.load(std::memory_order_relaxed) < 64u) std::this_thread::yield();
+    for (std::uint32_t check = 0; check < Checks; ++check) {
+        if (!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views)) ++rejected;
+    }
+    stop.store(true, std::memory_order_release);
+    churn.join();
+    const auto generationAfter = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    require(generationAfter - generationBefore >= 64u, "registered view churn: the unrelated mappings did not move the allocation generation");
+    const auto rejectedMessage = "registered view churn: " + std::to_string(rejected) + " of " + std::to_string(Checks) + " checks rejected views whose own range never changed while only an unrelated allocation moved";
+    require(rejected == 0u, rejectedMessage.c_str());
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels.data());
+    }
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted after their range was removed");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels.data(), texels.size(), true, false, true);
+    }
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted after their range was mapped again with a new backing");
+    views[0].backingSerial = GuestAllocations::GuestAllocationsLookup_nid_postfix(reinterpret_cast<std::uintptr_t>(texels.data()), false)->backingSerial;
+    require(!AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views were accepted while one of them still names the old backing");
+    views[1].backingSerial = views[2].backingSerial = views[0].backingSerial;
+    require(AgcDriver::DriverDetail::CaptureRegisteredViewsCurrent(views), "registered view churn: views matching the new backing were rejected");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels.data());
+    }
+}
+
 void verifySnapshotAllocationMoves() {
     using namespace ShaderRecompiler;
     constexpr std::size_t RangeBytes = 65536u;
@@ -8101,7 +8177,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTUAAAA=", "new requests did not use serialization version 53");
+    require(requestPrefix(encoded, 8u) == "NVNQQTYAAAA=", "new requests did not use serialization version 54");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8222,7 +8298,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTYAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTcAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8341,14 +8417,16 @@ void verifyDepthExportClamp() {
         const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
-            "depth export: a version 53 request lost the bounds or the version 45 target tail");
+            "depth export: a version 54 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 53u, "depth export: a depth exporting request did not use serialization version 53");
+        require(bytes.size() > 8u && bytes[4] == 54u, "depth export: a depth exporting request did not use serialization version 54");
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
         bytes.erase(found, found + boundBytes.size());
+        bytes.pop_back();
+        bytes.pop_back();
         bytes.pop_back();
         bytes.pop_back();
         bytes.pop_back();
@@ -8371,12 +8449,14 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 53u, "a two-sample dithered request did not use serialization version 53");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 54u, "a two-sample dithered request did not use serialization version 54");
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
+            ditheredBytes.pop_back();
+            ditheredBytes.pop_back();
             ditheredBytes.pop_back();
             ditheredBytes.pop_back();
             ditheredBytes.pop_back();
@@ -8447,6 +8527,8 @@ void verifyVertexInfoVersion19() {
     auto version20Vertex = flagged;
     version20Vertex.pop_back();
     version20Vertex.pop_back();
+    version20Vertex.pop_back();
+    version20Vertex.pop_back();
     version20Vertex.resize(version20Vertex.size() - sizeof(std::uint32_t));
     version20Vertex.pop_back();
     version20Vertex.pop_back();
@@ -8461,6 +8543,8 @@ void verifyVertexInfoVersion19() {
     const auto layered = serializer.Deserialize(serializer.Serialize(vertex));
     require(layered.request.context.vertex.has_value() && layered.request.context.vertex->paClVsOutCntl == vertex.context.vertex->paClVsOutCntl, "a layered vertex info lost its clip distances or render target index");
     auto legacy = plain;
+    legacy.pop_back();
+    legacy.pop_back();
     legacy.pop_back();
     legacy.pop_back();
     legacy.resize(legacy.size() - sizeof(std::uint32_t));
@@ -8540,7 +8624,7 @@ void verifyVertexInfoVersion19() {
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 6u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 8u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -8702,9 +8786,11 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 17u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 17 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 10 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 10 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag and the shader image minimum LOD flag of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 19u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 19 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 12 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 12 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag, the shader image minimum LOD flag and the f16 conversion NaN flags of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
+        legacyBytes.pop_back();
+        legacyBytes.pop_back();
         legacyBytes.pop_back();
         legacyBytes.pop_back();
         legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
@@ -8720,6 +8806,8 @@ void verifyDepthRemapRequests() {
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
+    version35.pop_back();
+    version35.pop_back();
     version35.pop_back();
     version35.pop_back();
     version35.resize(version35.size() - sizeof(std::uint32_t));
@@ -8775,8 +8863,8 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 58u + pointTailBytes && legacy[4] == 53u, "a merged hull request did not use serialization version 53");
-    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 5u - pointTailBytes);
+    require(legacy.size() > 60u + pointTailBytes && legacy[4] == 54u, "a merged hull request did not use serialization version 54");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 7u - pointTailBytes);
     legacy.pop_back();
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
@@ -8935,7 +9023,7 @@ void verifyPixelExportReplay() {
     }
 }
 
-std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileRequest twoParameterRequest(std::span<const std::uint32_t> code) {
     using namespace ShaderRecompiler;
     RecompileRequest request{};
     request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
@@ -8946,7 +9034,12 @@ std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t>
     request.target.subgroupSize = 64;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    const auto result = Recompile(request);
+    return request;
+}
+
+std::vector<std::uint32_t> noPerspectiveLocations(std::span<const std::uint32_t> code) {
+    using namespace ShaderRecompiler;
+    const auto result = Recompile(twoParameterRequest(code));
     const auto& words = result.spirv.Words();
     std::map<std::uint32_t, std::uint32_t> locations;
     std::vector<std::uint32_t> decorated;
@@ -8969,7 +9062,8 @@ void verifyPixelInputs() {
     const auto linear = noPerspectiveLocations(byPair);
     require(linear.size() == 1u && linear[0] == 1u, "only the parameter interpolated through the linear pair must be NoPerspective");
     static constexpr std::array<std::uint32_t, 7> bothPairs{0xc8100000u, 0xc8110001u, 0xc8140002u, 0xc8150003u, 0xf800180fu, 0x05040504u, 0xbf810000u};
-    expectFailure([&] { static_cast<void>(noPerspectiveLocations(bothPairs)); }, "interpolated through both a perspective and a linear I/J pair", "a parameter read through both pairs was given one interpolation");
+    const auto both = ShaderRecompiler::Recompile(twoParameterRequest(bothPairs));
+    require(both.barycentricEmulation.active && both.barycentricEmulation.smooth && both.barycentricEmulation.linear, "a parameter read through both pairs did not fall back to both barycentrics");
 
     static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
     RecompileRequest request{};
@@ -9941,6 +10035,42 @@ void verifyUnusedUnnormalizedSampler() {
     msaaArraySnapshot.images[0].dwords[5] = 0x00000020u;
     DescriptorBindingBuilder{}.Populate(msaaArrayAllocation, msaaArrayInfo, IrShaderStage::Compute, 0u, msaaArraySnapshot, {});
     require(msaaArrayAllocation.bindings.size() == 1u && msaaArrayAllocation.bindings[0].imageShape == DescriptorImageShape::Image2DMultisampleArray, "multisampled array image resource did not receive Image2DMultisampleArray descriptor shape");
+}
+
+void verifyDsSwizzleFftMode() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    static std::array<std::uint32_t, 32> output{};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), 128u, 0x31016facu};
+    const auto compiled = [&userData](std::uint32_t offset) {
+        const std::vector<std::uint32_t> code{0xd8d40000u | offset, 0x01000000u, 0x34040082u, 0xbf8cc07fu, 0xe0701000u, 0x80000102u, 0xbf810000u};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x26000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv.Copy();
+    };
+    const auto reversesLanes = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == spv::OpBitReverse) return true;
+        }
+        return false;
+    };
+    for (const auto offset : {0xe000u, 0xe010u, 0xe018u, 0xe001u}) require(reversesLanes(compiled(offset)), "ds_swizzle FFT mode: an offset with a mask below 0x1f did not reverse the lane bits");
+    for (const auto offset : {0xe01fu, 0xc000u, 0xc021u, 0xdfffu}) require(!reversesLanes(compiled(offset)), "ds_swizzle FFT mode: mask 0x1f or a rotate offset reversed the lane bits");
+    require(compiled(0xffe0u) == compiled(0xe000u) && compiled(0xf550u) == compiled(0xe010u), "ds_swizzle FFT mode: offset bits 12:5 changed the swizzle");
 }
 
 void verifyWaveUniformValues() {
@@ -11575,6 +11705,11 @@ int main(int argc, char** argv) {
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--registered-view-churn") {
+            verifyRegisteredViewsUnderUnrelatedChurn();
+            std::cout << "Registered image views stay current while unrelated allocations change\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
             verifyNestedSnapshotRetry();
             std::cout << "Nested snapshot retry preserves parent and child coverage\n";
@@ -11703,6 +11838,7 @@ int main(int argc, char** argv) {
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyNullVolumeUnnormalizedSampler();
+        verifyDsSwizzleFftMode();
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
