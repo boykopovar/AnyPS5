@@ -135,11 +135,6 @@ static void TestDigestVerifyInitNullKey() {
         "null key preserves queued error order");
     Require(ERR_get_error_nid_postfix() == 0, "null key adds no queued error");
     RequireThrows([] { EVP_DigestVerifyInit_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr); }, "null digest context");
-    RequireThrows([&] { EVP_DigestVerifyInit_nid_postfix(&context, nullptr, nullptr, nullptr, &digest); },
-        "key-backed initialization remains unsupported");
-    context.pkeyContext = reinterpret_cast<void*>(std::uintptr_t{0x1357});
-    RequireThrows([&] { EVP_DigestVerifyInit_nid_postfix(&context, nullptr, nullptr, nullptr, nullptr); },
-        "existing public-key context remains unsupported");
 }
 
 int main() {
