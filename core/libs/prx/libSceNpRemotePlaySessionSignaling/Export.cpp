@@ -56,4 +56,20 @@ int APS5_VABI sceNpRemotePlaySessionSignalingTerminate() {
     return 0;
 }
 
+int APS5_VABI sceNpRemotePlaySessionSignalingAbortConnection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingEstablishConnection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpCreateJoinSession() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpRemotePlaySessionSignalingManualUdpJoinSession() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

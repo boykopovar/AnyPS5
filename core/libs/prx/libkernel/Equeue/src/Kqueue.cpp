@@ -13,6 +13,7 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
@@ -46,10 +47,14 @@ constexpr int GUEST_EMFILE = 24;
 constexpr int GUEST_EPIPE = 32;
 
 constexpr int KQ_NEVENTS = 8;
+constexpr int KQ_STACK_EVENTS = 64;
+constexpr int KQ_MAX_SCAN = 1024;
 constexpr std::int16_t EVFILT_AIO = -3;
+constexpr std::int16_t EVFILT_PROC = -5;
 constexpr std::int16_t EVFILT_PROCDESC = -8;
 constexpr std::int16_t EVFILT_LIO = -10;
 constexpr std::int16_t EVFILT_SENDFILE = -12;
+constexpr std::uint32_t NOTE_EXIT = 0x80000000;
 constexpr std::uint32_t NOTE_FFCTRLMASK = 0xc0000000;
 constexpr std::uint32_t NOTE_FFLAGSMASK = 0x00ffffff;
 constexpr std::uint32_t NOTE_FFAND = 0x40000000;
@@ -228,6 +233,33 @@ bool PollKqueue(KernelEqueueEvent* e) {
     return pending != 0;
 }
 
+struct ClearedKqueueNote {
+    std::uint64_t seen = 0;
+    bool active = false;
+};
+
+bool PollClearedKqueue(KernelEqueueEvent* e) {
+    auto& note = *static_cast<ClearedKqueueNote*>(e->filter.data);
+    const auto snapshot = e->filter.watched->SnapshotTriggered();
+    if (snapshot.activations != note.seen) {
+        note.seen = snapshot.activations;
+        note.active = true;
+    }
+    if (snapshot.count == 0) {
+        note.active = false;
+    } else if (note.active) {
+        e->event.data = static_cast<std::intptr_t>(snapshot.count);
+    }
+    return note.active;
+}
+
+void ResetClearedKqueue(KernelEqueueEvent* e) {
+    static_cast<ClearedKqueueNote*>(e->filter.data)->active = false;
+    e->triggered = false;
+    e->event.fflags = 0;
+    e->event.data = 0;
+}
+
 bool KqueueReaches(const KernelEqueueRef& from, const KernelEqueuePrivate* target, std::vector<const KernelEqueuePrivate*>& visited) {
     if (from.get() == target) {
         return true;
@@ -245,9 +277,6 @@ bool KqueueReaches(const KernelEqueueRef& from, const KernelEqueuePrivate* targe
 }
 
 int AddKqueueKnote(const KernelEqueueRef& queue, const KernelEqueueRef& watched, KernelEvent& change, std::uint16_t flags) {
-    if ((flags & EV_CLEAR) != 0) {
-        NotImplemented_nid_no_patch("kevent: EV_CLEAR on a kqueue descriptor");
-    }
     std::lock_guard lock(g_kqueueWatchMutex);
     std::vector<const KernelEqueuePrivate*> visited;
     if (KqueueReaches(watched, queue.get(), visited)) {
@@ -260,6 +289,17 @@ int AddKqueueKnote(const KernelEqueueRef& queue, const KernelEqueueRef& watched,
     event.event.data = 0;
     event.filter.pollFunc = PollKqueue;
     event.filter.watched = watched;
+    if ((flags & EV_CLEAR) != 0) {
+        auto note = std::make_shared<ClearedKqueueNote>();
+        const auto snapshot = watched->SnapshotTriggered();
+        note->seen = snapshot.activations;
+        note->active = snapshot.count != 0;
+        event.event.data = static_cast<std::intptr_t>(snapshot.count);
+        event.filter.data = note.get();
+        event.filter.owner = std::move(note);
+        event.filter.pollFunc = PollClearedKqueue;
+        event.filter.resetFunc = ResetClearedKqueue;
+    }
     change.fflags = 0;
     change.data = 0;
     return GuestErrno(queue->AddEvent(event));
@@ -317,6 +357,27 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     KernelEqueueEvent event{};
     event.deadlineNs = *periodNs <= std::numeric_limits<std::uint64_t>::max() - now ? now + *periodNs : std::numeric_limits<std::uint64_t>::max();
     event.intervalNs = (flags & EV_ONESHOT) != 0 ? 0 : *periodNs;
+    event.event = change;
+    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
+    event.event.fflags = 0;
+    event.event.data = 0;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
+bool DefinedProcessChange(const KernelEqueueRef& queue, const KernelEvent& change) {
+    if (queue->HasEvent(change.ident, change.filter)) {
+        return (change.flags & EV_DELETE) != 0 || (change.fflags & ~NOTE_EXIT) == 0;
+    }
+    if ((change.flags & EV_ADD) == 0) {
+        return true;
+    }
+    return change.ident == static_cast<std::uintptr_t>(getpid_nid_postfix()) && (change.fflags & ~NOTE_EXIT) == 0;
+}
+
+int AddProcessKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    KernelEqueueEvent event{};
     event.event = change;
     event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
     event.event.fflags = 0;
@@ -424,6 +485,9 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
         if (event.enabled && event.filter.pollFunc == PollEdge) {
             static_cast<EdgeWatch::Watch*>(event.filter.data)->armed = true;
         }
+        if (event.enabled && event.filter.pollFunc == PollClearedKqueue) {
+            static_cast<ClearedKqueueNote*>(event.filter.data)->active = true;
+        }
         if (change.filter == EVFILT_USER) {
             TouchUserKnote(event, change);
         } else if (change.filter == EVFILT_VNODE) {
@@ -461,7 +525,11 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
         change.data = 0;
         return GUEST_EINVAL;
     }
-    if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
+    if (change.filter == EVFILT_PROC) {
+        if (!DefinedProcessChange(queue, change)) {
+            NotImplemented_nid_no_patch("kevent: EVFILT_PROC on another process or with notes other than NOTE_EXIT");
+        }
+    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
@@ -479,6 +547,8 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
             error = AddTimerKnote(queue, change, flags);
         } else if (change.filter == EVFILT_USER) {
             error = AddUserKnote(queue, change, flags);
+        } else if (change.filter == EVFILT_PROC) {
+            error = AddProcessKnote(queue, change, flags);
         } else if (change.filter == EVFILT_VNODE) {
             const std::uint32_t notes = change.fflags;
             change.fflags = 0;
@@ -583,9 +653,19 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
     if (nchanges > 0 && changelist == nullptr) {
         return PosixFailure(GUEST_EFAULT);
     }
+    KernelTimespec limit{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
+            return PosixFailure(GUEST_EFAULT);
+        }
+        timeout = &limit;
+    }
     int errors = 0;
     for (int i = 0; i < nchanges; ++i) {
-        KernelEvent change = changelist[i];
+        KernelEvent change{};
+        if (!GuestCopyIn_nid_no_patch(&change, changelist + i, sizeof(change))) {
+            return PosixFailure(GUEST_EFAULT);
+        }
         if (change.filter == 0) {
             continue;
         }
@@ -600,7 +680,10 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
         change.flags = EV_ERROR;
         change.data = error;
         if (eventlist != nullptr) {
-            *eventlist++ = change;
+            if (!GuestCopyOut_nid_no_patch(eventlist, &change, sizeof(change))) {
+                return PosixFailure(GUEST_EFAULT);
+            }
+            ++eventlist;
         }
         --nevents;
         ++errors;
@@ -622,14 +705,19 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
             deadline = ScanDeadline(*timeout);
         }
     }
-    KernelEvent scratch[KQ_NEVENTS];
-    KernelEvent* target = eventlist != nullptr ? eventlist : scratch;
-    const int capacity = eventlist != nullptr ? nevents : std::min(nevents, KQ_NEVENTS);
+    KernelEvent scratch[KQ_STACK_EVENTS];
+    std::unique_ptr<KernelEvent[]> heap;
+    const int capacity = std::min(nevents, eventlist != nullptr ? KQ_MAX_SCAN : KQ_NEVENTS);
+    KernelEvent* target = scratch;
+    if (capacity > KQ_STACK_EVENTS) {
+        heap.reset(new KernelEvent[static_cast<std::size_t>(capacity)]);
+        target = heap.get();
+    }
     const int count = poll ? queue->GetTriggeredEvents(target, capacity) : queue->WaitForEventsUntil(target, capacity, deadline.value_or(0));
     if (count < 0) {
         return PosixFailure(GuestErrno(count));
     }
-    if (count > 0 && eventlist == nullptr) {
+    if (count > 0 && (eventlist == nullptr || !GuestCopyOut_nid_no_patch(eventlist, target, static_cast<std::size_t>(count) * sizeof(KernelEvent)))) {
         return PosixFailure(GUEST_EFAULT);
     }
     return count;
