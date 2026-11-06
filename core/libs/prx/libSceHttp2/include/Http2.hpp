@@ -54,7 +54,7 @@ int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cbFunc, 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t contentLength);
 int APS5_VABI sceHttp2SetResolveTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec);
-int APS5_VABI sceHttp2SetSslCallback(int id, void* cbFunc, void* userArg);
+int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cbFunc, void* userArg);
 int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t sslFlags);
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t sslFlags);
@@ -82,7 +82,7 @@ int APS5_VABI sceHttp2CookieImport(void);
 int APS5_VABI sceHttp2GetAuthEnabled(int id, int* isEnable);
 int APS5_VABI sceHttp2GetAutoRedirect(int id, int* enable);
 int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, std::size_t* required, std::size_t prepared);
-int APS5_VABI sceHttp2GetCookieBox(void);
+int APS5_VABI sceHttp2GetCookieBox(int id, int* cookieBoxId);
 int APS5_VABI sceHttp2GetCookieStats(int cookieBoxId, Http2CookieStats* stats);
 int APS5_VABI sceHttp2RedirectCacheFlush(int libHttp2CtxId);
 int APS5_VABI sceHttp2RemoveRequestHeader(int id, const char* name);

@@ -19,6 +19,8 @@ unless --summary names another file.
 
 Buffer-full markers report lost events even without a summary. Slice-based timings, waits and batch
 inventories then describe retained events only; untraced time is not evidence of idle time.
+The gpu thread's busy time is the union of its retained ranges within the frame window; the producer's summary
+and the per-slice inventories retain accumulated durations and can count overlapping work separately.
 
 A summary file written by APS5_TRACE_SUMMARY_EVERY (aps5-summary.jsonl, or any .jsonl) is digested as a table with
 one row per interval and a text sparkline of the frame p99 and of the GPU busy time per present; the lines of
@@ -66,7 +68,7 @@ class Trace:
         self.threads = {}
         self.slices = collections.defaultdict(list)
         self.presents = []
-        self.folded = collections.defaultdict(float)
+        self.folded = collections.defaultdict(list)
         self.batched = []
         self.losses = []
         if not isinstance(document, (list, dict)):
@@ -112,7 +114,8 @@ class Trace:
                     self.losses.append((tid, ts, lost))
             elif phase == "C":
                 tid = _event_tid(event, index)
-                self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
+                self.folded[tid].append((_event_number(event, "ts", index),
+                    sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())))
         self.presents.sort(key=lambda present: present[0])
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
@@ -122,7 +125,7 @@ class Trace:
                 while stack and start >= round(stack[-1][0] * 1000) + round(stack[-1][1] * 1000):
                     stack.pop()
                 entry[3] = len(stack)
-                entry[4] = any(is_wait(parent[2]) for parent in stack)
+                entry[4] = bool(stack and (stack[-1][4] or is_wait(stack[-1][2])))
                 stack.append(entry)
 
     def select_threads(self, names):
@@ -290,14 +293,20 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         traced = 0.0
         waited = 0.0
         leaders = collections.Counter()
+        gpu = trace.name(tid) == "gpu"
+        covered_until = -math.inf
         for ts, dur, name, depth, nested in slices:
-            overlap = max(min(ts + dur, frames[-1][2]) - max(ts, frames[0][1]), 0.0) if frames else dur
+            begin = max(ts, frames[0][1]) if frames else ts
+            end = min(ts + dur, frames[-1][2]) if frames else ts + dur
+            overlap = max(end - begin, 0.0)
             if overlap > 0:
                 totals[name] += overlap
-                if depth == 0:
-                    traced += overlap
-                    if not is_wait(name):
-                        leaders[name] += overlap
+                if depth == 0 or gpu:
+                    contribution = max(end - max(begin, covered_until), 0.0) if gpu else overlap
+                    covered_until = max(covered_until, end)
+                    traced += contribution
+                    if contribution > 0 and not is_wait(name):
+                        leaders[name] += contribution
                 if is_wait(name) and not nested:
                     waited += overlap
             if is_wait(name) and not nested and (overlap > 0 or not frames):
@@ -305,7 +314,8 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         threads.append({"thread": trace.name(tid), "busy_ms_per_frame": (traced - waited) / 1000.0 / count,
                         "wait_ms_per_frame": waited / 1000.0 / count,
                         "untraced_ms_per_frame": max(span_us - traced, 0.0) / 1000.0 / count,
-                        "folded_ms_per_frame": trace.folded.get(tid, 0.0) / count,
+                        "folded_ms_per_frame": sum(value for ts, value in trace.folded.get(tid, [])
+                                                   if not frames or frames[0][1] <= ts < frames[-1][2]) / count,
                         "busy_pct": 100.0 * (traced - waited) / span_us if span_us else 0.0,
                         "wait_pct": 100.0 * waited / span_us if span_us else 0.0,
                         "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]})

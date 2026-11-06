@@ -23,8 +23,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_readonly_resummarize PROPERTIES TIMEOUT 10)
     add_test(NAME agc_driver_eop_interrupts COMMAND agc_driver_tests --eop-interrupts)
     set_tests_properties(agc_driver_eop_interrupts PROPERTIES TIMEOUT 60)
+    add_test(NAME agc_driver_wait_producer_chain COMMAND agc_driver_tests --wait-producer-chain)
+    set_tests_properties(agc_driver_wait_producer_chain PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_driver_readonly_resummarize agc_driver_eop_interrupts PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_readonly_resummarize agc_driver_eop_interrupts agc_driver_wait_producer_chain PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_small_copy_sync COMMAND agc_driver_tests --small-copy-sync)

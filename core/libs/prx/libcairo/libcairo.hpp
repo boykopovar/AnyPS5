@@ -2,3 +2,4 @@
 
 #include "prx/libcairo/include/InventoryExports.hpp"
 #include "prx/libcairo/include/Matrix.hpp"
+#include "prx/libcairo/include/Surface.hpp"

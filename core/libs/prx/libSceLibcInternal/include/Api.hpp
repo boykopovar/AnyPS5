@@ -26,8 +26,12 @@ using ThreadDestructorFunction = void (APS5_VABI*)(void*);
 
 extern "C" {
 
+int APS5_VABI sigblock_nid_postfix(int mask);
+int APS5_VABI sigsetmask_nid_postfix(int mask);
+
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
 void APS5_VABI vwarnc_nid_postfix(int code, const char* format, VaList* args);
@@ -39,6 +43,7 @@ void APS5_VABI _warn_nid_postfix(const char* format, ...);
 void APS5_VABI warnx_nid_postfix(const char* format, ...);
 const char* APS5_VABI getprogname_nid_postfix();
 const char* APS5_VABI _getprogname_nid_postfix();
+void APS5_VABI setprogname_nid_postfix(const char* name);
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
@@ -55,8 +60,17 @@ std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
 char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
 char* APS5_VABI inet_ntoa_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI inet_netof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI __inet_netof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI inet_lnaof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI __inet_lnaof_nid_postfix(std::uint32_t address);
+std::uint32_t APS5_VABI inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
+std::uint32_t APS5_VABI __inet_makeaddr_nid_postfix(std::uint32_t net, std::uint32_t host);
+std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
+std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
+int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);
 int APS5_VABI posix_spawnattr_init_nid_postfix(PosixSpawnAttributes** attributes);
 int APS5_VABI posix_spawnattr_destroy_nid_postfix(PosixSpawnAttributes** attributes);
 int APS5_VABI posix_spawnattr_setflags_nid_postfix(PosixSpawnAttributes** attributes, std::int16_t flags);
