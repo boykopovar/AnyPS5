@@ -80,6 +80,8 @@ Param DialogParam(char16_t* buffer, std::uint32_t maxLength) {
 }
 
 std::uint32_t EndStatus() {
+    Require(sceImeDialogGetResult(nullptr) == ErrorNotOpened);
+    Require(sceImeDialogGetResult(reinterpret_cast<Result*>(0x10)) == ErrorNotOpened);
     Result result{};
     Require(sceImeDialogGetResult(&result) == 0);
     return result.endstatus;
@@ -104,6 +106,11 @@ int main() {
     Require(!ImeCapturesKeyboard_nid_postfix());
     Require(sceImeDialogGetStatus() == StatusNone);
     Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogAbort() == ErrorNotOpened);
+    Result earlyResult{};
+    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotOpened);
+    Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
+    Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
 
     Open(param);
     for (int poll = 0; poll < 8; ++poll) Require(sceImeDialogGetStatus() == StatusRunning);
@@ -116,6 +123,7 @@ int main() {
     Press(SDL_SCANCODE_RETURN);
     Require(sceImeDialogGetStatus() == StatusFinished);
     Require(!ImeCapturesKeyboard_nid_postfix());
+    Require(sceImeDialogGetResult(reinterpret_cast<Result*>(1)) == ErrorNotOpened);
     Require(EndStatus() == EndStatusOk);
     Require(std::u16string(buffer) == u"Hi\u00e9\U0001F600");
     Require(sceImeDialogAbort() == ErrorNotOpened);
@@ -338,4 +346,10 @@ int main() {
     Tap(PadR2);
     Require(std::u16string(buffer) == u"!");
     Close();
+
+    Require(sceImeDialogTerm() == ErrorNotOpened);
+    Require(sceImeDialogAbort() == ErrorNotOpened);
+    Require(sceImeDialogGetResult(&earlyResult) == ErrorNotOpened);
+    Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
+    Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
 }
