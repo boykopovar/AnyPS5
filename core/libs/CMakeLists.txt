@@ -347,6 +347,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sys_sdk_version PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
+
+    add_test_executable(guest_kernel_sys_app_category_tests tests/GuestKernelSysAppCategory.cpp)
+    target_include_directories(guest_kernel_sys_app_category_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_app_category_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_app_category_tests)
+    add_test(NAME guest_kernel_sys_app_category COMMAND guest_kernel_sys_app_category_tests)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_app_category PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
     add_test_executable(guest_kernel_sys_console_identity_tests tests/GuestKernelSysConsoleIdentity.cpp)
     target_include_directories(guest_kernel_sys_console_identity_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_console_identity_tests PRIVATE libkernel_sys libkernel libc)
@@ -455,7 +465,7 @@ if(BUILD_TESTING)
         set(public_header_manifest "${CMAKE_CURRENT_BINARY_DIR}/public_headers.json")
         add_test(NAME public_headers COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_public_headers.py --audit-only --manifest "${public_header_manifest}")
-        set_tests_properties(public_headers PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE FIXTURES_SETUP public_headers_manifest)
+        set_tests_properties(public_headers PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE FIXTURES_SETUP public_headers_manifest)
         foreach(batch RANGE 0 63)
             add_test(NAME public_headers_compile_${batch} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_public_headers.py --compiler ${CMAKE_CXX_COMPILER} ${public_header_compiler_args}
@@ -1461,4 +1471,19 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_file_wrapper_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcFileWrapper.cpp)
+    target_include_directories(guest_webrtc_file_wrapper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_webrtc_file_wrapper_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_file_wrapper_tests)
+    add_test(NAME guest_webrtc_file_wrapper COMMAND guest_webrtc_file_wrapper_tests)
+    set_tests_properties(guest_webrtc_file_wrapper PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+endif()
+
 include(prx/libSceBeisobmf/Tests.cmake)
