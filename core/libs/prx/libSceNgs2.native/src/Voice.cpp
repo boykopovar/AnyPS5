@@ -558,7 +558,8 @@ static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFi
 
 static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVoiceCompressorParam& param) {
     const auto flags = param.flags;
-    if (PS4_LIBRARY ? flags != 0 : (flags & ~0x3fu) != 0 || (flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u) {
+    if (PS4_LIBRARY && (flags & 1u) == 0) throw std::runtime_error("NGS2: an enabled submixer compressor (flags " + Ngs2Hex(flags) + ") is not implemented");
+    if (!PS4_LIBRARY && ((flags & ~0x3fu) != 0 || (flags & 0x6u) == 0x6u || (flags & 0x30u) == 0x30u)) {
         throw std::runtime_error("NGS2: submixer compressor flags " + Ngs2Hex(flags) + " are not implemented");
     }
     if (PS4_LIBRARY || (flags & 1u) != 0) return;
