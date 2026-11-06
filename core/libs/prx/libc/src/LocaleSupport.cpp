@@ -304,27 +304,7 @@ std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const c
 
 const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
 
-char APS5_VABI NumpunctDecimalPoint(const GuestLocale::NumpunctFacet* self) {
-    return self->decimalPoint;
-}
-
-char APS5_VABI NumpunctThousandsSep(const GuestLocale::NumpunctFacet* self) {
-    return self->thousandsSep;
-}
-
-GuestLocale::String* APS5_VABI NumpunctGrouping(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
-    return AssignCString(result, self->grouping);
-}
-
-GuestLocale::String* APS5_VABI NumpunctFalsename(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
-    return AssignCString(result, self->falsename);
-}
-
-GuestLocale::String* APS5_VABI NumpunctTruename(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
-    return AssignCString(result, self->truename);
-}
-
-const GuestLocale::NumpunctVtable g_numpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumpunctDecimalPoint, NumpunctThousandsSep, NumpunctGrouping, NumpunctFalsename, NumpunctTruename};
+const GuestLocale::NumpunctVtable g_numpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix, _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix, _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix, _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix, _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix};
 
 void PutCharacter(GuestLocale::OutputIterator& out, char character) {
     GuestLocale::Streambuf* buffer = out.buffer;
@@ -399,6 +379,11 @@ const GuestLocale::NumpunctVtable& Punctuation(const GuestLocale::Facet* facet) 
 
 const GuestLocale::NumpunctFacet* AsNumpunct(const GuestLocale::Facet* facet) {
     return reinterpret_cast<const GuestLocale::NumpunctFacet*>(facet);
+}
+
+const GuestLocale::NumpunctFacet* RequireNumpunct(const GuestLocale::NumpunctFacet* self, const char* function) {
+    if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument(std::string(function) + ": null facet");
+    return self;
 }
 
 std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
@@ -684,11 +669,14 @@ std::uint64_t _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_n
 std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14] {};
 std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
+std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots] {};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
@@ -790,9 +778,65 @@ GuestLocaleFacade g_sceV2ClassicLocaleFacade{&g_classicLocale};
 constexpr std::uint32_t SceV2AllLocaleCategories = 0x3f;
 constexpr int SceV2LocaleCategoryCount = 6;
 
+std::recursive_mutex g_sceV2LocimpMutex;
+
+void APS5_VABI DestroySceV2Locimp_nid_no_patch(GuestLocale::Facet* self) {
+    _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(self));
+}
+
+void APS5_VABI DeleteSceV2Locimp_nid_no_patch(GuestLocale::Facet* self) {
+    _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(self));
+    _ZdlPv_nid_postfix(self);
+}
+
+const GuestLocale::FacetVtable g_sceV2LocimpVtable{DestroySceV2Locimp_nid_no_patch, DeleteSceV2Locimp_nid_no_patch, RetainFacet, ReleaseFacet};
+
+void ReleaseSceV2Facet(GuestLocale::Facet* facet) {
+    if (auto* released = facet->vtable->release(facet)) released->vtable->deleteObject(released);
+}
+
+bool CopySceV2Facets(GuestLocale::Implementation* self, const GuestLocale::Implementation* source) {
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    const std::size_t count = self->facetCount;
+    if (count == 0) return true;
+    if (count > SIZE_MAX / sizeof(GuestLocale::Facet*)) return false;
+    auto* facets = static_cast<GuestLocale::Facet**>(malloc_nid_postfix(count * sizeof(GuestLocale::Facet*)));
+    if (facets == nullptr) return false;
+    self->facets = facets;
+    for (std::size_t index = count; index-- != 0;) {
+        GuestLocale::Facet* facet = source->facets[index];
+        facets[index] = facet;
+        if (facet != nullptr) facet->vtable->retain(facet);
+    }
+    return true;
+}
+
+bool AddSceV2Facet(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    if (id >= self->facetCount) {
+        if (id >= SIZE_MAX / sizeof(GuestLocale::Facet*)) return false;
+        const std::size_t count = std::max<std::size_t>(id + 1, 40);
+        GuestLocale::Facet** grown;
+        if (self->facets == g_classicFacets) {
+            grown = static_cast<GuestLocale::Facet**>(malloc_nid_postfix(count * sizeof(GuestLocale::Facet*)));
+            if (grown != nullptr) std::memcpy(grown, g_classicFacets, self->facetCount * sizeof(GuestLocale::Facet*));
+        } else {
+            grown = static_cast<GuestLocale::Facet**>(realloc_nid_postfix(self->facets, count * sizeof(GuestLocale::Facet*)));
+        }
+        if (grown == nullptr) return false;
+        self->facets = grown;
+        std::fill(grown + self->facetCount, grown + count, nullptr);
+        self->facetCount = count;
+    }
+    facet->vtable->retain(facet);
+    if (GuestLocale::Facet* old = self->facets[id]) ReleaseSceV2Facet(old);
+    self->facets[id] = facet;
+    return true;
+}
+
 GuestLocale::Implementation* NewSceV2Locimp(bool transparent) {
     auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
-    *self = {{&g_copiedLocaleVtable, 1, 0}, nullptr, 0, 0, transparent, "*"};
+    *self = {{&g_sceV2LocimpVtable, 1, 0}, nullptr, 0, 0, transparent, "*"};
     return self;
 }
 
@@ -816,6 +860,16 @@ alignas(16) unsigned char _ZNSt8__sce_v25wcoutE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v25wcerrE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v23cinE_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v24clogE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v25wclogE_nid_postfix[0x400] {};
+unsigned char* _ZNSt8__sce_v28_Ptr_cinE_nid_postfix = _ZNSt8__sce_v23cinE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_coutE_nid_postfix = _ZNSt8__sce_v24coutE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix = _ZNSt8__sce_v24cerrE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_clogE_nid_postfix = _ZNSt8__sce_v24clogE_nid_postfix;
+unsigned char* _ZNSt8__sce_v29_Ptr_wcinE_nid_postfix = _ZNSt8__sce_v24wcinE_nid_postfix;
+unsigned char* _ZNSt8__sce_v210_Ptr_wcoutE_nid_postfix = _ZNSt8__sce_v25wcoutE_nid_postfix;
+unsigned char* _ZNSt8__sce_v210_Ptr_wcerrE_nid_postfix = _ZNSt8__sce_v25wcerrE_nid_postfix;
+unsigned char* _ZNSt8__sce_v210_Ptr_wclogE_nid_postfix = _ZNSt8__sce_v25wclogE_nid_postfix;
 
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale5_InitEb_nid_postfix(bool doIncref) {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
@@ -879,15 +933,34 @@ void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(Gu
     g_sceV2RegisteredFacets.push_back(facet);
 }
 
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_ctorEPS1_RKS1__nid_postfix(GuestLocale::Implementation* self, const GuestLocale::Implementation* source) {
+    if (self == nullptr || source == nullptr) throw std::invalid_argument("_Locimp_ctor: null object");
+    if (!CopySceV2Facets(self, source)) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(GuestLocale::Implementation* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locimp_dtor: null object");
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    for (std::size_t index = self->facetCount; index-- != 0;) {
+        if (GuestLocale::Facet* facet = self->facets[index]) ReleaseSceV2Facet(facet);
+    }
+    if (self->facets != g_classicFacets) free_nid_postfix(self->facets);
+}
+
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(const GuestLocale::Implementation* source) {
     if (source == nullptr) throw std::invalid_argument("_Locimp constructor: null source");
     auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
-    _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(self, source);
+    *self = {{&g_sceV2LocimpVtable, 1, 0}, nullptr, source->facetCount, source->category, source->transparent, source->name};
+    if (!CopySceV2Facets(self, source)) {
+        _ZdlPv_nid_postfix(self);
+        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+    }
     return self;
 }
 
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
-    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(self, facet, id);
+    if (self == nullptr || facet == nullptr) throw std::invalid_argument("_Locimp_Addfac: null object");
+    if (!AddSceV2Facet(self, facet, id)) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
 }
 
 GuestLocale::Implementation* _ZNSt8__sce_v26locale7_Locimp8_ClocptrE_nid_postfix = &g_classicLocale;
@@ -1009,6 +1082,46 @@ std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
         *facet = &punct->base;
     }
     return 4;
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return RequireNumpunct(self, "numpunct::do_decimal_point")->decimalPoint;
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return RequireNumpunct(self, "numpunct::do_thousands_sep")->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, RequireNumpunct(self, "numpunct::do_grouping")->grouping);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, RequireNumpunct(self, "numpunct::do_falsename")->falsename);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, RequireNumpunct(self, "numpunct::do_truename")->truename);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::decimal_point")->base).decimalPoint(self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::thousands_sep")->base).thousandsSep(self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::grouping")->base).grouping(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::falsename")->base).falsename(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::truename")->base).truename(result, self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
