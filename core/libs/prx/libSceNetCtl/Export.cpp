@@ -70,7 +70,7 @@ static constexpr std::uint16_t STUN_ATTR_MAPPED_ADDRESS = 0x0001;
 static constexpr std::uint16_t STUN_ATTR_CHANGED_ADDRESS = 0x0005;
 static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS = 0x0020;
 static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS_LEGACY = 0x8020;
-static constexpr std::uint16_t STUN_ATTR_OTHER_ADDRESS = 0x802b;
+static constexpr std::uint16_t STUN_ATTR_OTHER_ADDRESS = 0x802c;
 static constexpr std::size_t STUN_HEADER_SIZE = 20;
 static constexpr std::size_t STUN_TRANSACTION_ID_SIZE = 12;
 static constexpr int STUN_DEFAULT_TIMEOUT_MS = 300;
@@ -260,6 +260,7 @@ void WatchHostAddresses(HostAddressCache& cache) {
 #endif
 
 static bool HostHasAddress(int family) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
 #ifdef _WIN32
     auto& cache = AddressCache();
     const int slot = family == AF_INET ? 0 : family == AF_INET6 ? 1 : 2;
@@ -460,6 +461,7 @@ static bool QueryHostIpv4Interface(HostIpv4Interface& found) {
 }
 
 static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return false;
 #ifdef _WIN32
     auto& cache = AddressCache();
     std::lock_guard guard(cache.lock);

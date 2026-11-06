@@ -560,7 +560,7 @@ static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterPara
 }
 
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
-    if (!PS4_LIBRARY) {
+    if (!PS4_LIBRARY || param.size == sizeof(Ngs2SamplerVoiceFilterParam)) {
         if (param.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
         return reinterpret_cast<const Ngs2SamplerVoiceFilterParam&>(param);
     }
@@ -1102,6 +1102,11 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
     if (voice.rack->system == nullptr && !voice.pendingControls.empty()) voice.ApplyPendingControls();
     try {
         for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
+            if (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && (param->id & 0xffff00e0u) == 0x40000000u) {
+                const auto& modules = voice.rack->customModuleIds;
+                const auto index = param->id & 0x1fu;
+                if (index >= modules.size() || modules[index] != ((param->id >> 8) & 0xffu)) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
+            }
             if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
                 const auto index = param->id & 0x1fu;
                 if (index >= voice.customPitchShift.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
