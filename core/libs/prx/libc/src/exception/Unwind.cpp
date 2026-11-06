@@ -186,7 +186,7 @@ bool FindFrameFast(Lookup& query) {
     const auto* header = static_cast<const Byte*>(object.dlfo_eh_frame);
     if (header[0] != 1) return false;
     static std::mutex mutex;
-    static std::map<std::tuple<const Byte*, const void*, const void*>, std::pair<Word, Word>> bases;
+    static auto& bases = *new std::map<std::tuple<const Byte*, const void*, const void*>, std::pair<Word, Word>>();
     const std::tuple key {header, static_cast<const void*>(object.dlfo_map_start), static_cast<const void*>(object.dlfo_map_end)};
     {
         std::lock_guard lock(mutex);
@@ -240,7 +240,7 @@ using ImageKey = std::array<Word, 6>;
 
 const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte* end) {
     static std::mutex mutex;
-    static std::map<ImageKey, FrameIndex> indexes;
+    static auto& indexes = *new std::map<ImageKey, FrameIndex>();
     std::lock_guard lock(mutex);
     const auto [entry, inserted] = indexes.try_emplace(key);
     auto& index = entry->second;
