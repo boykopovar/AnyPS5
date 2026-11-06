@@ -26,9 +26,6 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
-#include <span>
-#include <string>
-#include <vector>
 #include <utility>
 
 namespace AgcDriver {
@@ -86,6 +83,7 @@ ColorTarget MultisampledTarget(const GuestBlock& color, VkFormat format) {
     target.elementBytes = 4;
     target.bytes = BlockBytes / 4;
     target.samples = 4;
+    target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
     return target;
 }
 
@@ -97,6 +95,7 @@ struct Acquired {
 
 Acquired Acquire(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Context& context, const ColorTarget& target) {
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::Graphics::PrepareMultisampleTargetForDraw_nid_no_patch(context, target);
     Acquired acquired;
     acquired.view = AgcDriver::Graphics::MultisampleTargetView(context, target, acquired.owner, &acquired.image);
     Require(acquired.view != VK_NULL_HANDLE && acquired.image != VK_NULL_HANDLE && acquired.owner != nullptr, "the multisampled target has no view");

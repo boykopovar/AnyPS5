@@ -4,15 +4,14 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -34,6 +33,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -42,7 +42,6 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -172,7 +171,7 @@ alignas(256) constexpr std::array<std::uint32_t, 17> BdaSpanCode{
 };
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{
-    {-1.0f, -1.0f, 0.5f, 1.0f}, {0.83f, -1.0f, 0.5f, 1.0f}, {-1.0f, 0.31f, 0.5f, 1.0f}
+    {-1.0f, -1.0f, 0.5f, 1.0f}, {0.83f, -1.0f, 0.5f, 1.0f}, {-1.0f, 0.71f, 0.5f, 1.0f}
 }};
 
 alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
@@ -288,10 +287,8 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32
     return color;
 }
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t pipeBankXor = 0) {
-    const auto color = DecodeTarget(block.Address() | pipeBankXor);
-    Require(color.address == block.Address() && color.pipeBankXor == pipeBankXor, "the color target lost its base address or pipe/bank XOR");
-    return color;
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
+    return DecodeTarget(block.Address());
 }
 
 AgcDriver::Graphics::ColorTarget DecodeSwappedTarget(const Block& block) {
@@ -447,8 +444,8 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& sta
     device.Draw(state, draw, shaders);
 }
 
-std::array<std::uint32_t, 8> TargetDescriptor(const Block& block, std::uint32_t sampleShift, std::uint32_t pipeBankXor = 0, std::uint32_t format = Format16161616Float, std::uint32_t tileMode = TileRenderTarget) {
-    const auto address = block.Address() | pipeBankXor;
+std::array<std::uint32_t, 8> TargetDescriptor(const Block& block, std::uint32_t sampleShift, std::uint32_t format = Format16161616Float, std::uint32_t tileMode = TileRenderTarget) {
+    const auto address = block.Address();
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
@@ -569,8 +566,8 @@ std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, c
     return loaded;
 }
 
-std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t fragments = Samples, std::uint32_t pipeBankXor = 0, std::uint32_t format = Format16161616Float, std::uint32_t tileMode = TileRenderTarget) {
-    return LoadSamples(device, TargetDescriptor(block, static_cast<std::uint32_t>(std::countr_zero(fragments)), pipeBankXor, format, tileMode), fragments);
+std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t format = Format16161616Float, std::uint32_t tileMode = TileRenderTarget) {
+    return LoadSamples(device, TargetDescriptor(block, SampleShift, format, tileMode));
 }
 
 void CheckFirstSampleReads(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::vector<std::array<float, 4>>& samples, bool distinct, const std::string& what, const std::array<std::uint32_t, 44>& code = PlaneCode, const char* second = "image_sample_lz") {
@@ -606,7 +603,7 @@ void CheckFirstSampleReads(AgcDriver::VulkanDevice& device, const std::array<std
 }
 
 std::array<std::uint32_t, 8> CompressedDescriptor(const Block& block, std::uint32_t tileMode, std::uint64_t htile) {
-    auto texture = TargetDescriptor(block, SampleShift, 0u, Format16161616Float, tileMode);
+    auto texture = TargetDescriptor(block, SampleShift, Format16161616Float, tileMode);
     const auto meta = htile >> 8u;
     texture[6] = (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta & 0xffu) << 24u);
     texture[7] = static_cast<std::uint32_t>(meta >> 8u);
@@ -625,24 +622,21 @@ double EdgeDistance(double x, double y, std::size_t from) {
     return side(c[0], c[1]) < 0 ? -side(x, y) : side(x, y);
 }
 
-void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std::array<float, 4>>& loaded, const std::array<float, 4>& background, std::span<const std::array<float, 4>> supplied = {}) {
+void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std::array<float, 4>>& loaded, const std::array<float, 4>& background) {
     const auto locations = AgcDriver::Graphics::SampleLocations(state);
-    Require(loaded.size() == Side * Side * state.samples, "the multisample result has the wrong element count");
-    Require(supplied.empty() || supplied.size() == loaded.size(), "the initial sample count does not match the rendered target");
-    std::vector<std::uint32_t> pixelsByCoverage(state.samples + 1u);
-    std::vector<std::uint32_t> coveredBySample(state.samples);
+    std::array<std::uint32_t, Samples + 1u> pixelsByCoverage{};
+    std::array<std::uint32_t, Samples> coveredBySample{};
     std::uint32_t checked = 0;
     for (std::uint32_t y = 0; y < Side; ++y) {
         for (std::uint32_t x = 0; x < Side; ++x) {
             std::uint32_t covered = 0;
-            for (std::uint32_t sample = 0; sample < state.samples; ++sample) {
-                const auto index = (y * Side + x) * state.samples + sample;
-                const auto& texel = loaded[index];
+            for (std::uint32_t sample = 0; sample < Samples; ++sample) {
+                const auto& texel = loaded[(y * Side + x) * Samples + sample];
                 const bool drawn = texel == Drawn;
-                const bool empty = texel == (supplied.empty() ? background : supplied[index]);
+                const bool empty = texel == background;
                 char where[160];
                 std::snprintf(where, sizeof(where), "sample %u of pixel (%u, %u) loaded (%g, %g, %g, %g)", sample, x, y, texel[0], texel[1], texel[2], texel[3]);
-                Require(drawn || empty, std::string(where) + ", neither the drawn color nor the initial target sample");
+                Require(drawn || empty, std::string(where) + ", neither the drawn color nor the cleared target");
                 covered += drawn ? 1u : 0u;
                 coveredBySample[sample] += drawn ? 1u : 0u;
                 const auto px = x + static_cast<double>(locations[sample].x);
@@ -655,9 +649,9 @@ void CheckSamples(const AgcDriver::Graphics::State& state, const std::vector<std
             ++pixelsByCoverage[covered];
         }
     }
-    Require(checked >= Side * Side * state.samples * 9u / 10u, "fewer than nine in ten samples are clear of the triangle's edges");
-    Require(pixelsByCoverage[0] != 0 && pixelsByCoverage[state.samples] != 0, "the triangle covers every pixel or none");
-    Require(std::any_of(pixelsByCoverage.begin() + 1, pixelsByCoverage.end() - 1, [](auto count) { return count != 0; }), "no pixel is partly covered, so the samples of a pixel were not told apart");
+    Require(checked >= Side * Side * Samples * 9u / 10u, "fewer than nine in ten samples are clear of the triangle's edges");
+    Require(pixelsByCoverage[0] != 0 && pixelsByCoverage[Samples] != 0, "the triangle covers every pixel or none");
+    Require(pixelsByCoverage[1] + pixelsByCoverage[2] + pixelsByCoverage[3] != 0, "no pixel is partly covered, so the samples of a pixel were not told apart");
     Require(std::adjacent_find(coveredBySample.begin(), coveredBySample.end(), std::not_equal_to<>()) != coveredBySample.end(), "every sample index has the same coverage, so the sample index was not told apart");
 }
 
@@ -730,7 +724,7 @@ void CheckNativeIndices(AgcDriver::VulkanDevice& device, const Block& source, co
             } catch (const std::exception& error) {
                 refusal = error.what();
             }
-            const bool refused = refusal.find("whose samples are only on the host") != std::string::npos;
+            const bool refused = refusal.find(expected) != std::string::npos;
             std::printf("native index %u %s: refused=%u neighbor=passed detail=%s\n", indexSize * 8u, edge ? "edge" : "base", refused ? 1u : 0u, refusal.c_str());
             Require(refusal.empty() || refused, "the native index input failed for another reason: " + refusal);
             missed += refused ? 0u : 1u;
@@ -765,8 +759,10 @@ void CheckOverwrittenTarget(AgcDriver::VulkanDevice& device) {
     std::memset(reused.data + colorBytes / 2u, 0x5a, 256u);
     AgcDriver::Graphics::RequireNoMultisampleTarget(written, 256u, "a read of target memory the title wrote over");
     AgcDriver::Graphics::RequireNoMultisampleTarget(reused.Address(), 64u, "a read of the rest of a target the title wrote over");
+    const std::vector<std::uint8_t> guest(reused.data, reused.data + reused.bytes);
     Draw(device, state);
     device.WaitIdle();
+    Require(std::equal(guest.begin(), guest.end(), reused.data), "a fresh draw after a partial guest overwrite changed guest color memory");
     refusal.clear();
     try {
         AgcDriver::Graphics::RequireNoMultisampleTarget(written, 256u, "a read of a target drawn again over memory the title wrote");
@@ -822,6 +818,7 @@ void CheckClaimedTargets(AgcDriver::VulkanDevice& device) {
         Draw(device, TargetState(DecodeTarget(reused.Address(), 0u)));
         device.WaitIdle();
         Require(!Refused(reused.Address(), 0x1000u, "a read of a 2x target that a single-sample color target was drawn over"), "a 2x target that a single-sample color target was drawn over is still guarded");
+        AgcDriver::GuestMemory::FlushGpuWrites(reused.Address(), reused.bytes);
     }
     {
         Block reused(2u * BlockBytes);
@@ -830,10 +827,13 @@ void CheckClaimedTargets(AgcDriver::VulkanDevice& device) {
         Require(AgcDriver::Graphics::MultisampledColorBytes(wide.color) == 2u * BlockBytes && AgcDriver::Graphics::MultisampledColorBytes(narrow.color) == BlockBytes, "the 2x target does not span the 4x target and one more block");
         Draw(device, wide);
         device.WaitIdle();
+        const auto previous = AgcDriver::Graphics::ReadMultisampleTargetColorSnapshot_nid_no_patch(context, wide.color);
         Draw(device, narrow);
-        device.WaitIdle();
-        Require(!Refused(reused.Address() + BlockBytes, 0x1000u, "a read of the part of a 2x target that a 4x target drawn over it does not cover"), "a 2x target that a 4x target was drawn over is still guarded");
-        Require(Refused(reused.Address(), 0x1000u, "a read of a 4x target drawn over a 2x target"), "a 4x target drawn over a 2x target is not guarded");
+        const auto replacement = AgcDriver::Graphics::ReadMultisampleTargetColorSnapshot_nid_no_patch(context, narrow.color);
+        Require(std::equal(replacement.original.begin(), replacement.original.end(), previous.current.begin()), "a different-sample replacement imported stale guest samples");
+        Require(std::equal(previous.current.begin(), previous.current.end(), reinterpret_cast<const std::byte*>(reused.data)), "a narrower replacement lost the old owner's complete footprint");
+        Require(!Refused(reused.Address() + BlockBytes, 0x1000u, "a read after a narrower target"), "the published original owner's tail is still guarded");
+        Require(Refused(reused.Address(), 0x1000u, "a read of the replacement target"), "a narrower replacement did not guard its own native samples");
     }
     if (context.storageImageMultisample) {
         Block color(BlockBytes);
@@ -940,7 +940,7 @@ void CheckBdaSpan(AgcDriver::VulkanDevice& device, const Block& block, std::size
         failure = error.what();
     }
     const auto deferred = log.Finish();
-    if (failure.empty()) failure = deferred;
+    if (failure.empty() && deferred.find("BDA access failed:") != std::string::npos) failure = deferred;
     if (refused) {
         Require(failure.find("BDA access failed:") != std::string::npos, "BDA access to a resident native multisample range was not refused: " + failure);
         Require(std::equal(before.begin(), before.end(), block.data), "a refused BDA access changed guest memory");
@@ -962,6 +962,264 @@ void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint3
         refusal = error.what();
     }
     Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
+}
+
+std::vector<std::array<float, 4>> StoreInitial(const Block& block, std::uint32_t fragments, std::uint32_t pipeBankXor, bool uniform) {
+    using namespace AgcDriver::Graphics;
+    const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, 8u, fragments, Side, Side, 1u, pipeBankXor);
+    Require(layout.Bytes() <= block.bytes, "the initial color footprint exceeds its allocation");
+    StoreWords(block, block.bytes, 0x38003800u);
+    std::vector<std::byte> linear(static_cast<std::size_t>(layout.LinearBytes()));
+    std::vector<std::array<float, 4>> expected(Side * Side * fragments);
+    for (std::uint32_t index = 0; index < expected.size(); ++index) {
+        const auto sample = index % fragments;
+        const auto pixel = index / fragments;
+        const bool ones = uniform || ((pixel % Side) * 3u + (pixel / Side) * 5u + sample * 7u) % 2u == 0u;
+        const std::array<std::uint16_t, 4> bits = ones ? std::array<std::uint16_t, 4>{0x3c00u, 0x3c00u, 0x3c00u, 0x3c00u} : std::array<std::uint16_t, 4>{0x3a00u, 0x3400u, 0x3800u, 0x3c00u};
+        std::memcpy(linear.data() + index * sizeof(bits), bits.data(), sizeof(bits));
+        expected[index] = ones ? Ones : Written;
+    }
+    layout.Tile(linear, std::as_writable_bytes(std::span(block.data, static_cast<std::size_t>(layout.Bytes()))));
+    return expected;
+}
+
+void NonuniformInitialContents(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::uint32_t exercised = 0u;
+    for (const auto shift : {1u, 2u, 3u}) {
+        const auto fragments = 1u << shift;
+        if ((context.limits.framebufferColorSampleCounts & fragments) == 0u || (context.limits.sampledImageColorSampleCounts & fragments) == 0u) continue;
+        for (const auto pipeBankXor : {0u, 0x8100u}) {
+            Block block(4u * BlockBytes);
+            const auto expected = StoreInitial(block, fragments, pipeBankXor, false);
+            const std::vector<std::uint8_t> before(block.data, block.data + block.bytes);
+            auto color = DecodeTarget(block.Address(), shift);
+            color.pipeBankXor = pipeBankXor;
+            const auto state = TargetState(color);
+            Draw(device, state);
+            auto descriptor = TargetDescriptor(block, shift);
+            descriptor[0] ^= pipeBankXor >> 8u;
+            const auto loaded = LoadSamples(device, descriptor, fragments);
+            const auto locations = SampleLocations(state);
+            std::uint32_t drawn = 0u, untouched = 0u;
+            for (std::uint32_t y = 0u; y < Side; ++y) {
+                for (std::uint32_t x = 0u; x < Side; ++x) {
+                    for (std::uint32_t sample = 0u; sample < fragments; ++sample) {
+                        const auto index = (y * Side + x) * fragments + sample;
+                        const auto& texel = loaded[index];
+                        Require(texel == Drawn || texel == expected[index], "a first partial draw lost a nonuniform initial sample");
+                        const auto px = x + static_cast<double>(locations[sample].x);
+                        const auto py = y + static_cast<double>(locations[sample].y);
+                        const auto distance = std::min({EdgeDistance(px, py, 0u), EdgeDistance(px, py, 1u), EdgeDistance(px, py, 2u)});
+                        if (std::fabs(distance) < EdgeMargin) continue;
+                        Require(texel == (distance > 0.0 ? Drawn : expected[index]), "nonuniform initial contents and raster coverage disagree");
+                        drawn += distance > 0.0;
+                        untouched += distance < 0.0;
+                    }
+                }
+            }
+            Require(drawn != 0u && untouched != 0u, "nonuniform samples were not checked on both sides of the draw");
+            Require(std::equal(before.begin(), before.end(), block.data), "nonuniform initialization changed guest bytes or padding");
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            ClearCachedTextures(context.device);
+            ClearMultisampleTargets(context.device);
+            std::printf("nonuniform initial contents: %u fragments xor=0x%x preserve untouched samples and guest padding\n", fragments, pipeBankXor);
+            ++exercised;
+        }
+    }
+    Require(exercised != 0u, "no nonuniform initial multisample case was exercised");
+}
+
+int NonuniformInitialLifetime(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Require((context.limits.framebufferColorSampleCounts & Samples) != 0u, "initial lifetime sample count is unavailable");
+    device.WaitIdle();
+    auto* previous = Recorder::Active();
+    Require(previous != nullptr && previous->Device() == context.device, "initial lifetime fixture has no device recorder to restore");
+    struct Restore { Recorder* previous; ~Restore() { previous->Activate(); } } restore{previous};
+    for (const bool uniform : {false, true}) {
+        Block block(BlockBytes);
+        if (uniform) StoreWords(block, block.bytes, FillOnes);
+        const auto expected = uniform ? std::vector<std::array<float, 4>>(Side * Side * Samples, Ones) : StoreInitial(block, Samples, 0u, false);
+        const auto color = DecodeTarget(block);
+        const auto state = TargetState(color);
+        {
+            auto recorded = context;
+            recorded.bufferPool = std::make_shared<BufferPool>(context);
+            Recorder recorder(recorded);
+            std::shared_ptr<void> owner;
+            VkImageView view = VK_NULL_HANDLE;
+            std::size_t initialBytes = 0;
+            constexpr std::size_t uploadBytes = Side * Side * Samples * 8u;
+            constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            const auto usage = BufferPool::Usage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, properties);
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                recorder.Activate();
+                PrepareMultisampleTargetForDraw_nid_no_patch(recorded, color);
+                VkImage image = VK_NULL_HANDLE;
+                view = MultisampleTargetView(recorded, color, owner, &image);
+                VkMemoryRequirements requirements{};
+                context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+                initialBytes = recorder.OpenKeptBytes();
+                Require(initialBytes == requirements.size + BlockBytes + (uniform ? 0u : uploadBytes), "initial native color accounting omits the retained guest baseline or transient upload");
+                const auto premature = recorded.bufferPool->Take(uploadBytes, usage);
+                if (premature) recorded.bufferPool->Put(*premature);
+                Require(!premature.has_value(), "initial upload was recycled before submission completed");
+                recorder.Submit();
+            }
+            recorder.Sync();
+            Require(recorder.InFlightKeptBytes() == 0, "completed initial contents still count as in-flight kept bytes");
+            auto released = recorded.bufferPool->Take(uploadBytes, usage);
+            Require(released.has_value() != uniform, "initial upload was not returned to the caller's pool after completion, or uniform clear allocated an upload");
+            if (released) recorded.bufferPool->Put(*released);
+            for (int round = 0; round < 3; ++round) {
+                {
+                    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                    std::shared_ptr<void> reusedOwner;
+                    Require(MultisampleTargetView(recorded, color, reusedOwner) == view && reusedOwner == owner, "initial-content accounting did not reuse its resident target");
+                    const auto targetBytes = recorder.OpenKeptBytes();
+                    Require(targetBytes != 0 && initialBytes == targetBytes + (uniform ? 0u : uploadBytes), "reused target still counts initial upload bytes");
+                    KeepMultisampleTarget_nid_no_patch(owner);
+                    Require(recorder.OpenKeptBytes() == targetBytes, "one target is counted twice within a submission");
+                    recorder.Submit();
+                }
+                recorder.Sync();
+            }
+        }
+        previous->Activate();
+        Draw(device, state);
+        const auto loaded = LoadSamples(device, block);
+        Require(loaded.size() == expected.size(), "initial lifetime sample count differs");
+        for (std::size_t index = 0; index < loaded.size(); ++index) Require(loaded[index] == Drawn || loaded[index] == expected[index], "initial contents were lost after completion and reuse");
+        std::printf("native color initial lifetime: %s contents survive completion and three resident reuses without retaining initialization bytes\n", uniform ? "uniform" : "varying");
+    }
+    return 0;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL RefuseInitialImage(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties*) {
+    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+}
+
+void NonuniformInitialCapabilities(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Block block(4u * BlockBytes);
+    const auto expected = StoreInitial(block, Samples, 0x8100u, false);
+    const std::vector<std::uint8_t> before(block.data, block.data + block.bytes);
+    auto color = DecodeTarget(block);
+    color.pipeBankXor = 0x8100u;
+    const auto refused = [&](const Context& unavailable, const char* expected) {
+        std::string error;
+        try {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            PrepareMultisampleTargetForDraw_nid_no_patch(unavailable, color);
+        } catch (const std::runtime_error& failure) { error = failure.what(); }
+        Require(error.find(expected) != std::string::npos, "initial upload capability refusal differs: " + error);
+        Require(!MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color))), "refused initial upload left a resident owner");
+        Require(std::equal(before.begin(), before.end(), block.data), "refused initial upload changed guest contents");
+    };
+    for (const auto missing : {0u, 1u, 2u}) {
+        auto unavailable = context;
+        if (missing == 0u) unavailable.storageImageMultisample = false;
+        if (missing == 1u) unavailable.storageImageWriteWithoutFormat = false;
+        if (missing == 2u) unavailable.detiler = nullptr;
+        refused(unavailable, "require enabled formatless");
+    }
+    auto unavailable = context;
+    unavailable.limits.maxStorageBufferRange = 0u;
+    refused(unavailable, "at least one aligned element");
+    unavailable = context;
+    unavailable.imageFormatProperties = RefuseInitialImage;
+    refused(unavailable, "vkGetPhysicalDeviceImageFormatProperties multisampled target");
+    color.tileMode = ColorTileMode::Z64KBX;
+    refused(context, "nonuniform initial multisample color tiling");
+    color.tileMode = ColorTileMode::RenderTarget;
+    auto chunked = context;
+    chunked.limits.maxStorageBufferRange = 256u;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        PrepareMultisampleTargetForDraw_nid_no_patch(chunked, color);
+    }
+    Draw(device, TargetState(color));
+    auto descriptor = TargetDescriptor(block, SampleShift);
+    descriptor[0] ^= 0x81u;
+    const auto loaded = LoadSamples(device, descriptor);
+    for (std::size_t index = 0; index < loaded.size(); ++index) Require(loaded[index] == Drawn || loaded[index] == expected[index], "chunked initial upload lost sample values");
+    Require(std::equal(before.begin(), before.end(), block.data), "chunked initial upload changed guest contents");
+    device.SubmitRecorded(true);
+    device.WaitIdle();
+    ClearCachedTextures(context.device);
+    ClearMultisampleTargets(context.device);
+    std::puts("nonuniform initial upload: missing capabilities refuse without ownership or byte changes; 256-byte chunks preserve samples");
+}
+
+void NonuniformInitialHook(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Block block(4u * BlockBytes);
+    const auto expected = StoreInitial(block, Samples, 0u, false);
+    static std::atomic<std::uint32_t> captures{0u};
+    struct Reset { ~Reset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); } } reset;
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t, std::size_t) {
+        Require(!HoldsMultisampleTargetsLock(), "nonuniform initial capture held the targets lock across a flush callback");
+        WithMultisampleTargetsLockForTest([] {});
+        captures.fetch_add(1u, std::memory_order_relaxed);
+    });
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeTarget(block));
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    Require(captures.load(std::memory_order_relaxed) == 1u, "nonuniform initial capture read guest contents more than once");
+    const auto loaded = LoadSamples(device, block);
+    Require(loaded == expected, "nonuniform capture changed initial sample values before a draw");
+    device.SubmitRecorded(true);
+    device.WaitIdle();
+    ClearCachedTextures(context.device);
+    ClearMultisampleTargets(context.device);
+    std::puts("nonuniform initial upload captures once outside the targets lock");
+}
+
+void CheckReadbackSamples(const AgcDriver::Graphics::State& state, const std::vector<std::array<float, 4>>& loaded, const std::array<float, 4>& background, std::span<const std::array<float, 4>> supplied = {}) {
+    const auto locations = AgcDriver::Graphics::SampleLocations(state);
+    Require(loaded.size() == Side * Side * state.samples, "the multisample result has the wrong element count");
+    Require(supplied.empty() || supplied.size() == loaded.size(), "the initial sample count does not match the rendered target");
+    std::vector<std::uint32_t> pixelsByCoverage(state.samples + 1u);
+    std::vector<std::uint32_t> coveredBySample(state.samples);
+    std::uint32_t checked = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            std::uint32_t covered = 0;
+            for (std::uint32_t sample = 0; sample < state.samples; ++sample) {
+                const auto index = (y * Side + x) * state.samples + sample;
+                const auto& texel = loaded[index];
+                const bool drawn = texel == Drawn;
+                const bool empty = texel == (supplied.empty() ? background : supplied[index]);
+                char where[160];
+                std::snprintf(where, sizeof(where), "sample %u of pixel (%u, %u) loaded (%g, %g, %g, %g)", sample, x, y, texel[0], texel[1], texel[2], texel[3]);
+                Require(drawn || empty, std::string(where) + ", neither the drawn color nor the initial target sample");
+                covered += drawn ? 1u : 0u;
+                coveredBySample[sample] += drawn ? 1u : 0u;
+                const auto px = x + static_cast<double>(locations[sample].x);
+                const auto py = y + static_cast<double>(locations[sample].y);
+                const auto distance = std::min({EdgeDistance(px, py, 0), EdgeDistance(px, py, 1), EdgeDistance(px, py, 2)});
+                if (std::fabs(distance) < EdgeMargin) continue;
+                ++checked;
+                Require(drawn == (distance > 0), std::string(where) + (distance > 0 ? ", which the triangle covers" : ", which the triangle does not cover"));
+            }
+            ++pixelsByCoverage[covered];
+        }
+    }
+    Require(checked >= Side * Side * state.samples * 9u / 10u, "fewer than nine in ten samples are clear of the triangle's edges");
+    Require(pixelsByCoverage[0] != 0 && pixelsByCoverage[state.samples] != 0, "the triangle covers every pixel or none");
+    if (state.samples == Samples) {
+        Require(std::any_of(pixelsByCoverage.begin() + 1, pixelsByCoverage.end() - 1, [](auto count) { return count != 0; }), "no pixel is partly covered, so the samples of a pixel were not told apart");
+        Require(std::adjacent_find(coveredBySample.begin(), coveredBySample.end(), std::not_equal_to<>()) != coveredBySample.end(), "every sample index has the same coverage, so the sample index was not told apart");
+    }
 }
 
 std::vector<std::array<float, 4>> ReadHalfSamples(const AgcDriver::Graphics::Context& context, const AgcDriver::Graphics::ColorTarget& color) {
@@ -994,7 +1252,7 @@ void RequireInitialRefused(const AgcDriver::Graphics::Context& context, const Ag
     std::string refusal;
     try {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-        AgcDriver::Graphics::MultisampleTargetView(context, color);
+        AgcDriver::Graphics::PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
@@ -1017,6 +1275,13 @@ VKAPI_ATTR VkResult VKAPI_CALL NoReadbackImage(VkPhysicalDevice physical, VkForm
     return imageFormatProperties(physical, format, type, tiling, usage, flags, properties);
 }
 
+std::vector<std::array<float, 4>> LoadColorSamples(AgcDriver::VulkanDevice& device, const Block& block, const AgcDriver::Graphics::ColorTarget& color) {
+    auto descriptor = TargetDescriptor(block, std::countr_zero(color.samples));
+    descriptor[0] ^= color.pipeBankXor >> 8u;
+    return LoadSamples(device, descriptor, color.samples);
+}
+
+
 void Readback(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -1025,8 +1290,7 @@ void Readback(AgcDriver::VulkanDevice& device) {
     for (const auto fragments : {2u, 4u, 8u}) {
         if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, fragments)) continue;
         Block block(BlockBytes);
-        auto color = DecodeTarget(block);
-        color.samples = fragments;
+        auto color = DecodeTarget(block.Address(), std::countr_zero(fragments));
         RequireReadbackRefused(context, color, "requires an existing resident target");
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -1034,7 +1298,9 @@ void Readback(AgcDriver::VulkanDevice& device) {
         }
         const auto state = TargetState(color);
         Draw(device, state);
-        CheckSamples(state, ReadHalfSamples(context, color), {});
+        const auto read = ReadHalfSamples(context, color);
+        Require(read == LoadColorSamples(device, block, color), "native readback disagrees with independent MIMG sample reads");
+        CheckReadbackSamples(state, read, {});
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             auto* recording = Recorder::Active();
@@ -1062,8 +1328,8 @@ void Readback(AgcDriver::VulkanDevice& device) {
         ++exercised;
         {
             Block exact(BlockBytes);
-            auto exactColor = DecodeTarget(exact, 0x8100u);
-            exactColor.samples = fragments;
+            auto exactColor = DecodeTarget(exact.Address(), std::countr_zero(fragments));
+            exactColor.pipeBankXor = 0x8100u;
             const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, 8u, fragments, Side, Side, 1u, exactColor.pipeBankXor);
             constexpr std::array<std::uint16_t, 12> patterns{0u, 0x8000u, 1u, 0x8001u, 0x03ffu, 0x0400u, 0x7c00u, 0xfc00u, 0x7e01u, 0xfe55u, 0x7d01u, 0xfdffu};
             std::vector<std::uint16_t> words(static_cast<std::size_t>(layout.LinearBytes()) / sizeof(std::uint16_t));
@@ -1074,6 +1340,7 @@ void Readback(AgcDriver::VulkanDevice& device) {
             const std::vector<std::byte> before(tiled.begin(), tiled.end());
             {
                 std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                PrepareMultisampleTargetForDraw_nid_no_patch(context, exactColor);
                 MultisampleTargetView(context, exactColor);
             }
             const auto samples = ReadMultisampleTargetSamples_nid_no_patch(context, exactColor);
@@ -1121,7 +1388,7 @@ void Readback(AgcDriver::VulkanDevice& device) {
         }
         Draw(device, TargetState(color));
         RequireReadbackRefused(unsupported, color, "multisample color readback");
-        CheckSamples(TargetState(color), LoadSamples(device, block), {});
+        CheckReadbackSamples(TargetState(color), LoadSamples(device, block), {});
         std::puts("native color readback: unsupported snapshot format refuses readback and retains rendering");
         Block invalidBlock(BlockBytes);
         auto invalid = DecodeTarget(invalidBlock);
@@ -1130,90 +1397,6 @@ void Readback(AgcDriver::VulkanDevice& device) {
         std::puts("native color readback: mismatched source format and element size is refused before view creation");
     }
     Require(exercised != 0, "no supported native color readback sample count was exercised");
-}
-
-std::vector<std::array<float, 4>> StoreInitial(const Block& block, std::uint32_t fragments, std::uint32_t pipeBankXor, bool uniform) {
-    using namespace AgcDriver::Graphics;
-    const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, 8u, fragments, Side, Side, 1u, pipeBankXor);
-    Require(layout.Bytes() <= block.bytes, "the initial color footprint exceeds its allocation");
-    StoreWords(block, block.bytes, 0x38003800u);
-    std::vector<std::byte> linear(static_cast<std::size_t>(layout.LinearBytes()));
-    std::vector<std::array<float, 4>> expected(Side * Side * fragments);
-    for (std::uint32_t index = 0; index < expected.size(); ++index) {
-        const auto sample = index % fragments;
-        const auto pixel = index / fragments;
-        const bool ones = uniform || ((pixel % Side) * 3u + (pixel / Side) * 5u + sample * 7u) % 2u == 0u;
-        const std::array<std::uint16_t, 4> bits = ones ? std::array<std::uint16_t, 4>{0x3c00u, 0x3c00u, 0x3c00u, 0x3c00u} : std::array<std::uint16_t, 4>{0x3a00u, 0x3400u, 0x3800u, 0x3c00u};
-        std::memcpy(linear.data() + index * sizeof(bits), bits.data(), sizeof(bits));
-        expected[index] = ones ? Ones : Written;
-    }
-    layout.Tile(linear, std::as_writable_bytes(std::span(block.data, static_cast<std::size_t>(layout.Bytes()))));
-    return expected;
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL NoInitialStorageImage(VkPhysicalDevice physical, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
-    if ((flags & VK_IMAGE_CREATE_EXTENDED_USAGE_BIT) != 0 && (usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) return VK_ERROR_FORMAT_NOT_SUPPORTED;
-    return imageFormatProperties(physical, format, type, tiling, usage, flags, properties);
-}
-
-int InitialLifetime(AgcDriver::VulkanDevice& device) {
-    using namespace AgcDriver::Graphics;
-    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
-    device.WaitIdle();
-    auto* previous = Recorder::Active();
-    Require(previous != nullptr && previous->Device() == context.device, "initial lifetime fixture has no device recorder to restore");
-    for (const bool uniform : {false, true}) {
-        Block block(BlockBytes);
-        if (uniform) StoreWords(block, block.bytes, FillOnes);
-        const auto expected = uniform ? std::vector<std::array<float, 4>>(Side * Side * Samples, Ones) : StoreInitial(block, Samples, 0u, false);
-        const auto color = DecodeTarget(block);
-        const auto state = TargetState(color);
-        {
-            auto recorded = context;
-            recorded.bufferPool = std::make_shared<BufferPool>(context);
-            Recorder recorder(recorded);
-            std::shared_ptr<void> owner;
-            VkImageView view = VK_NULL_HANDLE;
-            std::size_t initialBytes = 0;
-            constexpr std::size_t uploadBytes = Side * Side * Samples * 8u;
-            constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-            const auto usage = BufferPool::Usage(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, properties);
-            {
-                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-                recorder.Activate();
-                view = MultisampleTargetView(recorded, color, owner);
-                initialBytes = recorder.OpenKeptBytes();
-                const auto premature = recorded.bufferPool->Take(uploadBytes, usage);
-                if (premature) recorded.bufferPool->Put(*premature);
-                Require(!premature.has_value(), "initial upload was recycled before submission completed");
-                recorder.Submit();
-            }
-            recorder.Sync();
-            Require(recorder.InFlightKeptBytes() == 0, "completed initial contents still count as in-flight kept bytes");
-            auto released = recorded.bufferPool->Take(uploadBytes, usage);
-            Require(released.has_value() != uniform, "initial upload was not returned to the caller's pool after completion, or uniform clear allocated an upload");
-            if (released) recorded.bufferPool->Put(*released);
-            for (int round = 0; round < 3; ++round) {
-                {
-                    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-                    std::shared_ptr<void> reusedOwner;
-                    Require(MultisampleTargetView(recorded, color, reusedOwner) == view && reusedOwner == owner, "initial-content accounting did not reuse its resident target");
-                    const auto targetBytes = recorder.OpenKeptBytes();
-                    Require(targetBytes != 0 && initialBytes == targetBytes + (uniform ? 0u : uploadBytes), "reused target still counts initial color snapshot or upload bytes");
-                    KeepMultisampleTarget_nid_no_patch(owner);
-                    Require(recorder.OpenKeptBytes() == targetBytes, "one target is counted twice within a submission");
-                    recorder.Submit();
-                }
-                recorder.Sync();
-            }
-        }
-        previous->Activate();
-        Draw(device, state);
-        CheckSamples(state, LoadSamples(device, block), {}, expected);
-        std::printf("native color initial lifetime: %s contents survive completion and three resident reuses without retaining initialization bytes\n", uniform ? "uniform" : "varying");
-    }
-    return 0;
 }
 
 std::vector<std::byte> HalfSamples(std::span<const std::array<float, 4>> samples) {
@@ -1238,6 +1421,7 @@ void RequireColorSnapshotRefused(const AgcDriver::Graphics::Context& context, co
     Require(refusal.find(expected) != std::string::npos, "guest color snapshot was not refused: " + refusal);
 }
 
+
 void CheckColorSnapshot(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, const Block& block, const std::vector<std::array<float, 4>>& loaded, std::optional<std::uint32_t> padding = std::nullopt) {
     using namespace AgcDriver::Graphics;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -1254,7 +1438,7 @@ void CheckColorSnapshot(AgcDriver::VulkanDevice& device, const AgcDriver::Graphi
     Require(snapshot.current == expected, "guest color snapshot differs from the MIMG samples or preserved padding");
     Require(std::equal(before.begin(), before.end(), begin), "capturing the guest color snapshot modified guest memory");
     Require(ReadHalfSamples(context, color) == loaded, "native snapshot readback disagrees with guest MIMG");
-    Require(LoadSamples(device, block, color.samples, color.pipeBankXor) == loaded, "sampling after the native snapshot changed the image contents");
+    Require(LoadColorSamples(device, block, color) == loaded, "sampling after the native snapshot changed the image contents");
     std::string guard;
     try {
         RequireNoMultisampleTarget(block.Address(), 1u, "snapshot validation");
@@ -1263,171 +1447,246 @@ void CheckColorSnapshot(AgcDriver::VulkanDevice& device, const AgcDriver::Graphi
     }
     Require(guard.find("overlaps multisampled color target") != std::string::npos, "capturing a snapshot removed the native target's guest-access guard");
     Draw(device, TargetState(color));
-    Require(LoadSamples(device, block, color.samples, color.pipeBankXor) == loaded, "attachment reuse after the native snapshot changed untouched samples");
+    Require(LoadColorSamples(device, block, color) == loaded, "attachment reuse after the native snapshot changed untouched samples");
 }
 
-void InitialContents(AgcDriver::VulkanDevice& device, bool snapshots = false) {
+
+void ColorSnapshots(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    std::uint32_t exercised = 0;
+    std::uint32_t exercised = 0u;
     for (const auto fragments : {2u, 4u, 8u}) {
         if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, fragments)) continue;
         for (const auto pipeBankXor : {0u, 0x8100u}) {
-            for (const bool uniform : {false, true}) {
-                Block block(BlockBytes);
-                auto color = DecodeTarget(block, pipeBankXor);
-                color.samples = fragments;
-                const auto expected = StoreInitial(block, fragments, pipeBankXor, uniform);
-                const std::vector<std::uint8_t> before(block.data, block.data + block.bytes);
-                const auto state = TargetState(color);
+            Block block(BlockBytes);
+            StoreInitial(block, fragments, pipeBankXor, false);
+            auto color = DecodeTarget(block.Address(), std::countr_zero(fragments));
+            color.pipeBankXor = pipeBankXor;
+            const auto state = TargetState(color);
+            Draw(device, state);
+            CheckColorSnapshot(device, color, block, LoadColorSamples(device, block, color));
+            if (fragments == Samples && pipeBankXor == 0u) {
+                NoteColorMetadataFill(block.Address(), block.bytes, FillOnes);
                 Draw(device, state);
-                const auto loaded = LoadSamples(device, block, fragments, pipeBankXor);
-                CheckSamples(state, loaded, {}, expected);
-                if (snapshots) CheckColorSnapshot(device, color, block, loaded);
-                Require(std::equal(before.begin(), before.end(), block.data), "initialization or the draw changed guest color bytes or padding");
-                std::printf("native color initial samples: fragments=%u xor=0x%x %s background survives first partial draw\n", fragments, pipeBankXor, uniform ? "uniform" : "varying pixel/fragment");
-                if (snapshots && !uniform && pipeBankXor == 0x8100u) {
-                    for (const auto pattern : {FillOnes, 0u}) {
-                        NoteColorMetadataFill(block.Address(), block.bytes, pattern);
-                        Draw(device, state);
-                        const auto filled = LoadSamples(device, block, fragments, pipeBankXor);
-                        CheckSamples(state, filled, pattern == FillOnes ? Ones : std::array<float, 4>{});
-                        CheckColorSnapshot(device, color, block, filled, pattern);
-                    }
-                    StoreWords(block, block.bytes, FillOnes);
-                    NoteColorMetadataFill(block.Address(), block.bytes, FillOnes);
-                    Draw(device, state);
-                    const auto filled = LoadSamples(device, block, fragments, pipeBankXor);
-                    CheckSamples(state, filled, Ones);
-                    CheckColorSnapshot(device, color, block, filled, FillOnes);
-                    const auto previous = block.data[block.bytes - 1u];
-                    block.data[block.bytes - 1u] ^= 0x5au;
-                    RequireColorSnapshotRefused(context, color, "no longer matches its initial contents or a known full fill");
-                    block.data[block.bytes - 1u] = previous;
-                    auto wrong = color;
-                    wrong.pipeBankXor = 0u;
-                    RequireColorSnapshotRefused(context, wrong, "subresource does not match the resident target");
-                    std::printf("native color snapshot: fragments=%u full fills preserve padding; changed guest bytes and mismatched XOR refused\n", fragments);
-                }
-                ++exercised;
+                CheckColorSnapshot(device, color, block, LoadColorSamples(device, block, color), FillOnes);
+                StoreWords(block, block.bytes, FillOnes);
+                NoteColorMetadataFill(block.Address(), block.bytes, FillOnes);
+                Draw(device, state);
+                CheckColorSnapshot(device, color, block, LoadColorSamples(device, block, color), FillOnes);
+                block.data[BlockBytes - 1u] ^= 1u;
+                RequireColorSnapshotRefused(context, color, "no longer matches its initial contents or a known full fill");
+                block.data[BlockBytes - 1u] ^= 1u;
+                auto wrong = color;
+                wrong.mip = 1u;
+                RequireColorSnapshotRefused(context, wrong, "subresource does not match the resident target");
             }
-        }
-        {
-            Block block(BlockBytes);
-            StoreWords(block, block.bytes, FillOnes);
-            auto color = DecodeTarget(block);
-            color.samples = fragments;
-            auto noStorage = context;
-            noStorage.storageImageMultisample = false;
-            noStorage.storageImageWriteWithoutFormat = false;
-            {
-                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-                MultisampleTargetView(noStorage, color);
-            }
-            const auto state = TargetState(color);
-            Draw(device, state);
-            const auto loaded = LoadSamples(device, block, fragments);
-            CheckSamples(state, loaded, Ones);
-            if (snapshots) CheckColorSnapshot(device, color, block, loaded);
-            std::printf("native color initial samples: fragments=%u exact uniform clear without storage writes passed\n", fragments);
-            ++exercised;
-        }
-        {
-            Block block(BlockBytes);
-            auto color = DecodeTarget(block, 0x8100u);
-            color.samples = fragments;
-            const auto expected = StoreInitial(block, fragments, 0x8100u, false);
-            auto linear = color;
-            linear.tileMode = ColorTileMode::Linear;
-            RequireInitialRefused(context, linear, "initial multisample color footprint is not implemented");
-            for (const auto profile : {0u, 1u, 2u}) {
-                auto unsupported = context;
-                if (profile == 0) unsupported.storageImageMultisample = false;
-                if (profile == 1) unsupported.storageImageWriteWithoutFormat = false;
-                if (profile == 2) unsupported.detiler = nullptr;
-                RequireInitialRefused(unsupported, color, "require enabled formatless multisampled storage image writes");
-            }
-            auto noRange = context;
-            noRange.limits.maxStorageBufferRange = 0u;
-            RequireInitialRefused(noRange, color, "storage range cannot hold an aligned element");
-            auto noImage = context;
-            imageFormatProperties = context.imageFormatProperties;
-            noImage.imageFormatProperties = NoInitialStorageImage;
-            RequireInitialRefused(noImage, color, "cannot initialize the multisampled color target through its unsigned storage view");
-            auto chunked = context;
-            chunked.limits.maxStorageBufferRange = 256u;
-            {
-                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-                MultisampleTargetView(chunked, color);
-            }
-            const auto state = TargetState(color);
-            Draw(device, state);
-            const auto loaded = LoadSamples(device, block, fragments, 0x8100u);
-            CheckSamples(state, loaded, {}, expected);
-            if (snapshots) CheckColorSnapshot(device, color, block, loaded);
-            std::printf("native color initial samples: fragments=%u five unsupported capability profiles and linear layout refused, restored 256-byte chunks passed\n", fragments);
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            ClearCachedTextures(context.device);
+            ClearMultisampleTargets(context.device);
+            std::printf("native color snapshot: %u fragments xor=0x%x preserves MIMG samples, padding, guest bytes and ownership\n", fragments, pipeBankXor);
             ++exercised;
         }
     }
-    if (snapshots) {
-        {
-            Block block(BlockBytes);
-            const auto color = DecodeTarget(block);
-            const auto expected = StoreInitial(block, Samples, 0u, false);
-            const auto loaded = LoadSamples(device, block);
-            Require(loaded == expected, "a cold varying texture lost its initial samples before snapshotting");
-            const auto* begin = reinterpret_cast<const std::byte*>(block.data);
-            const std::vector<std::byte> before(begin, begin + block.bytes);
-            const auto snapshot = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, color);
-            Require(snapshot.original == before && snapshot.current == before && std::equal(before.begin(), before.end(), begin), "a cold texture snapshot changed its samples, padding or guest bytes");
-            std::puts("native color snapshot: varying texture first-use baseline retained without a prior draw");
-        }
+    Require(exercised != 0u, "no native color snapshot sample count was exercised");
+    Block uniform(BlockBytes);
+    StoreWords(uniform, uniform.bytes, FillOnes);
+    const auto color = DecodeTarget(uniform);
+    Draw(device, TargetState(color));
+    CheckColorSnapshot(device, color, uniform, LoadSamples(device, uniform));
+}
+
+void ColorSnapshotRefusals(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    {
         Block block(BlockBytes);
-        Block metadata(BlockBytes);
-        auto color = DecodeTarget(block);
-        color.cmaskAddress = metadata.Address();
-        RequireInitialRefused(context, color, "CMASK require a modeled metadata import");
-        std::puts("native color snapshot: unmodeled CMASK import refused before target creation");
-        if (InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) {
-            auto completed = std::make_shared<Block>(BlockBytes);
-            auto completedColor = DecodeTarget(*completed);
-            StoreInitial(*completed, Samples, 0u, false);
-            Draw(device, TargetState(completedColor));
-            auto completionRefusals = std::make_shared<std::array<std::string, 2>>();
-            {
-                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-                auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
-                Require(recorder != nullptr, "the snapshot fixture has no owning recorder");
-                recorder->OnComplete([completed, completedColor, context, completionRefusals] {
-                    try {
-                        static_cast<void>(ReadMultisampleTargetSamples_nid_no_patch(context, completedColor));
-                    } catch (const std::exception& error) {
-                        (*completionRefusals)[0] = error.what();
-                    }
-                    try {
-                        static_cast<void>(ReadMultisampleTargetColorSnapshot_nid_no_patch(context, completedColor));
-                    } catch (const std::exception& error) {
-                        (*completionRefusals)[1] = error.what();
-                    }
-                    StoreWords(*completed, completed->bytes, FillOnes);
-                    NoteColorMetadataFill(completed->Address(), completed->bytes, FillOnes);
-                });
-                auto* recording = Recorder::Active();
-                Require(recording != nullptr, "the snapshot fixture has no active recorder");
-                Recorder other(context);
-                other.Activate();
-                RequireColorSnapshotRefused(context, completedColor, "another active recorder on the same device");
-                recording->Activate();
-            }
-            const auto snapshot = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, completedColor);
-            Require(std::all_of(completionRefusals->begin(), completionRefusals->end(), [](const auto& error) { return error.find("during a recorder completion") != std::string::npos; }), "a native color snapshot recursively completed its producer");
-            std::vector<std::byte> expected(completed->bytes);
-            for (std::size_t offset = 0; offset < expected.size(); offset += sizeof(FillOnes)) std::memcpy(expected.data() + offset, &FillOnes, sizeof(FillOnes));
-            Require(snapshot.original == expected && snapshot.current == expected, "the native snapshot captured its baseline before producer completion");
-            std::puts("native color snapshot: producer completion precedes baseline capture; another active recorder remains refused");
+        const auto color = DecodeTarget(block);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            MultisampleTargetView(context, color);
         }
+        RequireColorSnapshotRefused(context, color, "has no initial footprint");
+        Draw(device, TargetState(color));
+        CheckReadbackSamples(TargetState(color), ReadHalfSamples(context, color), {});
     }
-    Require(exercised != 0, "no supported native color initial-content case was exercised");
+    {
+        Block block(BlockBytes);
+        StoreWords(block, block.bytes, FillOnes);
+        auto color = DecodeTarget(block);
+        color.tileMode = ColorTileMode::Z64KBX;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
+        }
+        RequireColorSnapshotRefused(context, color, "unsupported tiling or multisample metadata");
+    }
+    auto completed = std::make_shared<Block>(BlockBytes);
+    const auto completedColor = DecodeTarget(*completed);
+    StoreInitial(*completed, Samples, 0u, false);
+    Draw(device, TargetState(completedColor));
+    auto refusals = std::make_shared<std::array<std::string, 2>>();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
+        Require(recorder != nullptr, "the snapshot fixture has no owning recorder");
+        recorder->OnComplete([completed, completedColor, context, refusals] {
+            try { static_cast<void>(ReadMultisampleTargetSamples_nid_no_patch(context, completedColor)); }
+            catch (const std::exception& error) { (*refusals)[0] = error.what(); }
+            try { static_cast<void>(ReadMultisampleTargetColorSnapshot_nid_no_patch(context, completedColor)); }
+            catch (const std::exception& error) { (*refusals)[1] = error.what(); }
+            StoreWords(*completed, completed->bytes, FillOnes);
+            NoteColorMetadataFill(completed->Address(), completed->bytes, FillOnes);
+        });
+        auto* recording = Recorder::Active();
+        Require(recording != nullptr, "the snapshot fixture has no active recorder");
+        Recorder other(context);
+        other.Activate();
+        RequireColorSnapshotRefused(context, completedColor, "another active recorder on the same device");
+        recording->Activate();
+    }
+    const auto snapshot = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, completedColor);
+    Require(std::all_of(refusals->begin(), refusals->end(), [](const auto& error) { return error.find("during a recorder completion") != std::string::npos; }), "a native color snapshot recursively completed its producer");
+    std::vector<std::byte> expected(completed->bytes);
+    for (std::size_t offset = 0; offset < expected.size(); offset += sizeof(FillOnes)) std::memcpy(expected.data() + offset, &FillOnes, sizeof(FillOnes));
+    Require(snapshot.original == expected && snapshot.current == expected, "the native snapshot captured its baseline before producer completion");
+    std::puts("native color snapshot: missing baseline, tiling, foreign recorder and completion reentry refuse; producer completion precedes current guest capture");
+}
+
+void UniformInitialContents(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    std::uint32_t exercised = 0u;
+    for (const auto shift : {1u, 2u, 3u}) {
+        const auto fragments = 1u << shift;
+        if ((context.limits.framebufferColorSampleCounts & fragments) == 0u || (context.limits.sampledImageColorSampleCounts & fragments) == 0u) continue;
+        Block block(4u * BlockBytes);
+        StoreWords(block, block.bytes, FillOnes);
+        const std::vector<std::uint8_t> before(block.data, block.data + block.bytes);
+        const auto color = DecodeTarget(block.Address(), shift);
+        const auto state = TargetState(color);
+        Draw(device, state);
+        const auto loaded = LoadSamples(device, TargetDescriptor(block, shift), fragments);
+        std::uint32_t drawn = 0u;
+        std::uint32_t untouched = 0u;
+        const auto locations = SampleLocations(state);
+        for (std::uint32_t y = 0u; y < Side; ++y) {
+            for (std::uint32_t x = 0u; x < Side; ++x) {
+                for (std::uint32_t sample = 0u; sample < fragments; ++sample) {
+                    const auto& texel = loaded[(y * Side + x) * fragments + sample];
+                    Require(texel == Drawn || texel == Ones, "a first partial draw lost the uniform initial sample");
+                    const auto px = x + static_cast<double>(locations[sample].x);
+                    const auto py = y + static_cast<double>(locations[sample].y);
+                    const auto distance = std::min({EdgeDistance(px, py, 0u), EdgeDistance(px, py, 1u), EdgeDistance(px, py, 2u)});
+                    if (std::fabs(distance) < EdgeMargin) continue;
+                    Require((texel == Drawn) == (distance > 0.0), "initial multisample contents and raster coverage disagree");
+                    drawn += texel == Drawn;
+                    untouched += texel == Ones;
+                }
+            }
+        }
+        Require(drawn != 0u && untouched != 0u, "uniform initial contents were not checked on both sides of a partial draw");
+        Require(std::equal(before.begin(), before.end(), block.data), "uniform initialization changed guest bytes or padding");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        ClearCachedTextures(context.device);
+        ClearMultisampleTargets(context.device);
+        std::printf("uniform initial contents: %u fragments preserve untouched samples and guest padding\n", fragments);
+        ++exercised;
+    }
+    Require(exercised != 0u, "no uniform multisample initialization case was exercised");
+}
+
+void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto refuses = [&](const ColorTarget& color, const char* expected, const Context* selected = nullptr) {
+        std::string refusal;
+        try {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            PrepareMultisampleTargetForDraw_nid_no_patch(selected != nullptr ? *selected : context, color);
+        } catch (const std::runtime_error& error) { refusal = error.what(); }
+        Require(refusal.find(expected) != std::string::npos, std::string("initial color refusal did not match ") + expected + ": " + refusal);
+    };
+    Block block(4u * BlockBytes);
+    StoreWords(block, block.bytes, FillOnes);
+    const auto color = DecodeTarget(block);
+    auto invalid = color;
+    invalid.address = invalid.surfaceAddress = 0u;
+    refuses(invalid, "not fully mapped");
+    block.data[BlockBytes - 1u] ^= 1u;
+    const std::vector<std::uint8_t> varying(block.data, block.data + block.bytes);
+    auto unavailable = context;
+    unavailable.storageImageMultisample = false;
+    refuses(color, "require enabled formatless", &unavailable);
+    Require(std::equal(varying.begin(), varying.end(), block.data), "a refused initial import changed guest contents");
+    Require(!MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color))), "a refused initial import left a resident owner");
+    StoreWords(block, block.bytes, FillOnes);
+    auto noStorage = context;
+    noStorage.storageImageMultisample = false;
+    noStorage.storageImageWriteWithoutFormat = false;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        PrepareMultisampleTargetForDraw_nid_no_patch(noStorage, color);
+    }
+    CheckUniform(LoadSamples(device, block), Ones, "uniform initialization without storage writes");
+    const auto original = MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color)));
+    Require(original && original->active->load(std::memory_order_acquire), "uniform initialization did not retain its owner");
+    auto alias = color;
+    alias.format = VK_FORMAT_R32G32_SFLOAT;
+    PrepareMultisampleTargetForDraw_nid_no_patch(context, alias);
+    const auto current = MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color)));
+    Require(current && current->active != original->active && !original->active->load(std::memory_order_acquire), "a prepared format replacement did not publish and replace its owner");
+    const auto replacement = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, alias);
+    Require(replacement.original == replacement.current, "a uniform format replacement changed the published samples or padding");
+    Require(std::equal(replacement.original.begin(), replacement.original.end(), reinterpret_cast<const std::byte*>(block.data)), "the uniform format replacement imported different guest bytes");
+    Block depthMemory(4u * BlockBytes, true), htile(BlockBytes, true);
+    DepthTarget depth{depthMemory.Address(), 0u, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, htile.Address(), false, Samples};
+    depth.depthSwizzle = 24u;
+    depth.iterate256 = depth.htilePipeAligned = depth.htileDepthOnly = true;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto view = DepthSurfaceView(context, depth);
+        Require(ResidentDepthGuardOverlaps_nid_no_patch(depth.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(depth.extent, 4u, Samples))), "initial color refusal fixture has no resident depth guard");
+        std::string refusal;
+        try { PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeTarget(depthMemory)); }
+        catch (const std::runtime_error& error) { refusal = error.what(); }
+        Require(DepthSurfaceAt(depth.address), "refused initial color capture retired an unwritten native depth owner");
+        Require(refusal.find("overlap resident native depth") != std::string::npos, "initial color capture did not refuse a resident depth owner");
+        Require(DepthSurfaceView(context, depth) == view, "refused color capture replaced the native depth image");
+    }
+    device.SubmitRecorded(true);
+    device.WaitIdle();
+    ClearCachedTextures(context.device);
+    ClearDepthSurfaces(context.device);
+    ClearMultisampleTargets(context.device);
+    std::puts("uniform initial refusal checks passed: unreadable memory, differing padding, no storage features, retained owner");
+}
+
+void UniformInitialFlushHook(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    static std::atomic<std::uint32_t> captures{0u};
+    Block block(4u * BlockBytes);
+    StoreWords(block, block.bytes, FillOnes);
+    struct Reset { ~Reset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); } } reset;
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t, std::size_t) {
+        Require(!HoldsMultisampleTargetsLock(), "initial color capture held the targets lock across a flush callback");
+        WithMultisampleTargetsLockForTest([] {});
+        captures.fetch_add(1u, std::memory_order_relaxed);
+    });
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        PrepareMultisampleTargetForDraw_nid_no_patch(context, DecodeTarget(block));
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    Require(captures.load(std::memory_order_relaxed) == 1u, "initial color capture did not run its flush callback exactly once");
+    CheckUniform(LoadSamples(device, block), Ones, "after a reentrant initial-capture flush hook");
+    device.SubmitRecorded(true);
+    device.WaitIdle();
+    ClearCachedTextures(context.device);
+    ClearMultisampleTargets(context.device);
+    std::puts("uniform initial capture flush callback entered the target registry without holding its lock");
 }
 
 alignas(256) std::array<std::uint32_t, 12> VertexValues{};
@@ -1547,6 +1806,10 @@ int NativeVertexInput(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
         std::memcpy(source.data + colorBytes + vertex * sizeof(element), element.data(), sizeof(element));
     }
     std::memcpy(source.data + colorBytes - 8u, element.data(), 8u);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::Graphics::MaterializeMultisampleTargetClear(context, color);
+    }
     Draw(*device, TargetState(color));
     AgcDriver::Graphics::NoteColorMetadataFill(source.Address(), static_cast<std::size_t>(colorBytes), FillOnes);
     CheckUniform(LoadSamples(*device, source), Ones, "before the fixed-function vertex probe");
@@ -1572,7 +1835,7 @@ int NativeVertexInput(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
             } catch (const std::exception& error) {
                 refusal = error.what();
             }
-            const bool refused = refusal.find("whose samples are only on the host") != std::string::npos;
+            const bool refused = refusal.find(expected) != std::string::npos;
             Require(refusal.empty() || refused, "the native vertex input failed for another reason: " + refusal);
             std::printf("native vertex stride %u %s: refused=%u neighbor=passed original-guest-values=%u detail=%s\n", stride, edge ? "edge" : "base", refused ? 1u : 0u, refused ? 0u : 12u, refusal.c_str());
             missed += refused ? 0u : 1u;
@@ -1609,7 +1872,7 @@ int InitialReuse(AgcDriver::VulkanDevice& device) {
     const auto* begin = reinterpret_cast<const std::byte*>(reused.data);
     Require(previous.current != previous.original, "the reuse control has no newer GPU samples");
     Require(std::equal(previous.original.begin(), previous.original.end(), begin), "the reuse control published before replacement");
-    MaterializeMultisampleTargetClear(context, narrow);
+    PrepareMultisampleTargetForDraw_nid_no_patch(context, narrow);
     const auto replacement = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, narrow);
     Require(std::equal(replacement.original.begin(), replacement.original.end(), previous.current.begin()), "replacement imported stale guest bytes instead of the old owner's GPU samples");
     Require(replacement.current == replacement.original, "replacement initialization changed the published samples or padding");
@@ -1665,8 +1928,8 @@ void Publication(AgcDriver::VulkanDevice& device, bool automatic = false) {
         for (const auto pipeBankXor : {0u, 0x8100u}) {
             for (const auto profile : {0u, 1u, 2u}) {
                 Block block(2u * BlockBytes);
-                auto color = DecodeTarget(block, pipeBankXor);
-                color.samples = fragments;
+                auto color = DecodeTarget(block.Address(), std::countr_zero(fragments));
+                color.pipeBankXor = pipeBankXor;
                 const auto initial = StoreInitial(block, fragments, pipeBankXor, false);
                 RequirePublicationRefused(context, color, "requires an existing resident target");
                 const auto state = TargetState(color);
@@ -1676,12 +1939,16 @@ void Publication(AgcDriver::VulkanDevice& device, bool automatic = false) {
                     NoteColorMetadataFill(block.Address(), colorBytes, profile == 1u ? FillOnes : 0u);
                     Draw(device, state);
                 }
-                const auto loaded = LoadSamples(device, block, fragments, pipeBankXor);
-                if (profile == 0u) CheckSamples(state, loaded, {}, initial);
-                else CheckSamples(state, loaded, profile == 1u ? Ones : std::array<float, 4>{});
+                const auto loaded = LoadColorSamples(device, block, color);
+                if (profile == 0u) CheckReadbackSamples(state, loaded, {}, initial);
+                else CheckReadbackSamples(state, loaded, profile == 1u ? Ones : std::array<float, 4>{});
                 const auto* begin = reinterpret_cast<const std::byte*>(block.data);
                 const std::vector<std::byte> before(begin, begin + block.bytes);
                 auto expected = before;
+                if (profile != 0u) {
+                    const auto fill = profile == 1u ? FillOnes : 0u;
+                    for (std::size_t offset = 0u; offset < colorBytes; offset += sizeof(fill)) std::memcpy(expected.data() + offset, &fill, sizeof(fill));
+                }
                 if (profile != 0u) {
                     const auto pattern = profile == 1u ? FillOnes : 0u;
                     for (std::size_t offset = 0; offset < colorBytes; offset += sizeof(pattern)) std::memcpy(expected.data() + offset, &pattern, sizeof(pattern));
@@ -1745,7 +2012,7 @@ void Publication(AgcDriver::VulkanDevice& device, bool automatic = false) {
                 RequireReadbackRefused(context, color, "requires an existing resident target");
                 Require(read == expected, "published guest color differs from MIMG samples, padding or neighboring bytes");
                 Draw(device, state);
-                Require(LoadSamples(device, block, fragments, pipeBankXor) == loaded, "a fresh target did not import the published samples");
+                Require(LoadColorSamples(device, block, color) == loaded, "a fresh target did not import the published samples");
                 VkImage newImage = VK_NULL_HANDLE;
                 {
                     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -1787,6 +2054,49 @@ void Publication(AgcDriver::VulkanDevice& device, bool automatic = false) {
     Require(completionRefusal->find("during a recorder completion") != std::string::npos, "recursive publication from a completion was not refused: " + *completionRefusal);
     Require(std::all_of(read.begin(), read.end(), [](const auto word) { return word == FillOnes; }), "publication captured its guest baseline before producer completions");
     std::puts("native color publication: known full fill from a producer completion precedes the publication baseline; recursive publication stays refused");
+}
+
+int PublicationMappings(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
+    for (const bool duringCompletion : {false, true}) {
+        auto block = std::make_shared<Block>(2u * BlockBytes);
+        const auto color = DecodeTarget(*block);
+        StoreInitial(*block, Samples, 0u, false);
+        Draw(device, TargetState(color));
+        const auto* begin = reinterpret_cast<const std::byte*>(block->data);
+        const std::vector<std::byte> before(begin, begin + block->bytes);
+        auto applied = std::make_shared<bool>(false);
+        const auto protect = [block, applied, duringCompletion] {
+            GuestAllocations::Mutation mutation;
+            mutation.Protect(block->data + 4096u, 4096u, duringCompletion, false, true, [] {});
+            *applied = true;
+        };
+        if (duringCompletion) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            auto* recorder = context.recorder != nullptr ? context.recorder : Recorder::Active();
+            Require(recorder != nullptr, "the publication mapping fixture has no owning recorder");
+            recorder->OnComplete(protect);
+        } else protect();
+        RequirePublicationRefused(context, color, duringCompletion ? "requires writable registered guest memory" : "requires readable registered guest memory");
+        Require(*applied, "the publication mapping mutation did not complete");
+        Require(std::equal(before.begin(), before.end(), begin), "refused mapping publication changed guest bytes");
+        std::string guard;
+        try { RequireNoMultisampleTarget(block->Address(), 1u, "a refused publication mapping"); }
+        catch (const std::exception& error) { guard = error.what(); }
+        Require(guard.find("overlaps multisampled color target") != std::string::npos, "refused mapping publication lost its resident guard");
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Protect(block->data + 4096u, 4096u, true, true, true, [] {});
+        }
+        const auto expected = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, color).current;
+        PublishMultisampleTargetColor_nid_no_patch(context, color);
+        Require(std::equal(expected.begin(), expected.end(), begin), "restored mappings lost the published samples or padding");
+        RequireNoMultisampleTarget(block->Address(), expected.size(), "after restored mapping publication");
+        std::printf("native color publication mappings: completion=%u refusal preserved bytes/owner, restoration published samples\n", static_cast<unsigned>(duringCompletion));
+    }
+    return 0;
 }
 
 void BufferAdjacentControls(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
@@ -2282,44 +2592,6 @@ int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (argc == 4 && std::string_view(argv[1]) == "--reused-publication") {
-            Require(std::string_view(argv[3]) == "explicit" || std::string_view(argv[3]) == "cpu", "unknown publication reuse path");
-            return ReusedPublication(*device, argv[2], std::string_view(argv[3]) == "cpu");
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--draw-recipe") {
-            DrawRecipePublication(device);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--buffer-refusal") {
-            BufferAdjacentControls(device);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--buffer-publication") {
-            BufferPublication(device);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--cpu-publication") {
-            Publication(*device, true);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--publication") {
-            Publication(*device);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--readback") {
-            Readback(*device);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--snapshot") {
-            InitialContents(*device, true);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--initial-reuse") return InitialReuse(*device);
-        if (argc == 2 && std::string_view(argv[1]) == "--initial-lifetime") return InitialLifetime(*device);
-        if (argc == 2 && std::string_view(argv[1]) == "--initial") {
-            InitialContents(*device);
-            return 0;
-        }
         if (argc == 2 && std::string_view(argv[1]) == "--native-fmask") {
             {
                 const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
@@ -2332,6 +2604,27 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
+        if (argc == 4 && std::string_view(argv[1]) == "--reused-publication") {
+            Require(std::string_view(argv[3]) == "explicit" || std::string_view(argv[3]) == "cpu", "unknown publication reuse path");
+            return ReusedPublication(*device, argv[2], std::string_view(argv[3]) == "cpu");
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--publication") { Publication(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-recipe") { DrawRecipePublication(device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--buffer-refusal") { BufferAdjacentControls(device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--buffer-publication") { BufferPublication(device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-publication") { Publication(*device, true); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-reuse") return InitialReuse(*device);
+        if (argc == 2 && std::string_view(argv[1]) == "--publication-mappings") return PublicationMappings(*device);
+        if (argc == 2 && std::string_view(argv[1]) == "--readback") { Readback(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--snapshot") { ColorSnapshots(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--snapshot_refusals") { ColorSnapshotRefusals(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform_lifetime") return NonuniformInitialLifetime(*device);
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform_capabilities") { NonuniformInitialCapabilities(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform_hook") { NonuniformInitialHook(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-nonuniform") { NonuniformInitialContents(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform") { UniformInitialContents(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_refusals") { UniformInitialRefusals(*device); return 0; }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-uniform_hook") { UniformInitialFlushHook(*device); return 0; }
         Block block(4u * BlockBytes);
         Block other(BlockBytes);
         Block output(2u * 1024u * 1024u);
@@ -2369,15 +2662,15 @@ int main(int argc, char** argv) {
         std::puts("DIM 2D image_load, image_sample_lz and image_sample_l reads of a 4x color target return each pixel's sample 0");
         Block swapped(4u * BlockBytes);
         Draw(*device, TargetState(DecodeSwappedTarget(swapped)), 0, 2u, Unorm8PixelCode);
-        const auto swappedSamples = LoadSamples(*device, swapped, Samples, 0u, Format8888Unorm);
+        const auto swappedSamples = LoadSamples(*device, swapped, Format8888Unorm);
         CheckSwappedSamples(swappedSamples);
-        CheckFirstSampleReads(*device, TargetDescriptor(swapped, SampleShift, 0u, Format8888Unorm), swappedSamples, true, "from a 4x BGRA8 target read through an RGBA8 descriptor");
+        CheckFirstSampleReads(*device, TargetDescriptor(swapped, SampleShift, Format8888Unorm), swappedSamples, true, "from a 4x BGRA8 target read through an RGBA8 descriptor");
         std::puts("a 4x BGRA8 color target loaded through an RGBA8 texture descriptor reads its drawn color with red and blue swapped");
         Block packedFloat(4u * BlockBytes);
         Draw(*device, TargetState(DecodePackedFloatTarget(packedFloat)));
-        const auto packedSamples = LoadSamples(*device, packedFloat, Samples, 0u, Format11_11_10Float);
+        const auto packedSamples = LoadSamples(*device, packedFloat, Format11_11_10Float);
         CheckPackedFloatSamples(packedSamples);
-        CheckFirstSampleReads(*device, TargetDescriptor(packedFloat, SampleShift, 0u, Format11_11_10Float), packedSamples, true, "from a 4x 10_11_11 float target read through a format 36 descriptor");
+        CheckFirstSampleReads(*device, TargetDescriptor(packedFloat, SampleShift, Format11_11_10Float), packedSamples, true, "from a 4x 10_11_11 float target read through a format 36 descriptor");
         std::puts("a 4x 10_11_11 float color target loaded through a format 36 (11_11_10 float) texture descriptor reads its drawn color");
         Block integer(4u * BlockBytes);
         Block signedFill(BlockBytes);
@@ -2385,11 +2678,11 @@ int main(int argc, char** argv) {
             std::puts("DIM 2D reads of 4x 8_8_8_8_UINT and 8_8_8_8_SINT targets not tested: sampledImageIntegerSampleCounts lacks VK_SAMPLE_COUNT_4_BIT");
         } else {
             Draw(*device, TargetState(DecodeUintTarget(integer)), 0, 2u, Uint8PixelCode);
-            const auto integerSamples = LoadSamples(*device, integer, Samples, 0u, Format8888Uint);
+            const auto integerSamples = LoadSamples(*device, integer, Format8888Uint);
             CheckUintSamples(integerSamples);
-            CheckFirstSampleReads(*device, TargetDescriptor(integer, SampleShift, 0u, Format8888Uint), integerSamples, true, "from a drawn 4x 8_8_8_8_UINT target");
+            CheckFirstSampleReads(*device, TargetDescriptor(integer, SampleShift, Format8888Uint), integerSamples, true, "from a drawn 4x 8_8_8_8_UINT target");
             StoreWords(signedFill, BlockBytes, FilledSint8);
-            CheckFirstSampleReads(*device, TargetDescriptor(signedFill, SampleShift, 0u, Format8888Sint), std::vector<std::array<float, 4>>(Side * Side * Samples, std::bit_cast<std::array<float, 4>>(FilledSint8Texel)), false, "from 8_8_8_8_SINT color memory no draw rendered to");
+            CheckFirstSampleReads(*device, TargetDescriptor(signedFill, SampleShift, Format8888Sint), std::vector<std::array<float, 4>>(Side * Side * Samples, std::bit_cast<std::array<float, 4>>(FilledSint8Texel)), false, "from 8_8_8_8_SINT color memory no draw rendered to");
             std::puts("DIM 2D reads of a drawn 4x 8_8_8_8_UINT target and of 8_8_8_8_SINT color memory no draw rendered to return each pixel's sample 0 bit for bit");
         }
         CheckOverwrittenTarget(*device);
@@ -2404,6 +2697,10 @@ int main(int argc, char** argv) {
         const auto bdaState = TargetState(DecodeTarget(bda));
         CheckBdaSpan(*device, bda, 0, false);
         CheckBdaSpan(*device, bda, BlockBytes, false);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            AgcDriver::Graphics::MaterializeMultisampleTargetClear(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device), bdaState.color);
+        }
         Draw(*device, bdaState);
         CheckBdaSpan(*device, bda, 0, true);
         CheckBdaSpan(*device, bda, BlockBytes, false);
@@ -2423,7 +2720,6 @@ int main(int argc, char** argv) {
         };
         CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + 4u, output.Address())); }, "fresh read", missing, mismatch);
         CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes - 4u, output.Address())); }, "edge read", missing, mismatch);
-        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes, block.Address())); }, "write", missing);
         CheckBufferRefused([&] { dispatch(warm); }, "warmed dispatch", missing, mismatch);
         if (prepared != nullptr) {
             CheckBufferRefused([&] {
@@ -2490,9 +2786,13 @@ int main(int argc, char** argv) {
         for (const auto& [mode, tileMode] : {std::pair{TileRenderTarget, AgcDriver::Graphics::TextureTileMode::kR64KBX}, std::pair{TileZ64KBX, AgcDriver::Graphics::TextureTileMode::kZ64KBX}}) {
             Block varying(BlockBytes);
             const auto expected = StoreVaryingUnorm(varying, tileMode);
-            CheckLoaded(LoadSamples(*device, varying, Samples, 0u, Format8888Unorm, mode), expected, "from varying color memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
+            CheckLoaded(LoadSamples(*device, varying, Format8888Unorm, mode), expected, "from varying color memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
         }
-        std::puts("loads of R_X and Z_X color memory no draw rendered to return each sample's guest color");
+        Block varyingD(BlockBytes);
+        StoreWords(varyingD, colorBytes, FillOnes);
+        std::memcpy(varyingD.data, &odd, sizeof(odd));
+        RequireRefused(*device, TargetDescriptor(varyingD, SampleShift, Format16161616Float, TileD64KBX), "non-uniform multisampled guest color tiling is not implemented", "loading varying D_X color memory no draw rendered to");
+        std::puts("loads of R_X and Z_X color memory no draw rendered to return each sample's guest color, and varying D_X color memory is refused");
         const auto oneSample = [](std::uint32_t, std::uint32_t, std::uint32_t sample) { return sample == StoredSample; };
         const auto drawnBefore = LoadSamples(*device, block);
         StoreSamples(*device, TargetDescriptor(block, SampleShift), SampleWrites(oneSample));
@@ -2527,15 +2827,14 @@ int main(int argc, char** argv) {
         for (const auto mode : {TileZ64KBX, TileD64KBX}) {
             Block swizzled(BlockBytes);
             StoreWords(swizzled, colorBytes, FillOnes);
-            CheckUniform(LoadSamples(*device, swizzled, Samples, 0u, Format16161616Float, mode), Ones, "from the uniform memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
+            CheckUniform(LoadSamples(*device, swizzled, Format16161616Float, mode), Ones, "from the uniform memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
         }
         const auto htileBytes = AgcDriver::Graphics::HtileMetadataBytes({Side, Side});
         Require(htileBytes <= BlockBytes, "the HTILE of the 4x texture does not fit one block");
         Block cleared(2u * BlockBytes);
         StoreWords(cleared, colorBytes, FillOnes);
-        cleared.data[0] ^= 1u;
         const auto clearedHtile = cleared.Address() + BlockBytes;
-        CheckUniform(LoadSamples(*device, CompressedDescriptor(cleared, TileZ64KBX, clearedHtile)), {}, "from a Z swizzle surface whose HTILE is all cleared to 0.0 over nonuniform color memory");
+        CheckUniform(LoadSamples(*device, CompressedDescriptor(cleared, TileZ64KBX, clearedHtile)), {}, "from a Z swizzle surface whose HTILE is all cleared to 0.0 over memory of other values");
         AgcDriver::Graphics::NoteColorMetadataFill(clearedHtile, sizeof(std::uint32_t), 0u);
         RequireRefused(*device, CompressedDescriptor(cleared, TileZ64KBX, clearedHtile), "over the HTILE", "loading a Z swizzle texture after a fill over part of its HTILE");
         AgcDriver::Graphics::NoteColorMetadataFill(clearedHtile, static_cast<std::size_t>(htileBytes), 0u);
@@ -2554,10 +2853,14 @@ int main(int argc, char** argv) {
         RequireRefused(*device, CompressedDescriptor(display, TileD64KBX, display.Address() + BlockBytes), "compression metadata", "loading a D swizzle multisampled texture no draw rendered to with compression metadata");
         Block standard(BlockBytes);
         StoreWords(standard, colorBytes, FillOnes);
-        RequireRefused(*device, TargetDescriptor(standard, SampleShift, 0u, Format16161616Float, TileS64KBX), "has no modeled multisampled color footprint", "loading an S swizzle multisampled texture no draw rendered to");
+        RequireRefused(*device, TargetDescriptor(standard, SampleShift, Format16161616Float, TileS64KBX), "has no modeled multisampled color footprint", "loading an S swizzle multisampled texture no draw rendered to");
         device->WaitIdle();
         AgcDriver::Graphics::ClearMultisampleTargets(device->Device());
         CheckBdaSpan(*device, block, 0, false);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            AgcDriver::Graphics::MaterializeMultisampleTargetClear(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device), DecodeTarget(block));
+        }
         Draw(*device, TargetState(DecodeTarget(block)));
         std::puts("every sample of a 4x color target loaded through its multisampled texture descriptor matches the triangle drawn into it, then the fill of its color memory; a surface no draw rendered to loads the value its color memory repeats and keeps it under a later draw");
         struct ReleaseIndexDevice {
