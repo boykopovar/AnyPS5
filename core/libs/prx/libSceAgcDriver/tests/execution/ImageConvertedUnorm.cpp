@@ -740,7 +740,7 @@ void CheckDepth24(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     Run(device, LoadXyzw, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), {}, LoadGroups);
     for (std::uint32_t index = 0; index < LoadWidth; ++index) {
         const auto depth = LoadTexel(index) & 0xffffffu;
-        Require(StoreField(Output[index * 4u], 0xffffffu) == depth, "image_load of 8_24_UNORM reads the wrong depth for format 141");
+        Require(StoreField(Output[index * 4u], 0xffffffu) == depth, "image_load of 8_24_UNORM reads the wrong depth for format 141: " + Hex(Output[index * 4u]) + " for texel " + Hex(LoadTexel(index)));
         Require(Output[index * 4u + 1u] == 0u && Output[index * 4u + 2u] == 0u && Output[index * 4u + 3u] == 0x3f800000u, "image_load of 8_24_UNORM must give G=0 B=0 A=1 for format 141");
     }
     Run(device, SampleLz, TextureDescriptor(texels, 141u, SwizzleXYZW, LoadWidth), PointSampler, 1);
