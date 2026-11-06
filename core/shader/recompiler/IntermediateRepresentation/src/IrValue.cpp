@@ -5,27 +5,8 @@
 
 namespace ShaderRecompiler {
 
-IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {
-}
-
-std::uint32_t IrValue::Id() const {
-    return id;
-}
-
-const std::vector<IrValue*>& IrValue::Arguments() const {
-    return arguments;
-}
-
-const std::vector<IrValue*>& IrValue::Uses() const {
-    return uses;
-}
-
-IrBlock* IrValue::Parent() const {
-    return parent;
-}
-
-std::uint32_t IrValue::ImmediateU32() const {
-    return static_cast<std::uint32_t>(immediateBits);
+IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id, std::pmr::memory_resource* useArena) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr), operandUses(IrUseAllocator<IrUse>(useArena)) {
+    arguments.reserve(IrOpcodeOperandCount(opcode));
 }
 
 void IrValue::AddArgument(IrValue* argument) {
@@ -33,7 +14,6 @@ void IrValue::AddArgument(IrValue* argument) {
     if (argument == nullptr) {
         return;
     }
-    argument->uses.push_back(this);
     argument->operandUses.push_back(IrUse{this, arguments.size() - 1});
 }
 
@@ -43,20 +23,17 @@ void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
     }
     IrValue* previous = arguments[index];
     if (previous != nullptr) {
-        const auto useIt = std::find(previous->uses.begin(), previous->uses.end(), this);
-        if (useIt != previous->uses.end()) {
-            previous->uses.erase(useIt);
-        }
-        const auto operandIt = std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
-            return use.user == this && use.operand == index;
-        });
+        const auto operandIt = !previous->operandUses.empty() && previous->operandUses.back() == IrUse{this, index}
+            ? previous->operandUses.end() - 1
+            : std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
+                return use.user == this && use.operand == index;
+            });
         if (operandIt != previous->operandUses.end()) {
             previous->operandUses.erase(operandIt);
         }
     }
     arguments[index] = argument;
     if (argument != nullptr) {
-        argument->uses.push_back(this);
         argument->operandUses.push_back(IrUse{this, index});
     }
 }
@@ -65,10 +42,27 @@ void IrValue::ReplaceAllUsesWith(IrValue* replacement) {
     if (replacement == this) {
         return;
     }
-    while (!operandUses.empty()) {
-        const IrUse use = operandUses.back();
-        use.user->ReplaceArgument(use.operand, replacement);
+    if (replacement != nullptr) {
+        const auto reserveAdditional = [count = operandUses.size()](auto& list) {
+            const auto maximum = list.max_size();
+            if (count > maximum - list.size()) {
+                throw std::length_error("IrValue::ReplaceAllUsesWith use list is too large");
+            }
+            const auto required = list.size() + count;
+            if (required > list.capacity()) {
+                const auto grown = list.capacity() > maximum / 2 ? maximum : list.capacity() * 2;
+                list.reserve(std::max(required, grown));
+            }
+        };
+        reserveAdditional(replacement->operandUses);
     }
+    for (auto use = operandUses.rbegin(); use != operandUses.rend(); ++use) {
+        use->user->arguments[use->operand] = replacement;
+        if (replacement != nullptr) {
+            replacement->operandUses.push_back(*use);
+        }
+    }
+    operandUses.clear();
 }
 
 void IrValue::SetImmediateU32(std::uint32_t value) {
@@ -84,20 +78,8 @@ bool IrValue::IsEmpty() const {
     return opcode == IrOpcode::Void;
 }
 
-bool IrValue::IsPhi() const {
-    return opcode == IrOpcode::Phi;
-}
-
 bool IrValue::MayHaveSideEffects() const {
     return IrOpcodeHasSideEffects(opcode);
-}
-
-bool IrValue::HasUses() const {
-    return !uses.empty();
-}
-
-std::size_t IrValue::UseCount() const {
-    return uses.size();
 }
 
 std::size_t IrValue::PhiBlockCount() const {
@@ -111,8 +93,13 @@ IrBlock* IrValue::PhiBlock(std::size_t index) const {
     return phiBlocks[index];
 }
 
-const std::vector<IrUse>& IrValue::OperandUses() const {
+const IrUseList& IrValue::OperandUses() const {
     return operandUses;
+}
+
+void IrValue::MoveUsesToHeap() {
+    if (operandUses.get_allocator().Arena() == nullptr) return;
+    operandUses = IrUseList(operandUses.begin(), operandUses.end(), IrUseAllocator<IrUse>{});
 }
 
 std::uint64_t IrValue::ImmediateU64() const {
@@ -204,7 +191,7 @@ void IrValue::ReplaceOpcode(IrOpcode opcode) {
 }
 
 void IrValue::Invalidate() {
-    if (!uses.empty()) {
+    if (!operandUses.empty()) {
         throw std::runtime_error("IrValue::Invalidate called on a value that still has uses");
     }
     for (std::size_t index = 0; index < arguments.size(); index++) {

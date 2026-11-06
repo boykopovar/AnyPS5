@@ -1,3 +1,4 @@
+#include "prx/libSceFiber/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -17,15 +18,6 @@
 #include <iostream>
 #include <string>
 
-using GuestFiberEntry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
-
-extern "C" {
-std::int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject*, const char*, GuestFiberEntry, std::uint64_t, void*, std::uint64_t, const void*, std::uint32_t);
-std::int32_t APS5_VABI sceFiberFinalize(FiberObject*);
-std::int32_t APS5_VABI sceFiberRun_nid_postfix(FiberObject*, std::uint64_t, std::uint64_t*);
-std::int32_t APS5_VABI sceFiberReturnToThread(std::uint64_t, std::uint64_t*);
-}
-
 namespace {
 
 using AgcDriver::DriverDetail::Driver;
@@ -34,7 +26,11 @@ using AgcDriver::Graphics::Require;
 constexpr std::size_t HostStackContextBytes = 16 * 1024;
 constexpr std::size_t ContextBytes = 64 * 1024;
 constexpr std::size_t MappingBytes = 4 * 65536;
+#ifdef ANYPS5_ENABLE_ASAN
+constexpr std::size_t FiberStackLimit = 16 * 1024;
+#else
 constexpr std::size_t FiberStackLimit = 8 * 1024;
+#endif
 constexpr std::uint64_t Fill = 0x5aa5c33c5aa5c33cull;
 
 alignas(16) std::array<std::uint64_t, ContextBytes / sizeof(std::uint64_t)> FiberContext;
@@ -73,6 +69,7 @@ void MapForGpu() {
 void APS5_VABI MapOnFiber(std::uint64_t, std::uint64_t) {
     MapForGpu();
     sceFiberReturnToThread(0, nullptr);
+
 }
 
 void ReleaseMapping() {

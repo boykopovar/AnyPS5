@@ -203,7 +203,8 @@ bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::bufferAtomic(const RdnaInstruction& inst, IrOpcode opcode) {
-    const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst);
     const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);

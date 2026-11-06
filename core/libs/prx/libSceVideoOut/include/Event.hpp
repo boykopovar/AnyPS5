@@ -3,7 +3,6 @@
 
 #include <cstdint>
 
-#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -24,6 +23,6 @@ int APS5_VABI sceVideoOutGetEventCount(const KernelEvent* ev);
 int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data);
 int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev);
 
-#endif
-
 }
+
+#endif

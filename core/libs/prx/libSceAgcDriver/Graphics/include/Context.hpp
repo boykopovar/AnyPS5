@@ -6,18 +6,22 @@
 #endif
 #include <mutex>
 #include <vulkan/vulkan.h>
+#include "prx/libc/include/PrimedSharedMutex.hpp"
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
 
 class TextureDetiler;
 class GpuColorTransfer;
@@ -32,6 +36,7 @@ class SamplerCache;
 class ShaderResources;
 class PlaceholderImages;
 class VertexInputCache;
+class VertexBufferFormats;
 
 class PipelineCacheSynchronization {
 public:
@@ -43,7 +48,7 @@ public:
     SnapshotLock TryLockForSnapshot() const { return SnapshotLock(mutex, std::try_to_lock); }
 
 private:
-    mutable std::shared_mutex mutex;
+    mutable PrimedSharedMutex mutex;
 };
 
 inline void Require(bool condition, const std::string& reason) {
@@ -70,12 +75,28 @@ inline void Check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) throw std::runtime_error(std::string("AGC graphics: ") + operation + ": Vulkan result " + std::to_string(result));
 }
 
+inline VkShaderModule CreateShaderModule(PFN_vkCreateShaderModule create, VkDevice device, bool graphicsPipelineLibrary, const std::uint32_t* code, std::size_t bytes, const char* operation) {
+    std::vector<std::uint32_t> keyed(code, code + bytes / sizeof(std::uint32_t));
+    if (!graphicsPipelineLibrary && keyed.size() > 2) keyed[2] ^= 0x8000u;
+    VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    info.codeSize = keyed.size() * sizeof(std::uint32_t);
+    info.pCode = keyed.data();
+    VkShaderModule module = VK_NULL_HANDLE;
+    Check(create(device, &info, nullptr, &module), operation);
+    return module;
+}
+
 inline void Require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("AGC graphics: ") + reason);
 }
 
 struct DescriptorRejected : std::runtime_error {
     using std::runtime_error::runtime_error;
+};
+
+struct BdaUnalignedAccess : std::runtime_error {
+    BdaUnalignedAccess(const std::string& message, std::uint32_t instruction) : std::runtime_error(message), instruction(instruction) {}
+    std::uint32_t instruction;
 };
 
 // Device entry points resolved once per device (VulkanDevice's State fills it after setup): the
@@ -125,10 +146,7 @@ struct DeviceFunctions {
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
-inline std::uint64_t& DeviceProcLookups() {
-    thread_local std::uint64_t count = 0;
-    return count;
-}
+std::uint64_t& DeviceProcLookups();
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -160,8 +178,12 @@ struct Context {
     bool depthClamp = false;
     // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
+    bool drawInputsInPlace = true;
+    bool discreteGpu = false;
     bool dmaBufImport = false;
     bool sparseBinding = false;
+    bool sparseResidencyBuffer = false;
+    bool sparseResidencyAliased = false;
     std::uint32_t queueFamily = 0;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     VkQueue sparseQueue = VK_NULL_HANDLE;
@@ -171,6 +193,7 @@ struct Context {
     std::uint32_t settleFamily = 0;
     std::mutex* settleQueueMutex = nullptr;
     PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
+    VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes, bool newImage) = nullptr;
     RenderCache* renderCache = nullptr;
     DrawQueue* drawQueue = nullptr;
     GraphicsPipelineCache* graphicsPipelines = nullptr;
@@ -189,11 +212,18 @@ struct Context {
     bool depthBounds = false;
     bool depthBiasClamp = false;
     bool dualSrcBlend = false;
+    bool logicOp = false;
     bool samplerFilterMinmax = false;
+    bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
+    VkSampleCountFlags mergedCoverageSampleCounts = 0;
+    VkSampleCountFlags truncatedCoverageSampleCounts = 0;
+    bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
+    VkBuffer oversizedBuffer = VK_NULL_HANDLE;
+    bool exactRobustLoads = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
     // draw whose records one of them produces reads them on the CPU. Null in tests.
@@ -208,11 +238,21 @@ struct Context {
     bool runtimeDescriptorArray = false;
     bool partiallyBound = false;
     bool variableDescriptorCount = false;
+    bool sampledImageUpdateAfterBind = false;
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
+    bool individuallyFreeDescriptorSets = false;
+    bool tessellationPipelineCache = true;
+    bool imageTableUpdateAfterBind = false;
+    bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool largePoints = false;
     bool sampleRateShading = false;
+    bool fillModeNonSolid = false;
+    bool maintenance5 = false;
     bool storageImageMultisample = false;
+    bool storageImageWriteWithoutFormat = false;
+    bool imageFormatList = false;
     bool shaderClipDistance = false;
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
@@ -221,17 +261,25 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
+    bool maintenance8 = false;
+    bool pushDescriptors = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     std::uint32_t srgbDecodeFormats = 0;
+    std::uint32_t srgbCopyFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
     bool singlePassStorage = false;
     VkSampleCountFlags sampleLocationSampleCounts = 0;
     VkSampleCountFlags sampleLocationGridSampleCounts = 0;
+    std::array<VkExtent2D, 4> sampleLocationGridSizes{};
+    bool shaderStencilExport = false;
     PipelineCacheSynchronization* pipelineCacheSynchronization = nullptr;
     bool shaderTerminateInvocation = false;
 
@@ -239,6 +287,7 @@ struct Context {
         return pipelineCacheSynchronization != nullptr ? pipelineCacheSynchronization->LockForPipelineUse() : PipelineCacheSynchronization::PipelineUseLock{};
     }
     VertexInputCache* vertexInputs = nullptr;
+    VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {
@@ -290,28 +339,78 @@ struct Context {
         return type;
     }
 
-    std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
-        const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return type;
+    struct HeapReport {
+        VkDeviceSize budget = 0;
+        VkDeviceSize usage = 0;
+        bool Fits(VkDeviceSize bytes) const { return budget == 0 || (usage < budget && bytes <= budget - usage); }
+    };
+
+    HeapReport ReportedHeap(std::uint32_t heap) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return {};
         VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
         VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
         properties.pNext = &reported;
         memoryProperties2(physical, &properties);
+        return {reported.heapBudget[heap], reported.heapUsage[heap]};
+    }
+
+    bool DeviceLocalFits(std::uint32_t mask, VkDeviceSize bytes) const {
+        return ReportedHeap(memory.memoryTypes[MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)].heapIndex).Fits(bytes);
+    }
+
+    std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
+        const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         const auto heap = memory.memoryTypes[type].heapIndex;
-        const auto budget = reported.heapBudget[heap];
-        const auto usage = reported.heapUsage[heap];
-        if (budget == 0 || (usage < budget && bytes <= budget - usage)) return type;
-        for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
-            if ((mask & (1u << i)) == 0 || (memory.memoryHeaps[memory.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) continue;
-            static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
-            const auto count = placements.fetch_add(1) + 1;
-            const auto total = placedBytes.fetch_add(bytes) + bytes;
-            if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), i, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
-            return i;
+        const auto report = ReportedHeap(heap);
+        if (report.Fits(bytes)) return type;
+        const auto host = HostMemoryType(mask);
+        if (!host) return type;
+        if (cacheReclaim != nullptr) {
+            const auto wanted = bytes + (report.usage > report.budget ? report.usage - report.budget : 0u);
+            const auto released = cacheReclaim(wanted, true);
+            if (released >= wanted) return type;
+            if (released != 0) {
+                const auto after = ReportedHeap(heap);
+                if (after.Fits(bytes)) return type;
+            }
         }
-        return type;
+        static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
+        const auto count = placements.fetch_add(1) + 1;
+        const auto total = placedBytes.fetch_add(bytes) + bytes;
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(report.usage >> 20u), static_cast<unsigned long long>(report.budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        return *host;
+    }
+
+    bool DeviceLocalHeadroom(std::uint32_t type, VkDeviceSize bytes) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE || type >= memory.memoryTypeCount) return true;
+        const auto heap = memory.memoryTypes[type].heapIndex;
+        if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return true;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
+        memoryProperties2(physical, &properties);
+        const auto budget = reported.heapBudget[heap];
+        if (budget == 0) return true;
+        const auto limit = budget - budget / 8u;
+        const auto usage = reported.heapUsage[heap];
+        return usage < limit && bytes <= limit - usage;
+    }
+
+    std::optional<std::uint32_t> HostMemoryType(std::uint32_t mask) const {
+        for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
+            if ((mask & (1u << i)) != 0 && (memory.memoryHeaps[memory.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return i;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::uint32_t> RefusedDeviceMemoryFallback(std::uint32_t mask, std::uint32_t refused) const {
+        if (refused >= memory.memoryTypeCount || (memory.memoryHeaps[memory.memoryTypes[refused].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return std::nullopt;
+        return HostMemoryType(mask);
     }
 };
+
+inline VkShaderModule CreateShaderModule(const Context& context, const std::uint32_t* code, std::size_t bytes, const char* operation) {
+    return CreateShaderModule(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule"), context.device, context.graphicsPipelineLibrary, code, bytes, operation);
+}
 
 inline void EndRenderPass(const Context& context, VkCommandBuffer commands) {
     if (context.graphicsPipelineLibrary) context.Resolved(&DeviceFunctions::cmdEndRendering, "vkCmdEndRenderingKHR")(commands);
@@ -319,7 +418,10 @@ inline void EndRenderPass(const Context& context, VkCommandBuffer commands) {
 }
 
 std::uint32_t ImageTableCapacity(const Context& context);
+std::uint32_t StorageTableCapacity(const Context& context);
 std::uint32_t SamplerTableCapacity(const Context& context);
+bool ImageTableUpdateAfterBind(const Context& context);
+bool SamplerTableUpdateAfterBind(const Context& context);
 
 }
 

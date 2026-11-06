@@ -1,0 +1,25 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0, TEXEL_FORMAT) uniform restrict uimage2DMS texels;
+
+layout(std430, binding = 1) buffer Values {
+    uvec4 values[];
+};
+
+layout(push_constant) uniform Access {
+    uvec2 extent;
+    uint count;
+    uint store;
+} access;
+
+void main() {
+    const uvec2 at = gl_GlobalInvocationID.xy;
+    if (at.x >= access.extent.x || at.y >= access.extent.y) return;
+    for (uint index = 0u; index < access.count; ++index) {
+        const uint slot = (at.y * access.extent.x + at.x) * access.count + index;
+        if (access.store != 0u) imageStore(texels, ivec2(at), int(index), values[slot]);
+        else values[slot] = imageLoad(texels, ivec2(at), int(index));
+    }
+}

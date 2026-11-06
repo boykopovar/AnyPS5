@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ComputePipelineCapture.hpp"
 #include <algorithm>
+#include <atomic>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -11,8 +13,50 @@
 namespace AgcDriver {
 namespace {
 
+class CaptureLimit final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+class CaptureIoFailure final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+std::atomic<bool> optionalDisabled{false};
+
+void DisableOptionalCapture(const char* message) {
+    if (!optionalDisabled.exchange(true, std::memory_order_relaxed)) std::fprintf(stderr, "[compute-capture] optional capture disabled: %s\n", message);
+}
+
 void RequireCapture(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(std::string("compute pipeline capture: ") + message);
+}
+
+void RequireCaptureIo(bool condition, const char* message) {
+    if (!condition) throw CaptureIoFailure(std::string("compute pipeline capture: ") + message);
+}
+
+void RequireCaptureCapacity(bool condition, const char* message) {
+    if (!condition) throw CaptureLimit(std::string("compute pipeline capture: ") + message);
+}
+
+void CheckCaptureIo(const std::error_code& error, const char* message) {
+    if (error) throw CaptureIoFailure(std::string("compute pipeline capture: ") + message + ": " + error.message());
+}
+
+std::filesystem::file_status CaptureStatus(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error != std::errc::no_such_file_or_directory) CheckCaptureIo(error, "cannot inspect capture path");
+    return status;
+}
+
+std::uintmax_t CaptureFileSize(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    CheckCaptureIo(error, "cannot size capture");
+    return size;
 }
 
 std::string Hash(std::span<const std::byte> bytes) {
@@ -65,13 +109,13 @@ private:
 };
 
 std::vector<std::byte> ReadBytes(const std::filesystem::path& path) {
-    const auto size = std::filesystem::file_size(path);
+    const auto size = CaptureFileSize(path);
     RequireCapture(size <= ComputePipelineCapture::MaxFileBytes, "file exceeds 36 MiB");
     std::ifstream input(path, std::ios::binary);
-    RequireCapture(input.good(), "cannot open capture");
+    RequireCaptureIo(input.good(), "cannot open capture");
     std::vector<std::byte> bytes(static_cast<std::size_t>(size));
     input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    RequireCapture(input.good() && input.peek() == std::char_traits<char>::eof(), "capture changed while reading");
+    RequireCaptureIo(input.good() && input.peek() == std::char_traits<char>::eof(), "capture changed while reading");
     return bytes;
 }
 
@@ -111,7 +155,7 @@ void ComputePipelineCapture::Validate() const {
             RequireCapture(binding.stages == VK_SHADER_STAGE_COMPUTE_BIT, "unsupported descriptor stage flags");
             constexpr VkDescriptorBindingFlags supported = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
             RequireCapture((binding.flags & ~supported) == 0, "unsupported descriptor binding flags");
-            RequireCapture((binding.flags & VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT) == 0 || (binding.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && (layout.flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT) != 0), "unsupported update-after-bind descriptor");
+            RequireCapture((binding.flags & VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT) == 0 || ((binding.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || binding.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || binding.type == VK_DESCRIPTOR_TYPE_SAMPLER) && (layout.flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT) != 0), "unsupported update-after-bind descriptor");
             RequireCapture((binding.flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) == 0 || binding.binding == highest, "variable descriptor count must use the highest binding");
         }
     }
@@ -234,32 +278,70 @@ std::filesystem::path ComputePipelineCapture::Write(const std::filesystem::path&
     const auto path = recordDirectory / "capture.aps5cp";
     static std::mutex mutex;
     std::lock_guard lock(mutex);
-    std::filesystem::create_directories(directory);
-    RequireCapture(!std::filesystem::is_symlink(std::filesystem::symlink_status(directory)), "capture directory is a symbolic link");
-    if (std::filesystem::exists(recordDirectory)) {
-        RequireCapture(std::filesystem::is_directory(recordDirectory) && !std::filesystem::is_symlink(std::filesystem::symlink_status(recordDirectory)) && !std::filesystem::is_symlink(std::filesystem::symlink_status(path)), "existing capture path is not a regular capture");
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    CheckCaptureIo(error, "cannot create capture directory");
+    RequireCapture(!std::filesystem::is_symlink(CaptureStatus(directory)), "capture directory is a symbolic link");
+    const auto recordStatus = CaptureStatus(recordDirectory);
+    if (std::filesystem::exists(recordStatus)) {
+        RequireCapture(std::filesystem::is_directory(recordStatus) && !std::filesystem::is_symlink(recordStatus), "existing capture path is not a regular capture");
+        const auto captureStatus = CaptureStatus(path);
+        RequireCapture(std::filesystem::is_regular_file(captureStatus) && !std::filesystem::is_symlink(captureStatus), "existing capture path is not a regular capture");
         RequireCapture(ReadBytes(path) == bytes, "existing capture differs or is incomplete");
         return path;
     }
     std::uintmax_t totalBytes = 0;
     std::size_t count = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-        RequireCapture(++count < 128, "capture directory reached 128 entries");
-        RequireCapture(entry.is_directory() && !entry.is_symlink(), "capture directory contains an unexpected entry");
+    auto iterator = std::filesystem::directory_iterator(directory, error);
+    CheckCaptureIo(error, "cannot enumerate capture directory");
+    while (iterator != std::filesystem::directory_iterator{}) {
+        const auto& entry = *iterator;
+        const auto entryStatus = CaptureStatus(entry.path());
+        if (std::filesystem::is_regular_file(entryStatus) && entry.path().filename() == ".DS_Store") {
+            iterator.increment(error);
+            CheckCaptureIo(error, "cannot advance capture directory");
+            continue;
+        }
+        RequireCaptureCapacity(++count < 128, "capture directory reached 128 entries");
+        RequireCapture(std::filesystem::is_directory(entryStatus) && !std::filesystem::is_symlink(entryStatus), "capture directory contains an unexpected entry");
         const auto capture = entry.path() / "capture.aps5cp";
-        RequireCapture(std::filesystem::is_regular_file(capture) && !std::filesystem::is_symlink(std::filesystem::symlink_status(capture)), "capture directory contains an incomplete record");
-        const auto size = std::filesystem::file_size(capture);
+        const auto captureStatus = CaptureStatus(capture);
+        RequireCapture(std::filesystem::is_regular_file(captureStatus) && !std::filesystem::is_symlink(captureStatus), "capture directory contains an incomplete record");
+        const auto size = CaptureFileSize(capture);
         RequireCapture(size <= MaxFileBytes, "existing capture exceeds size bound");
         totalBytes += size;
+        iterator.increment(error);
+        CheckCaptureIo(error, "cannot advance capture directory");
     }
-    RequireCapture(totalBytes + bytes.size() <= 256u * 1024u * 1024u, "capture directory exceeds 256 MiB");
-    RequireCapture(std::filesystem::create_directory(recordDirectory), "capture directory was concurrently created");
+    RequireCaptureCapacity(totalBytes + bytes.size() <= 256u * 1024u * 1024u, "capture directory exceeds 256 MiB");
+    const bool created = std::filesystem::create_directory(recordDirectory, error);
+    CheckCaptureIo(error, "cannot create capture record directory");
+    RequireCapture(created, "capture directory was concurrently created");
     std::ofstream output(path, std::ios::binary);
-    RequireCapture(output.good(), "cannot create capture");
+    RequireCaptureIo(output.good(), "cannot create capture");
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     output.close();
-    RequireCapture(output.good(), "cannot finish capture");
+    RequireCaptureIo(output.good(), "cannot finish capture");
     return path;
+}
+
+bool ComputePipelineCapture::OptionalEnabled() {
+    return !optionalDisabled.load(std::memory_order_relaxed);
+}
+
+std::filesystem::path ComputePipelineCapture::WriteOptional(const std::filesystem::path& directory) const {
+    if (!OptionalEnabled()) {
+        Validate();
+        return {};
+    }
+    try {
+        return Write(directory);
+    } catch (const CaptureLimit& error) {
+        DisableOptionalCapture(error.what());
+    } catch (const CaptureIoFailure& error) {
+        DisableOptionalCapture(error.what());
+    }
+    return {};
 }
 
 }

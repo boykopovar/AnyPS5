@@ -26,6 +26,13 @@ alignas(256) constexpr std::array<std::uint32_t, 69> Code{
     0x7e000207u, 0xe0102000u, 0x80000002u, 0x8afe7e6au, 0xbf880003u, 0x7e000206u, 0xe0102000u, 0x80000002u,
     0xbefe046au, 0x8afe7e0au, 0xbf880003u, 0x7e000205u, 0xe0102000u, 0x80000002u, 0xbefe040au, 0x8afe7e08u,
     0xbf880003u, 0x7e000204u, 0xe0102000u, 0x80000002u, 0xbf810000u};
+constexpr std::size_t ComparesAt = 27;
+constexpr std::array<std::uint32_t, 69> WithCompares(std::array<std::uint32_t, 3> compares) {
+    auto code = Code;
+    for (std::size_t word = 0; word < compares.size(); ++word) code[ComparesAt + word] = compares[word];
+    return code;
+}
+alignas(256) constexpr std::array<std::uint32_t, 69> SwappedCode = WithCompares({0x7d8c02f9u, 0x06068c02u, 0x7d860609u});
 constexpr std::array<std::uint32_t, 4> Pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
 constexpr std::uint32_t Untouched = 0xcafebabeu;
 alignas(256) std::array<std::uint32_t, 1028> Output{};
@@ -33,6 +40,35 @@ alignas(256) std::array<std::uint32_t, 1028> Output{};
 std::vector<std::uint32_t> UserData(void* output, std::uint32_t records, std::uint32_t count, std::uint32_t period, std::uint32_t format = 0x00014004u) {
     const auto address = reinterpret_cast<std::uintptr_t>(output);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), records, format, Pattern[0], Pattern[1], Pattern[2], Pattern[3], count, period};
+}
+
+void SwappedComparesTests() {
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64, 1, 1}, 0, {true, false, false}, false, 1};
+    const std::array<std::uint32_t, 5> packet{0xc0031500u, 4, 1, 1, 0x41u};
+    for (const auto period : {1u, 2u, 4u}) {
+        const auto data = UserData(Output.data(), 1024, 256, period);
+        const auto listed = MatchDwordPatternFill(packet, Code, data, compute);
+        const auto swapped = MatchDwordPatternFill(packet, SwappedCode, data, compute);
+        Require(listed && swapped && swapped->base == listed->base && swapped->bytes == listed->bytes && swapped->pattern == listed->pattern, "the kernel with its two compares in the other order was not recognized as the same fill");
+    }
+    const auto data = UserData(Output.data(), 1024, 256, 4);
+    for (std::size_t word = 0; word < SwappedCode.size(); ++word) {
+        auto altered = SwappedCode;
+        altered[word] ^= 1u;
+        Require(!MatchDwordPatternFill(packet, altered, data, compute), "a different shader matched the dword pattern-fill kernel with swapped compares");
+    }
+    Require(!MatchDwordPatternFill(packet, std::span(SwappedCode).first(68), data, compute), "a truncated shader with swapped compares matched");
+    constexpr std::array<std::array<std::uint32_t, 3>, 5> otherOrders{{
+        {0x7d8c02f9u, 0x7d860609u, 0x06068c02u},
+        {0x06068c02u, 0x7d8c02f9u, 0x7d860609u},
+        {0x7d860609u, 0x06068c02u, 0x7d8c02f9u},
+        {0x7d860609u, 0x7d860609u, 0x7d8c02f9u},
+        {0x7d8c02f9u, 0x06068c02u, 0x7d8c02f9u},
+    }};
+    for (const auto& order : otherOrders) {
+        const auto code = WithCompares(order);
+        Require(!MatchDwordPatternFill(packet, code, data, compute), "a kernel whose compare words are not one of the two orders matched");
+    }
 }
 
 void MatchTests() {
@@ -74,7 +110,7 @@ void MatchTests() {
     Require(clamped && clamped->bytes == 256, "the fill exceeded the descriptor's records");
 }
 
-std::vector<std::uint32_t> Commands(const std::vector<std::uint32_t>& data, std::uint32_t groups, bool partial, std::uint32_t threads) {
+std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& data, std::uint32_t groups, bool partial, std::uint32_t threads) {
     std::vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
         words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
@@ -83,7 +119,7 @@ std::vector<std::uint32_t> Commands(const std::vector<std::uint32_t>& data, std:
     };
     const std::array<std::uint32_t, 3> shape{64, 1, 1};
     registers(0x207, shape);
-    const auto address = reinterpret_cast<std::uintptr_t>(Code.data());
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
     const std::array<std::uint32_t, 2> program{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>(address >> 40u)};
     registers(0x20c, program);
     const std::array<std::uint32_t, 1> resource{(static_cast<std::uint32_t>(data.size()) << 1u) | (1u << 7u)};
@@ -111,18 +147,20 @@ void ExecuteTests() {
         {4, 1024, 256, 5, false, 0},
         {0, 1024, 256, 4, true, 70},
     }};
-    for (const auto& item : cases) {
-        Output.fill(Untouched);
-        const auto words = Commands(UserData(Output.data(), item.records, item.count, item.period), item.groups, item.partial, item.threads);
-        Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
-        AgcDriver::Submit(&packet, 0);
-        AgcDriverWaitIdle_nid_postfix();
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
-        const auto launched = item.partial ? item.threads : item.groups * 64u;
-        const auto filled = std::min({launched, item.records, item.count});
-        for (std::uint32_t i = 0; i < Output.size(); ++i) {
-            const auto expected = i < filled ? Pattern[std::min(i % item.period, 3u)] : Untouched;
-            Require(Output[i] == expected, "dword pattern fill mismatch at " + std::to_string(i) + " (period " + std::to_string(item.period) + ", count " + std::to_string(item.count) + ", records " + std::to_string(item.records) + "): got " + std::to_string(Output[i]) + ", expected " + std::to_string(expected));
+    for (const std::span<const std::uint32_t> code : {std::span<const std::uint32_t>(Code), std::span<const std::uint32_t>(SwappedCode)}) {
+        for (const auto& item : cases) {
+            Output.fill(Untouched);
+            const auto words = Commands(code, UserData(Output.data(), item.records, item.count, item.period), item.groups, item.partial, item.threads);
+            Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
+            AgcDriver::Submit(&packet, 0);
+            AgcDriverWaitIdle_nid_postfix();
+            AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+            const auto launched = item.partial ? item.threads : item.groups * 64u;
+            const auto filled = std::min({launched, item.records, item.count});
+            for (std::uint32_t i = 0; i < Output.size(); ++i) {
+                const auto expected = i < filled ? Pattern[std::min(i % item.period, 3u)] : Untouched;
+                Require(Output[i] == expected, "dword pattern fill mismatch at " + std::to_string(i) + " (" + (code.data() == SwappedCode.data() ? "swapped" : "listed") + " compares, period " + std::to_string(item.period) + ", count " + std::to_string(item.count) + ", records " + std::to_string(item.records) + "): got " + std::to_string(Output[i]) + ", expected " + std::to_string(expected));
+            }
         }
     }
 }
@@ -131,7 +169,10 @@ void ExecuteTests() {
 
 int main() {
     try {
-        if (std::getenv("APS5_NO_FILL_HLE") == nullptr) MatchTests();
+        if (std::getenv("APS5_NO_FILL_HLE") == nullptr) {
+            MatchTests();
+            SwappedComparesTests();
+        }
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;

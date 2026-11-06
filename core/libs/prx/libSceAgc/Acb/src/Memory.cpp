@@ -43,7 +43,7 @@ std::uint32_t APS5_VABI sceAgcAcbAtomicMemGetSize() {
 }
 
 std::uint32_t APS5_VABI sceAgcAcbAtomicGdsGetSize() {
-    return 36;
+    return 44;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbPrimeUtcl2(CommandBuffer* buf, const volatile void* address, std::uint32_t sizeInBytes) {

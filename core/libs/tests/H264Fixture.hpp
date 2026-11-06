@@ -114,6 +114,18 @@ inline constexpr std::array<std::uint64_t, 6> PictureHashes{
 
 inline constexpr std::array<std::uint64_t, 6> DisplayOrderUnits{0, 2, 3, 1, 5, 4};
 
+inline constexpr std::size_t SpsOffset = 10;
+inline constexpr std::array<std::uint8_t, 25> CroppedSps{
+    0x67, 0x64, 0x00, 0x0a, 0xac, 0xd9, 0x44, 0x7f, 0x29, 0x70, 0x11, 0x00, 0x00,
+    0x03, 0x00, 0x01, 0x00, 0x00, 0x03, 0x00, 0x3c, 0x0f, 0x12, 0x25, 0x96,
+};
+
+inline std::vector<std::uint8_t> croppedStream() {
+    std::vector<std::uint8_t> stream(Stream.begin(), Stream.end());
+    for (std::size_t index = 0; index < CroppedSps.size(); ++index) stream[SpsOffset + index] = CroppedSps[index];
+    return stream;
+}
+
 inline std::uint64_t hashNv12(const std::uint8_t* buffer, std::uint32_t pitch, std::uint32_t height) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](const std::uint8_t* row) {
@@ -125,21 +137,21 @@ inline std::uint64_t hashNv12(const std::uint8_t* buffer, std::uint32_t pitch, s
     return hash;
 }
 
-inline std::vector<std::vector<std::uint8_t>> accessUnits(bool lengthPrefixed) {
+inline std::vector<std::vector<std::uint8_t>> accessUnits(const std::uint8_t* data, std::size_t size, bool lengthPrefixed) {
     std::vector<std::size_t> starts;
-    for (std::size_t index = 0; index + 4 < Stream.size(); ++index) {
-        if (Stream[index] == 0 && Stream[index + 1] == 0 && Stream[index + 2] == 0 && Stream[index + 3] == 1 && (Stream[index + 4] & 0x1fu) == 9) starts.push_back(index);
+    for (std::size_t index = 0; index + 4 < size; ++index) {
+        if (data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 0 && data[index + 3] == 1 && (data[index + 4] & 0x1fu) == 9) starts.push_back(index);
     }
-    starts.push_back(Stream.size());
+    starts.push_back(size);
     std::vector<std::vector<std::uint8_t>> units;
     for (std::size_t unit = 0; unit + 1 < starts.size(); ++unit) {
         if (!lengthPrefixed) {
-            units.emplace_back(Stream.begin() + static_cast<std::ptrdiff_t>(starts[unit]), Stream.begin() + static_cast<std::ptrdiff_t>(starts[unit + 1]));
+            units.emplace_back(data + starts[unit], data + starts[unit + 1]);
             continue;
         }
         std::vector<std::size_t> nals;
         for (std::size_t index = starts[unit]; index + 3 < starts[unit + 1]; ++index) {
-            if (Stream[index] == 0 && Stream[index + 1] == 0 && Stream[index + 2] == 1) {
+            if (data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 1) {
                 nals.push_back(index + 3);
                 index += 2;
             }
@@ -147,14 +159,18 @@ inline std::vector<std::vector<std::uint8_t>> accessUnits(bool lengthPrefixed) {
         std::vector<std::uint8_t> converted;
         for (std::size_t nal = 0; nal < nals.size(); ++nal) {
             auto end = nal + 1 < nals.size() ? nals[nal + 1] - 3 : starts[unit + 1];
-            while (end > nals[nal] && Stream[end - 1] == 0) --end;
+            while (end > nals[nal] && data[end - 1] == 0) --end;
             const auto length = end - nals[nal];
             for (int shift = 24; shift >= 0; shift -= 8) converted.push_back(static_cast<std::uint8_t>(length >> shift));
-            converted.insert(converted.end(), Stream.begin() + static_cast<std::ptrdiff_t>(nals[nal]), Stream.begin() + static_cast<std::ptrdiff_t>(end));
+            converted.insert(converted.end(), data + nals[nal], data + end);
         }
         units.push_back(std::move(converted));
     }
     return units;
+}
+
+inline std::vector<std::vector<std::uint8_t>> accessUnits(bool lengthPrefixed) {
+    return accessUnits(Stream.data(), Stream.size(), lengthPrefixed);
 }
 
 }

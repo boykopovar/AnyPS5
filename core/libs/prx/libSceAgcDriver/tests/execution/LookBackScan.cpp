@@ -24,6 +24,13 @@ alignas(256) constexpr std::array<std::uint32_t, 43> ScanCode{
     0xe0701000, 0x80030802, 0xbf810000,
 };
 
+constexpr auto StoreScanCode = [] {
+    auto code = ScanCode;
+    code[16] = 0xe0745000;
+    code[38] = 0xe0745000;
+    return code;
+}();
+
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t Blocks = 4096;
 
@@ -41,9 +48,17 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t groups) {
-    alignas(256) static std::array<std::uint32_t, ScanCode.size()> code{};
-    code = ScanCode;
+struct Variant {
+    const char* name;
+    const std::array<std::uint32_t, ScanCode.size()>& words;
+};
+
+constexpr std::array<Variant, 2> Variants{{{"buffer_atomic_swap_x2", ScanCode}, {"buffer_store_dwordx2", StoreScanCode}}};
+
+void Run(AgcDriver::VulkanDevice& device, std::size_t variant, std::uint32_t groups) {
+    alignas(256) static std::array<std::array<std::uint32_t, ScanCode.size()>, Variants.size()> programs{};
+    auto& code = programs[variant];
+    code = Variants[variant].words;
     std::vector<std::uint32_t> userData;
     for (const auto& descriptor : {BufferDescriptor(Counter.data(), sizeof(Counter)), BufferDescriptor(Aggregates.data(), sizeof(Aggregates)), BufferDescriptor(Pairs.data(), sizeof(Pairs)), BufferDescriptor(Prefixes.data(), sizeof(Prefixes))}) {
         userData.insert(userData.end(), descriptor.begin(), descriptor.end());
@@ -64,8 +79,8 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t groups) {
     device.WaitIdle();
 }
 
-void CheckLookBack(AgcDriver::VulkanDevice& device, std::uint32_t block) {
-    const auto name = "look-back from block " + std::to_string(block);
+void CheckLookBack(AgcDriver::VulkanDevice& device, std::size_t variant, std::uint32_t block) {
+    const auto name = std::string(Variants[variant].name) + " look-back from block " + std::to_string(block);
     Pairs.fill(0u);
     std::uint32_t prefix = 0;
     for (std::uint32_t b = 0; b < Blocks; ++b) Aggregates[b] = Value(b, block);
@@ -77,20 +92,20 @@ void CheckLookBack(AgcDriver::VulkanDevice& device, std::uint32_t block) {
     Counter.fill(0u);
     Counter[0] = block;
     Prefixes.fill(0xdeadbeefu);
-    Run(device, 1);
+    Run(device, variant, 1);
     Require(Counter[0] == block + 1, name + ": the counter is " + std::to_string(Counter[0]));
     Require(Prefixes[block] == prefix, name + ": its prefix is " + std::to_string(Prefixes[block]) + ", expected " + std::to_string(prefix));
     Require(Pairs[2 * block] == 2u, name + ": its flag is " + std::to_string(Pairs[2 * block]) + ", expected 2");
     Require(Pairs[2 * block + 1] == prefix + Aggregates[block], name + ": it published " + std::to_string(Pairs[2 * block + 1]) + ", expected " + std::to_string(prefix + Aggregates[block]));
 }
 
-void CheckWhole(AgcDriver::VulkanDevice& device, std::uint32_t seed) {
-    const auto name = "whole scan " + std::to_string(seed);
+void CheckWhole(AgcDriver::VulkanDevice& device, std::size_t variant, std::uint32_t seed) {
+    const auto name = std::string(Variants[variant].name) + " whole scan " + std::to_string(seed);
     for (std::uint32_t b = 0; b < Blocks; ++b) Aggregates[b] = Value(b, seed);
     Counter.fill(0u);
     Pairs.fill(0u);
     Prefixes.fill(0xdeadbeefu);
-    Run(device, Blocks);
+    Run(device, variant, Blocks);
     std::uint32_t running = 0;
     for (std::uint32_t b = 0; b < Blocks; ++b) {
         Require(Prefixes[b] == running, name + ": block " + std::to_string(b) + "'s prefix is " + std::to_string(Prefixes[b]) + ", expected " + std::to_string(running));
@@ -113,8 +128,10 @@ int main() {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
             return VulkanTestSkipped;
         }
-        for (const std::uint32_t block : {0u, 1u, 2u, 63u, 64u, 1000u, Blocks - 1}) CheckLookBack(*device, block);
-        for (std::uint32_t seed = 0; seed < 50; ++seed) CheckWhole(*device, seed);
+        for (std::size_t variant = 0; variant < Variants.size(); ++variant) {
+            for (const std::uint32_t block : {0u, 1u, 2u, 63u, 64u, 1000u, Blocks - 1}) CheckLookBack(*device, variant, block);
+            for (std::uint32_t seed = 0; seed < 50; ++seed) CheckWhole(*device, variant, seed);
+        }
         std::puts("look-back scan tests passed");
         return 0;
     } catch (const std::exception& error) {

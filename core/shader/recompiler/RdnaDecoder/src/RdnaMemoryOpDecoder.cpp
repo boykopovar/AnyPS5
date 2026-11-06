@@ -935,6 +935,23 @@ RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std
         instruction.sourceCount = 1;
         return instruction;
     }
+    if (seg == 1u) {
+        const RdnaOperand zero = scalarSource(128u);
+        instruction.source0 = saddr == 0x7Du ? vectorRegister(addr) : zero;
+        instruction.source1 = zero;
+        if (saddr != 0x7Du && saddr != 0x7Fu) {
+            instruction.source1 = scalarSource(saddr);
+            if (instruction.source1.kind != RdnaOperandKind::ScalarRegister &&
+                instruction.source1.kind != RdnaOperandKind::VccLo &&
+                instruction.source1.kind != RdnaOperandKind::VccHi &&
+                instruction.source1.kind != RdnaOperandKind::M0 &&
+                instruction.source1.kind != RdnaOperandKind::ExecLo) {
+                throw std::runtime_error("FLAT scratch scalar offset register is unsupported");
+            }
+        }
+        instruction.sourceCount = 2;
+        return instruction;
+    }
     instruction.source0 = vectorRegister(addr);
     if (seg == 0u || saddr == 0x7Du || saddr == 0x7Fu) {
         if (addr == 255u) {
@@ -974,9 +991,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
     const auto addr = word1 & 0xFFu;
     const auto& info = lookupOpcode(dsOpcodes, opcode, "DS opcode is not supported");
     const auto combinedOffset = offset0 | (offset1 << 8u);
-    if (info.opcode == RdnaOpcode::DsSwizzleB32 && combinedOffset >= 0xE000u) {
-        throw std::runtime_error("DS swizzle FFT mode is not supported");
-    }
     if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 || info.opcode == RdnaOpcode::DsPermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 || info.opcode == RdnaOpcode::DsReadAddtidB32)) {
         throw std::runtime_error("DS lane operation is available only for LDS");
     }

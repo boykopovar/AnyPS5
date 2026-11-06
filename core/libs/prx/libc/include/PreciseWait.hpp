@@ -51,6 +51,19 @@ inline HANDLE PreciseWaitThreadTimer() {
     return HostThreadLocal<Timer, Timer>().handle;
 }
 
+inline std::uint64_t PreciseQpcFrequency() {
+    static std::atomic<std::uint64_t> cachedFreq{0};
+    std::uint64_t freq = cachedFreq.load(std::memory_order_relaxed);
+    if (freq == 0) [[unlikely]] {
+        LARGE_INTEGER f;
+        if (QueryPerformanceFrequency(&f) && f.QuadPart > 0) {
+            freq = static_cast<std::uint64_t>(f.QuadPart);
+            cachedFreq.store(freq, std::memory_order_relaxed);
+        }
+    }
+    return freq;
+}
+
 inline void PreciseSleepFromCounterWithTimer(
     LARGE_INTEGER counter,
     unsigned long long hundredNanos,
@@ -62,21 +75,12 @@ inline void PreciseSleepFromCounterWithTimer(
     }
     constexpr unsigned long long kSpinTailHundredNanos = 2500;
     constexpr unsigned long long kMinTimerSpinSleepHundredNanos = 10000;
-    static std::atomic<std::uint64_t> cachedFreq{0};
-    std::uint64_t freq = cachedFreq.load(std::memory_order_relaxed);
+    const std::uint64_t freq = PreciseQpcFrequency();
     std::uint64_t deltaTicks = hundredNanos;
     std::uint64_t pauseThresholdTicks = 2ULL;
     if (freq != 10000000ULL) [[unlikely]] {
-        if (freq == 0) {
-            LARGE_INTEGER f;
-            QueryPerformanceFrequency(&f);
-            freq = static_cast<std::uint64_t>(f.QuadPart);
-            cachedFreq.store(freq, std::memory_order_relaxed);
-        }
-        if (freq != 10000000ULL) {
-            deltaTicks = PreciseHundredNanosToQpcTicks(hundredNanos, freq);
-            pauseThresholdTicks = PrecisePauseThresholdTicks(freq);
-        }
+        deltaTicks = PreciseHundredNanosToQpcTicks(hundredNanos, freq);
+        pauseThresholdTicks = PrecisePauseThresholdTicks(freq);
     }
     const std::uint64_t deadlineTicks = static_cast<std::uint64_t>(counter.QuadPart) + deltaTicks;
     const bool useSpinTail = allowSpinTail || hundredNanos >= kMinTimerSpinSleepHundredNanos;
@@ -129,17 +133,37 @@ inline void PreciseSpinPause() {
 
 inline std::uint64_t PreciseMonotonicNanos() {
     struct timespec ts;
+#if defined(__APPLE__) && defined(_LIBCPP_VERSION) && defined(CLOCK_MONOTONIC_RAW)
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+#else
     clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
     return static_cast<std::uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(ts.tv_nsec);
 }
 
 #ifdef __linux__
-inline bool PreciseLinuxLowTimerSlack() {
-    static thread_local const bool lowSlack = [] {
+inline unsigned long long PreciseLinuxSpinTailNanos_nid_no_patch() {
+    static thread_local unsigned long long cachedSpinTailNanos = 0;
+    unsigned long long spinTailNanos = cachedSpinTailNanos;
+    if (spinTailNanos == 0) [[unlikely]] {
         const long current = prctl(PR_GET_TIMERSLACK, 0UL, 0UL, 0UL, 0UL);
-        return current == 1L || prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL) == 0;
-    }();
-    return lowSlack;
+        const bool lowSlack = current == 1L || prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL) == 0;
+        spinTailNanos = lowSlack ? 15000ULL : 100000ULL;
+        cachedSpinTailNanos = spinTailNanos;
+    }
+    return spinTailNanos;
+}
+
+inline bool PreciseLinuxLowTimerSlack() {
+    return PreciseLinuxSpinTailNanos_nid_no_patch() == 15000ULL;
+}
+
+[[gnu::noinline]] inline void PreciseSleepLinuxTimer_nid_no_patch(std::uint64_t wakeNanos) {
+    struct timespec req;
+    req.tv_sec = static_cast<time_t>(wakeNanos / 1000000000ULL);
+    req.tv_nsec = static_cast<long>(wakeNanos % 1000000000ULL);
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &req, nullptr) == EINTR) {
+    }
 }
 #endif
 
@@ -149,14 +173,24 @@ inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned lo
     }
     const std::uint64_t deadlineNanos = startNanos + nanos;
 #ifdef __linux__
-    const bool lowSlack = allowLowSlack && PreciseLinuxLowTimerSlack();
-    const unsigned long long spinTailNanos = lowSlack ? 15000ULL : 100000ULL;
-    if (nanos > spinTailNanos) [[unlikely]] {
-        const std::uint64_t wakeNanos = deadlineNanos - spinTailNanos;
+    if (nanos > 15000ULL) [[unlikely]] {
+        const unsigned long long spinTailNanos = allowLowSlack ? PreciseLinuxSpinTailNanos_nid_no_patch() : 100000ULL;
+        if (nanos > spinTailNanos) {
+            PreciseSleepLinuxTimer_nid_no_patch(deadlineNanos - spinTailNanos);
+        }
+    }
+#elif defined(__APPLE__)
+    (void)allowLowSlack;
+    constexpr unsigned long long kSpinTailNanos = 100000ULL;
+    constexpr unsigned long long kMaxWakeMarginNanos = 5000000ULL;
+    if (nanos > kSpinTailNanos) [[unlikely]] {
+        const unsigned long long beforeTail = nanos - kSpinTailNanos;
+        const unsigned long long margin = beforeTail * 3ULL / 10ULL;
+        const unsigned long long sleepNanos = beforeTail - (margin < kMaxWakeMarginNanos ? margin : kMaxWakeMarginNanos);
         struct timespec req;
-        req.tv_sec = static_cast<time_t>(wakeNanos / 1000000000ULL);
-        req.tv_nsec = static_cast<long>(wakeNanos % 1000000000ULL);
-        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &req, nullptr) == EINTR) {
+        req.tv_sec = static_cast<time_t>(sleepNanos / 1000000000ULL);
+        req.tv_nsec = static_cast<long>(sleepNanos % 1000000000ULL);
+        while (nanosleep(&req, &req) == -1 && errno == EINTR) {
         }
     }
 #else
@@ -214,6 +248,29 @@ inline void PreciseSleepUs(unsigned long long micros) {
 template <class TClock, class TDuration>
 inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& deadline) {
 #ifdef _WIN32
+    if constexpr (std::is_same_v<TClock, std::chrono::steady_clock>) {
+        if (PreciseQpcFrequency() == 10000000ULL) [[likely]] {
+            const auto rawDeadline = deadline.time_since_epoch().count();
+            if (rawDeadline <= 0) [[unlikely]] {
+                return;
+            }
+            using HundredNanos = std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>;
+            std::uint64_t targetHns = 0;
+            if constexpr (std::is_same_v<typename TDuration::period, std::nano>) {
+                targetHns = (static_cast<std::uint64_t>(rawDeadline) + 99ULL) / 100ULL;
+            } else {
+                targetHns = static_cast<std::uint64_t>(
+                    std::chrono::ceil<HundredNanos>(deadline.time_since_epoch()).count());
+            }
+            LARGE_INTEGER counter;
+            QueryPerformanceCounter(&counter);
+            const std::uint64_t nowTicks = static_cast<std::uint64_t>(counter.QuadPart);
+            if (nowTicks < targetHns) {
+                PreciseSleepFromCounter(counter, targetHns - nowTicks);
+            }
+            return;
+        }
+    }
     LARGE_INTEGER counter;
     QueryPerformanceCounter(&counter);
     const auto now = TClock::now();
@@ -229,6 +286,27 @@ inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& 
         }
     }
 #elif !defined(__EMSCRIPTEN__)
+#if (defined(__linux__) && (defined(__GLIBCXX__) || (defined(_LIBCPP_VERSION) && !defined(_LIBCPP_HAS_TIMESPEC_GET)))) || \
+    (defined(__APPLE__) && defined(_LIBCPP_VERSION) && defined(CLOCK_MONOTONIC_RAW))
+    if constexpr (std::is_same_v<TClock, std::chrono::steady_clock>) {
+        const auto rawDeadline = deadline.time_since_epoch().count();
+        if (rawDeadline <= 0) [[unlikely]] {
+            return;
+        }
+        std::uint64_t targetNanos = 0;
+        if constexpr (std::is_same_v<typename TDuration::period, std::nano>) {
+            targetNanos = static_cast<std::uint64_t>(rawDeadline);
+        } else {
+            targetNanos = static_cast<std::uint64_t>(
+                std::chrono::ceil<std::chrono::nanoseconds>(deadline.time_since_epoch()).count());
+        }
+        const std::uint64_t startNanos = PreciseMonotonicNanos();
+        if (startNanos < targetNanos) {
+            PreciseSleepFromNanos(startNanos, targetNanos - startNanos);
+        }
+        return;
+    }
+#endif
     const std::uint64_t startNanos = PreciseMonotonicNanos();
     const auto now = TClock::now();
     if (now < deadline) {

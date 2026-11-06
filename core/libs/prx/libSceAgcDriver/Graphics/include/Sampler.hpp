@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <array>
 #include <cstdint>
 #include <map>
@@ -25,6 +26,7 @@ public:
     bool ReadsOpaqueBlackBorder() const;
     bool RequiresNonSeamlessCube() const;
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
+    static bool ShaderAppliesLodBias(const GuestSamplerResource& descriptor);
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
 
 private:
@@ -59,7 +61,7 @@ private:
         std::shared_ptr<Sampler> sampler;
         std::uint64_t lastUse;
     };
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::map<std::array<std::uint32_t, 5>, Entry> entries;
     std::uint64_t clock = 0;
     std::size_t capacity;
@@ -67,10 +69,10 @@ private:
     std::uint64_t misses = 0;
 };
 
-void RequireFilterMinmax(const Context& context, VkFormat format, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
-void RequireNonSeamlessCube(bool cube, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireFilterMinmax(const Context& context, VkFormat format, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 
 }
 

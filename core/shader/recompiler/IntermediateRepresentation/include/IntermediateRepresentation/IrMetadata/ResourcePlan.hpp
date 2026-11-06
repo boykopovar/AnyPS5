@@ -9,10 +9,16 @@
 #include "IntermediateRepresentation/IrMetadata/ShaderInfo.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <new>
+#include <algorithm>
+#include <atomic>
+#include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +30,86 @@ struct DescriptorValue {
     std::uint8_t availableDwordMask = 0;
 
     bool operator==(const DescriptorValue& other) const = default;
+};
+
+struct RegisteredImageView {
+    std::uint32_t resource = 0;
+    std::uint32_t record = 0;
+    DescriptorValue provenance;
+    DescriptorValue effective;
+    std::uint64_t generation = 0;
+    std::uint64_t address = 0;
+    std::uint64_t rangeAddress = 0;
+    std::uint64_t rangeBytes = 0;
+    std::uint64_t allocationAddress = 0;
+    std::uint64_t allocationBytes = 0;
+    std::uint64_t backingSerial = 0;
+    bool hasRange = false;
+    bool readable = false;
+    bool writable = false;
+    bool gpu = false;
+
+    bool operator==(const RegisteredImageView& other) const {
+        return resource == other.resource && record == other.record && provenance == other.provenance && effective == other.effective && address == other.address && rangeAddress == other.rangeAddress && rangeBytes == other.rangeBytes && allocationAddress == other.allocationAddress && allocationBytes == other.allocationBytes && backingSerial == other.backingSerial && hasRange == other.hasRange && readable == other.readable && writable == other.writable && gpu == other.gpu;
+    }
+};
+
+template <typename T>
+class SharedValues {
+public:
+    SharedValues() = default;
+    explicit SharedValues(std::vector<T> values) : block(values.empty() ? nullptr : std::make_shared<const Block>(std::move(values))) {}
+
+    [[nodiscard]] std::size_t size() const { return block != nullptr ? block->values.size() : 0u; }
+    [[nodiscard]] bool empty() const { return block == nullptr; }
+    [[nodiscard]] const T* data() const { return block != nullptr ? block->values.data() : nullptr; }
+    [[nodiscard]] const T* begin() const { return data(); }
+    [[nodiscard]] const T* end() const { return data() + size(); }
+    [[nodiscard]] const T& operator[](std::size_t index) const { return block->values[index]; }
+    [[nodiscard]] const T& at(std::size_t index) const {
+        if (index >= size()) throw std::out_of_range("SharedValues::at");
+        return block->values[index];
+    }
+    [[nodiscard]] const T& front() const { return at(0); }
+    [[nodiscard]] const T& back() const { return at(size() - 1u); }
+    [[nodiscard]] std::span<const T> Span() const { return {data(), size()}; }
+    [[nodiscard]] std::vector<T> Copy() const { return {begin(), end()}; }
+    [[nodiscard]] bool Shares(const SharedValues& other) const { return block == other.block; }
+
+    [[nodiscard]] std::uint64_t Hash() const {
+        constexpr std::uint64_t Basis = 0xcbf29ce484222325ull;
+        if (block == nullptr) return Basis;
+        if (const auto known = block->hash.load(std::memory_order_relaxed); known != 0u) return known;
+        std::uint64_t hash = Basis;
+        const auto mix = [&](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+        mix(block->values.size());
+        for (const auto& value : block->values) {
+            if constexpr (std::is_same_v<T, DescriptorValue>) {
+                mix(value.dwordCount);
+                mix(value.availableDwordMask);
+                for (const auto dword : value.dwords) mix(dword);
+            } else if constexpr (std::is_integral_v<T>) {
+                mix(value);
+            } else {
+                mix(value.first);
+                mix(value.second);
+            }
+        }
+        hash = hash != 0u ? hash : 1u;
+        block->hash.store(hash, std::memory_order_relaxed);
+        return hash;
+    }
+
+    friend bool operator==(const SharedValues& left, const SharedValues& right) { return left.block == right.block || std::ranges::equal(left.Span(), right.Span()); }
+    friend bool operator==(const SharedValues& left, const std::vector<T>& right) { return std::ranges::equal(left.Span(), right); }
+
+private:
+    struct Block {
+        explicit Block(std::vector<T> values) : values(std::move(values)) {}
+        std::vector<T> values;
+        mutable std::atomic<std::uint64_t> hash{0};
+    };
+    std::shared_ptr<const Block> block;
 };
 
 enum class UniformFillKind { None, Buffer, Image };
@@ -45,15 +131,26 @@ struct ImageTableColumnSnapshot {
     std::uint32_t keys = 0;
     std::uint32_t fault = 0;
     bool outside = false;
-    std::vector<std::uint32_t> codes;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    bool nested = false;
+    SharedValues<std::uint64_t> pointers;
+    SharedValues<std::uint32_t> codes;
+    SharedValues<DescriptorValue> words;
+    SharedValues<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    struct ResourceView {
+        std::uint32_t resource = 0;
+        SharedValues<DescriptorValue> words;
+        std::vector<RegisteredImageView> identities;
+
+        bool operator==(const ResourceView& other) const = default;
+    };
+    std::vector<ResourceView> resourceViews;
 
     bool operator==(const ImageTableColumnSnapshot& other) const = default;
 };
 
 struct ImageTableSnapshot {
     std::vector<ImageTableColumnSnapshot> tables;
-    std::vector<DescriptorValue> words;
+    std::vector<ImageTableColumnSnapshot> nested;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::uint64_t shader = 0;
 
@@ -70,6 +167,8 @@ struct ResourceSnapshot {
     std::vector<SrtReadPoison> srtPoison;
     std::uint32_t nullRootReads = 0;
     ImageTableSnapshot tables;
+    std::vector<RegisteredImageView> registeredImages;
+    std::uint64_t imageAllocationGeneration = 0;
 };
 
 struct UniformFillPlan {
@@ -151,12 +250,19 @@ struct CompactResourcePlan {
     std::vector<std::uint32_t> conditions;
 };
 
+struct SrtTapeSlot {
+    std::once_flag once;
+    std::atomic<bool> ready{false};
+    std::shared_ptr<const void> tape;
+};
+
 struct IrResourcePlan {
     IrShaderStage stage = IrShaderStage::Unknown;
     std::uint64_t shaderHash = 0;
     std::uint32_t userDataBase = 0;
     std::uint32_t userDataCount = 64;
     std::uint32_t srgbDecodeFormats = 0;
+    std::uint32_t maxImageArrayLayers = 0;
     IrValueArena valueStorage;
     std::vector<std::unique_ptr<IrBlock>> blockStorage;
     std::vector<MemoryInfo> memoryInfo;
@@ -177,6 +283,7 @@ struct IrResourcePlan {
     bool resourceTrackingComplete = false;
     ShaderInfo info;
     UniformFillPlan uniformFill;
+    std::shared_ptr<SrtTapeSlot> tapeSlot = std::make_shared<SrtTapeSlot>();
 };
 
 }

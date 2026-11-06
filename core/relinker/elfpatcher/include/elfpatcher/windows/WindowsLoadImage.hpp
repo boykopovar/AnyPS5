@@ -19,8 +19,16 @@ public:
     std::vector<PeSection> BuildSections() const;
 
 private:
+    struct Block {
+        std::uint64_t Offset;
+        std::vector<std::uint8_t> Bytes;
+    };
+
+    Block& backBlock(std::uint64_t offset, std::uint64_t length);
+
     std::vector<Domain::ProgramHeader> segments;
-    std::vector<std::uint8_t> data;
+    std::vector<Block> blocks;
+    std::uint64_t size;
     std::vector<std::uint32_t> pageFlags;
     std::uint64_t firstAddress;
     std::uint64_t imageBase;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -23,6 +24,9 @@
 #include <windows.h>
 #else
 #include <sys/resource.h>
+#endif
+#ifdef __linux__
+#include <sys/prctl.h>
 #endif
 
 namespace {
@@ -119,7 +123,7 @@ std::string LargeLine(std::size_t index, std::size_t bytes) {
 }
 
 void OrderPerThread() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     std::string expected;
@@ -136,7 +140,7 @@ void OrderPerThread() {
 }
 
 void LongLine() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     const std::string longText(3000, 'x');
     AgcDriver::AsyncLog::Get().Defer(file, "%s|%d\n", AgcDriver::LogLiteral{longText.c_str()}, 7);
@@ -155,7 +159,7 @@ void Coalescing() {
 }
 
 void FlushWaitsForHeldStream() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     {
@@ -175,7 +179,7 @@ void FlushWaitsForHeldStream() {
 }
 
 void BoundedFlushGivesUp() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     Check(log.FlushFor(0ms), "FlushFor waited with nothing queued");
@@ -191,7 +195,7 @@ void BoundedFlushGivesUp() {
 }
 
 void FullQueueBlocksCaller() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     constexpr std::size_t lineBytes = 1024 * 1024;
@@ -240,7 +244,12 @@ void FullQueueBlocksCaller() {
 constexpr int ChildLines = 50;
 
 [[noreturn]] void EndChild(const std::string& mode, const char* output) {
-    std::FILE* file = std::fopen(output, "wb");
+    const auto path = std::filesystem::temp_directory_path() / output;
+#ifdef _WIN32
+    std::FILE* file = _wfopen(path.c_str(), L"wb");
+#else
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+#endif
     Check(file != nullptr, "child output file");
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -248,6 +257,9 @@ constexpr int ChildLines = 50;
 #else
     const rlimit noCore{0, 0};
     setrlimit(RLIMIT_CORE, &noCore);
+#endif
+#ifdef __linux__
+    prctl(PR_SET_DUMPABLE, 0);
 #endif
     std::thread([] {
         std::this_thread::sleep_for(8s);
@@ -282,12 +294,18 @@ std::string Quote(const std::string& text) {
 
 void LinesSurviveEnd(const std::string& self, const std::string& mode) {
     const auto output = std::filesystem::temp_directory_path() / ("aps5-async-log-" + mode + "-" + std::to_string(Clock::now().time_since_epoch().count()) + ".txt");
-    std::string command = Quote(self) + " child " + mode + " " + Quote(output.string());
 #ifdef _WIN32
-    command = Quote(command);
-#endif
+    (void)self;
+    std::wstring executable(32768, L'\0');
+    executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+    const std::wstring command = L"\"\"" + executable + L"\" child " + std::filesystem::path(mode).wstring() + L" \"" + output.filename().wstring() + L"\"\"";
+    const auto start = Clock::now();
+    const int status = _wsystem(command.c_str());
+#else
+    const std::string command = Quote(self) + " child " + mode + " " + Quote(output.filename().string());
     const auto start = Clock::now();
     const int status = std::system(command.c_str());
+#endif
     const auto lived = Clock::now() - start;
     std::error_code error;
     const bool started = std::filesystem::exists(output, error);

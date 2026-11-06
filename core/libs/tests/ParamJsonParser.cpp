@@ -81,6 +81,12 @@ static void CheckUserDefinedParams(const std::filesystem::path& path) {
     }
 }
 
+static void CheckContentVersion(const std::filesystem::path& path) {
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":"01.002.000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion == "01.002.000", "Incorrect content version");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A missing content version was not empty");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":1,"localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A content version that is not a string was kept");
+}
+
 static void CheckNesting(const std::filesystem::path& path) {
     const std::string prefix = R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"extra":)";
     const auto nested = [&](std::size_t arrays) {
@@ -146,6 +152,7 @@ static void CheckLanguages(const std::filesystem::path& path) {
 static void CheckOutputPermission(const std::filesystem::path& path) {
     const std::string prefix = R"({"titleId":"PPSA99007","localizedParameters":{"en-US":{"titleName":"Example"}})";
     Require(ParseText(path, prefix + "}").attribute3 == 0, "Absent output permission is not zero");
+    Require(!ParseText(path, prefix + ",\"attribute\":8388608}").paramSfoAttribute, "param.json gave a param.sfo attribute");
     for (const auto& [text, expected] : {std::pair{"0", 0u}, {"524352", 0x80040u}, {"4294967295", 0xFFFFFFFFu}}) {
         Require(ParseText(path, prefix + ",\"attribute3\":" + text + "}").attribute3 == expected, "Incorrect output permission");
     }
@@ -226,6 +233,7 @@ int main() {
         }
         CheckLanguages(path);
         CheckUserDefinedParams(path);
+        CheckContentVersion(path);
         CheckOutputPermission(path);
         CheckNesting(path);
     } catch (const std::exception& error) {

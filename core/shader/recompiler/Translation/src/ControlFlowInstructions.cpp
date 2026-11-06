@@ -28,8 +28,7 @@ void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin)
     IrU32 newCounter = counter;
     if (begin) {
         const IrU1 lowZero(ir.IEqual(execLo.Value(), zero.Value()));
-        const IrU1 highZero(ir.IEqual(execHi.Value(), zero.Value()));
-        const IrU1 execZero(ir.LogicalAnd(lowZero.Value(), highZero.Value()));
+        const IrU1 execZero(ir.IEqual(ir.Emit(IrOpcode::BitwiseOr32, IrType::U32, {&execLo.Value(), &execHi.Value()}), zero.Value()));
         const IrU32 entered(ir.Select(lowZero.Value(), execLo.Value(), execHi.Value()));
         newCounter = IrU32(ir.Select(execZero.Value(), counter.Value(), entered.Value()));
         newExecHi = IrU32(ir.Select(ir.LogicalOr(execZero.Value(), lowZero.Value()), execHi.Value(), zero.Value()));

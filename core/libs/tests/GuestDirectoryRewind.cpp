@@ -1,7 +1,12 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -12,15 +17,6 @@
 #include <set>
 #include <string>
 
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-int APS5_VABI sceKernelGetdents(int, char*, int);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Directory rewind check failed at line %d\n", line);
@@ -28,7 +24,6 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
-
 
 static std::set<std::string> ReadAll(int directory) {
     std::set<std::string> names;
@@ -81,10 +76,29 @@ int main() {
     Require(sceKernelLseek(directory, -98, 1) == 2);
     Require(ReadAll(directory) == rest);
 
+    Require(sceKernelLseek(directory, 0, 0) == 0);
+    Require(sceKernelLseek(directory, 0, 2) == 5);
+    Require(sceKernelLseek(directory, 0, 1) == 5);
+    Require(ReadAll(directory).empty());
+    Require(sceKernelLseek(directory, 0, 0) == 0);
+    Require(sceKernelLseek(directory, -3, 2) == 2);
+    Require(sceKernelLseek(directory, 0, 1) == 2);
+    Require(ReadAll(directory) == rest);
+    Require(sceKernelLseek(directory, -5, 2) == 0);
+    Require(ReadAll(directory) == (std::set<std::string>{".", "..", "a", "b", "c"}));
+
     Require(sceKernelLseek(directory, 3, 0) == 3);
     Require(sceKernelLseek(directory, -1, 0) == static_cast<int>(0x80020016u));
     Require(sceKernelLseek(directory, -4, 1) == static_cast<int>(0x80020016u));
+    Require(sceKernelLseek(directory, -6, 2) == static_cast<int>(0x80020016u));
+    errno = 0;
+    Require(File::SeekDirectoryDescriptor(directory, 0, -1) == -1 && errno == EINVAL);
+    errno = 0;
+    Require(File::SeekDirectoryDescriptor(directory, 0, 3) == -1 && errno == EINVAL);
     Require(sceKernelLseek(directory, 0, 1) == 3);
+    Require(sceKernelLseek(directory, 1, 2) == 6);
+    Require(sceKernelLseek(directory, std::numeric_limits<std::int64_t>::max(), 2) == static_cast<int>(0x80020054u));
+    Require(sceKernelLseek(directory, 0, 1) == 6);
     Require(sceKernelLseek(directory, std::numeric_limits<std::int64_t>::max(), 0) == std::numeric_limits<std::int64_t>::max());
     Require(sceKernelLseek(directory, 1, 1) == static_cast<int>(0x80020054u));
     Require(sceKernelLseek(directory, 0, 1) == std::numeric_limits<std::int64_t>::max());
@@ -131,5 +145,7 @@ int main() {
     Require(sceKernelLseek(reused, 0, 1) == 5);
     Require(sceKernelLseek(reused, 0, 2) == 0);
     Require(sceKernelClose(reused) == 0);
+    Require(sceKernelClose(reused) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelClose(-1) == SCE_KERNEL_ERROR_EBADF);
     std::filesystem::remove_all(root);
 }
