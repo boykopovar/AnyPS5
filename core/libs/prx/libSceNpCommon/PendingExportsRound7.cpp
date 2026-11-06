@@ -124,11 +124,6 @@ int APS5_VABI _ZN3sce2np14CalloutContextD0Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZThn8_N3sce2np10MemoryFile4ReadEPNS0_6HandleEPvmPm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -190,11 +185,6 @@ bool APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void* self) {
 }
 
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -427,11 +417,6 @@ int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient15RegisterServiceEPKNS1_17Service
 }
 
 int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
