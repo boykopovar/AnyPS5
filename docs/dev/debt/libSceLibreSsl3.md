@@ -41,7 +41,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 171 remaining callable exports: 161 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 167 remaining callable exports: 157 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -62,7 +62,6 @@
 | `BIO_clear_flags` | `3sypCuBDdQs` |
 | `EVP_chacha20` | `3tGgkjBQ82A` |
 | `ASN1_INTEGER_set` | `3v2Omd4sqcU` |
-| `RSA_set0_factors` | `3wlK0tLONvk` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `BIO_get_shutdown` | `44M+SEbpNdQ` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
@@ -82,7 +81,6 @@
 | `unknown` | `A-Hs-8mau+8` |
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `tls_config_set_key_mem` | `A65b+ZhOt9k` |
-| `BN_clear_free` | `ABcJv8S1KEM` |
 | `unknown` | `AiNud8LR8B4` |
 | `X509_cmp_current_time` | `Ax+Uu++rnrA` |
 | `SSL_CTX_set_timeout` | `BBOgwZLvXHA` |
@@ -119,7 +117,6 @@
 | `unknown` | `PBYz0kpXwg8` |
 | `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
-| `RSA_set0_crt_params` | `QTV9Nyi7ryg` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
 | `SSL_CIPHER_get_id` | `QaiPrM-RrrM` |
 | `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
@@ -196,7 +193,6 @@
 | `EC_POINT_dup` | `uITUdhDDAg8` |
 | `HKDF` | `uJ2ZXq4z3As` |
 | `EVP_aes_128_ccm` | `uM9UnC8KFjY` |
-| `RSA_set0_key` | `uihDBp74nLI` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `tls_free` | `uz3bWkbHZu4` |
 | `tls_config_verify_client` | `v1vHv4jOJxQ` |
@@ -217,4 +213,10 @@
 | `ECDSA_SIG_get0` | `z8fsXF8JuL0` |
 | `EVP_MD_block_size` | `zCa75KLWWn4` |
 
-- 111 of the 126 exports the 13.60 table lists only by NID carry, in the table above and in [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp), the LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior; each keeps the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
+- 107 of the 126 exports the 13.60 table lists only by NID carry, in the table above and in [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp), the LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior; each keeps the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
+
+### Functional
+
+- [RSA_set0_key, RSA_set0_factors, RSA_set0_crt_params and BN_clear_free](../../../core/libs/prx/libSceLibreSsl3/src/RsaSetters.cpp) have no console verification or key-constructor/destructor interoperability measurement. They use the existing 152-byte RSA layout and the 24-byte BIGNUM layout of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto), following `rsa/rsa_lib.c` and `bn/bn_lib.c`: a successful setter owns supplied components, retains omitted components and clears replaced components through the guest allocator; static limb arrays are borrowed. Missing required components return zero before mutation. Null RSA objects and negative owned limb capacities throw instead of dereferencing invalid memory or erasing an unbounded range. Malformed pointers and aliased component ownership are unverified. Closes when: compared with the console and complete key lifetimes.
+
+- [Forwarded BN_new and BN_free](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) still throw in the parent library. Future implementations must allocate owned BIGNUM limbs and structs from the same guest heap used by the RSA setters and set `BN_FLG_MALLOCED` on heap-owned structs. Constructor/setter/destructor interoperability remains unverified.
