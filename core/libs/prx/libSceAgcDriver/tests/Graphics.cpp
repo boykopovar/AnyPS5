@@ -12947,6 +12947,24 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         subgroup.hostSubgroupSize = 64;
         Require(!(subgroup.Identity() == constFirst.Identity()), "the host subgroup size did not enter the identity");
         Require(ShaderRecompiler::RecompileResult{}.Identity().Empty(), "a result without a module has an identity");
+        const auto embedded = [&](std::uint32_t element, std::uint32_t word) {
+            auto result = module(1);
+            auto& binding = result.bindings.emplace_back();
+            binding.samplerEmbedded = {element};
+            binding.samplerEmbeddedWords = {word, 1u, 2u, 3u};
+            return result;
+        };
+        Require(embedded(0u, 5u).Identity() == embedded(0u, 5u).Identity() && !(embedded(0u, 5u).Identity() == constFirst.Identity()), "an embedded sampler did not enter the identity");
+        Require(!(embedded(0u, 5u).Identity() == embedded(0u, 6u).Identity()), "the embedded sampler words did not enter the identity");
+        Require(!(embedded(0u, 5u).Identity() == embedded(1u, 5u).Identity()), "the embedded sampler element did not enter the identity");
+        const auto flagged = [&](std::size_t flag) {
+            auto result = embedded(0u, 5u);
+            auto& binding = result.bindings.back();
+            for (auto* flags : {&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}) flags->assign(1, false);
+            if (flag < 4u) (*std::array{&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}[flag])[0] = true;
+            return result;
+        };
+        for (std::size_t flag = 0; flag < 4u; ++flag) Require(!(flagged(flag).Identity() == flagged(4u).Identity()), "an embedded sampler flag did not enter the identity");
     }
     mock = MockVulkan{};
     auto context = mockContext();

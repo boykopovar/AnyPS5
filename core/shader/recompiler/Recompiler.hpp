@@ -879,7 +879,17 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
         mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
-        for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+        for (const auto& binding : bindings) {
+            mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+            mix(binding.samplerEmbedded.size());
+            for (const auto value : binding.samplerEmbedded) mix(value);
+            mix(binding.samplerEmbeddedWords.size());
+            for (const auto value : binding.samplerEmbeddedWords) mix(value);
+            for (const auto* flags : {&binding.samplerDepthCompare, &binding.samplerUnnormalized, &binding.samplerIntegerBorder, &binding.samplerCoordinatesIgnored}) {
+                mix(flags->size());
+                for (std::size_t element = 0; element < flags->size(); ++element) mix((*flags)[element] ? 1u : 0u);
+            }
+        }
         if (identity.Empty()) identity.low = 1;
         return identity;
     }
