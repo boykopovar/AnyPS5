@@ -1,4 +1,5 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
@@ -34,6 +35,9 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int NpObjectAlreadyInitialized = static_cast<int>(0x80559E03);
+constexpr int NpTimedOut = static_cast<int>(0x8055800B);
+constexpr int NpCondTimedOut = static_cast<int>(0x8055800B);
 constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
@@ -226,6 +230,17 @@ void TestHeaps() {
     Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
     Require(sceNpFreeKernelMemory(nullptr) == NpNullObject, "freeing needs an object");
 
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", &address, nullptr) == NpNullObject,
+        "unaligned kernel memory allocation needs an object");
+    address = nullptr;
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", &address, &memory) == 0
+            && address != nullptr && address == memory.address && memory.size == 0x4000,
+        "kernel memory allocation writes the mapped address");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", nullptr, &memory) == 0 && memory.address != nullptr,
+        "kernel memory allocation accepts a null address output");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
+
     Require(sceNpArchInit() == 0 && sceNpArchInit() == 0, "the library initialises more than once");
     NpAllocatorEx* global = sceNpGlobalHeapGetAllocatorExPtr();
     Require(global->outOfMemoryError == NpOutOfMemory, "the global allocator reports the library's out-of-memory error");
@@ -359,6 +374,163 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct SemaphoreWaiter {
+    NpSemaphoreObject* semaphore;
+    std::atomic<bool> started {false};
+    std::atomic<bool> done {false};
+    int result = -1;
+};
+
+void* APS5_VABI WaitOnSemaphore(void* arg) {
+    auto* waiter = static_cast<SemaphoreWaiter*>(arg);
+    waiter->started = true;
+    waiter->result = _ZN3sce2np9Semaphore4WaitEj(waiter->semaphore, 0);
+    waiter->done = true;
+    return nullptr;
+}
+
+void TestSemaphoreObjects() {
+    NpSemaphoreObject semaphore {};
+    _ZN3sce2np9SemaphoreC1Ev(&semaphore);
+    bool refused = false;
+    try {
+        _ZN3sce2np9Semaphore6SignalEv(&semaphore);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(semaphore.vtable != nullptr && !_ZNK3sce2np9Semaphore6IsInitEv(&semaphore) && refused, "a semaphore asserts that it is created before use");
+    Require(_ZN3sce2np9Semaphore6CreateEiiPKc(&semaphore, 3, 2, "NpSemaphoreBad") < 0 && !_ZNK3sce2np9Semaphore6IsInitEv(&semaphore),
+        "a refused Create leaves the semaphore uninitialized");
+    Require(_ZN3sce2np9Semaphore6CreateEiiPKc(&semaphore, 0, 2, "NpSemaphoreObject") == 0 && _ZNK3sce2np9Semaphore6IsInitEv(&semaphore),
+        "a semaphore is created");
+    Require(_ZN3sce2np9Semaphore6CreateEiiPKc(&semaphore, 0, 2, "NpSemaphoreObject") == NpObjectAlreadyInitialized
+        && _ZN3sce2np9Semaphore4OpenEPKc(&semaphore, "NpSemaphoreObject") == NpObjectAlreadyInitialized, "a second Create or Open is refused");
+    Require(_ZN3sce2np9Semaphore4WaitEj(&semaphore, 1000) == NpTimedOut, "a timed wait on an empty semaphore times out");
+    KernelUseconds timeout = 1000;
+    Require(sceNpWaitSema(semaphore.sema, &timeout) == NpTimedOut, "sceNpWaitSema maps the kernel timeout");
+    Require(_ZN3sce2np9Semaphore6SignalEv(&semaphore) == 0 && _ZN3sce2np9Semaphore4WaitEj(&semaphore, 0) == 0, "a signal is taken by a wait without a timeout");
+    Require(_ZN3sce2np9Semaphore6SignalEv(&semaphore) == 0 && _ZN3sce2np9Semaphore6SignalEv(&semaphore) == 0
+        && _ZN3sce2np9Semaphore6SignalEv(&semaphore) < 0, "a signal past the maximum count is refused");
+    Require(_ZN3sce2np9Semaphore4WaitEj(&semaphore, 1000) == 0 && _ZN3sce2np9Semaphore4WaitEj(&semaphore, 1000) == 0,
+        "each signal is taken once");
+
+    SemaphoreWaiter waiter {&semaphore};
+    Pthread thread {};
+    Require(sceNpCreateThread(&thread, WaitOnSemaphore, &waiter, 0, 0x10000, 0, "NpSemaphoreWaiter") == 0, "a waiting thread is created");
+    while (!waiter.started) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(!waiter.done && _ZN3sce2np9Semaphore6SignalEv(&semaphore) == 0, "the waiter blocks until a signal");
+    void* value = nullptr;
+    Require(sceNpJoinThread(thread, &value) == 0 && waiter.result == 0, "a signal wakes the waiter");
+    _ZN3sce2np9Semaphore7DestroyEv(&semaphore);
+    _ZN3sce2np9Semaphore7DestroyEv(&semaphore);
+    Require(!_ZNK3sce2np9Semaphore6IsInitEv(&semaphore), "Destroy leaves the semaphore uninitialized and may be repeated");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpSemaphoreObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpSemaphoreObject), &allocator));
+    _ZN3sce2np9SemaphoreC1Ev(owned);
+    Require(_ZN3sce2np9Semaphore6CreateEiiPKc(owned, 1, 1, "NpSemaphoreOwned") == 0, "an allocated semaphore is created");
+    using Destructor = void APS5_VABI (*)(NpSemaphoreObject*);
+    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
+}
+
+struct CondObjectWaiter {
+    NpMutexObject* mutex;
+    NpCondObject* cond;
+    std::atomic<int> stage {0};
+    int result = -1;
+};
+
+void* APS5_VABI WaitOnCond(void* arg) {
+    auto* waiter = static_cast<CondObjectWaiter*>(arg);
+    _ZN3sce2np5Mutex4LockEv(waiter->mutex);
+    waiter->stage = 1;
+    while (waiter->stage == 1) waiter->result = _ZN3sce2np4Cond4WaitEj(waiter->cond, 5000000);
+    _ZN3sce2np5Mutex6UnlockEv(waiter->mutex);
+    return nullptr;
+}
+
+bool WakeWaiter(NpMutexObject* mutex, NpCondObject* cond, bool targeted) {
+    CondObjectWaiter waiter {mutex, cond};
+    Pthread thread {};
+    if (sceNpCreateThread(&thread, WaitOnCond, &waiter, 0, 0x10000, 0, "NpCondWaiter") != 0) return false;
+    while (waiter.stage != 1) std::this_thread::yield();
+    _ZN3sce2np5Mutex4LockEv(mutex);
+    waiter.stage = 2;
+    const int signalled = targeted ? _ZN3sce2np4Cond8SignalToEP7pthread(cond, thread) : _ZN3sce2np4Cond6SignalEv(cond);
+    _ZN3sce2np5Mutex6UnlockEv(mutex);
+    void* value = nullptr;
+    return signalled == 0 && sceNpJoinThread(thread, &value) == 0 && waiter.result == 0;
+}
+
+template <typename Call>
+bool RefusedBeforeInit(Call call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestMutexAndCondObjects() {
+    NpMutexObject mutex {};
+    _ZN3sce2np5MutexC1Ev(&mutex);
+    Require(mutex.vtable != nullptr && !mutex.isInit, "a constructed mutex is not initialized");
+    Require(RefusedBeforeInit([&] { _ZN3sce2np5Mutex4LockEv(&mutex); }) && RefusedBeforeInit([&] { _ZN3sce2np5Mutex7TryLockEv(&mutex); })
+        && RefusedBeforeInit([&] { _ZN3sce2np5Mutex6UnlockEv(&mutex); }), "locking asserts that the mutex is initialized");
+    Require(_ZN3sce2np5Mutex4InitEPKcj(&mutex, "NpMutexObject", 0) == 0 && mutex.isInit, "a mutex is initialized");
+    Require(_ZN3sce2np5Mutex4InitEPKcj(&mutex, "NpMutexObject", 0) == NpObjectAlreadyInitialized, "a second Init is refused");
+    Require(_ZN3sce2np5Mutex7TryLockEv(&mutex) && !_ZN3sce2np5Mutex7TryLockEv(&mutex), "a held plain mutex cannot be taken again");
+    _ZN3sce2np5Mutex6UnlockEv(&mutex);
+
+    NpMutexObject recursive {};
+    _ZN3sce2np5MutexC1Ev(&recursive);
+    Require(_ZN3sce2np5Mutex4InitEPKcj(&recursive, "NpMutexRecursive", 3) == 0, "a recursive mutex is initialized");
+    Require(_ZN3sce2np5Mutex7TryLockEv(&recursive) && _ZN3sce2np5Mutex7TryLockEv(&recursive), "bit 0 of the flags makes the mutex recursive");
+    _ZN3sce2np5Mutex6UnlockEv(&recursive);
+    _ZN3sce2np5Mutex6UnlockEv(&recursive);
+    _ZN3sce2np5Mutex7DestroyEv(&recursive);
+    _ZN3sce2np5Mutex7DestroyEv(&recursive);
+    Require(!recursive.isInit, "Destroy leaves the mutex uninitialized and may be repeated");
+
+    NpCondObject cond {};
+    _ZN3sce2np4CondC1Ev(&cond);
+    Require(cond.vtable != nullptr && !_ZNK3sce2np4Cond6IsInitEv(&cond), "a constructed condition is not initialized");
+    Require(_ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(&cond, "NpCondObject", &mutex) == 0 && _ZNK3sce2np4Cond6IsInitEv(&cond) && cond.mutex == &mutex.mutex,
+        "a condition keeps the kernel mutex of its sce::np::Mutex");
+    Require(_ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(&cond, "NpCondObject", &mutex) == NpObjectAlreadyInitialized, "a second Init is refused");
+    _ZN3sce2np5Mutex4LockEv(&mutex);
+    Require(_ZN3sce2np4Cond4WaitEj(&cond, 2000) == NpCondTimedOut, "a timed wait reports the timeout");
+    _ZN3sce2np5Mutex6UnlockEv(&mutex);
+    Require(_ZN3sce2np4Cond6SignalEv(&cond) == 0 && _ZN3sce2np4Cond9SignalAllEv(&cond) == 0, "signalling without waiters succeeds");
+    Require(WakeWaiter(&mutex, &cond, false), "Signal wakes a waiter");
+    Require(WakeWaiter(&mutex, &cond, true), "SignalTo wakes the given waiter");
+    _ZN3sce2np4Cond7DestroyEv(&cond);
+    Require(!_ZNK3sce2np4Cond6IsInitEv(&cond) && cond.cond == nullptr, "Destroy clears the condition");
+    Require(_ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(&cond, "NpCondNullMutex", nullptr) == 0 && _ZNK3sce2np4Cond6IsInitEv(&cond),
+        "Init with a null mutex stores its member address and counts as initialized");
+    _ZN3sce2np4Cond7DestroyEv(&cond);
+    _ZN3sce2np5Mutex7DestroyEv(&mutex);
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    using MutexDestructor = void APS5_VABI (*)(NpMutexObject*);
+    using CondDestructor = void APS5_VABI (*)(NpCondObject*);
+    auto* ownedMutex = static_cast<NpMutexObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpMutexObject), &allocator));
+    _ZN3sce2np5MutexC1Ev(ownedMutex);
+    Require(_ZN3sce2np5Mutex4InitEPKcj(ownedMutex, "NpMutexOwned", 0) == 0, "an allocated mutex is initialized");
+    reinterpret_cast<MutexDestructor>(ownedMutex->vtable[1])(ownedMutex);
+    Require(record.released == record.block.data(), "the mutex deleting destructor frees through the stored allocator");
+    record.released = nullptr;
+    auto* ownedCond = static_cast<NpCondObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCondObject), &allocator));
+    _ZN3sce2np4CondC1Ev(ownedCond);
+    reinterpret_cast<CondDestructor>(ownedCond->vtable[1])(ownedCond);
+    Require(record.released == record.block.data(), "the condition deleting destructor frees through the stored allocator");
 }
 
 struct ExRecord {
@@ -606,7 +778,7 @@ void TestTitleSecretObjects() {
     auto* owned = static_cast<NpTitleSecretObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleSecretObject), &allocator));
     _ZN3sce2np13NpTitleSecretC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleSecretObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -706,6 +878,20 @@ void TestCalloutSelfTermination() {
 
 bool Equals(const char* actual, const char* expected) {
     return std::strcmp(actual, expected) == 0;
+}
+
+void TestUserIdList() {
+    std::array<int, 20> users;
+    users.fill(0x5A5A);
+    int count = 0x5A5A;
+    for (std::size_t capacity = 0; capacity < users.size(); ++capacity) {
+        Require(sceNpUserGetUserIdList(users.data(), capacity, &count) == NpInvalidArgument,
+            "a short user id list is refused");
+        Require(count == 0x5A5A, "a short user id list leaves the count unchanged");
+        for (const int user : users) Require(user == 0x5A5A, "a short user id list leaves the users unchanged");
+    }
+    Require(sceNpUserGetUserIdList(users.data(), users.size(), &count) == 0, "the registered user ids are read");
+    Require(count == 1 && users[0] == USER_SERVICE_INITIAL_USER_ID, "the initial user is the only registered user");
 }
 
 void TestIds() {
@@ -1200,6 +1386,8 @@ void TestBase64() {
     Require(sceNpBase64UrlGetDecodeSize("+w==", 4) == NpInvalidCharacter, "base64url refuses the standard alphabet");
     Require(sceNpBase64UrlDecoder("-wA", 3, bytes, 2) == 2 && bytes[0] == 0xFB && bytes[1] == 0, "base64url decodes a short tail");
     Require(sceNpBase64UrlDecoder("-w", 2, bytes, 0) == NpInvalidFormat, "base64url decoding refuses a short buffer");
+    Require(sceNpBase64UrlGetDecodeSize(nullptr, 0) == NpInvalidCharacter && sceNpBase64UrlDecoder(nullptr, 0, bytes, sizeof(bytes)) == NpInvalidCharacter,
+        "base64url decoding of a null source with no length behaves like an empty one");
 }
 
 void TestNumbers() {
@@ -1543,6 +1731,8 @@ int main() {
     TestObjects();
     TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
+    TestSemaphoreObjects();
+    TestMutexAndCondObjects();
     TestAllocatorExRecorded();
     TestRingBuf();
     TestMemoryStreams();
@@ -1563,5 +1753,6 @@ int main() {
     TestXmlText();
     TestJsonParser();
     TestTitleIds();
+    TestUserIdList();
     std::puts("guest np common runtime: PASS");
 }
