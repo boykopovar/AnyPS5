@@ -47,6 +47,10 @@ const char* APS5_VABI _getprogname_nid_postfix();
 void APS5_VABI setprogname_nid_postfix(const char* name);
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
+void* APS5_VABI sceLibcInternalPmrNewDeleteResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrGetDefaultResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrNullMemoryResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrSetDefaultResource_nid_no_patch(void* resource) noexcept;
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
 void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
 int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle);
@@ -117,6 +121,7 @@ bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target)
 char* APS5_VABI _ZNSt10filesystem9_Read_dirERA260_cPvRNS_9file_typeE_nid_postfix(char* target, void* handle, int* type);
 void* APS5_VABI _ZNSt10filesystem9_Open_dirERA260_cPKcRiRNS_9file_typeE_nid_postfix(char* target, const char* path, int* error, int* type);
 int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle);
+void APS5_VABI sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(void* self);
 int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
