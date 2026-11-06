@@ -126,6 +126,11 @@ void TestMediaTimeCreationAndConversions() {
     WTF::MediaTime t2ZeroScaleNeg = _ZN3WTF9MediaTime16createWithDoubleEdj(-2.5, 0);
     Require(_ZNK3WTF9MediaTime18isNegativeInfiniteEv(&t2ZeroScaleNeg));
 
+    WTF::MediaTime t2NegProduct = _ZN3WTF9MediaTime16createWithDoubleEdj(-1e12, 10000000);
+    Require(_ZNK3WTF9MediaTime7isValidEv(&t2NegProduct));
+    Require(_ZNK3WTF9MediaTime9timeScaleEv(&t2NegProduct) < 10000000);
+    Require(std::fabs(_ZNK3WTF9MediaTime8toDoubleEv(&t2NegProduct) + 1e12) < 1e-3);
+
     WTF::MediaTime f1 = _ZN3WTF9MediaTime15createWithFloatEf(1.25f);
     Require(_ZNK3WTF9MediaTime14hasDoubleValueEv(&f1));
     Require(_ZNK3WTF9MediaTime7toFloatEv(&f1) == 1.25f);
