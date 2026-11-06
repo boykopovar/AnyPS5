@@ -13,7 +13,9 @@
 #endif
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -147,6 +149,101 @@ void CheckGuestWriteBeforeRepeatedClears(AgcDriver::VulkanDevice& device, const 
     Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a stencil plane the guest wrote after its last store stayed stale");
 }
 
+#ifdef __linux__
+struct SharedPlanes {
+    int file = -1;
+    std::uintptr_t begin = 0;
+    std::size_t bytes = 0;
+    std::uint64_t offset = 0;
+};
+SharedPlanes sharedPlanes;
+
+bool ResolveSharedPlanes(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+    if (sharedPlanes.file < 0 || bytes == 0 || address < sharedPlanes.begin || address - sharedPlanes.begin >= sharedPlanes.bytes || bytes > sharedPlanes.bytes - (address - sharedPlanes.begin)) return false;
+    *file = fcntl(sharedPlanes.file, F_DUPFD_CLOEXEC, 0);
+    *offset = sharedPlanes.offset + (address - sharedPlanes.begin);
+    return *file >= 0;
+}
+#endif
+
+void* AllocateSharedBlocks(std::size_t bytes) {
+#ifdef __linux__
+    const int file = memfd_create("stencil-plane-memory", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    Require(file >= 0, "cannot create the shared depth and stencil planes");
+    Require(ftruncate(file, static_cast<off_t>(bytes + Block)) == 0 && fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK) == 0, "cannot size the shared depth and stencil planes");
+    void* raw = mmap(nullptr, bytes + Block, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+    Require(raw != MAP_FAILED, "cannot map the shared depth and stencil planes");
+    const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+    const auto aligned = (begin + Block - 1) & ~static_cast<std::uintptr_t>(Block - 1);
+    if (aligned != begin) munmap(raw, aligned - begin);
+    if (aligned + bytes != begin + bytes + Block) munmap(reinterpret_cast<void*>(aligned + bytes), begin + Block - aligned);
+    sharedPlanes = {file, aligned, bytes, aligned - begin};
+    GuestArena::GuestArenaSetSharedBacking_nid_postfix(ResolveSharedPlanes);
+    void* block = reinterpret_cast<void*>(aligned);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
+    GuestAllocations::Mutation().Add(block, bytes, true, true, true);
+    return block;
+#else
+    return AllocateBlocks(bytes);
+#endif
+}
+
+void CheckReusedStencilPlane(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint32_t swizzle) {
+    auto* blocks = static_cast<std::byte*>(AllocateSharedBlocks(DepthBytes + StencilBytes));
+    auto* depth = reinterpret_cast<float*>(blocks);
+    auto* stencil = reinterpret_cast<std::uint8_t*>(blocks + DepthBytes);
+    std::fill(depth, depth + DepthBytes / sizeof(float), 1.0f);
+    Fill(stencil, 0u);
+    const auto stencilBase = reinterpret_cast<std::uintptr_t>(stencil);
+    const Surface surface{reinterpret_cast<std::uintptr_t>(depth), stencilBase, 0, false, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+    const auto draw = [&](std::uint8_t reference) {
+        Require(Draw(device, shaders, surface, {.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, reference)}, PlaneExtent, Colors) == PlaneTexels, "a draw writing stencil over the reused plane did not cover it");
+    };
+    draw(0x18u);
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the shared stencil plane after a draw stored nothing");
+    device.WaitIdle();
+    Require(Holding(stencil, 0x18u) == StencilBytes, "the stencil drawn into the shared plane did not reach guest memory");
+    if (!AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes)) {
+        std::puts("the shared stencil plane is not write-watched here: a guest reusing the plane's memory is not exercised");
+        return;
+    }
+    constexpr std::size_t RecordBytes = 0x30;
+    constexpr std::array<std::size_t, 3> RecordOffsets{0x1000, 0x7dd0, StencilBytes - RecordBytes};
+    const auto writeRecords = [&](std::uint8_t value) {
+        for (const auto offset : RecordOffsets) std::fill(stencil + offset, stencil + offset + RecordBytes, value);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+    };
+    const auto recordsHold = [&](std::uint8_t value) {
+        return std::all_of(RecordOffsets.begin(), RecordOffsets.end(), [&](std::size_t offset) { return std::all_of(stencil + offset, stencil + offset + RecordBytes, [&](std::uint8_t byte) { return byte == value; }); });
+    };
+
+    draw(0x66u);
+    Fill(stencil, 0x77u);
+    const bool storedOverFill = !AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty();
+    device.WaitIdle();
+    Require(Holding(stencil, 0x77u) == StencilBytes, "a read of a stencil plane the guest wrote over after a draw stored the stencil drawn before the write over the guest's bytes");
+    Require(!storedOverFill, "a read of a stencil plane the guest wrote over after a draw stored the stencil drawn before the write");
+
+    draw(0x2bu);
+    writeRecords(0x7au);
+    AgcDriver::Graphics::RetireDepthSurfaces(device.graphicsContext().device, surface.depth, DepthBytes);
+    device.WaitIdle();
+    Require(recordsHold(0x7au), "retiring the surface stored the stencil drawn before the guest wrote records into the plane over them");
+    Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane whose retired surface's stencil was dropped stored it");
+
+    draw(0x4du);
+    writeRecords(0x3cu);
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(surface.depth, DepthBytes + StencilBytes, AgcDriver::Graphics::DepthPlaneScope::Whole));
+    device.WaitIdle();
+    Require(recordsHold(0x3cu), "a whole read of the planes stored the stencil drawn before the guest wrote records into the plane over them");
+
+    writeRecords(0x5eu);
+    draw(0x18u);
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane drawn after the guest's records stored nothing");
+    device.WaitIdle();
+    Require(Holding(stencil, 0x18u) == StencilBytes, "the stencil drawn after the guest wrote records did not reach guest memory over them");
+}
+
 }
 
 int main() {
@@ -255,6 +352,8 @@ int main() {
         Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane drawn after the unmap stored nothing");
         device->WaitIdle();
         Require(Holding(stencilPlane, 0x18u) == StencilBytes, "the stencil drawn after the unmap did not reach guest memory");
+
+        CheckReusedStencilPlane(*device, shaders, swizzle);
         std::puts("stencil plane memory tests passed");
         return 0;
     } catch (const std::exception& error) {
