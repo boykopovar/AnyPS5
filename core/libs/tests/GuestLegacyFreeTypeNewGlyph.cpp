@@ -40,8 +40,10 @@ public:
     explicit Module(const char* path) {
 #ifdef _WIN32
         handle = LoadLibraryW(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(path))).c_str());
+        if (!handle) std::fprintf(stderr, "LoadLibraryW failed for %s: %lu\n", path, GetLastError());
 #else
         handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        if (!handle) std::fprintf(stderr, "dlopen failed for %s: %s\n", path, dlerror());
 #endif
         Require(handle != nullptr, "load legacy module");
     }
