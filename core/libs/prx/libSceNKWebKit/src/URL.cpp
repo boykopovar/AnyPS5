@@ -1,5 +1,12 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+
+#include <cstring>
+#include <new>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -307,12 +314,28 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
 
 namespace {
 
+std::optional<std::uint16_t> WithoutDefaultPort(const std::u16string& protocol, std::optional<std::uint16_t> port) {
+    if (!port) return port;
+    struct DefaultPort {
+        std::u16string_view protocol;
+        std::uint16_t port;
+    };
+    static constexpr DefaultPort defaults[] = {
+        {u"ftp", 21}, {u"ws", 80}, {u"http", 80}, {u"wss", 443}, {u"https", 443},
+    };
+    for (const auto& entry : defaults) {
+        if (entry.protocol == protocol && entry.port == *port) return std::nullopt;
+    }
+    return port;
+}
+
 class SecurityOrigin final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::SecurityOrigin> {
 public:
     SecurityOrigin(const NKWebKit::String& protocol, const NKWebKit::String& host, std::optional<std::uint16_t> port)
-        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
+        : protocol(protocol.characters), host(host.characters), port(WithoutDefaultPort(protocol.characters, port)),
+          protocolNull(protocol.null), hostNull(host.null) {}
     SecurityOrigin(std::u16string protocol, std::u16string host, std::optional<std::uint16_t> port)
-        : protocol(std::move(protocol)), host(std::move(host)), port(port) {}
+        : protocol(std::move(protocol)), host(std::move(host)), port(WithoutDefaultPort(this->protocol, port)) {}
 
     std::u16string protocol;
     std::u16string host;
@@ -325,6 +348,10 @@ const void* CopyOriginString(std::u16string text) {
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(std::move(text)));
 }
 
+const void* CreateOpaqueOrigin() {
+    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
+}
+
 std::u16string PortString(std::uint16_t port) {
     const auto text = std::to_string(port);
     return {text.begin(), text.end()};
@@ -334,6 +361,72 @@ void ConvertToASCIILowercase(std::u16string& text) {
     for (auto& c : text) {
         if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c - u'A' + u'a');
     }
+}
+
+bool EqualsLettersIgnoringASCIICase(const std::u16string& text, std::u16string_view lowercaseLiteral) {
+    auto copy = text;
+    ConvertToASCIILowercase(copy);
+    return copy == lowercaseLiteral;
+}
+
+bool IsValidScheme(const std::u16string& scheme) {
+    if (scheme.empty()) return false;
+    for (std::size_t i = 0; i < scheme.size(); ++i) {
+        const char16_t c = scheme[i];
+        const bool alpha = (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z');
+        const bool other = (c >= u'0' && c <= u'9') || c == u'+' || c == u'-' || c == u'.';
+        if (!(alpha || (i && other))) return false;
+    }
+    return true;
+}
+
+bool ParseAuthorityPort(std::u16string_view text, std::optional<std::uint16_t>& port) {
+    port.reset();
+    if (text.empty()) return true;
+    unsigned value = 0;
+    for (const char16_t c : text) {
+        if (c < u'0' || c > u'9') return false;
+        value = value * 10 + (c - u'0');
+        if (value > 65535) return false;
+    }
+    port = static_cast<std::uint16_t>(value);
+    return true;
+}
+
+bool IsUnicodeCompatibleASCIIWhitespace(char16_t c) {
+    return c == u' ' || c == u'\n' || c == u'\t' || c == u'\r' || c == u'\f';
+}
+
+std::optional<std::uint16_t> ParseUInt16AllowingTrailingJunk(std::u16string_view text) {
+    std::size_t i = 0;
+    while (i < text.size() && IsUnicodeCompatibleASCIIWhitespace(text[i])) ++i;
+    if (i < text.size() && text[i] == u'+') ++i;
+    if (i == text.size() || text[i] < u'0' || text[i] > u'9') return std::nullopt;
+    unsigned value = 0;
+    for (; i < text.size() && text[i] >= u'0' && text[i] <= u'9'; ++i) {
+        value = value * 10 + (text[i] - u'0');
+        if (value > 65535) return std::nullopt;
+    }
+    return static_cast<std::uint16_t>(value);
+}
+
+std::u16string EncodeForFileName(const std::u16string& text) {
+    if (text.size() > 0x7FFFFFFFu) throw std::length_error("file name component exceeds maximum length");
+    void* characters = nullptr;
+    auto* impl = NKWebKit::WtfAbi::TryCreateUninitialized(static_cast<unsigned>(text.size()), false, characters);
+    if (!impl) throw std::bad_alloc();
+    NKWebKit::WtfAbi::String input(impl);
+    if (!text.empty()) std::memcpy(characters, text.data(), text.size() * sizeof(char16_t));
+    const auto output = _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(&input);
+    if (!output.impl) throw std::bad_alloc();
+    std::u16string result;
+    result.reserve(output.impl->length);
+    const bool is8Bit = output.impl->hashAndFlags & 4;
+    for (unsigned i = 0; i < output.impl->length; ++i) {
+        result.push_back(is8Bit ? static_cast<const unsigned char*>(output.impl->data)[i]
+                                : static_cast<const char16_t*>(output.impl->data)[i]);
+    }
+    return result;
 }
 
 }  // namespace
@@ -349,15 +442,12 @@ const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* h
 
 const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     const auto* str = NKWebKit::Cast<NKWebKit::String>(string, __func__);
-    if (str->null || str->characters.empty()) {
-        return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
-    }
+    if (str->null || str->characters.empty()) return CreateOpaqueOrigin();
     const auto& text = str->characters;
     const auto schemeEnd = text.find(u"://");
-    if (schemeEnd == std::u16string::npos) {
-        return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
-    }
+    if (schemeEnd == std::u16string::npos) return CreateOpaqueOrigin();
     auto protocol = text.substr(0, schemeEnd);
+    if (!IsValidScheme(protocol)) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(protocol);
     if (protocol == u"file") {
         return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::u16string(), std::nullopt));
@@ -366,46 +456,28 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     const auto pathStart = text.find_first_of(u"/?#", hostStart);
     auto authority = (pathStart != std::u16string::npos) ? text.substr(hostStart, pathStart - hostStart) : text.substr(hostStart);
     const auto atPos = authority.rfind(u'@');
-    if (atPos != std::u16string::npos) {
-        authority = authority.substr(atPos + 1);
-    }
+    if (atPos != std::u16string::npos) authority = authority.substr(atPos + 1);
+
     std::u16string host;
-    std::optional<std::uint16_t> port;
+    std::u16string portText;
     if (authority.starts_with(u"[")) {
         const auto bracketEnd = authority.find(u']');
-        if (bracketEnd != std::u16string::npos) {
-            host = authority.substr(0, bracketEnd + 1);
-            if (bracketEnd + 1 < authority.size() && authority[bracketEnd + 1] == u':') {
-                auto portStr = authority.substr(bracketEnd + 2);
-                unsigned long long parsed = 0;
-                bool valid = !portStr.empty();
-                for (char16_t c : portStr) {
-                    if (c < u'0' || c > u'9') { valid = false; break; }
-                    parsed = parsed * 10 + (c - u'0');
-                    if (parsed > 65535) { valid = false; break; }
-                }
-                if (valid && parsed != 0) port = static_cast<std::uint16_t>(parsed);
-            }
-        } else {
-            host = authority;
+        if (bracketEnd == std::u16string::npos) return CreateOpaqueOrigin();
+        host = authority.substr(0, bracketEnd + 1);
+        const auto rest = authority.substr(bracketEnd + 1);
+        if (!rest.empty()) {
+            if (rest.front() != u':') return CreateOpaqueOrigin();
+            portText = rest.substr(1);
         }
     } else {
         const auto colon = authority.rfind(u':');
-        if (colon != std::u16string::npos) {
-            host = authority.substr(0, colon);
-            auto portStr = authority.substr(colon + 1);
-            unsigned long long parsed = 0;
-            bool valid = !portStr.empty();
-            for (char16_t c : portStr) {
-                if (c < u'0' || c > u'9') { valid = false; break; }
-                parsed = parsed * 10 + (c - u'0');
-                if (parsed > 65535) { valid = false; break; }
-            }
-            if (valid && parsed != 0) port = static_cast<std::uint16_t>(parsed);
-        } else {
-            host = authority;
-        }
+        host = authority.substr(0, colon);
+        if (colon != std::u16string::npos) portText = authority.substr(colon + 1);
     }
+    std::optional<std::uint16_t> port;
+    if (!ParseAuthorityPort(portText, port)) return CreateOpaqueOrigin();
+    const bool requiresHost = protocol == u"http" || protocol == u"https" || protocol == u"ftp";
+    if (requiresHost && host.empty()) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(host);
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
 }
@@ -417,20 +489,13 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* i
     const auto separator1 = text.find(u'_');
     if (separator1 == std::u16string::npos) return nullptr;
     const auto separator2 = text.rfind(u'_');
-    if (separator2 == std::u16string::npos || separator1 == separator2) return nullptr;
+    if (separator1 == separator2) return nullptr;
 
-    const auto portLength = text.size() - separator2 - 1;
-    std::optional<std::uint16_t> port;
-    if (portLength > 0) {
-        unsigned long long parsed = 0;
-        for (std::size_t i = separator2 + 1; i < text.size(); ++i) {
-            char16_t c = text[i];
-            if (c < u'0' || c > u'9') return nullptr;
-            parsed = parsed * 10 + (c - u'0');
-            if (parsed > 65535) return nullptr;
-        }
-        if (parsed != 0) port = static_cast<std::uint16_t>(parsed);
-    }
+    const auto portText = std::u16string_view(text).substr(separator2 + 1);
+    auto port = ParseUInt16AllowingTrailingJunk(portText);
+    if (!port && !portText.empty()) return nullptr;
+    if (port && !*port) port = std::nullopt;
+
     auto protocol = text.substr(0, separator1);
     auto host = text.substr(separator1 + 1, separator2 - separator1 - 1);
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
@@ -438,8 +503,8 @@ const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* i
 
 const void* APS5_VABI WKSecurityOriginCopyDatabaseIdentifier(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
-    if (value->protocol == u"file") return CopyOriginString(u"file__0");
-    auto text = value->protocol + u"_" + value->host + u"_" + PortString(value->port.value_or(0));
+    if (EqualsLettersIgnoringASCIICase(value->protocol, u"file")) return CopyOriginString(u"file__0");
+    auto text = value->protocol + u"_" + EncodeForFileName(value->host) + u"_" + PortString(value->port.value_or(0));
     return CopyOriginString(std::move(text));
 }
 

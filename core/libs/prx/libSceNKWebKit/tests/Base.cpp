@@ -75,14 +75,23 @@ static void TestSecurityOrigin() {
     for (const Case& value : {
         Case{"http", "example.com", 8080, 8080, "http://example.com:8080", "http_example.com_8080"},
         Case{"http", "host_name", 0, 0, "http://host_name", "http_host_name_0"},
-        Case{"http", "example.com", 80, 80, "http://example.com:80", "http_example.com_80"},
+        Case{"http", "example.com", 80, 0, "http://example.com", "http_example.com_0"},
+        Case{"https", "example.com", 443, 0, "https://example.com", "https_example.com_0"},
+        Case{"ftp", "example.com", 21, 0, "ftp://example.com", "ftp_example.com_0"},
+        Case{"ws", "example.com", 80, 0, "ws://example.com", "ws_example.com_0"},
+        Case{"wss", "example.com", 443, 0, "wss://example.com", "wss_example.com_0"},
+        Case{"https", "example.com", 80, 80, "https://example.com:80", "https_example.com_80"},
+        Case{"http", "example.com", 443, 443, "http://example.com:443", "http_example.com_443"},
+        Case{"HTTP", "example.com", 80, 80, "HTTP://example.com:80", "HTTP_example.com_80"},
         Case{"https", "EXAMPLE", 65536, 0, "https://EXAMPLE", "https_EXAMPLE_0"},
         Case{"custom", "host", -1, 65535, "custom://host:65535", "custom_host_65535"},
         Case{"custom", "host", -65536, 0, "custom://host:0", "custom_host_0"},
         Case{"file", "host", 42, 42, "file://", "file__0"},
-        Case{"FILE", "host", 0, 0, "FILE://host", "FILE_host_0"},
+        Case{"FILE", "host", 0, 0, "FILE://host", "file__0"},
         Case{"", "", 0, 0, "", "__0"},
-        Case{"http", "a b%_c", 0, 0, "http://a b%_c", "http_a b%_c_0"}
+        Case{"http", "a b%_c", 0, 0, "http://a b%_c", "http_a%20b%25_c_0"},
+        Case{"http", "[::1]", 8080, 8080, "http://[::1]:8080", "http_[%3A%3A1]_8080"},
+        Case{"http", "a/b:c", 0, 0, "http://a/b:c", "http_a%2Fb%3Ac_0"}
     }) {
         const auto* protocol = WKStringCreateWithUTF8CString(value.protocol);
         const auto* host = WKStringCreateWithUTF8CString(value.host);
@@ -105,7 +114,7 @@ static void TestSecurityOrigin() {
     }
     WKRelease(origin);
 
-    for (const char* dbId : {"http_example.com_8080", "http_example.com_0", "file__0", "https_foo.org_443"}) {
+    for (const char* dbId : {"http_example.com_8080", "http_example.com_0", "file__0", "https_foo.org_8443"}) {
         const auto* idStr = WKStringCreateWithUTF8CString(dbId);
         const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
         WKRelease(idStr);
@@ -115,7 +124,39 @@ static void TestSecurityOrigin() {
         WKRelease(fromDb);
     }
 
-    for (const char* invalidDbId : {"", "invalid", "http_onlyone", "http_host_abc", "http_host_99999"}) {
+    struct DbCase {
+        const char* input;
+        const char* host;
+        unsigned port;
+        const char* dbId;
+    };
+    for (const DbCase& db : {
+        DbCase{"http_h_80abc", "h", 0, "http_h_0"},
+        DbCase{"http_h_8080abc", "h", 8080, "http_h_8080"},
+        DbCase{"http_h_8080_9", "h_8080", 9, "http_h_8080_9"},
+        DbCase{"http_h_ 8080", "h", 8080, "http_h_8080"},
+        DbCase{"http_h_\t+8080", "h", 8080, "http_h_8080"},
+        DbCase{"http_h_0", "h", 0, "http_h_0"},
+        DbCase{"http_h_", "h", 0, "http_h_0"},
+        DbCase{"http__0", "", 0, "http__0"},
+        DbCase{"https_h_443", "h", 0, "https_h_0"},
+        DbCase{"http_a%20b_80", "a%20b", 0, "http_a%2520b_0"},
+        DbCase{"http_A b_5", "A b", 5, "http_A%20b_5"},
+        DbCase{"http_h_65535", "h", 65535, "http_h_65535"},
+        DbCase{"FILE_h_9", "h", 9, "file__0"}
+    }) {
+        const auto* idStr = WKStringCreateWithUTF8CString(db.input);
+        const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
+        WKRelease(idStr);
+        Require(fromDb != nullptr);
+        Require(WKSecurityOriginGetPort(fromDb) == db.port);
+        CheckOriginString(WKSecurityOriginCopyHost(fromDb), db.host);
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromDb), db.dbId);
+        WKRelease(fromDb);
+    }
+
+    for (const char* invalidDbId : {"", "invalid", "http_onlyone", "http_host_abc", "http_host_99999", "http_host_65536",
+                                    "http_host_-1", "http_host_ ", "http_host_+", "http_host_99999999999999999999"}) {
         const auto* idStr = WKStringCreateWithUTF8CString(invalidDbId);
         const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
         WKRelease(idStr);
@@ -139,7 +180,36 @@ static void TestSecurityOrigin() {
         StringCase{"file:///home/user/test.html", "file", "", 0, "file://", "file__0"},
         StringCase{"custom://host", "custom", "host", 0, "custom://host", "custom_host_0"},
         StringCase{"invalid-string", "", "", 0, "", "__0"},
-        StringCase{"", "", "", 0, "", "__0"}
+        StringCase{"", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:80/", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"https://example.com:443", "https", "example.com", 0, "https://example.com", "https_example.com_0"},
+        StringCase{"ftp://example.com:21", "ftp", "example.com", 0, "ftp://example.com", "ftp_example.com_0"},
+        StringCase{"ws://example.com:80", "ws", "example.com", 0, "ws://example.com", "ws_example.com_0"},
+        StringCase{"wss://example.com:443", "wss", "example.com", 0, "wss://example.com", "wss_example.com_0"},
+        StringCase{"http://example.com:443", "http", "example.com", 443, "http://example.com:443", "http_example.com_443"},
+        StringCase{"HTTP://EXAMPLE.com:80", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:0/", "http", "example.com", 0, "http://example.com:0", "http_example.com_0"},
+        StringCase{"custom://host:0", "custom", "host", 0, "custom://host:0", "custom_host_0"},
+        StringCase{"http://example.com:/p", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://[::1]:8080/", "http", "[::1]", 8080, "http://[::1]:8080", "http_[%3A%3A1]_8080"},
+        StringCase{"http://[::1]/", "http", "[::1]", 0, "http://[::1]", "http_[%3A%3A1]_0"},
+        StringCase{"ws://", "ws", "", 0, "ws://", "ws__0"},
+        StringCase{"http://", "", "", 0, "", "__0"},
+        StringCase{"https:///path", "", "", 0, "", "__0"},
+        StringCase{"ftp://", "", "", 0, "", "__0"},
+        StringCase{"http://user@:80", "", "", 0, "", "__0"},
+        StringCase{"HTTP://", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:99999", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:65536", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:abc", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:80abc", "", "", 0, "", "__0"},
+        StringCase{"http://[::1", "", "", 0, "", "__0"},
+        StringCase{"http://[::1]x", "", "", 0, "", "__0"},
+        StringCase{"://host", "", "", 0, "", "__0"},
+        StringCase{"1http://host", "", "", 0, "", "__0"},
+        StringCase{"ht tp://host", "", "", 0, "", "__0"},
+        StringCase{"example.com:80", "", "", 0, "", "__0"},
+        StringCase{"http:/example.com", "", "", 0, "", "__0"}
     }) {
         const auto* inStr = WKStringCreateWithUTF8CString(sc.input);
         const auto* fromStr = WKSecurityOriginCreateFromString(inStr);
