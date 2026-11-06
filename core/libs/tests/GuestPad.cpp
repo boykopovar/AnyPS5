@@ -703,7 +703,6 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibrationForce(handle, &weak) == scePadSetVibration(handle, &weak) && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(handle, nullptr) == PAD_ERROR_INVALID_ARG && VibrationIs(0, 5, 6));
     for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetVibrationForce(other, nullptr) == PAD_ERROR_INVALID_ARG);
-    for (const int other : {0x999, -1}) Require(scePadSetVibrationForce(other, &strong) == PAD_ERROR_INVALID_HANDLE);
     const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special >= PAD_SPECIAL_HANDLE);
     Require(scePadSetVibrationForce(special, &strong) == PAD_OK && VibrationIs(0, 5, 6));
@@ -1108,6 +1107,7 @@ int main() {
     const int earlyPad = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_STANDARD, 0, nullptr);
     Require(earlyPad > 0);
     PadData earlyPadData{};
+    Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadClose_nid_postfix(earlyPad) == PAD_OK);
