@@ -77,7 +77,19 @@ def compiled(build):
     return sources
 
 
-def unbuilt_exports(root, sources):
+def target_names(build):
+    program, encoding = ninja(build)
+    listed = subprocess.run([program, "-C", str(build), "-t", "targets", "all"],
+                            capture_output=True, text=True, encoding=encoding, check=True).stdout
+    names = set()
+    for line in listed.splitlines():
+        name = line.partition(": ")[0]
+        if not re.search(r"[\\/]", name):
+            names.add(name.partition(":")[0])
+    return names
+
+
+def unbuilt_exports(root, sources, targets=None):
     prx = (Path(root) / "core" / "libs" / "prx").resolve()
     built_sources = {source for source in sources if prx in source.parents}
     if not built_sources:
@@ -97,6 +109,8 @@ def unbuilt_exports(root, sources):
     unbuilt = []
     for file in sorted(prx.glob("*/**/*.cpp")):
         relative = file.relative_to(prx)
+        if targets is not None and relative.parts[0] not in targets:
+            continue
         if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
             continue
         if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
@@ -338,7 +352,7 @@ def main(argv=None):
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
-        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build))
+        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), target_names(args.build))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:

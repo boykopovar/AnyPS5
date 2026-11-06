@@ -23,8 +23,8 @@ class UnbuiltExportTests(unittest.TestCase):
             path.write_text(content, encoding="utf-8")
         return root
 
-    def unbuilt(self, root, built):
-        return check_test_registration.unbuilt_exports(root, {(root / name).resolve() for name in built})
+    def unbuilt(self, root, built, targets=None):
+        return check_test_registration.unbuilt_exports(root, {(root / name).resolve() for name in built}, targets)
 
     def test_a_source_no_target_compiles_is_reported(self):
         root = self.tree({
@@ -74,6 +74,38 @@ class UnbuiltExportTests(unittest.TestCase):
                 self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
                                  [Path("core/libs/prx/libSceExample/Try.cpp")])
 
+    def test_a_library_the_build_has_no_target_for_is_not_checked(self):
+        root = self.tree({
+            "core/libs/prx/libSceAddressSanitizer/Export.cpp": "int APS5_VABI sceAddressSanitizerOpen(void) { return 0; }\n",
+            "core/libs/prx/libSceExample/Built.cpp": "",
+            "core/libs/prx/libSceExample/Export.cpp": "int APS5_VABI sceExampleOpen(void) { return 0; }\n",
+        })
+        self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"], {"libSceExample", "libSceExample.prx"}),
+                         [Path("core/libs/prx/libSceExample/Export.cpp")])
+
+    def test_a_library_built_from_another_directory_is_still_checked(self):
+        root = self.tree({
+            "core/libs/prx/libSceKeyboard/PadEmulate.cpp": "",
+            "core/libs/prx/libSceKbEmulate/Export.cpp": "int APS5_VABI sceKbEmulateOpen(void) { return 0; }\n",
+        })
+        self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceKeyboard/PadEmulate.cpp"], {"libSceKeyboard", "libSceKbEmulate"}),
+                         [Path("core/libs/prx/libSceKbEmulate/Export.cpp")])
+
+    def test_target_names_are_the_bare_names_ninja_lists(self):
+        listed = ("libSceExample: phony\n"
+                  "libSceExample.prx: phony\n"
+                  "libc:Release: phony\n"
+                  "core/libs/prx/libSceExample/CMakeFiles/libSceExample.dir/Export.cpp.o: CXX_COMPILER__libSceExample_Release\n"
+                  "C:\\build\\core\\libs\\libs\\libSceExample.prx: CUSTOM_COMMAND\n")
+
+        def run(command, *, capture_output, text, encoding, check):
+            self.assertEqual(command, ["ninja", "-C", "build", "-t", "targets", "all"])
+            return subprocess.CompletedProcess(command, 0, listed, "")
+
+        with patch.object(check_test_registration, "ninja", return_value=("ninja", "utf-8")), \
+                patch.object(check_test_registration.subprocess, "run", side_effect=run):
+            self.assertEqual(check_test_registration.target_names("build"), {"libSceExample", "libSceExample.prx", "libc"})
+
     def test_a_build_without_library_sources_is_not_checked(self):
         root = self.tree({
             "core/libs/prx/libSceExample/Export.cpp": "int APS5_VABI sceExampleOpen(void) { return 0; }\n",
@@ -111,6 +143,7 @@ class UnbuiltExportTests(unittest.TestCase):
             with self.subTest(result=result), patch.object(check_test_registration, "built", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "registered", return_value={"example_tests"}), \
                     patch.object(check_test_registration, "compiled", return_value=set()), \
+                    patch.object(check_test_registration, "target_names", return_value=set()), \
                     patch.object(check_test_registration, "unbuilt_exports", return_value=result), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(check_test_registration.main(["build"]), expected)
