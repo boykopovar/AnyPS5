@@ -122,7 +122,7 @@ int APS5_VABI attachISRead_nid_postfix();
 int APS5_VABI attachISWrite_nid_postfix();
 int APS5_VABI attach_SB_nid_postfix();
 int APS5_VABI checkImageBuffer_nid_postfix();
-int APS5_VABI detachISRead_nid_postfix();
+std::int64_t APS5_VABI detachISRead_nid_postfix(void* codec, Jxr::BitIo* io);
 int APS5_VABI detachISWrite_nid_postfix();
 int APS5_VABI detach_SB_nid_postfix();
 int APS5_VABI flushToByte_SB_nid_postfix();
