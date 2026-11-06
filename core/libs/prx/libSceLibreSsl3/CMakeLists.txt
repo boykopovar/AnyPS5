@@ -243,7 +243,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_libressl3_bignum_divide COMMAND guest_libressl3_bignum_divide_tests)
     set_tests_properties(guest_libressl3_bignum_divide PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference guest_libressl3_evp guest_libressl3_version guest_libressl3_x509_pubkey_param PROPERTIES ENVIRONMENT_MODIFICATION guest_libressl3_bignum_divide
+        set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference guest_libressl3_evp guest_libressl3_version guest_libressl3_x509_pubkey_param guest_libressl3_bignum_divide PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 
