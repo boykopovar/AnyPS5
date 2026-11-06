@@ -12456,9 +12456,6 @@ int APS5_VABI _ZN3JSC10LinkBuffer8linkCodeERNS_14MacroAssemblerENS_20JITCompilat
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKNotificationPermissionRequestAllow() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore9FrameView11removeChildERNS_6WidgetE() {
     NotImplemented_nid_no_patch(__func__);
@@ -13795,13 +13792,7 @@ int APS5_VABI WKGeolocationManagerSetProvider() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKGeolocationPermissionRequestAllow() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI WKGeolocationPermissionRequestDeny() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKHTTPCookieStoreDeleteAllCookies() {
     NotImplemented_nid_no_patch(__func__);
@@ -13999,9 +13990,6 @@ int APS5_VABI WKNotificationManagerSetProvider() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKNotificationPermissionRequestDeny() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKOpenPanelParametersCopyAcceptedFileExtensions() {
     NotImplemented_nid_no_patch(__func__);

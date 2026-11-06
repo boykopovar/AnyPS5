@@ -1352,6 +1352,110 @@ static void TestProtectionSpace() {
     Require(threw);
 }
 
+static void TestPermissionRequests() {
+    Require(WKGeolocationPermissionRequestGetTypeID() == 61);
+    Require(WKNotificationPermissionRequestGetTypeID() == 78);
+
+    int geoCalls = 0;
+    bool geoDecision = false;
+    auto geoAllow = NKWebKit::Make<NKWebKit::GeolocationPermissionRequest>([&](bool res) {
+        geoCalls++;
+        geoDecision = res;
+    });
+    Require(geoAllow->state == NKWebKit::GeolocationPermissionRequest::State::Pending);
+    WKGeolocationPermissionRequestAllow(geoAllow.Get());
+    Require(geoAllow->state == NKWebKit::GeolocationPermissionRequest::State::Allowed);
+    Require(geoCalls == 1);
+    Require(geoDecision);
+
+    WKGeolocationPermissionRequestAllow(geoAllow.Get());
+    Require(geoCalls == 1);
+
+    geoCalls = 0;
+    auto geoDeny = NKWebKit::Make<NKWebKit::GeolocationPermissionRequest>([&](bool res) {
+        geoCalls++;
+        geoDecision = res;
+    });
+    WKGeolocationPermissionRequestDeny(geoDeny.Get());
+    Require(geoDeny->state == NKWebKit::GeolocationPermissionRequest::State::Denied);
+    Require(geoCalls == 1);
+    Require(!geoDecision);
+
+    int notifCalls = 0;
+    bool notifDecision = false;
+    auto notifAllow = NKWebKit::Make<NKWebKit::NotificationPermissionRequest>([&](bool res) {
+        notifCalls++;
+        notifDecision = res;
+    });
+    Require(notifAllow->state == NKWebKit::NotificationPermissionRequest::State::Pending);
+    WKNotificationPermissionRequestAllow(notifAllow.Get());
+    Require(notifAllow->state == NKWebKit::NotificationPermissionRequest::State::Allowed);
+    Require(notifCalls == 1);
+    Require(notifDecision);
+
+    WKNotificationPermissionRequestAllow(notifAllow.Get());
+    Require(notifCalls == 1);
+
+    notifCalls = 0;
+    auto notifDeny = NKWebKit::Make<NKWebKit::NotificationPermissionRequest>([&](bool res) {
+        notifCalls++;
+        notifDecision = res;
+    });
+    WKNotificationPermissionRequestDeny(notifDeny.Get());
+    Require(notifDeny->state == NKWebKit::NotificationPermissionRequest::State::Denied);
+    Require(notifCalls == 1);
+    Require(!notifDecision);
+
+    bool threw = false;
+    try {
+        WKGeolocationPermissionRequestAllow(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKGeolocationPermissionRequestDeny(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKNotificationPermissionRequestAllow(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKNotificationPermissionRequestDeny(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto dummy = NKWebKit::Make<NKWebKit::URL>("https://example.com");
+    threw = false;
+    try {
+        WKGeolocationPermissionRequestAllow(dummy.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKNotificationPermissionRequestAllow(dummy.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1383,6 +1487,7 @@ int main() {
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestProtectionSpace();
+    TestPermissionRequests();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
