@@ -54,6 +54,7 @@
 - [Mouse capture and delta scaling](../../../core/libs/prx/libSceVideoOut/src/MouseInput.cpp) (libSceVideoOut) - the console's mouse reports relative motion only, so a host cursor can never coincide with the title's cursor; while a title has a mouse open and the window is focused the host cursor is hidden and captured (SDL relative mode, released on focus loss). Motion deltas are scaled from the presented image's size in window units to the title's display resolution with sub-pixel carry; the console's deltas are counts, so a title that applies its own sensitivity moves its cursor that much faster than the host pointer would have. The scale takes SDL's relative motion in logical window units, the units of `SDL_GetWindowSize`; under Windows DPI scaling SDL may report it in physical pixels, which is unverified (no Windows run yet), and a drawable larger than the window does not change the scale.
 - [HDR output](../../../core/libs/prx/libSceVideoOut/src/HostHdrProbe.cpp) (libSceVideoOut, libSceSystemService) - HDR output is reported only on Windows; elsewhere it stays SDR: SDL2 and Vulkan expose no output HDR state, and a surface can offer HDR10 formats with HDR off (KDE Wayland with RADV). The console's events for an HDR change are unknown; here every open port's output mode event fires when HDR availability or luminance changes. Console HDR settings (calibrated peak, the SDR-in-HDR conversion block) are not modelled. Surface format changes that leave the swapchain valid are seen only when DXGI's report changes or the swapchain is recreated. `sceSystemServiceGetHdrToneMapLuminance` reports SDR before VideoOut is first used, and no HDR change event fires for the state found at start-up. HDR needs a 10-bit HDR10 swapchain and a monitor DXGI reports in `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020`; without a usable peak, luminance is 1000 nits peak and full frame, 0 black
 - [Windows game controllers](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - SDL's DirectInput joystick backend is disabled at default hint priority before `SDL_InitSubSystem`, because its device enumeration blocks forever on some vendor HID devices (#1042). XInput and HIDAPI controllers are detected; controllers reachable only through DirectInput are not. Setting `SDL_DIRECTINPUT_ENABLED=1` restores them on hosts without such a device. SDL's Windows.Gaming.Input backend stays on by default. Setting `APS5_NO_WGI` turns it off at default hint priority, for hosts where it faults at `Windows.Gaming.Input.dll+0x10a84` a few seconds into every run: seen on Windows 10 Pro 22H2 (19045) with the Nefarius and Oculus virtual gamepad emulation buses installed and no physical controller connected. With it off, devices and features reachable only through Windows.Gaming.Input are lost: racing wheels, arcade sticks, flight sticks, HID pads without an HIDAPI driver, and Xbox One and Series trigger rumble.
+- [DualSense trigger state](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - `scePadGetTriggerEffectState` reads the controller's own trigger effect and status nibbles from input report 0x01 over USB and 0x31 over Bluetooth through a second HID handle. The offsets and nibble split follow [duaLib](https://github.com/WujekFoliarz/duaLib/blob/master/src/include/dataStructures.h). The cached state is cleared when the controller closes, the status handle closes, the handle cannot be opened, or the pad is initialized, so a disconnect or failed reopen reports zero until a new report arrives. The console's update timing and the second handle on Linux are unmeasured. Closes when: the USB and Bluetooth states are measured against a console on both transports.
 - [ImeTextInput](../../../core/libs/prx/libSceVideoOut/src/ImeTextInput.cpp) (libSceVideoOut) forwards SDL_TEXTEDITING with its text cut to 32 bytes by SDL and `start` and `length` read as counts of characters. SDL_TEXTEDITING_EXT (longer text) is not requested, `SDL_SetTextInputRect` is not called so the system candidate window is not placed at the field, and SDL's own text input, started when video starts, is left on outside dialogs. How each platform reports `start` and `length` (characters or UTF-16 units, cursor or selection) is not measured. Closes when: measured on Linux (ibus and fcitx)
 - [Bluetooth DualSense haptics](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the controller's queue depth, the console's filter and the rumble interplay are unmeasured. Vibration ports are averaged to 3 kHz in 16-frame boxes (not the console's low-pass) and sent as report 0x32, one 32-frame block once two are buffered, at most every 10.67 ms, following the title's audio clock. The report asks the controller to queue 64 frames (21 ms) to absorb Bluetooth jitter and clock drift; 16 dropped out about once a second. The host buffer keeps the newest 160 frames (53 ms). `scePadSetVibration` rumble goes out as SDL's report 0x31 with audio haptics off; the stream resends its own 0x31 100 ms after the rumble stops, as haptics came back changed without it. A failed write silences the vibration ports, without rumble, until the controller reconnects. Windows only. Closes when: the clock difference and the rumble interplay are measured on a title that uses both.
 
@@ -65,14 +66,13 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/ea0a096e6231dbe7b98b5a308e2ac91e/00f8422a1ae71e32816d72ae579c2f2d097f63a0) records module, logical library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp); it is a metadata summary rather than independent verification. Some NIDs belong to multiple logical libraries within the module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 182 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 170 entries observed in a 3.20-labelled image and a later 13.60-labelled image; of the original 182, 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
 | `sceVideoOutAddBuffer` | `4iy9hG9Du1s` |
 | `sceVideoOutAddBuffer4k2kPrivilege` | `twrSaoZ9cJs` |
 | `sceVideoOutAddBufferAnisoPrivilege` | `lm+1oyWKwy0` |
-| `sceVideoOutAddBufferHdrPrivilege` | `VAlir52gpQI` |
 | `sceVideoOutAddBufferYccPrivilege` | `D3s8DoEnuR4` |
 | `sceVideoOutAddDisplayPositionEvent` | `Cxb2w82t7lw` |
 | `sceVideoOutAddDriver` | `HtwSd4H2Tws` |
@@ -90,7 +90,6 @@
 | `sceVideoOutControlHdcpEncryption` | `M-JkRj7X+No` |
 | `sceVideoOutCursorIsUpdatePending` | `HibOtezzT6M` |
 | `sceVideoOutCursorSetPositionStereo` | `735GfVO9v2s` |
-| `sceVideoOutCurveSamplePointsCalc_` | `kazBRXPqR7c` |
 | `sceVideoOutDebugAddVrrPrivilege` | `rAYR4zzw414` |
 | `sceVideoOutDebugBlankPipe` | `-9YA0lVAq+U` |
 | `sceVideoOutDebugReadCrc` | `4E8qvHf7Cj0` |
@@ -106,7 +105,6 @@
 | `sceVideoOutDriverGetBufferLabelAddress` | `NGyEl5aT4fc` |
 | `sceVideoOutDriverGetEopHandle` | `P1bIHoga4jE` |
 | `sceVideoOutDriverGetFinishedEopHandle` | `G6peSSDP4iA` |
-| `sceVideoOutDriverGetLatestEopHandle` | `GL8+3RHW5vk` |
 | `sceVideoOutDriverIncrementBufferLabel` | `Ztx4b2LhRDk` |
 | `sceVideoOutDriverResetBufferLabel` | `soAIjspgdt8` |
 | `sceVideoOutDriverTriggerEvent` | `OHnnkrUcShM` |
@@ -131,7 +129,6 @@
 | `sceVideoOutHdmiMonitorInfoIsSupportedVideoOutMode_` | `WBZrUaQY+EU` |
 | `sceVideoOutLockBuffer` | `7ifZFxWJ9Q4` |
 | `sceVideoOutRazorAddCallback` | `ZX7C79uOujU` |
-| `sceVideoOutRazorRecallCallbacks` | `hGcTks-qqIU` |
 | `sceVideoOutRazorRemoveCallback` | `zUDW7kIFclI` |
 | `sceVideoOutRegisterBufferAttribute` | `EJQifjOp8s4` |
 | `sceVideoOutRegisterStereoBuffers` | `lCTCOogRbk0` |
@@ -163,7 +160,6 @@
 | `sceVideoOutSysGetDeviceInfo` | `2sgenMqwczM` |
 | `sceVideoOutSysGetFlipStatus` | `21sS8EU45cw` |
 | `sceVideoOutSysGetKsvList` | `Ur8iOIm0tyE` |
-| `sceVideoOutSysGetMonitorInfo_` | `vMLWuJckGv0` |
 | `sceVideoOutSysGetOutputStatus` | `Ip78YCQUrTo` |
 | `sceVideoOutSysGetPipelineStatus` | `dFhciCfO31s` |
 | `sceVideoOutSysGetResolutionStatus2` | `qLDCAl8ygCw` |
@@ -172,18 +168,12 @@
 | `sceVideoOutSysGetVblankStatus` | `d1AjT2uZJn0` |
 | `sceVideoOutSysGetVideoOutModeByBusSpecifier` | `AAELy8Yc3Mc` |
 | `sceVideoOutSysHdmiMonitorInfoIsMorpheus` | `3-9DXFGVg0M` |
-| `sceVideoOutSysInitMode` | `9cmjhjqa7Sg` |
 | `sceVideoOutSysIsModeS3d` | `iUigHJ2op4M` |
 | `sceVideoOutSysIsOutputSupported` | `Z0EyU29WqOg` |
 | `sceVideoOutSysIsSupportedByMonitorInfo_` | `mfxElr79O7Q` |
 | `sceVideoOutSysIsUserStatusHdr` | `q+vWPvYIh8o` |
 | `sceVideoOutSysIsUserStatusSystemDefault` | `O57F5ikhGxo` |
 | `sceVideoOutSysIsUserStatusVr` | `4XsQdhiOaAc` |
-| `sceVideoOutSysModeIsHdr` | `I7-lGGvFgBM` |
-| `sceVideoOutSysModeIsSystemDefault` | `5Y8uUbGMio0` |
-| `sceVideoOutSysModeIsVrLegacy` | `zecl8Gox+P0` |
-| `sceVideoOutSysModeIsVrNative` | `SgA2MtojPto` |
-| `sceVideoOutSysModeIsVr` | `QEiuHxjungc` |
 | `sceVideoOutSysOpenInternal` | `kP4l+nyBjRA` |
 | `sceVideoOutSysOpenVrNative` | `WUU+ufqgLJg` |
 | `sceVideoOutSysReadCrc64` | `eBvoaLwfBBQ` |
@@ -198,7 +188,6 @@
 | `sceVideoOutSysSetOverscanRatio` | `nMbAqI1ty8w` |
 | `sceVideoOutSysUpdateDisplayParameter` | `UFDoqv4XXC0` |
 | `sceVideoOutSysUpdatePrivilege` | `Jl91AhxKc0w` |
-| `sceVideoOutSysUpdateRenderingMode` | `4G37EIMMD+Q` |
 | `sceVideoOutUnlockBuffer` | `amghnA-Ev5s` |
 | `sceVideoOutUnregisterBufferAttribute` | `SRQSpP4QK5U` |
 | `Unknown` | `-5AIEU9+11g` |
@@ -251,6 +240,10 @@
 | `Unknown` | `yGMBA0AKcgQ` |
 | `Unknown` | `yoK0AjkkBkI` |
 | `Unknown` | `ys239q8VgXY` |
+
+- [Firmware 13.42 answers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutAddBufferHdrPrivilege`, `sceVideoOutRazorRecallCallbacks` and `sceVideoOutSysUpdateRenderingMode` return 0, `sceVideoOutCurveSamplePointsCalc_` returns 0x8029001C, `sceVideoOutDriverGetLatestEopHandle` 0x802900FF and `sceVideoOutSysGetMonitorInfo_` -1, and `sceVideoOutSysModeIsVr` returns bit 1 of the dword at offset 0x20 of its argument, as firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. Their parameter lists are unverified beyond what the code reads; the layout of the structure `sceVideoOutSysModeIsVr` reads is unknown apart from that dword. The module reads that dword without checking the pointer, so a null argument faults on the console as it does here
+
+- [Firmware 13.42 mode helpers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutSysInitMode` fills the first 0x20 bytes of its argument with 0xFF and then stores 0x20 in the first dword. Of the dword at offset 0x20, `sceVideoOutSysModeIsSystemDefault` reports bit 0 clear, `sceVideoOutSysModeIsVrNative` bits 2:1 equal to 01 and `sceVideoOutSysModeIsVrLegacy` both bits set; `sceVideoOutSysModeIsHdr` reports byte 6 from 12 to 17. As firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. The init function leaves EAX unset, so it is declared `void`. Field meanings are unknown, and none of them checks the pointer.
 
 - [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
 

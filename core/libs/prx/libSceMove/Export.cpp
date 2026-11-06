@@ -124,51 +124,71 @@ int APS5_VABI sceMoveResetLightSphere(int32_t handle) {
     return checkHandle(handle);
 }
 int APS5_VABI sceMoveGetBluetoothAddress(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveGetCalibrationInfo(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveGetDeviceId(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveIsReproductionModel(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveIsValidHandle(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return 0;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveReadStateRecentForTracker(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveSetCalibrationMode(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveSetExtensionPortOutput(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveSetLightSphereForTracker(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveWriteCalibrationInfo(void) {
+    std::lock_guard lock(stateMutex);
+    if (!initialized) return MOVE_ERROR_NOT_INIT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
