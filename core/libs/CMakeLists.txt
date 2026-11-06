@@ -290,13 +290,14 @@ if(TARGET mimalloc AND WIN32)
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
 elseif(TARGET mimalloc)
+    set(MIMALLOC_NAME ${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
     add_custom_command(
-            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            OUTPUT ${PATCHED_DIR}/${MIMALLOC_NAME}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/${MIMALLOC_NAME}
             DEPENDS mimalloc
-            COMMENT "Copying libmimalloc.dylib beside the libraries"
+            COMMENT "Copying ${MIMALLOC_NAME} beside the libraries"
     )
-    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/${MIMALLOC_NAME})
 endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
@@ -606,6 +607,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+    endif()
+    add_test_executable(guest_bemp2sys_tests tests/GuestBemp2sys.cpp)
+    target_include_directories(guest_bemp2sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_bemp2sys_tests PRIVATE libSceBemp2sys libkernel libc)
+    configure_windows_unwind(guest_bemp2sys_tests)
+    add_test(NAME guest_bemp2sys COMMAND guest_bemp2sys_tests)
+    set_tests_properties(guest_bemp2sys PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_bemp2sys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBemp2sys>")
     endif()
     add_test_executable(guest_playready_tests tests/GuestPlayReady.cpp)
     target_include_directories(guest_playready_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
