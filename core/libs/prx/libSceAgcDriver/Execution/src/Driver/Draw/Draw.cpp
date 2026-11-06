@@ -1228,7 +1228,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 runCaptureCheckHook();
                 if (tail.queue != nullptr && capturedMemoryChanged(memory)) {
                     const RecaptureScope recapture;
-                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
                 }
                 phaseTiming.Phase(DrawRowVectors);
                 auto writes = drawWriteRanges(graphics, stages);
@@ -1253,7 +1253,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
                     gpuLock.unlock();
                     const RecaptureScope recapture;
-                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+                    return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
                 }
             }
             recordedOne = true;
@@ -1296,7 +1296,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         runCaptureCheckHook();
         if (tail.queue != nullptr && capturedMemoryChanged(memory)) {
             const RecaptureScope recapture;
-            return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+            return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
         }
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
@@ -1321,7 +1321,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
         gpuLock.unlock();
         const RecaptureScope recapture;
-        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected);
+        return draw(*tail.queue, tail.packet, submission, tail.packetOffset, rejected, *tail.splitTargets);
     }
     noteDrawWriters(stages, submission.queue);
     phaseTiming.Phase(DrawRowVectors);
