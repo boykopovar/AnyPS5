@@ -167,6 +167,8 @@ int main() {
     std::atomic<bool> adoptedCompleted{false};
     std::thread nativeWorker([&] {
         workerTlsHook.active = true;
+        const std::uint32_t adoptedMxcsr = 0x1fc0;
+        asm volatile("ldmxcsr %0" : : "m"(adoptedMxcsr));
         Pthread adoptedSelf = scePthreadSelf();
         if (!adoptedSelf) throw std::runtime_error("Thread adoption failed");
         adoptedCompleted.store(true);
@@ -175,7 +177,7 @@ int main() {
     nativeWorker.join();
     if (!adoptedCompleted.load())
         throw std::runtime_error("Adopted thread failed to execute");
-    if (workerMxcsrAfterReturn.load() != hostMxcsrBefore)
+    if (workerMxcsrAfterReturn.load() != 0x1fc0)
         throw std::runtime_error("Adopted thread host MXCSR was corrupted upon scePthreadExit");
     std::cout << "PASS: 10000 thread starts, committed stacks, large frames, explicit exits and joins; 100 detach checks; adopted thread exit\n";
 }
