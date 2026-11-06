@@ -442,6 +442,11 @@ std::uint8_t* APS5_VABI sceUsbdControlTransferGetSetup(UsbdTransfer* transfer) {
 
 void APS5_VABI sceUsbdSetIsoPacketLengths(UsbdTransfer* transfer, std::uint32_t length) {
     if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (transfer->numIsoPackets > IsoCapacity(state, transfer)) throw std::runtime_error(std::string(__func__) + ": the iso packet count is larger than the transfer was allocated for");
+    }
     for (std::int32_t packet = 0; packet < transfer->numIsoPackets; ++packet) transfer->isoPacketDescriptors[packet].length = length;
 }
 

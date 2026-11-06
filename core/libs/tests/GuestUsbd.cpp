@@ -455,6 +455,7 @@ void CheckTransferFillers() {
     small->numIsoPackets = 2;
     Require(sceUsbdGetIsoPacketBuffer(small, 0) == nullptr, "the packet buffer of a count above the allocation was returned");
     Require(sceUsbdSubmitTransfer(small) == invalidArgument, "a submit above the allocated packet count was accepted");
+    Require(Throws([&] { sceUsbdSetIsoPacketLengths(small, 8); }), "setting iso packet lengths above the allocated packet count did not throw");
     sceUsbdFreeTransfer(small);
     sceUsbdFreeTransfer(transfer);
 }
