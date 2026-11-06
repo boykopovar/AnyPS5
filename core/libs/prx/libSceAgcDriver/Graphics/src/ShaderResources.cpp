@@ -3770,12 +3770,12 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
 }
 
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
-    synchronizeGuestBuffers();
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
         provedEpoch = 0;
         return false;
     }
+    synchronizeGuestBuffers();
     if (EpochProofs()) {
         const auto epoch = GuestMemory::CollectEpoch();
         const auto proof = GuestMemory::ProofSerial();
