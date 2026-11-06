@@ -462,6 +462,7 @@ struct TextureCounters {
     std::atomic<std::uint64_t> fromStorage{0};
     std::atomic<std::uint64_t> snapshots{0};
     std::atomic<std::uint64_t> cleared{0};
+    std::atomic<std::uint64_t> imported{0};
     std::atomic<std::uint64_t> pendingReads{0};
     std::atomic<std::uint64_t> storageFallbacks{0};
     std::atomic<std::uint64_t> records{0};
@@ -507,7 +508,7 @@ void reportTextureCounters() {
     auto last = counters.lastReport.load();
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
-    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.cleared), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.untrackedKept), count(counters.untrackedCompared));
+    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu uploaded on the GPU from host imports, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.cleared), count(counters.imported), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.untrackedKept), count(counters.untrackedCompared));
 }
 
 // What the sampled-texture lookups on this thread proved their returned objects current against,
@@ -1154,6 +1155,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     } else if (gpuSource != nullptr) {
         entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, gpuSource);
         entry.accounted = entry.texture->AllocationBytes();
+        counters.imported.fetch_add(1, std::memory_order_relaxed);
     } else {
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
         const bool pending = *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
@@ -5825,6 +5827,10 @@ std::uint64_t SampledLookupKeyProofs() {
 
 std::uint64_t SampledTexturesCleared() {
     return TextureCounts().cleared.load(std::memory_order_relaxed);
+}
+
+std::uint64_t SampledTexturesImported() {
+    return TextureCounts().imported.load(std::memory_order_relaxed);
 }
 
 ImageTableReuseCounts ImageTableReuses() {

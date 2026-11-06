@@ -106,6 +106,7 @@ public:
     };
     ViewRange SampledViewRange(bool firstLayer) const { return firstLayer ? firstLayerRange : viewRange; }
     // The layout the image is kept in while sampled.
+    VkImage Image() const { return image; }
     VkImageLayout Layout() const { return layout; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
     VkFormat ViewFormat() const { return viewFormat; }
