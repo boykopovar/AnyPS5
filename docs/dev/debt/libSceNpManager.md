@@ -1,7 +1,5 @@
 # libSceNpManager technical debt
 
-- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
-
 ### ManagerInt profile getters
 
 - [The account and sign-in profile getters](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) follow the firmware 11.00 register layout: the `Sdk` variants and `GetAccountId`/`GetAccountType`/`GetAccountNpEnv`/`GetActiveSigninState`/`GetAuthServerErrorFlag`/`GetOnlineIdChangeFlag`/`GetPlusMemberTypeNB`/`GetServerError`/`GetSigninState`/`GetUserNum` take `(int userId, output)`, `GetNpEnv` and `GetVshClientId` take the output only, and `GetOfflineAccountId` takes `(int userId, accountId, flag)` with both outputs optional. The getters reject `-1` and a null required output with `0x80550003`, then report `0x80550006` because AnyPS5 keeps NP signed out; firmware returns `0x80550002` when the manager object is absent. `GetUserIdByAccountId` and `GetOnlineIdByAccountId` take the 64-bit account id and reject zero, `GetUserIdByOnlineIdSdk` and `GetNpIdByOnlineId` take the online id, `GetNpIdSdk` and `GetOnlineIdSdk` take the user id, and all report the same signed-out result. `GetAccountType` zeroes its output before the query and `GetNpEnv` zeroes 0x18 bytes, both as firmware does.
@@ -15,6 +13,7 @@
 
 ### Unknown function info
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
 - [libSceNpManager additional exports](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) - 148 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded.
 
 | Name | NID |
