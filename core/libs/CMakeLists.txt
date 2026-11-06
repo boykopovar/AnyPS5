@@ -152,7 +152,8 @@ add_custom_command(
         COMMENT "Patching NIDs for libc"
 )
 
-file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+file(GLOB LIBS_DIRS LIST_DIRECTORIES true CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+file(GLOB LIBS_CMAKE_LISTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/prx/*/CMakeLists.txt)
 list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
 
 set(PATCHED_OUTPUTS ${LIBC_PATCHED})
@@ -289,13 +290,14 @@ if(TARGET mimalloc AND WIN32)
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
 elseif(TARGET mimalloc)
+    set(MIMALLOC_NAME ${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
     add_custom_command(
-            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
-            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            OUTPUT ${PATCHED_DIR}/${MIMALLOC_NAME}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/${MIMALLOC_NAME}
             DEPENDS mimalloc
-            COMMENT "Copying libmimalloc.dylib beside the libraries"
+            COMMENT "Copying ${MIMALLOC_NAME} beside the libraries"
     )
-    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/${MIMALLOC_NAME})
 endif()
 
 include(prx/libSceFreeType/BuildInfo.cmake)
@@ -535,6 +537,36 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_kernel_sys_barrier_tests)
     add_test(NAME guest_kernel_sys_barrier COMMAND guest_kernel_sys_barrier_tests)
     set_tests_properties(guest_kernel_sys_barrier PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_kernel_sys_execve_tests tests/GuestKernelSysExecve.cpp)
+    target_include_directories(guest_kernel_sys_execve_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_execve_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_execve_tests)
+    add_test(NAME guest_kernel_sys_execve COMMAND guest_kernel_sys_execve_tests)
+    set_tests_properties(guest_kernel_sys_execve PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_execve PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_execvpe_tests tests/GuestKernelSysExecvpe.cpp)
+    target_include_directories(guest_kernel_sys_execvpe_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_execvpe_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_execvpe_tests)
+    add_test(NAME guest_kernel_sys_execvpe COMMAND guest_kernel_sys_execvpe_tests)
+    set_tests_properties(guest_kernel_sys_execvpe PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_execvpe PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_nanosleep_tests tests/GuestKernelSysNanosleep.cpp)
+    target_include_directories(guest_kernel_sys_nanosleep_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_nanosleep_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_nanosleep_tests)
+    add_test(NAME guest_kernel_sys_nanosleep COMMAND guest_kernel_sys_nanosleep_tests)
+    set_tests_properties(guest_kernel_sys_nanosleep PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_nanosleep PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
     add_test_executable(guest_kernel_sys_adjtime_tests tests/GuestKernelSysAdjtime.cpp)
     target_include_directories(guest_kernel_sys_adjtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_adjtime_tests PRIVATE libkernel_sys libkernel libc)
@@ -575,6 +607,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+    endif()
+    add_test_executable(guest_bemp2sys_tests tests/GuestBemp2sys.cpp)
+    target_include_directories(guest_bemp2sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_bemp2sys_tests PRIVATE libSceBemp2sys libkernel libc)
+    configure_windows_unwind(guest_bemp2sys_tests)
+    add_test(NAME guest_bemp2sys COMMAND guest_bemp2sys_tests)
+    set_tests_properties(guest_bemp2sys PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_bemp2sys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBemp2sys>")
     endif()
     add_test_executable(guest_playready_tests tests/GuestPlayReady.cpp)
     target_include_directories(guest_playready_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1080,16 +1122,6 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_gesture PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
-    endif()
-
-    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
-    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
-    configure_windows_unwind(guest_sys_util_notification_tests)
-    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
-    if(WIN32)
-        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
     endif()
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
