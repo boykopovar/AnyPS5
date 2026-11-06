@@ -742,6 +742,7 @@ std::optional<std::uint32_t> DppFirstLaneSource(std::uint32_t control) {
 }
 
 std::uint32_t DsSwizzleFirstLaneSource(std::uint32_t control) {
+    if ((control & 0xe000u) == 0xe000u) return 0u;
     if ((control & 0xc000u) == 0xc000u) {
         const std::uint32_t rotate = (control >> 5u) & 0x1fu;
         return ((control & 0x400u) != 0u ? 32u - rotate : rotate) & ~control & 0x1fu;

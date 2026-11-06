@@ -7459,12 +7459,13 @@ void verifySingleLaneCrossLaneReads() {
         code.insert(code.end(), {0xf80008cfu, 0x01010101u, 0xbf810000u});
         return code;
     };
-    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 8> accepted{{
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 9> accepted{{
         {"a DPP quad_perm:[0,0,2,2]", exported({0x7e0202fau, 0xff00a005u})},
         {"a DPP row_shr:1", exported({0x7e0202fau, 0xff011105u})},
         {"a DPP row_share:0", exported({0x7e0202fau, 0xff015005u})},
         {"a DPP8 [0,0,0,0,4,4,4,4]", exported({0x7e0202e9u, 0x92400005u})},
         {"ds_swizzle_b32 swizzle(BROADCAST,4,0)", exported({0xd8d4001cu, 0x01000005u})},
+        {"ds_swizzle_b32 in FFT mode at offset 0xffe0", exported({0xd8d4ffe0u, 0x01000005u})},
         {"ds_bpermute_b32 of address 0", exported({0x7e040280u, 0xdacc0000u, 0x01000502u})},
         {"v_permlane16_b32 with lane selects 0x76543210", exported({0xbe8003ffu, 0x76543210u, 0xd7770001u, 0x00040105u})},
         {"image_sample_cd, whose derivatives come from the quad's first active lane", {0x7e020280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0c0280u, 0xf1a00108u, 0x00820801u, 0xbf8c3f70u, 0xf80008cfu, 0x08080808u, 0xbf810000u}},
