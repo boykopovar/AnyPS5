@@ -2906,6 +2906,7 @@ void retireStoringStale(DepthSurface& surface) {
     const auto resource = mirrorResource(surface.target);
     const auto planeBytes = DescribeSurface(resource).guestBytes;
     std::uint64_t generation = 0;
+    GuestMemory::CollectWritesUncached(surface.target.address, static_cast<std::size_t>(planeBytes));
     const auto written = surface.WrittenUnits(resource, generation);
     const auto removed = unmappedUnits(surface.target.address, planeBytes, surface.unitBytes, surface.staleUnits.size(), surface.depthMark);
     auto units = surface.staleUnits;
