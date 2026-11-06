@@ -651,8 +651,10 @@ if(BUILD_TESTING)
         add_test(NAME none_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_none_relocations.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_none_relocations COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker>)
-        set_tests_properties(guest_none_relocations PROPERTIES TIMEOUT 20)
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> plain)
+        add_test(NAME guest_none_relocations_sce COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> sce)
+        set_tests_properties(guest_none_relocations guest_none_relocations_sce PROPERTIES TIMEOUT 20)
         add_test(NAME interpreter_in_code COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_interpreter_in_code.py $<TARGET_FILE:relinker>)
         set_tests_properties(interpreter_in_code PROPERTIES TIMEOUT 20)
@@ -955,6 +957,11 @@ if(BUILD_TESTING)
         add_asan_test_options(input_magic max_allocation_size_mb=512)
         add_test(NAME input_preservation COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_preservation.py $<TARGET_FILE:relinker>)
+        foreach(mode linux windows controls)
+            add_test(NAME patch_input_preservation_${mode} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_input_preservation.py $<TARGET_FILE:relinker> ${mode})
+            set_tests_properties(patch_input_preservation_${mode} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME output_collisions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_collisions.py $<TARGET_FILE:relinker>)
         add_test(NAME secondary_output_collisions COMMAND ${Python3_EXECUTABLE}

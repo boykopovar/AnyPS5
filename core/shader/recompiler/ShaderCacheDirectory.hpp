@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILER_SHADERCACHEDIRECTORY_HPP
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -204,14 +205,17 @@ inline bool ReadWholeFile(const std::filesystem::path& path, std::vector<std::by
     }
 }
 
-inline std::uint64_t HashBytes(std::span<const std::byte> bytes, std::uint64_t seed = 0) {
+template<std::size_t Count>
+inline std::array<std::uint64_t, Count> HashBytes(std::span<const std::byte> bytes, std::array<std::uint64_t, Count> hashes) {
     constexpr std::uint64_t multiplier = 0x9e3779b97f4a7c15ull;
-    std::uint64_t hash = seed ^ (static_cast<std::uint64_t>(bytes.size()) * multiplier);
+    for (auto& hash : hashes) hash ^= static_cast<std::uint64_t>(bytes.size()) * multiplier;
     const auto mix = [&](std::uint64_t chunk) {
         chunk *= 0xff51afd7ed558ccdull;
         chunk ^= chunk >> 32u;
-        hash = (hash ^ chunk) * multiplier;
-        hash = (hash << 27u) | (hash >> 37u);
+        for (auto& hash : hashes) {
+            hash = (hash ^ chunk) * multiplier;
+            hash = (hash << 27u) | (hash >> 37u);
+        }
     };
     std::size_t index = 0;
     for (; index + 8 <= bytes.size(); index += 8) {
@@ -224,12 +228,18 @@ inline std::uint64_t HashBytes(std::span<const std::byte> bytes, std::uint64_t s
         std::memcpy(&chunk, bytes.data() + index, bytes.size() - index);
         mix(chunk ^ 0x8000000000000000ull);
     }
-    hash ^= hash >> 33u;
-    hash *= 0xff51afd7ed558ccdull;
-    hash ^= hash >> 33u;
-    hash *= 0xc4ceb9fe1a85ec53ull;
-    hash ^= hash >> 33u;
-    return hash;
+    for (auto& hash : hashes) {
+        hash ^= hash >> 33u;
+        hash *= 0xff51afd7ed558ccdull;
+        hash ^= hash >> 33u;
+        hash *= 0xc4ceb9fe1a85ec53ull;
+        hash ^= hash >> 33u;
+    }
+    return hashes;
+}
+
+inline std::uint64_t HashBytes(std::span<const std::byte> bytes, std::uint64_t seed = 0) {
+    return HashBytes(bytes, std::array{seed})[0];
 }
 
 }

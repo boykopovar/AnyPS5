@@ -146,7 +146,6 @@ void testLifetime(bool reopen) {
     } else {
         check(expectFailure([&] { sceVideoOutWaitVblank(handle); }).find("closed") != std::string::npos, "closed port accepted a vblank wait");
     }
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     if (reopen) sceVideoOutClose(handle);
     LibcRunShutdown_nid_postfix();
 }
@@ -179,20 +178,39 @@ void testPs4Buffers() {
     tiledChange.width = 64;
     tiledChange.height = 64;
     tiledChange.pixel_format = 0x8000000000000000ull;
-    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear and PS4 buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
+    check(sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr) == 0, "a PS4 buffer set was not changed to tiled");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        std::lock_guard lock(cfg->mutex);
+        const auto display = DescribeVideoOutBuffer(cfg->buffers[1], cfg->groups[0]);
+        check(display.tilingMode == AgcDriver::DisplayTilingGcn && display.pitchInPixel == 128 && display.alignment == 4096, "the PS4 buffer set changed to tiled is not a GCN display buffer padded to 128 pixels");
+    }
+    auto linearChange = tiledChange;
+    linearChange.tiling_mode = 1;
+    linearChange.pitch_in_pixel = 64;
+    check(sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &linearChange, nullptr) == 0, "a PS4 buffer set was not changed back to linear");
     void* const odd[1] = {storage.data() + 65536 + 256};
     check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, odd, 1, &attribute); }).find("4 KiB alignment") != std::string::npos, "a PS4 buffer was accepted below 4 KiB alignment");
     void* const fourth[1] = {storage.data() + 65536};
-    auto tiled = attribute;
-    tiled.tiling_mode = 0;
-    tiled.pitch_in_pixel = 0;
-    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled); }).find("tiled display buffers are not implemented") != std::string::npos, "a PS4 tiled buffer was accepted");
     auto tenBit = attribute;
     tenBit.pixel_format = 0x88060000u;
     check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tenBit); }).find("unsupported PS4 pixel format 0x88060000") != std::string::npos, "an unknown PS4 pixel format was accepted");
     auto withOption = attribute;
     withOption.option = 1;
     check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &withOption); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 buffer option was accepted");
+    auto unknownTiling = attribute;
+    unknownTiling.tiling_mode = 2;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &unknownTiling); }).find("VIDEO_OUT_ERROR_INVALID_TILING_MODE") != std::string::npos, "a PS4 buffer with tiling mode 2 was accepted");
+    auto tiled = attribute;
+    tiled.tiling_mode = 0;
+    tiled.pitch_in_pixel = 0;
+    check(sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled) == 2, "the PS4 tiled buffer set index is not 2");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        std::lock_guard lock(cfg->mutex);
+        const auto display = DescribeVideoOutBuffer(cfg->buffers[3], cfg->groups[2]);
+        check(cfg->groups[2].attribute.tiling_mode == 0 && display.tilingMode == AgcDriver::DisplayTilingGcn && display.pitchInPixel == 128, "the PS4 tiled buffer is not a GCN display buffer padded to 128 pixels");
+    }
     std::array<std::uint8_t, sizeof(VideoOutFlipStatus)> raw{};
     raw.fill(0xaa);
     check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS4 flip status failed");
@@ -223,13 +241,12 @@ void testPs4Buffers() {
 void testDeferredBuffer() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
-    auto gate = std::make_shared<Gate>();
-    AgcDriverRegisterVideoOutput_nid_postfix(7, gate);
-    std::array<uint32_t, 6> held{0xc004105c, 7, 0xfffffffeu, 1, 0, 0};
-    Packet heldPacket{held.data(), 6, 0, {}};
-    check(sceAgcDriverSubmitDcb(&heldPacket) == 0, "the gated flip was not accepted");
-    std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 3, 0};
-    Packet flipPacket{flip.data(), 6, 0, {}};
+    alignas(8) static std::uint32_t reached = 0;
+    reached = 0;
+    const auto label = reinterpret_cast<std::uintptr_t>(&reached);
+    std::array<uint32_t, 13> flip{0xc0053c00u, 0x13u, static_cast<uint32_t>(label), static_cast<uint32_t>(label >> 32u), 1u, 0xffffffffu, 0u,
+                                  0xc004105c, static_cast<uint32_t>(handle), 0, 1, 3, 0};
+    Packet flipPacket{flip.data(), 13, 0, {}};
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "a GPU flip of a buffer registered before the GPU reaches it was rejected at submit");
     std::vector<std::byte> allocation(65536 + 65535);
     const auto storage = alignedBuffer(allocation);
@@ -237,7 +254,7 @@ void testDeferredBuffer() {
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
-    gate->Release();
+    std::atomic_ref<std::uint32_t>(reached).store(1u, std::memory_order_release);
     {
         std::unique_lock lock(cfg->mutex);
         const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(30), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
@@ -248,7 +265,6 @@ void testDeferredBuffer() {
     AgcDriverWaitIdle_nid_postfix();
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     LibcRunShutdown_nid_postfix();
 }
 
