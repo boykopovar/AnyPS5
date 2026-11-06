@@ -33,6 +33,8 @@ void* operator new(std::size_t bytes) {
     throw std::bad_alloc();
 }
 void* operator new[](std::size_t bytes) { return operator new(bytes); }
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept { return std::malloc(bytes != 0 ? bytes : 1); }
+void* operator new[](std::size_t bytes, const std::nothrow_t&) noexcept { return std::malloc(bytes != 0 ? bytes : 1); }
 void operator delete(void* pointer) noexcept { Release(pointer); }
 void operator delete[](void* pointer) noexcept { Release(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { Release(pointer); }
