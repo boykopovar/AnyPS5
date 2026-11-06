@@ -1,11 +1,13 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -16,7 +18,9 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -24,8 +28,11 @@
 #include <functional>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -154,11 +161,122 @@ void Dispatch(std::vector<std::uint32_t>& commands) {
     Append(commands, 0x15, {1u, 1u, 1u, 0x8041u});
 }
 
-void Submit(std::vector<std::uint32_t>& commands, const std::string& what) {
+void Enqueue(std::vector<std::uint32_t>& commands, const std::string& what) {
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     if (sceAgcDriverSubmitDcb(&packet) != 0) throw std::runtime_error("raw pointer store pending: " + what + ": the submission failed");
+}
+
+void Submit(std::vector<std::uint32_t>& commands, const std::string& what) {
+    Enqueue(commands, what);
     AgcDriverWaitIdle_nid_postfix();
 }
+
+class SubmitHold {
+public:
+    SubmitHold() {
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            recorder = AgcDriver::Graphics::Recorder::Active();
+        }
+        if (recorder == nullptr) throw std::runtime_error("raw pointer store pending: no active recorder to hold a batch on the GPU");
+        device = recorder->Device();
+#ifdef _WIN32
+        constexpr const char* libraryName = "vulkan-1.dll";
+#elif defined(__APPLE__)
+        constexpr const char* libraryName = "libvulkan.1.dylib";
+#else
+        constexpr const char* libraryName = "libvulkan.so.1";
+#endif
+        library.reset(SDL_LoadObject(libraryName));
+        if (library == nullptr) throw std::runtime_error("raw pointer store pending: cannot load Vulkan to hold a batch");
+        resolve = reinterpret_cast<PFN_vkGetDeviceProcAddr>(SDL_LoadFunction(library.get(), "vkGetDeviceProcAddr"));
+        if (resolve == nullptr) throw std::runtime_error("raw pointer store pending: cannot resolve vkGetDeviceProcAddr");
+        const auto createSemaphore = function<PFN_vkCreateSemaphore>("vkCreateSemaphore");
+        destroySemaphore = function<PFN_vkDestroySemaphore>("vkDestroySemaphore");
+        signalSemaphore = reinterpret_cast<PFN_vkSignalSemaphore>(resolve(device, "vkSignalSemaphoreKHR"));
+        if (signalSemaphore == nullptr) signalSemaphore = function<PFN_vkSignalSemaphore>("vkSignalSemaphore");
+        VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+        if (createSemaphore(device, &info, nullptr, &semaphore) != VK_SUCCESS) throw std::runtime_error("raw pointer store pending: cannot create the batch hold");
+    }
+
+    SubmitHold(const SubmitHold&) = delete;
+    SubmitHold& operator=(const SubmitHold&) = delete;
+
+    ~SubmitHold() {
+        if (watcher.joinable()) {
+            watcher.request_stop();
+            watcher.join();
+        }
+        Release();
+        try {
+            AgcDriverWaitIdle_nid_postfix();
+        } catch (...) {
+        }
+        destroySemaphore(device, semaphore, nullptr);
+    }
+
+    void Arm() {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        recorder->HoldNextSubmit(semaphore, 1);
+        first = recorder->OpenSerial();
+    }
+
+    std::uint64_t AwaitHeldSubmission() {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                if (recorder->Submissions() >= first && !recorder->Recording()) return recorder->Submissions();
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        throw std::runtime_error("raw pointer store pending: the storing submission was not submitted to the GPU");
+    }
+
+    void ReleaseAfterLaterSubmission(std::uint64_t held) {
+        watcher = std::jthread([this, held](std::stop_token stop) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            while (!stop.stop_requested() && recorder->NewestSubmitted() <= held && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(100));
+            Release();
+        });
+    }
+
+    void Finish() {
+        if (watcher.joinable()) watcher.join();
+        Release();
+        if (releaseResult != VK_SUCCESS) throw std::runtime_error("raw pointer store pending: cannot release the held batch");
+    }
+
+private:
+    template <typename TFunction>
+    TFunction function(const char* name) const {
+        const auto found = reinterpret_cast<TFunction>(resolve(device, name));
+        if (found == nullptr) throw std::runtime_error(std::string("raw pointer store pending: cannot resolve ") + name);
+        return found;
+    }
+
+    void Release() {
+        if (released.exchange(true)) return;
+        VkSemaphoreSignalInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+        info.semaphore = semaphore;
+        info.value = 1;
+        releaseResult = signalSemaphore(device, &info);
+    }
+
+    AgcDriver::Graphics::Recorder* recorder = nullptr;
+    VkDevice device = VK_NULL_HANDLE;
+    std::unique_ptr<void, decltype(&SDL_UnloadObject)> library{nullptr, &SDL_UnloadObject};
+    PFN_vkGetDeviceProcAddr resolve = nullptr;
+    PFN_vkDestroySemaphore destroySemaphore = nullptr;
+    PFN_vkSignalSemaphore signalSemaphore = nullptr;
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    std::uint64_t first = 0;
+    std::jthread watcher;
+    std::atomic<bool> released{false};
+    VkResult releaseResult = VK_NOT_READY;
+};
 
 void SettleOutput(const GuestBlock& block, std::size_t offset, std::size_t bytes) {
     AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(block.At(offset)), bytes);
@@ -214,6 +332,34 @@ void ComputeTableWrittenByDispatch(bool sameSubmission) {
     SettleOutput(output, 0, BufferBytes);
     const bool right = OutputIs(output, 0x2000u);
     Report(sameSubmission ? "a compute dispatch whose V# table a dispatch just before it rewrote through a raw pointer, in the same submission" : "control: a compute dispatch whose V# table an earlier submission's dispatch rewrote through a raw pointer", right, OutputText(output), !sameSubmission);
+}
+
+void ComputeTableWrittenWhileHeld() {
+    GuestBlock table, first, moved, output;
+    FillInputs(first, moved);
+    const auto input = BufferDescriptor(first.At(0));
+    std::memcpy(table.Bytes(0), input.data(), sizeof(input));
+    const auto stored = BufferDescriptor(output.At(0));
+    BuildStoreCode(ComputeStoreCode, BufferDescriptor(moved.At(0)));
+    Register(ComputeStoreHeader, ComputeStoreCode.data(), sizeof(ComputeStoreCode), 0, false);
+    std::vector<std::uint32_t> store;
+    ComputeProgram(store, ComputeStoreCode.data(), 4u, 1u);
+    Append(store, 0x76, {0x240, 0u, 0u, static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u)});
+    Dispatch(store);
+    std::vector<std::uint32_t> reader;
+    ComputeProgram(reader, TableCode.data(), 8u, Lanes);
+    Append(reader, 0x76, {0x240, static_cast<std::uint32_t>(table.At(0)), static_cast<std::uint32_t>(table.At(0) >> 32u), 0u, 0u, stored[0], stored[1], stored[2], stored[3]});
+    Dispatch(reader);
+    SubmitHold hold;
+    hold.Arm();
+    Enqueue(store, "compute table written by a dispatch held on the GPU, first submission");
+    const auto held = hold.AwaitHeldSubmission();
+    hold.ReleaseAfterLaterSubmission(held);
+    Enqueue(reader, "compute table written by a dispatch held on the GPU");
+    AgcDriverWaitIdle_nid_postfix();
+    hold.Finish();
+    SettleOutput(output, 0, BufferBytes);
+    Report("a compute dispatch recorded while an earlier submission's dispatch, which rewrites its V# table through a raw pointer, is still held on the GPU", OutputIs(output, 0x2000u), OutputText(output));
 }
 
 void DrawRegisters(std::vector<std::uint32_t>& commands, const GuestBlock& target, std::uint64_t pixelData, const std::function<void(std::vector<std::uint32_t>&)>& tableRegisters) {
@@ -322,6 +468,7 @@ int main() {
         }
         ComputeTableWrittenByDispatch(true);
         DrawTableWrittenByDispatch(true);
+        ComputeTableWrittenWhileHeld();
         AgcDriverShutdown_nid_postfix();
         if (!Failures.empty()) {
             std::string all;
