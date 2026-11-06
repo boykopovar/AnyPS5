@@ -125,6 +125,7 @@ struct F16x2Math {
     bool add = false;
     bool mul = false;
     bool fma = false;
+    bool fusedFma = false;
 };
 
 F16x2Math FindF16x2Math(std::span<const std::uint32_t> spirv) {
@@ -143,12 +144,13 @@ F16x2Math FindF16x2Math(std::span<const std::uint32_t> spirv) {
             Require(words >= 4u, "f16 native: malformed vector type");
             if (half && spirv[offset + 2u] == *half && spirv[offset + 3u] == 2u) pair = spirv[offset + 1u];
         }
-        if (opcode == spv::OpFAdd || opcode == spv::OpFMul || opcode == spv::OpExtInst) {
+        if (opcode == spv::OpFAdd || opcode == spv::OpFMul || opcode == spv::OpExtInst || opcode == spv::OpFmaKHR) {
             Require(words >= 5u, "f16 native: malformed arithmetic instruction");
             if (pair && spirv[offset + 1u] == *pair) {
                 math.add = math.add || opcode == spv::OpFAdd;
                 math.mul = math.mul || opcode == spv::OpFMul;
                 math.fma = math.fma || opcode == spv::OpExtInst;
+                math.fusedFma = math.fusedFma || opcode == spv::OpFmaKHR;
             }
         }
         offset += words;
@@ -170,6 +172,7 @@ int main() {
             std::puts("f16 native: skipped, the device has no native f16 with RTE rounding and kept denormals");
             return VulkanTestSkipped;
         }
+        const bool fused = supports(spv::CapabilityFMAKHR);
         std::vector<std::uint32_t> withoutFloat16;
         std::ranges::copy_if(target.supportedCapabilities, std::back_inserter(withoutFloat16), [](std::uint32_t capability) { return capability != spv::CapabilityFloat16; });
         auto emulatedTarget = target;
@@ -211,7 +214,8 @@ int main() {
             const F16x2Math emulatedMath = FindF16x2Math(emulated.spirv.Words());
             Require(nativeMath.add == mode.native && nativeMath.mul == mode.native, std::string("f16 native: ") + mode.name + (mode.native ? " does not use" : " uses") + " f16vec2 add and mul");
             Require(!nativeMath.fma, std::string("f16 native: ") + mode.name + " uses an f16vec2 Fma, which Vulkan does not require to be fused");
-            Require(!emulatedMath.add && !emulatedMath.mul && !emulatedMath.fma, std::string("f16 native: ") + mode.name + " uses f16vec2 math without Float16");
+            Require(nativeMath.fusedFma == (fused && mode.native), std::string("f16 native: ") + mode.name + (fused && mode.native ? " does not use" : " uses") + " OpFmaKHR for the fma forms");
+            Require(!emulatedMath.add && !emulatedMath.mul && !emulatedMath.fma && !emulatedMath.fusedFma, std::string("f16 native: ") + mode.name + " uses f16vec2 math without Float16");
             for (std::uint32_t batch = 0; batch < Batches; ++batch) {
                 for (auto& word : Input) word = Half() | (Half() << 16u);
                 const auto nativeOutput = run(native);
@@ -229,7 +233,7 @@ int main() {
                 compared += Threads * Results;
             }
         }
-        std::printf("f16 native tests passed (%llu results, %llu NaN results with another payload)\n", static_cast<unsigned long long>(compared), static_cast<unsigned long long>(nanPayloads));
+        std::printf("f16 native tests passed (%llu results, %llu NaN results with another payload, %s)\n", static_cast<unsigned long long>(compared), static_cast<unsigned long long>(nanPayloads), fused ? "fused f16 fma" : "no FMAKHR");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

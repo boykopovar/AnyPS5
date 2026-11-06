@@ -10,6 +10,7 @@
 #include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <limits>
 #include <list>
@@ -155,6 +156,9 @@ struct ImageTableReuseCounts {
     std::uint64_t replayed = 0;
     std::uint64_t writesKept = 0;
     std::uint64_t writesMade = 0;
+    std::uint64_t variantSurfaces = 0;
+    std::uint64_t variantSubstituted = 0;
+    std::uint64_t variantRejected = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
@@ -170,7 +174,7 @@ struct PresyncSurface {
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
-    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {});
+    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, bool deviceStaging = false);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
     // Two-stage build for dispatches (see build): with `deferred` the constructor runs stage A only,
     // which needs no device lock, and Complete() runs stage B under GuestMemory::GpuMutex; until
@@ -190,6 +194,7 @@ public:
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+    void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
@@ -216,8 +221,20 @@ public:
         std::size_t size;
         std::span<const std::uint32_t> words;
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const;
+    struct DrawUse {
+        DrawUse() = default;
+        DrawUse(const DrawUse&) = delete;
+        DrawUse& operator=(const DrawUse&) = delete;
+        ~DrawUse();
+        std::shared_ptr<BdaResources> record;
+        std::shared_ptr<DrawBindings> bindings;
+        std::shared_ptr<std::atomic<bool>> ownRecord;
+    };
+    std::shared_ptr<DrawUse> BeginDrawUse(Recorder& recorder) const;
+    void CompleteDrawUse(const DrawUse& use) const;
+    void BindDrawUse(VkCommandBuffer commands, VkPipelineLayout layout, const DrawUse* use) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false, const BdaResources* faultRecord = nullptr) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData = nullptr) const;
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
@@ -241,12 +258,23 @@ public:
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HasGpuCopies() const { return guestMemory.HasGpuCopies(); }
     bool HasHostGpuCopies() const { return guestMemory.HasHostGpuCopies(); }
+    bool HasStagedCopies() const { return guestMemory.HasStagedCopies(); }
     const void* MemoryOwner() const { return &guestMemory; }
     void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool SpaceReuse() const { return spaceReuse; }
+    static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
+    bool RetakeSpace() { return guestMemory.RetakeSpace(); }
+    bool SpaceHeld() const { return guestMemory.SpaceHeld(); }
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
+    std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
+    void HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial) { guestMemory.HoldSpaceThrough(recorder, serial); }
+    bool ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough) { return guestMemory.ReleaseCompletedSpace(recorder, completedThrough); }
     bool UsesAddressTable() const { return usesBda; }
+    std::span<const std::byte> AddressTableBytes() const;
+    bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -310,6 +338,7 @@ public:
     struct ProofReport {
         ProofPath path = ProofPath::Fast;
         ProofFailure failure = ProofFailure::None;
+        bool audited = false;
     };
     bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
     static bool EpochProofs();
@@ -516,7 +545,7 @@ private:
     std::size_t nextImageRecord = 0;
     // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
     // lock and the cache still holds it; null sends the element to cachedTexture.
-    std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
+    std::shared_ptr<Texture> fastTexture(ImageRecord& record);
     void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
     void applySamplerVariants();
     void forgetDeferredInputs();
@@ -546,6 +575,7 @@ private:
         bool depth = false;
         bool valid = false;
     };
+    bool keepsTemplateRecords() const;
     void captureValidation();
     // A surface of this object the fast proof found a foreign image pending over: the element
     // (index into textures, or into storageTextures when `storage`) whose own object stands in for
@@ -591,6 +621,7 @@ private:
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    bool spaceReuse = false;
     bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
@@ -634,11 +665,14 @@ private:
     };
     std::vector<FaultDescriptor> faultDescriptors;
     void prepareFaultSlot() const;
+    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const;
+    std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
     std::size_t readOnlyBuffers = 0;
     std::chrono::steady_clock::time_point lastFullWalk = std::chrono::steady_clock::now();
+    std::uint64_t walkImportGeneration = HostImportSetGeneration();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeOnlyRanges;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;

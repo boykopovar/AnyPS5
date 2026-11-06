@@ -295,7 +295,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Variant& variant) {
     };
     vertexRequest.useCache = false;
     const auto vertex = ShaderRecompiler::Recompile(vertexRequest);
-    Require(vertex.registrationModule == target.registrationModules, variant.name + ": the vertex shader was not emitted in the device's module form");
+    if (target.registrationModules) Require(!vertex.registrationModule, variant.name + ": the vertex shader was emitted in registration form");
     const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
     ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
     pixelInfo.wave32 = true;

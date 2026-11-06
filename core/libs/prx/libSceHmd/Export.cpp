@@ -7,8 +7,10 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cerrno>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 #include <string>
 
 static_assert(sizeof(HmdCommandBuffer) == 16);
@@ -33,6 +35,12 @@ std::uint32_t CompiledSdkVersion() {
     std::uint32_t version;
     std::memcpy(&version, processParameters + 0x10, sizeof(version));
     return version;
+}
+
+std::int32_t QueryHandleBeforeInitialize(std::int32_t handle, const char* query) {
+    if (handle != 0) return Hmd::InvalidHandle;
+    if (CompiledSdkVersion() >= Hmd::StartupStateSdkVersion) throw std::runtime_error(std::string(query) + ": handle 0 before sceHmdInitialize from SDK 4.50 is not read");
+    return Hmd::NotInitialized;
 }
 
 std::int32_t CommandQueryHandle(std::int32_t handle, const char* query) {
@@ -106,22 +114,32 @@ std::int32_t APS5_VABI sceHmdClose(std::int32_t handle) {
 std::int32_t APS5_VABI sceHmdGetDeviceInformation(Hmd::DeviceInformation* info) {
     if (!info) return Hmd::ParameterNull;
     if (!initialized.load()) return Hmd::NotInitialized;
-    *info = {};
-    info->status = Hmd::DeviceStatus::NotDetected;
-    info->userId = -1;
+    Hmd::DeviceInformation result{};
+    result.status = Hmd::DeviceStatus::NotDetected;
+    result.userId = -1;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) {
+        errno = savedErrno;
+        return Hmd::ParameterNull;
+    }
     return 0;
 }
 
 std::int32_t APS5_VABI sceHmdGetDeviceInformationByHandle(std::int32_t handle,
                                                         Hmd::DeviceInformation* info) {
-    (void)handle;
-    (void)info;
-    return initialized.load() ? Hmd::InvalidHandle : Hmd::NotInitialized;
+    if (initialized.load()) return Hmd::InvalidHandle;
+    const std::int32_t result = QueryHandleBeforeInitialize(handle, __func__);
+    return result == Hmd::NotInitialized && !info ? Hmd::ParameterNull : result;
 }
 
 std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status) {
     if (!status) return Hmd::ParameterNull;
-    *status = Hmd::DeviceStatus::NotDetected;
+    constexpr Hmd::DeviceStatus deviceStatus = Hmd::DeviceStatus::NotDetected;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(status, &deviceStatus, sizeof(deviceStatus))) {
+        errno = savedErrno;
+        return Hmd::ParameterNull;
+    }
     return 0;
 }
 
@@ -434,9 +452,9 @@ int APS5_VABI sceHmdInternalSetM2LedOn(std::int32_t handle, std::uint32_t ledMas
 }
 
 int APS5_VABI sceHmdGetFieldOfView(std::int32_t handle, HmdFieldOfView* fieldOfView) {
-    (void)handle;
     if (!fieldOfView) return Hmd::ParameterNull;
-    return initialized.load() ? Hmd::InvalidHandle : Hmd::NotInitialized;
+    if (initialized.load()) return Hmd::InvalidHandle;
+    return QueryHandleBeforeInitialize(handle, __func__);
 }
 
 int APS5_VABI sceHmdReprojectionAddDisplayBuffer(std::int32_t bufferIndex, const void* reserved) {

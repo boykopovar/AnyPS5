@@ -715,7 +715,6 @@ struct AprQueue {
     std::mutex submit;
     std::mutex mutex;
     std::condition_variable ready;
-    std::condition_variable done;
     struct Work {
         std::vector<std::uint8_t> commands;
         Deferred resume;
@@ -723,13 +722,32 @@ struct AprQueue {
     };
     std::deque<Work> pending;
     bool running = false;
-    std::uint32_t submitted = 0;
-    std::uint32_t completed = 0;
 };
 
-AprQueue* _startQueue() {
+struct AprCompletion {
+    std::mutex mutex;
+    std::condition_variable done;
+    std::set<std::uint32_t> outstanding;
+    std::uint32_t issued = 0;
+};
+
+AprCompletion& _completion(bool amm) {
+    static AprCompletion* const completions[2] = {new AprCompletion(), new AprCompletion()};
+    return *completions[amm ? 1 : 0];
+}
+
+void _complete(bool amm, std::uint32_t id) {
+    auto& completion = _completion(amm);
+    {
+        std::lock_guard lock(completion.mutex);
+        completion.outstanding.erase(id);
+    }
+    completion.done.notify_all();
+}
+
+AprQueue* _startQueue(bool amm) {
     auto* created = new AprQueue();
-    std::thread([created] {
+    std::thread([created, amm] {
         for (;;) {
             AprQueue::Work work;
             {
@@ -750,27 +768,39 @@ AprQueue* _startQueue() {
             {
                 std::lock_guard lock(created->mutex);
                 created->running = false;
-                created->completed = std::max(created->completed, work.id);
             }
-            created->done.notify_all();
+            _complete(amm, work.id);
         }
     }).detach();
     return created;
 }
 
-AprQueue& _queue(bool amm) {
-    static AprQueue* const queues[2] = {_startQueue(), _startQueue()};
-    return *queues[amm ? 1 : 0];
+AprQueue& _queue(bool amm, std::uint32_t priority) {
+    if (amm) {
+        static AprQueue* const ammQueue = _startQueue(true);
+        return *ammQueue;
+    }
+    static std::mutex& queuesLock = *new std::mutex();
+    static std::map<std::uint32_t, AprQueue*>& queues = *new std::map<std::uint32_t, AprQueue*>();
+    std::lock_guard lock(queuesLock);
+    auto& queue = queues[priority];
+    if (queue == nullptr) queue = _startQueue(false);
+    return *queue;
 }
 
-std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm) {
-    auto& queue = _queue(amm);
+std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0) {
+    auto& queue = _queue(amm, priority);
+    auto& completion = _completion(amm);
     std::lock_guard submitLock(queue.submit);
     std::uint32_t id;
+    {
+        std::lock_guard lock(completion.mutex);
+        id = ++completion.issued;
+        completion.outstanding.insert(id);
+    }
     bool queued;
     {
         std::lock_guard lock(queue.mutex);
-        id = ++queue.submitted;
         queued = queue.running || !queue.pending.empty();
     }
     const auto enqueue = [&](Deferred resume) {
@@ -788,18 +818,14 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm) {
         enqueue(*deferred);
         return id;
     }
-    {
-        std::lock_guard lock(queue.mutex);
-        queue.completed = std::max(queue.completed, id);
-    }
-    queue.done.notify_all();
+    _complete(amm, id);
     return id;
 }
 
 void _waitSubmitted(std::uint32_t id, bool amm) {
-    auto& queue = _queue(amm);
-    std::unique_lock lock(queue.mutex);
-    queue.done.wait(lock, [&] { return queue.completed >= id || id > queue.submitted; });
+    auto& completion = _completion(amm);
+    std::unique_lock lock(completion.mutex);
+    completion.done.wait(lock, [&] { return id > completion.issued || !completion.outstanding.contains(id); });
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
@@ -809,9 +835,9 @@ std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
     if (id == 0) return false;
     {
-        auto& queue = _queue(true);
-        std::lock_guard lock(queue.mutex);
-        if (id > queue.submitted) return false;
+        auto& completion = _completion(true);
+        std::lock_guard lock(completion.mutex);
+        if (id > completion.issued) return false;
     }
     _waitSubmitted(id, true);
     return true;
@@ -876,17 +902,15 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
-    (void)priority;
     if (!buffer) return _fail(GUEST_EINVAL);
-    _submit(buffer->base, buffer->offset, false);
+    _submit(buffer->base, buffer->offset, false, priority);
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
-    (void)priority;
     if (!buffer) return _fail(GUEST_EINVAL);
-    *id = _submit(buffer->base, buffer->offset, false);
+    *id = _submit(buffer->base, buffer->offset, false, priority);
     return 0;
 }
 

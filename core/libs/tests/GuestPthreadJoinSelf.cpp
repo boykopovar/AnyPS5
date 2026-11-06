@@ -13,6 +13,8 @@ static constexpr int GUEST_EDEADLK = 11;
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void* APS5_VABI JoinSelf(void*) {
+    Require(scePthreadEqual(scePthreadSelf(), scePthreadSelf()) == 1);
+    scePthreadYield();
     void* result = reinterpret_cast<void*>(std::uintptr_t{0x55});
     Require(scePthreadJoin(scePthreadSelf(), &result) == SCE_KERNEL_ERROR_EDEADLK);
     Require(pthread_join_nid_postfix(scePthreadSelf(), &result) == GUEST_EDEADLK);
@@ -36,6 +38,7 @@ int main() {
     Pthread thread = nullptr;
     void* result = nullptr;
     Require(scePthreadCreate(&thread, nullptr, JoinSelf, nullptr, "join-self") == SCE_OK);
+    Require(scePthreadEqual(thread, thread) == 1 && scePthreadEqual(thread, scePthreadSelf()) == 0);
     Require(scePthreadJoin(thread, &result) == SCE_OK);
     Require(result == reinterpret_cast<void*>(std::uintptr_t{0x1234}));
 

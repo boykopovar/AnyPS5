@@ -39,6 +39,8 @@ static void CheckClosed() {
 
 static void CheckOpened() {
     KeyboardParam param{};
+    Require(sceImeKeyboardOpen(-1, &param) == InvalidUserId, "keyboard open for an invalid user");
+    Require(sceImeKeyboardClose(-1) == NotOpened, "close after the refused open");
     Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
     Require(sceImeKeyboardOpen(1, &param) == AlreadyOpened, "duplicate open accepted");
     KeyboardInfo info;
