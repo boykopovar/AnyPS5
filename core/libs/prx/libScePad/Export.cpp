@@ -238,9 +238,14 @@ int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
 }
 
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
- std::memset(info, 0, sizeof(*info));
+ if (SpecialHandle(handle)) {
+  std::memset(info, 0, sizeof(*info));
+  return PAD_OK;
+ }
+ PadGetTriggerEffectState_nid_postfix(PortOf(handle), info->state);
  return PAD_OK;
 }
 
@@ -395,6 +400,12 @@ int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
  return PAD_OK;
 }
 
+int APS5_VABI scePadSetConnection(std::int32_t handle, bool connected) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (param == nullptr) return PAD_ERROR_INVALID_ARG;
@@ -428,8 +439,8 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  }
  std::uint32_t mode[2] = {};
  for (int trigger = 0; trigger < 2; ++trigger) std::memcpy(&mode[trigger], bytes + 8 + 56 * trigger, 4);
- if (mode[0] > 6 || mode[1] > 6) {
-  return PAD_ERROR_INVALID_ARG;
+ for (int trigger = 0; trigger < 2; ++trigger) {
+  if ((mask & (1u << trigger)) != 0 && mode[trigger] > 6) return PAD_ERROR_INVALID_ARG;
  }
  const int port = PortOf(handle);
  for (int trigger = 0; trigger < 2; ++trigger) {
@@ -629,6 +640,8 @@ int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t
 }
 
 int APS5_VABI scePadSetLightBarBlinking(std::int32_t handle, const PadLightBarBlinkingParameter* parameter) {
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -754,8 +767,10 @@ int APS5_VABI scePadSwitchConnection(std::int32_t handle, std::uint32_t flags) {
 }
 
 int APS5_VABI scePadDisableTriggerEffect(std::int32_t handle, bool disabled) {
-    (void)disabled;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (SpecialHandle(handle)) return PAD_OK;
+    Pad::SetTriggerEffectsDisabled(PortOf(handle), disabled);
     return PAD_OK;
 }
 
