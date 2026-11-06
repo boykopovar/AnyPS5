@@ -51,7 +51,7 @@ bool g_robust2 = false;
 bool g_waveLdsMemoryBarriers = false;
 bool g_deviceScopeLdsMemoryBarriers = false;
 bool g_ldsLockFences = false;
-bool g_coherentBufferAtomicLoads = false;
+bool g_coherentBufferAtomics = false;
 bool g_code = false;
 
 bool Replay(const char* path) {
@@ -61,7 +61,7 @@ bool Replay(const char* path) {
     if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
     if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
     if (g_ldsLockFences) request.request.target.ldsLockFences = true;
-    if (g_coherentBufferAtomicLoads) request.request.target.coherentBufferAtomicLoads = true;
+    if (g_coherentBufferAtomics) request.request.target.coherentBufferAtomics = true;
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
@@ -191,7 +191,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--coherent-buffer-atomic-loads] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--coherent-buffer-atomics] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -232,8 +232,8 @@ int main(int argc, char** argv) {
             g_ldsLockFences = true;
             continue;
         }
-        if (std::string(argv[i]) == "--coherent-buffer-atomic-loads") {
-            g_coherentBufferAtomicLoads = true;
+        if (std::string(argv[i]) == "--coherent-buffer-atomics") {
+            g_coherentBufferAtomics = true;
             continue;
         }
         if (std::string(argv[i]) == "--mem") {

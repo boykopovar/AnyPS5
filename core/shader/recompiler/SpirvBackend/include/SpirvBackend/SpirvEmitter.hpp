@@ -45,7 +45,7 @@ struct SpirvTargetOptions {
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
     bool meshWindowBuffer = false;
-    bool coherentBufferAtomicLoads = false;
+    bool coherentBufferAtomics = false;
 };
 
 struct SpirvEmitInfo {

@@ -484,6 +484,8 @@ enum class IrOpcode : std::uint16_t {
     InstPrefetch,
     SelectU32,
     ImageBvhIntersectRay,
+    GuestRelease,
+    GuestAcquire,
     Count
 };
 

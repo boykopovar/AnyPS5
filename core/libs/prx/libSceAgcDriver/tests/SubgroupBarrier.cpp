@@ -152,7 +152,7 @@ void verifyLdsLockFenceDrivers() {
 
 void verifyCoherentBufferAtomicLoadDrivers() {
     for (const auto& item : Cases) {
-        require(AgcDriver::CoherentBufferAtomicLoadsRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected atomic coherent buffer loads only on MoltenVK");
+        require(AgcDriver::CoherentBufferAtomicsRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected atomic coherent buffer loads only on MoltenVK");
     }
 }
 

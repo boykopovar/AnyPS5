@@ -441,7 +441,7 @@ struct VulkanDevice::State {
     bool subgroupControlBarriers = true;
     bool workgroupScopeFences = true;
     bool ldsLockFences = false;
-    bool coherentBufferAtomicLoads = false;
+    bool coherentBufferAtomics = false;
     // VK_EXT_descriptor_indexing with non-uniform image array indexing (bindless image tables in
     // graphics stages, and compute workgroups wider than a wave).
     bool descriptorIndexing = false;
@@ -1355,7 +1355,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
         state->workgroupScopeFences = WorkgroupScopeFenceUsable(driver.driverID);
         state->ldsLockFences = LdsLockFencesRequired(driver.driverID);
-        state->coherentBufferAtomicLoads = CoherentBufferAtomicLoadsRequired(driver.driverID);
+        state->coherentBufferAtomics = CoherentBufferAtomicsRequired(driver.driverID);
     }
     {
         HostGpuQuery hostQuery;
@@ -4152,7 +4152,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
     target.ldsLockFences = state->ldsLockFences;
-    target.coherentBufferAtomicLoads = state->coherentBufferAtomicLoads;
+    target.coherentBufferAtomics = state->coherentBufferAtomics;
     target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;

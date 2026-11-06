@@ -239,7 +239,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
-    const bool atomic = state.coherentBufferAtomicLoads && context.Memory(instruction).coherent;
+    const bool atomic = state.coherentBufferAtomics && context.Memory(instruction).coherent;
     const bool selectable = !atomic && LoadsSelectable(state, access);
     const bool exact = state.exactRobustLoads && selectable;
     const auto bounds = exact ? 0u : EmitMemoryElementInBounds(state, access, last);
@@ -324,7 +324,8 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, u32, unaligned, next, index);
-    const auto bytes = bits != 32u ? byteBuffers(state) : 0u;
+    const bool atomic = state.coherentBufferAtomics && context.Memory(instruction).coherent;
+    const auto bytes = bits != 32u && !atomic ? byteBuffers(state) : 0u;
     if (bytes != 0u) {
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, context.Memory(instruction).resource);
         const auto block = state.module.AllocateId();
@@ -358,7 +359,8 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
         if (bits == 32u) {
             EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
                 const auto pointer = EmitMemoryElementPointer(state, access, index);
-                if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
+                if (atomic) state.module.AddFunction(spv::OpAtomicStore, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
+                else if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
                 else state.module.AddFunction(spv::OpStore, pointer, value);
             });
         }

@@ -109,7 +109,7 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
     target.subgroupSize = 32;
     target.robustBufferAccess2 = robust;
     target.exactRobustLoads = exact;
-    target.coherentBufferAtomicLoads = test.atomicLoads;
+    target.coherentBufferAtomics = test.atomicLoads;
     return SpirvEmitter().Emit(program, inputs, bindings, target);
 }
 
@@ -431,6 +431,103 @@ int main() {
                 require(count(emitLoad(coherent, true, 8, 64, robust, exact), spv::OpAtomicLoad) == 0, "a coherent buffer load is atomic without the flag");
             }
         }
+    });
+    run("coherent buffer publication", [] {
+        const auto emitPublication = [](bool flag, bool fences) {
+            IrProgram program;
+            program.SetWaveSize(32);
+            program.Resources().stage = IrShaderStage::Compute;
+            program.Resources().srtPlanComplete = true;
+            program.Resources().resourceTrackingComplete = true;
+            program.Metadata().shaderInfoComplete = true;
+            program.Metadata().bindingLayoutComplete = true;
+            auto& block = program.CreateBlock();
+            program.SetEntryBlock(block);
+            program.BlockOrder().push_back(&block);
+            program.Metadata().blockInfo.emplace_back();
+            const auto constant = [&](std::uint32_t number) -> IrValue& {
+                auto& value = program.CreateValue(IrOpcode::Void, IrType::U32);
+                value.SetImmediateU32(number);
+                return value;
+            };
+            const auto emit = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments) -> IrValue& {
+                auto& value = program.CreateValue(opcode, type);
+                for (auto* argument : arguments) value.AddArgument(argument);
+                block.AppendInstruction(&value);
+                return value;
+            };
+            auto& enabled = program.CreateValue(IrOpcode::Void, IrType::Bool);
+            enabled.SetImmediateBool(true);
+            auto& zero = constant(0);
+            MemoryInfo memory;
+            memory.kind = ResourceKind::Buffer;
+            memory.dataBits = 32;
+            memory.dataDwords = 1;
+            memory.componentCount = 1;
+            memory.coherent = true;
+            program.Resources().memoryInfo.push_back(memory);
+            program.Info().buffers.emplace_back().read = true;
+            program.Info().buffers.front().written = true;
+            program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Buffers, {0}});
+            program.Metadata().bindings.pushDataStartDword = 0;
+            program.Metadata().bindings.memoryOffsetCount = 1;
+            auto& handle = emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&constant(0x100u), &zero, &constant(64u), &zero});
+            emit(IrOpcode::StoreBufferU32, IrType::Void, {&handle, &zero, &constant(0u), &zero, &constant(7u), &enabled});
+            if (fences) emit(IrOpcode::GuestRelease, IrType::Void, {});
+            emit(IrOpcode::StoreBufferU32, IrType::Void, {&handle, &zero, &constant(16u), &zero, &constant(1u), &enabled});
+            auto& token = emit(IrOpcode::LoadBufferU32, IrType::U32, {&handle, &zero, &constant(16u), &zero, &enabled});
+            if (fences) emit(IrOpcode::GuestAcquire, IrType::Void, {});
+            auto& payload = emit(IrOpcode::LoadBufferU32, IrType::U32, {&handle, &zero, &constant(0u), &zero, &enabled});
+            emit(IrOpcode::StoreBufferU32, IrType::Void, {&handle, &zero, &constant(32u), &zero, &emit(IrOpcode::IAdd32, IrType::U32, {&token, &payload}), &enabled});
+            ShaderComputeInputInfo compute;
+            compute.threadsNum[0] = 32;
+            compute.threadsNum[1] = 1;
+            compute.threadsNum[2] = 1;
+            compute.ldsSizeDwords = 16;
+            compute.scratchSizeDwords = 16;
+            compute.hostSubgroupSize = 32;
+            compute.waveSize = 32;
+            ShaderStageInputInfo inputs;
+            inputs.compute = &compute;
+            CompiledBindingLayout bindings;
+            bindings.layout = program.Metadata().bindings;
+            SpirvTargetOptions target{};
+            target.vulkanVersion = 0x00401000;
+            target.spirvVersion = 0x00010300;
+            target.subgroupSize = 32;
+            target.coherentBufferAtomics = flag;
+            return SpirvEmitter().Emit(program, inputs, bindings, target);
+        };
+        struct Counts {
+            unsigned atomicStores = 0, atomicLoads = 0, volatileStores = 0, volatileLoads = 0, deviceFences = 0, otherFences = 0;
+        };
+        const auto counts = [](const std::vector<std::uint32_t>& module) {
+            std::map<std::uint32_t, std::uint32_t> constants;
+            Counts found;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                const auto opcode = static_cast<spv::Op>(module[offset] & 0xffffu);
+                const auto words = module[offset] >> 16u;
+                if (opcode == spv::OpConstant && words == 4u) constants.emplace(module[offset + 2], module[offset + 3]);
+                found.atomicStores += opcode == spv::OpAtomicStore;
+                found.atomicLoads += opcode == spv::OpAtomicLoad;
+                found.volatileStores += opcode == spv::OpStore && words >= 4u && (module[offset + 3] & spv::MemoryAccessVolatileMask) != 0u;
+                found.volatileLoads += opcode == spv::OpLoad && words >= 5u && (module[offset + 4] & spv::MemoryAccessVolatileMask) != 0u;
+                if (opcode == spv::OpMemoryBarrier) {
+                    const auto value = [&](std::uint32_t id) { return constants.contains(id) ? constants.at(id) : ~0u; };
+                    const bool device = value(module[offset + 1]) == spv::ScopeDevice && value(module[offset + 2]) == (spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask);
+                    found.deviceFences += device;
+                    found.otherFences += !device;
+                }
+            }
+            return found;
+        };
+        const auto fenced = counts(emitPublication(true, true));
+        const auto unfenced = counts(emitPublication(true, false));
+        require(fenced.atomicStores == 3u && fenced.volatileStores == 0u && fenced.volatileLoads == 0u && fenced.atomicLoads == unfenced.atomicLoads, "with the flag, coherent dword stores and loads are not all atomic");
+        require(fenced.deviceFences == unfenced.deviceFences + 2u && fenced.otherFences == unfenced.otherFences, "with the flag, the guest's release and acquire did not each become one device-scope acquire-release fence on uniform memory");
+        require(emitPublication(false, true) == emitPublication(false, false), "without the flag, the guest's release or acquire changed the module");
+        const auto plain = counts(emitPublication(false, true));
+        require(plain.atomicStores == 0u && plain.volatileStores == 3u && plain.volatileLoads != 0u && plain.atomicLoads + plain.volatileLoads == fenced.atomicLoads, "without the flag, the coherent stores and loads of a publication are not volatile");
     });
     run("exact robust loads read what the checked variant reads", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};

@@ -29,19 +29,22 @@ constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t RecordBytes = 128;
 constexpr std::uint32_t TokenWord = 4;
 constexpr std::uint32_t ReportWord = 8;
+constexpr std::uint32_t ReportWords = 8;
 constexpr std::uint32_t Tokens = 128;
 constexpr std::uint32_t SpinBudget = 1000000;
 constexpr std::uint32_t Rounds = 4;
 
-alignas(256) constexpr std::array<std::uint32_t, 63> CrossWorkgroupBufferFlagCode{
-    0x7da40080, 0xbe850304, 0xbe860380, 0xbe870380, 0xbf09ff05, 0x00000080, 0xbf850030, 0xe030c010,
-    0x80000100, 0xbf8c3f70, 0x7d840205, 0xbf870006, 0x80068106, 0xbf0aff06, 0x000f4240, 0xbf85fff7,
-    0x7e040283, 0xbf820026, 0xbf068005, 0xbf850014, 0xe038c000, 0x80000800, 0x7e180205, 0x4a1a18ff,
-    0x00010000, 0x4a1c18ff, 0x00020000, 0x4a1e18ff, 0x00030000, 0xbf8c3f70, 0x3a101908, 0x3a121b09,
-    0x3a141d0a, 0x3a161f0b, 0xd7720008, 0x042a1308, 0x38101708, 0x7d8a1080, 0xbf860001, 0x80078107,
-    0x80088105, 0x7e080208, 0x4a0a08ff, 0x00010000, 0x4a0c08ff, 0x00020000, 0x4a0e08ff, 0x00030000,
-    0xe0784000, 0x80000400, 0xbbfd0000, 0xe0704010, 0x80000400, 0x80058205, 0xbf82ffcd, 0x7e040282,
-    0x7e060206, 0x7e080207, 0x7e0a0205, 0x8f098404, 0xe0780020, 0x09000200, 0xbf810000,
+alignas(256) constexpr std::array<std::uint32_t, 92> CrossWorkgroupBufferFlagCode{
+    0x7da40080, 0xbe850304, 0xbe860380, 0xbe870380, 0xbe8a0380, 0x7e020281, 0xe0c80014, 0x80000100, 0xbf09ff05, 0x00000080,
+    0xbf850042, 0x7e020280, 0xe0c84014, 0x80000100, 0xbf8c3f70, 0x7e140501, 0xe030c010, 0x80000100, 0xbf8c3f70, 0x7d840205,
+    0xbf87000f, 0x80068106, 0xbf0aff06, 0x000f4240, 0xbf85fff7, 0x7e020280, 0xe0c84018, 0x80000100, 0xbf8c3f70, 0x7e160501,
+    0xbf06820a, 0x850c8081, 0xbf06800b, 0x850c800c, 0x7e040283, 0xbf82002b, 0xe1c40000, 0x00000000, 0xe1c80000, 0x00000000,
+    0xbf068005, 0xbf850014, 0xe038c000, 0x80000800, 0x7e180205, 0x4a1a18ff, 0x00010000, 0x4a1c18ff, 0x00020000, 0x4a1e18ff,
+    0x00030000, 0xbf8c3f70, 0x3a101908, 0x3a121b09, 0x3a141d0a, 0x3a161f0b, 0xd7720008, 0x042a1308, 0x38101708, 0x7d8a1080,
+    0xbf860001, 0x80078107, 0x80088105, 0x7e080208, 0x4a0a08ff, 0x00010000, 0x4a0c08ff, 0x00020000, 0x4a0e08ff, 0x00030000,
+    0xe0784000, 0x80000400, 0xbbfd0000, 0xe0704010, 0x80000400, 0x80058205, 0xbf82ffbb, 0xbe8c0381, 0x7e040282, 0x7e020281,
+    0xe0c80018, 0x80000100, 0x7e060206, 0x7e080207, 0x7e0a0205, 0x7e0c020c, 0x8f098504, 0xe0780020, 0x09000200, 0xe0700030,
+    0x09000600, 0xbf810000,
 };
 
 class GuestBlock {
@@ -64,7 +67,9 @@ private:
     std::uint8_t* block = nullptr;
 };
 
-bool Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize) {
+enum class Outcome { Passed, Failed, NotConcurrent };
+
+Outcome Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize) {
     auto* words = guest.Words();
     std::memset(words, 0, RecordBytes);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words));
@@ -85,13 +90,16 @@ bool Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     device.WaitIdle();
     bool passed = words[TokenWord] == Tokens;
     for (std::uint32_t index = 0; index < 4u; ++index) passed = passed && words[index] == Tokens + (index << 16u);
+    bool concurrentTimeout = false;
     for (std::uint32_t group = 0; group < 2u; ++group) {
-        const auto* report = words + ReportWord + group * 4u;
+        const auto* report = words + ReportWord + group * ReportWords;
         passed = passed && report[0] == 2u && report[2] == 0u && report[3] == Tokens + group;
-        std::printf("wave%u group %u: %s, %u spin iterations, %u stale payloads, next token %u\n", waveSize, group, report[0] == 2u ? "took every turn" : report[0] == 3u ? "gave up" : "?", report[1], report[2], report[3]);
+        concurrentTimeout = concurrentTimeout || (report[0] == 3u && report[4] == 1u);
+        std::printf("wave%u group %u: %s, %u spin iterations, %u stale payloads, next token %u\n", waveSize, group, report[0] == 2u ? "took every turn" : report[0] == 3u ? (report[4] == 1u ? "gave up while the other workgroup was running" : "gave up without the other workgroup running") : "?", report[1], report[2], report[3]);
     }
     std::printf("wave%u: token %u of %u, payload %08x %08x %08x %08x\n", waveSize, words[TokenWord], Tokens, words[0], words[1], words[2], words[3]);
-    return passed;
+    if (passed) return Outcome::Passed;
+    return concurrentTimeout || words[ReportWord + 2u] != 0u || words[ReportWord + ReportWords + 2u] != 0u ? Outcome::Failed : Outcome::NotConcurrent;
 }
 
 }
@@ -101,16 +109,23 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         GuestBlock guest;
+        std::uint32_t passes = 0;
         std::uint32_t failures = 0;
         std::uint32_t runs = 0;
         for (std::uint32_t round = 0; round < Rounds; ++round) {
             for (const std::uint32_t waveSize : {64u, 32u}) {
                 ++runs;
-                if (!Run(*device, guest, waveSize)) ++failures;
+                const auto outcome = Run(*device, guest, waveSize);
+                if (outcome == Outcome::Passed) ++passes;
+                if (outcome == Outcome::Failed) ++failures;
             }
         }
-        std::printf("%u of %u runs passed the token %u times within %u spin iterations per workgroup\n", runs - failures, runs, Tokens, SpinBudget);
-        Require(failures == 0u, "two workgroups handing a token back and forth with buffer_load_dword glc dlc through a V# did not see each other's stores, or read a stale payload after the token");
+        std::printf("%u of %u runs passed the token %u times within %u spin iterations per workgroup, %u failed, %u ran the workgroups one after the other\n", passes, runs, Tokens, SpinBudget, failures, runs - passes - failures);
+        Require(failures == 0u, "two running workgroups handing a token back and forth with buffer_load_dword glc dlc through a V# did not see each other's stores, or read a stale payload after the token");
+        if (passes == 0u) {
+            std::puts("cross-workgroup buffer flag: the device never ran the two workgroups at the same time, so no handoff was checked");
+            return VulkanTestSkipped;
+        }
         std::puts("cross-workgroup buffer flag tests passed");
         return 0;
     } catch (const std::exception& error) {

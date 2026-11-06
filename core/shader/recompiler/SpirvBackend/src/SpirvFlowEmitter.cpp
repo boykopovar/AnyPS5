@@ -709,6 +709,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::SetAttribute: return Invoke(EmitSetAttribute, ctx, inst);
         case IrOpcode::ControlNop: return Invoke(EmitControlNop, ctx, inst);
         case IrOpcode::Waitcnt: return Invoke(EmitWaitcnt, ctx, inst);
+        case IrOpcode::GuestRelease:
+        case IrOpcode::GuestAcquire: return Invoke(EmitGuestFence, ctx, inst);
         case IrOpcode::Sendmsg: return Invoke(EmitSendmsg, ctx, inst);
         case IrOpcode::TtraceData: return Invoke(EmitTtraceData, ctx, inst);
         case IrOpcode::InstPrefetch: return Invoke(EmitInstPrefetch, ctx, inst);
@@ -941,6 +943,12 @@ void EmitControlNop(SpirvValueEmitContext& context) {
 }
 
 void EmitWaitcnt(SpirvValueEmitContext& context) {
+    EmitVoid(context);
+}
+
+void EmitGuestFence(SpirvValueEmitContext& context) {
+    auto& state = context.state;
+    if (state.coherentBufferAtomics) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask));
     EmitVoid(context);
 }
 

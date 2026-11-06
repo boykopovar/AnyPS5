@@ -352,7 +352,7 @@ struct SpirvTarget {
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
-    bool coherentBufferAtomicLoads = false;
+    bool coherentBufferAtomics = false;
 };
 
 struct BindingLayout {
