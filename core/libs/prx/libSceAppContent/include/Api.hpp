@@ -43,7 +43,7 @@ int APS5_VABI sceAppContentDownload2Shrink(void);
 int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void);
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info);
 int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppContentAddcontInfo* list, uint32_t listNum, uint32_t* hitNum);
-int APS5_VABI sceAppContentGetDownloadedStoreCountry(void);
+int APS5_VABI sceAppContentGetDownloadedStoreCountry(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, void* storeCountry);
 int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key);
 int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag);
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag);
