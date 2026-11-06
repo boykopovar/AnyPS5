@@ -72,6 +72,7 @@ public:
         std::function<std::uint32_t(std::uint32_t kind, std::uint32_t slot)> generation;
         std::function<std::uint64_t()> serial;
         std::function<bool()> nearlyFull;
+        std::function<std::uint32_t(std::span<const std::vector<std::uint32_t>> slots, std::uint32_t touched)> touch;
     };
     struct Budget {
         std::uint32_t entries = 16384u;
@@ -199,6 +200,7 @@ private:
     void hold(const Key& key, Entry entry);
     void release(const Key& key, Recorder& recorder);
     void retainSlots(Recorder& recorder);
+    void touchSlots();
     void refresh(const Context& build, Recorder& recorder);
     void evict(const Context& build, Recorder& recorder);
     void upload(Recorder& recorder);
@@ -229,6 +231,9 @@ private:
     std::optional<ValidationState> validated;
     std::uint64_t scannedStamp = 0;
     std::uint64_t slotSerial = 0;
+    std::vector<std::vector<std::uint32_t>> heldSlots;
+    bool heldSlotsStale = true;
+    std::uint32_t touchedEpoch = 0;
     std::uint64_t useSerial = 0;
     std::uint64_t evictionCheck = 0;
     std::map<ShaderRecompiler::PipelineIdentity, std::set<std::uint64_t>> identityPrograms;

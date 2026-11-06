@@ -99,6 +99,9 @@ struct FakeHeap {
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::weak_ptr<Texture>> holders;
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> generations;
     std::map<std::uint32_t, std::uint32_t> next;
+    std::uint32_t epoch = 1;
+    std::uint32_t touches = 0;
+    std::map<std::uint32_t, std::uint32_t> uses;
 
     void Sweep(std::uint32_t kind, std::uint32_t slot) {
         for (auto found = slots.begin(); found != slots.end();) {
@@ -126,6 +129,14 @@ DeviceImageTable::Slots FakeSlots(const std::shared_ptr<FakeHeap>& heap) {
     slots.generation = [heap](std::uint32_t kind, std::uint32_t slot) { return heap->generations[{kind, slot}]; };
     slots.serial = [heap] { return heap->serial; };
     slots.nearlyFull = [heap] { return heap->nearlyFull; };
+    slots.touch = [heap](std::span<const std::vector<std::uint32_t>> held, std::uint32_t touched) {
+        if (touched == heap->epoch) return heap->epoch;
+        ++heap->touches;
+        for (const auto& kind : held) {
+            for (const auto slot : kind) heap->uses[slot] = heap->epoch;
+        }
+        return heap->epoch;
+    };
     return slots;
 }
 
@@ -293,6 +304,77 @@ void SweptSlotsLeave(AgcDriver::VulkanDevice& device) {
     table.Prepare(context, *recorder);
     const auto again = table.Find(keys[2]);
     Require(again.has_value() && again->fault == 0u && table.Totals().inserted == keys.size() + 1u, "the swept key's next miss inserts it again with a fresh slot");
+    recorder->Sync();
+}
+
+void SweptWhileWaitingForAChunk(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.graphicsContext();
+    const auto heap = std::make_shared<FakeHeap>();
+    DeviceImageTable table(context, Lookup(), FakeSlots(heap));
+    const auto keys = FormatKeys();
+    table.Prepare(context, *recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    recorder->Sync();
+    table.Prepare(context, *recorder);
+    Require(table.Totals().entries == keys.size(), "every format is inserted");
+    const auto held = table.Find(keys[2]);
+    Require(held.has_value(), "the key whose slot moves is inserted");
+    const auto kind = KindOf(*held);
+    recorder->Sync();
+    for (std::uint32_t chunk = 0; chunk < DeviceImageTable::RingChunks; ++chunk) {
+        static_cast<void>(recorder->Commands());
+        static_cast<void>(table.Trailer(*recorder));
+        if (chunk == 0u) recorder->OnComplete([heap, kind, slot = held->slot] { heap->Sweep(kind, slot); });
+        recorder->Submit();
+    }
+    static_cast<void>(recorder->Commands());
+    const auto waits = table.Totals().chunkWaits;
+    table.Prepare(context, *recorder);
+    Require(table.Totals().chunkWaits == waits + 1u, "the prepare waited for a miss-ring chunk, every one held by a batch in flight");
+    Require(heap->generations[{kind, held->slot}] == 1u, "the batch that finished during the wait moved the key's heap slot");
+    Require(!table.Find(keys[2]).has_value(), "a prepare serves no key whose heap slot moved while it waited for a miss-ring chunk (slot " + std::to_string(held->slot) + ", " + std::to_string(table.Totals().swept) + " swept)");
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+        if (index != 2u) Require(table.Find(keys[index]).has_value(), "a key whose slot did not move stays");
+    }
+    const auto words = table.KeyWords();
+    const auto uploaded = ReadTable(context, *recorder, table, Abi::HeaderWords + words.size());
+    Require(std::equal(words.begin(), words.end(), uploaded.begin() + Abi::HeaderWords), "the batch after the wait reads buckets without the moved key");
+    recorder->Sync();
+}
+
+void LiveSlotsTouched(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.graphicsContext();
+    const auto heap = std::make_shared<FakeHeap>();
+    DeviceImageTable table(context, Lookup(), FakeSlots(heap));
+    const auto keys = FormatKeys();
+    table.Prepare(context, *recorder);
+    Require(heap->touches == 0u, "a table without entries touches no slot");
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    recorder->Sync();
+    table.Prepare(context, *recorder);
+    const auto allUsed = [&] {
+        for (const auto& key : keys) {
+            const auto value = table.Find(key);
+            if (value.has_value() && heap->uses[value->slot] != heap->epoch) return false;
+        }
+        return true;
+    };
+    Require(heap->touches == 1u && allUsed(), "the prepare that inserts the keys marks every live slot used in the heap's epoch (" + std::to_string(heap->touches) + " touches)");
+    table.Prepare(context, *recorder);
+    Require(heap->touches == 1u, "a second prepare in the same epoch touches nothing again");
+    ++heap->epoch;
+    table.Prepare(context, *recorder);
+    Require(heap->touches == 2u && allUsed(), "a prepare in a later epoch marks every live slot used again");
+    const auto swept = table.Find(keys[1]);
+    Require(swept.has_value(), "the key to sweep is inserted");
+    heap->Sweep(KindOf(*swept), swept->slot);
+    ++heap->epoch;
+    table.Prepare(context, *recorder);
+    Require(!table.Find(keys[1]).has_value() && heap->uses[swept->slot] == heap->epoch - 1u && heap->touches == 3u && allUsed(), "a swept key's slot is no longer marked used, and the others are");
     recorder->Sync();
 }
 
@@ -814,6 +896,8 @@ int main(int argc, char** argv) {
         ResolvesAndUploads(*device);
         TrailerAddresses(*device);
         SweptSlotsLeave(*device);
+        SweptWhileWaitingForAChunk(*device);
+        LiveSlotsTouched(*device);
         MarginRefuses(*device);
         RejectsAndFaults(*device);
         CountsOverflow(*device);

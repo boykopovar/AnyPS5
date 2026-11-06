@@ -89,13 +89,14 @@ DeviceImageTable::Slots DeviceImageTable::HeapSlots(const Context& context) {
     slots.generation = [heap](std::uint32_t, std::uint32_t slot) { return heap->SlotGeneration(slot); };
     slots.serial = [heap] { return heap->SlotSerial(); };
     slots.nearlyFull = [] { return BindlessHeap::NearlyFull(); };
+    slots.touch = [heap](std::span<const std::vector<std::uint32_t>> held, std::uint32_t touched) { return heap->TouchSlots(held, touched); };
     return slots;
 }
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Slots slots) : DeviceImageTable(context, std::move(lookup), std::move(slots), Budget{}) {}
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Slots slots, Budget budget) : context(context), lookup(std::move(lookup)), slots(std::move(slots)), keys(std::min(DeviceImageKeys::InitialBuckets, budget.maxBuckets), budget.maxBuckets), budget(budget) {
-    if (!this->slots.take || !this->slots.generation || !this->slots.serial || !this->slots.nearlyFull) throw std::runtime_error("AGC device image table: its heap slots are incomplete");
+    if (!this->slots.take || !this->slots.generation || !this->slots.serial || !this->slots.nearlyFull || !this->slots.touch) throw std::runtime_error("AGC device image table: its heap slots are incomplete");
     table = std::make_unique<Buffer>(context, static_cast<std::size_t>(TableBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16u);
     chunkStride = (RingBytes + alignment - 1u) / alignment * alignment;
@@ -163,9 +164,11 @@ void DeviceImageTable::Prepare(const Context& build, Recorder& recorder, std::sp
     resolve(build, recorder);
     refresh(build, recorder);
     evict(build, recorder);
-    upload(recorder);
     auto& chunk = chunks[chunkFor(recorder, true)];
     chunk.programs.insert(programs.begin(), programs.end());
+    retainSlots(recorder);
+    upload(recorder);
+    touchSlots();
 }
 
 std::optional<std::string> DeviceImageTable::Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) {
@@ -410,6 +413,7 @@ void DeviceImageTable::hold(const Key& key, Entry entry) {
     const auto last = (entry.address + std::max<std::uint64_t>(entry.guestBytes, 1u) - 1u) >> BlockShift;
     for (auto block = first; block <= last; ++block) blocks[block].keys.insert(key);
     entries[key] = std::move(entry);
+    heldSlotsStale = true;
 }
 
 void DeviceImageTable::release(const Key& key, Recorder& recorder) {
@@ -431,6 +435,7 @@ void DeviceImageTable::release(const Key& key, Recorder& recorder) {
     }
     if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
     entries.erase(found);
+    heldSlotsStale = true;
 }
 
 void DeviceImageTable::retainSlots(Recorder& recorder) {
@@ -444,6 +449,17 @@ void DeviceImageTable::retainSlots(Recorder& recorder) {
     if (swept.empty()) return;
     for (const auto& key : swept) release(key, recorder);
     totals.swept += keys.Retain([&](const Key& key) { return !swept.contains(key); });
+}
+
+void DeviceImageTable::touchSlots() {
+    if (heldSlotsStale) {
+        heldSlots.assign(1u, {});
+        heldSlots.front().reserve(entries.size());
+        for (const auto& [key, entry] : entries) heldSlots.front().push_back(entry.slot);
+        heldSlotsStale = false;
+        touchedEpoch = 0;
+    }
+    if (!heldSlots.front().empty()) touchedEpoch = slots.touch(heldSlots, touchedEpoch);
 }
 
 void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
