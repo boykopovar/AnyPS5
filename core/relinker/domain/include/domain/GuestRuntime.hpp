@@ -30,6 +30,8 @@ struct GuestRuntime {
     std::vector<std::string> UnmatchedImportModules;
     std::set<std::string> ZeroReturnExports;
     bool DeferInitialization = false;
+    std::vector<std::string> DeferredDependencies;
+    std::vector<std::string> DeferredSweep;
 };
 
 }

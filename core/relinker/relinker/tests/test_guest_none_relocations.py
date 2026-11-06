@@ -176,6 +176,7 @@ def main():
         assert ctypes.CFUNCTYPE(ctypes.c_int)(pointer)() == 42
         return
     relinker = Path(sys.argv[1]).resolve()
+    modes = {"plain": (False,), "sce": (True,), "all": (False, True)}[sys.argv[2] if len(sys.argv) > 2 else "all"]
     cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
              ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
              ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
@@ -203,7 +204,7 @@ def main():
             assert guest.read_bytes() == image
             return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
 
-        for sce in (False, True):
+        for sce in modes:
             for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
                 for encoding in ("rela", "repeated", "relr"):
                     entries = [(TARGET, 8, addend)]
