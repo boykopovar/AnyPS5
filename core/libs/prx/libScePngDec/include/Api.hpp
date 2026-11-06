@@ -9,6 +9,6 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
 int32_t APS5_VABI scePngDecDelete(void* handle);
 int32_t APS5_VABI scePngDecParseHeader(const PngDecParseParam* param, PngDecImageInfo* imageInfo);
 int32_t APS5_VABI scePngDecQueryMemorySize(const PngDecCreateParam* param);
-int APS5_VABI scePngDecDecodeWithInputControl();
+int32_t APS5_VABI scePngDecDecodeWithInputControl(void* handle, const PngDecInputControlParam* param, PngDecImageInfo* imageInfo);
 
 }
