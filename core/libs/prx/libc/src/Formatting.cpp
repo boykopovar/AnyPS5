@@ -519,17 +519,36 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             std::vector<unsigned char> text(bounded ? taken + 1 : 0);
             alignas(16) unsigned char scratch[32];
             void* destination = bounded ? static_cast<void*>(text.data()) : target != nullptr ? target : scratch;
+            const bool narrowInteger = !suppress && std::strchr("diouxX", conversion) != nullptr && (length.empty() || length == "h" || length == "hh");
+            std::uint64_t wideInteger = 0;
             std::string directive = "%";
             if (suppress) directive += '*';
             if (taken != 0) directive += std::to_string(taken);
-            directive += HostLength(length, conversion);
+            directive += narrowInteger ? std::string("ll") : HostLength(length, conversion);
             directive += specifier;
             directive += "%n";
+            const bool floating = std::strchr("aAeEfFgG", conversion) != nullptr;
+            if (floating || std::strchr("xXip", conversion) != nullptr) {
+                const HexPrefix prefix = CheckHexPrefix(field, width, floating);
+                if (prefix == HexPrefix::InputFailure) return finish(converted ? assigned : EOF);
+                if (prefix == HexPrefix::MatchingFailure) return finish(assigned);
+            }
+            const int savedError = errno;
             int consumed = -1;
-            const int matched = source.Scan(directive.c_str(), suppress, destination, &consumed);
+            const int matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : destination, &consumed);
+            if (floating) {
+                const bool outOfRange = consumed > 0 && DecimalOutOfRange(std::string(input, static_cast<std::size_t>(consumed)));
+                errno = outOfRange ? ERANGE : savedError;
+            }
             if (consumed < 0 || (!suppress && matched != 1)) return finish(!converted && *input == '\0' ? EOF : assigned);
             if (!suppress && target == nullptr)
                 return violation(std::strchr("aAeEfFgG", conversion) != nullptr ? "scanf_s: bad floating-point argument" : "scanf_s: bad integer argument");
+            if (narrowInteger) std::memcpy(target, &wideInteger, length == "hh" ? 1 : length == "h" ? 2 : 4);
+            if (floating && !suppress) {
+                if (length == "L") StoreDefaultNaN<long double>(target, 10);
+                else if (length == "l") StoreDefaultNaN<double>(target, sizeof(double));
+                else StoreDefaultNaN<float>(target, sizeof(float));
+            }
             if (bounded) {
                 std::size_t stored = taken;
                 if (conversion != 'c') {
