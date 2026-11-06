@@ -12,7 +12,7 @@ execute_process(COMMAND "${PATCHER}" --write-export-list "${LIBC}" "${WORK_DIR}/
 if(NOT status STREQUAL "0")
     message(FATAL_ERROR "libc export list failed: ${output}${error}")
 endif()
-foreach(module LIBC KERNEL INTERNAL LEGACY SSL3 CONSUMER)
+foreach(module LIBC KERNEL INTERNAL NETCTL NET LEGACY SSL3 CONSUMER)
     get_filename_component(name "${${module}}" NAME)
     get_filename_component(library "${${module}}" NAME_WE)
     file(COPY_FILE "${${module}}" "${WORK_DIR}/${name}")
