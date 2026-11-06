@@ -106,6 +106,12 @@ int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
     return Retain_nid_no_patch(ctx->references);
 }
 
+int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl3Bio* bio) {
+    if (!bio)
+        throw std::invalid_argument("BIO_up_ref requires a BIO");
+    return Retain_nid_no_patch(bio->references);
+}
+
 void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q) {
     if (!rsa && (p || q))
         throw std::invalid_argument("RSA_get0_factors requires a key when outputs are requested");
