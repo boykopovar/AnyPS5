@@ -178,13 +178,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
     add_dependencies(guest_libressl3_mixed_evp_consumer libSceLibreSsl3)
     add_test_executable(guest_libressl3_mixed_evp_loader ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3MixedLoader.cpp)
     target_link_libraries(guest_libressl3_mixed_evp_loader PRIVATE ${CMAKE_DL_LIBS})
-    add_dependencies(guest_libressl3_mixed_evp_loader guest_libressl3_mixed_evp_consumer libc libkernel libSceLibcInternal nid_patcher)
+    add_dependencies(guest_libressl3_mixed_evp_loader guest_libressl3_mixed_evp_consumer libc libkernel libSceLibcInternal libSceLibreSsl libSceNet libSceNetCtl nid_patcher)
     add_test(NAME guest_libressl3_mixed_evp COMMAND ${CMAKE_COMMAND}
         -DCONSUMER=$<TARGET_FILE:guest_libressl3_mixed_evp_consumer>
         -DPATCHER=$<TARGET_FILE:nid_patcher>
         -DLIBC=$<TARGET_FILE:libc>
         -DKERNEL=$<TARGET_FILE:libkernel>
         -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
+        -DNETCTL=$<TARGET_FILE:libSceNetCtl>
+        -DNET=$<TARGET_FILE:libSceNet>
         -DLEGACY=$<TARGET_FILE:libSceLibreSsl>
         -DSSL3=$<TARGET_FILE:libSceLibreSsl3>
         -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/mixed-evp
