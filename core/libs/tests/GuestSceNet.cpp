@@ -2268,6 +2268,7 @@ static void CheckSockInfo() {
     std::array<std::uint8_t, 0xa0> kernelExpected{};
     std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
     kernelExpected[0x28] = 2;
+    kernelExpected[0x2a] = 0x10;
     std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
     std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
     kernelExpected[0x48] = 1;
