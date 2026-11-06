@@ -4,6 +4,10 @@
 
 - [FcConfigCreate, FcConfigReference and FcConfigDestroy](../../../core/libs/prx/libfontconfig/Config.cpp) follow the firmware 13.42 `system_ex/common_ex/lib/libfontconfig.sprx` disassembly reported in review (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`). Both creation and reference clear the return register, regardless of the reference argument, and destruction returns without dereferencing its argument. These exports intentionally differ from desktop Fontconfig reference-counted configuration objects. This is disassembly evidence, not measured execution on a PS5, and semantics on other firmware versions are unverified. `FcInit`, `FcConfigGetCurrent` and other configuration APIs still throw.
 
+### Unknown function info
+
+- [FcCharSet and FcMatrix exports](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig) - `FcCharSetCreate`, `FcCharSetDestroy`, `FcCharSetAddChar`, `FcCharSetMerge`, `FcCharSetSubtractCount` and `FcMatrixMultiply` follow the public [fontconfig.h](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/fontconfig/fontconfig.h), [fccharset.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/src/fccharset.c) and [fcmatrix.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/src/fcmatrix.c). The module's fontconfig version is unknown and no console or title caller was read. Character sets hold no reference count and no constant state, because nothing exported here can share one yet.
+
 ### Functional
 
 - [Font sets and object sets](../../../core/libs/prx/libfontconfig/Sets.cpp) are based on disassembly of firmware 13.42 `libfontconfig.sprx` (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`), not the stock desktop Fontconfig layout. Font-set capacity is stored in bytes, grows by sixteen pointers, and stops at 1024 entries; each insertion duplicates the caller's pattern. Object sets allocate their pointer arrays inline and preserve the original argument order with duplicated names. Host safety returns on null destroy and null add, where the firmware accesses pointers without such checks. Console runtime behavior beyond disassembly is not verified.
@@ -11,7 +15,7 @@
 
 ### Callable exports
 
-- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 45 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 39 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -35,25 +39,19 @@
 | `FcPatternFilter` | `H9TOtqlqmHM` |
 | `FcPatternGetFTFace` | `HjlABSyLzNg` |
 | `FcPatternEqual` | `HxFAszDPXuE` |
-| `FcCharSetSubtractCount` | `J8GcxU03WkE` |
 | `FcPatternAddInteger` | `LNzAovAnOd8` |
 | `FcLangSetAdd` | `Lsu4XJJ3V2o` |
 | `FcFontSort` | `MApHziT-St4` |
-| `FcCharSetMerge` | `MafDsPXgY6k` |
 | `FcPatternGetCharSet` | `NKrjlO4HBhg` |
-| `FcCharSetDestroy` | `Nw0ilSm8FxY` |
 | `FcPatternDel` | `Om2ww9GOmes` |
 | `FcPatternReference` | `QZuEIDVT42s` |
 | `FcPatternGet` | `Xmsz9ffM-9g` |
 | `FcPatternAddMatrix` | `Zqa5tqMhOrI` |
 | `FcPatternAddString` | `bU30lh8YpkE` |
 | `FcLangSetHasLang` | `gbtAblHLpQg` |
-| `FcCharSetCreate` | `hNyN1seFzWY` |
 | `FcLangSetCreate` | `jjz2C1StauM` |
 | `FcFreeTypeCharIndex` | `l240XTbw2vk` |
 | `FcPatternDestroy` | `nVkAFM4iCS4` |
-| `FcCharSetAddChar` | `nXYd1oE9ZM0` |
-| `FcMatrixMultiply` | `oM+8JNTrd24` |
 | `FcPatternAddCharSet` | `paHcj4DoPQ4` |
 | `FcDefaultSubstitute` | `sqEJZ2yMVNw` |
 | `FcPatternAddLangSet` | `vqX-PYS3MPc` |
