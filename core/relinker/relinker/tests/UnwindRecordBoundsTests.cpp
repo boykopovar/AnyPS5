@@ -427,6 +427,14 @@ int main() {
             fdeOverflowRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
         }
         Require(fdeOverflowRejected);
+        auto fdeRangeOverflowBytes = Fixture();
+        Io::WriteU64(fdeRangeOverflowBytes, 112, std::numeric_limits<std::uint64_t>::max());
+        bool fdeRangeOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeRangeOverflowBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            fdeRangeOverflowRejected = std::string(error.what()).find("inconsistent FDE function range") != std::string::npos;
+        }
+        Require(fdeRangeOverflowRejected);
         std::vector<std::uint8_t> landingPadBytes(0x400, 0);
         Io::WriteU32(landingPadBytes, 0x200, 25);
         landingPadBytes[0x208] = 1;
@@ -1386,6 +1394,6 @@ int main() {
             nonFileBackedLsdaRejected = std::string(error.what()).find("unwind address is not file-backed") != std::string::npos;
         }
         Require(nonFileBackedLsdaRejected);
-        std::cout << "102 unwind record cases passed\n";
+        std::cout << "103 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
