@@ -825,12 +825,13 @@ void CheckClaimedTargets(AgcDriver::VulkanDevice& device) {
         Require(AgcDriver::Graphics::MultisampledColorBytes(wide.color) == 2u * BlockBytes && AgcDriver::Graphics::MultisampledColorBytes(narrow.color) == BlockBytes, "the 2x target does not span the 4x target and one more block");
         Draw(device, wide);
         device.WaitIdle();
-        std::string refusal;
-        try { Draw(device, narrow); }
-        catch (const std::runtime_error& error) { refusal = error.what(); }
-        Require(refusal.find("overlap another native owner") != std::string::npos, "an incompatible target shape did not refuse unpublished native samples");
-        Require(Refused(reused.Address() + BlockBytes, 0x1000u, "a read after a refused narrower target"), "a refused narrower target retired the original owner's tail");
-        Require(Refused(reused.Address(), 0x1000u, "a read of the original target after a refused replacement"), "a refused narrower target retired the original owner");
+        const auto previous = AgcDriver::Graphics::ReadMultisampleTargetColorSnapshot_nid_no_patch(context, wide.color);
+        Draw(device, narrow);
+        const auto replacement = AgcDriver::Graphics::ReadMultisampleTargetColorSnapshot_nid_no_patch(context, narrow.color);
+        Require(std::equal(replacement.original.begin(), replacement.original.end(), previous.current.begin()), "a different-sample replacement imported stale guest samples");
+        Require(std::equal(previous.current.begin(), previous.current.end(), reinterpret_cast<const std::byte*>(reused.data)), "a narrower replacement lost the old owner's complete footprint");
+        Require(!Refused(reused.Address() + BlockBytes, 0x1000u, "a read after a narrower target"), "the published original owner's tail is still guarded");
+        Require(Refused(reused.Address(), 0x1000u, "a read of the replacement target"), "a narrower replacement did not guard its own native samples");
     }
     if (context.storageImageMultisample) {
         Block color(BlockBytes);
@@ -1631,10 +1632,12 @@ void UniformInitialRefusals(AgcDriver::VulkanDevice& device) {
     Require(original && original->active->load(std::memory_order_acquire), "uniform initialization did not retain its owner");
     auto alias = color;
     alias.format = VK_FORMAT_R32G32_SFLOAT;
-    refuses(alias, "overlap another native owner");
+    PrepareMultisampleTargetForDraw_nid_no_patch(context, alias);
     const auto current = MultisampleColorTargetOver(color.address, static_cast<std::size_t>(MultisampledColorBytes(color)));
-    Require(current && current->active == original->active && original->active->load(std::memory_order_acquire), "refused replacement retired the original owner");
-    CheckUniform(LoadSamples(device, block), Ones, "after refused owner replacement");
+    Require(current && current->active != original->active && !original->active->load(std::memory_order_acquire), "a prepared format replacement did not publish and replace its owner");
+    const auto replacement = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, alias);
+    Require(replacement.original == replacement.current, "a uniform format replacement changed the published samples or padding");
+    Require(std::equal(replacement.original.begin(), replacement.original.end(), reinterpret_cast<const std::byte*>(block.data)), "the uniform format replacement imported different guest bytes");
     Block depthMemory(4u * BlockBytes, true), htile(BlockBytes, true);
     DepthTarget depth{depthMemory.Address(), 0u, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, htile.Address(), false, Samples};
     depth.depthSwizzle = 24u;

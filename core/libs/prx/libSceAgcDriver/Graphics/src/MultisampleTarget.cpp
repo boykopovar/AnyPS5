@@ -1623,6 +1623,7 @@ void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const 
     Require(target.elementBytes != 0u && target.elementBytes <= 16u && 16u % target.elementBytes == 0u, "initial multisample color texel size is not implemented");
     const auto bytes = MultisampledColorBytes(target);
     Require(bytes != 0u && bytes <= std::numeric_limits<std::size_t>::max() && target.address <= std::numeric_limits<std::uint64_t>::max() - bytes, "initial multisample color footprint is not implemented");
+    Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
     SynchronizeMultisampleTargetRead_nid_no_patch(target.address, static_cast<std::size_t>(bytes));
     const auto requireUnowned = [&] {
         Require(!ResidentDepthGuardOverlaps_nid_no_patch(target.address, static_cast<std::size_t>(bytes)), "initial multisample color contents overlap resident native depth");
