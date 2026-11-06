@@ -275,12 +275,12 @@ static void CheckProtected(const Api& api, hb_face_t* face, const FreeTypeTest::
 #endif
 
 int main(int argc, char** argv) {
-    Require(argc == 3);
+    Require(argc == 4);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
     auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
-    auto kernel = LoadLibraryW((std::filesystem::path(argv[1]).parent_path() / "libkernel.prx").c_str());
+    auto kernel = LoadLibraryW(std::filesystem::path(argv[3]).c_str());
     Require(kernel != nullptr);
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
@@ -296,11 +296,11 @@ int main(int argc, char** argv) {
 #undef LoadExport
 #ifdef _WIN32
     const FreeTypeTest::KernelApi kernelApi{
-        Import<decltype(FreeTypeTest::KernelApi::allocate)>(kernel, patched ? "rTXw65xmLIA" : "sceKernelAllocateDirectMemory"),
-        Import<decltype(FreeTypeTest::KernelApi::map)>(kernel, patched ? "L-Q3LEjIbgA" : "sceKernelMapDirectMemory"),
-        Import<decltype(FreeTypeTest::KernelApi::protect)>(kernel, patched ? "vSMAm3cxYTY" : "sceKernelMprotect"),
-        Import<decltype(FreeTypeTest::KernelApi::unmap)>(kernel, patched ? "cQke9UuBQOk" : "sceKernelMunmap"),
-        Import<decltype(FreeTypeTest::KernelApi::release)>(kernel, patched ? "MBuItvba6z8" : "sceKernelReleaseDirectMemory")
+        Import<decltype(FreeTypeTest::KernelApi::allocate)>(kernel, "sceKernelAllocateDirectMemory"),
+        Import<decltype(FreeTypeTest::KernelApi::map)>(kernel, "sceKernelMapDirectMemory"),
+        Import<decltype(FreeTypeTest::KernelApi::protect)>(kernel, "sceKernelMprotect"),
+        Import<decltype(FreeTypeTest::KernelApi::unmap)>(kernel, "sceKernelMunmap"),
+        Import<decltype(FreeTypeTest::KernelApi::release)>(kernel, "sceKernelReleaseDirectMemory")
     };
 #endif
     try {
