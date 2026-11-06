@@ -52,8 +52,8 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 13; ++kind) {
-            auto bytes = Fixture(); auto segment = load;
+        for (int kind = 0; kind < 14; ++kind) {
+            auto bytes = Fixture(); auto segment = load; auto ehSeg = eh;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
                 case 1: Io::WriteU32(bytes, 96, 0x1000); break;
@@ -73,7 +73,7 @@ int main() {
                 case 9: bytes[3] = 0x1C; Io::WriteU64(bytes, 16, 0x8000000000000000ULL); break;
                 case 10: {
                     segment.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
-                    eh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
+                    ehSeg.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
                     Io::WriteU64(bytes, 4, 0xFFFFFFFFFFFF0040ULL);
                     bytes[3] = 0x13;
                     Io::WriteU32(bytes, 16, 0x107F0);
@@ -95,16 +95,17 @@ int main() {
                     bytes[99] = 0x80;
                     break;
                 }
+                case 13: bytes[3] = 0x05; break;
             }
             bool rejected = false;
-            std::vector<Domain::ProgramHeader> headers = {segment, eh};
+            std::vector<Domain::ProgramHeader> headers = {segment, ehSeg};
             if (kind == 8) {
                 Domain::ProgramHeader high{}; high.Type = 1; high.MappedAddress = 0xFFFFFFFFFFFFF000ULL; high.FileSize = 0x100;
                 headers.push_back(high);
             }
             if (kind == 10) {
                 Domain::ProgramHeader funcSeg{}; funcSeg.Type = 1; funcSeg.MappedAddress = 0x800; funcSeg.FileSize = 0x20;
-                headers = {segment, eh, funcSeg};
+                headers = {segment, ehSeg, funcSeg};
             }
             try { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }
             catch (const std::exception&) { rejected = true; }
