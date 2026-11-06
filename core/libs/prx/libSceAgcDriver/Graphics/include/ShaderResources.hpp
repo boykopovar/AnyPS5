@@ -340,9 +340,9 @@ public:
         ProofFailure failure = ProofFailure::None;
         bool audited = false;
     };
-    bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
+    bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr, std::span<const MovedBuffer> moved = {});
     static bool EpochProofs();
-    bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
+    bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr, std::span<const MovedBuffer> moved = {}) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report, moved); }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
     bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }
     bool ProveCurrent(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(shader, report); }

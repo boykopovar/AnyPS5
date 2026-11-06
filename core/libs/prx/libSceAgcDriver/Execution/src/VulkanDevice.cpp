@@ -6223,17 +6223,20 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         contentKey = prepared != nullptr && !prepared->key.empty() ? std::move(prepared->key) : DispatchContentKey(shaders[0], context.device);
         auto cached = preparedFind && prepared != nullptr && prepared->cached != nullptr ? std::move(prepared->cached) : state->resourceCache.Find(contentKey);
         if (cached != nullptr) {
-            if (cached->Revalidate(shaders[0])) {
+            Graphics::ShaderResources::MoveProof proof;
+            std::optional<std::vector<Graphics::ShaderResources::MovedBuffer>> moved = std::vector<Graphics::ShaderResources::MovedBuffer>{};
+            if (DispatchMove() && !exactEntry) {
+                moved = cached->MovedDispatchBuffers(shaders[0], state->recorder.get(), DispatchMoveBytes(), proof);
+                if (moved.has_value() && threadGroup != std::array<std::uint32_t, 3>{}) {
+                    const auto data = cached->shaderDataAllocation(shaders[0]);
+                    if (data.has_value() && std::ranges::any_of(*moved, [&](const Graphics::ShaderResources::MovedBuffer& entry) { return entry.allocation == *data; })) moved.reset();
+                }
+            }
+            if (moved.has_value() && cached->Revalidate(shaders[0], nullptr, *moved)) {
                 bool usable = true;
                 if (DispatchMove() && !exactEntry) {
                     auto& moves = DispatchMoves();
-                    Graphics::ShaderResources::MoveProof proof;
-                    auto moved = cached->MovedDispatchBuffers(shaders[0], state->recorder.get(), DispatchMoveBytes(), proof);
                     moves.checked.fetch_add(1, std::memory_order_relaxed);
-                    if (moved.has_value() && threadGroup != std::array<std::uint32_t, 3>{}) {
-                        const auto data = cached->shaderDataAllocation(shaders[0]);
-                        if (data.has_value() && std::ranges::any_of(*moved, [&](const Graphics::ShaderResources::MovedBuffer& entry) { return entry.allocation == *data; })) moved.reset();
-                    }
                     if (moved.has_value() && !moved->empty()) {
                         overlay = cached->PrepareDrawBindings(*state->recorder, *moved, true);
                         if (overlay != nullptr && overlay->allocation.set == VK_NULL_HANDLE) overlay.reset();
