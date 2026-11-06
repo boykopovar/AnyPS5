@@ -1,5 +1,9 @@
 # libSceGnmDriverForNeoMode technical debt
 
+### Silent stubs
+
+- [sceGnmDriverTraceInProgress, sceGnmGetDbgGcHandle, sceGnmGetGpuCoreClockFrequency, sceGnmGetOffChipTessellationBufferSize, sceGnmValidateOnSubmitEnabled](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - return retail-mode constants without reading guest parameters. Clock frequency and GC handle states follow Neo compatibility models and remain unmeasured on hardware.
+
 ### Unknown function info
 
 - [sceGnmIsDebugResetAvailable (`xMMot887QXE`)](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - the PS5 firmware 13.60 export table and public NID map identify the export, but its signature and behaviour are unknown; its placeholder uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`.

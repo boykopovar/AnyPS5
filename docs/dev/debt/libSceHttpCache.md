@@ -1,5 +1,9 @@
 # libSceHttpCache technical debt
 
+### Silent stubs
+
+- [sceHttpCacheDebugSetUrl, sceHttpCacheSystemSendStatistics, sceHttpCacheSystemTerm and sceHttpCacheSystemShutdown](../../../core/libs/prx/libSceHttpCache/Export.cpp): the supplied implementations return zero without reading arguments. No callers have yet established whether their public prototypes include unused arguments.
+
 ### Unknown function info
 
 - [libSceHttpCache additional exports](../../../core/libs/prx/libSceHttpCache/Export.cpp) - these name/NID pairs are present in the inspected export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
@@ -10,8 +14,6 @@ The inventory label is not authenticated retail-firmware provenance. The inspect
 | --- | --- |
 | `sceHttpCacheEnableCacheInfo` | `dIQhFL4sKBo` |
 | `sceHttpCacheUnregisterCacheInfoUrl` | `3JQc1T-fvmc` |
-
-- [sceHttpCacheDebugSetUrl, sceHttpCacheSystemSendStatistics, sceHttpCacheSystemTerm and sceHttpCacheSystemShutdown](../../../core/libs/prx/libSceHttpCache/Export.cpp): the supplied implementations return zero without reading arguments. No callers have yet established whether their public prototypes include unused arguments.
 - [`sceHttpCacheClearCacheInfo` and `sceHttpCacheRemoveTag`](../../../core/libs/prx/libSceHttpCache/Export.cpp): signatures unverified; parameterless declarations that throw through `NotImplemented_nid_no_patch`. The pointer types of [`sceHttpCacheClearAllUserTags`](../../../core/libs/prx/libSceHttpCache/Export.cpp) (a list of at most 20 entries, taken as user ids) and [`sceHttpCacheRegisterCacheInfoUrl`](../../../core/libs/prx/libSceHttpCache/Export.cpp) are inferred from the checks.
 
 ### Functional
