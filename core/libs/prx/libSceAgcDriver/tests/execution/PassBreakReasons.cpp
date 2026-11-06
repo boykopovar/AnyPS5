@@ -119,7 +119,7 @@ int main() {
         const auto shaders = Compile(*device);
         device->WaitIdle();
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-        Recorder recorder(context);
+        Recorder recorder(context, true);
         recorder.Activate();
         const auto depthA = reinterpret_cast<std::uintptr_t>(DepthA.data());
         const auto depthB = reinterpret_cast<std::uintptr_t>(DepthB.data());
