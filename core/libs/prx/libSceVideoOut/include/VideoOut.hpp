@@ -14,6 +14,7 @@ int APS5_VABI sceVideoOutCursorSet2xMagnify(int32_t, int32_t, bool);
 int APS5_VABI sceVideoOutAdjustColor_(int handle, const VideoOutColorSettings* settings, uint32_t settingsSize);
 int APS5_VABI sceVideoOutColorSettingsSetGamma_(VideoOutColorSettings* settings, float gamma, uint32_t settingsSize);
 int APS5_VABI sceDbgVideoOutAddOutputModeVr60Privilege();
+int APS5_VABI sceVideoOutCursorSetHotSpot();
 int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege();
 
 }
