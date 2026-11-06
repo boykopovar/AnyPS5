@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -70,6 +71,102 @@ void InitializeHeap() {
     ApplicationHeapInitialize_nid_no_patch(process.data());
 }
 
+void TestGpsMetadata() {
+    struct Fixture {
+        Jxr::ImageEncodeMetadataPrefix encoder;
+        std::array<std::byte, 32> trailing;
+    } fixture;
+    std::memset(&fixture, 0xa5, sizeof(fixture));
+    fixture.encoder.headerDone = 0;
+    fixture.encoder.gpsInfoMetadata = nullptr;
+    fixture.encoder.gpsInfoMetadataByteCount = 0xfeed;
+    auto& encoder = fixture.encoder;
+    auto* const encoderPointer = reinterpret_cast<tagPKImageEncode*>(&encoder);
+    const auto snapshot = [&] {
+        std::array<std::byte, sizeof(fixture)> bytes;
+        std::memcpy(bytes.data(), &fixture, sizeof(fixture));
+        return bytes;
+    };
+    const auto requireOnlyGps = [&](const std::array<std::byte, sizeof(fixture)>& before, const std::uint8_t* pointer,
+                                    std::uint32_t size) {
+        auto expected = before;
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, gpsInfoMetadata),
+                    &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offsetof(Fixture, encoder) + offsetof(Jxr::ImageEncodeMetadataPrefix, gpsInfoMetadataByteCount),
+                    &size, sizeof(size));
+        Require(std::memcmp(expected.data(), &fixture, sizeof(fixture)) == 0);
+    };
+    const std::array<std::uint8_t, 5> first {0x11, 0x22, 0x33, 0x44, 0x55};
+    const std::array<std::uint8_t, 3> second {0xa1, 0xb2, 0xc3};
+    auto before = snapshot();
+    const auto firstCalloc = callocCalls;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == 0);
+    Require(callocCalls == firstCalloc + 1 && lastCount == 1 && lastSize == first.size());
+    Require(encoder.gpsInfoMetadata != first.data() && encoder.gpsInfoMetadataByteCount == first.size());
+    Require(std::memcmp(encoder.gpsInfoMetadata, first.data(), first.size()) == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, static_cast<std::uint32_t>(first.size()));
+
+    auto* const previous = encoder.gpsInfoMetadata;
+    before = snapshot();
+    const auto previousFrees = frees;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    Require(frees == previousFrees + 1 && lastFreed == previous);
+    Require(encoder.gpsInfoMetadataByteCount == second.size());
+    Require(std::memcmp(encoder.gpsInfoMetadata, second.data(), second.size()) == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, static_cast<std::uint32_t>(second.size()));
+
+    auto* const current = encoder.gpsInfoMetadata;
+    const auto currentSize = encoder.gpsInfoMetadataByteCount;
+    encoder.headerDone = 1;
+    before = snapshot();
+    const auto guardedFrees = frees;
+    const auto guardedCallocs = callocCalls;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, first.data(), static_cast<std::uint32_t>(first.size())) == -109);
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -109);
+    Require(snapshot() == before && encoder.gpsInfoMetadata == current && encoder.gpsInfoMetadataByteCount == currentSize);
+    Require(frees == guardedFrees && callocCalls == guardedCallocs);
+    encoder.headerDone = 0;
+
+    bool threw = false;
+    try { PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(nullptr, first.data(), static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    before = snapshot();
+    const auto nullInputFrees = frees;
+    const auto nullInputCallocs = callocCalls;
+    threw = false;
+    try { PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && frees == nullInputFrees + 1 && lastFreed == current);
+    Require(callocCalls == nullInputCallocs + 1 && encoder.gpsInfoMetadata == lastAllocated && encoder.gpsInfoMetadataByteCount == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, 0);
+    void* nullInputAllocation = encoder.gpsInfoMetadata;
+    Require(PKFree_nid_postfix(&nullInputAllocation) == 0);
+    encoder.gpsInfoMetadata = static_cast<std::uint8_t*>(nullInputAllocation);
+
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, second.data(), static_cast<std::uint32_t>(second.size())) == 0);
+    auto* const allocationFailurePrevious = encoder.gpsInfoMetadata;
+    before = snapshot();
+    const auto failureCallocs = callocCalls;
+    const auto failureFrees = frees;
+    failAllocation = true;
+    Require(PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, nullptr, static_cast<std::uint32_t>(first.size())) == -101);
+    failAllocation = false;
+    Require(callocCalls == failureCallocs + 1 && lastAllocated == nullptr);
+    Require(frees == failureFrees + 1 && lastFreed == allocationFailurePrevious);
+    Require(encoder.gpsInfoMetadata == nullptr && encoder.gpsInfoMetadataByteCount == 0);
+    requireOnlyGps(before, nullptr, 0);
+    std::uint8_t emptyInput = 0;
+    before = snapshot();
+    const auto zeroResult = PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix(encoderPointer, &emptyInput, 0);
+    Require(zeroResult == (lastAllocated ? 0 : -101));
+    Require(encoder.gpsInfoMetadata == lastAllocated && encoder.gpsInfoMetadataByteCount == 0);
+    requireOnlyGps(before, encoder.gpsInfoMetadata, 0);
+    void* emptyAllocation = encoder.gpsInfoMetadata;
+    Require(PKFree_nid_postfix(&emptyAllocation) == 0);
+    encoder.gpsInfoMetadata = static_cast<std::uint8_t*>(emptyAllocation);
+}
+
 }
 
 int main() {
@@ -111,5 +208,6 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    TestGpsMetadata();
     return 0;
 }
