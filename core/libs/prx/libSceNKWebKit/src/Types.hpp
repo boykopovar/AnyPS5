@@ -101,6 +101,20 @@ public:
     bool valid = false;
 };
 
+class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
+public:
+    URLResponse() = default;
+    URLResponse(Retained<URL> url, Retained<String> mimeType, int statusCode, Retained<String> suggestedFilename, bool isAttachment, std::int64_t expectedContentLength)
+        : url(std::move(url)), mimeType(std::move(mimeType)), statusCode(statusCode), suggestedFilename(std::move(suggestedFilename)), isAttachment(isAttachment), expectedContentLength(expectedContentLength) {}
+
+    Retained<URL> url;
+    Retained<String> mimeType;
+    int statusCode = 0;
+    Retained<String> suggestedFilename;
+    bool isAttachment = false;
+    std::int64_t expectedContentLength = 0;
+};
+
 class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
     std::string absoluteImageURL;
@@ -112,6 +126,20 @@ public:
     std::u16string lookupText;
     RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
     bool isContentEditable = false;
+};
+
+class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
+public:
+    Retained<String> text;
+    bool enabled = true;
+    bool isItem = true;
+    bool isSeparator = false;
+};
+
+class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResultListener> {
+public:
+    bool cancelled = false;
+    std::vector<Retained<String>> chosenFiles;
 };
 
 }  // namespace NKWebKit
