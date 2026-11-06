@@ -126,6 +126,22 @@ bool twoByteRmIsGeneral(const std::uint8_t op) {
     return twoByteRegisterIsGeneral(op) || op == 0x6e || op == 0x7e || op == 0xba;
 }
 
+bool oneByteRegisterIsByte(const std::uint8_t op) {
+    return (op <= 0x3f && (op & 7) <= 3 && (op & 1) == 0) || op == 0x84 || op == 0x86 || op == 0x88 || op == 0x8a;
+}
+
+bool oneByteRmIsByte(const std::uint8_t op) {
+    return oneByteRegisterIsByte(op) || op == 0x80 || op == 0x82 || op == 0xc0 || op == 0xc6 || op == 0xd0 || op == 0xd2 || op == 0xf6 || op == 0xfe;
+}
+
+bool twoByteRegisterIsByte(const std::uint8_t op) {
+    return op == 0xb0 || op == 0xc0;
+}
+
+bool twoByteRmIsByte(const std::uint8_t op) {
+    return op == 0xb0 || op == 0xc0 || op == 0xb6 || op == 0xbe;
+}
+
 bool vexGeneralUsesRsp(const std::uint8_t* code, const Insn& insn, const std::uint8_t mod, const std::uint8_t reg, const std::uint8_t rm, const bool r, const bool b) {
     const auto at = insn.Info.OpcodeOffset;
     const auto lead = code[at];
@@ -158,15 +174,16 @@ MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     const auto reg = static_cast<std::uint8_t>((modrm >> 3) & 7);
     const auto rm = static_cast<std::uint8_t>(modrm & 7);
     const bool vex = info.RexPrefix == 0 && (code[info.OpcodeOffset] == 0xc4 || code[info.OpcodeOffset] == 0xc5 || code[info.OpcodeOffset] == 0x62 || xopPrefixed(code, insn));
-    if (!vex && !info.IsTwoByteOpcode && reg == kRegRsp && !r) {
+    const bool rex = info.RexPrefix != 0;
+    if (!vex && !info.IsTwoByteOpcode && reg == kRegRsp && !r && (rex || !oneByteRegisterIsByte(info.Opcode))) {
         const auto op = info.Opcode;
         if ((op <= 0x3f && (op & 7) <= 3) || (op >= 0x84 && op <= 0x8b) || op == 0x8d) use.UsesRsp = use.RegisterRsp = true;
     }
-    if (!vex && info.IsTwoByteOpcode && ((reg == kRegRsp && !r && twoByteRegisterIsGeneral(info.Opcode)) || (mod == 3 && rm == kRegRsp && !b && twoByteRmIsGeneral(info.Opcode)))) use.UsesRsp = use.RegisterRsp = true;
+    if (!vex && info.IsTwoByteOpcode && ((reg == kRegRsp && !r && twoByteRegisterIsGeneral(info.Opcode) && (rex || !twoByteRegisterIsByte(info.Opcode))) || (mod == 3 && rm == kRegRsp && !b && twoByteRmIsGeneral(info.Opcode) && (rex || !twoByteRmIsByte(info.Opcode))))) use.UsesRsp = use.RegisterRsp = true;
     if (vex && vexGeneralUsesRsp(code, insn, mod, reg, rm, r, b)) use.UsesRsp = use.RegisterRsp = true;
     if (mod == 3) {
         const bool generalPurpose = !vex && !info.IsTwoByteOpcode && !(info.Opcode >= 0xd8 && info.Opcode <= 0xdf);
-        if (generalPurpose && rm == kRegRsp && !b) use.UsesRsp = use.RegisterRsp = true;
+        if (generalPurpose && rm == kRegRsp && !b && (rex || !oneByteRmIsByte(info.Opcode))) use.UsesRsp = use.RegisterRsp = true;
         return use;
     }
     std::size_t at = info.ModRmOffset + 1;

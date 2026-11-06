@@ -427,6 +427,23 @@ void refusesRelocatingIndirectJumpsAfterPushesAndAllocations() {
     require(sites.empty() && report.Relocated == 0, "a leaf jumping through rdi after a push and a sub was relocated");
 }
 
+void readsAhAsAByteRegisterNotRsp() {
+    for (const bool spl : {false, true}) {
+        std::vector<std::uint8_t> body = StoreBelowRsp;
+        if (spl) append(body, {0x40});
+        append(body, {0x0f, 0xb6, 0xf4});
+        append(body, {0x88, 0x64, 0x24, 0x08});
+        append(body, LoadBelowRsp);
+        const auto input = image({framelessLeaf({}, body, Ret)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+        const auto handled = report.Framed + report.Relocated;
+        if (spl) require(handled == 0, "a leaf reading spl through movzbl with a REX prefix was framed, although it uses rsp as a register");
+        else require(handled == 1, "a leaf reading ah through movzbl and storing ah to the stack was refused as a register use of rsp");
+    }
+}
+
 void refusesRelocatingRipRelativeBranches() {
     std::vector<std::uint8_t> body = StoreBelowRsp;
     append(body, LoadBelowRsp);
@@ -997,6 +1014,7 @@ int main() {
         relocatesLeavesEndingInTheSdkAssertTrap();
         relocatesLeavesTailJumpingThroughARegister();
         relocatesIndirectJumpsWithPushedRegisters();
+        readsAhAsAByteRegisterNotRsp();
         refusesRelocatingIndirectJumpsAfterPushesAndAllocations();
         relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
         refusesRelocatingStackReadsOfAPushedRegister();
