@@ -230,16 +230,6 @@ void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char* key) {
     mbedtls_des_key_set_parity(key);
 }
 
-int APS5_VABI DTLSv1_client_method_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI DTLSv1_server_method_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -338,17 +328,7 @@ int APS5_VABI RSA_generate_key_ex_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_CTX_new_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -500,11 +480,6 @@ int APS5_VABI SSL_connect_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_get0_param_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -523,11 +498,6 @@ int APS5_VABI SSL_get_error_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_get_ex_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_get_fd_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -555,11 +525,6 @@ int APS5_VABI SSL_library_init_nid_postfix(void) {
 
 void APS5_VABI SSL_load_error_strings_nid_postfix(void) {}
 
-int APS5_VABI SSL_new_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_peek_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -581,11 +546,6 @@ int APS5_VABI SSL_set_SSL_CTX_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_set_bio_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_set_fd_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -617,21 +577,6 @@ int APS5_VABI SSL_write_nid_postfix(void) {
 
 std::uint64_t APS5_VABI SSLeay_nid_postfix(void) {
     return 0x20000000;
-}
-
-int APS5_VABI SSLv23_client_method_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSLv23_server_method_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI TLS_client_method_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI UI_OpenSSL_nid_postfix(void) {
