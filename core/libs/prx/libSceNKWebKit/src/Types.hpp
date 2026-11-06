@@ -101,6 +101,20 @@ public:
     bool valid = false;
 };
 
+class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
+public:
+    URLResponse() = default;
+    URLResponse(Retained<URL> url, Retained<String> mimeType, int statusCode, Retained<String> suggestedFilename, bool isAttachment, std::int64_t expectedContentLength)
+        : url(std::move(url)), mimeType(std::move(mimeType)), statusCode(statusCode), suggestedFilename(std::move(suggestedFilename)), isAttachment(isAttachment), expectedContentLength(expectedContentLength) {}
+
+    Retained<URL> url;
+    Retained<String> mimeType;
+    int statusCode = 0;
+    Retained<String> suggestedFilename;
+    bool isAttachment = false;
+    std::int64_t expectedContentLength = 0;
+};
+
 class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
     std::string absoluteImageURL;
@@ -122,6 +136,35 @@ public:
     Retained<URL> absolutePDFURL;
     Retained<String> linkLabel;
     Retained<String> linkTitle;
+};
+
+class Download final : public ObjectOf<ObjectType::Download> {
+public:
+    Retained<Object> request;
+    Retained<Object> originatingPage;
+    bool wasUserInitiated = false;
+};
+
+class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
+public:
+    Retained<String> title;
+    Retained<String> description;
+    Retained<String> helpText;
+    Retained<String> url;
+};
+
+class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
+public:
+    Retained<String> text;
+    bool enabled = true;
+    bool isItem = true;
+    bool isSeparator = false;
+};
+
+class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResultListener> {
+public:
+    bool cancelled = false;
+    std::vector<Retained<String>> chosenFiles;
 };
 
 }  // namespace NKWebKit
