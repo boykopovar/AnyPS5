@@ -78,6 +78,16 @@ class TitleIdTests(unittest.TestCase):
         body = "### Tested\nUnblocks: none in this change.\n### Checklist\n- [x] Unblocks: PPSA01325 #3232\n"
         self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
 
+    def test_checklist_continuation_bullets_are_read(self):
+        cases = [
+            ("- [x] Unblocks: titles below\n  - PPSA01325 #3232\n- [x] Depends on: none\n", {"PPSA01325"}),
+            ("- [x] Unblocks: PPSA01325 #3232\n  - PPSA04609 #4000\n- [x] GPUs tested: n/a\n", {"PPSA01325", "PPSA04609"}),
+            ("Unblocks: none in this change.\n### Checklist\n- [x] Unblocks:\n  - PPSA01325 #3232\n", {"PPSA01325"}),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body):
+                self.assertEqual(pr_labels.title_ids(body), expected)
+
     def test_none_body(self):
         self.assertEqual(pr_labels.title_ids(None), set())
 
