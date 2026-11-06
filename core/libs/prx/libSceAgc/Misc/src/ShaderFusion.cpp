@@ -363,6 +363,7 @@ int APS5_VABI sceAgcFuseShaderHalves_0200(Shader* fused_result, const Shader* fr
         return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
     }
     if (isGs) return FuseGeometryHalves(fused_result, front, back, scratch_mem);
+    if (scratch_mem == nullptr) Fail("sceAgcFuseShaderHalves_0200", "hull halves need fused shader memory");
     *fused_result = *back;
     fused_result->type = static_cast<std::uint8_t>(ShaderBinaryType::Hs);
     if (scratch_mem != nullptr) {
