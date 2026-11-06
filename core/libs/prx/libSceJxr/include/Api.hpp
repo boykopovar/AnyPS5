@@ -153,7 +153,7 @@ int APS5_VABI setBitIOPointers_nid_postfix();
 int APS5_VABI setUniformQuantizer_nid_postfix();
 int APS5_VABI slideOneMBRow_nid_postfix();
 int APS5_VABI swapMRPtr_nid_postfix();
-int APS5_VABI termPostProc_nid_postfix();
+void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t numChannels);
 int APS5_VABI updatePostProcInfo_nid_postfix();
 int APS5_VABI updatePredInfo_nid_postfix();
 int APS5_VABI useDCQuantizer_nid_postfix();

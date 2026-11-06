@@ -128,6 +128,16 @@ public:
     bool isContentEditable = false;
 };
 
+class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
+public:
+    Retained<URL> absoluteImageURL;
+    Retained<URL> absoluteLinkURL;
+    Retained<URL> absoluteMediaURL;
+    Retained<URL> absolutePDFURL;
+    Retained<String> linkLabel;
+    Retained<String> linkTitle;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
