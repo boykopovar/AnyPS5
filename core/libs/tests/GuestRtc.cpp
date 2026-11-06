@@ -1018,6 +1018,7 @@ int main(int argc, char** argv) {
     {
         const RtcDateTime validDate{2020, 1, 1, 0, 0, 0, 0};
         const RtcDateTime preEpochDate{1969, 1, 1, 0, 0, 0, 0};
+        const RtcDateTime preWin32EpochDate{1600, 12, 31, 23, 59, 59, 0};
         const RtcDateTime outOfRangeDosDate{1979, 1, 1, 0, 0, 0, 0};
         Require(sceRtcGetTick(&validDate, reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
         Require(sceRtcGetTick(reinterpret_cast<const RtcDateTime*>(0x10), &shifted) == invalidPointer);
@@ -1038,6 +1039,7 @@ int main(int argc, char** argv) {
         uint64_t queryWin32Time = 0;
         Require(sceRtcGetWin32FileTime(&validDate, reinterpret_cast<uint64_t*>(0x10)) == invalidPointer);
         Require(sceRtcGetWin32FileTime(&preEpochDate, reinterpret_cast<uint64_t*>(0x10)) == invalidPointer);
+        Require(sceRtcGetWin32FileTime(&preWin32EpochDate, reinterpret_cast<uint64_t*>(0x10)) == invalidPointer);
         Require(sceRtcGetWin32FileTime(reinterpret_cast<const RtcDateTime*>(0x10), &queryWin32Time) == invalidPointer);
         Require(sceRtcSetWin32FileTime(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
         uint32_t queryDosTime = 0;
