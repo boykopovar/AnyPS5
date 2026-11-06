@@ -29,6 +29,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WKBundleScriptWorld query and name functions](../../../core/libs/prx/libSceNKWebKit/src/BundleScriptWorld.cpp) (libSceNKWebKit) - isolated worlds are test-driven until script context execution is connected.
 
 - [Inspector state queries](../../../core/libs/prx/libSceNKWebKit/src/Inspector.cpp) (libSceNKWebKit) - WKInspectorIsConnected, WKInspectorIsVisible, WKInspectorIsFront, WKInspectorIsAttached, WKInspectorIsElementSelectionActive and WKInspectorIsProfilingPage inspect the inspector state.
+- [Mock media device testing](../../../core/libs/prx/libSceNKWebKit/src/MockMediaDevices.cpp) (libSceNKWebKit) - `WKClearMockMediaDevices`, `WKRemoveMockMediaDevice` and `WKResetMockMediaDevices` manage test mock media device state in host memory; hardware media capture pipeline integration is unmodeled.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 
 - [User content URL pattern matching](../../../core/libs/prx/libSceNKWebKit/src/UserContentURLPattern.cpp) (libSceNKWebKit) - `WKUserContentURLPatternMatchesURL` parses pattern components (scheme, host, path) and evaluates wildcard patterns against candidate URLs per WebKit `UserContentURLPattern` semantics; port matching, non-standard schemes and console execution are unverified.
@@ -89,6 +90,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6362 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6365 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -331,7 +333,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleSetServiceWorkerProxyCreationCallback` | `tow2sT8FF3c` |
 | `WKBundleSetTabKeyCyclesThroughElements` | `t7K3DznwwOU` |
 | `WKBundleSetWebNotificationPermission` | `-67rxYq1qZo` |
-| `WKClearMockMediaDevices` | `ogjjVYnBJR8` |
 | `WKConnectionPostMessage` | `HRkYAo+HK5w` |
 | `WKConnectionSetConnectionClient` | `YRlm9YSeOYE` |
 | `WKContextAddVisitedLink` | `AtKeeOk+CQI` |
@@ -659,7 +660,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
 | `WKProtectionSpaceCopyCertificateInfo` | `FdhooB4MqkE` |
 | `WKRegistrableDomainCreate` | `BjwTHxBa4gc` |
-| `WKRemoveMockMediaDevice` | `Dr2VufJK70A` |
 | `WKRenderLayerCopyElementID` | `lRlQXPSYfTI` |
 | `WKRenderLayerCopyElementTagName` | `mtWy8+9VNV4` |
 | `WKRenderLayerCopyRendererName` | `AG7ICWq3N8w` |
@@ -684,7 +684,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKRenderObjectGetElementClassNames` | `NkEITXscsR4` |
 | `WKRenderObjectGetFrameRect` | `CvLd+zsiNGM` |
 | `WKRenderObjectGetTextLength` | `QQwtijo98qI` |
-| `WKResetMockMediaDevices` | `atK8tRkYvFI` |
 | `WKResourceCacheManagerClearCacheForAllOrigins` | `g-SjvruXQtc` |
 | `WKResourceCacheManagerClearCacheForOrigin` | `Sq7E7Dwlq0w` |
 | `WKResourceCacheManagerGetCacheOrigins` | `v+SAyXDkOCI` |

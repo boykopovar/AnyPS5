@@ -246,4 +246,8 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+void APS5_VABI WKClearMockMediaDevices();
+void APS5_VABI WKRemoveMockMediaDevice(const void* persistentIdRef);
+void APS5_VABI WKResetMockMediaDevices();
+
 }
