@@ -172,6 +172,7 @@ int main() {
     const auto exportedHostPath = ResolveDiskPath_nid_no_patch(exported);
     std::ifstream exportedFile(exportedHostPath, std::ios::binary);
     const std::string exportedContents((std::istreambuf_iterator<char>(exportedFile)), std::istreambuf_iterator<char>());
+    exportedFile.close();
     Require(exportedContents == "hello world");
     chunks = DataChunks{};
     Require(sceContentExportFromData(first, &fromData, 11, ProvideChunks, &chunks, nullptr, 0) == 0);
