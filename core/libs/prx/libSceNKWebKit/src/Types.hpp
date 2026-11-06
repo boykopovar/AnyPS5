@@ -176,4 +176,21 @@ public:
     std::vector<Retained<String>> chosenFiles;
 };
 
+
+class UserMediaPermissionRequest final : public ObjectOf<ObjectType::UserMediaPermissionRequest> {
+public:
+    bool decided = false;
+    bool allowed = false;
+
+    void Allow() {
+        decided = true;
+        allowed = true;
+    }
+
+    void Deny() {
+        decided = true;
+        allowed = false;
+    }
+};
+
 }  // namespace NKWebKit
