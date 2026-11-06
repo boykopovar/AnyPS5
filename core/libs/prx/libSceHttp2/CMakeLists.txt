@@ -110,3 +110,12 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+if(BUILD_TESTING)
+    add_test(NAME guest_http2_auth_status COMMAND guest_http2_transport_tests --auth-status)
+    set_tests_properties(guest_http2_auth_status PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_http2_auth_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
+    endif()
+endif()

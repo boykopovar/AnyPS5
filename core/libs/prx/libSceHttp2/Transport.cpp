@@ -325,6 +325,8 @@ struct Request::State {
     std::string trailerHeaders;
     bool trailerBlock = false;
     int blockStatus = 0;
+    bool hasAuthChallenge = false;
+    bool hasProxyAuthChallenge = false;
     std::string location;
     bool hasLocation = false;
     int networkResult = 0;
@@ -657,7 +659,7 @@ struct Request::State {
             Require(sceHttpParseStatusLine(rawHeaders.data(), rawHeaders.size(), &major, &minor, &code, &reason, &reasonSize) >= 0 && major == 1 && minor >= 0 && minor <= 1,
                 "sceHttp2: malformed or unsupported HTTP1 status line");
             status = code;
-            hasLength = chunked = hasLocation = false;
+            hasLength = chunked = hasLocation = hasAuthChallenge = hasProxyAuthChallenge = false;
             contentEncoding.clear();
             contentLength = 0;
             location.clear();
@@ -683,6 +685,10 @@ struct Request::State {
                     location = value;
                 } else if (name == "set-cookie" && settings.cookieBox != 0) {
                     Http2StoreResponseCookie(settings.cookieBox, Address(), value);
+                } else if (name == "www-authenticate") {
+                    hasAuthChallenge = true;
+                } else if (name == "proxy-authenticate") {
+                    hasProxyAuthChallenge = true;
                 }
             }
             if (status >= 100 && status < 200) {
@@ -690,7 +696,8 @@ struct Request::State {
                 return;
             }
             Require(status >= 200 && status <= 599 && !(hasLength && chunked), "sceHttp2: invalid or ambiguous HTTP1 framing");
-            Require(!settings.auth || (status != 401 && status != 407), "sceHttp2: authentication is not implemented");
+            const bool authenticationChallenge = (status == 401 && hasAuthChallenge) || (status == 407 && hasProxyAuthChallenge);
+            Require(!settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
             remaining = contentLength;
             ready = true;
             ended = method == "HEAD" || status == 204 || status == 304 || (hasLength && remaining == 0);
@@ -814,6 +821,7 @@ struct Request::State {
                 }
                 state.blockStatus = 0;
                 state.blockHeaders.clear();
+                state.hasAuthChallenge = state.hasProxyAuthChallenge = false;
                 state.hasLength = false;
                 state.contentLength = 0;
                 state.location.clear();
@@ -837,6 +845,8 @@ struct Request::State {
                 return;
             }
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
+            if (key == "www-authenticate") state.hasAuthChallenge = true;
+            if (key == "proxy-authenticate") state.hasProxyAuthChallenge = true;
             if (key == "location") {
                 Require(!state.hasLocation, "sceHttp2: duplicate redirect location; console error mapping is unknown");
                 state.location = text;
@@ -866,7 +876,8 @@ struct Request::State {
                 state.trailerBlock = false;
             } else if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
-                Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
+                const bool authenticationChallenge = (state.status == 401 && state.hasAuthChallenge) || (state.status == 407 && state.hasProxyAuthChallenge);
+                Require(!state.settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
                 state.ready = true;
                 state.allHeaders = "HTTP/2.0 " + std::to_string(state.status) + " HTTP2 NO PHRASE\r\n";
                 for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";

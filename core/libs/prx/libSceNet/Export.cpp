@@ -1036,6 +1036,17 @@ bool ControlSocketStatusForKernel(int descriptor, int command, int flags, int* r
 
 const bool g_socketStatusControlRegistered = (KernelSetSocketStatusControl_nid_no_patch(&ControlSocketStatusForKernel), true);
 
+bool ControlSocketIoctlForKernel(int descriptor, std::uint32_t request, void* argument, int* error) {
+    {
+        std::lock_guard lk(g_mutex);
+        if (g_socks.find(descriptor) == g_socks.end()) return false;
+    }
+    *error = sceNetIoctl(descriptor, request, argument) == 0 ? 0 : *errno_slot();
+    return true;
+}
+
+const bool g_socketIoctlControlRegistered = (KernelSetSocketIoctlControl_nid_no_patch(&ControlSocketIoctlForKernel), true);
+
 bool FindSocketNativeForKernel(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native) {
     std::lock_guard lk(g_mutex);
     const auto it = g_socks.find(descriptor);
@@ -3785,13 +3796,15 @@ int APS5_VABI sceNetDumpRead(std::int32_t dumpId, void* buffer, std::int32_t buf
 }
 
 int APS5_VABI sceNetEmulationDebugSettingsSet(const NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)flags;
+    return fail(NET_EOPNOTSUPP);
 }
 
 int APS5_VABI sceNetEmulationDebugSettingsGet(NetEmulationParameter* parameter, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)flags;
+    return fail(NET_EOPNOTSUPP);
 }
 
 int APS5_VABI sceNetEmulationSet(const NetEmulationParameter*, std::uint32_t) {
