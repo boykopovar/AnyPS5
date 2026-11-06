@@ -9,6 +9,33 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+constexpr std::size_t testPageSize = 4096;
+
+void* AllocatePage(bool readable) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, testPageSize, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
+#else
+    void* page = mmap(nullptr, testPageSize, readable ? PROT_READ : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return page == MAP_FAILED ? nullptr : page;
+#endif
+}
+
+void FreePage(void* page) {
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, testPageSize);
+#endif
+}
+
+
 static void Require(bool value, const char* message) {
     if (value) return;
     std::fprintf(stderr, "%s\n", message);
@@ -185,6 +212,26 @@ void FirmwareExSignatures() {
 
 }
 
+void BadGuestPointersAreRefused() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    void* unreadable = AllocatePage(false);
+    Require(unreadable != nullptr, "an unreadable page was not mapped");
+    AudioOut2ContextHandle context = 0x6B6B;
+    Require(sceAudioOut2ContextCreate(static_cast<const AudioOut2ContextParam*>(unreadable), nullptr, 0, &context) == errorInvalidArgument, "unreadable parameters were not refused");
+    Require(context == 0x6B6B, "a refused context creation wrote a handle");
+    FreePage(unreadable);
+
+    void* readOnly = AllocatePage(true);
+    Require(readOnly != nullptr, "a read-only page was not mapped");
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, static_cast<AudioOut2ContextHandle*>(readOnly)) == errorInvalidArgument, "an unwritable handle slot was not refused");
+    FreePage(readOnly);
+
+    const auto live = CreateContext();
+    Require(sceAudioOut2ContextDestroy(live) == 0, "a context created after the refusals was not destroyed");
+}
+
 void OversizedGrainIsRefused() {
     constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
     AudioOut2ContextParam params{};
@@ -209,6 +256,7 @@ int main() {
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
     FirmwareExSignatures();
     OversizedGrainIsRefused();
+    BadGuestPointersAreRefused();
     UncreatedContextIsInvalid();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);
