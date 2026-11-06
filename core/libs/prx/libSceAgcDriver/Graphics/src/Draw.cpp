@@ -2673,7 +2673,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
     }
     passReads.insert(passReads.end(), inputs.inPlaceReads.begin(), inputs.inPlaceReads.end());
-    const auto passImages = resources.StorageImages();
+    thread_local std::vector<std::pair<VkImage, bool>>* passImagesSlot = nullptr;
+    auto& passImages = ShaderRecompiler::ThreadOwned(passImagesSlot);
+    resources.StorageImages(passImages);
     InlineList<std::pair<VkImage, bool>, 16> passAttachments;
     for (const auto& target : record.targets) {
         if (target != nullptr) passAttachments.EmplaceBack(target->Image(), true);
