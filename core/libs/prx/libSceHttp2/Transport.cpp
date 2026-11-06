@@ -8,6 +8,7 @@
 #endif
 
 #include "Transport.hpp"
+#include "Cookies.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 
 #include "zlib.h"
@@ -320,6 +321,8 @@ struct Request::State {
     std::string contentEncoding;
     bool inflatedGzip = false;
     int blockStatus = 0;
+    bool hasAuthChallenge = false;
+    bool hasProxyAuthChallenge = false;
     std::string location;
     bool hasLocation = false;
     int networkResult = 0;
@@ -359,6 +362,8 @@ struct Request::State {
     }
 
     ~State() { Close(); }
+
+    std::string Address() const { return std::string(url.secure ? "https://" : "http://") + url.authority + url.path; }
 
     void Close() {
         callbackLock = nullptr;
@@ -650,7 +655,7 @@ struct Request::State {
             Require(sceHttpParseStatusLine(rawHeaders.data(), rawHeaders.size(), &major, &minor, &code, &reason, &reasonSize) >= 0 && major == 1 && minor >= 0 && minor <= 1,
                 "sceHttp2: malformed or unsupported HTTP1 status line");
             status = code;
-            hasLength = chunked = hasLocation = false;
+            hasLength = chunked = hasLocation = hasAuthChallenge = hasProxyAuthChallenge = false;
             contentEncoding.clear();
             contentLength = 0;
             location.clear();
@@ -674,6 +679,12 @@ struct Request::State {
                     Require(!hasLocation, "sceHttp2: duplicate HTTP1 Location");
                     hasLocation = true;
                     location = value;
+                } else if (name == "set-cookie" && settings.cookieBox != 0) {
+                    Http2StoreResponseCookie(settings.cookieBox, Address(), value);
+                } else if (name == "www-authenticate") {
+                    hasAuthChallenge = true;
+                } else if (name == "proxy-authenticate") {
+                    hasProxyAuthChallenge = true;
                 }
             }
             if (status >= 100 && status < 200) {
@@ -681,7 +692,8 @@ struct Request::State {
                 return;
             }
             Require(status >= 200 && status <= 599 && !(hasLength && chunked), "sceHttp2: invalid or ambiguous HTTP1 framing");
-            Require(!settings.auth || (status != 401 && status != 407), "sceHttp2: authentication is not implemented");
+            const bool authenticationChallenge = (status == 401 && hasAuthChallenge) || (status == 407 && hasProxyAuthChallenge);
+            Require(!settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
             remaining = contentLength;
             ready = true;
             ended = method == "HEAD" || status == 204 || status == 304 || (hasLength && remaining == 0);
@@ -697,7 +709,23 @@ struct Request::State {
         header += "Host: " + authority + "\r\nConnection: close\r\n";
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& field) { return field.first == "user-agent"; }))
             header += "User-Agent: " + settings.userAgent + "\r\n";
-        for (const auto& [name, value] : settings.headers) if (name != "host") header += name + ": " + value + "\r\n";
+        std::string cookies;
+        bool hasCookie = false;
+        for (const auto& [name, value] : settings.headers) {
+            if (name == "cookie") {
+                if (!cookies.empty() && !value.empty()) cookies += "; ";
+                cookies += value;
+                hasCookie = true;
+            } else if (name != "host") header += name + ": " + value + "\r\n";
+        }
+        if (settings.cookieBox != 0) {
+            if (const auto stored = Http2CookieHeader(settings.cookieBox, Address())) {
+                if (!cookies.empty()) cookies += "; ";
+                cookies += *stored;
+                hasCookie = true;
+            }
+        }
+        if (hasCookie) header += "cookie: " + cookies + "\r\n";
         const bool chunkUpload = settings.noContentLength && size;
         if (chunkUpload) header += "Transfer-Encoding: chunked\r\n";
         else if (!settings.noContentLength) header += "Content-Length: " + std::to_string(size) + "\r\n";
@@ -784,6 +812,7 @@ struct Request::State {
             if (frame->hd.stream_id == state.stream) {
                 Require(!state.ready, "sceHttp2: response trailers are not implemented");
                 state.blockStatus = 0;
+                state.hasAuthChallenge = state.hasProxyAuthChallenge = false;
                 state.hasLength = false;
                 state.contentLength = 0;
                 state.location.clear();
@@ -803,6 +832,8 @@ struct Request::State {
             const std::string_view key(reinterpret_cast<const char*>(name), nameSize);
             const std::string_view text(reinterpret_cast<const char*>(value), valueSize);
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
+            if (key == "www-authenticate") state.hasAuthChallenge = true;
+            if (key == "proxy-authenticate") state.hasProxyAuthChallenge = true;
             if (key == "location") {
                 Require(!state.hasLocation, "sceHttp2: duplicate redirect location; console error mapping is unknown");
                 state.location = text;
@@ -812,6 +843,7 @@ struct Request::State {
                 state.contentLength = Number(text);
                 state.hasLength = true;
             }
+            if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
         });
     }
@@ -825,7 +857,8 @@ struct Request::State {
             if (frame->hd.stream_id != state.stream) return;
             if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
-                Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
+                const bool authenticationChallenge = (state.status == 401 && state.hasAuthChallenge) || (state.status == 407 && state.hasProxyAuthChallenge);
+                Require(!state.settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
                 state.ready = true;
             }
             if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
@@ -894,6 +927,9 @@ struct Request::State {
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& header) { return header.first == "user-agent"; }))
             fields.emplace_back("user-agent", settings.userAgent);
         for (const auto& header : settings.headers) if (header.first != "host") fields.push_back(header);
+        if (settings.cookieBox != 0) {
+            if (auto cookie = Http2CookieHeader(settings.cookieBox, Address())) fields.emplace_back("cookie", std::move(*cookie));
+        }
         if (!settings.noContentLength) fields.emplace_back("content-length", std::to_string(settings.contentLength));
         std::vector<nghttp2_nv> headers;
         for (auto& [name, value] : fields) headers.push_back({reinterpret_cast<std::uint8_t*>(name.data()),
