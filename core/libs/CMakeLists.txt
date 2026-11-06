@@ -1104,6 +1104,7 @@ if(BUILD_TESTING)
     endif()
 
     add_test_executable(guest_kernel_sys_ksem_tests tests/GuestKernelSysKsem.cpp)
+    target_compile_definitions(guest_kernel_sys_ksem_tests PRIVATE ANYPS5_KSEM_TESTING)
     target_include_directories(guest_kernel_sys_ksem_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_ksem_tests PRIVATE libkernel_sys libkernel libc)
     configure_windows_unwind(guest_kernel_sys_ksem_tests)

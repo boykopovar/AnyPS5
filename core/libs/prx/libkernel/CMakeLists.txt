@@ -114,6 +114,8 @@ endif()
 configure_windows_unwind(libkernel)
 
 if(BUILD_TESTING)
+    set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
+            APPEND PROPERTY COMPILE_DEFINITIONS ANYPS5_KSEM_TESTING)
     add_test_executable(kernel_error_tests ${LIBS_INCLUDE_DIR}/tests/KernelError.cpp)
     target_include_directories(kernel_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(kernel_error_tests PRIVATE libkernel libc)
