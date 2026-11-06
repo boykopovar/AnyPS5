@@ -878,6 +878,9 @@ constexpr int GuestCloseOnExec = 0x10000000;
 constexpr int GuestNonBlocking = 0x20000000;
 constexpr std::uint32_t NoDevice = 0xFFFFFFFFu;
 std::uint32_t lastUnixInode = 0;
+bool PairPeerGone(const Socket& socket) {
+    return socket.family == GuestUnix && socket.peer.expired();
+}
 int SetNonBlocking(Socket& socket) {
 #ifdef _WIN32
     unsigned long value = 1;
@@ -1070,7 +1073,14 @@ int NativePair(int type, NativeSocket (&pair)[2]) {
     pair[1] = native[1];
     return 0;
 }
+#endif
 int QueuedBytes(const Socket& socket, int& count) {
+#ifdef _WIN32
+    unsigned long pending = 0;
+    if (ioctlsocket(socket.value, FIONREAD, &pending) != 0) return -1;
+    count = static_cast<int>(pending);
+    return 0;
+#else
 #ifdef __APPLE__
     if (socket.type == 2) {
         socklen_t size = sizeof(count);
@@ -1078,6 +1088,15 @@ int QueuedBytes(const Socket& socket, int& count) {
     }
 #endif
     return ::ioctl(socket.value, FIONREAD, &count);
+#endif
+}
+#ifdef _WIN32
+bool DatagramQueued(const Socket& socket) {
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(socket.value, &readable);
+    timeval none{};
+    return ::select(0, &readable, nullptr, nullptr, &none) > 0;
 }
 #endif
 int UnnamedAddress(void* address, std::uint32_t* length) {
@@ -1649,6 +1668,9 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!buffer && length) return Fail(14);
+#ifdef _WIN32
+    if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
+#endif
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     return result < 0 ? Fail(SendError(socket->type)) : result;
@@ -1662,6 +1684,9 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
     const GuestArena::HostWrite destination(length == 0 ? nullptr : buffer, static_cast<std::size_t>(length));
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) return answered == 0 ? 0 : Fail(answered);
+#ifdef _WIN32
+    if (socket->type == 2 && PairPeerGone(*socket) && !DatagramQueued(*socket)) return Fail(54);
+#endif
     if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
     if (ReceiveShut(*socket)) return 0;
     const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
@@ -1807,7 +1832,11 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
         return 0;
     }
     if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
-    if (request != 0x8004667e && request != 0x4004667f) return Fail(25);
+    if (request != 0x8004667e && request != 0x4004667f) {
+        const char group = static_cast<char>((request >> 8) & 0xff);
+        const bool internet = socket->family == 2 || socket->family == 28;
+        return Fail(internet && group != 'i' && group != 'r' && group != 'f' ? 49 : 25);
+    }
     std::lock_guard lock(socket->modeMutex);
     if (request == 0x4004667f && socket->receiveShut) {
         const int zero = 0;
