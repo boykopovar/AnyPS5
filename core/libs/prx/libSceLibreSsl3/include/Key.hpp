@@ -3,6 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 
+struct LibreSsl3Bignum {
+    std::uint64_t* data;
+    std::int32_t top;
+    std::int32_t capacity;
+    std::int32_t negative;
+    std::int32_t flags;
+};
+
+static_assert(sizeof(LibreSsl3Bignum) == 24);
+static_assert(offsetof(LibreSsl3Bignum, flags) == 20);
+
 struct LibreSsl3EvpPkey {
     std::int32_t type;
     std::int32_t references;
@@ -53,3 +64,8 @@ static_assert(sizeof(LibreSsl3EcKey) == 64);
 static_assert(offsetof(LibreSsl3EcKey, references) == 48);
 static_assert(sizeof(LibreSsl3Rsa) == 152);
 static_assert(offsetof(LibreSsl3Rsa, references) == 104);
+static_assert(offsetof(LibreSsl3Rsa, p) == 48);
+static_assert(offsetof(LibreSsl3Rsa, q) == 56);
+static_assert(offsetof(LibreSsl3Rsa, dmp1) == 64);
+static_assert(offsetof(LibreSsl3Rsa, dmq1) == 72);
+static_assert(offsetof(LibreSsl3Rsa, iqmp) == 80);
