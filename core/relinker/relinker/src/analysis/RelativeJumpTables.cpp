@@ -337,11 +337,12 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             if (info.Length == 0 || info.Length > funcCode.size() - pos) break;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto next = funcBegin + pos + info.Length;
-                if (info.BranchDisp < 0 && next < static_cast<std::uint64_t>(-info.BranchDisp)) continue;
-                if (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<std::uint64_t>(info.BranchDisp)) continue;
-                const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-                if (target >= segmentVAddr && target < segmentEnd)
-                    branchTargets.insert(target);
+                if ((info.BranchDisp >= 0 || next >= static_cast<std::uint64_t>(-info.BranchDisp))
+                    && (info.BranchDisp <= 0 || std::numeric_limits<VirtualAddress>::max() - next >= static_cast<std::uint64_t>(info.BranchDisp))) {
+                    const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
+                    if (target >= segmentVAddr && target < segmentEnd)
+                        branchTargets.insert(target);
+                }
             }
             pos += info.Length;
         }
@@ -379,11 +380,12 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
             if (info.Length == 0 || info.Length > segment.size() - pos) break;
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto next = segmentVAddr + pos + info.Length;
-                if (info.BranchDisp < 0 && next < static_cast<std::uint64_t>(-info.BranchDisp)) continue;
-                if (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<std::uint64_t>(info.BranchDisp)) continue;
-                const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
-                if (target >= segmentVAddr && target < segmentEnd) {
-                    if (branchTargets.insert(target).second) pendingTargets.push_back(target);
+                if ((info.BranchDisp >= 0 || next >= static_cast<std::uint64_t>(-info.BranchDisp))
+                    && (info.BranchDisp <= 0 || std::numeric_limits<VirtualAddress>::max() - next >= static_cast<std::uint64_t>(info.BranchDisp))) {
+                    const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
+                    if (target >= segmentVAddr && target < segmentEnd) {
+                        if (branchTargets.insert(target).second) pendingTargets.push_back(target);
+                    }
                 }
             }
             if (info.FlowKind == Codegen::ControlFlowKind::Return || info.FlowKind == Codegen::ControlFlowKind::IndirectJump || info.FlowKind == Codegen::ControlFlowKind::Trap) break;
@@ -420,11 +422,12 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
                 std::int32_t displacement = 0;
                 std::memcpy(&displacement, funcCode.data() + next - 4, sizeof(displacement));
                 const auto base = begin + next;
-                if (displacement < 0 && base < static_cast<std::uint64_t>(-static_cast<std::int64_t>(displacement))) continue;
-                if (displacement > 0 && std::numeric_limits<VirtualAddress>::max() - base < static_cast<std::uint64_t>(displacement)) continue;
-                const auto target = base + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
-                if (target >= end && target < inspectEnd) {
-                    candidateTable = candidateTable ? std::min(*candidateTable, target) : target;
+                if ((displacement >= 0 || base >= static_cast<std::uint64_t>(-static_cast<std::int64_t>(displacement)))
+                    && (displacement <= 0 || std::numeric_limits<VirtualAddress>::max() - base >= static_cast<std::uint64_t>(displacement))) {
+                    const auto target = base + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
+                    if (target >= end && target < inspectEnd) {
+                        candidateTable = candidateTable ? std::min(*candidateTable, target) : target;
+                    }
                 }
             }
             pos = next;
