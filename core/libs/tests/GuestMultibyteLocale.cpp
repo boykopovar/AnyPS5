@@ -84,6 +84,34 @@ static void CheckEncoding() {
     Require(wctomb_nid_postfix(bytes, 0xffff) == 3 && std::memcmp(bytes, "\xef\xbf\xbf", 3) == 0 && wctomb_nid_postfix(nullptr, 1) == 0, "wctomb");
 }
 
+static void CheckConsoleConversions() {
+    Require(_Getctype_nid_postfix() == _Getpctype_nid_postfix(), "_Getctype answers the table _Getpctype answers");
+
+    ConversionVector vector {};
+    std::memset(&vector, 0xcc, sizeof(vector));
+    Require(_Getcvt_nid_postfix(&vector) == &vector && vector.page == 1 && vector.maxLength == 1, "_Getcvt fills the page and the maximum length");
+    for (const unsigned char byte : vector.state) Require(byte == 0, "_Getcvt clears the conversion state");
+
+    Require(_Getdateorder_nid_postfix() == 2, "_Getdateorder answers two");
+
+    std::uint16_t wide = 0;
+    *__error_nid_postfix() = 0;
+    Require(_Mbrtowc_nid_postfix(&wide, "A", 1, nullptr) == 1 && wide == 'A', "_Mbrtowc converts with its own state");
+    unsigned char state[16] {};
+    Require(_Mbrtowc_nid_postfix(&wide, "\xc3\xa9", 2, state) == 2 && wide == 0xe9, "_Mbrtowc converts with a caller state");
+    Require(_Mbrtowc_nid_postfix(&wide, "\xe2\x82\xac", 3, state) == 3 && wide == 0x20ac, "_Mbrtowc converts a three-byte form");
+    wide = 0x7777;
+    Require(_Mbrtowc_nid_postfix(&wide, nullptr, 1, state) == 0 && wide == 0x7777, "_Mbrtowc of a null string converts nothing");
+    Require(_Mbrtowc_nid_postfix(nullptr, "A", 1, state) == 1, "_Mbrtowc counts without a destination");
+    *__error_nid_postfix() = 0;
+    Require(_Mbrtowc_nid_postfix(&wide, "\x80", 1, state) == -1 && *__error_nid_postfix() == 86, "_Mbrtowc rejects a lone continuation byte");
+
+    char bytes[8] {};
+    Require(_Wcrtomb_nid_postfix(bytes, 'A', nullptr) == 1 && bytes[0] == 'A', "_Wcrtomb writes with its own state");
+    Require(_Wcrtomb_nid_postfix(bytes, 0x20ac, state) == 3 && std::memcmp(bytes, "\xe2\x82\xac", 3) == 0, "_Wcrtomb writes with a caller state");
+    Require(_Wcrtomb_nid_postfix(nullptr, 0x20ac, state) == 3, "_Wcrtomb counts without a destination");
+}
+
 static void CheckStrings() {
     const char text[] = "a\xc3\xa9\xe2\x82\xac" "b";
     std::uint16_t wide[8];
@@ -138,6 +166,7 @@ int main() {
     CheckState();
     CheckMbrlen();
     CheckEncoding();
+    CheckConsoleConversions();
     CheckStrings();
     return 0;
 }

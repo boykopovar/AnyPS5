@@ -614,6 +614,12 @@ std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
 GuestLocale::String* APS5_VABI _ZNKSt7collateIcE9transformEPKcS2__nid_postfix(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last);
 void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* self, const char* localeName);
 void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self);
+struct ConversionVector {
+    std::uint32_t page;
+    std::uint32_t maxLength;
+    unsigned char state[32];
+};
+
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st);
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, mbstate_t* st);
 const short* APS5_VABI _Getpctype_nid_postfix();
@@ -621,6 +627,9 @@ const short* APS5_VABI _Getptolower_nid_postfix();
 const short* APS5_VABI _Getptoupper_nid_postfix();
 mbstate_t* APS5_VABI _Getpmbstate_nid_postfix();
 mbstate_t* APS5_VABI _Getpwcstate_nid_postfix();
+const short* APS5_VABI _Getctype_nid_postfix();
+int APS5_VABI _Getdateorder_nid_postfix();
+ConversionVector* APS5_VABI _Getcvt_nid_postfix(ConversionVector* destination);
 GuestLocale::TimeInfo* APS5_VABI _Getptimes_nid_postfix();
 std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc);
 void APS5_VABI _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(GuestLocale::Implementation* self, const GuestLocale::Implementation* source);
@@ -951,6 +960,8 @@ int APS5_VABI mbtowc_nid_postfix(std::uint16_t* destination, const char* source,
 std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void*);
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count);
 int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value);
+int APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
+int APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void*);
 std::size_t APS5_VABI c16rtomb_nid_postfix(char* destination, std::uint16_t unit, void* state);
 std::size_t APS5_VABI mbrtoc32_nid_postfix(std::uint32_t* destination, const char* source, std::size_t count, void* state);

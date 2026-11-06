@@ -1159,14 +1159,25 @@ const short* APS5_VABI _Getptoupper_nid_postfix() {
     return g_upperTable.data() + 1;
 }
 
-mbstate_t* APS5_VABI _Getpmbstate_nid_postfix() {
+mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     thread_local mbstate_t state {};
     return &state;
 }
 
-mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
-    thread_local mbstate_t state {};
-    return &state;
+const short* APS5_VABI _Getctype_nid_postfix() {
+    return _Getpctype_nid_postfix();
+}
+
+int APS5_VABI _Getdateorder_nid_postfix() {
+    return 2;
+}
+
+ConversionVector* APS5_VABI _Getcvt_nid_postfix(ConversionVector* destination) {
+    if (!destination) throw std::invalid_argument("_Getcvt: null conversion vector");
+    destination->page = 1;
+    destination->maxLength = 1;
+    std::memset(destination->state, 0, sizeof(destination->state));
+    return destination;
 }
 
 GuestLocale::TimeInfo* APS5_VABI _Getptimes_nid_postfix() {
