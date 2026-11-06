@@ -64,6 +64,7 @@ struct ColorTarget {
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     bool cmaskFastClear = false;
+    std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};
     std::uint32_t mipCount = 1;
@@ -79,6 +80,7 @@ struct ColorTarget {
     std::uint32_t layers = 1;
     std::uint32_t exportIndex = 0;
     bool uintExport = false;
+    bool volume = false;
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
     std::uint32_t coverageSamples = 1;
@@ -87,6 +89,13 @@ struct ColorTarget {
     std::uint32_t fmaskPipeBankXor = 0;
     std::uint32_t partialWriteMask = 0;
     std::uint32_t mergeBlend = 0;
+    bool staged = false;
+    std::uint16_t stagedMask = 0;
+    VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
+
+    std::uint64_t MemoryAddress() const {
+        return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
+    }
 };
 
 struct DepthTarget {
@@ -107,6 +116,7 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    bool gcn = false;
 };
 
 struct State {
@@ -142,6 +152,8 @@ struct State {
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
     std::uint32_t renderLayers = 1;
+    std::uint32_t meshLayerBase = 0;
+    std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
@@ -168,6 +180,7 @@ struct State {
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+    float lineWidth = 1.0f;
     VkFrontFace frontFace;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
@@ -220,6 +233,7 @@ std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t expor
 std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask);
 std::uint32_t PackedBlendControl(std::uint32_t blendControl);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+ColorTarget StagedMergeTarget(const ColorTarget& staged);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
 std::uint32_t LateTestMergeSplitTargets(const Registers& context, const State& state);
@@ -256,6 +270,12 @@ struct DepthCopyPass {
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
 bool DepthResummarizeDrawsNothing(const QueueState& queue);
+struct DepthRenderControl {
+    std::uint64_t address;
+    std::uint32_t samples;
+    std::uint32_t control;
+};
+std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
 // this precheck covers, evaluated without exceptions before the draw is decoded; empty when they
 // pass (DecodeState still checks everything). A register a rule needs that is absent is no verdict.

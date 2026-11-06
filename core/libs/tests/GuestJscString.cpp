@@ -49,26 +49,26 @@ static void Unicode() {
         utf16.data(), utf16.data() + utf16.size(), writtenUnits) == std::codecvt_base::ok);
     Require(readBytes == utf8.data() + utf8.size());
     utf16.resize(writtenUnits - utf16.data());
-    auto* string = JSStringCreateWithUTF8CString(utf8.c_str());
-    Require(JSStringGetLength(string) == utf16.size());
-    const auto* characters = JSStringGetCharactersPtr(string);
+    auto* string = JSStringCreateWithUTF8CString_nid_postfix(utf8.c_str());
+    Require(JSStringGetLength_nid_postfix(string) == utf16.size());
+    const auto* characters = JSStringGetCharactersPtr_nid_postfix(string);
     Require(std::equal(utf16.begin(), utf16.end(), characters));
     const std::vector<std::uint16_t> units(utf16.begin(), utf16.end());
-    auto* other = JSStringCreateWithCharacters(units.data(), units.size());
+    auto* other = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
     Require(JSStringIsEqual(string, other));
-    Require(JSStringGetMaximumUTF8CStringSize(string) == utf16.size() * 3 + 1);
+    Require(JSStringGetMaximumUTF8CStringSize_nid_postfix(string) == utf16.size() * 3 + 1);
     std::vector<char> buffer(utf8.size() + 2, '?');
-    Require(JSStringGetUTF8CString(string, buffer.data(), buffer.size() - 1) == utf8.size() + 1);
+    Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size() - 1) == utf8.size() + 1);
     Require(std::memcmp(buffer.data(), utf8.c_str(), utf8.size() + 1) == 0);
     Require(buffer.back() == '?');
-    JSStringRelease(other);
-    JSStringRelease(string);
+    JSStringRelease_nid_postfix(other);
+    JSStringRelease_nid_postfix(string);
 }
 
 static void Boundaries() {
     const char text[] = "A\xC2\xA2\xE2\x82\xAC\xF0\x9F\x98\x80Z";
-    auto* string = JSStringCreateWithUTF8CString(text);
-    Require(JSStringGetLength(string) == 6);
+    auto* string = JSStringCreateWithUTF8CString_nid_postfix(text);
+    Require(JSStringGetLength_nid_postfix(string) == 6);
     const std::array<std::size_t, 6> complete{0, 1, 3, 6, 10, 11};
     for (std::size_t capacity = 1; capacity <= sizeof(text) + 1; ++capacity) {
         std::array<char, 32> buffer;
@@ -77,19 +77,19 @@ static void Boundaries() {
         for (const auto length : complete) {
             if (length < capacity) expected = length;
         }
-        Require(JSStringGetUTF8CString(string, buffer.data(), capacity) == expected + 1);
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), capacity) == expected + 1);
         Require(std::memcmp(buffer.data(), text, expected) == 0 && buffer[expected] == '\0');
         for (auto index = expected + 1; index < buffer.size(); ++index) Require(buffer[index] == '?');
     }
     char unchanged = '!';
-    Require(JSStringGetUTF8CString(string, &unchanged, 0) == 0 && unchanged == '!');
-    Require(JSStringGetUTF8CString(string, nullptr, 10) == 0);
-    Require(JSStringGetUTF8CString(nullptr, &unchanged, 1) == 0 && unchanged == '!');
-    Require(JSStringGetLength(nullptr) == 0 && JSStringGetCharactersPtr(nullptr) == nullptr);
+    Require(JSStringGetUTF8CString_nid_postfix(string, &unchanged, 0) == 0 && unchanged == '!');
+    Require(JSStringGetUTF8CString_nid_postfix(string, nullptr, 10) == 0);
+    Require(JSStringGetUTF8CString_nid_postfix(nullptr, &unchanged, 1) == 0 && unchanged == '!');
+    Require(JSStringGetLength_nid_postfix(nullptr) == 0 && JSStringGetCharactersPtr_nid_postfix(nullptr) == nullptr);
     Require(JSStringIsEqual(nullptr, nullptr) && !JSStringIsEqual(nullptr, string));
     Require(JSStringIsEqualToUTF8CString(string, text));
     Require(!JSStringIsEqualToUTF8CString(string, "a"));
-    JSStringRelease(string);
+    JSStringRelease_nid_postfix(string);
 }
 
 static void Invalid() {
@@ -100,61 +100,61 @@ static void Invalid() {
         std::numeric_limits<std::size_t>::max()}) {
         bool threw = false;
         try {
-            JSStringCreateWithCharacters(unavailable, count);
+            JSStringCreateWithCharacters_nid_postfix(unavailable, count);
         } catch (const std::length_error&) {
             threw = true;
         }
         Require(threw);
-        auto* nullCharacters = JSStringCreateWithCharacters(nullptr, count);
-        Require(JSStringGetLength(nullCharacters) == 0 && JSStringGetCharactersPtr(nullCharacters) == nullptr);
+        auto* nullCharacters = JSStringCreateWithCharacters_nid_postfix(nullptr, count);
+        Require(JSStringGetLength_nid_postfix(nullCharacters) == 0 && JSStringGetCharactersPtr_nid_postfix(nullCharacters) == nullptr);
         Require(JSStringIsEqualToUTF8CString(nullCharacters, nullptr));
-        JSStringRelease(nullCharacters);
+        JSStringRelease_nid_postfix(nullCharacters);
     }
-    auto* empty = JSStringCreateWithUTF8CString("");
-    Require(JSStringGetLength(empty) == 0);
-    auto* nullString = JSStringCreateWithCharacters(nullptr, 0);
-    Require(JSStringGetLength(nullString) == 0 && JSStringGetCharactersPtr(nullString) == nullptr);
+    auto* empty = JSStringCreateWithUTF8CString_nid_postfix("");
+    Require(JSStringGetLength_nid_postfix(empty) == 0);
+    auto* nullString = JSStringCreateWithCharacters_nid_postfix(nullptr, 0);
+    Require(JSStringGetLength_nid_postfix(nullString) == 0 && JSStringGetCharactersPtr_nid_postfix(nullString) == nullptr);
     Require(!JSStringIsEqual(empty, nullString));
     Require(JSStringIsEqualToUTF8CString(nullString, "\xFF"));
-    JSStringRelease(nullString);
+    JSStringRelease_nid_postfix(nullString);
     for (const auto* invalid : {"\x80", "\xC0\x80", "\xC1\xBF", "\xE0\x80\x80", "\xED\xA0\x80", "\xF0\x80\x80\x80", "\xF4\x90\x80\x80", "\xF5\x80\x80\x80", "\xFF", "x\xC2", "x\xE2\x82", "x\xF0\x9F\x98", "\xE2!"}) {
-        auto* string = JSStringCreateWithUTF8CString(invalid);
-        Require(JSStringGetLength(string) == 0 && JSStringGetCharactersPtr(string) == nullptr);
+        auto* string = JSStringCreateWithUTF8CString_nid_postfix(invalid);
+        Require(JSStringGetLength_nid_postfix(string) == 0 && JSStringGetCharactersPtr_nid_postfix(string) == nullptr);
         Require(!JSStringIsEqual(string, empty));
         Require(JSStringIsEqualToUTF8CString(string, "\xFF"));
         char buffer = '!';
-        Require(JSStringGetUTF8CString(string, &buffer, 1) == 1 && buffer == '\0');
-        JSStringRelease(string);
+        Require(JSStringGetUTF8CString_nid_postfix(string, &buffer, 1) == 1 && buffer == '\0');
+        JSStringRelease_nid_postfix(string);
     }
     for (const auto& units : std::vector<std::vector<std::uint16_t>>{{0xD800}, {0xDC00}, {'x', 0xD800}, {'x', 0xDC00, 'y'}, {'x', 0xD800, 'y'}}) {
-        auto* string = JSStringCreateWithCharacters(units.data(), units.size());
-        Require(JSStringGetLength(string) == units.size());
-        Require(std::equal(units.begin(), units.end(), JSStringGetCharactersPtr(string)));
+        auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
+        Require(JSStringGetLength_nid_postfix(string) == units.size());
+        Require(std::equal(units.begin(), units.end(), JSStringGetCharactersPtr_nid_postfix(string)));
         std::array<char, 16> buffer;
         buffer.fill('?');
         const std::size_t prefix = units[0] == 'x' ? 1 : 0;
-        Require(JSStringGetUTF8CString(string, buffer.data(), buffer.size()) == prefix + 1);
+        Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size()) == prefix + 1);
         Require(buffer[prefix] == '\0' && buffer[prefix + 1] == '?');
-        JSStringRelease(string);
+        JSStringRelease_nid_postfix(string);
     }
-    JSStringRelease(empty);
+    JSStringRelease_nid_postfix(empty);
 }
 
 static void NullText() {
-    auto* nullText = JSStringCreateWithUTF8CString(nullptr);
-    Require(JSStringGetLength(nullText) == 0 && JSStringGetCharactersPtr(nullText) == nullptr);
-    Require(JSStringGetMaximumUTF8CStringSize(nullText) == 1);
+    auto* nullText = JSStringCreateWithUTF8CString_nid_postfix(nullptr);
+    Require(JSStringGetLength_nid_postfix(nullText) == 0 && JSStringGetCharactersPtr_nid_postfix(nullText) == nullptr);
+    Require(JSStringGetMaximumUTF8CStringSize_nid_postfix(nullText) == 1);
     char buffer = '!';
-    Require(JSStringGetUTF8CString(nullText, &buffer, 1) == 1 && buffer == '\0');
-    auto* malformed = JSStringCreateWithUTF8CString("\xFF");
-    auto* nullCharacters = JSStringCreateWithCharacters(nullptr, 0);
-    auto* empty = JSStringCreateWithUTF8CString("");
+    Require(JSStringGetUTF8CString_nid_postfix(nullText, &buffer, 1) == 1 && buffer == '\0');
+    auto* malformed = JSStringCreateWithUTF8CString_nid_postfix("\xFF");
+    auto* nullCharacters = JSStringCreateWithCharacters_nid_postfix(nullptr, 0);
+    auto* empty = JSStringCreateWithUTF8CString_nid_postfix("");
     const std::array<std::uint16_t, 1> unit{'x'};
-    auto* emptyCharacters = JSStringCreateWithCharacters(unit.data(), 0);
-    auto* text = JSStringCreateWithUTF8CString("null");
+    auto* emptyCharacters = JSStringCreateWithCharacters_nid_postfix(unit.data(), 0);
+    auto* text = JSStringCreateWithUTF8CString_nid_postfix("null");
     Require(JSStringIsEqual(nullText, malformed) && JSStringIsEqual(nullText, nullCharacters));
     Require(!JSStringIsEqual(nullText, empty) && !JSStringIsEqual(nullText, emptyCharacters));
-    Require(JSStringGetCharactersPtr(emptyCharacters) != nullptr && JSStringIsEqual(empty, emptyCharacters));
+    Require(JSStringGetCharactersPtr_nid_postfix(emptyCharacters) != nullptr && JSStringIsEqual(empty, emptyCharacters));
     Require(JSStringIsEqualToUTF8CString(nullText, nullptr));
     Require(JSStringIsEqualToUTF8CString(malformed, nullptr));
     Require(JSStringIsEqualToUTF8CString(nullCharacters, nullptr));
@@ -165,7 +165,7 @@ static void NullText() {
     Require(!JSStringIsEqualToUTF8CString(nullptr, ""));
     Require(JSStringIsEqualToUTF8CString(nullText, "\xC0\x80"));
     Require(!JSStringIsEqualToUTF8CString(nullText, ""));
-    for (auto* string : {nullText, malformed, nullCharacters, empty, emptyCharacters, text}) JSStringRelease(string);
+    for (auto* string : {nullText, malformed, nullCharacters, empty, emptyCharacters, text}) JSStringRelease_nid_postfix(string);
 }
 
 template<typename Call> static bool Faults(Call call) {
@@ -178,24 +178,24 @@ template<typename Call> static bool Faults(Call call) {
 }
 
 static void NullHandles() {
-    Require(Faults([] { JSStringRetain(nullptr); }));
-    Require(Faults([] { JSStringRelease(nullptr); }));
-    Require(Faults([] { JSStringGetMaximumUTF8CStringSize(nullptr); }));
+    Require(Faults([] { JSStringRetain_nid_postfix(nullptr); }));
+    Require(Faults([] { JSStringRelease_nid_postfix(nullptr); }));
+    Require(Faults([] { JSStringGetMaximumUTF8CStringSize_nid_postfix(nullptr); }));
 }
 
 static void References() {
-    auto* string = JSStringCreateWithUTF8CString("wrap");
+    auto* string = JSStringCreateWithUTF8CString_nid_postfix("wrap");
     Require(string->references.load() == 1);
-    Require(JSStringRetain(string) == string && string->references.load() == 2);
-    JSStringRelease(string);
+    Require(JSStringRetain_nid_postfix(string) == string && string->references.load() == 2);
+    JSStringRelease_nid_postfix(string);
     Require(string->references.load() == 1);
     string->references.store(std::numeric_limits<std::uint32_t>::max());
-    Require(JSStringRetain(string) == string && string->references.load() == 0);
-    JSStringRelease(string);
+    Require(JSStringRetain_nid_postfix(string) == string && string->references.load() == 0);
+    JSStringRelease_nid_postfix(string);
     Require(string->references.load() == std::numeric_limits<std::uint32_t>::max());
     Require(JSStringIsEqualToUTF8CString(string, "wrap"));
     string->references.store(1);
-    JSStringRelease(string);
+    JSStringRelease_nid_postfix(string);
 }
 
 static void Limits() {
@@ -218,42 +218,42 @@ static void Limits() {
 
 static void MaximumSize() {
     for (const auto* text : {"", "a", "\xC2\xA2", "\xE2\x82\xAC", "\xF0\x9F\x98\x80", "abc\xF0\x9F\x98\x80"}) {
-        auto* string = JSStringCreateWithUTF8CString(text);
-        Require(JSStringGetMaximumUTF8CStringSize(string) == JSStringGetLength(string) * 3 + 1);
-        JSStringRelease(string);
+        auto* string = JSStringCreateWithUTF8CString_nid_postfix(text);
+        Require(JSStringGetMaximumUTF8CStringSize_nid_postfix(string) == JSStringGetLength_nid_postfix(string) * 3 + 1);
+        JSStringRelease_nid_postfix(string);
     }
     std::vector<std::uint16_t> units(1000, 'u');
-    auto* string = JSStringCreateWithCharacters(units.data(), units.size());
-    Require(JSStringGetMaximumUTF8CStringSize(string) == 3001);
-    JSStringRelease(string);
+    auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
+    Require(JSStringGetMaximumUTF8CStringSize_nid_postfix(string) == 3001);
+    JSStringRelease_nid_postfix(string);
 }
 
 static void Ownership() {
     std::array<std::uint16_t, 4> units{'A', 0, 0x03A9, 'B'};
-    auto* string = JSStringCreateWithCharacters(units.data(), units.size());
+    auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
     units.fill('?');
-    const auto* pointer = JSStringGetCharactersPtr(string);
+    const auto* pointer = JSStringGetCharactersPtr_nid_postfix(string);
     Require(pointer[0] == 'A' && pointer[1] == 0 && pointer[2] == 0x03A9 && pointer[3] == 'B');
     std::array<char, 10> buffer{};
-    Require(JSStringGetUTF8CString(string, buffer.data(), buffer.size()) == 6);
+    Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size()) == 6);
     const std::array<char, 6> expected{'A', 0, static_cast<char>(0xCE), static_cast<char>(0xA9), 'B', 0};
     Require(std::equal(expected.begin(), expected.end(), buffer.begin()));
-    auto* retained = JSStringRetain(string);
+    auto* retained = JSStringRetain_nid_postfix(string);
     Require(retained == string);
-    JSStringRelease(string);
-    Require(JSStringGetCharactersPtr(retained) == pointer && JSStringGetLength(retained) == 4);
+    JSStringRelease_nid_postfix(string);
+    Require(JSStringGetCharactersPtr_nid_postfix(retained) == pointer && JSStringGetLength_nid_postfix(retained) == 4);
     std::vector<std::thread> threads;
     for (unsigned index = 0; index < 4; ++index) {
         threads.emplace_back([retained] {
             for (unsigned count = 0; count < 5000; ++count) {
-                Require(JSStringRetain(retained) == retained);
-                Require(JSStringGetLength(retained) == 4);
-                JSStringRelease(retained);
+                Require(JSStringRetain_nid_postfix(retained) == retained);
+                Require(JSStringGetLength_nid_postfix(retained) == 4);
+                JSStringRelease_nid_postfix(retained);
             }
         });
     }
     for (auto& thread : threads) thread.join();
-    JSStringRelease(retained);
+    JSStringRelease_nid_postfix(retained);
 }
 
 int main() {

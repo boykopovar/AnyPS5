@@ -1,5 +1,7 @@
 #pragma once
 
+#include "prx/libSceHttp2/include/Http2.hpp"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -18,10 +20,15 @@ inline std::atomic<LookupHook>& LookupHookSlot() {
 }
 
 struct Settings {
+    Http2RedirectCallback redirectCallback = nullptr;
+    void* redirectArgument = nullptr;
+    HttpsCallback sslCallback = nullptr;
+    void* sslArgument = nullptr;
     std::string userAgent;
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
+    bool inflateGzip = false;
     bool auth = true;
     int redirect = 1;
     std::uint32_t verifyFlags = 0x3d;
@@ -35,6 +42,7 @@ struct Settings {
     void* authInfoArgument = nullptr;
     void* preSendCallback = nullptr;
     void* preSendArgument = nullptr;
+    int cookieBox = 0;
 };
 
 struct Capacity {
@@ -45,7 +53,7 @@ struct Capacity {
 
 class Request {
 public:
-    Request(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
+    Request(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
     ~Request();
     Request(const Request&) = delete;
     Request& operator=(const Request&) = delete;
@@ -53,6 +61,8 @@ public:
     int Read(void* data, std::size_t size);
     int Status(int* status);
     int ContentLength(int* kind, std::uint64_t* length);
+    int Headers(char** header, std::size_t* size);
+    int TrailingHeaders(char** header, std::size_t* size);
     void Cancel();
     void Stop();
 private:
@@ -62,7 +72,7 @@ private:
 
 int AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode);
 std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum);
-std::shared_ptr<Request> CreateRequest_nid_no_patch(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
+std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int version, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
 
 }
 
