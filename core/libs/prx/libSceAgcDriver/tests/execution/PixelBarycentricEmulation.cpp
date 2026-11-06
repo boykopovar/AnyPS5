@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -88,6 +89,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulatio
     Pixels.fill(Unwritten);
     auto target = device.Target();
     target.fragmentShaderBarycentricEnabled = false;
+    target.gpuResolvedImages = AgcDriver::Graphics::DescriptorHeapEnabled();
     target.fragmentBarycentricBuiltins = builtins;
     static const auto trianglePositions = ClipPositions(Emulation::Geometry);
     static const auto rectanglePositions = ClipPositions(Emulation::RectList);
@@ -127,6 +129,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulatio
     };
     fragment.useCache = false;
     auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    AgcDriver::Graphics::Require(vertexResult.gpuResolvedImages == target.gpuResolvedImages && pixelResult.gpuResolvedImages == target.gpuResolvedImages, "the barycentric draw's stages did not take GPU mode");
     std::vector<AgcDriver::Graphics::CompiledShader> shaders{{ShaderStage::Vertex, &vertexResult, 0}};
     ShaderRecompiler::RecompileResult geometry;
     ShaderRecompiler::BarycentricTessellationShaders patches;

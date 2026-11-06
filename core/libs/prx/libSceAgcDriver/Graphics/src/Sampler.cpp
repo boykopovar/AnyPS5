@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "PipelineSpecialization.hpp"
 #include <algorithm>
@@ -63,6 +64,7 @@ namespace AgcDriver::Graphics {
     }
 
     void Sampler::release() noexcept {
+        ReleaseHeapSlots(context);
         if (sampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
     }
 
@@ -100,6 +102,7 @@ namespace AgcDriver::Graphics {
         auto resource = DecodeSamplerResource(words, unnormalizedProven, forceDegammaPaired, integerBorder);
         resource.compareEnable = compareEnable;
         auto sampler = std::make_shared<Sampler>(context, resource);
+        sampler->SetCacheKey(key);
         // The cap keeps live samplers well below the device's limit (NVIDIA: ~4000); a set in flight
         // still holds the evicted sampler through its own shared_ptr.
         while (entries.size() >= capacity) {

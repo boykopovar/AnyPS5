@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -21,6 +22,7 @@
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -93,6 +95,14 @@ struct RectPush {
     std::array<std::uint32_t, 2> extent;
 };
 
+struct HeapRectPush {
+    RectPush rect;
+    std::uint32_t depth;
+    std::uint32_t texels;
+};
+
+static_assert(offsetof(HeapRectPush, depth) == 16 && offsetof(HeapRectPush, texels) == 20);
+
 class DepthToStoragePass {
 public:
     explicit DepthToStoragePass(const Context& context) : context(context) {
@@ -121,6 +131,13 @@ public:
                 auto pipelineCacheLock = context.LockPipelineCacheForUse();
                 created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline);
             }
+            if (created == VK_SUCCESS && HeapPassesActive(context)) {
+                const auto& heap = BindlessHeap::For(context);
+                const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{
+                    HeapPushIndexMapping(heap, 0, 0, VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT, offsetof(HeapRectPush, depth)),
+                    HeapPushIndexMapping(heap, 0, 1, HeapPassStorageImages, offsetof(HeapRectPush, texels))};
+                heapPipeline = CreateHeapComputePipeline(context, info, mappings);
+            }
             context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, compute, nullptr);
             Check(created, "vkCreateComputePipelines depth to storage");
         } catch (...) {
@@ -134,17 +151,31 @@ public:
 
     VkDevice Device() const { return context.device; }
 
-    void Record(VkCommandBuffer commands, VkImageView depthPlane, VkImageView texels, std::span<const VkRect2D> rects) const {
+    void Record(VkCommandBuffer commands, VkImageView depthPlane, const HeapSlotOwner* depthOwner, VkImageView texels, const HeapSlotOwner* texelOwner, std::span<const VkRect2D> rects) const {
+        const auto dispatch = context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch");
+        if (heapPipeline != VK_NULL_HANDLE) {
+            auto& heap = BindlessHeap::For(context);
+            const auto depthSlot = heap.ViewSlot(HeapPassSampledKind, depthOwner, depthPlane);
+            const auto texelSlot = depthSlot ? heap.ViewSlot(HeapPassStorageKind, texelOwner, texels) : std::nullopt;
+            if (texelSlot) {
+                heap.BindDescriptorHeaps(commands);
+                context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
+                for (const auto& rect : rects) {
+                    const HeapRectPush push{{{static_cast<std::uint32_t>(rect.offset.x), static_cast<std::uint32_t>(rect.offset.y)}, {rect.extent.width, rect.extent.height}}, *depthSlot, *texelSlot};
+                    CmdPushData(context, commands, sizeof(push), &push);
+                    dispatch(commands, (rect.extent.width + 7u) / 8u, (rect.extent.height + 7u) / 8u, 1);
+                }
+                return;
+            }
+        }
         const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, depthPlane, VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo texelInfo{VK_NULL_HANDLE, texels, VK_IMAGE_LAYOUT_GENERAL};
         const std::array<VkWriteDescriptorSet, 2> writes{imageWrite(0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, depthInfo), imageWrite(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, texelInfo)};
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-        pushSet(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, static_cast<std::uint32_t>(writes.size()), writes.data());
-        const auto pushConstants = context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants");
-        const auto dispatch = context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch");
+        CmdPushDescriptorSet(pushSet, commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, static_cast<std::uint32_t>(writes.size()), writes.data(), SetBindSite::DepthTransfer);
         for (const auto& rect : rects) {
             const RectPush push{{static_cast<std::uint32_t>(rect.offset.x), static_cast<std::uint32_t>(rect.offset.y)}, {rect.extent.width, rect.extent.height}};
-            pushConstants(commands, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+            CmdPushConstants(context, commands, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             dispatch(commands, (rect.extent.width + 7u) / 8u, (rect.extent.height + 7u) / 8u, 1);
         }
     }
@@ -161,9 +192,11 @@ private:
 
     void release() noexcept {
         context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+        if (heapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, heapPipeline, nullptr);
         context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
         context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, setLayout, nullptr);
         pipeline = VK_NULL_HANDLE;
+        heapPipeline = VK_NULL_HANDLE;
         layout = VK_NULL_HANDLE;
         setLayout = VK_NULL_HANDLE;
     }
@@ -173,6 +206,7 @@ private:
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline heapPipeline = VK_NULL_HANDLE;
 };
 
 std::mutex& depthToStoragePassesMutex() {
@@ -602,7 +636,7 @@ public:
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory depth target");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory depth");
-            if (target.samples != 1u) owned = std::make_shared<OwnedImage>(this->context, image, memory);
+            owned = std::make_shared<OwnedImage>(this->context, image, memory);
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             viewInfo.image = image;
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -858,13 +892,13 @@ public:
         return texture;
     }
 
-    std::shared_ptr<Texture> FirstSample(const Texture& source, VkComponentMapping components) {
+    std::shared_ptr<Texture> FirstSample(Texture& source, VkComponentMapping components) {
         auto* recorder = RecorderFor(context);
         Require(recorder != nullptr, "a native multisampled depth target is sampled only by recorded draws and dispatches");
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
         const auto format = d16 ? VK_FORMAT_R16_UNORM : VK_FORMAT_R32_SFLOAT;
         if (firstSample == nullptr) firstSample = std::make_shared<FirstSampleTextures>(context, format, target.extent);
-        firstSample->copy.Record(*recorder, source.View(), source.Layout());
+        firstSample->copy.Record(*recorder, source);
         const std::array<std::uint32_t, 4> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)};
         auto& texture = firstSample->textures[key];
         if (texture == nullptr) {
@@ -931,7 +965,8 @@ public:
     }
 
     bool SampledElsewhere() const {
-        return std::any_of(textures.begin(), textures.end(), [](const auto& entry) { return entry.second.use_count() > 1; });
+        const auto held = [](const auto& entry) { return entry.second.use_count() > 1; };
+        return std::any_of(textures.begin(), textures.end(), held) || std::any_of(stencilCopy.textures.begin(), stencilCopy.textures.end(), held);
     }
 
     void NoteHostWrite() {
@@ -1575,6 +1610,7 @@ private:
     struct StencilCopy {
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
+        std::shared_ptr<OwnedImage> owner;
         std::unique_ptr<DeviceBuffer> staging;
         std::map<std::array<std::uint32_t, 13>, std::shared_ptr<Texture>> textures;
         std::uint64_t written = 0;
@@ -1596,6 +1632,7 @@ private:
     std::uint64_t stencilMemory = 0;
     StencilCopy stencilCopy;
     VkImageView transferView = VK_NULL_HANDLE;
+    HeapPassSlots transferSlots{context};
 
     void createSampleShadow() {
         VkImage image = VK_NULL_HANDLE;
@@ -1688,6 +1725,7 @@ private:
                 allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                 stencilCopy.memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory stencil copy");
                 Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, stencilCopy.image, stencilCopy.memory, 0), "vkBindImageMemory stencil copy");
+                stencilCopy.owner = std::make_shared<OwnedImage>(context, stencilCopy.image, stencilCopy.memory);
                 stencilCopy.staging = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(target.extent.width) * target.extent.height, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             } catch (...) {
                 releaseStencilCopy();
@@ -1700,7 +1738,7 @@ private:
         }
         auto& texture = stencilCopy.textures[key];
         if (texture == nullptr) {
-            texture = std::make_shared<Texture>(context, stencilCopy.image, VK_FORMAT_R8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, components, viewType);
+            texture = std::make_shared<Texture>(context, stencilCopy.image, VK_FORMAT_R8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, components, viewType, 0, stencilCopy.owner);
             texture->MarkRefreshedPerUse();
         }
         return texture;
@@ -1742,8 +1780,11 @@ private:
     void releaseStencilCopy() noexcept {
         stencilCopy.textures.clear();
         stencilCopy.staging.reset();
-        if (stencilCopy.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, stencilCopy.image, nullptr);
-        if (stencilCopy.memory) MemoryAccounting::Free(context, stencilCopy.memory);
+        if (stencilCopy.owner != nullptr) stencilCopy.owner.reset();
+        else {
+            if (stencilCopy.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, stencilCopy.image, nullptr);
+            if (stencilCopy.memory) MemoryAccounting::Free(context, stencilCopy.memory);
+        }
         stencilCopy = {};
     }
 
@@ -1806,7 +1847,7 @@ private:
             const auto& areas = rects != nullptr ? *rects : whole;
             const auto texels = storage->AtomicView(0, storage->Descriptor().dimension == TextureDimension::k2DArray);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            depthToStoragePassFor(context).Record(commands, depthTransferView(), texels, areas);
+            depthToStoragePassFor(context).Record(commands, depthTransferView(), &transferSlots, texels, storage.get(), areas);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
             depthTransferPassCount.fetch_add(1, std::memory_order_relaxed);
             if (batch) {
@@ -1872,6 +1913,7 @@ private:
         mirrorPlane = {};
         stencilMirror = {};
         textures.clear();
+        transferSlots.Release();
         if (transferView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, transferView, nullptr);
         transferView = VK_NULL_HANDLE;
         if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
@@ -2424,10 +2466,11 @@ void DepthSurface::PublishToGuest() {
             info.format = hostFormat;
             info.subresourceRange = {static_cast<VkImageAspectFlags>(aspect), 0u, 1u, 0u, 1u};
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &arrayView), "vkCreateImageView depth publication");
+            HeapPassSlots passSlots(context);
             CommandBatch batch(context);
             constexpr VkAccessFlags writes = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
             RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, writes, VK_ACCESS_SHADER_READ_BIT);
-            context.detiler->DispatchMultisampleReadback(batch.Handle(), format, linear.Handle(), 0u, linearBytes, arrayView, target.extent.width, target.extent.height, 1u, target.samples, 0u, static_cast<std::uint32_t>(layout.LinearBytes() / elementBytes));
+            context.detiler->DispatchMultisampleReadback(batch.Handle(), format, linear.Handle(), 0u, linearBytes, arrayView, target.extent.width, target.extent.height, 1u, target.samples, 0u, static_cast<std::uint32_t>(layout.LinearBytes() / elementBytes), &passSlots);
             RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
             batch.SubmitAndWait();
         } catch (...) {

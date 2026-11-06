@@ -19,3 +19,7 @@ target_include_directories(agc_driver_provoking_vertex_tests PRIVATE ${agcTestSh
 if(BUILD_TESTING)
     set_tests_properties(agc_driver_provoking_vertex PROPERTIES TIMEOUT 30)
 endif()
+
+if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_provoking_vertex)
+endif()

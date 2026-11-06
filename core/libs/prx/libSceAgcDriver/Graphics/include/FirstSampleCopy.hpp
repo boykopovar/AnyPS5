@@ -6,6 +6,7 @@
 namespace AgcDriver::Graphics {
 
 class Recorder;
+class Texture;
 
 class FirstSampleCopy {
 public:
@@ -14,7 +15,7 @@ public:
     FirstSampleCopy(const FirstSampleCopy&) = delete;
     FirstSampleCopy& operator=(const FirstSampleCopy&) = delete;
 
-    void Record(Recorder& recorder, VkImageView source, VkImageLayout layout);
+    void Record(Recorder& recorder, Texture& source);
     VkImage Image() const { return image; }
 
 private:
@@ -33,6 +34,7 @@ private:
     VkShaderModule vertex = VK_NULL_HANDLE;
     VkShaderModule fragment = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline heapPipeline = VK_NULL_HANDLE;
 };
 
 }

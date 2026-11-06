@@ -2,10 +2,13 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -36,6 +39,7 @@
 #include <new>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace AgcDriver {
@@ -61,6 +65,7 @@ constexpr std::size_t PixelCodeOffset = 256;
 constexpr std::size_t IndirectCodeOffset = 512;
 constexpr std::size_t PointerSlots = 1024;
 constexpr std::size_t MovedVerticesOffset = 32768;
+constexpr std::size_t ShiftedVerticesOffset = MovedVerticesOffset + 4100;
 constexpr std::size_t RingSlotBytes = 256;
 constexpr std::size_t RingSlots = 8;
 constexpr std::uint32_t PinWaitMs = 4000;
@@ -295,6 +300,8 @@ private:
     AgcDriver::Graphics::AddressDrawReuseCounts before = AgcDriver::Graphics::AddressDrawReuseCounters();
 };
 
+bool HeapStages = false;
+
 std::uint64_t Builds() {
     const auto counters = AgcDriver::Graphics::BdaResources::TableCacheCounters();
     return counters.hits + counters.misses - AgcDriver::Graphics::AddressDrawReuseVerifications();
@@ -324,6 +331,7 @@ struct Scene {
         pixels.Register(true);
         std::memcpy(vertices.Data(), Triangle.data(), sizeof(Triangle));
         std::memcpy(vertices.Data() + MovedVerticesOffset, Triangle.data(), sizeof(Triangle));
+        std::memcpy(vertices.Data() + ShiftedVerticesOffset, Triangle.data(), sizeof(Triangle));
         vertices.Register(false);
         std::memcpy(code.Data() + VertexCodeOffset, VertexCode.data(), sizeof(VertexCode));
         std::memcpy(code.Data() + PixelCodeOffset, PixelCode.data(), sizeof(PixelCode));
@@ -362,7 +370,7 @@ struct Scene {
         ShaderRecompiler::RecompileRequest vertex{
             {ShaderStage::Vertex, code.Address(VertexCodeOffset), VertexCode, 0, {}},
             {64, 0, userData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
-            device.Target(),
+            Target(),
             {0, 0, 0, 64}
         };
         vertex.useCache = cachedVertex;
@@ -372,8 +380,14 @@ struct Scene {
         shaders[0] = {ShaderStage::Vertex, &vertexResults.back(), 0};
     }
 
+    ShaderRecompiler::SpirvTarget Target() const {
+        auto target = device.Target();
+        target.gpuResolvedImages = HeapStages;
+        return target;
+    }
+
     void Point(std::uint64_t slot, std::span<const std::uint32_t> program = PixelCode, std::size_t offset = PixelCodeOffset) {
-        const auto target = device.Target();
+        const auto target = Target();
         ShaderRecompiler::ShaderPixelStageInfo pixel{};
         pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
         pixel.posX = true;
@@ -464,8 +478,13 @@ void CpuWrite(Scene& scene) {
     Require(scene.DrawnColor() == 120, "address draw space reuse: the draw before the CPU write did not read the guest constant");
     scene.Store(scene.constants, 0, 40);
     const auto before = Builds();
+    const auto copies = AgcDriver::Graphics::DrawInputCopies();
     const auto color = scene.DrawnColor();
     Require(color == 40, "address draw space reuse: a draw after a CPU write into its constant read " + std::to_string(color) + " instead of the written 40");
+    if (HeapStages) {
+        const auto taken = AgcDriver::Graphics::DrawInputCopies() - copies;
+        Require(taken == 0, "address draw space reuse: heap stages of an address draw read " + std::to_string(taken) + " per-draw copies instead of guest memory in place");
+    }
     Require(Builds() == before, "address draw space reuse: a CPU write into memory the draw reads in place made it build its resources again (" + std::to_string(Builds() - before) + " builds)");
 }
 
@@ -746,9 +765,23 @@ void RingRefusals(Scene& scene) {
     {
         const Outcomes outcomes;
         scene.Fetch(MovedVerticesOffset);
+        const auto copies = AgcDriver::Graphics::DrawInputCopies();
         const auto color = scene.DrawnColor();
         Require(color == 170, "address draw space reuse: the draw after its read-only vertex buffer moved read " + std::to_string(color) + " instead of 170");
+        if (HeapStages) {
+            const auto taken = AgcDriver::Graphics::DrawInputCopies() - copies;
+            Require(taken == 0, "address draw space reuse: heap stages read " + std::to_string(taken) + " copies of a vertex buffer that moved inside the space instead of the buffer in place");
+        }
         Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose read-only vertex buffer moved inside the space counted " + outcomes.Text() + ", expected one reuse with the buffer bound anew");
+    }
+    if (HeapStages) {
+        const Outcomes outcomes;
+        scene.Fetch(ShiftedVerticesOffset);
+        const auto copies = AgcDriver::Graphics::DrawInputCopies();
+        const auto color = scene.DrawnColor();
+        Require(color == 170, "address draw space reuse: the draw after its vertex buffer moved off its view's alignment read " + std::to_string(color) + " instead of 170");
+        Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a heap-stage draw whose vertex buffer moved off its view's alignment counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
+        Require(AgcDriver::Graphics::DrawInputCopies() == copies, "address draw space reuse: heap stages read a copy of a vertex buffer that moved off its view's alignment");
     }
     {
         std::memcpy(scene.spare.Data(), Triangle.data(), sizeof(Triangle));
@@ -1006,20 +1039,27 @@ constexpr std::array<NamedCase, 3> TransitionCases{{
 
 int main(int argc, char** argv) {
     try {
-        const std::string mode = argc > 1 ? argv[1] : "";
-        const std::string only = mode == "--case" && argc > 2 ? argv[2] : "";
-        Require(mode.empty() || mode == "--off" || mode == "--transitions" || mode == "--verify" || mode == "--held" || !only.empty(), "usage: [--off | --transitions | --verify | --held | --case <name>]");
+        HeapStages = argc > 1 && std::string_view(argv[1]) == "--heap-stages";
+        const int first = HeapStages ? 2 : 1;
+        const std::string mode = argc > first ? argv[first] : HeapStages ? "--heap-stages" : "";
+        const std::string only = mode == "--case" && argc > first + 1 ? argv[first + 1] : "";
+        Require(mode.empty() || mode == "--off" || mode == "--transitions" || mode == "--verify" || mode == "--held" || mode == "--heap-stages" || !only.empty(), "usage: [--off | --transitions | --verify | --held | --heap-stages [--case <name>] | --case <name>]");
         Require(mode != "--verify" || std::getenv("APS5_VERIFY_ADDRESS_DRAW_REUSE") != nullptr, "address draw space reuse: --verify needs APS5_VERIFY_ADDRESS_DRAW_REUSE=1");
         Require(mode != "--held" || std::getenv("APS5_RELEASE_ON_UNLOCK") != nullptr, "address draw space reuse: --held needs APS5_RELEASE_ON_UNLOCK=1");
         LimitPinWait();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (HeapStages && !AgcDriver::Graphics::DescriptorHeapEnabled()) {
+            std::puts("skipped, the device has no VK_EXT_descriptor_heap, which --heap-stages needs");
+            return VulkanTestSkipped;
+        }
         {
             Scene scene(*device);
             if (!Imported(scene)) {
                 std::puts("skipped, host imports are unavailable: the cached address space needs one");
                 return VulkanTestSkipped;
             }
+            if (HeapStages) Require(std::all_of(scene.shaders.begin(), scene.shaders.end(), [](const AgcDriver::Graphics::CompiledShader& shader) { return AgcDriver::Graphics::HeapShader(shader); }), "address draw space reuse: --heap-stages built a stage that is not a heap stage");
             const Outcomes outcomes;
             const auto verifiedBefore = AgcDriver::Graphics::AddressDrawReuseVerifications();
             if (mode == "--off") {
@@ -1029,6 +1069,7 @@ int main(int argc, char** argv) {
                 bool ran = false;
                 for (const auto& entry : cases) {
                     if (!only.empty() && only != entry.name) continue;
+                    if (HeapStages && std::string_view(entry.name) == "fault-per-use") continue;
                     entry.run(scene);
                     ran = true;
                 }

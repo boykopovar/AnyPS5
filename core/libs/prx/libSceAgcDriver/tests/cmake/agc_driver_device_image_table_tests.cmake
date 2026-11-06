@@ -1,0 +1,7 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_device_image_table_heap COMMAND agc_driver_device_image_table_tests --heap)
+    set_tests_properties(agc_driver_device_image_table_heap PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GPU_HEAP=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_device_image_table_heap PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

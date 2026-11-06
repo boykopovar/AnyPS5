@@ -10,6 +10,7 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 int main(int argc, char** argv) try {
@@ -73,6 +74,27 @@ int main(int argc, char** argv) try {
     {
         std::ofstream file(directory / "lds.req", std::ios::binary);
         file << RequestSerializer{}.Serialize(lds);
+        if (!file) throw std::runtime_error("cannot write synthetic replay request");
+    }
+    for (const auto& [name, dwords] : {std::pair<const char*, std::uint32_t>{"heap-addressed.req", 0u}, std::pair<const char*, std::uint32_t>{"heap-4096.req", 4096u}}) {
+        auto heap = lds;
+        heap.target.gpuResolvedImages = true;
+        heap.target.descriptorMemory = true;
+        heap.target.heapDataUniformDwords = dwords;
+        std::ofstream file(directory / name, std::ios::binary);
+        file << RequestSerializer{}.Serialize(heap);
+        if (!file) throw std::runtime_error("cannot write synthetic replay request");
+    }
+    srt[20] = 0u;
+    const std::array<std::uint32_t, 6> dataCapabilities{spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilitySampledImageArrayDynamicIndexing, spv::CapabilityStorageImageArrayDynamicIndexing};
+    for (const auto& [name, dwords] : {std::pair<const char*, std::uint32_t>{"heap-data-addressed.req", 0u}, std::pair<const char*, std::uint32_t>{"heap-data-4096.req", 4096u}}) {
+        auto heap = request;
+        heap.target.supportedCapabilities = dataCapabilities;
+        heap.target.gpuResolvedImages = true;
+        heap.target.descriptorMemory = true;
+        heap.target.heapDataUniformDwords = dwords;
+        std::ofstream file(directory / name, std::ios::binary);
+        file << RequestSerializer{}.Serialize(heap);
         if (!file) throw std::runtime_error("cannot write synthetic replay request");
     }
     std::puts("synthetic guarded replay requests written");

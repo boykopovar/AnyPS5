@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -669,6 +670,8 @@ void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags
     for (std::size_t i = 0; i < Pixels.size(); i += 4) {
         for (std::size_t c = 0; c < 4; ++c) Pixels[i + c] = std::byte{Background[c]};
     }
+    const bool heap = AgcDriver::Graphics::DescriptorHeapEnabled();
+    Require(stages.local.gpuResolvedImages == heap && stages.hull.gpuResolvedImages == heap && stages.domain.gpuResolvedImages == heap && stages.fragment.gpuResolvedImages == heap, "the tessellation draw's stages did not take GPU mode");
     std::uint32_t cursor = 0;
     const auto offset = [&](const ShaderRecompiler::RecompileResult& result) {
         const auto at = result.pushConstants.empty() ? 0u : cursor;
@@ -718,6 +721,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags
 
 void RequireDepthRangeRemap(AgcDriver::VulkanDevice& device) {
     auto target = device.Target();
+    target.gpuResolvedImages = AgcDriver::Graphics::DescriptorHeapEnabled();
     Require(device.graphicsContext().depthClamp, "tessellation depth remap needs depth clamping");
     target.depthRangeRemap = true;
     const auto compile = [&](float z, std::uint32_t mode) {
@@ -1215,7 +1219,8 @@ int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto target = device->Target();
+        auto target = device->Target();
+        target.gpuResolvedImages = AgcDriver::Graphics::DescriptorHeapEnabled();
         if (!target.tessellation.has_value()) {
             std::puts("tessellation: skipped, the device has no tessellation shaders");
             return VulkanTestSkipped;

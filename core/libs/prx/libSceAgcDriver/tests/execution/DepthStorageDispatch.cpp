@@ -141,7 +141,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        device.ComputeTarget(64),
         {0, 0, 0, 128}
     };
     request.useCache = false;

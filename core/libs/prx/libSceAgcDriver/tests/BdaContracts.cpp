@@ -2,14 +2,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
-#include <spirv/unified1/GLSL.std.450.h>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
 #include <string>
 #include <vector>
 #include <array>
-#include <initializer_list>
 
 namespace {
 
@@ -27,46 +25,6 @@ struct ScanWords {
         words.insert(words.end(), packed.begin(), packed.end());
     }
 };
-
-enum ScanId : std::uint32_t {
-    IdVoid = 1, IdVoidFunction, IdUint, IdUlong, IdUintPointer, IdAddress, IdOne, IdDeviceScope, IdNoSemantics, IdPointerPointer, IdPointerFunction, IdBool, IdTrue, IdFloat, IdFloatPointer, IdGlsl, IdFunctionUintPointer, IdUntypedPointer, IdFloatOne, IdMain, IdMainLabel, IdPointer, IdHelper, IdHelperParameter, IdHelperLabel, IdBody,
-};
-
-bool ScanStores(const std::function<void(ScanWords&)>& main, const std::function<void(ScanWords&)>& after = {}) {
-    ScanWords module{{spv::MagicNumber, 0x00010500u, 0u, 200u, 0u}};
-    module.Op(spv::OpCapability, {spv::CapabilityShader});
-    module.Op(spv::OpCapability, {spv::CapabilityInt64});
-    module.Op(spv::OpCapability, {spv::CapabilityPhysicalStorageBufferAddresses});
-    module.OpString(spv::OpExtInstImport, {IdGlsl}, "GLSL.std.450");
-    module.Op(spv::OpMemoryModel, {spv::AddressingModelPhysicalStorageBuffer64, spv::MemoryModelGLSL450});
-    module.OpString(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, IdMain}, "main");
-    module.Op(spv::OpTypeVoid, {IdVoid});
-    module.Op(spv::OpTypeFunction, {IdVoidFunction, IdVoid});
-    module.Op(spv::OpTypeInt, {IdUint, 32u, 0u});
-    module.Op(spv::OpTypeInt, {IdUlong, 64u, 0u});
-    module.Op(spv::OpTypeFloat, {IdFloat, 32u});
-    module.Op(spv::OpTypeBool, {IdBool});
-    module.Op(spv::OpTypePointer, {IdUintPointer, spv::StorageClassPhysicalStorageBuffer, IdUint});
-    module.Op(spv::OpTypePointer, {IdPointerPointer, spv::StorageClassPhysicalStorageBuffer, IdUintPointer});
-    module.Op(spv::OpTypePointer, {IdFloatPointer, spv::StorageClassPhysicalStorageBuffer, IdFloat});
-    module.Op(spv::OpTypePointer, {IdPointerFunction, spv::StorageClassFunction, IdUint});
-    module.Op(spv::OpTypeUntypedPointerKHR, {IdUntypedPointer, spv::StorageClassPhysicalStorageBuffer});
-    module.Op(spv::OpTypeFunction, {IdFunctionUintPointer, IdVoid, IdUintPointer});
-    module.Op(spv::OpConstant, {IdUlong, IdAddress, 0x1000u, 0u});
-    module.Op(spv::OpConstant, {IdUint, IdOne, 1u});
-    module.Op(spv::OpConstant, {IdUint, IdDeviceScope, spv::ScopeDevice});
-    module.Op(spv::OpConstant, {IdUint, IdNoSemantics, 0u});
-    module.Op(spv::OpConstant, {IdFloat, IdFloatOne, 0x3f800000u});
-    module.Op(spv::OpConstantTrue, {IdBool, IdTrue});
-    module.Op(spv::OpFunction, {IdVoid, IdMain, spv::FunctionControlMaskNone, IdVoidFunction});
-    module.Op(spv::OpLabel, {IdMainLabel});
-    module.Op(spv::OpConvertUToPtr, {IdUintPointer, IdPointer, IdAddress});
-    main(module);
-    module.Op(spv::OpReturn, {});
-    module.Op(spv::OpFunctionEnd, {});
-    if (after) after(module);
-    return AgcDriver::Graphics::SpirvStoresThroughAddresses(module.words);
-}
 
 enum FaultScanId : std::uint32_t {
     FaultVoid = 1, FaultVoidFunction, FaultUint, FaultWords, FaultBlock, FaultBlockPointer, FaultWordPointer, FaultHelperFunction, FaultVariable, FaultZero, FaultReportLast, FaultOverflowWord, FaultScope, FaultSemantics, FaultMain, FaultMainLabel, FaultHelper, FaultHelperParameter, FaultHelperLabel, FaultBody,
@@ -137,53 +95,6 @@ void RunFaultReportScanTests() {
     }), "fault scan: the fault buffer handed to a function was not followed");
 }
 
-void RunAddressStoreScanTests() {
-    using AgcDriver::Graphics::Require;
-    Require(!ScanStores([](ScanWords& m) { m.Op(spv::OpLoad, {IdUint, IdBody, IdPointer}); }), "store scan: a load through a physical pointer was taken for a store");
-    Require(!ScanStores([](ScanWords& m) { m.Op(spv::OpAtomicLoad, {IdUint, IdBody, IdPointer, IdDeviceScope, IdNoSemantics}); }), "store scan: an atomic load was taken for a store");
-    Require(ScanStores([](ScanWords& m) { m.Op(spv::OpStore, {IdPointer, IdOne}); }), "store scan: a store was missed");
-    Require(ScanStores([](ScanWords& m) { m.Op(spv::OpAtomicStore, {IdPointer, IdDeviceScope, IdNoSemantics, IdOne}); }), "store scan: an atomic store was missed");
-    for (const auto opcode : {spv::OpAtomicExchange, spv::OpAtomicIAdd, spv::OpAtomicISub, spv::OpAtomicSMin, spv::OpAtomicUMin, spv::OpAtomicSMax, spv::OpAtomicUMax, spv::OpAtomicAnd, spv::OpAtomicOr, spv::OpAtomicXor}) {
-        Require(ScanStores([opcode](ScanWords& m) { m.Op(opcode, {IdUint, IdBody, IdPointer, IdDeviceScope, IdNoSemantics, IdOne}); }), "store scan: atomic opcode " + std::to_string(static_cast<std::uint32_t>(opcode)) + " was missed");
-    }
-    Require(ScanStores([](ScanWords& m) { m.Op(spv::OpAtomicIIncrement, {IdUint, IdBody, IdPointer, IdDeviceScope, IdNoSemantics}); }), "store scan: an atomic increment was missed");
-    Require(ScanStores([](ScanWords& m) { m.Op(spv::OpAtomicCompareExchange, {IdUint, IdBody, IdPointer, IdDeviceScope, IdNoSemantics, IdNoSemantics, IdOne, IdOne}); }), "store scan: an atomic compare-exchange was missed");
-    Require(ScanStores([](ScanWords& m) {
-        m.Op(spv::OpConvertUToPtr, {IdPointerPointer, IdBody, IdAddress});
-        m.Op(spv::OpLoad, {IdUintPointer, IdBody + 1u, IdBody});
-        m.Op(spv::OpStore, {IdBody + 1u, IdOne});
-    }), "store scan: a store through a pointer loaded from guest memory was missed");
-    Require(ScanStores([](ScanWords& m) {
-        m.Op(spv::OpSelect, {IdUintPointer, IdBody, IdTrue, IdPointer, IdPointer});
-        m.Op(spv::OpStore, {IdBody, IdOne});
-    }), "store scan: a store through a selected pointer was missed");
-    Require(ScanStores([](ScanWords& m) { m.Op(spv::OpFunctionCall, {IdVoid, IdBody, IdHelper, IdPointer}); }, [](ScanWords& m) {
-        m.Op(spv::OpFunction, {IdVoid, IdHelper, spv::FunctionControlMaskNone, IdFunctionUintPointer});
-        m.Op(spv::OpFunctionParameter, {IdUintPointer, IdHelperParameter});
-        m.Op(spv::OpLabel, {IdHelperLabel});
-        m.Op(spv::OpStore, {IdHelperParameter, IdOne});
-        m.Op(spv::OpReturn, {});
-        m.Op(spv::OpFunctionEnd, {});
-    }), "store scan: a store through a pointer parameter of a called function was missed");
-    Require(!ScanStores([](ScanWords& m) {
-        m.Op(spv::OpVariable, {IdPointerFunction, IdBody, spv::StorageClassFunction});
-        m.Op(spv::OpCopyMemory, {IdBody, IdPointer});
-    }), "store scan: a copy out of guest memory was taken for a store");
-    Require(ScanStores([](ScanWords& m) {
-        m.Op(spv::OpVariable, {IdPointerFunction, IdBody, spv::StorageClassFunction});
-        m.Op(spv::OpCopyMemory, {IdPointer, IdBody});
-    }), "store scan: a copy into guest memory was missed");
-    Require(ScanStores([](ScanWords& m) {
-        m.Op(spv::OpConvertUToPtr, {IdUntypedPointer, IdBody, IdAddress});
-        m.Op(spv::OpStore, {IdBody, IdOne});
-    }), "store scan: a store through an untyped physical pointer was missed");
-    Require(ScanStores([](ScanWords& m) {
-        m.Op(spv::OpConvertUToPtr, {IdFloatPointer, IdBody, IdAddress});
-        m.Op(spv::OpExtInst, {IdFloat, IdBody + 1u, IdGlsl, GLSLstd450Modf, IdFloatOne, IdBody});
-    }), "store scan: an extended instruction writing through a physical pointer was missed");
-    Require(ScanStores([](ScanWords& m) { m.Op(spv::OpCooperativeMatrixStoreKHR, {IdPointer, IdOne, IdNoSemantics}); }), "store scan: a cooperative matrix store was missed");
-}
-
 
 template<typename TAction>
 void reject(TAction action, const char* expected) {
@@ -210,22 +121,11 @@ std::uint32_t CallSites(const std::vector<std::uint32_t>& spirv, const char* nam
 
 void RunBdaContractTests() {
     using namespace ShaderRecompiler;
-    using AgcDriver::Graphics::SpirvStoresThroughAddresses;
-    RunAddressStoreScanTests();
     RunFaultReportScanTests();
-    AgcDriver::Graphics::Require(!SpirvStoresThroughAddresses(MakeBdaTestShader(0x1000, 32)), "a BDA read was taken for a store through an address");
-    AgcDriver::Graphics::Require(!SpirvStoresThroughAddresses(MakeBdaDwordReadTestShader(0x1000, 4, false, false)), "BDA dword reads were taken for a store through an address");
-    AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(MakeBdaStoreTestShader(0x1000, 7, 32, false)), "a BDA store was not seen");
-    AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(MakeBdaWriteTestShader(0x1000, 7, 32, false)), "a BDA write was not seen");
-    const std::array<std::uint32_t, 2> stored{7u, 9u};
-    AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(MakeBdaDwordWriteTestShader(0x1000, static_cast<std::uint32_t>(stored.size()), stored.data())), "BDA dword writes were not seen");
     const std::array<std::uint32_t, 5> headerOnly{spv::MagicNumber, 0x00010300u, 0u, 1u, 0u};
-    AgcDriver::Graphics::Require(!SpirvStoresThroughAddresses(headerOnly), "a module without physical pointers was taken for one storing through addresses");
     const std::array<std::uint32_t, 2> truncated{spv::MagicNumber, 0u};
-    AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(truncated), "an unreadable module was taken for one without stores");
     auto unparsed = MakeBdaStoreTestShader(0x1000, 7, 32, false);
     unparsed[5] |= 0xffff0000u;
-    AgcDriver::Graphics::Require(SpirvStoresThroughAddresses(unparsed), "a module with an instruction past its end was taken for one without stores");
     using AgcDriver::Graphics::SpirvFaultReportOnly;
     AgcDriver::Graphics::Require(SpirvFaultReportOnly(MakeBdaTestShader(0x1000, 32), 0, 1) && SpirvFaultReportOnly(MakeBdaDwordReadTestShader(0x1000, 4, false, false), 0, 1) && SpirvFaultReportOnly(MakeBdaFaultSequenceTestShader({BdaAbi::FaultReason::Unmapped, BdaAbi::FaultReason::Unaligned}), 0, 1), "a BDA read program, which writes only the fault report, was given a full fault buffer");
     AgcDriver::Graphics::Require(!SpirvFaultReportOnly(MakeBdaStoreTestShader(0x1000, 7, 32, false), 0, 1) && !SpirvFaultReportOnly(MakeBdaWriteTestShader(0x1000, 7, 32, false), 0, 1), "a BDA store program, which records written pages, was given a report-only fault buffer");

@@ -1,19 +1,22 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SAMPLER_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SAMPLER_HPP
 
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 
 namespace AgcDriver::Graphics {
 
-class Sampler {
+class Sampler : public HeapSlotOwner {
 public:
     Sampler(const Context& context, const GuestSamplerResource& descriptor);
     ~Sampler();
@@ -28,6 +31,8 @@ public:
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
     static bool ShaderAppliesLodBias(const GuestSamplerResource& descriptor);
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
+    const std::array<std::uint32_t, 5>* CacheKey() const { return cacheKey ? &*cacheKey : nullptr; }
+    void SetCacheKey(const std::array<std::uint32_t, 5>& key) { cacheKey = key; }
 
 private:
     void release() noexcept;
@@ -38,6 +43,7 @@ private:
     bool requiresFilterMinmax = false;
     bool opaqueBlackBorder = false;
     bool requiresNonSeamlessCube = false;
+    std::optional<std::array<std::uint32_t, 5>> cacheKey;
 };
 
 // One VkSampler per distinct S# (its 4 words plus the shader's depth-compare use and the

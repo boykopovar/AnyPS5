@@ -112,10 +112,10 @@ std::span<const VkDynamicState> PipelineLibraryDynamicStates() {
     return dynamicStates;
 }
 
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules) {
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, bool descriptorHeap, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules) {
     Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     const bool split = (layout.flags & VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) != 0;
-    Require(!split || (layout.setLayoutCount == 2u && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~3u) == 0u), "split pipeline library layout requires two descriptor set slots and a valid mask");
+    Require(!split || ((layout.setLayoutCount == 2u || layout.setLayoutCount == 3u) && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~((1u << layout.setLayoutCount) - 1u)) == 0u), "split pipeline library layout requires two or three descriptor set slots and a valid mask");
     auto& store = Libraries();
     std::unique_lock lock(store.mutex);
     ++store.activeBuilds[context.device];
@@ -138,9 +138,9 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         auto found = device.layouts.find(key);
         if (found != device.layouts.end()) return found->second;
         auto info = layout;
-        std::array<VkDescriptorSetLayout, 2> sets{VK_NULL_HANDLE, VK_NULL_HANDLE};
+        std::array<VkDescriptorSetLayout, 3> sets{VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
         if (mask.has_value()) {
-            for (std::uint32_t set = 0; set < sets.size(); ++set) {
+            for (std::uint32_t set = 0; set < layout.setLayoutCount; ++set) {
                 if ((*mask & (1u << set)) != 0u) sets[set] = layout.pSetLayouts[set];
             }
             info.pSetLayouts = sets.data();
@@ -149,8 +149,10 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &info, nullptr, &handle), "vkCreatePipelineLayout library");
         return device.layouts.emplace(key, handle).first->second;
     };
-    const auto fullLayout = layoutFor(keys.layout, std::nullopt);
-    const std::array<VkPipelineLayout, 4> partLayouts{VK_NULL_HANDLE, split ? layoutFor(keys.preRasterizationLayout, keys.preRasterizationSets) : fullLayout, split ? layoutFor(keys.fragmentLayout, keys.fragmentSets) : fullLayout, VK_NULL_HANDLE};
+    const std::array<std::byte, 1> memoryMarker{std::byte{descriptorHeap ? std::uint8_t{2} : std::uint8_t{0}}};
+    const Key memoryKey(memoryMarker.begin(), memoryMarker.end());
+    const auto fullLayout = descriptorHeap ? VkPipelineLayout{VK_NULL_HANDLE} : layoutFor(Combined(keys.layout, memoryKey), std::nullopt);
+    const std::array<VkPipelineLayout, 4> partLayouts{VK_NULL_HANDLE, split && !descriptorHeap ? layoutFor(Combined(keys.preRasterizationLayout, memoryKey), keys.preRasterizationSets) : fullLayout, split && !descriptorHeap ? layoutFor(Combined(keys.fragmentLayout, memoryKey), keys.fragmentSets) : fullLayout, VK_NULL_HANDLE};
     std::vector<VkPipelineShaderStageCreateInfo> preRasterization;
     const VkPipelineShaderStageCreateInfo* fragment = nullptr;
     bool mesh = false;
@@ -167,7 +169,8 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT,
         VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT,
     };
-    const std::array<const Key*, 4> partKeys{&keys.vertexInput, &keys.preRasterization, &keys.fragmentShader, &keys.fragmentOutput};
+    std::array<Key, 4> markedParts{Combined(keys.vertexInput, memoryKey), Combined(keys.preRasterization, memoryKey), Combined(keys.fragmentShader, memoryKey), Combined(keys.fragmentOutput, memoryKey)};
+    const std::array<const Key*, 4> partKeys{&markedParts[0], &markedParts[1], &markedParts[2], &markedParts[3]};
     const Key none;
     VkPipelineRenderingCreateInfoKHR shaderRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
     shaderRendering.viewMask = rendering.viewMask;
@@ -197,6 +200,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         library.flags = flags[part];
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
         create.flags = optimize ? VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
+        auto partFlags = DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(create.flags), &library);
         create.pDynamicState = info.pDynamicState;
         create.layout = partLayouts[part];
         switch (flags[part]) {
@@ -223,6 +227,11 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             create.pColorBlendState = info.pColorBlendState;
             create.layout = VK_NULL_HANDLE;
             break;
+        }
+        if (descriptorHeap) {
+            create.pNext = &partFlags;
+            create.flags = 0;
+            create.layout = VK_NULL_HANDLE;
         }
         VkPipeline handle = VK_NULL_HANDLE;
         // Built without the store's mutex: a draw whose parts are resident is not held behind
@@ -272,11 +281,18 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
     linked.pLibraries = libraries.data();
     VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
+    create.flags = 0;
+    create.layout = info.layout;
+    auto linkFlags = DescriptorHeapFlags(0, &linked);
+    if (descriptorHeap) {
+        create.pNext = &linkFlags;
+        create.flags = 0;
+        create.layout = VK_NULL_HANDLE;
+    }
     if (sampleCounts) {
         linkedSamples.pNext = create.pNext;
         create.pNext = &linkedSamples;
     }
-    create.layout = info.layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
     lock.unlock();
     {
@@ -293,20 +309,25 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         const auto createPipelines = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
         const auto cache = context.pipelineCache;
         const auto cacheSynchronization = context.pipelineCacheSynchronization;
-        const auto libraryLayout = fullLayout;
-        std::function<void()> relink = [slot, createPipelines, cache, cacheSynchronization, libraryLayout, libraries, sampleCounts, attachmentSamples, &store, devicePointer = &device] {
+        const auto libraryLayout = descriptorHeap ? VkPipelineLayout{VK_NULL_HANDLE} : fullLayout;
+        std::function<void()> relink = [slot, createPipelines, cache, cacheSynchronization, libraryLayout, libraries, sampleCounts, attachmentSamples, &store, devicePointer = &device, descriptorHeap] {
             if (slot->released.load()) return;
             auto linkedSamples = sampleCounts ? attachmentSamples(*sampleCounts) : VkAttachmentSampleCountInfoNV{};
             VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
             linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
             linked.pLibraries = libraries.data();
             VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
+            create.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
+            create.layout = libraryLayout;
+            auto relinkFlags = DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT), &linked);
+            if (descriptorHeap) {
+                create.pNext = &relinkFlags;
+                create.flags = 0;
+            }
             if (sampleCounts) {
                 linkedSamples.pNext = create.pNext;
                 create.pNext = &linkedSamples;
             }
-            create.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
-            create.layout = libraryLayout;
             VkPipeline result = VK_NULL_HANDLE;
             const auto pipelineCreationResult = [&] {
                 auto pipelineCacheLock = cacheSynchronization != nullptr ? cacheSynchronization->LockForPipelineUse() : PipelineCacheSynchronization::PipelineUseLock{};

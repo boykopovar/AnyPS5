@@ -146,7 +146,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::span<c
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        device.ComputeTarget(64),
         {0, 0, 0, 128}
     };
     request.useCache = false;

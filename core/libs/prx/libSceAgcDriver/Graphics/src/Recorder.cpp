@@ -8,10 +8,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/StagingCopyBack_spv.h"
@@ -680,6 +682,22 @@ bool SnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
     return SnapshotOverlaps(snapshot.get(), address, bytes);
 }
 
+}
+
+bool Recorder::ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before) {
+    if (!HookSnapshotEnabled()) return false;
+    const bool labels = !QueuedLabelRanges().empty();
+    const auto now = pendingWrites.load(std::memory_order_acquire);
+    for (const auto& [begin, end] : ranges) {
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (labels && QueuedLabelOverlaps(begin, bytes)) return false;
+        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now.get(), begin, bytes)) return false;
+    }
+    return !StorageTexture::AnyPendingOverlaps(ranges) && !AnyShadowedOverlaps(ranges);
+}
+
+namespace {
+
 // Whether one merged range of the snapshot contains [address, end) entirely.
 bool SnapshotCovers(const WriteRanges* snapshot, std::uint64_t address, std::uint64_t end) {
     if (snapshot == nullptr || snapshot->empty()) return false;
@@ -1175,7 +1193,6 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
         cmdResetQueryPool = context.Function<PFN_vkCmdResetQueryPool>("vkCmdResetQueryPool");
         cmdCopyQueryPoolResults = context.Function<PFN_vkCmdCopyQueryPoolResults>("vkCmdCopyQueryPoolResults");
         cmdBindPipeline = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
-        cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
     }
     if (!timelineSemaphores) return;
@@ -1242,8 +1259,10 @@ Recorder::~Recorder() {
         if (labelTableOwner == this) labelTableOwner = nullptr;
     }
     if (meshArgumentPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, meshArgumentPipeline, nullptr);
+    if (meshArgumentHeapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, meshArgumentHeapPipeline, nullptr);
     if (meshArgumentLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, meshArgumentLayout, nullptr);
     if (changedCopyPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, changedCopyPipeline, nullptr);
+    if (changedCopyHeapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, changedCopyHeapPipeline, nullptr);
     if (changedCopyLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, changedCopyLayout, nullptr);
     if (sampleCounterState > 0) {
         samplesPassed.store(SamplesTotal(), std::memory_order_release);
@@ -1256,6 +1275,7 @@ Recorder::~Recorder() {
         sampleCounter.reset();
     }
     if (dispatchArgumentPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, dispatchArgumentPipeline, nullptr);
+    if (dispatchArgumentHeapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, dispatchArgumentHeapPipeline, nullptr);
     if (dispatchArgumentLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, dispatchArgumentLayout, nullptr);
     for (const auto fence : spare) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     spare.clear();
@@ -1790,6 +1810,7 @@ void Recorder::ensureOpen() {
             }
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            NoteCommandBufferBegun(batch->commands);
             Check(function(beginCommandBuffer, "vkBeginCommandBuffer")(batch->commands, &begin), "vkBeginCommandBuffer recorder");
         } catch (...) {
             release(*batch);
@@ -2304,6 +2325,7 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
             pipelineInfo.stage.pName = "main";
             pipelineInfo.layout = dispatchArgumentLayout;
             Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &dispatchArgumentPipeline), "vkCreateComputePipelines dispatch arguments");
+            dispatchArgumentHeapPipeline = createPushOnlyHeapPipeline(pipelineInfo);
             context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             dispatchArgumentState = 1;
         } catch (const std::exception& error) {
@@ -2313,7 +2335,7 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
     }
     if (dispatchArgumentState < 0) return false;
     recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-    function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, dispatchArgumentPipeline);
+    bindPushOnlyPipeline(commands, dispatchArgumentPipeline, dispatchArgumentHeapPipeline);
     const auto* limit = context.limits.maxComputeWorkGroupCount;
     struct {
         VkDeviceAddress source;
@@ -2323,7 +2345,7 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
     } parameters{source, arguments, {limit[0], limit[1], limit[2], threadGroup != nullptr ? 1u : 0u}, {1u, 1u, 1u, 0u}};
     if (threadGroup != nullptr) std::copy(threadGroup->begin(), threadGroup->end(), parameters.group.begin());
     static_assert(sizeof(parameters) == PushBytes);
-    function(cmdPushConstants, "vkCmdPushConstants")(commands, dispatchArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+    pushOnlyParameters(commands, dispatchArgumentHeapPipeline, dispatchArgumentLayout, PushBytes, &parameters);
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
     const VkPipelineStageFlags readers = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | (threadGroup != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0u);
     const VkAccessFlags reads = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | (threadGroup != nullptr ? VK_ACCESS_TRANSFER_READ_BIT : 0u);
@@ -2636,15 +2658,14 @@ void Recorder::dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, 
         std::uint32_t phase;
     } parameters{sampleCounter->DeviceAddress(), sampleCounter->DeviceAddress() + DumpListOffset, firstDump, dumps, firstSegment, lastSegment, 0u};
     static_assert(sizeof(parameters) == SampleDumpPushBytes);
-    const auto push = function(cmdPushConstants, "vkCmdPushConstants");
     const auto dispatch = function(cmdDispatch, "vkCmdDispatch");
-    push(commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
+    CmdPushConstants(context, commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
     dispatch(commands, 1, 1, 1);
     if (dumps == 0) return;
     const auto publish = [&](std::uint32_t phase) {
         recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
         parameters.phase = phase;
-        push(commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
+        CmdPushConstants(context, commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
         dispatch(commands, 1, 1, 1);
     };
     publish(1u);
@@ -2687,7 +2708,6 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     const auto commands = batch.commands;
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
     const auto bind = function(cmdBindPipeline, "vkCmdBindPipeline");
-    const auto push = function(cmdPushConstants, "vkCmdPushConstants");
     const auto dispatch = function(cmdDispatch, "vkCmdDispatch");
     std::size_t done = 0;
     do {
@@ -2709,13 +2729,13 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
             std::uint32_t store;
         } parameters{sampleCounter->DeviceAddress(), target, count, last && target != 0 ? 1u : 0u};
         static_assert(sizeof(parameters) == SampleCounterPushBytes);
-        push(commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
+        CmdPushConstants(context, commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
         dispatch(commands, 1, 1, 1);
         if (parameters.store == 1u) {
             const auto publish = [&](std::uint32_t store) {
                 recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
                 parameters.store = store;
-                push(commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
+                CmdPushConstants(context, commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
                 dispatch(commands, 1, 1, 1);
             };
             publish(3u);
@@ -2784,6 +2804,7 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
                 auto pipelineCacheLock = context.LockPipelineCacheForUse();
                 Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &meshArgumentPipeline), "vkCreateComputePipelines mesh arguments");
             }
+            meshArgumentHeapPipeline = createPushOnlyHeapPipeline(pipelineInfo);
             context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             meshArgumentState = 1;
         } catch (const std::exception& error) {
@@ -2793,18 +2814,47 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
     }
     if (meshArgumentState < 0) return false;
     recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-    function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, meshArgumentPipeline);
+    bindPushOnlyPipeline(commands, meshArgumentPipeline, meshArgumentHeapPipeline);
     struct {
         VkDeviceAddress record;
         VkDeviceAddress arguments;
         std::array<std::uint32_t, 8> rules;
     } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], 0u}};
     static_assert(sizeof(parameters) == PushBytes);
-    function(cmdPushConstants, "vkCmdPushConstants")(commands, meshArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+    pushOnlyParameters(commands, meshArgumentHeapPipeline, meshArgumentLayout, PushBytes, &parameters);
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
     CountBarriers(CommandClass::Draw, 2);
     return true;
+}
+
+VkPipeline Recorder::createPushOnlyHeapPipeline(const VkComputePipelineCreateInfo& info) const {
+    if (!DescriptorHeapEnabled() || !context.descriptorHeap || !BindlessHeap::For(context).DescriptorHeapMode()) return VK_NULL_HANDLE;
+    auto heapFlags = DescriptorHeapFlags();
+    auto heapInfo = info;
+    heapInfo.pNext = &heapFlags;
+    heapInfo.layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    try {
+        auto pipelineCacheLock = context.LockPipelineCacheForUse();
+        if (context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &heapInfo, nullptr, &pipeline) != VK_SUCCESS) return VK_NULL_HANDLE;
+    } catch (const std::exception&) {
+        return VK_NULL_HANDLE;
+    }
+    return pipeline;
+}
+
+void Recorder::bindPushOnlyPipeline(VkCommandBuffer commands, VkPipeline pipeline, VkPipeline heapPipeline) const {
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline != VK_NULL_HANDLE ? heapPipeline : pipeline);
+}
+
+void Recorder::pushOnlyParameters(VkCommandBuffer commands, VkPipeline heapPipeline, VkPipelineLayout layout, std::uint32_t bytes, const void* values) const {
+    if (heapPipeline == VK_NULL_HANDLE) {
+        CmdPushConstants(context, commands, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, bytes, values);
+        return;
+    }
+    const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {values, bytes}};
+    context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
 }
 
 bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter) {
@@ -2830,6 +2880,7 @@ bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress resul
             pipelineInfo.stage.pName = "main";
             pipelineInfo.layout = changedCopyLayout;
             Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &changedCopyPipeline), "vkCreateComputePipelines changed copy");
+            changedCopyHeapPipeline = createPushOnlyHeapPipeline(pipelineInfo);
             context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             changedCopyState = 1;
         } catch (const std::exception& error) {
@@ -2839,7 +2890,7 @@ bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress resul
     }
     if (changedCopyState < 0) return false;
     static const bool alwaysCopy = std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr;
-    function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, changedCopyPipeline);
+    bindPushOnlyPipeline(commands, changedCopyPipeline, changedCopyHeapPipeline);
     const auto perDispatch = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t{context.limits.maxComputeWorkGroupCount[0]} * GroupSize, std::numeric_limits<std::uint32_t>::max() - GroupSize));
     for (std::uint32_t done = 0; done < dwords;) {
         const auto count = std::min(dwords - done, perDispatch);
@@ -2852,7 +2903,7 @@ bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress resul
             std::uint32_t always;
         } parameters{result + VkDeviceAddress{done} * 4u, snapshot + VkDeviceAddress{done} * 4u, target + VkDeviceAddress{done} * 4u, counter, count, alwaysCopy ? 1u : 0u};
         static_assert(sizeof(parameters) == PushBytes);
-        function(cmdPushConstants, "vkCmdPushConstants")(commands, changedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+        pushOnlyParameters(commands, changedCopyHeapPipeline, changedCopyLayout, PushBytes, &parameters);
         function(cmdDispatch, "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
         done += count;
     }
@@ -3044,6 +3095,12 @@ void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
     if (owner == nullptr || bytes == 0) return;
     ensureOpen();
     if (open->keptOwners.insert(owner).second) open->keptBytes += bytes;
+}
+
+void Recorder::BoundDrawBatch() {
+    BoundKeptBytes();
+    if (open == nullptr || !DescriptorHeapEnabled() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (auto* heap = BindlessHeap::Existing(context); heap != nullptr && heap->TakeRingPressure()) Submit();
 }
 
 void Recorder::BoundKeptBytes() {
@@ -3970,6 +4027,7 @@ void Recorder::Submit() {
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
     submission.pCommandBuffers = &batch->commands;
+    if (auto* heap = DescriptorHeapEnabled() ? BindlessHeap::Existing(context) : nullptr; heap != nullptr) heap->Submitted(*this, submissions + 1);
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     std::string tokensStr = "[";

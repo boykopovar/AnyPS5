@@ -299,8 +299,8 @@ public:
         realCreateImage = context.Function<PFN_vkCreateImage>("vkCreateImage");
         realDestroyImage = context.Function<PFN_vkDestroyImage>("vkDestroyImage");
         realBindImageMemory = context.Function<PFN_vkBindImageMemory>("vkBindImageMemory");
-        realCreateImageView = context.Function<PFN_vkCreateImageView>("vkCreateImageView");
-        realDestroyImageView = context.Function<PFN_vkDestroyImageView>("vkDestroyImageView");
+        realCreateImageView = reinterpret_cast<PFN_vkCreateImageView>(realProc(context.device, "vkCreateImageView"));
+        realDestroyImageView = reinterpret_cast<PFN_vkDestroyImageView>(realProc(context.device, "vkDestroyImageView"));
         realClearColorImage = context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage");
         realCopyImage = context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage");
         context.deviceProc = CountingDeviceProc;
@@ -488,7 +488,7 @@ public:
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             const auto keptBefore = context.recorder->OpenKeptBytes();
-            storageView = MultisampleTargetStorageView(context, resource);
+            storageView = MultisampleTargetStorageView(context, resource).view;
             promoted = ImageFor(storageView, &promotedImage);
             Require(promoted.generation != old.generation && Alive(oldImage, old), "MSAA storage promotion did not retain its source image");
             Require(ImageFor(sampledView).generation == old.generation, "MSAA storage promotion destroyed a held sampled view");
@@ -496,7 +496,7 @@ public:
             totalBytes = AllocationBytesOf(old) + AllocationBytesOf(promoted);
             const auto kept = context.recorder->OpenKeptBytes();
             Require(kept == keptBefore + totalBytes, "MSAA storage promotion did not account for exactly both allocations");
-            Require(MultisampleTargetStorageView(context, resource) == storageView, "a repeated MSAA storage lookup changed its view");
+            Require(MultisampleTargetStorageView(context, resource).view == storageView, "a repeated MSAA storage lookup changed its view");
             Require(context.recorder->OpenKeptBytes() == kept, "a repeated MSAA storage lookup double-counts its allocations");
         }
         Sync();
@@ -506,10 +506,10 @@ public:
             Require(held->View() == sampledView, "a held sampled MSAA alias changed after promotion completion");
             held.reset();
             const auto keptBefore = context.recorder->OpenKeptBytes();
-            Require(MultisampleTargetStorageView(context, resource) == storageView, "a later MSAA storage lookup changed its promoted image");
+            Require(MultisampleTargetStorageView(context, resource).view == storageView, "a later MSAA storage lookup changed its promoted image");
             const auto kept = context.recorder->OpenKeptBytes();
             Require(kept == keptBefore + totalBytes, "an already-storable MSAA target is missing allocations from the new batch budget");
-            Require(MultisampleTargetStorageView(context, resource) == storageView, "a repeated promoted MSAA lookup changed its view");
+            Require(MultisampleTargetStorageView(context, resource).view == storageView, "a repeated promoted MSAA lookup changed its view");
             Require(context.recorder->OpenKeptBytes() == kept, "an already-storable MSAA target double-counts its allocations in one batch");
         }
         block.Unmap();
@@ -549,7 +549,7 @@ public:
         Sync();
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-            promoted = ImageFor(MultisampleTargetStorageView(context, resource), &promotedImage);
+            promoted = ImageFor(MultisampleTargetStorageView(context, resource).view, &promotedImage);
             Require(bornStorable == (promoted.generation == rendered.generation), bornStorable ? "a born-storable MSAA target was promoted to a new image" : "MSAA storage promotion kept the rendered image");
             const auto promotedTwin = MultisampleTargetView(context, twin);
             ImageFor(promotedTwin, &promotedTwinImage);
@@ -573,9 +573,9 @@ public:
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             MultisampleTargetView(context, target);
-            storageView = MultisampleTargetStorageView(context, resource);
+            storageView = MultisampleTargetStorageView(context, resource).view;
             Require(storageView != VK_NULL_HANDLE, "a UNORM storage access to a multisampled sRGB target has no view");
-            Require(MultisampleTargetStorageView(context, resource) == storageView, "a repeated UNORM storage access to a multisampled sRGB target changed its view");
+            Require(MultisampleTargetStorageView(context, resource).view == storageView, "a repeated UNORM storage access to a multisampled sRGB target changed its view");
             resource.format = 60;
             bool refused = false;
             try {

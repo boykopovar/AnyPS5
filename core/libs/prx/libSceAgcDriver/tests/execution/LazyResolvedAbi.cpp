@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -556,10 +557,11 @@ void LazyResolution(const Layout& layout, const std::filesystem::path& reference
     Require(unmatched.firstUses - start.firstUses == Drawn && unmatched.own - start.own == Drawn && unmatched.found == start.found, "lazy resolved ABI: draws whose state differs from the resolved ABI did not count as preparing their own artifact (before: " + Uses(start) + "; after: " + Uses(unmatched) + ")");
     Require(unmatched.entries > start.entries && unmatched.unmatchedEntries - start.unmatchedEntries == unmatched.entries - start.entries, "lazy resolved ABI: entries prepared for an ABI no draw used do not count as unmatched (before: " + Uses(start) + "; after: " + Uses(unmatched) + ")");
     Require(matched.firstUses == unmatched.firstUses + 1 && matched.found == unmatched.found + 1 && matched.own == unmatched.own, "lazy resolved ABI: a draw whose state matches the resolved ABI did not count as finding its artifact (before: " + Uses(unmatched) + "; after: " + Uses(matched) + ")");
-    Require(matched.entries > unmatched.entries && matched.unmatchedEntries == unmatched.unmatchedEntries + (matched.entries - unmatched.entries) - 1, "lazy resolved ABI: the entry a matching draw used still counts as unmatched (before: " + Uses(unmatched) + "; after: " + Uses(matched) + ")");
+    const std::uint64_t usedVariants = AgcDriver::DriverDetail::HeapFragmentsEnabled() ? 2u : 1u;
+    Require(matched.entries > unmatched.entries && matched.unmatchedEntries == unmatched.unmatchedEntries + (matched.entries - unmatched.entries) - usedVariants, "lazy resolved ABI: the entry a matching draw used still counts as unmatched (before: " + Uses(unmatched) + "; after: " + Uses(matched) + ")");
     for (const auto index : {Matching, Twice, Replaced}) Require(eager.at("drawn " + std::to_string(index)) == eager.at("resolved " + std::to_string(index)), "lazy resolved ABI: shader " + std::to_string(index) + ", drawn with its resolved ABI's state, did not find the ABI's entries with eager preparation");
-    for (std::uint32_t index = 0; index < Drawn; ++index) Require(Count(eager.at("drawn " + std::to_string(index))) == Count(eager.at("resolved " + std::to_string(index))) + 1, "lazy resolved ABI: a draw whose state differs from its resolved ABI did not prepare its own entry with eager preparation");
-    Require(Count(eager.at("drawn " + std::to_string(Replacement))) == Count(eager.at("registered " + std::to_string(Replacement))) + 1, "lazy resolved ABI: the header registered over a resolved one did not prepare its own entry at its draw with eager preparation");
+    for (std::uint32_t index = 0; index < Drawn; ++index) Require(Count(eager.at("drawn " + std::to_string(index))) == Count(eager.at("resolved " + std::to_string(index))) + usedVariants, "lazy resolved ABI: a draw whose state differs from its resolved ABI did not prepare its own entry with eager preparation");
+    Require(Count(eager.at("drawn " + std::to_string(Replacement))) == Count(eager.at("registered " + std::to_string(Replacement))) + usedVariants, "lazy resolved ABI: the header registered over a resolved one did not prepare its own entry at its draw with eager preparation");
     Require(lazy.at("libraries drawn") == eager.at("libraries drawn"), "lazy resolved ABI: the pipeline libraries built differ from eager preparation (eager " + eager.at("libraries drawn") + "; lazy " + lazy.at("libraries drawn") + ")");
     Require(first == expected, "lazy resolved ABI: the shader prepared at its first draw drew other bytes than with eager preparation");
     AgcDriverWaitIdle_nid_postfix();

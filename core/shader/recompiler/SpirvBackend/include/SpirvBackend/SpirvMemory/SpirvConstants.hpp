@@ -14,6 +14,7 @@ std::uint32_t ConstantF32Value(SpirvEmitterState& state, float value);
 std::uint32_t ConstantBool(SpirvEmitterState& state, bool value);
 std::uint32_t ConstantU64(SpirvEmitterState& state, std::uint64_t value);
 std::uint32_t ConstantU32CompositeZero(SpirvEmitterState& state, std::uint32_t components);
+std::uint32_t HeapImageSlotCount(SpirvEmitterState& state);
 
 }
 
