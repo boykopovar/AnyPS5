@@ -1,4 +1,5 @@
 #include "prx/libharfbuzz/include/Layout.hpp"
+#include "FreeTypeGuestOutputFixture.hpp"
 
 #include <hb-ot.h>
 
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
@@ -29,11 +31,13 @@ static void Require(bool condition, std::source_location location = std::source_
 }
 
 template <typename TFunction, typename TModule>
-static TFunction Import(TModule module, const char* name) {
+static TFunction Import(TModule module, const char* name, const char* fallback = nullptr) {
 #ifdef _WIN32
-    const auto address = GetProcAddress(module, name);
+    auto address = GetProcAddress(module, name);
+    if (!address && fallback) address = GetProcAddress(module, fallback);
 #else
-    const auto address = dlsym(module, name);
+    auto address = dlsym(module, name);
+    if (!address && fallback) address = dlsym(module, fallback);
 #endif
     if (!address) std::fprintf(stderr, "Missing symbol: %s\n", name);
     Require(address != nullptr);
@@ -211,12 +215,73 @@ static void CheckLiterals(const Api& api, hb_face_t* face) {
     Require(api.feature(face, HB_OT_TAG_GSUB, 1, 1, HB_TAG('m', 'a', 'r', 'k'), &index) == 0 && index == HB_OT_LAYOUT_NO_FEATURE_INDEX);
 }
 
+#ifdef _WIN32
+static void CheckProtected(const Api& api, hb_face_t* face, const FreeTypeTest::KernelApi& kernel) {
+    FreeTypeTest::GuestOutput output(kernel);
+    for (const unsigned kind : {0u, 1u, 2u, 3u}) {
+        for (const bool alias : {false, true}) {
+            if (kind >= 2 && alias) continue;
+            for (const bool hostReadOnly : {false, true}) {
+                for (unsigned mask = 1; mask < 4; ++mask) {
+                    if ((kind >= 2 || alias) && mask != 1) continue;
+                    output.Reset();
+                    const std::size_t countOffset = 64;
+                    const std::size_t tagsOffset = alias ? countOffset : FreeTypeTest::GuestOutput::Page + 64;
+                    auto* count = output.Record<unsigned>(countOffset);
+                    auto* tags = output.Record<hb_tag_t>(tagsOffset);
+                    *count = 2;
+                    const auto before = output.Snapshot();
+                    auto expected = before;
+                    auto* expectedCount = reinterpret_cast<unsigned*>(expected.data() + countOffset);
+                    auto* expectedTags = reinterpret_cast<hb_tag_t*>(expected.data() + tagsOffset);
+                    const hb_tag_t feature = kind == 2 ? HB_TAG('l', 'i', 'g', 'a') : HB_TAG('z', 'z', 'z', 'z');
+                    const unsigned expectedResult = kind == 0 ? hb_ot_layout_table_get_script_tags(face, HB_OT_TAG_GSUB, 0, expectedCount, expectedTags)
+                        : kind == 1 ? hb_ot_layout_script_get_language_tags(face, HB_OT_TAG_GSUB, 1, 0, expectedCount, expectedTags)
+                        : static_cast<unsigned>(hb_ot_layout_language_find_feature(face, HB_OT_TAG_GSUB, 1, 0, feature, expectedCount));
+                    const auto query = [&] {
+                        if (kind == 0) return api.scripts(face, HB_OT_TAG_GSUB, 0, count, tags);
+                        if (kind == 1) return api.languages(face, HB_OT_TAG_GSUB, 1, 0, count, tags);
+                        return static_cast<unsigned>(api.feature(face, HB_OT_TAG_GSUB, 1, 0, feature, count));
+                    };
+                    for (unsigned page = 0; page < 2; ++page) {
+                        if (!(mask & (1u << page))) continue;
+                        output.Protect(page, false);
+                        if (!hostReadOnly) output.PermitNativeWrite(page);
+                    }
+                    bool refused = false;
+                    try { query(); }
+                    catch (const std::exception&) { refused = true; }
+                    Require(refused);
+                    output.Unchanged(before);
+                    output.Protect(0, true);
+                    output.Protect(1, true);
+                    Require(query() == expectedResult && output.Snapshot() == expected);
+                }
+            }
+        }
+    }
+    output.Reset();
+    auto* count = output.Record<unsigned>(64);
+    auto* tags = output.Record<hb_tag_t>(FreeTypeTest::GuestOutput::Page + 64);
+    *count = 0;
+    output.Protect(1, false);
+    Require(api.scripts(face, HB_OT_TAG_GSUB, 0, count, tags) == 2 && *count == 0);
+    *count = 2;
+    Require(api.scripts(face, HB_OT_TAG_GSUB, 2, count, tags) == 2 && *count == 0);
+    *count = 0;
+    Require(api.languages(face, HB_OT_TAG_GSUB, 1, 0, count, tags) == 2 && *count == 0);
+    output.Protect(1, true);
+}
+#endif
+
 int main(int argc, char** argv) {
     Require(argc == 3);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
     Require(patched || std::strcmp(argv[2], "unpatched") == 0);
 #ifdef _WIN32
     auto module = LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+    auto kernel = LoadLibraryW((std::filesystem::path(argv[1]).parent_path() / "libkernel.prx").c_str());
+    Require(kernel != nullptr);
     if (!module) std::fprintf(stderr, "LoadLibraryW failed: %lu\n", GetLastError());
 #else
     auto module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -224,17 +289,30 @@ int main(int argc, char** argv) {
 #endif
     Require(module != nullptr);
     Api api{};
-#define LoadExport(field, name, nid) api.field = Import<decltype(api.field)>(module, patched ? nid : #name "_nid_postfix")
+#define LoadExport(field, name, nid) api.field = Import<decltype(api.field)>(module, patched ? nid : #name "_nid_postfix", patched ? nullptr : #name)
     LoadExport(scripts, hb_ot_layout_table_get_script_tags, "wf6CfVJj9PQ");
     LoadExport(languages, hb_ot_layout_script_get_language_tags, "HH-sRSNiSaU");
     LoadExport(feature, hb_ot_layout_language_find_feature, "qos3JIrKrDg");
 #undef LoadExport
+#ifdef _WIN32
+    const FreeTypeTest::KernelApi kernelApi{
+        Import<decltype(FreeTypeTest::KernelApi::allocate)>(kernel, patched ? "rTXw65xmLIA" : "sceKernelAllocateDirectMemory"),
+        Import<decltype(FreeTypeTest::KernelApi::map)>(kernel, patched ? "L-Q3LEjIbgA" : "sceKernelMapDirectMemory"),
+        Import<decltype(FreeTypeTest::KernelApi::protect)>(kernel, patched ? "vSMAm3cxYTY" : "sceKernelMprotect"),
+        Import<decltype(FreeTypeTest::KernelApi::unmap)>(kernel, patched ? "cQke9UuBQOk" : "sceKernelMunmap"),
+        Import<decltype(FreeTypeTest::KernelApi::release)>(kernel, patched ? "MBuItvba6z8" : "sceKernelReleaseDirectMemory")
+    };
+#endif
+    try {
     const auto substitution = LayoutTable({HB_TAG('k', 'e', 'r', 'n'), HB_TAG('l', 'i', 'g', 'a'), HB_TAG('r', 'l', 'i', 'g')});
     const auto positioning = LayoutTable({HB_TAG('d', 'i', 's', 't'), HB_TAG('k', 'e', 'r', 'n'), HB_TAG('m', 'a', 'r', 'k')});
     auto* guest = Face(substitution.bytes, positioning.bytes);
     auto* native = Face(substitution.bytes, positioning.bytes);
     CheckLiterals(api, guest);
     CheckQueries(api, guest, native);
+#ifdef _WIN32
+    CheckProtected(api, guest, kernelApi);
+#endif
     hb_face_destroy(guest);
     hb_face_destroy(native);
     for (const auto length : std::array<std::size_t, 8>{0, 1, 4, 9, 10, 11, 21, 23}) {
@@ -246,8 +324,12 @@ int main(int argc, char** argv) {
         hb_face_destroy(native);
     }
     CheckQueries(api, hb_face_get_empty(), hb_face_get_empty());
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "HarfBuzz layout query unexpectedly threw: %s\n", error.what());
+        Require(false);
+    }
 #ifdef _WIN32
-    Require(FreeLibrary(module) != 0);
+    Require(FreeLibrary(module) != 0 && FreeLibrary(kernel) != 0);
 #else
     Require(dlclose(module) == 0);
 #endif
