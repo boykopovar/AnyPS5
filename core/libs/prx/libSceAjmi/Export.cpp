@@ -21,7 +21,7 @@ void* APS5_VABI sceAjmBatchJobInlineBuffer_nid_disambig1(void* position, const v
     std::memcpy(at, words, sizeof(words));
     at += sizeof(words);
     if (data_input_size) std::memcpy(at, data_input, data_input_size);
-    *batch_address = at;
+    if (batch_address) *batch_address = at;
     return at + size;
 }
 
