@@ -2612,6 +2612,24 @@ void TestRunSidebandStopsAtOversizedField(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestInlineBufferNullAddress(const char* ajmiLibrary) {
+#ifdef _WIN32
+    const char* nativeLibrary = "libSceAjm.native.prx";
+#else
+    const char* nativeLibrary = nullptr;
+#endif
+    const InlineBuffer nativeInline = reinterpret_cast<InlineBuffer>(ResolveExport(nativeLibrary, "sceAjmBatchJobInlineBuffer"));
+    const InlineBuffer ajmiInline = reinterpret_cast<InlineBuffer>(ResolveExport(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    for (const InlineBuffer inlineBuffer : {nativeInline, ajmiInline}) {
+        std::uint8_t data[13];
+        std::memset(data, 0x5A, sizeof(data));
+        std::vector<std::uint8_t> batch(64, 0xCD);
+        Require(inlineBuffer(batch.data(), data, sizeof(data), nullptr) == batch.data() + 24);
+        Require(BatchWord(batch, 0) == 0xCDCDCDC7 && BatchWord(batch, 4) == 16);
+        Require(std::memcmp(batch.data() + 8, data, sizeof(data)) == 0);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -2704,6 +2722,7 @@ int main(int argc, char** argv) {
     TestConsoleSingleFrameRun(context);
     TestConsoleStaleHeaderBits(context);
     TestRunSidebandStopsAtOversizedField(context);
+    TestInlineBufferNullAddress(argv[1]);
     Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
 }
