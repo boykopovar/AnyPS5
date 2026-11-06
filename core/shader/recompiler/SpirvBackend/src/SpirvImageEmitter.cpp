@@ -653,10 +653,17 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     return result;
 }
 
+std::uint32_t ScaleUnormTexel(SpirvEmitterState& state, std::uint32_t texel, std::uint32_t bits) {
+    return Binary(state, spv::OpVectorTimesScalar, TypeF32Vector(state, 4), texel, ConstantF32Value(state, static_cast<float>((1u << bits) - 1u)));
+}
+
 std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
     auto& state = ctx.state;
     if (access.image.srgbDecode) {
         return DecodeSrgbTexel(state, texel);
+    }
+    if (access.image.scaledUnormBits != 0u) {
+        return ScaleUnormTexel(state, texel, access.image.scaledUnormBits);
     }
     if (access.image.conversionFormat == FmaskExpansion) {
         return ExpandFmaskTexel(state, access, texel);
@@ -765,6 +772,9 @@ std::uint32_t PackedImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
 
 std::uint32_t UnpackImageGather(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t gathered) {
     auto& state = ctx.state;
+    if (access.image.scaledUnormBits != 0u) {
+        return ScaleUnormTexel(state, gathered, access.image.scaledUnormBits);
+    }
     const auto info = ImageConversionFormat(access.image);
     if (info.format == IrBufferFormat::Invalid) {
         return gathered;
@@ -2355,7 +2365,7 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
 
 bool SameImageModeForInstruction(const IrValue& inst, const MemoryInfo& memory, const ImageResource& a, const ImageResource& b) {
     if (a.resourceClass != b.resourceClass || a.dimension != b.dimension || a.numericClass != b.numericClass ||
-        a.depthCompare != b.depthCompare || a.atomic != b.atomic || a.atomic64 != b.atomic64 || a.table != b.table || a.depthBits != b.depthBits) {
+        a.depthCompare != b.depthCompare || a.atomic != b.atomic || a.atomic64 != b.atomic64 || a.table != b.table || a.depthBits != b.depthBits || a.scaledUnormBits != b.scaledUnormBits) {
         return false;
     }
     const auto opcode = inst.Opcode();
