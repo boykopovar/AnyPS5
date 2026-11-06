@@ -314,6 +314,12 @@ static void TestRoundedRect() {
     _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&overflowing, lr, maxWidth, maxWidth, WebCore::LayoutSize{0, 0}, WebCore::LayoutSize{0, 0});
     Require(!_ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(&overflowing, lr));
 
+    WebCore::LayoutRect maxLr{WebCore::LayoutPoint{0, 0}, WebCore::LayoutSize{std::numeric_limits<int>::max(), 6400}};
+    WebCore::RoundedRect saturating;
+    _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&saturating, maxLr, maxWidth, maxWidth, WebCore::LayoutSize{0, 0}, WebCore::LayoutSize{0, 0});
+    WebCore::LayoutRect smallLr{WebCore::LayoutPoint{64, 64}, WebCore::LayoutSize{128, 128}};
+    Require(_ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE(&saturating, smallLr));
+
     WebCore::RoundedRect rr2;
     _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_(&rr2, lr, sz, sz, sz, sz);
     Require(rr2.m_radii.m_topLeft.m_width.m_value == 640);
