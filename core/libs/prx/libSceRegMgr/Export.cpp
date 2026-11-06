@@ -67,9 +67,29 @@ public:
         return 0;
     }
 
+    int resetVal(uint32_t key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (entries_.erase(key) != 0) changed_[key] = 0xff;
+        return 0;
+    }
+
+    int isChange(uint32_t key, uint32_t consumer) {
+        const uint32_t index = consumer - 0x0d010001u;
+        const bool known = (index < 32u && (((0x8000808bu >> index) & 1u) != 0u)) || consumer == 0x0d890080u;
+        if (!known) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = changed_.find(key);
+        if (it == changed_.end()) return 0;
+        const auto mask = static_cast<uint8_t>(consumer);
+        const bool changed = (it->second & mask) != 0;
+        it->second &= static_cast<uint8_t>(~mask);
+        return changed ? 1 : 0;
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<int64_t, RegEntry> entries_;
+    std::unordered_map<int64_t, uint8_t> changed_;
 };
 
 RegistryStore gStore;
@@ -90,16 +110,21 @@ int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int string
     return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
+    (void)optionId;
+    (void)data;
+    (void)size;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
+    (void)optionId;
+    (void)inInt;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
+    (void)optionId;
+    (void)inStirng;
+    (void)stringLength;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data) {
     (void)key;
@@ -124,9 +149,10 @@ int APS5_VABI sceRegMgrGetBinInitVal(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrGetIntInitVal(void) {
+int APS5_VABI sceRegMgrGetIntInitVal(std::uint32_t optionId, std::int32_t* outInt) {
+    (void)optionId;
+    (void)outInt;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRegMgrGetStrInitVal(void) {
@@ -139,9 +165,8 @@ int APS5_VABI sceRegMgrGetVersion(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrIsChange(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer) {
+    return gStore.isChange(optionId, consumer);
 }
 
 int APS5_VABI sceRegMgrEvtGetCnt(void) {
@@ -154,9 +179,9 @@ int APS5_VABI sceRegMgrEvtGetRegId(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrResetVal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrResetVal(std::int32_t optionId, std::int32_t unk) {
+    (void)unk;
+    return gStore.resetVal(static_cast<std::uint32_t>(optionId));
 }
 
 int APS5_VABI sceRegMgrSetInitLevel(void) {
@@ -180,7 +205,6 @@ int APS5_VABI sceRegMgrSrvGetMachineType(void) {
 }
 
 int APS5_VABI sceRegMgrSrvGetQAFforReg(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

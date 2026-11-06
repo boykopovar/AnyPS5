@@ -54,5 +54,37 @@ int main() {
     Require(sceRegMgrGetBin(-1, binBuf, 1) == static_cast<int>(0x80820002));
     Require(binBuf[0] == 0x77);
 
+    Require(ReportsNotImplemented("sceRegMgrSetInt", [&] { sceRegMgrSetInt(0x3000, 42); }));
+    Require(ReportsNotImplemented("sceRegMgrSetInt", [&] { sceRegMgrSetInt(-1, -1); }));
+    Require(ReportsNotImplemented("sceRegMgrSetStr", [&] { sceRegMgrSetStr(0x3001, "abc", 4); }));
+    Require(ReportsNotImplemented("sceRegMgrSetStr", [&] { sceRegMgrSetStr(0x3001, nullptr, 0); }));
+    Require(ReportsNotImplemented("sceRegMgrSetBin", [&] { sceRegMgrSetBin(0x3002, binBuf, sizeof(binBuf)); }));
+    Require(ReportsNotImplemented("sceRegMgrSetBin", [&] { sceRegMgrSetBin(0x3002, nullptr, 0); }));
+    intVal = 0x55AA;
+    Require(sceRegMgrGetInt(0x3000, &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+    Require(sceRegMgrGetStr(0x3001, strBuf, sizeof(strBuf)) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetBin(0x3002, binBuf, sizeof(binBuf)) == static_cast<int>(0x80820002));
+
+    Require(sceRegMgrResetVal(0x3003, 0) == 0);
+    Require(sceRegMgrResetVal(0x3004, -1) == 0);
+    Require(sceRegMgrResetVal(static_cast<std::int32_t>(0xC0808000u), 0) == 0);
+    intVal = 0x55AA;
+    Require(sceRegMgrGetInt(static_cast<std::int64_t>(0xC0808000u), &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+
+    Require(ReportsNotImplemented("sceRegMgrGetIntInitVal", [&] { sceRegMgrGetIntInitVal(0x3005, &intVal); }));
+    Require(ReportsNotImplemented("sceRegMgrGetIntInitVal", [&] { sceRegMgrGetIntInitVal(0x3005, nullptr); }));
+    Require(ReportsNotImplemented("sceRegMgrGetStrInitVal", [&] { sceRegMgrGetStrInitVal(); }));
+    Require(ReportsNotImplemented("sceRegMgrGetBinInitVal", [&] { sceRegMgrGetBinInitVal(); }));
+
+    Require(sceRegMgrIsChange(0x3006, 0x0d010001u) == 0);
+    Require(sceRegMgrIsChange(0x3006, 0x0d010002u) == 0);
+    Require(sceRegMgrIsChange(0x3006, 0x0d890080u) == 0);
+    Require(sceRegMgrIsChange(0x3006, 1u) == 0);
+    Require(sceRegMgrIsChange(0xC0808000u, 0x0d010001u) == 0);
+
+    Require(sceRegMgrSrvGetQAFforReg() == 0);
+
     return 0;
 }
