@@ -82,3 +82,7 @@
 [submodule "3rdparty/sqlite"]
 	path = 3rdparty/sqlite
 	url = https://github.com/sqlite/sqlite.git
+[submodule "3rdparty/icu"]
+	path = 3rdparty/icu
+	url = https://github.com/unicode-org/icu.git
+	shallow = true
