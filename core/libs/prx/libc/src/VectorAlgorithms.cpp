@@ -111,6 +111,9 @@ void Reverse(void* first, void* last) {
 
 template<std::size_t Size>
 void ReverseCopy(const void* first, const void* last, void* destination) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (endAddress < beginAddress || (endAddress - beginAddress) % Size != 0) NotImplemented_nid_no_patch(__func__);
     auto* begin = static_cast<const unsigned char*>(first);
     auto* end = static_cast<const unsigned char*>(last);
     auto* out = static_cast<unsigned char*>(destination);
