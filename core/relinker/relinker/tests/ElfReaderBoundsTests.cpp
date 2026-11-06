@@ -1,4 +1,5 @@
 #include <relinker/parsing/ElfReader.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -75,10 +76,12 @@ void Require(const bool condition) {
     if (!condition) throw std::runtime_error("Unexpected parsed value");
 }
 
-void RejectSections(Bytes bytes) {
+void RejectSections(Bytes bytes, const std::string& expectedMessage = "", const std::uint64_t expectedOffset = std::numeric_limits<std::uint64_t>::max()) {
     try {
         Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
-    } catch (const Relinker::RelinkerException&) {
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) Require(error.what() == expectedMessage);
+        if (expectedOffset != std::numeric_limits<std::uint64_t>::max()) Require(error.FailureOffset == expectedOffset);
         return;
     }
     throw std::runtime_error("Invalid section metadata was accepted");
@@ -106,6 +109,57 @@ void RejectProgramHeaders(Bytes bytes, const std::string& expectedMessage = "", 
         return;
     }
     throw std::runtime_error("Invalid program header was accepted");
+}
+
+void RejectHeader(Bytes bytes, const std::string& expectedMessage = "", const std::uint64_t expectedOffset = std::numeric_limits<std::uint64_t>::max()) {
+    try {
+        Relinker::ElfReader(std::move(bytes)).ReadHeader();
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) {
+            Require(std::string(error.what()).find(expectedMessage) != std::string::npos);
+        }
+        if (expectedOffset != std::numeric_limits<std::uint64_t>::max()) {
+            Require(error.FailureOffset == expectedOffset);
+        }
+        return;
+    }
+    throw std::runtime_error("Invalid ELF header was accepted");
+}
+
+void RejectMagic(Bytes bytes, const std::string& expectedMessage = "") {
+    try {
+        Relinker::ElfReader(std::move(bytes)).ValidateMagic();
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) {
+            Require(std::string(error.what()).find(expectedMessage) != std::string::npos);
+        }
+        return;
+    }
+    throw std::runtime_error("Invalid ELF magic was accepted");
+}
+
+Bytes DynamicFixture(const std::vector<std::pair<std::int64_t, std::uint64_t>>& tags) {
+    Bytes bytes(0x100 + tags.size() * 16);
+    const std::uint8_t magic[] = {0x7f, 'E', 'L', 'F', 2, 1, 1};
+    std::memcpy(bytes.data(), magic, sizeof(magic));
+    Write<std::uint16_t>(bytes, 16, 3);
+    Write<std::uint16_t>(bytes, 18, 62);
+    Write<std::uint32_t>(bytes, 20, 1);
+    const std::size_t dynOffset = 0x80;
+    for (std::size_t i = 0; i < tags.size(); ++i) {
+        Write<std::int64_t>(bytes, dynOffset + i * 16, tags[i].first);
+        Write<std::uint64_t>(bytes, dynOffset + i * 16 + 8, tags[i].second);
+    }
+    return bytes;
+}
+
+Relinker::ProgramHeader DynamicHeader(const std::size_t tagCount) {
+    Relinker::ProgramHeader header{};
+    header.Type = 2;
+    header.Offset = 0x80;
+    header.FileSize = tagCount * 16;
+    header.MemorySize = tagCount * 16;
+    return header;
 }
 
 }
@@ -428,6 +482,171 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x1000) == 0x240);
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
+        }},
+        {"sh_link section header index bounds", [] {
+            for (const std::uint32_t type : {2u, 11u, 4u, 9u, 6u}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, type);
+                Write<std::uint32_t>(bytes, 232, 3);
+                RejectSections(std::move(bytes), "Section link index out of bounds", 232);
+
+                auto valid = Fixture();
+                Write<std::uint32_t>(valid, 196, type);
+                Write<std::uint32_t>(valid, 232, 2);
+                if (type == 4) Write<std::uint64_t>(valid, 248, 24);
+                if (type == 9) Write<std::uint64_t>(valid, 248, 16);
+                const auto sections = Relinker::ElfReader(std::move(valid)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[1].Link == 2);
+            }
+        }},
+        {"unused section link fields are preserved", [] {
+            for (const std::uint32_t type : {0u, 1u, 3u, 8u, 14u, 15u}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, type);
+                Write<std::uint32_t>(bytes, 232, 99);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[1].Link == 99);
+            }
+        }},
+        {"SHT_DYNSYM section entry size mismatch", [] {
+            for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, 11);
+                Write<std::uint64_t>(bytes, 248, entrySize);
+                RejectSections(std::move(bytes));
+            }
+        }},
+        {"SHT_RELA section entry size mismatch", [] {
+            for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, 4);
+                Write<std::uint64_t>(bytes, 248, entrySize);
+                RejectSections(std::move(bytes));
+            }
+        }},
+        {"SHT_REL section entry size mismatch", [] {
+            for (const std::uint64_t entrySize : {0ULL, 1ULL, 8ULL, 12ULL, 15ULL, 17ULL, 24ULL, 32ULL}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, 9);
+                Write<std::uint64_t>(bytes, 248, entrySize);
+                RejectSections(std::move(bytes));
+            }
+        }},
+        {"dynamic tag values are preserved for semantic validation", [] {
+            const std::vector<std::pair<std::int64_t, std::uint64_t>> tags = {
+                {Elfpatcher::DT_RELENT, 24},
+                {Elfpatcher::DT_RELSZ, 24},
+                {Elfpatcher::DT_PLTREL, 17},
+                {0, 0}
+            };
+            const auto parsed = Relinker::ElfReader(DynamicFixture(tags)).ReadDynamicTags(DynamicHeader(tags.size()));
+            Require(parsed.size() == 3 && parsed[0].Value == 24 && parsed[1].Value == 24 && parsed[2].Value == 17);
+        }},
+        {"file smaller than ELF header size", [] {
+            for (const std::size_t size : {0ULL, 1ULL, 16ULL, 32ULL, 63ULL}) {
+                Bytes bytes(size);
+                RejectHeader(bytes, "File too small for ELF header");
+                RejectMagic(std::move(bytes), "File too small for ELF header");
+            }
+        }},
+        {"SELF container magic rejection", [] {
+            for (const std::uint32_t magic : {0x1d3d154fu, 0xeef51454u}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 0, magic);
+                RejectHeader(bytes, "The input is a SELF container, not an ELF");
+                RejectMagic(std::move(bytes), "The input is a SELF container, not an ELF");
+            }
+        }},
+        {"invalid ELF magic number", [] {
+            for (const auto& magic : {
+                std::vector<std::uint8_t>{0x00, 'E', 'L', 'F'},
+                std::vector<std::uint8_t>{0x7f, 'e', 'l', 'f'},
+                std::vector<std::uint8_t>{0x7f, 'A', 'B', 'C'},
+                std::vector<std::uint8_t>{'B', 'O', 'Y', 'K'}
+            }) {
+                auto bytes = Fixture();
+                std::memcpy(bytes.data(), magic.data(), 4);
+                RejectHeader(bytes, "Invalid ELF magic number");
+                RejectMagic(std::move(bytes), "Invalid ELF magic number");
+            }
+        }},
+        {"invalid ELF class", [] {
+            for (const std::uint8_t cls : {0u, 1u, 3u, 255u}) {
+                auto bytes = Fixture();
+                bytes[4] = cls;
+                RejectHeader(std::move(bytes), "Expected little-endian ELF64 version 1");
+            }
+        }},
+        {"invalid ELF data encoding", [] {
+            for (const std::uint8_t encoding : {0u, 2u, 3u, 255u}) {
+                auto bytes = Fixture();
+                bytes[5] = encoding;
+                RejectHeader(std::move(bytes), "Expected little-endian ELF64 version 1");
+            }
+        }},
+        {"invalid ELF version in ident", [] {
+            for (const std::uint8_t version : {0u, 2u, 3u, 255u}) {
+                auto bytes = Fixture();
+                bytes[6] = version;
+                RejectHeader(std::move(bytes), "Expected little-endian ELF64 version 1");
+            }
+        }},
+        {"invalid ELF machine", [] {
+            for (const std::uint16_t machine : {0u, 3u, 40u, 61u, 63u, 183u, 0xffffu}) {
+                auto bytes = Fixture();
+                Write<std::uint16_t>(bytes, 0x12, machine);
+                RejectHeader(std::move(bytes), "Expected an x86-64 ELF");
+            }
+        }},
+        {"unsupported ELF object version", [] {
+            for (const std::uint32_t version : {0u, 2u, 3u, 0xffffffffu}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 0x14, version);
+                RejectHeader(std::move(bytes), "Unsupported ELF object version: expected 1", 0x14);
+            }
+        }},
+        {"invalid ELF header size", [] {
+            for (const std::uint16_t size : {0u, 52u, 60u, 63u, 65u, 128u, 0xffffu}) {
+                auto bytes = Fixture();
+                Write<std::uint16_t>(bytes, 0x34, size);
+                RejectHeader(std::move(bytes), "Invalid ELF header size: expected 64 bytes", 0x34);
+            }
+        }},
+        {"ELF program header entry size mismatch", [] {
+            for (const std::uint16_t entrySize : {0u, 48u, 55u, 57u, 64u, 0xffffu}) {
+                auto bytes = Fixture();
+                Write<std::uint16_t>(bytes, 0x36, entrySize);
+                RejectProgramHeaders(std::move(bytes), "Invalid ELF program header entry size: expected 56 bytes", 0x36);
+            }
+        }},
+        {"valid ELF header fields", [] {
+            const auto header = Relinker::ElfReader(Fixture()).ReadHeader();
+            Require(header.Machine == 62);
+            Require(header.Type == 3);
+            Require(header.ProgramHeaderEntrySize == 56);
+            Require(header.ProgramHeaderCount == 1);
+            Require(header.SectionHeaderEntrySize == 64);
+            Require(header.SectionHeaderCount == 3);
+            Require(header.SectionHeaderStringIndex == 2);
+        }},
+        {"PT_NULL ignores unused program header fields", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 64, 0);
+            Write<std::uint32_t>(bytes, 68, 0xffffffffu);
+            for (const std::size_t offset : {72u, 80u, 88u, 96u, 104u, 112u}) {
+                Write<std::uint64_t>(bytes, offset, std::numeric_limits<std::uint64_t>::max());
+            }
+            const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+            Require(headers.size() == 1 && headers[0].Type == 0);
+            Require(headers[0].Alignment == std::numeric_limits<std::uint64_t>::max());
+        }},
+        {"valid program header alignment powers of two", [] {
+            for (const std::uint64_t align : {0ULL, 1ULL, 2ULL, 4ULL, 8ULL, 16ULL, 0x1000ULL, 0x4000ULL, 0x10000ULL}) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 64 + 48, align);
+                const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+                Require(headers.size() == 1 && headers[0].Alignment == align);
+            }
         }},
     };
     std::size_t failures = 0;
