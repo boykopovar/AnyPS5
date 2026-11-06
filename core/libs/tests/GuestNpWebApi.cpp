@@ -27,6 +27,7 @@ constexpr int HandleNotFound = static_cast<int>(0x8055290Du);
 constexpr int ServicePushEventFilterNotFound = static_cast<int>(0x8055290Eu);
 constexpr int ServicePushEventCallbackNotFound = static_cast<int>(0x8055290Fu);
 constexpr int SignedInUserNotFound = static_cast<int>(0x80552910u);
+constexpr int ExtdPushEventFilterNotFound = static_cast<int>(0x8055291Cu);
 constexpr int HttpInvalidId = static_cast<int>(0x80431100u);
 constexpr int HttpInvalidResponse = static_cast<int>(0x80432060u);
 
@@ -250,6 +251,11 @@ void TestPushEventCallbacks() {
     Require(sceNpWebApiRegisterServicePushEventCallback(user + 1, 1, PushEventCallback(), &argument) == UserContextNotFound, "service callback of an unknown user context");
     Require(sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "a push event filter is not a service filter");
     Require(sceNpWebApiUnregisterServicePushEventCallback(user, 1) == ServicePushEventCallbackNotFound, "no service callback exists");
+
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, filter, nullptr, &argument) == InvalidArgument, "extended push event callback without a function");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user + 1, filter, nullptr, &argument) == InvalidArgument, "the function is checked before the user context for extended callbacks");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user + 1, filter, PushEventCallback(), &argument) == UserContextNotFound, "extended push event callback of an unknown user context");
+    Require(sceNpWebApiRegisterExtdPushEventCallback(user, 1, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended push event filter does not exist");
 
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the callback library contexts");
 }
