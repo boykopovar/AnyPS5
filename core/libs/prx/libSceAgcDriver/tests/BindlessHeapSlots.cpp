@@ -554,7 +554,6 @@ bool slotPressureSubmits(const Context& context, VkImageView view) {
         static_cast<void>(recorder.Commands());
         recorder.Submit();
     };
-    require(BindlessHeap::WaitsWhenFull(), "a nearly full heap waits by default instead of refusing draws");
     std::vector<std::shared_ptr<Texture>> held;
     std::vector<std::uint32_t> slots;
     for (std::size_t index = 0; index < 7u; ++index) {

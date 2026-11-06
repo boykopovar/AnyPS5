@@ -74,7 +74,6 @@ public:
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
     static bool RefusesDraws();
-    static bool WaitsWhenFull();
     static std::uint32_t ImageSlotCapacity();
     std::uint32_t ImageSlots() const { return slotCap; }
     std::uint32_t TouchSlots(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> samplerSlots, std::uint32_t touched) const;
@@ -166,7 +165,6 @@ private:
     std::vector<PoolBlock> poolBlocks;
     std::size_t poolCurrent = ~std::size_t{0};
     std::uint32_t poolAlignment = 256;
-    bool poolDeviceLocal = true;
     std::size_t poolBatchBytes = 0;
     std::size_t takePoolBlockLocked(std::size_t bytes);
     bool poolBlockDoneLocked(PoolBlock& block);

@@ -379,7 +379,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                                                                   std::to_string(StorageMemory[channel]) + ", expected the sampled " +
                                                                   std::to_string(Texel[channel]) + (heap ? " through the heap" : ""));
     }
-    if (!heap || (std::getenv("APS5_HEAP_SLOT_CAP") != nullptr && !AgcDriver::Graphics::BindlessHeap::WaitsWhenFull())) return;
+    if (!heap) return;
     if (mode == Mode::Vertex || mode == Mode::VertexTable)
         Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore,
                 "the heap did not take the sampling vertex stage with descriptor memory");
@@ -388,7 +388,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                 std::string("the heap did not take the fragment stage") + TakenWhat(mode, buffer));
     Require(AgcDriver::Graphics::DataAddressPushes() > pushesBefore,
             "the heap stages did not read their shader data through pushed addresses");
-    if (mode == Mode::ConstantSampler && std::getenv("APS5_NO_EMBEDDED_SAMPLERS") == nullptr)
+    if (mode == Mode::ConstantSampler)
         Require(AgcDriver::Graphics::EmbeddedSamplerMappings() > embeddedBefore, "the fragment stage's constant sampler was not embedded in its pipeline");
 }
 
@@ -465,11 +465,9 @@ int main() {
             DrawSamplesTheTexture(heap, mode);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
         if (heap && !capped) MixedDrawTakesThePerDrawPath();
-        if (capped && AgcDriver::Graphics::BindlessHeap::WaitsWhenFull())
+        if (capped)
             Require(AgcDriver::Graphics::HeapSlotEvictions() != 0u && !AgcDriver::DriverDetail::HeapRefused(),
                     "the capped heap refused draws instead of evicting image slots");
-        else if (capped)
-            Require(AgcDriver::DriverDetail::HeapRefused(), "a draw found the capped heap full and the heap was not refused");
         AgcDriverShutdown_nid_postfix();
         if (heap && !capped)
             Require(AgcDriver::Graphics::EmptyResourceSets() != 0, "no heap draw bound without a per-draw resource set");

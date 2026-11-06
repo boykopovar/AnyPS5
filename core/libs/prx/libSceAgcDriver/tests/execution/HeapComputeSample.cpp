@@ -98,10 +98,6 @@ void FullHeapSample() {
     Submit(words);
     for (std::size_t index = 0; index < FullHeapTextures; ++index)
         RequireSampled(Outputs[0].data() + 4u * index, SampleTexel, "texture " + std::to_string(index) + " of a heap with too few image slots", true);
-    if (!AgcDriver::Graphics::BindlessHeap::WaitsWhenFull()) {
-        Require(AgcDriver::Graphics::BindlessHeap::NearlyFull(), "the capped heap never ran short of image slots");
-        return;
-    }
     Require(AgcDriver::Graphics::SlotPressureSubmits() > submitsBefore, "the capped heap never submitted a batch early to free image slots");
     Require(AgcDriver::Graphics::HeapComputeStages() - stagesBefore == FullHeapTextures, "a compute stage left the heap while it ran short of image slots");
 }

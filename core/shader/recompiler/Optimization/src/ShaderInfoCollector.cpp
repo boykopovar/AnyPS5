@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -579,16 +578,11 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
 }
 
-bool embeddedSamplersEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_EMBEDDED_SAMPLERS") == nullptr;
-    return enabled;
-}
-
 void collectConstantSampler(const IrProgram& program, SamplerResource& sampler) {
     sampler.constant = false;
     sampler.constantWords = {};
     const auto& sources = program.Resources().descriptorSources;
-    if (!embeddedSamplersEnabled() || sampler.table != NoTable || sampler.source >= sources.size()) return;
+    if (sampler.table != NoTable || sampler.source >= sources.size()) return;
     const auto& source = sources[sampler.source];
     if (source.dwordCount != 4u) return;
     for (std::uint32_t index = 0; index < 4u; ++index) {

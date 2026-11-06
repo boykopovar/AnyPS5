@@ -2,7 +2,6 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -12,11 +11,6 @@ namespace {
 
 [[noreturn]] void fail(const std::string& message) {
     throw std::runtime_error(message);
-}
-
-bool PushHeapData() {
-    static const bool enabled = std::getenv("APS5_NO_HEAP_PUSHED_DATA") == nullptr;
-    return enabled;
 }
 
 void placePushedData(IrBindingLayout& layout) {
@@ -184,7 +178,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
     if (descriptorMemory && gpuResolvedImages) next.bufferAddressDwords = static_cast<std::uint32_t>(info.buffers.size()) * RuntimeAbi::BufferAddressWords;
-    if (next.UsesDataAddress() && PushHeapData()) placePushedData(next);
+    if (next.UsesDataAddress()) placePushedData(next);
 
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {

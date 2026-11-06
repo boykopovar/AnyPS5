@@ -60,8 +60,6 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_image_table_vouch_queued_draws COMMAND agc_driver_image_table_cache_bounds_tests --queued-draws)
     set_tests_properties(agc_driver_image_table_vouch_queued_draws PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
     agc_add_env_test(agc_driver_image_table_cache_bounds_heap_small agc_driver_image_table_cache_bounds_tests
-            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_HEAP_SLOT_CAP=1 APS5_NO_HEAP_EVICTION=1 TIMEOUT 60)
-    agc_add_env_test(agc_driver_image_table_cache_bounds_heap_pressure agc_driver_image_table_cache_bounds_tests
             ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_HEAP_SLOT_CAP=8 TIMEOUT 60)
     if(WIN32)
         set_tests_properties(agc_shader_table_snapshot_reuse agc_shader_table_snapshot_reuse_unmasked agc_driver_image_table_vouched_lookups agc_driver_image_table_vouch_queued_draws PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

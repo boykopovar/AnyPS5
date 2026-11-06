@@ -78,7 +78,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
         if (heap && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
-        const bool embedding = heap && std::getenv("APS5_NO_EMBEDDED_SAMPLERS") == nullptr;
+        const bool embedding = heap;
         FillTexels(TextureMemory, SampleTexel);
         for (auto& output : Outputs) output.fill(-1.0f);
         const auto constant = Compile(*device, Outputs[0].data(), ConstantSamplerCode, false);

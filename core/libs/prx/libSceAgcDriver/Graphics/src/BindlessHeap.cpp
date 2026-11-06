@@ -257,14 +257,11 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     meshWindowHeapOffset = sizes.meshWindowOffset;
     samplerHeapUsed = sizes.samplerUsed;
     Require(Fits(heapProperties), "the GPU heap's slots exceed the device's descriptor heap sizes");
-    static const bool hostDescriptors = std::getenv("APS5_NO_HEAP_DEVICE_DESCRIPTORS") != nullptr;
     constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    const auto makeBuffer = [&](std::size_t bytes, VkBufferUsageFlags usage, bool deviceLocal) {
-        if (deviceLocal) {
-            try {
-                return std::make_unique<Buffer>(context, bytes, usage, deviceVisible);
-            } catch (const std::exception&) {
-            }
+    const auto makeBuffer = [&](std::size_t bytes, VkBufferUsageFlags usage) {
+        try {
+            return std::make_unique<Buffer>(context, bytes, usage, deviceVisible);
+        } catch (const std::exception&) {
         }
         return std::make_unique<Buffer>(context, bytes, usage);
     };
@@ -274,8 +271,8 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     ringInHeap = sizes.ringBytes != 0u;
     const auto resourceBytes = ringInHeap ? static_cast<std::size_t>(sizes.ringOffset) + sizes.ringBytes
                                           : static_cast<std::size_t>(resourceHeapUsed + heapProperties.minResourceHeapReservedRange);
-    resourceHeap = makeBuffer(resourceBytes, ringInHeap ? heapUsage | ringUsage : heapUsage, ringInHeap || !hostDescriptors);
-    samplerHeap = makeBuffer(static_cast<std::size_t>(samplerHeapUsed + heapProperties.minSamplerHeapReservedRangeWithEmbedded), heapUsage, !hostDescriptors);
+    resourceHeap = makeBuffer(resourceBytes, ringInHeap ? heapUsage | ringUsage : heapUsage);
+    samplerHeap = makeBuffer(static_cast<std::size_t>(samplerHeapUsed + heapProperties.minSamplerHeapReservedRangeWithEmbedded), heapUsage);
     std::fill(resourceHeap->Bytes().begin(), resourceHeap->Bytes().end(), std::byte{0});
     std::fill(samplerHeap->Bytes().begin(), samplerHeap->Bytes().end(), std::byte{0});
     if (ringInHeap) {
@@ -287,7 +284,6 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     }
     ringAlignment = static_cast<std::uint32_t>(std::max<VkDeviceSize>(BufferSlotBytes, heapProperties.bufferDescriptorAlignment));
     poolAlignment = static_cast<std::uint32_t>(std::max<VkDeviceSize>({context.limits.minStorageBufferOffsetAlignment, context.limits.minUniformBufferOffsetAlignment, RingSpanAlignment}));
-    poolDeviceLocal = !hostDescriptors;
     ringChunks.resize(ringBytes / RingChunkBytes);
     slotCap = configuredSlotCap(sizes.imageSlots);
     deviceImageSlots.store(slotCap, std::memory_order_relaxed);
@@ -305,11 +301,6 @@ constexpr std::uint32_t EvictIdleSubmissions = 2u;
 constexpr std::uint32_t SamplerSlotMargin = Abi::GpuSamplerHeapSlots / 4u;
 std::atomic<std::uint32_t> refusedHeaps{0};
 std::atomic<std::uint32_t> refusingHeaps{0};
-
-bool waitsWhenFull() {
-    static const bool waits = std::getenv("APS5_NO_HEAP_EVICTION") == nullptr;
-    return waits;
-}
 
 }
 
@@ -482,10 +473,6 @@ bool BindlessHeap::NearlyFull() {
     return refusedHeaps.load(std::memory_order_relaxed) != 0u;
 }
 
-bool BindlessHeap::WaitsWhenFull() {
-    return waitsWhenFull();
-}
-
 bool BindlessHeap::RefusesDraws() {
     return refusingHeaps.load(std::memory_order_relaxed) != 0u;
 }
@@ -509,7 +496,7 @@ void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
     if (refused) return;
     refused = true;
     refusedHeaps.fetch_add(1, std::memory_order_relaxed);
-    if (waitsWhenFull() && (submitter == nullptr || submitter->HasTimeline())) {
+    if (submitter == nullptr || submitter->HasTimeline()) {
         pressured.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; the next draw or dispatch submits its batch so idle slots can be evicted\n", margin, what);
         return;
@@ -549,9 +536,8 @@ std::uint32_t BindlessHeap::TouchSlots(std::span<const std::vector<std::uint32_t
 }
 
 void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
-    static const bool disabled = std::getenv("APS5_NO_HEAP_EVICTION") != nullptr;
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
-    if (disabled || submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (idleSubmissions != 0u && evictScanEpoch == epoch) return;
     if (idleSubmissions != 0u) evictScanEpoch = epoch;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
@@ -583,9 +569,8 @@ void BindlessHeap::evictLocked(std::uint32_t idleSubmissions) {
 }
 
 void BindlessHeap::evictSamplersLocked(std::uint32_t idleSubmissions) {
-    static const bool disabled = std::getenv("APS5_NO_HEAP_EVICTION") != nullptr;
     const auto epoch = useEpoch.load(std::memory_order_relaxed);
-    if (disabled || submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
+    if (submitter == nullptr || !submitter->HasTimeline() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (idleSubmissions != 0u && samplerEvictScanEpoch == epoch) return;
     if (idleSubmissions != 0u) samplerEvictScanEpoch = epoch;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> idle;
@@ -822,11 +807,9 @@ std::size_t BindlessHeap::takePoolBlockLocked(std::size_t bytes) {
     constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     constexpr VkMemoryPropertyFlags deviceVisible = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     std::unique_ptr<Buffer> buffer;
-    if (poolDeviceLocal) {
-        try {
-            buffer = std::make_unique<Buffer>(context, size, usage, deviceVisible);
-        } catch (const std::exception&) {
-        }
+    try {
+        buffer = std::make_unique<Buffer>(context, size, usage, deviceVisible);
+    } catch (const std::exception&) {
     }
     if (buffer == nullptr) buffer = std::make_unique<Buffer>(context, size, usage);
     if (vacant == poolBlocks.size()) poolBlocks.emplace_back();
