@@ -26,9 +26,9 @@ struct Reference {
 };
 
 constexpr std::array<Reference, 3> MainReference{{
-    {164, 0x9a52c45ff2c1835eull, 634, 0xcdd566151d182f98ull, 2981, 0xc70a80b2813fd364ull},
-    {164, 0x9f782e639d169708ull, 749, 0xc3d5459a0c64dcddull, 3441, 0x01eed4c1203a449aull},
-    {164, 0xe73e14b0d07cc526ull, 941, 0x56560620005bd9f1ull, 4209, 0x21d9303ddbb475afull},
+    {70, 0x46b0d9badfae85e2ull, 702, 0x0d9e70744269ea92ull, 3270, 0x4b249d38f6458e86ull},
+    {70, 0xd1597df403cdca48ull, 817, 0xb4314d3adf2976f1ull, 3730, 0xcd977b1d81fb82f5ull},
+    {70, 0xedb517be09a7abfaull, 1035, 0xb030b454c1134138ull, 4602, 0x1391f757bac0fed3ull},
 }};
 
 void CheckKeys(const CompatibilityProgram& program, const std::string& what) {
