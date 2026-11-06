@@ -10,6 +10,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_JOB_MANAGER_CASE` | string | `core/libs/tests/JobManagerReference.cpp` |  | selects the CPU fixture run by `tools/run_job_manager_reference.py` |
 | `ANYPS5_JOB_MANAGER_HOST` | presence | `core/libs/tests/JobManagerReference.cpp` |  | runs the reference adapter against the host fallback instead of the loaded guest module |
 | `ANYPS5_LOADEXEC_PARENT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | variable the Windows entry stub reads; its wide name is built in `core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp` |
+| `ANYPS5_KERNEL_SYS_EXEC_MODE` | string | `core/libs/tests/GuestExecHost.cpp` |  | selects `_execve` (`ve`) or `_execvpe` (`vpe`) in the exec replacement test fixture; unset tests libkernel `execve` |
 | `ANYPS5_LOADEXEC_TEST_ROOT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | directory the load-exec host test reads its guest executable from |
 | `ANYPS5_POSIX_SPAWN_ROLE` | string | `core/libs/tests/GuestPosixSpawn.cpp` |  | role of the test's own copy spawned as a `posix_spawn` child, which exits or sleeps on it and otherwise fails |
 | `ANYPS5_TEST_QUOTED_ARGV0` | presence | `core/libs/tests/GuestLoadExecHost.cpp` |  | makes the load-exec test's first argument one with quotes, a backslash and non-ASCII text |
@@ -187,6 +188,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_FRAME_CAPTURE_FRAMES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 10 | number of frame boundaries the frame capture records |
 | `APS5_FRAME_CAPTURE_MIN_FREE_BYTES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 4294967296 | free bytes the capture volume must keep or the frame capture stops with a warning; the tests set 0 so a nearly full runner disk cannot fail them |
 | `APS5_FRAME_CAPTURE_TRIGGER` | string | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` |  | file whose appearance starts the frame capture at the next frame boundary; a number in it replaces the frame count |
+| `APS5_FRAME_REPLAY_ATTEMPT` | integer | `core/libs/prx/libSceAgcDriver/tools/FrameReplay.cpp` | 0 | number of times `agc_frame_replay` has started itself again on Windows because a host region sat in a captured GPU-visible range; set by the replay for the process it starts, which stops relaunching after 8 |
 | `APS5_FULL_BARRIERS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records every barrier instead of merging redundant ones |
 | `APS5_GPU_CHECKPOINTS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | attaches device diagnostic checkpoints through VK_NV_device_diagnostic_checkpoints, or buffer markers through VK_AMD_buffer_marker on a device without it |
 | `APS5_GPU_COPY_MAX_KIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` | 1024 | size cap in KiB on a descriptor sub-range copied through the GPU path, larger ones staying on the CPU |
@@ -194,6 +196,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_GPU_WAIT_TIMEOUT_MS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` | 1000 | milliseconds a GPU wait may run before a warning is printed |
 | `APS5_GROUP_CAPTURE_ALL_QUEUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/DispatchAhead.cpp` |  | resolves group-ahead capture on queue 0 as well |
 | `APS5_HANDOFF_SPIN_US` | integer | `core/libs/prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp` |  | microseconds a thread spins for a handed-off draw's work or for the GPU mutex before blocking, clamped to 0..10000; unset spins 150 us when the process has more than 8 usable processors and not at all otherwise |
+| `APS5_HEADLESS_PIPELINE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | loads the pipeline cache file on a device without a window too; `agc_frame_replay` sets it by default and clears it with `--cold-pipelines`, including inherited values |
 | `APS5_HEAP_MIRROR_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` | 24576 | budget in MiB for the heap mirrors held for registered allocations |
 | `APS5_HOOK_FLUSH_CPU_BLOCKS` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | set to 0 flushes pending images whose every 64 KiB block the CPU wrote, instead of skipping them |
 | `APS5_HOOK_FULL_SYNC` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | makes the flush hook's recorded-store wait a full Sync under the GpuMutex |
