@@ -1010,6 +1010,40 @@ static void CheckAudioFunctionSupport() {
     }
 }
 
+static void CheckAudioOutPathRouting() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        for (int path : {0, 1, 2, 3, 4}) {
+            const int otherPort = (p + 1) % PAD_MAX_CONTROLLERS;
+            const int otherBefore = OutputOf(otherPort).audioOutPath;
+            Require(scePadSetAudioOutPath(handles[p], path) == PAD_OK);
+            Require(OutputOf(p).audioOutPath == path);
+            Require(OutputOf(otherPort).audioOutPath == otherBefore);
+        }
+        for (int invalidPath : {-999, -1, 5, 6, 10, 100, 0x7fffffff}) {
+            Require(scePadSetAudioOutPath(handles[p], invalidPath) == PAD_ERROR_INVALID_ARG);
+        }
+    }
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadSetAudioOutPath(invHandle, 1) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetAudioOutPath(invHandle, 5) == PAD_ERROR_INVALID_ARG);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1326,5 +1360,6 @@ int main() {
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
     CheckAudioFunctionSupport();
+    CheckAudioOutPathRouting();
     CheckPortZeroWithdrawn();
 }
