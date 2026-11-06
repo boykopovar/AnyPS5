@@ -128,6 +128,9 @@ int APS5_VABI FT_GlyphSlot_Own_Bitmap_nid_postfix(FreeType::GuestGlyphSlotRec* s
 int APS5_VABI FT_Bitmap_Embolden_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestBitmap* bitmap, std::int64_t xStrength, std::int64_t yStrength);
 int APS5_VABI FT_Library_SetLcdFilterWeights_nid_postfix(FreeType::GuestLibrary* library, unsigned char* weights);
 int APS5_VABI FT_Library_SetLcdFilter_nid_postfix(FreeType::GuestLibrary* library, std::int32_t filter);
+void APS5_VABI FT_Outline_Transform_nid_postfix(const FreeType::GuestOutline* outline, const FreeType::GuestMatrix* matrix);
+int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(FreeType::GuestOutline* outline, std::int64_t xStrength, std::int64_t yStrength);
+int APS5_VABI FT_Outline_Embolden_nid_postfix(FreeType::GuestOutline* outline, std::int64_t strength);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
