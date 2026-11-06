@@ -192,5 +192,7 @@ int main(int argc, char** argv) {
         CheckKey<LibreSsl3Rsa>(RSA_up_ref_nid_postfix, 104);
     if (argc == 1 || std::strcmp(argv[1], "bits") == 0)
         CheckBits();
+    if (argc == 1 || std::strcmp(argv[1], "ssl_ctx") == 0)
+        CheckKey<LibreSsl3SslCtx>(SSL_CTX_up_ref_nid_postfix, 40);
     return 0;
 }
