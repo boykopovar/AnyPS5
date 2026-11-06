@@ -221,6 +221,22 @@ def test_version_table_smaller_than_symbols_is_rejected(patcher):
     assert on_disk == image, "the rejected library was written back modified"
 
 
+def test_two_dynsym_sections_are_rejected(patcher):
+    entries = symbols(False)
+    image = bytearray(build_image(entries, False))
+    struct.pack_into("<I", image, SHOFF + 1 * 64 + 40, 5)
+    struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64, 0, SHT_DYNSYM, 2, 0, DYNSYM_OFFSET, len(entries) * 24, 2, 1, 8, 24)
+    struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 5 * 64, 0, SHT_STRTAB, 2, 0, 0xA00, 0x100, 0, 0, 1, 0)
+    struct.pack_into("<H", image, 0x3C, 6)
+    image = bytes(image)
+
+    result, on_disk = patch(patcher, image, SONAME)
+    assert result.returncode != 0, result.stdout
+    message = result.stderr.decode("utf-8", errors="replace")
+    assert "multiple ELF dynsym" in message, message
+    assert on_disk == image, "the rejected library was written back modified"
+
+
 def find_patcher():
     for index, argument in enumerate(sys.argv[1:], 1):
         candidate = Path(argument)
@@ -254,6 +270,7 @@ def main():
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
     test_version_table_smaller_than_symbols_is_rejected(patcher)
+    test_two_dynsym_sections_are_rejected(patcher)
     print("NID patcher symbol version tests passed")
 
 
