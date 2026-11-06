@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ImageMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -50,12 +51,13 @@ struct OwnedImage {
     OwnedImage(const OwnedImage&) = delete;
     OwnedImage& operator=(const OwnedImage&) = delete;
     ~OwnedImage();
-    void Allocate(const Context& device, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, bool newImage = false);
+    void Allocate(const Context& device, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage = false, bool budgeted = false);
     Context context;
     VkImage image;
     VkDeviceMemory memory;
     VkDeviceSize memoryBytes = 0;
     std::uint32_t memoryType = 0;
+    ImageAllocation allocation;
 };
 
 class Texture {
@@ -401,7 +403,18 @@ public:
     // contains a descriptor of its first mips), if any; the caller decides whether the geometry fits
     // (Texture::CanCopyFrom, ResidentPresentable).
     static std::shared_ptr<StorageTexture> FindPending(std::uint64_t address, std::uint64_t bytes);
+    VkDevice Device() const;
+    static std::uint64_t EightBitWrites();
     static std::shared_ptr<StorageTexture> FindPendingSlice(std::uint64_t address, std::uint64_t bytes);
+    struct WriteRecord {
+        std::uint32_t width;
+        std::uint32_t height;
+        TextureTileMode tileMode;
+        TextureDimension dimension;
+        std::uint32_t format;
+        std::uint64_t serial;
+    };
+    static std::optional<WriteRecord> LastWrite(std::uint64_t address);
     // How a buffer fill of [address, address + bytes) (Driver.cpp's fill HLE) meets the storage
     // images alive: none of them; a whole surface (Exact) or one array layer of a surface (Layer),
     // `image` and `layer` naming it, whatever other images lie over the range (`others`, of which
@@ -482,12 +495,14 @@ public:
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
     static std::uint64_t PaddingSeedCopies();
+    static std::uint64_t LinearImportRetiles();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t GuestSnapshots();
     static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
@@ -525,6 +540,7 @@ private:
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
+    bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
@@ -790,9 +806,8 @@ private:
     // write here bumps the pending serial although the image was pending already.
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
+    ImageAllocation imageAllocation;
     VkDeviceSize memoryBytes = 0;
-    std::uint32_t memoryType = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;
@@ -805,7 +820,7 @@ private:
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
     VkImage proxyImage = VK_NULL_HANDLE;
-    VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
+    ImageAllocation proxyAllocation;
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     VkFormat imageFormat = VK_FORMAT_UNDEFINED;
