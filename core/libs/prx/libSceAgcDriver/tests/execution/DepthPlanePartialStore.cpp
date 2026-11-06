@@ -185,6 +185,37 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-write-after-memo-retire") {
+            if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(base, PlaneBytes)) return VulkanTestSkipped;
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the depth draw before a retire in the collect epoch did not cover the plane");
+            FillUnit(plane, 2, 0.75f);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            Require(AgcDriver::GuestMemory::CollectWrites(base, PlaneBytes) != 0, "the plane the guest wrote into was not collected");
+            const auto vertexAddress = base + 2u * Block + 256u;
+            const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(vertexAddress), static_cast<std::uint32_t>((vertexAddress >> 32u) & 0xffffu) | (32u << 16u), 4u, 0x0004dfacu};
+            auto* table = reinterpret_cast<std::byte*>(plane) + 4u * Block + 4096u;
+            std::memcpy(table, descriptor.data(), sizeof(descriptor));
+            const std::array<std::uint32_t, 8> words{0, 0, 0, 0, PlaneWidth, PlaneHeight, 1, 0};
+            AgcDriver::Graphics::GuestTextureResource levels{};
+            levels.baseAddress = base;
+            levels.width = PlaneWidth;
+            levels.height = PlaneHeight;
+            levels.mipCount = 2;
+            levels.lastLevel = 1;
+            levels.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+            levels.tileMode = AgcDriver::Graphics::TextureTileMode::kZ64KBX;
+            levels.format = 22;
+            Require(AgcDriver::Graphics::DepthSurfaceTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device), words, levels, {}) == nullptr, "a view with two levels of a plane the guest wrote was served by the depth surface");
+            device->WaitIdle();
+            Require(!AgcDriver::Graphics::DepthSurfaceAt(base), "a view with two levels of a plane the guest wrote left the depth surface live");
+            RequireUnit(plane, 2, 0.75f, UnitTexels, "the retire of a plane the guest wrote into before the collect, the written unit");
+            for (const std::size_t unit : {0u, 1u, 3u, 5u}) RequireUnit(plane, unit, 0.5f, Texels(unit), "the retire of a plane the guest wrote into, an untouched unit");
+            Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "the retire of a depth surface overwrote CPU descriptors written after a memoized collect");
+            std::puts("depth plane CPU descriptors after a memoized collect survive the retire");
+            return 0;
+        }
+
         if (argc == 2 && std::string_view(argv[1]) == "--partially-unmapped-plane") {
             Fill(plane, 1.0f);
             Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a partial unmap did not cover the plane");
