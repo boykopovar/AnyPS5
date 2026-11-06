@@ -13,7 +13,7 @@ namespace NKWebKit {
 class ProcessPool : public ObjectOf<ObjectType::ProcessPool> {};
 class Page : public ObjectOf<ObjectType::Page> {};
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
-class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
+class HTTPCookieStore final : public ObjectOf<ObjectType::HTTPCookieStore> {};
 class ContentRuleList : public ObjectOf<ObjectType::ContentRuleList> {};
 
 inline std::optional<std::u16string> OptionalString(const void* ref, const char* function) {
@@ -72,6 +72,15 @@ public:
     bool networkCacheSpeculativeValidationEnabled = false;
     bool testingSessionEnabled = false;
     bool staleWhileRevalidateEnabled = true;
+};
+
+class WebsiteDataStore final : public ObjectOf<ObjectType::WebsiteDataStore> {
+public:
+    explicit WebsiteDataStore(Retained<WebsiteDataStoreConfiguration> config)
+        : configuration(std::move(config)), cookieStore(Make<HTTPCookieStore>()) {}
+
+    Retained<WebsiteDataStoreConfiguration> configuration;
+    Retained<HTTPCookieStore> cookieStore;
 };
 
 class WebsitePolicies final : public ObjectOf<ObjectType::WebsitePolicies> {

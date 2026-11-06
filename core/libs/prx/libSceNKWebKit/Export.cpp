@@ -15140,14 +15140,6 @@ int APS5_VABI WKWebsiteDataStoreClearBundleIdentifierInNetworkProcess() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreCreateNonPersistentDataStore() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreCreateWithConfiguration() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreDisableNetworkProxySettings() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15172,19 +15164,11 @@ int APS5_VABI WKWebsiteDataStoreGetAllStorageAccessEntries() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKWebsiteDataStoreGetDefaultDataStore() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKWebsiteDataStoreGetFetchCacheOrigins() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKWebsiteDataStoreGetFetchCacheSizeForOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKWebsiteDataStoreGetHTTPCookieStore() {
     NotImplemented_nid_no_patch(__func__);
 }
 
