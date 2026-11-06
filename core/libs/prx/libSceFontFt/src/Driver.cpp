@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <limits>
 #ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
 #include <windows.h>
 #endif
 
@@ -962,7 +963,11 @@ int FontFt::SupportFormats(FontLibrary library, std::initializer_list<const char
     for (;;) {
         if (native->magic != Font::LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
         if ((previous & Font::LOCK_BIT) == 0 && lockWord.compare_exchange_weak(previous, previous | Font::LOCK_BIT, std::memory_order_acq_rel)) break;
+#ifdef _WIN32
+        PreciseSleepUs(30);
+#else
         std::this_thread::sleep_for(std::chrono::microseconds(30));
+#endif
         previous = lockWord.load(std::memory_order_acquire);
     }
     const auto unlock = [previous](Font::FontLibNative* locked) {
