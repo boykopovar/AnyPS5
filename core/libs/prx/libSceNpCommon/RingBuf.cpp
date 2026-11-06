@@ -203,7 +203,7 @@ int APS5_VABI _ZN3sce2np7RingBuf4ReadEPvm(NpRingBuf* self, void* data, std::size
 int APS5_VABI _ZN3sce2np7RingBuf4PeekEmPvm(NpRingBuf* self, std::size_t offset, void* data, std::size_t size) {
     Require(data != nullptr, "sce::np::RingBuf::Peek: null buffer");
     Require(size != 0, "sce::np::RingBuf::Peek: empty read");
-    if (offset + size > self->size || offset >= self->size) return NP_RING_BUF_ERROR_NO_SPACE;
+    if (offset >= self->size || size > self->size - offset) return NP_RING_BUF_ERROR_NO_SPACE;
     auto* out = static_cast<std::uint8_t*>(data);
     const std::uint8_t* source = self->readPointer + offset;
     if (source < End(*self)) {
