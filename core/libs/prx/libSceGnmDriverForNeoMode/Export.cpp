@@ -14,10 +14,12 @@
 
 namespace {
 
+constexpr int CommandFailed = -1;
 constexpr std::uint32_t InitPacketWords = 0x100;
 
 template <std::size_t Words>
 int WriteHardwareState(std::uint32_t* cmdbuf, std::uint32_t size, const std::array<std::uint32_t, Words>& state) {
+    if (!cmdbuf) return CommandFailed;
     if (size < InitPacketWords) return 0;
     auto* at = std::copy(GnmNeo::ClearState.begin(), GnmNeo::ClearState.end(), cmdbuf);
     at = std::copy(state.begin(), state.end(), at);
@@ -29,6 +31,7 @@ int WriteHardwareState(std::uint32_t* cmdbuf, std::uint32_t size, const std::arr
 
 template <std::size_t Words>
 int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t packetWords, const std::array<std::uint32_t, Words>& state) {
+    if (!cmdbuf) return CommandFailed;
     if (size != packetWords) return 0;
     std::copy(state.begin(), state.end(), cmdbuf);
     return static_cast<int>(packetWords);
@@ -64,7 +67,6 @@ constexpr int Failure = static_cast<int>(0x8EEE00FFu);
 constexpr int NoInterface = static_cast<int>(0x80000000u);
 constexpr int ValidationNotEnabled = static_cast<int>(0x80D13FFFu);
 
-constexpr int CommandFailed = -1;
 constexpr std::uint32_t OpNop = 0x10;
 constexpr std::uint32_t NeoDrawFlags = 0xe0000000u;
 constexpr std::uint32_t AutoIndex = 2;
