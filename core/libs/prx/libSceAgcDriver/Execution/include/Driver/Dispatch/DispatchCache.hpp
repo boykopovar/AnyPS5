@@ -26,23 +26,18 @@ namespace AgcDriver::DriverDetail {
 
 inline bool CaptureRegisteredViewsCurrent(std::span<const ShaderRecompiler::RegisteredImageView> views) {
     if (views.empty()) return true;
-    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
-        const auto before = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        bool current = true;
-        for (const auto& view : views) {
-            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(view.address), false);
-            if (view.hasRange != (range != nullptr)) {
-                current = false;
-                break;
-            }
-            if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) {
-                current = false;
-                break;
-            }
-        }
-        if (before == GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return current;
+    std::vector<std::uintptr_t> addresses;
+    addresses.reserve(views.size());
+    for (const auto& view : views) addresses.push_back(static_cast<std::uintptr_t>(view.address));
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> ranges(views.size());
+    GuestAllocations::GuestAllocationsLookupEach_nid_postfix(addresses.data(), addresses.size(), ranges.data());
+    for (std::size_t index = 0; index < views.size(); ++index) {
+        const auto& view = views[index];
+        const auto& range = ranges[index];
+        if (view.hasRange != (range != nullptr)) return false;
+        if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) return false;
     }
-    return false;
+    return true;
 }
 
 inline constexpr std::size_t MaxDispatchVariants = 8;
