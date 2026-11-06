@@ -1,5 +1,9 @@
 # libSceCompanionHttpd technical debt
 
+### Silent stubs
+
+- [sceCompanionHttpdAddHeader, sceCompanionHttpdSetStatus, sceCompanionHttpdSetBody](../../../core/libs/prx/libSceCompanionHttpd/Export.cpp) (libSceCompanionHttpd) - return zero without reading or writing arguments: response construction and HTTP server communication remain unmodeled.
+
 ### Unknown function info
 
 - [sceCompanionHttpdOptParamInitialize](../../../core/libs/prx/libSceCompanionHttpd/Export.cpp) (libSceCompanionHttpd) - the option block is taken as 0x60 bytes: titles fill a work memory pointer at +0x08, its size at +0x10 and a temporary data mount point at +0x58 after `sceCompanionHttpdOptParamInitialize`. Its other fields and the defaults the console writes are unknown, so `sceCompanionHttpdOptParamInitialize` zeroes the 0x60 bytes and rejects a null block with `INVALID_PARAM`; returning `INVALID_PARAM` for an unwritable block is a host-safety fallback as console behavior for unwritable memory has not been measured

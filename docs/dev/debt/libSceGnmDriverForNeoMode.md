@@ -1,5 +1,9 @@
 # libSceGnmDriverForNeoMode technical debt
 
+### Silent stubs
+
+- [sceGnmDriverTraceInProgress, sceGnmGetDbgGcHandle, sceGnmGetGpuCoreClockFrequency, sceGnmGetOffChipTessellationBufferSize, sceGnmValidateOnSubmitEnabled](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - return retail-mode constants without reading guest parameters. Clock frequency and GC handle states follow Neo compatibility models and remain unmeasured on hardware.
+
 ### Unknown function info
 
 - [sceGnmDingDongForWorkload, sceGnmRegisterOwner](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - the first throws through `NotImplemented_nid_no_patch` and `sceGnmRegisterOwner` returns `Failure` (0x8EEE00FF) without registering anything; behaviour and the PS5 prototypes are unmeasured. The only source of the parameter lists is shadPS4's PS4-derived prototypes (GPLv2, used as a reference only), with no second reference; structure pointers are `void*` because no layout is known.
