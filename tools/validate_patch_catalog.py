@@ -16,16 +16,18 @@ def unique_json_keys(pairs):
     return result
 
 
-def validate(directory):
+def validate(directory, json_output=False):
     try:
         entries = suggest_patches.read_catalog(directory, object_pairs_hook=unique_json_keys)
     except RecursionError as error:
         raise ValueError("index.json is nested too deeply") from error
     seen_ids = {}
     errors = 0
+    records = []
     for number, entry in enumerate(entries, 1):
         patch_name = entry.get("patch") if isinstance(entry, dict) else None
         label = f"Catalog entry {number} ({patch_name!r})" if isinstance(patch_name, str) else f"Catalog entry {number}"
+        record = {"entry": number, "patch": patch_name if isinstance(patch_name, str) else None, "valid": True, "error": None}
         try:
             if not isinstance(entry, dict):
                 raise ValueError("entry must be an object")
@@ -45,11 +47,19 @@ def validate(directory):
                         raise ValueError(f"duplicate id {identifier!r} for {key[0]} {key[1]} may match entry {previous}")
                 seen_ids.setdefault(key, []).append((number, targets))
         except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
-            print(f"{label}: invalid: {error}", file=sys.stderr)
+            record.update(valid=False, error=str(error))
+            if not json_output:
+                print(f"{label}: invalid: {error}", file=sys.stderr)
             errors += 1
         except RecursionError:
-            print(f"{label}: invalid: entry or patch file is nested too deeply", file=sys.stderr)
+            record.update(valid=False, error="entry or patch file is nested too deeply")
+            if not json_output:
+                print(f"{label}: invalid: entry or patch file is nested too deeply", file=sys.stderr)
             errors += 1
+        records.append(record)
+    if json_output:
+        print(json.dumps({"entries": records, "total": len(entries), "invalid": errors}, ensure_ascii=False, allow_nan=False, indent=2))
+        return 2 if errors else 0
     if errors:
         print(f"Catalog validation: {errors} invalid of {len(entries)} entries.", file=sys.stderr)
         return 2
@@ -63,15 +73,19 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Validate every entry in a local patch catalog without game files")
     parser.add_argument("--catalog", required=True, type=Path, help="directory containing index.json and patch files")
+    parser.add_argument("--json", action="store_true", help="write per-entry validation results as JSON")
     args = parser.parse_args(argv)
     try:
         try:
             catalog = args.catalog.resolve()
         except RuntimeError as error:
             raise ValueError(f"catalog path cannot be resolved: {error}") from error
-        return validate(catalog)
+        return validate(catalog, args.json)
     except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
-        print(f"Catalog validation: {error}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"error": str(error)}, ensure_ascii=False))
+        else:
+            print(f"Catalog validation: {error}", file=sys.stderr)
         return 2
 
 
