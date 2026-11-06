@@ -20,6 +20,26 @@ struct StringView {
     bool is8Bit;
 };
 
+enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
+
+struct HTMLNonNegativeIntegerResult {
+    union {
+        unsigned value;
+        HTMLIntegerParsingError error;
+    };
+    bool hasValue;
+};
+
+static_assert(sizeof(HTMLIntegerParsingError) == 4);
+static_assert(sizeof(HTMLNonNegativeIntegerResult) == 8);
+static_assert(alignof(HTMLNonNegativeIntegerResult) == 4);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, value) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, error) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, hasValue) == 4);
+static_assert(std::is_trivially_copy_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_move_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_destructible_v<HTMLNonNegativeIntegerResult>);
+
 struct URL {
     StringImpl* impl;
     unsigned bits;
