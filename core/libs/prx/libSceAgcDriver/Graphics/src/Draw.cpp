@@ -3714,9 +3714,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
     if (recorded) prepared.spaceKeep = reserveSpaceKeep(*recorder, *resources);
-    CommandState batchRecording;
-    if (!recorded) batchRecording.Begin(commands, false);
-    auto& recording = recorded ? recorder->GraphicsState() : batchRecording;
+    std::optional<CommandState> batchRecording;
+    if (!recorded) batchRecording.emplace().Begin(commands, false);
+    auto& recording = recorded ? recorder->GraphicsState() : *batchRecording;
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
     // The draw's [gputime] class range: from its first barrier to the download barrier.

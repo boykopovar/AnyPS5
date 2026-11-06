@@ -1544,7 +1544,6 @@ std::uint32_t CommandState::DynamicSlots(std::span<const VkDynamicState> states)
 
 void CommandState::Begin(VkCommandBuffer recording, bool suppress) {
     commands = recording;
-    ++generation;
     trackable = suppress ? ~0u : 0u;
     Invalidate();
 }

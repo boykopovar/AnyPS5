@@ -119,6 +119,9 @@ public:
             if (entry == name) TrackedCommandOutsideCommandState();
         }
     }
+    constexpr const char* Value() const { return value; }
+
+private:
     const char* value;
 };
 
@@ -330,14 +333,14 @@ struct Context {
 
     template<typename TFunction>
     TFunction Function(FunctionName name) const {
-        return lookup<TFunction>(name.value);
+        return lookup<TFunction>(name.Value());
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
     template<typename TFunction>
     TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
         if (functions != nullptr && functions->*member != nullptr) return functions->*member;
-        return lookup<TFunction>(name.value);
+        return lookup<TFunction>(name.Value());
     }
 
     class ComputeBinder {

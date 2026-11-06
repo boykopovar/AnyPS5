@@ -58,10 +58,13 @@ public:
     static constexpr std::uint32_t Mask(Slot slot) { return 1u << slot; }
     static std::uint32_t DynamicSlots(std::span<const VkDynamicState> states);
 
+    CommandState() = default;
+    CommandState(const CommandState&) = delete;
+    CommandState& operator=(const CommandState&) = delete;
+
     void Begin(VkCommandBuffer commands, bool suppress = true);
     void Invalidate() noexcept;
     VkCommandBuffer Commands() const { return commands; }
-    std::uint64_t Generation() const { return generation; }
     bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
     VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
     void BindPipeline(const Context& context, VkPipeline pipeline, std::uint32_t dynamicSlots);
@@ -96,7 +99,6 @@ private:
     void applyFaces(Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
 
     VkCommandBuffer commands = VK_NULL_HANDLE;
-    std::uint64_t generation = 0;
     std::uint32_t trackable = 0;
     std::uint32_t valid = 0;
     std::uint32_t overwritten = 0;

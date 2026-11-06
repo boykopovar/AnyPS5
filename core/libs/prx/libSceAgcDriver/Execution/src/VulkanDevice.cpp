@@ -804,9 +804,9 @@ struct VulkanDevice::State {
     template<typename TFunction>
     TFunction DeviceFunction(Graphics::FunctionName name) const {
         ++Graphics::DeviceProcLookups();
-        auto function = reinterpret_cast<TFunction>(deviceProc(device, name.value));
+        auto function = reinterpret_cast<TFunction>(deviceProc(device, name.Value()));
         if (function == nullptr) {
-            throw std::runtime_error(std::string("Vulkan device function missing: ") + name.value);
+            throw std::runtime_error(std::string("Vulkan device function missing: ") + name.Value());
         }
         return function;
     }

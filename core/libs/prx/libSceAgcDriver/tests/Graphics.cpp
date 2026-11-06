@@ -13679,11 +13679,10 @@ void commandStateTests() {
     {
         CommandState tracker;
         tracker.Begin(commands);
-        const auto generation = tracker.Generation();
         tracker.BindPipeline(context, pipelineA, library);
         tracker.SetCullMode(context, 1u);
         tracker.Begin(commands);
-        Require(tracker.Generation() == generation + 1u && tracker.BoundPipeline() == VK_NULL_HANDLE && !tracker.Known(Slot::CullMode), "beginning the same command buffer again did not start a new recording");
+        Require(tracker.BoundPipeline() == VK_NULL_HANDLE && !tracker.Known(Slot::CullMode), "beginning the same command buffer again did not start a new recording");
         tracker.BindPipeline(context, pipelineA, library);
         tracker.SetCullMode(context, 1u);
         tracker.SetCullMode(context, 1u);
@@ -13691,7 +13690,7 @@ void commandStateTests() {
         const auto other = makeHandle<VkCommandBuffer>();
         tracker.Begin(other);
         tracker.SetCullMode(context, 1u);
-        Require(tracker.Commands() == other && tracker.Generation() == generation + 2u, "beginning another command buffer did not restart the tracker");
+        Require(tracker.Commands() == other, "beginning another command buffer did not restart the tracker");
         expectStateLog({stateLine("cull", 1u)}, "another command buffer");
     }
 

@@ -11404,6 +11404,27 @@ void graphicsStateTests(const Device& device) {
         }
     }
     {
+        CommandBufferReuse reuse(context);
+        Recorder recorder(context);
+        drawn(recorder, first);
+        const auto abandoned = recorder.Commands();
+        expectStateLog(full, "the draw before a failed submit");
+        recorder.FailNextSubmitsForTest(1);
+        bool failed = false;
+        try {
+            recorder.Submit();
+        } catch (const std::runtime_error&) {
+            failed = true;
+        }
+        recorder.FailNextSubmitsForTest(0);
+        Require(failed, "the injected submit failure did not surface");
+        drawn(recorder, first);
+        Require(recorder.Commands() == abandoned && reuse.Reused() == 1, "the batch opened after the failed submit did not recycle the abandoned command buffer handle");
+        expectStateLog(full, "the first draw after a failed submit on a recycled command buffer handle");
+        recorder.Submit();
+        recorder.Sync();
+    }
+    {
         Recorder one(context);
         Recorder other(context);
         drawn(one, first);
