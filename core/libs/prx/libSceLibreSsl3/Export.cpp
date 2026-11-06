@@ -134,11 +134,6 @@ int APS5_VABI OBJ_txt2obj_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_CERTID_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OCSP_cert_to_id_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -162,16 +157,6 @@ const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
 }
 
 int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PKCS7_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
