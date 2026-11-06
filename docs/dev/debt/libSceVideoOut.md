@@ -65,14 +65,13 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/ea0a096e6231dbe7b98b5a308e2ac91e/00f8422a1ae71e32816d72ae579c2f2d097f63a0) records module, logical library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp); it is a metadata summary rather than independent verification. Some NIDs belong to multiple logical libraries within the module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 182 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 170 entries observed in a 3.20-labelled image and a later 13.60-labelled image; of the original 182, 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
 | `sceVideoOutAddBuffer` | `4iy9hG9Du1s` |
 | `sceVideoOutAddBuffer4k2kPrivilege` | `twrSaoZ9cJs` |
 | `sceVideoOutAddBufferAnisoPrivilege` | `lm+1oyWKwy0` |
-| `sceVideoOutAddBufferHdrPrivilege` | `VAlir52gpQI` |
 | `sceVideoOutAddBufferYccPrivilege` | `D3s8DoEnuR4` |
 | `sceVideoOutAddDisplayPositionEvent` | `Cxb2w82t7lw` |
 | `sceVideoOutAddDriver` | `HtwSd4H2Tws` |
@@ -90,7 +89,6 @@
 | `sceVideoOutControlHdcpEncryption` | `M-JkRj7X+No` |
 | `sceVideoOutCursorIsUpdatePending` | `HibOtezzT6M` |
 | `sceVideoOutCursorSetPositionStereo` | `735GfVO9v2s` |
-| `sceVideoOutCurveSamplePointsCalc_` | `kazBRXPqR7c` |
 | `sceVideoOutDebugAddVrrPrivilege` | `rAYR4zzw414` |
 | `sceVideoOutDebugBlankPipe` | `-9YA0lVAq+U` |
 | `sceVideoOutDebugReadCrc` | `4E8qvHf7Cj0` |
@@ -106,7 +104,6 @@
 | `sceVideoOutDriverGetBufferLabelAddress` | `NGyEl5aT4fc` |
 | `sceVideoOutDriverGetEopHandle` | `P1bIHoga4jE` |
 | `sceVideoOutDriverGetFinishedEopHandle` | `G6peSSDP4iA` |
-| `sceVideoOutDriverGetLatestEopHandle` | `GL8+3RHW5vk` |
 | `sceVideoOutDriverIncrementBufferLabel` | `Ztx4b2LhRDk` |
 | `sceVideoOutDriverResetBufferLabel` | `soAIjspgdt8` |
 | `sceVideoOutDriverTriggerEvent` | `OHnnkrUcShM` |
@@ -131,7 +128,6 @@
 | `sceVideoOutHdmiMonitorInfoIsSupportedVideoOutMode_` | `WBZrUaQY+EU` |
 | `sceVideoOutLockBuffer` | `7ifZFxWJ9Q4` |
 | `sceVideoOutRazorAddCallback` | `ZX7C79uOujU` |
-| `sceVideoOutRazorRecallCallbacks` | `hGcTks-qqIU` |
 | `sceVideoOutRazorRemoveCallback` | `zUDW7kIFclI` |
 | `sceVideoOutRegisterBufferAttribute` | `EJQifjOp8s4` |
 | `sceVideoOutRegisterStereoBuffers` | `lCTCOogRbk0` |
@@ -163,7 +159,6 @@
 | `sceVideoOutSysGetDeviceInfo` | `2sgenMqwczM` |
 | `sceVideoOutSysGetFlipStatus` | `21sS8EU45cw` |
 | `sceVideoOutSysGetKsvList` | `Ur8iOIm0tyE` |
-| `sceVideoOutSysGetMonitorInfo_` | `vMLWuJckGv0` |
 | `sceVideoOutSysGetOutputStatus` | `Ip78YCQUrTo` |
 | `sceVideoOutSysGetPipelineStatus` | `dFhciCfO31s` |
 | `sceVideoOutSysGetResolutionStatus2` | `qLDCAl8ygCw` |
@@ -172,18 +167,12 @@
 | `sceVideoOutSysGetVblankStatus` | `d1AjT2uZJn0` |
 | `sceVideoOutSysGetVideoOutModeByBusSpecifier` | `AAELy8Yc3Mc` |
 | `sceVideoOutSysHdmiMonitorInfoIsMorpheus` | `3-9DXFGVg0M` |
-| `sceVideoOutSysInitMode` | `9cmjhjqa7Sg` |
 | `sceVideoOutSysIsModeS3d` | `iUigHJ2op4M` |
 | `sceVideoOutSysIsOutputSupported` | `Z0EyU29WqOg` |
 | `sceVideoOutSysIsSupportedByMonitorInfo_` | `mfxElr79O7Q` |
 | `sceVideoOutSysIsUserStatusHdr` | `q+vWPvYIh8o` |
 | `sceVideoOutSysIsUserStatusSystemDefault` | `O57F5ikhGxo` |
 | `sceVideoOutSysIsUserStatusVr` | `4XsQdhiOaAc` |
-| `sceVideoOutSysModeIsHdr` | `I7-lGGvFgBM` |
-| `sceVideoOutSysModeIsSystemDefault` | `5Y8uUbGMio0` |
-| `sceVideoOutSysModeIsVrLegacy` | `zecl8Gox+P0` |
-| `sceVideoOutSysModeIsVrNative` | `SgA2MtojPto` |
-| `sceVideoOutSysModeIsVr` | `QEiuHxjungc` |
 | `sceVideoOutSysOpenInternal` | `kP4l+nyBjRA` |
 | `sceVideoOutSysOpenVrNative` | `WUU+ufqgLJg` |
 | `sceVideoOutSysReadCrc64` | `eBvoaLwfBBQ` |
@@ -198,7 +187,6 @@
 | `sceVideoOutSysSetOverscanRatio` | `nMbAqI1ty8w` |
 | `sceVideoOutSysUpdateDisplayParameter` | `UFDoqv4XXC0` |
 | `sceVideoOutSysUpdatePrivilege` | `Jl91AhxKc0w` |
-| `sceVideoOutSysUpdateRenderingMode` | `4G37EIMMD+Q` |
 | `sceVideoOutUnlockBuffer` | `amghnA-Ev5s` |
 | `sceVideoOutUnregisterBufferAttribute` | `SRQSpP4QK5U` |
 | `Unknown` | `-5AIEU9+11g` |
@@ -251,6 +239,10 @@
 | `Unknown` | `yGMBA0AKcgQ` |
 | `Unknown` | `yoK0AjkkBkI` |
 | `Unknown` | `ys239q8VgXY` |
+
+- [Firmware 13.42 answers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutAddBufferHdrPrivilege`, `sceVideoOutRazorRecallCallbacks` and `sceVideoOutSysUpdateRenderingMode` return 0, `sceVideoOutCurveSamplePointsCalc_` returns 0x8029001C, `sceVideoOutDriverGetLatestEopHandle` 0x802900FF and `sceVideoOutSysGetMonitorInfo_` -1, and `sceVideoOutSysModeIsVr` returns bit 1 of the dword at offset 0x20 of its argument, as firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. Their parameter lists are unverified beyond what the code reads; the layout of the structure `sceVideoOutSysModeIsVr` reads is unknown apart from that dword. The module reads that dword without checking the pointer, so a null argument faults on the console as it does here
+
+- [Firmware 13.42 mode helpers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutSysInitMode` fills the first 0x20 bytes of its argument with 0xFF and then stores 0x20 in the first dword. Of the dword at offset 0x20, `sceVideoOutSysModeIsSystemDefault` reports bit 0 clear, `sceVideoOutSysModeIsVrNative` bits 2:1 equal to 01 and `sceVideoOutSysModeIsVrLegacy` both bits set; `sceVideoOutSysModeIsHdr` reports byte 6 from 12 to 17. As firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. The init function leaves EAX unset, so it is declared `void`. Field meanings are unknown, and none of them checks the pointer.
 
 - [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
 
