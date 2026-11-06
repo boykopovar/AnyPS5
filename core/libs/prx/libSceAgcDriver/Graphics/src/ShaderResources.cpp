@@ -3713,6 +3713,7 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
         for (std::size_t element = 0; element < table.elementTextures.size(); ++element) {
             const auto index = table.elementTextures[element];
             if (index == std::numeric_limits<std::size_t>::max()) continue;
+            if (!table.representatives.empty() && table.representatives[element] != NoRepresentative) continue;
             if (index != textureIndex++ || index >= textures.size()) return OwnRefreshFallback::Uncached;
             const auto overlap = listed(index, false);
             if (overlap == overlapping.end()) continue;
