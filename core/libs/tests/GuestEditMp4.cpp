@@ -30,6 +30,7 @@ int main() {
         for (std::size_t index = 0x1c; index < bytes.size(); ++index) Require(bytes[index] == fill);
     }
     sceEditMp4InitializeParam(nullptr);
+    sceEditMp4InitializeParam(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10)));
 
     Require(sceEditMp4QueryMemSize() == 0x387d30);
     Require(sceEditMp4QueryMemSize() == 0x387d30);
