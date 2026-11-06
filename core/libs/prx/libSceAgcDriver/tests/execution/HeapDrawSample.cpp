@@ -48,6 +48,12 @@ alignas(256) constexpr std::array<std::uint32_t, 12> PixelCode{0x7e0002f0u, 0x7e
 alignas(256) constexpr std::array<std::uint32_t, 16> ConstantSamplerPixelCode{
     0xbe8803ffu, 6u | (6u << 3u) | (6u << 6u), 0xbe8903ffu, 0u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 2u << 30u,
     0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 16> BorderSamplerPixelCode{
+    0xbe8803ffu, 6u | (6u << 3u) | (6u << 6u), 0xbe8903ffu, 0u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 2u << 30u,
+    0x7e0002f3u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 16> WrapSamplerPixelCode{
+    0xbe8803ffu, 0u, 0xbe8903ffu, 0u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 2u << 30u,
+    0x7e0002f3u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 16> BufferPixelCode{
     0x7e0002f0u, 0x7e0202f0u, 0xf4200506u, 0xfa000000u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0x7e060214u,
     0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
@@ -138,7 +144,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-enum class Mode { Texture, Buffer, Storage, Gds, Vertex, Bda, Table, VertexTable, MovedBuffer, MovedTexture, PixelLds, ConstantSampler, MergedBlend, MergedBlendOther };
+enum class Mode { Texture, Buffer, Storage, Gds, Vertex, Bda, Table, VertexTable, MovedBuffer, MovedTexture, PixelLds, ConstantSampler, BorderSampler, WrapSampler, MergedBlend, MergedBlendOther };
 
 const std::uint32_t* VertexProgram(Mode mode) {
     if (mode == Mode::VertexTable) return TableVertexCode.data();
@@ -164,6 +170,7 @@ unsigned ExpectedChannel(Mode mode, bool buffer, std::size_t channel) {
     if (mode == Mode::MovedTexture) return 0x33u;
     if ((mode == Mode::Bda || mode == Mode::MovedBuffer) && channel == 3) return SecondAlphaByte;
     if (buffer && channel == 3) return BufferAlphaByte;
+    if (mode == Mode::BorderSampler) return 0xffu;
     if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) return std::min(2u * Texel[channel] + static_cast<unsigned>(Kept), 0xffu);
     return Texel[channel];
 }
@@ -175,6 +182,8 @@ const char* DrawnWhat(Mode mode, bool buffer) {
     if (buffer) return " (texture and buffer)";
     if (mode == Mode::Table) return " (image table)";
     if (mode == Mode::ConstantSampler) return " (texture with a constant sampler)";
+    if (mode == Mode::BorderSampler) return " (constant border-clamp sampler outside the texture)";
+    if (mode == Mode::WrapSampler) return " (constant wrapping sampler outside the texture, after a border-clamp draw of the same shader)";
     if (mode == Mode::MergedBlend) return " (texture blended unclamped into the color target)";
     if (mode == Mode::MergedBlendOther) return " (texture blended unclamped into a second color target)";
     return " (texture)";
@@ -186,7 +195,7 @@ const char* TakenWhat(Mode mode, bool buffer) {
     if (mode == Mode::Bda) return " loading through BDA";
     if (mode == Mode::Table) return " reading an image table";
     if (mode == Mode::VertexTable) return " (vertex stage reading an image table)";
-    if (mode == Mode::ConstantSampler) return " sampling with a constant sampler";
+    if (mode == Mode::ConstantSampler || mode == Mode::BorderSampler || mode == Mode::WrapSampler) return " sampling with a constant sampler";
     if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) return " merging into its color target";
     return "";
 }
@@ -353,6 +362,10 @@ std::span<const std::uint32_t> PixelProgram(Mode mode, bool buffer, bool vertexS
         return BdaPixelCode;
     case Mode::ConstantSampler:
         return ConstantSamplerPixelCode;
+    case Mode::BorderSampler:
+        return BorderSamplerPixelCode;
+    case Mode::WrapSampler:
+        return WrapSamplerPixelCode;
     default:
         break;
     }
@@ -428,7 +441,7 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                 std::string("the heap did not take the fragment stage") + TakenWhat(mode, buffer));
     Require(AgcDriver::Graphics::DataAddressPushes() > pushesBefore,
             "the heap stages did not read their shader data through pushed addresses");
-    if (mode == Mode::ConstantSampler)
+    if (mode == Mode::ConstantSampler || mode == Mode::BorderSampler || mode == Mode::WrapSampler)
         Require(AgcDriver::Graphics::EmbeddedSamplerMappings() > embeddedBefore, "the fragment stage's constant sampler was not embedded in its pipeline");
     if (mode == Mode::MergedBlendOther)
         Require(ShaderRecompiler::HeapTemplateCounts().entries == templatesBefore,
@@ -504,7 +517,7 @@ int main() {
             mutation.Add(BufferMemory.data(), sizeof(BufferMemory), true, true, true);
         }
         for (const auto mode : {Mode::Texture, Mode::Buffer, Mode::Storage, Mode::Gds, Mode::Vertex, Mode::Bda, Mode::Table, Mode::VertexTable,
-                                Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::ConstantSampler, Mode::MergedBlend, Mode::MergedBlendOther, Mode::Texture})
+                                Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::ConstantSampler, Mode::BorderSampler, Mode::WrapSampler, Mode::MergedBlend, Mode::MergedBlendOther, Mode::Texture})
             DrawSamplesTheTexture(heap, mode);
         const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
         if (heap && !capped) MixedDrawTakesThePerDrawPath();
