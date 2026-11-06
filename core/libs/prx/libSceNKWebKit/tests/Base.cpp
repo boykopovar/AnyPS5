@@ -155,6 +155,45 @@ static void TestURL() {
     auto* str = WKURLCopyString(u);
     Require(WKStringIsEqualToUTF8CString(str, "https://example.com/test?a=1#frag"));
     WKRelease(str);
+
+    auto* host = WKURLCopyHostName(u);
+    Require(WKStringIsEqualToUTF8CString(host, "example.com"));
+    WKRelease(host);
+
+    auto* scheme = WKURLCopyScheme(u);
+    Require(WKStringIsEqualToUTF8CString(scheme, "https"));
+    WKRelease(scheme);
+
+    auto* path = WKURLCopyPath(u);
+    Require(WKStringIsEqualToUTF8CString(path, "/test"));
+    WKRelease(path);
+
+    auto* lastComp = WKURLCopyLastPathComponent(u);
+    Require(WKStringIsEqualToUTF8CString(lastComp, "test"));
+    WKRelease(lastComp);
+
+    auto* u2 = WKURLCreateWithUTF8CString("https://example.com/test?a=1#frag");
+    Require(WKURLIsEqual(u, u2));
+
+    auto* u3 = WKURLCreateWithUTF8CString("https://other.com/");
+    Require(!WKURLIsEqual(u, u3));
+    WKRelease(u2);
+    WKRelease(u3);
+
+    auto* base = WKURLCreateWithUTF8CString("https://example.com/dir/page.html");
+    auto* rel = WKURLCreateWithBaseURL(base, "sub/next.html");
+    auto* relStr = WKURLCopyString(rel);
+    Require(WKStringIsEqualToUTF8CString(relStr, "https://example.com/dir/sub/next.html"));
+    WKRelease(relStr);
+    WKRelease(rel);
+
+    auto* absRel = WKURLCreateWithBaseURL(base, "https://other.org/abs");
+    auto* absStr = WKURLCopyString(absRel);
+    Require(WKStringIsEqualToUTF8CString(absStr, "https://other.org/abs"));
+    WKRelease(absStr);
+    WKRelease(absRel);
+    WKRelease(base);
+
     WKRelease(u);
 }
 

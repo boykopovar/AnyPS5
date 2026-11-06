@@ -15054,29 +15054,6 @@ int APS5_VABI WKTextCheckerSetTestingMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKURLCopyHostName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLCopyLastPathComponent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLCopyPath() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLCopyScheme() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLCreateWithBaseURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLIsEqual() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKUserContentExtensionStoreCompile() {
     NotImplemented_nid_no_patch(__func__);
