@@ -87,6 +87,26 @@ static void CheckTimedRwlockWithReader() {
 
 int main() {
     CheckTimedRwlockWithReader();
+    // The guest libc reads all 16 bytes of conversion metadata. Poison the
+    // fields to catch a partial write, with a guard for the adjacent stack data.
+    struct { KernelTimesec zone; uint64_t guard; } conversion{{-1, 0xffffffffu, 0xffffffffu}, 0x123456789abcdef0ull};
+    constexpr int64_t sampleTime = 1767225600;
+    int64_t converted = -1;
+    int32_t dstSeconds = -1;
+    Require(sceKernelConvertLocaltimeToUtc(sampleTime, -1, &converted, &conversion.zone, &dstSeconds) == SCE_OK);
+    Require(converted == sampleTime - static_cast<int32_t>(conversion.zone.west_sec) - static_cast<int32_t>(conversion.zone.dst_sec));
+    Require(dstSeconds != -1);
+    Require(conversion.zone.t == sampleTime && conversion.zone.west_sec != 0xffffffffu && conversion.zone.dst_sec != 0xffffffffu);
+    Require(conversion.guard == 0x123456789abcdef0ull);
+    conversion.zone = {-1, 0xffffffffu, 0xffffffffu};
+    // The DST output is 32 bits wide; the word after it must stay untouched.
+    struct { int32_t seconds; uint32_t after; } utcDst{-1, 0xa5a5a5a5u};
+    Require(sceKernelConvertUtcToLocaltime(sampleTime, &converted, &conversion.zone, &utcDst.seconds) == SCE_OK);
+    Require(converted == sampleTime + static_cast<int32_t>(conversion.zone.west_sec) + static_cast<int32_t>(conversion.zone.dst_sec));
+    Require(utcDst.seconds == static_cast<int32_t>(conversion.zone.dst_sec) && utcDst.after == 0xa5a5a5a5u);
+    Require(conversion.zone.t == sampleTime && conversion.zone.west_sec != 0xffffffffu && conversion.zone.dst_sec != 0xffffffffu);
+    Require(conversion.guard == 0x123456789abcdef0ull);
+
     constexpr int maximum = std::numeric_limits<int>::max();
     KernelSema semaphore = nullptr;
     Require(sceKernelCreateSema(&semaphore, "overflow", 1, maximum - 1, maximum, nullptr) == SCE_OK);

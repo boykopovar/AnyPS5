@@ -597,15 +597,16 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageSampleCCdOG16:
     case RdnaOpcode::ImageSampleCCdClOG16:
         return imageSample(inst);
+    case RdnaOpcode::ImageGather4:
     case RdnaOpcode::ImageGather4Lz:
     case RdnaOpcode::ImageGather4C:
     case RdnaOpcode::ImageGather4CLz:
+    case RdnaOpcode::ImageGather4O:
     case RdnaOpcode::ImageGather4LzO:
     case RdnaOpcode::ImageGather4CO:
     case RdnaOpcode::ImageGather4CLzO:
     case RdnaOpcode::ImageGather4h:
     case RdnaOpcode::ImageGather4hPck:
-    case RdnaOpcode::ImageGather4:
     case RdnaOpcode::ImageGather4B:
     case RdnaOpcode::ImageGather4BCl:
     case RdnaOpcode::ImageGather4BClO:
@@ -622,14 +623,21 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageGather4CLO:
     case RdnaOpcode::ImageGather4L:
     case RdnaOpcode::ImageGather4LO:
-    case RdnaOpcode::ImageGather4O:
         return imageGather(inst);
     case RdnaOpcode::ImageAtomicSwap:
         return imageAtomic(inst, IrOpcode::ImageAtomicSwap32);
+    case RdnaOpcode::ImageAtomicCmpswap:
+        return imageAtomicCompareSwap(inst);
     case RdnaOpcode::ImageAtomicAdd:
         return imageAtomic(inst, IrOpcode::ImageAtomicIAdd32);
+    case RdnaOpcode::ImageAtomicSub:
+        return imageAtomic(inst, IrOpcode::ImageAtomicISub32);
+    case RdnaOpcode::ImageAtomicSmin:
+        return imageAtomic(inst, IrOpcode::ImageAtomicSMin32);
     case RdnaOpcode::ImageAtomicUmin:
         return imageAtomic(inst, IrOpcode::ImageAtomicUMin32);
+    case RdnaOpcode::ImageAtomicSmax:
+        return imageAtomic(inst, IrOpcode::ImageAtomicSMax32);
     case RdnaOpcode::ImageAtomicUmax:
         return imageAtomic(inst, IrOpcode::ImageAtomicUMax32);
     case RdnaOpcode::ImageAtomicAnd:
@@ -638,14 +646,6 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
         return imageAtomic(inst, IrOpcode::ImageAtomicOr32);
     case RdnaOpcode::ImageAtomicXor:
         return imageAtomic(inst, IrOpcode::ImageAtomicXor32);
-    case RdnaOpcode::ImageAtomicCmpswap:
-        return imageAtomic(inst, IrOpcode::ImageAtomicCmpSwap32);
-    case RdnaOpcode::ImageAtomicSub:
-        return imageAtomic(inst, IrOpcode::ImageAtomicISub32);
-    case RdnaOpcode::ImageAtomicSmin:
-        return imageAtomic(inst, IrOpcode::ImageAtomicSMin32);
-    case RdnaOpcode::ImageAtomicSmax:
-        return imageAtomic(inst, IrOpcode::ImageAtomicSMax32);
     case RdnaOpcode::ImageAtomicInc:
         return imageAtomic(inst, IrOpcode::ImageAtomicInc32);
     case RdnaOpcode::ImageAtomicDec:

@@ -689,6 +689,27 @@ bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t byt
     return WindowsMappings::Get().Collect(address, bytes, pages, count, clear);
 }
 
+// Collect sub-phase totals (APS5_COLLECT_SUBPHASE). Plain scalars so the
+// caller needs no header type. 0-17 are calls/bytes/ns triples for
+// shared (compare/copy), private (GetWriteWatch), coverage (VirtualQuery),
+// lock (mutex wait), enum (pinned/seen page enumeration) and arm (alias
+// VirtualProtect); 18 sharedPages, 19 pinnedPages, 20 armedProtectCalls,
+// 21 memcmpBytes, 22 memcpyBytes, 23 returnedPages, 24 controlCalls,
+// 25 controlNanoseconds. The drain zeroes the source, so the values are
+// the window delta, never a mix of two windows.
+void GuestArenaCollectSubphase_nid_postfix(std::uint64_t* out) {
+    const auto t = WindowsMappings::Get().CollectSubphaseDrain();
+    out[0] = t.sharedCalls;      out[1] = t.sharedBytes;      out[2] = t.sharedNanoseconds;
+    out[3] = t.privateCalls;     out[4] = t.privateBytes;     out[5] = t.privateNanoseconds;
+    out[6] = t.coverageCalls;    out[7] = t.coverageBytes;    out[8] = t.coverageNanoseconds;
+    out[9] = t.lockCalls;        out[10] = t.lockBytes;       out[11] = t.lockNanoseconds;
+    out[12] = t.enumCalls;       out[13] = t.enumBytes;       out[14] = t.enumNanoseconds;
+    out[15] = t.armCalls;        out[16] = t.armBytes;        out[17] = t.armNanoseconds;
+    out[18] = t.sharedPages;     out[19] = t.pinnedPages;     out[20] = t.armedProtectCalls;
+    out[21] = t.memcmpBytes;     out[22] = t.memcpyBytes;     out[23] = t.returnedPages;
+    out[24] = t.controlCalls;    out[25] = t.controlNanoseconds;
+}
+
 bool GuestArenaCollectArmedWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear) {
     return WindowsMappings::Get().Collect(address, bytes, pages, count, clear, WindowsMappings::Collection::Armed);
 }

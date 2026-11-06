@@ -217,6 +217,14 @@ struct FlipQueue {
     bool stopping = false;
 };
 
+struct VideoOutWindowState {
+    void* handle = nullptr;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t drawableWidth = 0;
+    std::uint32_t drawableHeight = 0;
+};
+
 class VideoOutDriver {
 public:
     static VideoOutDriver& Get();
@@ -236,6 +244,7 @@ public:
     bool SupportsHighFrameRate();
     int GetDisplayRefreshRate();
     std::uint32_t GetDisplayResolution();
+    VideoOutWindowState GetWindowState();
 
     // 0, or VIDEO_OUT_ERROR_FLIP_QUEUE_FULL when the title has VIDEO_OUT_FLIP_QUEUE_CAPACITY flips pending.
     int SubmitFlip(int handle, int index, int flipMode, int64_t flipArg);

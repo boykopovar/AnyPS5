@@ -1,3 +1,4 @@
+#include <cstring>
 #include "prx/libScePlayerInvitationDialog/libScePlayerInvitationDialog.h"
 
 #include <mutex>

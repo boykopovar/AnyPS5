@@ -8,6 +8,8 @@
 #include <functional>
 #include <vector>
 
+void MeshShaderTranslationTests();
+
 struct DetilerCapture {
     std::uint32_t groupsX;
     std::uint32_t groupsY;

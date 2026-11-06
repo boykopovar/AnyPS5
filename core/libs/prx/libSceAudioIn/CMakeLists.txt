@@ -2,7 +2,7 @@ add_library(libSceAudioIn SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cp
 target_include_directories(libSceAudioIn PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
 target_link_libraries(libSceAudioIn PRIVATE SDL2-static)
 if(NOT APPLE)
-    target_link_options(libSceAudioIn PRIVATE LINKER:--exclude-libs,ALL)
+    target_link_options(libSceAudioIn PRIVATE LINKER:--exclude-libs,$<TARGET_FILE_NAME:SDL2-static>)
 endif()
 configure_windows_unwind(libSceAudioIn)
 

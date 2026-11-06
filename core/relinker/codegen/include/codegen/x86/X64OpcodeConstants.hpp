@@ -51,6 +51,8 @@ inline constexpr std::uint8_t OneByteVex3 = 0xC4;
 inline constexpr std::uint8_t OneByteVex2 = 0xC5;
 inline constexpr std::uint8_t OneByteMovImm8 = 0xC6;
 inline constexpr std::uint8_t OneByteMovImm32 = 0xC7;
+inline constexpr std::uint8_t OneByteMovMoffsMin = 0xA0;
+inline constexpr std::uint8_t OneByteMovMoffsMax = 0xA3;
 inline constexpr std::uint8_t OneByteShiftRm8By1 = 0xD0;
 inline constexpr std::uint8_t OneByteShiftRmBy1 = 0xD1;
 inline constexpr std::uint8_t OneByteShiftRm8ByCl = 0xD2;
@@ -114,8 +116,6 @@ inline constexpr std::uint8_t OneByteNop = 0x90;
 inline constexpr std::uint8_t OneByteRetImm16 = 0xC2;
 inline constexpr std::uint8_t OneByteRetFarImm16 = 0xCA;
 inline constexpr std::uint8_t OneByteEnter = 0xC8;
-inline constexpr std::uint8_t OneByteMovMoffsMin = 0xA0;
-inline constexpr std::uint8_t OneByteMovMoffsMax = 0xA3;
 
 inline constexpr std::uint8_t TwoByteJccRel32Min = 0x80;
 inline constexpr std::uint8_t TwoByteJccRel32Max = 0x8F;

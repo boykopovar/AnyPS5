@@ -182,6 +182,10 @@ struct PthreadPrivate {
     PthreadPrivate& operator=(const PthreadPrivate&) = delete;
 };
 
+// Makes scePthreadSelf() on the calling host thread answer `thread` and returns the previous value:
+// a guest signal handler delivered on a proxy thread runs as the interrupted thread.
+PthreadPrivate* PthreadExchangeCurrent(PthreadPrivate* thread);
+
 bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end);
 bool GuestThreadStackHostRangeOverlaps(std::uintptr_t start, std::uintptr_t end);
 void NoteGuestStackProtection(std::uintptr_t start, std::size_t bytes, bool readWrite);

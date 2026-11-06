@@ -217,6 +217,7 @@ if(BUILD_TESTING)
         set_tests_properties(tools_nid_name_audit PROPERTIES TIMEOUT 20)
         add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
+        set_tests_properties(pr_overlap_encoding PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
         add_test(NAME pr_overlap_dependencies COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_dependencies.py)
         add_test(NAME pr_overlap_tools COMMAND ${Python3_EXECUTABLE}
@@ -289,6 +290,9 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
+        add_test(NAME phase1_partial_encrypt COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_phase1_partial_encrypt.py)
+        set_tests_properties(phase1_partial_encrypt PROPERTIES TIMEOUT 30 LABELS phase1)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}

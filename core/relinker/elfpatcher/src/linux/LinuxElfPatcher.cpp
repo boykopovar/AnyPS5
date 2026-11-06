@@ -1,4 +1,5 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
+#include <elfpatcher/general/TrampolineWriter.hpp>
 #include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
@@ -395,33 +396,7 @@ void LinuxElfPatcher::_appendTrampoline(
     const std::uint64_t extraBlockOffset,
     const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const
 {
-    using namespace Codegen::Amd64OnlySubstitutionTable;
-    if (site.Length < kJmpRel32.Size || site.OriginalBytes.size() != site.Length || site.Body.size() < kJmpRel32.Size || site.ReturnBranchOffset > site.Body.size() - kJmpRel32.Size || site.Body[site.ReturnBranchOffset] != kJmpRel32.Bytes[0])
-        throw Domain::RelinkerException("Invalid AMD-only trampoline site", site.Offset);
-    if (site.Offset > extraBlockOffset || site.Length > extraBlockOffset - site.Offset)
-        throw Domain::RelinkerException("AMD-only instruction is outside the original image", site.Offset);
-    if (!std::equal(site.OriginalBytes.begin(), site.OriginalBytes.end(), buf.begin() + static_cast<std::ptrdiff_t>(site.Offset)))
-        throw Domain::RelinkerException("AMD-only site bytes changed before patching", site.Offset);
-
-    while (buf.size() % kStubAlignment != 0)
-        buf.push_back(kTrapFill);
-    const auto bodyOff = static_cast<std::uint64_t>(buf.size());
-    const auto bodyVaddr = vaddrOfExtraBlockOffset(bodyOff);
-    for (const std::uint8_t b : site.Body)
-        buf.push_back(b);
-    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(buf.data() + bodyOff, site.ReturnBranchOffset), site.Relocations, site.Address, bodyVaddr, site.Offset);
-
-    const auto inRange = [](const std::int64_t displacement) {
-        return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
-    };
-    std::int64_t returnDisplacement = 0, jumpDisplacement = 0;
-    if (!SignedDistance(site.Address + site.Length, bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size, returnDisplacement) || !SignedDistance(bodyVaddr, site.Address + kJmpRel32.Size, jumpDisplacement) || !inRange(returnDisplacement) || !inRange(jumpDisplacement))
-        throw Domain::RelinkerException("AMD-only stub exceeds rel32 range", site.Offset);
-    _byteWriter->WriteU32(buf, static_cast<std::size_t>(bodyOff + site.ReturnBranchOffset + 1), static_cast<std::uint32_t>(returnDisplacement));
-
-    std::fill_n(buf.begin() + static_cast<std::ptrdiff_t>(site.Offset), site.Length, kNop1.Bytes[0]);
-    buf[static_cast<std::size_t>(site.Offset)] = kJmpRel32.Bytes[0];
-    _byteWriter->WriteU32(buf, static_cast<std::size_t>(site.Offset + 1), static_cast<std::uint32_t>(jumpDisplacement));
+    AppendTrampoline(buf, site, extraBlockOffset, vaddrOfExtraBlockOffset);
 }
 
 std::vector<std::uint8_t> LinuxElfPatcher::Patch(

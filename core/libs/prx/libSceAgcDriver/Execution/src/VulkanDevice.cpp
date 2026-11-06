@@ -2666,7 +2666,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         check(getImages(state->device, state->swapchain, &imageCount, nullptr), "vkGetSwapchainImagesKHR");
         state->images.resize(imageCount);
         check(getImages(state->device, state->swapchain, &imageCount, state->images.data()), "vkGetSwapchainImagesKHR");
-        APS5_LOG_OUT("Swapchain created swapchain=%p extent=%ux%u images=%u", reinterpret_cast<void*>(state->swapchain), state->extent.width, state->extent.height, imageCount);
+        APS5_LOG_OUT("Swapchain created swapchain=%p extent=%ux%u images=%u presentMode=%d", reinterpret_cast<void*>(state->swapchain), state->extent.width, state->extent.height, imageCount, state->presentMode);
         VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         const auto createFence = state->DeviceFunction<PFN_vkCreateFence>("vkCreateFence");
         check(createFence(state->device, &fence, nullptr, &state->acquireFence), "vkCreateFence");
@@ -3717,8 +3717,13 @@ void VulkanDevice::PresentPixels(std::uint32_t width, std::uint32_t height, std:
         const char* value = std::getenv("APS5_DUMP_FRAMES");
         return value ? std::atoi(value) : 0;
     }();
+    // APS5_DUMP_FRAMES_SKIP=<n> ignores the first n presents; APS5_DUMP_FRAMES_EVERY=<n> keeps one in n.
+    static const int dumpSkip = [] { const char* value = std::getenv("APS5_DUMP_FRAMES_SKIP"); return value ? std::atoi(value) : 0; }();
+    static const int dumpEvery = [] { const char* value = std::getenv("APS5_DUMP_FRAMES_EVERY"); return value ? std::max(1, std::atoi(value)) : 1; }();
     static int dumped = 0;
-    if (frameDumpOutput.Enabled_nid_no_patch() && dumped < dumpLimit) {
+    static int presented = 0;
+    const int presentIndex = presented++;
+    if (frameDumpOutput.Enabled_nid_no_patch() && dumped < dumpLimit && presentIndex >= dumpSkip && (presentIndex - dumpSkip) % dumpEvery == 0) {
         char name[32];
         std::snprintf(name, sizeof(name), "frame_%03d.bmp", dumped++);
         frameDumpOutput.Write_nid_no_patch(name, width, height, pixels);

@@ -151,6 +151,37 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
                 ++reachedPending;
                 if (Graphics::Recorder::ThreadHookWaits() != hookWaitsAtCopy) observable.push_back(next - 1);
             }
+            // APS5_DRAW_WOULD_HIT: ceiling measurement for layout variants. When a variant differs,
+            // re-read the region and count how many differences are only guest addresses (base
+            // addresses of V#/T# buffers); those are the variants a layout-keyed cache could reuse.
+            static const bool wouldHitTrace = std::getenv("APS5_DRAW_WOULD_HIT") != nullptr;
+            if (wouldHitTrace && !same) {
+                thread_local std::vector<std::byte>* wouldSlot = nullptr;
+                auto& fresh = ShaderRecompiler::ThreadOwned(wouldSlot);
+                fresh.resize(region.bytes.size());
+                const auto copied = GuestMemory::CopyMapped(region.guestAddress, fresh);
+                if (copied == GuestMemory::Compare::Equal || copied == GuestMemory::Compare::Differs) {
+                    const auto count = region.bytes.size() / sizeof(std::uint32_t);
+                    bool any = false, onlyAddresses = true;
+                    for (std::size_t k = 0; k < count; ++k) {
+                        std::uint32_t storedWord = 0, freshWord = 0;
+                        std::memcpy(&storedWord, region.bytes.data() + k * sizeof(std::uint32_t), sizeof(storedWord));
+                        std::memcpy(&freshWord, fresh.data() + k * sizeof(std::uint32_t), sizeof(freshWord));
+                        if (storedWord == freshWord) continue;
+                        any = true;
+                        const auto looksAddress = [](std::uint32_t value) { return value >= 0x10000u && value < 0xfc000000u; };
+                        if (!looksAddress(storedWord) || !looksAddress(freshWord)) { onlyAddresses = false; break; }
+                    }
+                    static std::atomic<std::uint64_t> differingRegions{0}, addressOnlyRegions{0};
+                    if (any && onlyAddresses) addressOnlyRegions.fetch_add(1, std::memory_order_relaxed);
+                    const auto total = differingRegions.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if ((total % 2000) == 0) {
+                        const auto only = addressOnlyRegions.load(std::memory_order_relaxed);
+                        std::fprintf(stderr, "[would-hit] %llu differing regions, %llu only-guest-addresses (%.1f%%)\n",
+                            static_cast<unsigned long long>(total), static_cast<unsigned long long>(only), 100.0 * static_cast<double>(only) / static_cast<double>(total));
+                    }
+                }
+            }
             if (!same) {
                 if (data != nullptr && !masked) dataPendingMisses.fetch_add(1, std::memory_order_relaxed);
                 return false;

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <vector>
 #ifdef _WIN32
@@ -45,10 +47,18 @@ void Await(const std::uint32_t* label, std::uint32_t value) {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     void* block = nullptr;
+    using Clock = std::chrono::steady_clock;
+    const auto milliseconds = [](auto duration) { return std::chrono::duration<double, std::milli>(duration).count(); };
     try {
-        auto device = OpenVulkanTestDevice(); if (!device) return VulkanTestSkipped; device.reset();
+        const auto t0_init = Clock::now();
+        auto device = OpenVulkanTestDevice(); if (!device) return VulkanTestSkipped;
+        const auto t1_init = Clock::now();
+        std::cout << "FT_PHASE {\"phase\":\"vulkan_init\",\"ms\":" << milliseconds(t1_init - t0_init) << "}\n";
+        device.reset();
+        const auto t2_init = Clock::now();
+        std::cout << "FT_PHASE {\"phase\":\"vulkan_init_after_reset\",\"ms\":" << milliseconds(t2_init - t1_init) << "}\n";
 #ifdef _WIN32
         block = VirtualAlloc(nullptr, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
@@ -61,6 +71,63 @@ int main() {
         auto* descriptor = output + 64; auto* label = output + 128; auto* neighbor = output + 192;
         descriptor[0] = Low(output); descriptor[1] = High(output) & 0xffffu; descriptor[2] = 16; descriptor[3] = 0x31016facu;
         *neighbor = 0xabcdef12u;
+        if (argc == 2 && std::string_view(argv[1]) == "--frametime") {
+            for (const auto dispatches : {1u, 32u, 128u}) {
+                std::vector<double> totals, submits, waits;
+                double coldMs = 0;
+                for (std::uint32_t sample = 0; sample < 320; ++sample) {
+                    const auto start = Clock::now();
+                    *label = 0;
+                    label[1] = 0xfeedbeefu;
+                    AgcDriver::GuestMemory::MarkWritten(reinterpret_cast<std::uintptr_t>(label), 8);
+                    const auto t_words_start = Clock::now();
+                    std::vector<std::uint32_t> words;
+                    for (unsigned index = 0; index < dispatches; ++index) Dispatch(words, descriptor);
+                    Release(words, label, sample + 1);
+                    const auto t_words_end = Clock::now();
+                    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+                    const auto t_submit_call = Clock::now();
+                    AgcDriver::Submit(&packet, 0);
+                    const auto submitted = Clock::now();
+                    Await(label, sample + 1);
+                    const auto finished = Clock::now();
+                    if (sample == 0) {
+                        coldMs = milliseconds(finished - start);
+                        std::cout << "FT_PHASE {\"phase\":\"first_submit_total\",\"dispatches\":" << dispatches << ",\"ms\":" << coldMs << "}\n";
+                        std::cout << "FT_PHASE {\"phase\":\"first_words_build\",\"dispatches\":" << dispatches << ",\"ms\":" << milliseconds(t_words_end - t_words_start) << "}\n";
+                        std::cout << "FT_PHASE {\"phase\":\"first_submit_call\",\"dispatches\":" << dispatches << ",\"ms\":" << milliseconds(submitted - t_submit_call) << "}\n";
+                        std::cout << "FT_PHASE {\"phase\":\"first_await\",\"dispatches\":" << dispatches << ",\"ms\":" << milliseconds(finished - submitted) << "}\n";
+                    }
+                    Require(label[1] == 0, "benchmark completion marker was not written by the GPU");
+                    Require(*neighbor == 0xabcdef12u, "benchmark damaged neighboring guest memory");
+                    if (sample >= 20) {
+                        totals.push_back(milliseconds(finished - start));
+                        submits.push_back(milliseconds(submitted - start));
+                        waits.push_back(milliseconds(finished - submitted));
+                    }
+                }
+                const auto report = [&](const char* stage, std::vector<double> values) {
+                    std::sort(values.begin(), values.end());
+                    const auto percentile = [&](double fraction) { return values[static_cast<std::size_t>(fraction * (values.size() - 1))]; };
+                    const auto over = std::count_if(values.begin(), values.end(), [](double value) { return value > 1000.0 / 60.0; });
+                    std::cout << "AGC_BENCH {\"dispatches\":" << dispatches << ",\"stage\":\"" << stage
+                              << "\",\"samples\":" << values.size() << ",\"p50_ms\":" << percentile(0.50)
+                              << ",\"p95_ms\":" << percentile(0.95) << ",\"p99_ms\":" << percentile(0.99)
+                              << ",\"max_ms\":" << values.back() << ",\"cold_total_ms\":" << coldMs << ",\"over_budget\":" << over << "}\n";
+                };
+                report("total", totals);
+                report("submit", submits);
+                report("wait", waits);
+            }
+            AgcDriverShutdown_nid_postfix();
+            GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+            return 0;
+        }
         const auto submit = [&](std::uint32_t value) {
             *label = 0; label[1] = 0xfeedbeefu;
             AgcDriver::GuestMemory::MarkWritten(reinterpret_cast<std::uintptr_t>(label), 8);

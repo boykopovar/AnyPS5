@@ -496,7 +496,7 @@ const std::vector<std::uint32_t>& resultMemoPixelCode() {
     return code;
 }
 
-bool compileResultMemoPixel(std::uint32_t value) {
+bool compileResultMemoPixel(std::uint32_t value, std::shared_ptr<const ShaderRecompiler::RecompileResult>* retained = nullptr) {
     using namespace ShaderRecompiler;
     std::array<std::uint32_t, 1> color{value};
     auto request = FrontendRequest(resultMemoPixelCode(), color);
@@ -512,8 +512,64 @@ bool compileResultMemoPixel(std::uint32_t value) {
     const auto regions = memory.Regions();
     request.context.memory = regions;
     bool hit = false;
-    static_cast<void>(Recompile(request, *capture, &hit));
+    auto result = Recompile(request, *capture, &hit);
+    if (retained != nullptr) *retained = std::move(result);
     return hit;
+}
+
+void benchmarkResultMemoReplacement(std::uint32_t threads = 1u) {
+    using namespace ShaderRecompiler;
+    SetResultMemoBudget(0u);
+    std::shared_ptr<const RecompileResult> retained;
+    require(!compileResultMemoPixel(1u, &retained), "result memo benchmark: first result hit");
+    const auto words = retained->spirv.Copy();
+    const auto identity = retained->Identity();
+    for (std::uint32_t value = 2u; value < 258u; ++value) compileResultMemoPixel(value);
+    std::vector<double> samples;
+    for (std::uint32_t batch = 0u; batch < 31u; ++batch) {
+        const auto started = std::chrono::steady_clock::now();
+        const auto run = [&](std::uint32_t worker) {
+            for (std::uint32_t index = 0u; index < 256u; ++index) {
+                require(!compileResultMemoPixel(258u + (batch * threads + worker) * 256u + index), "result memo benchmark: new snapshot hit");
+            }
+        };
+        if (threads == 1u) {
+            run(0u);
+        } else {
+            std::vector<std::future<void>> workers;
+            for (std::uint32_t worker = 0u; worker < threads; ++worker) workers.push_back(std::async(std::launch::async, run, worker));
+            for (auto& worker : workers) worker.get();
+        }
+        samples.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / (256.0 * threads));
+    }
+    require(std::ranges::equal(retained->spirv.Words(), words) && retained->Identity() == identity, "result memo benchmark: retained result changed");
+    if (threads == 1u) require(compileResultMemoPixel(258u + 31u * 256u - 1u), "result memo benchmark: newest result missing");
+    require(!compileResultMemoPixel(0xffffffffu) && compileResultMemoPixel(0xffffffffu), "result memo benchmark: final result was not retained");
+    std::ranges::sort(samples);
+    const bool reuse = std::getenv("APS5_RESULT_REUSE") != nullptr && std::getenv("APS5_NO_RESULT_REUSE") == nullptr;
+    std::cout << "RESULT_MEMO_BENCH {\"reuse\":" << (reuse ? "true" : "false")
+              << ",\"threads\":" << threads << ",\"batches\":31,\"iterations_per_batch\":" << 256u * threads << ",\"p50_us\":" << samples[15]
+              << ",\"p95_us\":" << samples[29] << ",\"max_us\":" << samples.back() << "}\n";
+}
+
+void verifyResultMemoReplacement() {
+    using namespace ShaderRecompiler;
+    SetResultMemoBudget(0u);
+    std::shared_ptr<const RecompileResult> retained;
+    require(!compileResultMemoPixel(1u, &retained), "result memo replacement: first result hit");
+    const auto words = retained->spirv.Copy();
+    const auto push = retained->pushConstants;
+    const auto data = retained->shaderDataUserWords;
+    const auto identity = retained->Identity();
+    std::vector<std::weak_ptr<const RecompileResult>> results;
+    for (std::uint32_t value = 2u; value <= 1025u; ++value) {
+        std::shared_ptr<const RecompileResult> current;
+        require(!compileResultMemoPixel(value, &current), "result memo replacement: new snapshot hit");
+        results.emplace_back(current);
+    }
+    require(std::ranges::any_of(results, [](const auto& result) { return result.expired(); }), "result memo replacement: replaced results remained alive");
+    require(compileResultMemoPixel(1025u), "result memo replacement: newest result was not retained");
+    require(std::ranges::equal(retained->spirv.Words(), words) && retained->pushConstants == push && retained->shaderDataUserWords == data && retained->Identity() == identity, "result memo replacement: a retained result changed during replacement");
 }
 
 void verifyResultMemoBudgetThreads() {
@@ -9020,6 +9076,10 @@ ShaderRecompiler::RecompileRequest twoParameterRequest(std::span<const std::uint
     request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010300u;
     request.target.subgroupSize = 64;
+    static constexpr std::array<std::uint32_t, 2> capabilities{spv::CapabilityFragmentBarycentricKHR, spv::CapabilityFloat64};
+    static constexpr std::array<std::string_view, 1> extensions{"SPV_KHR_fragment_shader_barycentric"};
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
     return request;
@@ -9100,8 +9160,10 @@ ShaderRecompiler::RecompileRequest slotRequest(std::initializer_list<std::uint32
     request.target.fragmentShaderBarycentricEnabled = true;
     request.target.fragmentBarycentricBuiltins = true;
     request.target.hostInterpolationFirst = hostInterpolationFirst;
-    static constexpr std::array<std::uint32_t, 1> capabilities{spv::CapabilityFloat64};
+    static constexpr std::array<std::uint32_t, 2> capabilities{spv::CapabilityFragmentBarycentricKHR, spv::CapabilityFloat64};
+    static constexpr std::array<std::string_view, 1> extensions{"SPV_KHR_fragment_shader_barycentric"};
     request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
     return request;
@@ -11632,6 +11694,19 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-bench") {
+            benchmarkResultMemoReplacement();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-bench-threads") {
+            benchmarkResultMemoReplacement(4u);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-replacement") {
+            verifyResultMemoReplacement();
+            std::cout << "Result replacement releases unused entries and preserves live results\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget") {

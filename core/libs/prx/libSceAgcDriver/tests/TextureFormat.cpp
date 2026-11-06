@@ -1,4 +1,5 @@
 #include "GraphicsTests.hpp"
+#include "dcc_fast_clear.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -75,6 +76,21 @@ void reject(TAction action, std::string_view reason) {
         return;
     }
     throw std::runtime_error(std::string("expected texture format rejection: ") + std::string(reason));
+}
+
+void freesperDccReferenceTests() {
+    const std::array<DccKeys, 4> keys{DccKeys::Clear0000, DccKeys::Clear0001, DccKeys::Clear1110, DccKeys::Clear1111};
+    const std::array<std::uint8_t, 4> codes{0x00, 0x40, 0x80, 0xc0};
+    for (std::size_t k = 0; k < keys.size(); ++k) {
+        for (const bool alphaOnMsb : {false, true}) {
+            std::array<std::uint8_t, 16> metadata{};
+            metadata.fill(codes[k]);
+            std::array<std::uint8_t, 28> expected{}, actual{};
+            Require(prosper::gpu::gfx10_dcc_fast_clear_rgba8(expected.data(), 7, metadata.data(), metadata.size(), 4, alphaOnMsb, nullptr), "freesper reference must accept uniform RGBA8 clear");
+            Require(FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, keys[k], alphaOnMsb, std::as_writable_bytes(std::span(actual))), "AnyPS5 must accept uniform RGBA8 clear");
+            Require(actual == expected, "AnyPS5 DCC pixels differ from freesper reference");
+        }
+    }
 }
 
 int channelLowBit(VkFormat format, VkComponentSwizzle channel) {
@@ -336,6 +352,7 @@ void RunTextureFormatTests() {
     for (const std::uint32_t format : {7u, 13u, 22u, 36u, 50u, 77u, 132u, 133u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
     for (const std::uint32_t format : {1u, 2u, 14u, 15u, 56u, 57u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
     convertedDccClearTests();
+    freesperDccReferenceTests();
     singleDccKeysTests();
     packedFloatDccClearTests();
     fillContractTests();

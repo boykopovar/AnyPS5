@@ -1438,7 +1438,7 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             });
         }
         const auto old = state.module.AllocateId();
-        if (opcode == IrOpcode::ImageAtomicCmpSwap32) {
+        if (opcode == IrOpcode::ImageAtomicCmpSwap32 || opcode == IrOpcode::ImageAtomicCompareSwap32) {
             state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), value, ctx.Arg(access.inst, 3));
         } else {
             state.module.AddFunction(ImageAtomicOpcode(opcode), TypeU32(state), old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
@@ -2571,6 +2571,10 @@ void EmitImageAtomicOr32(SpirvValueEmitContext& ctx, const IrValue& inst) {
 }
 
 void EmitImageAtomicXor32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    EmitImage(ctx, inst);
+}
+
+void EmitImageAtomicCompareSwap32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitImage(ctx, inst);
 }
 

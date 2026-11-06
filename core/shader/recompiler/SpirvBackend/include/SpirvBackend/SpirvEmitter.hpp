@@ -19,6 +19,7 @@ struct SpirvTargetOptions {
     std::uint32_t bdaAbiVersion;
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
+    bool fragmentShaderBarycentricEnabled;
     bool nonConstantImageOffsets = false;
     bool shaderImageMinLod = false;
     bool narrowSubgroupClock = false;

@@ -15,6 +15,7 @@ public:
     std::uint64_t GetRelocatedAddress(std::uint64_t address) const;
     std::uint64_t GetImageBase() const;
     void WritePointer(std::uint64_t address, std::uint64_t value);
+    void WritePointer32(std::uint64_t address, std::uint32_t value);
     void RequireWritable(std::uint64_t address, std::uint64_t size) const;
     std::vector<PeSection> BuildSections() const;
 

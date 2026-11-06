@@ -5,10 +5,12 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #ifdef APS5_COUNT_MAPPING_QUERIES
 #include <atomic>
 #endif
 #include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -32,6 +34,59 @@ public:
         return *mappings;
     }
 
+    // Opt-in Collect sub-phase accounting (APS5_COLLECT_SUBPHASE=1): splits each
+    // Collect walk into lock-wait, shared compare/copy, private GetWriteWatch,
+    // coverage query, shared-page enumeration and arming (alias VirtualProtect).
+    // Disabled by default: one static getenv per function, no counter touched.
+    struct CollectSubphase {
+        // Per-phase triples: timed sections / requested bytes / nanoseconds.
+        // A "timed section" is one now()/now() pair recorded for that phase,
+        // which is also the number of timer pairs its nanoseconds contain.
+        std::uint64_t sharedCalls = 0;
+        std::uint64_t sharedBytes = 0;
+        std::uint64_t sharedNanoseconds = 0;
+        std::uint64_t privateCalls = 0;
+        std::uint64_t privateBytes = 0;
+        std::uint64_t privateNanoseconds = 0;
+        std::uint64_t coverageCalls = 0;
+        std::uint64_t coverageBytes = 0;
+        std::uint64_t coverageNanoseconds = 0;
+        std::uint64_t lockCalls = 0;
+        std::uint64_t lockBytes = 0;
+        std::uint64_t lockNanoseconds = 0;
+        std::uint64_t enumCalls = 0;      // pinned/seen page enumeration (arming path)
+        std::uint64_t enumBytes = 0;
+        std::uint64_t enumNanoseconds = 0;
+        std::uint64_t armCalls = 0;       // alias loop + VirtualProtect (arming path)
+        std::uint64_t armBytes = 0;
+        std::uint64_t armNanoseconds = 0;
+        // Per-walk work counts. Like the triples, every increment happens under
+        // mutex, so no extra locking.
+        std::uint64_t sharedPages = 0;     // shared pages walked (compare branch)
+        std::uint64_t pinnedPages = 0;     // pinned pages enumerated
+        std::uint64_t armedProtectCalls = 0;  // VirtualProtect calls while arming
+        std::uint64_t memcmpBytes = 0;     // bytes compared on shared pages
+        std::uint64_t memcpyBytes = 0;     // bytes copied on shared mismatch
+        std::uint64_t returnedPages = 0;   // pages pushed into the caller buffer
+        // Empty now()/now() pair, one per timed section: the control cost is
+        // controlNanoseconds / controlCalls per section, and total timer
+        // overhead is that times the sum of the *Calls fields above.
+        std::uint64_t controlCalls = 0;
+        std::uint64_t controlNanoseconds = 0;
+    };
+    static bool CollectSubphaseEnabled() {
+        static const bool enabled = std::getenv("APS5_COLLECT_SUBPHASE") != nullptr;
+        return enabled;
+    }
+    // Snapshot and reset in a single lock: taking totals and resetting in two
+    // lock acquisitions would drop every increment a concurrent Collect makes
+    // between them. Callers get per-window deltas without an offline sum.
+    CollectSubphase CollectSubphaseDrain() {
+        std::lock_guard lock(mutex);
+        const auto snapshot = subphase;
+        subphase = CollectSubphase{};
+        return snapshot;
+    }
 #ifdef APS5_COUNT_MAPPING_QUERIES
     static std::uint64_t MemoryQueries() {
         return queries.load(std::memory_order_relaxed);
@@ -565,7 +620,30 @@ public:
     }
 
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
+        const auto subphaseOn = CollectSubphaseEnabled();
+        const auto lockStart = subphaseOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         std::lock_guard lock(mutex);
+        if (subphaseOn) addSubphase(&CollectSubphase::lockCalls, &CollectSubphase::lockBytes, &CollectSubphase::lockNanoseconds, bytes, lockStart);
+        if (subphaseOn) {
+            // One empty now()/now() pair per Collect: the control cost of a single
+            // timed section. Phase overhead is control per section times the number
+            // of sections, i.e. the sum of the *Calls fields.
+            const auto controlStart = std::chrono::steady_clock::now();
+            ++subphase.controlCalls;
+            subphase.controlNanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - controlStart).count());
+        }
+        // Diagnostic fallback: compare contents instead of causing write faults in guest code.
+        // Set before process startup so no shared view is ever armed in this mode.
+        static const bool compareShared = [] {
+            const auto* value = std::getenv("APS5_COMPARE_SHARED_WRITES");
+            return value != nullptr && std::strcmp(value, "1") == 0;
+        }();
+        static const bool noSharedWriteArming = std::getenv("APS5_NO_SHARED_WRITE_ARMING") != nullptr;
+        const auto firstShared = views.lower_bound(address & ~(pageBytes - 1));
+        if (!compareShared && noSharedWriteArming && firstShared != views.end() && firstShared->first < address + bytes) {
+            *count = 0;
+            return false;
+        }
         const auto capacity = *count;
         *count = 0;
         const auto end = address + bytes;
@@ -593,12 +671,14 @@ public:
             cleanStart = cleanEnd = 0;
         };
         for (auto cursor = address; cursor < end;) {
-            const auto nextClean = cleanRanges.upper_bound(cursor);
-            if (nextClean != cleanRanges.begin()) {
-                const auto clean = std::prev(nextClean);
-                if (cursor < clean->second) {
-                    cursor = std::min(end, clean->second);
-                    continue;
+            const auto nextClean = compareShared ? cleanRanges.end() : cleanRanges.upper_bound(cursor);
+            if (!compareShared) {
+                if (nextClean != cleanRanges.begin()) {
+                    const auto clean = std::prev(nextClean);
+                    if (cursor < clean->second) {
+                        cursor = std::min(end, clean->second);
+                        continue;
+                    }
                 }
             }
             const auto base = cursor & ~(pageBytes - 1);
@@ -635,6 +715,46 @@ public:
                     return false;
                 }
                 const bool pinned = view.page->pins != 0;
+                if (subphaseOn && pinned) ++subphase.pinnedPages;
+                if (compareShared && !pinned) {
+                    const auto sharedStart = subphaseOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                    if (subphaseOn) ++subphase.sharedPages;
+                    view.page->comparedBytes.resize(pageBytes);
+                    // An open host write (BeginHostWrite on any alias) may land after the compare: keep
+                    // its page reported, as the faulting path does by leaving it untracked.
+                    const bool hostWriting = std::any_of(view.page->aliases.begin(), view.page->aliases.end(), [&](std::uintptr_t alias) { return views.at(alias).hostWrites != 0; });
+                    for (auto chunk = (cursor - base) / subpageBytes; base + chunk * subpageBytes < stop; ++chunk) {
+                        const auto at = std::max(cursor, base + chunk * subpageBytes);
+                        const auto bit = static_cast<std::uint8_t>(1u << chunk);
+                        const auto* current = reinterpret_cast<const std::byte*>(base + chunk * subpageBytes);
+                        auto* snapshot = view.page->comparedBytes.data() + chunk * subpageBytes;
+                        const bool known = (view.page->comparedValid & bit) != 0;
+                        if (subphaseOn && known) subphase.memcmpBytes += subpageBytes;
+                        if (!known || std::memcmp(snapshot, current, subpageBytes) != 0) {
+                            std::memcpy(snapshot, current, subpageBytes);
+                            view.page->comparedValid |= bit;
+                            if (subphaseOn) subphase.memcpyBytes += subpageBytes;
+                            invalidate(*view.page, bit);
+                        }
+                        if (view.comparedSeen[chunk] != view.page->generation[chunk]) {
+                            if (*count == capacity) {
+                                if (subphaseOn) addSubphase(&CollectSubphase::sharedCalls, &CollectSubphase::sharedBytes, &CollectSubphase::sharedNanoseconds, stop - cursor, sharedStart);
+                                return true;
+                            }
+                            pages[(*count)++] = reinterpret_cast<void*>(at);
+                            if (subphaseOn) ++subphase.returnedPages;
+                            if (clear && !hostWriting) view.comparedSeen[chunk] = view.page->generation[chunk];
+                        }
+                        if (clear) {
+                            view.collected |= bit;
+                            forget(freshRanges, base + chunk * subpageBytes, base + (chunk + 1) * subpageBytes);
+                        }
+                    }
+                    if (subphaseOn) addSubphase(&CollectSubphase::sharedCalls, &CollectSubphase::sharedBytes, &CollectSubphase::sharedNanoseconds, stop - cursor, sharedStart);
+                    cursor = stop;
+                    continue;
+                }
+                const auto enumStart = subphaseOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                 std::uint8_t settled = 0;
                 auto settledEnd = cursor;
                 bool full = false;
@@ -648,6 +768,7 @@ public:
                             break;
                         }
                         pages[(*count)++] = reinterpret_cast<void*>(from);
+                        if (subphaseOn) ++subphase.returnedPages;
                     }
                     settled |= static_cast<std::uint8_t>(1u << sub);
                     settledEnd = to;
@@ -660,7 +781,9 @@ public:
                         forget(freshRanges, base + sub * subpageBytes, base + (sub + 1) * subpageBytes);
                     }
                 }
+                if (subphaseOn) addSubphase(&CollectSubphase::enumCalls, &CollectSubphase::enumBytes, &CollectSubphase::enumNanoseconds, stop - cursor, enumStart);
                 if (clear && !pinned && settled != 0) {
+                    const auto armStart = subphaseOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                     std::uint8_t untracked = 0;
                     for (const auto alias : view.page->aliases) {
                         auto& other = views.at(alias);
@@ -673,6 +796,14 @@ public:
                         }
                         const DWORD protection = other.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
                         protectSubpages(alias, arming, protection, "arm shared memory write tracking", other.viewBytes);
+                        if (subphaseOn) {
+                            bool previous = false;
+                            for (std::size_t sub = 0; sub < subpages; ++sub) {
+                                const bool selected = (arming & (1u << sub)) != 0;
+                                if (selected && !previous) ++subphase.armedProtectCalls;
+                                previous = selected;
+                            }
+                        }
                         other.armed |= arming;
                     }
                     const auto tracked = static_cast<std::uint8_t>(settled & ~untracked);
@@ -687,6 +818,7 @@ public:
                         }
                         cleanEnd = to;
                     }
+                    if (subphaseOn) addSubphase(&CollectSubphase::armCalls, &CollectSubphase::armBytes, &CollectSubphase::armNanoseconds, stop - cursor, armStart);
                 }
                 if (full) {
                     flushClean();
@@ -695,6 +827,7 @@ public:
                 cursor = stop;
             } else {
                 flushClean();
+                const auto covStart = subphaseOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                 if (collection == Collection::Fresh) {
                     const auto next = views.lower_bound(cursor);
                     cursor = next == views.end() ? end : std::min(end, next->first);
@@ -704,9 +837,11 @@ public:
                 if (allocationEnd == 0) return false;
                 if (capacity == *count) return true;
                 const auto stop = ownedPending.empty() ? std::min(end, allocationEnd) : std::min({end, allocationEnd, (cursor & ~std::uintptr_t{4095}) + (capacity - *count) * 4096});
+                if (subphaseOn) addSubphase(&CollectSubphase::coverageCalls, &CollectSubphase::coverageBytes, &CollectSubphase::coverageNanoseconds, stop - cursor, covStart);
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
                 ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
                 DWORD granularity = 0;
+                const auto privStart = subphaseOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 #ifdef APS5_COUNT_MAPPING_QUERIES
                 ++collectSystemCalls;
                 collectPieces += (stop + pageBytes - 1) / pageBytes - cursor / pageBytes;
@@ -718,7 +853,9 @@ public:
                     fail("collect private guest writes");
                 }
                 if (!committed) staleProof(cursor, stop);
+                if (subphaseOn) addSubphase(&CollectSubphase::privateCalls, &CollectSubphase::privateBytes, &CollectSubphase::privateNanoseconds, stop - cursor, privStart);
                 *count += available;
+                if (subphaseOn) subphase.returnedPages += available;
                 if (*count == capacity) return true;
                 cursor = stop;
             }
@@ -872,6 +1009,8 @@ private:
             return initial;
         }();
         std::vector<std::uintptr_t> aliases;
+        std::vector<std::byte> comparedBytes;
+        std::uint8_t comparedValid = 0;
         std::uint32_t pins = 0;
         bool comparedWhenShared = false;
     };
@@ -923,6 +1062,7 @@ private:
         bool resident = false;
         std::shared_ptr<Physical> slot;
         std::size_t viewBytes = pageBytes;
+        std::array<std::uint64_t, 4> comparedSeen{};
         std::uint32_t hostImports = 0;
         bool aliasDemoted = false;
         std::uint8_t unreported = 0;
@@ -1420,6 +1560,13 @@ private:
         if (query(address).RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS)) fail("coalesce guest placeholders");
     }
 
+    static void addSubphase(std::uint64_t CollectSubphase::*calls, std::uint64_t CollectSubphase::*bytes, std::uint64_t CollectSubphase::*nanoseconds, std::size_t span, std::chrono::steady_clock::time_point start) {
+        auto& totals = Get().subphase;
+        ++(totals.*calls);
+        (totals.*bytes) += static_cast<std::uint64_t>(span);
+        (totals.*nanoseconds) += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    }
+
     void* mapAliasRuns(std::uintptr_t address, std::size_t bytes) {
         auto* reserved = allocate(GetCurrentProcess(), nullptr, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
         if (reserved == nullptr) fail("reserve a read-write alias of shared guest memory");
@@ -1482,10 +1629,11 @@ private:
     }
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::shared_ptr<Physical>> physical;
     std::map<std::uintptr_t, Run> residentRuns;
+    std::map<std::uintptr_t, std::size_t> splitAliases;
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::map<std::uintptr_t, Run>::iterator> residentIndex;
     std::vector<std::shared_ptr<Saved>> savedPool;
     std::size_t savedPoolBytes = 0;
-    std::map<std::uintptr_t, std::size_t> splitAliases;
+    CollectSubphase subphase;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
 #ifdef APS5_COUNT_MAPPING_QUERIES

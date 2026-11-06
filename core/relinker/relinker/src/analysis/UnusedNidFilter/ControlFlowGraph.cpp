@@ -143,6 +143,7 @@ void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vir
                         enqueue(nextVaddr + static_cast<VirtualAddress>(info.BranchDisp));
                     break;
                 case UnconditionalJump:
+                case IndirectJump:
                     fallThrough = false;
                     if (info.HasRipRelativeDisp) {
                         std::int32_t disp = 0;
@@ -157,6 +158,7 @@ void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vir
                     }
                     break;
                 case Call:
+                case IndirectCall:
                     if (info.HasRipRelativeDisp) {
                         std::int32_t disp = 0;
                         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
@@ -170,11 +172,7 @@ void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vir
                     }
                     fallThrough = !zeroPaddingFollows(nextVaddr);
                     break;
-                case IndirectCall:
-                    fallThrough = !zeroPaddingFollows(nextVaddr);
-                    break;
                 case Return:
-                case IndirectJump:
                 case Trap:
                     fallThrough = false;
                     break;

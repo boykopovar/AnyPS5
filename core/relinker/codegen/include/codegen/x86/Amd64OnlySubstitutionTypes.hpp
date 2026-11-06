@@ -20,6 +20,12 @@ enum class Amd64OnlyLowering : std::uint8_t {
     Kept
 };
 
+struct PendingRipFixup {
+    std::size_t BodyOffset;
+    std::int32_t OriginalDisplacement;
+    std::size_t InstructionEnd;
+};
+
 struct StubRelocation {
     std::size_t DisplacementOffset;
     std::size_t InstructionEnd;
@@ -34,6 +40,8 @@ struct Amd64OnlyMatch {
     std::vector<std::uint8_t> ReplacementBytes;
     std::vector<std::uint8_t> StubBody;
     std::size_t ReturnBranchOffset;
+    std::size_t TrailingOffset = 0;
+    std::vector<PendingRipFixup> RipFixups;
     bool Optional = false;
     std::vector<StubRelocation> Relocations = {};
     bool RelocatableWindow = false;

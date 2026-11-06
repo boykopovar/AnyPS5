@@ -841,16 +841,16 @@ bool IsImageOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::ImageStoreMipPck4:
         case RdnaOpcode::ImageMsaaLoad:
         case RdnaOpcode::ImageAtomicSwap:
+        case RdnaOpcode::ImageAtomicCmpswap:
         case RdnaOpcode::ImageAtomicAdd:
+        case RdnaOpcode::ImageAtomicSub:
+        case RdnaOpcode::ImageAtomicSmin:
         case RdnaOpcode::ImageAtomicUmin:
+        case RdnaOpcode::ImageAtomicSmax:
         case RdnaOpcode::ImageAtomicUmax:
         case RdnaOpcode::ImageAtomicAnd:
         case RdnaOpcode::ImageAtomicOr:
         case RdnaOpcode::ImageAtomicXor:
-        case RdnaOpcode::ImageAtomicCmpswap:
-        case RdnaOpcode::ImageAtomicSub:
-        case RdnaOpcode::ImageAtomicSmin:
-        case RdnaOpcode::ImageAtomicSmax:
         case RdnaOpcode::ImageAtomicInc:
         case RdnaOpcode::ImageAtomicDec:
         case RdnaOpcode::ImageAtomicFcmpswap:
@@ -859,6 +859,7 @@ bool IsImageOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::ImageGather4Lz:
         case RdnaOpcode::ImageGather4C:
         case RdnaOpcode::ImageGather4CLz:
+        case RdnaOpcode::ImageGather4O:
         case RdnaOpcode::ImageGather4LzO:
         case RdnaOpcode::ImageGather4CO:
         case RdnaOpcode::ImageGather4CLzO:
@@ -882,7 +883,6 @@ bool IsImageOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::ImageGather4CLO:
         case RdnaOpcode::ImageGather4L:
         case RdnaOpcode::ImageGather4LO:
-        case RdnaOpcode::ImageGather4O:
         case RdnaOpcode::ImageBvhIntersectRay:
         case RdnaOpcode::ImageBvh64IntersectRay:
             return true;

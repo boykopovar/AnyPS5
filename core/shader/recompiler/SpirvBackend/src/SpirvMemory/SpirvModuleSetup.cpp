@@ -457,8 +457,13 @@ void DefineModule(SpirvEmitterState& state) {
         return input.perVertex || input.kind == StageInputKind::BaryCoordSmooth || input.kind == StageInputKind::BaryCoordNoPerspective;
     });
     if (fragmentBarycentric && !state.program.Metadata().barycentricEmulation) {
+        constexpr std::string_view barycentricExtension = "SPV_KHR_fragment_shader_barycentric";
+        const bool capable = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFragmentBarycentricKHR)) != state.supportedCapabilities.end();
+        const bool extended = std::find(state.supportedExtensions.begin(), state.supportedExtensions.end(), barycentricExtension) != state.supportedExtensions.end();
+        if (!state.fragmentShaderBarycentricEnabled || !capable || !extended)
+            throw std::runtime_error("shader reads barycentric coordinates but the target does not enable SPV_KHR_fragment_shader_barycentric");
         state.module.EmitCapability(spv::CapabilityFragmentBarycentricKHR);
-        state.module.EmitExtension("SPV_KHR_fragment_shader_barycentric");
+        state.module.EmitExtension(std::string(barycentricExtension));
     }
     state.module.EmitCapability(spv::CapabilitySignedZeroInfNanPreserve);
     state.module.EmitExtension("SPV_KHR_float_controls");

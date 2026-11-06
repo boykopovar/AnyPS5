@@ -120,6 +120,10 @@ bool TranslationContext::imageAtomic(const RdnaInstruction& inst, IrOpcode opcod
     return true;
 }
 
+bool TranslationContext::imageAtomicCompareSwap(const RdnaInstruction& inst) {
+    return imageAtomic(inst, IrOpcode::ImageAtomicCmpSwap32);
+}
+
 bool TranslationContext::imageGetResinfo(const RdnaInstruction& inst) {
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     IrValue* resource = getImageResource(memory);

@@ -184,7 +184,15 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         }
     }
     replacement->touched = drawCacheHits;
-    if (replacement->decode != nullptr && shape != 0) drawShapes[shape] = key;
+    // Shape index: the entry a shape key resolves to. Under APS5_DRAW_LAYOUT_VARIANTS
+    // it must stay stable (and alive) so that a draw whose user words only moved can
+    // rebind from it; without the flag the newest insert wins, as before.
+    const bool shapeCache = layoutVariantsEnabled();
+    if (replacement->decode != nullptr && shape != 0) {
+        const auto slot = drawShapes.find(shape);
+        const bool live = slot != drawShapes.end() && drawCache.contains(slot->second);
+        if (!shapeCache || replaceShape || !live) drawShapes[shape] = key;
+    }
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();
@@ -196,7 +204,37 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     }
     while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
         const bool overBytes = drawCache.size() <= drawCacheEntries();
-        const auto last = drawCache.find(drawOrder.back());
+        // Shape representatives are pinned while the shape cache is on: evicting one
+        // would drop the only entry a whole shape can rebind from, which is exactly
+        // the failure that kept 83% of DREDGE's draws on the recompiled path. The
+        // pinning is relaxed once the cache exceeds 1.5x its entry budget, so a scene
+        // with more shapes than entries still evicts instead of growing without bound.
+        const bool relaxPins = drawCache.size() > drawCacheEntries() + drawCacheEntries() / 2;
+        // The victim search is bounded: scanning the whole LRU list on every insert
+        // (the cache is at capacity almost always) turned eviction into O(entries)
+        // work per draw. Sixteen probes keep the shape representatives alive in
+        // practice while leaving eviction O(1); if every probe is pinned we evict the
+        // coldest entry anyway instead of growing past the budget.
+        constexpr std::size_t VictimProbes = 16;
+        auto victim = drawOrder.end();
+        std::size_t probes = 0;
+        for (auto it = drawOrder.end(); it != drawOrder.begin() && probes < VictimProbes; ++probes) {
+            --it;
+            bool pinned = false;
+            if (shapeCache && !relaxPins) {
+                const auto candidate = drawCache.find(*it);
+                if (candidate != drawCache.end() && candidate->second->shape != 0) {
+                    const auto slot = drawShapes.find(candidate->second->shape);
+                    pinned = slot != drawShapes.end() && slot->second == *it;
+                }
+            }
+            if (!pinned) {
+                victim = it;
+                break;
+            }
+        }
+        if (victim == drawOrder.end()) victim = std::prev(drawOrder.end());
+        const auto last = drawCache.find(*victim);
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
         }

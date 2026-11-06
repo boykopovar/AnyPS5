@@ -1,6 +1,7 @@
 #ifndef DECODER_JPEG_HPP
 #define DECODER_JPEG_HPP
 
+
 #include <cstdint>
 #include <optional>
 #include <span>

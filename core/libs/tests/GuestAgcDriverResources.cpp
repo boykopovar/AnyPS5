@@ -129,7 +129,8 @@ int main() {
     Require(sceAgcDriverInitResourceRegistrationInterface() == Unavailable);
     Require(sceAgcDriverSetResourceRegistrationInfo() == 0);
     Require(sceAgcDriverInitResourceRegistration() == 0);
-    std::uint64_t userMemSize = 0;
-    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&userMemSize) == 0 && userMemSize == 0x4000ull);
-    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr) == 0x80020065u);
+    std::uint64_t userMemSize = 0x12345678ull;
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&userMemSize, 128u, 64u) == Unavailable);
+    Require(userMemSize == 0x12345678ull);
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr, 128u, 64u) == Unavailable);
 }

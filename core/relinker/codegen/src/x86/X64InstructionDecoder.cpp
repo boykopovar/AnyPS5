@@ -39,6 +39,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             break;
         }
 
+        if (b == PrefixAddressSize) addressSizeOverride = true;
         rexPresent = false;
         rex = 0;
         pos += 1;
@@ -120,6 +121,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
     bool hasModRm = false;
     std::size_t immediateSize = ImmSizeNone;
+    const bool operandSize16 = operandSizeOverride && !rexW;
 
     const bool vectorImmediate = vexMap == 1 && ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xC2 || opcode == 0xC4 || opcode == 0xC5 || opcode == 0xC6);
 
@@ -194,10 +196,14 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    opcode == OneByteTestEaxImm32 ||
                    (opcode >= OneByteMovImm32RegMin && opcode <= OneByteMovImm32RegMax)) {
             if (opcode >= OneByteMovImm32RegMin && opcode <= OneByteMovImm32RegMax) {
-                immediateSize = rexW ? ImmSize64 : operandImmediateSize;
+                immediateSize = rexW ? ImmSize64 :
+                    (operandSizeOverride ? ImmSize16 : ImmSize32);
+
             } else {
-                immediateSize = operandImmediateSize;
+                immediateSize = operandSize16 ? ImmSize16 : ImmSize32;
             }
+        } else if (opcode >= OneByteMovMoffsMin && opcode <= OneByteMovMoffsMax) {
+            immediateSize = addressSizeOverride ? ImmSize32 : ImmSize64;
         } else if (opcode == OneByteImm8Grp1 || opcode == OneByteImulRm32Imm8) {
             immediateSize = ImmSize8;
         }
@@ -307,7 +313,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         reg <= Grp3RegTestMax) {
         immediateSize = (opcode == OneByteTestGrp3Rm8)
             ? ImmSize8
-            : operandImmediateSize;
+            : (operandSize16 ? ImmSize16 : ImmSize32);
     }
 
     if (mod != ModRmModRegister && rm == ModRmRmSibPresent) {
@@ -499,7 +505,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
                 info.HasMemoryOperand = true;
             if (reg == 2) {
                 if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {
-                    info.FlowKind = ControlFlowKind::Call;
+                    info.FlowKind = ControlFlowKind::IndirectCall;
                     info.HasRipRelativeDisp = true;
                     info.RipRelativeDispOffset = pos + 1;
                 } else {
@@ -509,13 +515,9 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             }
             if (reg == 4) {
                 if (mod == ModRmModIndirect && rm == ModRmRmRipRelative) {
-                    std::int32_t disp = 0;
-                    std::memcpy(&disp, data + pos + 1, 4);
-                    info.FlowKind = ControlFlowKind::UnconditionalJump;
+                    info.FlowKind = ControlFlowKind::IndirectJump;
                     info.HasRipRelativeDisp = true;
                     info.RipRelativeDispOffset = pos + 1;
-                    info.HasBranchTarget = true;
-                    info.BranchDisp = disp;
                 } else {
                     info.FlowKind = ControlFlowKind::IndirectJump;
                 }

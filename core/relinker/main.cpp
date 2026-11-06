@@ -60,8 +60,9 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
         input.Modules = std::move(modules.Modules);
         input.RuntimeDirectories = modules.RuntimeDirectories;
     }
-    const auto iconPath = Io::NativePath(args.inputPath).parent_path() / "sce_sys" / "icon0.png";
-    if (args.toWindows && std::filesystem::exists(iconPath)) input.Icon = fileReader.Read(Io::Utf8Path(iconPath));
+    const auto iconPath = args.iconPath.empty() ? Io::NativePath(args.inputPath).parent_path() / "sce_sys" / "icon0.png" : Io::NativePath(args.iconPath);
+    input.IconName = iconPath;
+    if (args.toWindows && (!args.iconPath.empty() || std::filesystem::exists(iconPath))) input.Icon = fileReader.Read(Io::Utf8Path(iconPath));
     Relinker::ConversionOptions options;
     options.Target = args.toWindows ? Relinker::TargetSystem::Windows : args.toMacos ? Relinker::TargetSystem::MacOs : Relinker::TargetSystem::Linux;
     options.ToIntel = args.toIntel;

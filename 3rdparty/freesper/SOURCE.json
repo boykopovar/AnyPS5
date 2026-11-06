@@ -1,0 +1,10 @@
+{
+  "source_root": "C:\\Users\\giann\\Downloads\\freesper-main",
+  "origin_reference": "Prosper 89669c4ef92de2319e135b2484b169ae3f5dc60b (earlier comparison)",
+  "files": {
+    "prosper\\src\\gpu\\texture\\tile.cpp": "ffa4dc58c7d77e4ab9da96ee4b48244888200f07801d4b9c574404b6160b0768",
+    "README.md": "74d4168b88e629c4a1f87435a1b770a614c0fc16ff8f3015c03e2fe883131883"
+  },
+  "imported_symbol": "prosper::gpu::gfx10_dcc_fast_clear_rgba8",
+  "changes": "Function body unchanged; inline, standard includes and namespace wrapper added."
+}

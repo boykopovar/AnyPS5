@@ -40,6 +40,7 @@ struct ConversionInput {
     std::vector<GuestModuleInput> Modules;
     std::vector<std::filesystem::path> RuntimeDirectories;
     std::optional<std::vector<std::uint8_t>> Icon;
+    std::filesystem::path IconName = "icon0.png";
 };
 
 struct ConversionOutput {

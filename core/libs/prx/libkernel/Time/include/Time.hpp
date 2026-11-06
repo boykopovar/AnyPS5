@@ -27,6 +27,11 @@ extern "C" {
     // with their timeout rate; a site that times out once per frame is a lost wake-up.
     void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint64_t waitedNanos, bool timedOut);
 
+    // Debug aid: narrows the APS5_TRACE_WAITS report to one OS thread, so another module that knows
+    // which thread it cares about (VideoOut knows the thread that submits flips) can ask for its
+    // waits only. 0 restores the whole-process report. Only meaningful with APS5_TRACE_WAITS set.
+    void sceKernelTraceWaitsFocus_nid_postfix(unsigned long thread);
+
 }
 
 #endif

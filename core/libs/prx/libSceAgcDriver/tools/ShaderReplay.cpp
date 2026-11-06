@@ -15,12 +15,15 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <exception>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -47,6 +50,7 @@ bool g_memory = false;
 bool g_spirv = false;
 bool g_prepare = false;
 bool g_materialize = false;
+bool g_benchmark = false;
 bool g_graph = false;
 bool g_maintenance8 = false;
 bool g_robust2 = false;
@@ -174,6 +178,46 @@ bool Replay(const char* path) {
                 phase = "materialize";
                 const auto result = invocation->Materialize(*capture);
                 std::printf("  materialized: %zu SPIR-V words\n", result->spirv.size());
+                if (g_benchmark) {
+                    const auto memo = ShaderRecompiler::Recompile(request.request, *capture);
+                    if (!std::ranges::equal(result->spirv.Words(), memo->spirv.Words())) throw std::runtime_error("memoized SPIR-V differs from materialization");
+                    std::vector<double> directSamples;
+                    std::vector<double> memoSamples;
+                    std::vector<double> captureSamples;
+                    const auto measureCapture = [&] {
+                        const auto started = std::chrono::steady_clock::now();
+                        for (std::size_t iteration = 0; iteration < 64u; ++iteration) static_cast<void>(invocation->Capture(runtime));
+                        return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / 64.0;
+                    };
+                    const auto measure = [&](bool cached) {
+                        std::size_t words = 0;
+                        const auto started = std::chrono::steady_clock::now();
+                        for (std::size_t iteration = 0; iteration < 64u; ++iteration) {
+                            const auto current = cached ? ShaderRecompiler::Recompile(request.request, *capture) : invocation->Materialize(*capture);
+                            words += current->spirv.size();
+                        }
+                        const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / 64.0;
+                        if (words != result->spirv.size() * 64u) throw std::runtime_error("repeated materialization changed SPIR-V size");
+                        return elapsed;
+                    };
+                    static_cast<void>(measure(false));
+                    static_cast<void>(measure(true));
+                    static_cast<void>(measureCapture());
+                    for (std::size_t batch = 0; batch < 31u; ++batch) {
+                        captureSamples.push_back(measureCapture());
+                        if (batch % 2u == 0u) {
+                            directSamples.push_back(measure(false));
+                            memoSamples.push_back(measure(true));
+                        } else {
+                            memoSamples.push_back(measure(true));
+                            directSamples.push_back(measure(false));
+                        }
+                    }
+                    std::ranges::sort(directSamples);
+                    std::ranges::sort(memoSamples);
+                    std::ranges::sort(captureSamples);
+                    std::printf("  MATERIALIZE_BENCH {\"batches\":31,\"iterations_per_batch\":64,\"prepared_p50_us\":%.3f,\"prepared_p95_us\":%.3f,\"recompile_p50_us\":%.3f,\"recompile_p95_us\":%.3f,\"capture_p50_us\":%.3f,\"capture_p95_us\":%.3f}\n", directSamples[15], directSamples[29], memoSamples[15], memoSamples[29], captureSamples[15], captureSamples[29]);
+                }
             }
             return true;
         } catch (const std::exception& error) {
@@ -190,6 +234,11 @@ bool Replay(const char* path) {
             std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
         }
         if (g_memory) {
+            for (const auto& attribute : result.vertexAttributes) {
+                const auto& v = attribute.resource.fields;
+                std::printf("  vertex location %u, components %u, fetch %u: V# %08x %08x %08x %08x\n", attribute.location, attribute.components, attribute.fetchIndex, v[0], v[1], v[2], v[3]);
+            }
+            std::printf("  vertex offset SGPR %d, instance offset SGPR %d\n", result.vertexOffsetSgpr, result.instanceOffsetSgpr);
             for (const auto& binding : result.bindings) {
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
                 for (std::size_t i = 0; i + 4 <= binding.guestDescriptor.size(); i += 4) {
@@ -219,7 +268,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--bench-materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -274,6 +323,11 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--prepare") {
             g_prepare = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--bench-materialize") {
+            g_benchmark = true;
+            g_materialize = true;
             continue;
         }
         if (std::string(argv[i]) == "--materialize") {

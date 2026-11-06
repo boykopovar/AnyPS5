@@ -135,6 +135,76 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
     }
 }
 
+bool Driver::layoutVariantsEnabled() {
+    static const bool enabled = std::getenv("APS5_DRAW_LAYOUT_VARIANTS") != nullptr;
+    return enabled;
+}
+
+void Driver::buildVariantTape(DispatchVariant& variant, const DrawProgram& program) {
+    if (!layoutVariantsEnabled()) return;
+    variant.tape = std::make_shared<const VariantTape>(BuildVariantTape(variant.runs, variant.runBases, variant.words, program.userData));
+}
+
+bool Driver::rebindVariantTape(const DispatchVariant& variant, std::span<const std::uint32_t> oldUser, std::span<const std::uint32_t> newUser, std::shared_ptr<DispatchVariant>& out, std::vector<ShaderRecompiler::MemoryRegion>& outRegions) {
+    out = nullptr;
+    outRegions.clear();
+    if (!layoutVariantsEnabled() || variant.tape == nullptr || !variant.tape->rebasable || variant.compiled == nullptr) return false;
+    const auto& tape = *variant.tape;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+    std::vector<std::uint32_t> flat;
+    if (!ReplayVariantTape(tape, newUser, runs, flat)) return false;
+    // Field-by-field copy: DispatchVariant holds an atomic and is not copy-assignable.
+    auto copy = std::make_shared<DispatchVariant>();
+    copy->runs = runs;
+    copy->runBases = variant.runBases;
+    copy->relocatableWords = variant.relocatableWords;
+    copy->valueWords = variant.valueWords;
+    copy->valueSlots = variant.valueSlots;
+    copy->calleeWords = variant.calleeWords;
+    copy->calleeReads = variant.calleeReads;
+    copy->words = flat;
+    copy->shared = variant.shared;
+    copy->forgetSerial = variant.forgetSerial;
+    copy->compiled = variant.compiled;
+    copy->registeredViews = variant.registeredViews;
+    copy->meshIndexDescriptor = variant.meshIndexDescriptor;
+    copy->shader = variant.shader;
+    copy->recipe.store(variant.recipe.load());
+    copy->dataPositions = variant.dataPositions;
+    copy->dataSlots = variant.dataSlots;
+    copy->flatBinding = variant.flatBinding;
+    copy->pushOffset = variant.pushOffset;
+    copy->userDataMask = variant.userDataMask;
+    copy->vertexInfo = variant.vertexInfo;
+    copy->memory = variant.memory;
+    copy->captured = variant.captured;
+    copy->spans = variant.spans;
+    copy->tape = variant.tape;
+    // Data runs carry live content at the rebound address, so downstream
+    // validation compares equal by construction; Structural runs keep the
+    // patched captured bytes and are equality-checked by validateVariant.
+    for (std::size_t r = 0; r < runs.size(); ++r) {
+        if (tape.regions[r].kind != TapeField::Data) continue;
+        const auto w0 = tape.runWordOffset[r];
+        const auto count = tape.regions[r].bytes / 4u;
+        if (w0 + count > copy->words.size()) return false;
+        if (GuestMemory::CopyMapped(runs[r].first, std::as_writable_bytes(std::span(copy->words).subspan(w0, count))) != GuestMemory::Compare::Equal) return false;
+    }
+    // RebindPatches compares the tape's own snapshot with the new user words, so a
+    // cached rebound copy stays rebindable even though its words moved.
+    RebindPatches(tape, tape.oldUserData, newUser, variant.valueSlots, variant.compiled->shaderDataUserWords, copy->descriptorPatches, copy->shaderDataPatches);
+    outRegions.reserve(runs.size());
+    std::uint32_t offset = 0;
+    for (std::size_t r = 0; r < runs.size(); ++r) {
+        const auto count = tape.regions[r].bytes / 4u;
+        if (offset + count > copy->words.size()) return false;
+        outRegions.push_back({runs[r].first, std::as_bytes(std::span<const std::uint32_t>(copy->words).subspan(offset, count))});
+        offset += count;
+    }
+    out = std::move(copy);
+    return true;
+}
+
 void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied) {
     std::uint64_t relocatable = eligible && drawRelocationEnabled() ? use.asBase & ~use.asValue : 0;
     if (hiddenWords != 0) relocatable &= hiddenWords >= 64 ? 0 : ~((std::uint64_t {1} << hiddenWords) - 1);

@@ -14,6 +14,11 @@ if(NOT code STREQUAL "0" OR NOT output MATCHES "materialized: [0-9]+ SPIR-V word
     message(FATAL_ERROR "inactive image replay failed: ${code}\n${output}${errors}")
 endif()
 
+execute_process(COMMAND "${TOOL}" --bench-materialize "${CAPTURE}/inactive.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "0" OR NOT output MATCHES "MATERIALIZE_BENCH.*prepared_p50_us.*capture_p95_us")
+    message(FATAL_ERROR "materialization benchmark failed: ${code}\n${output}${errors}")
+endif()
+
 execute_process(COMMAND "${TOOL}" --materialize "${CAPTURE}/invalid.req" RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT code STREQUAL "1" OR NOT output MATCHES "capture failed: runtime image descriptor is invalid")
     message(FATAL_ERROR "active invalid image replay did not fail at capture: ${code}\n${output}${errors}")

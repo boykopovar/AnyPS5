@@ -3,8 +3,8 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdio>
 #include <cstring>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -100,8 +100,8 @@ std::uint32_t* WriteRegisterRange(CommandBuffer* buffer, std::uint32_t opcode, s
     Require(count != 0 && count <= 0x3fffu && offset <= 0xffffu && count <= 0x10000u - offset, function, "invalid register range");
     std::vector<std::uint32_t> snapshot;
     if (values != nullptr) {
-        snapshot.resize(count);
-        std::memcpy(snapshot.data(), values, static_cast<std::size_t>(count) * sizeof(std::uint32_t));
+        CheckAddress(reinterpret_cast<std::uintptr_t>(values), 4, function);
+        snapshot.assign(values, values + count);
     }
     auto* packet = Allocate(buffer, count + 2u, function);
     packet[0] = Header(opcode, count + 2u);
@@ -150,8 +150,15 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
     return first;
 }
 
+// Debug aid: APS5_TRACE_INDIRECT_REGS=1 logs every indirect register packet the title builds or patches.
+bool TraceIndirectRegisters() {
+    static const bool value = std::getenv("APS5_TRACE_INDIRECT_REGS") != nullptr;
+    return value;
+}
+
 std::uint32_t* WriteIndirectRegisters(CommandBuffer* buffer, std::uint32_t opcode, const volatile ShaderRegister* registers, std::uint32_t count, const char* function) {
     const auto address = reinterpret_cast<std::uintptr_t>(registers);
+    if (TraceIndirectRegisters()) std::fprintf(stderr, "[agc] %s opcode 0x%x regs %p count %u\n", function, opcode, reinterpret_cast<const void*>(address), count);
     if (address != 0 || count != 0) CheckAddress(address, 4, function);
     CheckBits(count, 0x3fffu, function);
     return Emit(buffer, opcode, {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 0x80000000u, count}, function);
@@ -162,6 +169,7 @@ void PatchIndirectAddress(std::uint32_t* packet, std::uint32_t opcode, const vol
     Require(packet[3] == 0x80000000u && (packet[4] & ~0x3fffu) == 0, function, "invalid indirect register packet");
     const auto address = reinterpret_cast<std::uintptr_t>(registers);
     CheckAddress(address, 4, function);
+    if (TraceIndirectRegisters()) std::fprintf(stderr, "[agc] %s packet %p regs %p count %u\n", function, static_cast<void*>(packet), reinterpret_cast<const void*>(address), packet[4]);
     packet[1] = static_cast<std::uint32_t>(address);
     packet[2] = static_cast<std::uint32_t>(address >> 32u);
 }
@@ -169,6 +177,12 @@ void PatchIndirectAddress(std::uint32_t* packet, std::uint32_t opcode, const vol
 void PatchIndirectCount(std::uint32_t* packet, std::uint32_t opcode, std::uint32_t count, const char* function) {
     ValidatePacket(packet, opcode, 5, function);
     Require(packet[3] == 0x80000000u && packet[4] <= 0x3fffu && count <= 0x3fffu - packet[4], function, "indirect register count overflow or invalid packet");
+    if (TraceIndirectRegisters()) {
+        const auto* added = reinterpret_cast<const ShaderRegister*>(packet[1] | (static_cast<std::uintptr_t>(packet[2]) << 32u)) + packet[4];
+        std::uint32_t invalid = 0;
+        for (std::uint32_t i = 0; i < count; ++i) invalid += (added[i].offset & ~0x70000000u) > 0xffffu ? 1u : 0u;
+        std::fprintf(stderr, "[agc] %s packet %p count %u + %u (first 0x%x, %u invalid)\n", function, static_cast<void*>(packet), packet[4], count, count != 0 ? added[0].offset : 0u, invalid);
+    }
     packet[4] += count;
 }
 

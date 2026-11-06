@@ -377,6 +377,25 @@ Set `APS5_THREAD_PRIORITY=high` to raise the AGC driver's queue workers and the 
 
 The shader recompilation logic in [core/shader/recompiler](../../core/shader/recompiler) is isolated from the rest of the project and is a pure function of its input data, designed for integration into any other project. The current CMake target also includes cache support and links a supplied runtime target, glslang, and optionally SPIRV-Tools.
 
+## Graphics latency suite without a game
+
+With `BUILD_TESTING=ON`, build the graphics test targets, then run:
+
+```sh
+python tools/graphics_suite.py --build build --output artifacts/graphics-validation --prepare
+python tools/graphics_suite.py --build build --output artifacts/graphics-performance --performance --runs 3
+```
+
+Set `VK_LAYER_PATH` to the Vulkan SDK layer directory if it is not registered, and put the compiler runtime DLL directory on `PATH` on Windows. The first command requires the validation layer to load, refuses skipped or missing tests, checks GPU output markers, and rejects VUID errors. It covers command submission, draw descriptors, memory revalidation, shader snapshots, pipeline caches, buffer pools, presentation, depth, sampled storage and multisampling. The second command disables the requested validation layer and measures synthetic submission latency in three fresh processes.
+
+`--prepare` builds only the selected executable targets, discovered from CTest, and saves compiler output in `build.log`. Without it, run against an already updated build. `--cmake` and `--ctest` accept explicit tool paths.
+
+`agc_frametime` submits 1, 32 and 128 compute dispatches per batch through the real AGC driver, warms up 20 batches and records 300 samples per workload. Its JSON measurements separate CPU preparation/submission from completion waiting, and report p50/p95/p99/max plus samples exceeding 16.67 ms. `agc_draw_frametime` also measures 300 offscreen triangle draws with depth writes, shader preparation, pipeline lookup, GPU completion and pixel readback; it verifies target coverage on every draw. This small target measures fixed costs, not fill rate at game resolution. The performance runner fails when any total p99 exceeds `--budget-ms` (default 1000/60). CTest alone checks correctness and does not apply a timing threshold. Logs, JUnit results and `summary.json` are written to the requested artifact directory.
+
+These are offscreen component measurements, not displayed frame times or a prediction of game FPS. They omit a game's draw mix, resolution, presentation pacing and CPU workload. A green suite is a prerequisite for a controlled game test, not proof of 60 FPS. Keep unrelated GPU workloads consistent when comparing runs.
+
+The first batch is reported separately as `cold_total_ms` to expose startup/compilation cost. Warm samples also fail the performance gate when any maximum exceeds `--max-ms` (default 1000/30), even when p99 is within budget. Validation runs report timing but do not apply these performance thresholds.
+
 ## Register context tests
 
 The x86-64 register capture and restore tests can be built separately on Linux and macOS, without submodules or the prx libraries. On macOS:

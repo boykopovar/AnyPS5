@@ -4,6 +4,11 @@
 #include <cstdint>
 #include <cstddef>
 #include <limits>
+#include <cstdio>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
@@ -42,10 +47,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#ifdef __APPLE__
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
-#endif
 
 static_assert(sizeof(KernelIovec) == sizeof(GuestSockets::Iovec));
 static_assert(sizeof(KernelIovec) == sizeof(AppArchiveBuffer) && offsetof(KernelIovec, length) == offsetof(AppArchiveBuffer, Length));
@@ -61,7 +62,6 @@ static constexpr std::uint64_t KERNEL_MNT_NOSUID = 0x8;
 #include <windows.h>
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 #include <io.h>
-#include <cstdio>
 #include <fcntl.h>
 #include <direct.h>
 #include <sys/stat.h>
@@ -232,8 +232,6 @@ static int SetTimes(HANDLE handle, const KernelTimeval* times) {
         GetSystemTimePreciseAsFileTime(&access);
         modified = access;
     } else if (!File::WindowsFileTime::Encode(times[0], access) || !File::WindowsFileTime::Encode(times[1], modified)) {
-        const FILETIME unchanged{0xFFFFFFFF, 0xFFFFFFFF};
-        SetFileTime(handle, nullptr, &unchanged, &unchanged);
         errno = EINVAL;
         return -1;
     }
@@ -1078,6 +1076,7 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         if (fstat_nid_disambig1_nid_postfix(d, &ignored) != 0) return -1;
         return PosixFailure(GUEST_EFAULT);
     }
+    if (d < 0) return PosixResult(SCE_KERNEL_ERROR_EBADF);
     FileStat result{};
     if (GuestSockets::IsOpen(d)) {
         if (const int error = GuestSockets::Stat(d, &result)) return PosixFailure(error);
@@ -1117,7 +1116,6 @@ int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
 }
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
-    if (!GuestSockets::IsOpen(d) && !DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
     if (whence < 0 || whence > 2) return PosixFailure(GUEST_EINVAL);
     return PosixResult(sceKernelLseek(d, offset, whence));
 }
@@ -1203,7 +1201,7 @@ std::int64_t PosixPwrite_nid_no_patch(int d, const void* buf, std::size_t nbytes
 int64_t APS5_VABI read_nid_postfix(int d, void* buf, uint64_t nbytes) {
     if (ExceedsTransferLimit(nbytes)) return PosixFailure(GUEST_EINVAL);
     if (GuestSockets::IsOpen(d)) return GuestSockets::Read(d, buf, static_cast<size_t>(nbytes));
-    if (const int error = TransferArgumentError(d, buf == nullptr && nbytes != 0)) return PosixFailure(error);
+    if (buf == nullptr && nbytes != 0) return PosixFailure(GUEST_EFAULT);
     char emptyBuffer = 0;
     return PosixResult(sceKernelRead(d, buf == nullptr ? &emptyBuffer : buf, static_cast<size_t>(nbytes)));
 }
@@ -1211,7 +1209,7 @@ int64_t APS5_VABI read_nid_postfix(int d, void* buf, uint64_t nbytes) {
 std::int64_t APS5_VABI _read_nid_postfix(int descriptor, void* buffer, std::size_t count) {
     if (ExceedsTransferLimit(count)) return PosixFailure(GUEST_EINVAL);
     if (GuestSockets::IsOpen(descriptor)) return GuestSockets::Read(descriptor, buffer, count);
-    if (const int error = TransferArgumentError(descriptor, buffer == nullptr && count != 0)) return PosixFailure(error);
+    if (buffer == nullptr && count != 0) return PosixFailure(GUEST_EFAULT);
     char emptyBuffer = 0;
     return PosixResult(sceKernelRead(descriptor, buffer == nullptr ? &emptyBuffer : buffer, count));
 }
@@ -1219,7 +1217,7 @@ std::int64_t APS5_VABI _read_nid_postfix(int descriptor, void* buffer, std::size
 int64_t APS5_VABI write_nid_postfix(int d, const char* str, int64_t size) {
     if (size < 0) return PosixFailure(GUEST_EINVAL);
     if (GuestSockets::IsOpen(d)) return GuestSockets::Write(d, str, static_cast<std::size_t>(size));
-    if (const int error = TransferArgumentError(d, str == nullptr && size != 0)) return PosixFailure(error);
+    if (str == nullptr && size != 0) return PosixFailure(GUEST_EFAULT);
     const char emptyBuffer = 0;
     return PosixResult(sceKernelWrite(d, str == nullptr ? &emptyBuffer : str, static_cast<size_t>(size)));
 }
@@ -1227,7 +1225,7 @@ int64_t APS5_VABI write_nid_postfix(int d, const char* str, int64_t size) {
 std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, std::size_t count) {
     if (ExceedsTransferLimit(count)) return PosixFailure(GUEST_EINVAL);
     if (GuestSockets::IsOpen(descriptor)) return GuestSockets::Write(descriptor, buffer, count);
-    if (const int error = TransferArgumentError(descriptor, buffer == nullptr && count != 0)) return PosixFailure(error);
+    if (buffer == nullptr && count != 0) return PosixFailure(GUEST_EFAULT);
     const char emptyBuffer = 0;
     return PosixResult(sceKernelWrite(descriptor, buffer == nullptr ? &emptyBuffer : buffer, count));
 }
@@ -1346,7 +1344,8 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     const GuestArena::HostWrite destination(buf, static_cast<std::size_t>(nbytes));
     const GuestArena::HostWrite baseDestination(basep, basep == nullptr ? 0 : sizeof(*basep));
     if (!destination.Open() || !baseDestination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
-    return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
+    if (basep != nullptr) *basep = 0;
+    return File::ReadDirectoryDescriptor(fd, buf, nbytes);
 }
 
 int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
@@ -1858,9 +1857,15 @@ int64_t APS5_VABI pwritev_nid_postfix(int d, const KernelIovec* iov, int iovcnt,
 }
 
 int APS5_VABI sceKernelRename(const char* from, const char* to) {
-    if (!from) return SceErrorFromErrno(GUEST_EFAULT);
+    if (!from || !to) return SceErrorFromErrno(GUEST_EFAULT);
     const int result = RenameGuestPath_nid_no_patch(from, to);
     return result == 0 ? 0 : SceKernelError(errno);
+}
+
+int APS5_VABI rename_nid_postfix(const char* from, const char* to);
+
+int APS5_VABI KernelPosixRename_nid_no_patch(const char* from, const char* to) {
+    return rename_nid_postfix(from, to);
 }
 
 int APS5_VABI sceKernelRmdir(const char* path) {
@@ -2078,3 +2083,6 @@ int64_t APS5_VABI _writev_nid_postfix(int d, const KernelIovec* iov, int iovcnt)
 }
 
 }
+
+// libScePosix rename: the NID patcher skips the plain name because libc exports one too.
+APS5_EXPORT("NN01qLRhiqU", KernelPosixRename_nid_no_patch);

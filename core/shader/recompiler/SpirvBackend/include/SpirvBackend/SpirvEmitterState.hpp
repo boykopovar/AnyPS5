@@ -139,6 +139,7 @@ struct SpirvEmitterState {
     std::uint32_t spirvVersion = 0x00010300u;
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
+    bool fragmentShaderBarycentricEnabled = false;
     bool nonConstantImageOffsets = false;
     bool shaderImageMinLod = false;
     bool tableIndexNonUniform = true;

@@ -30,6 +30,15 @@ bool sharedTiers() {
     return shared;
 }
 
+VkDeviceSize hostBudget(const char* name, VkDeviceSize fallback) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) return fallback;
+    char* end = nullptr;
+    const auto mib = std::strtoull(value, &end, 10);
+    if (end == value || *end != '\0' || mib == 0 || mib > 16384) return fallback;
+    return static_cast<VkDeviceSize>(mib) * 1024 * 1024;
+}
+
 bool exactSizes() {
     static const bool exact = std::getenv("APS5_NO_BUFFER_CLASSES") != nullptr;
     return exact;
@@ -50,12 +59,9 @@ constexpr VkBufferUsageFlags deviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 }
 
 BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))), cacheReclaim(context.cacheReclaim), device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), allocateMemory(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")), mapMemory(context.Function<PFN_vkMapMemory>("vkMapMemory")), physical(context.physical), memoryProperties(context.memory), memoryProperties2(context.memoryProperties2) {
-    smallTier.budget = smallBudget;
-    largeTier.budget = budget;
+    smallTier.budget = hostBudget("APS5_HOST_SMALL_POOL_MIB", smallBudget);
+    largeTier.budget = hostBudget("APS5_HOST_LARGE_POOL_MIB", budget);
     deviceTier.budget = deviceBudget(context);
-    memoryProperties = context.memory;
-    physical = context.physical;
-    memoryProperties2 = context.memoryProperties2;
     imageBudget = ImageBudget(deviceTier.budget);
 }
 
@@ -81,7 +87,7 @@ VkDeviceMemory BufferPool::allocateMemoryWithReuse(const VkMemoryAllocateInfo& a
     unsigned attempts = 1;
     VkDeviceSize reclaimed = 0;
     VkDeviceSize released = 0;
-    const auto exhausted = [](VkResult value) { return value == VK_ERROR_OUT_OF_DEVICE_MEMORY || value == VK_ERROR_OUT_OF_HOST_MEMORY || value == VK_ERROR_TOO_MANY_OBJECTS; };
+    const auto exhausted = [](VkResult value) { return value == VK_ERROR_OUT_OF_DEVICE_MEMORY || value == VK_ERROR_OUT_OF_HOST_MEMORY; };
     if (exhausted(result)) {
         if (reuse && reuse(allocation.memoryTypeIndex)) return VK_NULL_HANDLE;
         reclaimed = trim();
@@ -428,7 +434,7 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
         const auto now = std::chrono::steady_clock::now();
         if (now - lastReport > std::chrono::seconds(10)) {
             lastReport = now;
-            AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu); images: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.slots, smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.slots, largeTier.retainedBytes / 1048576.0, sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.slots, deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u), static_cast<unsigned long long>(imageHits), static_cast<unsigned long long>(imageMisses), static_cast<unsigned long long>(imageEvictions), imageSlots, imageBytes / 1048576.0, static_cast<unsigned long long>(imageBudget >> 20u));
+            AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.slots, smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(smallTier.budget >> 20u), static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.slots, largeTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.budget >> 20u), sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.slots, deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u));
         }
     }
     auto& tier = tierFor(capacity, properties);
@@ -459,13 +465,14 @@ void BufferPool::evictOldest(Tier& tier, std::vector<BufferAllocation>& evicted)
     const auto oldest = std::min_element(tier.free.begin(), tier.free.end(), [](const auto& left, const auto& right) { return left.second.front().lastUse < right.second.front().lastUse; });
     // First: a throw here leaves the slot retained and counted.
     evicted.push_back(oldest->second.front().allocation);
-    tier.retainedBytes -= oldest->second.front().allocation.allocationBytes;
-    if (oldest->second.front().allocation.buffer == VK_NULL_HANDLE) {
-        imageOrder.erase(oldest->second.front().order);
-        imageBytes -= oldest->second.front().allocation.allocationBytes;
+    const auto& slot = oldest->second.front();
+    if (slot.allocation.buffer == VK_NULL_HANDLE) {
+        imageOrder.erase(slot.order);
+        imageBytes -= slot.allocation.allocationBytes;
         --imageSlots;
         ++imageEvictions;
     }
+    tier.retainedBytes -= oldest->second.front().allocation.allocationBytes;
     oldest->second.pop_front();
     if (oldest->second.empty()) tier.free.erase(oldest);
     --tier.slots;
@@ -565,8 +572,8 @@ VkDeviceSize BufferPool::trim() {
             tier->slots = 0;
         }
         imageEvictions += imageSlots;
-        imageBytes = 0;
         imageSlots = 0;
+        imageBytes = 0;
         imageOrder.clear();
     }
     VkDeviceSize bytes = 0;

@@ -28,6 +28,16 @@
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
+#include <cstring>
+#include <stdexcept>
+#include <string_view>
+#include <mutex>
+#include <set>
+#include <unordered_map>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #ifdef _WIN32
 namespace {
 struct UnwindImage {
@@ -179,8 +189,8 @@ int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** add
 }
 
 int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info) {
-  (void)flags;
-  if (!info) return SCE_KERNEL_ERROR_EFAULT;
+ if (flags >= 3) return SCE_KERNEL_ERROR_EINVAL;
+ if (!info) return SCE_KERNEL_ERROR_EFAULT;
 #if defined(__EMSCRIPTEN__)
   static_cast<void>(addr);
   NotImplemented_nid_no_patch(__func__);
@@ -278,6 +288,7 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
 #endif
 }
 
+}
 namespace {
 
 thread_local PendingModuleArgs pendingModuleArgs;
@@ -296,6 +307,8 @@ void __aps5_set_module_init_result_nid_no_patch(int result) {
 }
 
 }
+
+extern "C" {
 
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
  (void)flags;

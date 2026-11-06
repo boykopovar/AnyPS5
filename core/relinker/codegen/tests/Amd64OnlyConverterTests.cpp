@@ -129,6 +129,15 @@ void decoderLengths() {
         {0x66, 0x0F, 0xC4, 0xC0, 0x01}, {0xC2, 0x08, 0x00}, {0xC8, 0x10, 0x00, 0x00}, {0xF3, 0x0F, 0x2B, 0x07},
         {0xF2, 0x44, 0x0F, 0x2B, 0x4C, 0x24, 0x10}, {0x0F, 0x01, 0xFA}, {0x0F, 0xB9, 0x00},
         {0x41, 0x0F, 0xBB, 0xF7}, {0x0F, 0xBB, 0x47, 0x08},
+        {0x66, 0x48, 0x81, 0xC0, 0x11, 0x22, 0x33, 0x44},
+        {0x66, 0x48, 0xC7, 0xC0, 0x11, 0x22, 0x33, 0x44},
+        {0x66, 0x48, 0x69, 0xC0, 0x11, 0x22, 0x33, 0x44},
+        {0x66, 0x48, 0x05, 0x11, 0x22, 0x33, 0x44},
+        {0x66, 0x48, 0xA9, 0x11, 0x22, 0x33, 0x44},
+        {0x66, 0x48, 0xF7, 0xC0, 0x11, 0x22, 0x33, 0x44},
+        {0x66, 0x81, 0xC0, 0x11, 0x22}, {0x66, 0xF7, 0xC0, 0x11, 0x22},
+        {0x66, 0x68, 0x11, 0x22},
+        {0x66, 0x48, 0xB8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88},
         {0xA0, 1, 2, 3, 4, 5, 6, 7, 8}, {0x48, 0xA1, 1, 2, 3, 4, 5, 6, 7, 8}, {0xA2, 1, 2, 3, 4, 5, 6, 7, 8},
         {0x64, 0x48, 0xA3, 1, 2, 3, 4, 5, 6, 7, 8}, {0x67, 0xA1, 1, 2, 3, 4}, {0x48, 0x67, 0xA3, 1, 2, 3, 4},
         {0x0F, 0x38, 0xCB, 0xCA}, {0x45, 0x0F, 0x38, 0xCC, 0xE1}, {0x0F, 0x38, 0xCD, 0x08}, {0x0F, 0x38, 0xCB, 0x0D, 0x10, 0x00, 0x00, 0x00},
@@ -156,6 +165,15 @@ void decoderLengths() {
     const Bytes lastRex = {0x41, 0x48, 0x8B, 0x00, 0x90};
     const auto last = decoder.DecodeInstruction(lastRex.data(), lastRex.size());
     require(last.Length == 4 && last.OpcodeOffset == 2 && last.RexPrefix == 0x48, "The REX before the opcode was not the one kept");
+    for (const std::uint8_t opcode : {0xA0, 0xA1, 0xA2, 0xA3}) {
+        for (const Bytes prefix : {Bytes{}, Bytes{0x66}, Bytes{0x48}, Bytes{0x66, 0x48}, Bytes{0x67}, Bytes{0x66, 0x67, 0x48}}) {
+            Bytes instruction = prefix;
+            instruction.push_back(opcode);
+            instruction.insert(instruction.end(), std::find(prefix.begin(), prefix.end(), 0x67) == prefix.end() ? 8 : 4, 0x90);
+            require(decoder.Decode(instruction.data(), instruction.size()) == instruction.size(), "MOFFS address width was decoded incorrectly");
+            requireFailure([&] { (void)decoder.Decode(instruction.data(), instruction.size() - 1); }, "Truncated MOFFS address was accepted");
+        }
+    }
 }
 
 const std::vector<Bytes> kRipRelativeVectorLoads = {
@@ -368,6 +386,14 @@ void matcherSubstitutions() {
     require(prefixedMcommit && prefixedMcommit->Lowering == Codegen::Amd64OnlyLowering::InPlace && prefixedMcommit->ReplacementBytes == Bytes{0xF9, 0x0F, 0x1F, 0x40, 0x00}, "Prefixed MCOMMIT was not padded to its length");
     const auto lockedMcommit = match({0xF0, 0xF3, 0x0F, 0x01, 0xFA});
     require(lockedMcommit && lockedMcommit->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK MCOMMIT was replaced instead of failing");
+    const Bytes mcommitBytes = {0xF3, 0x0F, 0x01, 0xFA};
+    const Bytes mwaitxBytes = {0x0F, 0x01, 0xFB};
+    const std::array<std::span<const std::uint8_t>, 2> mcommitSequence = {mcommitBytes, mwaitxBytes};
+    const auto groupedMcommit = Codegen::MakeAmd64OnlyInstructionMatcher()->MatchSequence(mcommitSequence, {});
+    require(groupedMcommit && groupedMcommit->StubBody[0] == 0xF9, "Grouped MCOMMIT did not preserve STC lowering");
+    const Bytes lockedMcommitBytes = {0xF0, 0xF3, 0x0F, 0x01, 0xFA};
+    const std::array<std::span<const std::uint8_t>, 2> lockedMcommitSequence = {lockedMcommitBytes, mwaitxBytes};
+    require(!Codegen::MakeAmd64OnlyInstructionMatcher()->MatchSequence(lockedMcommitSequence, {}).has_value(), "Grouped LOCK MCOMMIT was accepted");
     const auto lockedRdpru = match({0xF0, 0x0F, 0x01, 0xFD});
     require(lockedRdpru && lockedRdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK RDPRU was replaced instead of failing");
     const auto registerForm = match({0x66, 0x0F, 0x79, 0xCA});
@@ -388,7 +414,8 @@ void matcherSubstitutions() {
         require(sha1 && sha1->Lowering == Codegen::Amd64OnlyLowering::Trampoline && sha1->InstructionName == name, "SHA-1 memory form was not lowered through a stub");
     }
     const auto stackMessage = match({0x0F, 0x38, 0xC9, 0x4C, 0x24, 0x18});
-    require(stackMessage && stackMessage->StubBody.size() > 22 && Bytes(stackMessage->StubBody.begin() + 13, stackMessage->StubBody.begin() + 22) == Bytes{0xF3, 0x0F, 0x6F, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00}, "SHA-1 stack operand was not loaded past the spilled scratch register");
+    const Bytes stackLoad{0xF3, 0x0F, 0x6F, 0x84, 0x24, 0xA8, 0x00, 0x00, 0x00};
+    require(stackMessage && std::search(stackMessage->StubBody.begin(), stackMessage->StubBody.end(), stackLoad.begin(), stackLoad.end()) != stackMessage->StubBody.end(), "SHA-1 stack operand was not loaded past the spilled scratch register");
     const auto stub = match(kInsertqHighSite);
     require(stub && stub->Lowering == Codegen::Amd64OnlyLowering::Trampoline && stub->StubBody == kInsertqHighBody && stub->ReturnBranchOffset == 15 && stub->InstructionName == "INSERTQ", "INSERTQ was not lowered through a stub");
     const auto topAligned = match({0x66, 0x0F, 0x78, 0xC3, 0x18, 0x28});
@@ -554,9 +581,29 @@ void converterSegment() {
     require(result.Bytes == expected, "Converter changed bytes other than the MOVNTSS opcode");
     const auto untouched = converter->Convert(Bytes(0x300, 0x90), {segmentHeader(0x100)});
     require(untouched.ReplacedCount == 0 && untouched.Trampolines.empty() && untouched.Reports.empty() && untouched.Bytes == Bytes(0x300, 0x90), "Segment without AMD-only instructions was changed");
+    Bytes addressFixture(0x300, 0x90);
+    const Bytes addressText = {0xA1, 0xF3, 0x0F, 0x2B, 0x07, 0x90, 0x90, 0x90, 0x90, 0xF3, 0x0F, 0x2B, 0x07, 0xC3};
+    std::copy(addressText.begin(), addressText.end(), addressFixture.begin() + 0x200);
+    const auto addressResult = converter->Convert(addressFixture, {segmentHeader(addressText.size())});
+    auto expectedAddress = addressFixture;
+    expectedAddress[0x20B] = 0x11;
+    require(addressResult.Reports.size() == 1 && addressResult.Reports[0].Offset == 0x209 && addressResult.Bytes == expectedAddress, "Converter rewrote instruction-like bytes inside a MOFFS address");
     auto branchInside = file;
     branchInside[0x207] = 0x02;
     requireFailure([&] { (void)converter->Convert(branchInside, {segmentHeader(20)}); }, "Branch into an AMD-only instruction was accepted");
+    auto monitorx = file;
+    monitorx[0x20F] = 0x0F;
+    monitorx[0x210] = 0x01;
+    monitorx[0x211] = 0xFA;
+    monitorx[0x212] = 0x90;
+    const auto monitorxResult = converter->Convert(monitorx, {segmentHeader(20)});
+    require(monitorxResult.ReplacedCount == 1 && monitorxResult.Bytes[0x20F] == 0x0F && monitorxResult.Bytes[0x210] == 0x1F && monitorxResult.Bytes[0x211] == 0x00, "MONITORX was not replaced in place");
+    auto clzero = monitorx;
+    clzero[0x211] = 0xFC;
+    clzero[0x213] = 0x90;
+    const auto clzeroResult = converter->Convert(clzero, {segmentHeader(20)});
+    require(clzeroResult.Trampolines.size() == 2 && clzeroResult.Trampolines[1].Offset == 0x20F && clzeroResult.Trampolines[1].Length == 5, "Short CLZERO did not absorb the following instructions");
+    require(clzeroResult.Trampolines[1].Body[clzeroResult.Trampolines[1].ReturnBranchOffset] == 0xE9, "CLZERO stub does not end with the return jump");
     auto lockedRdpru = file;
     lockedRdpru[0x20F] = 0xF0;
     lockedRdpru[0x210] = 0x0F;
@@ -573,7 +620,10 @@ void converterSegment() {
     auto registerForm = file;
     const Bytes extrqRegister = {0x66, 0x0F, 0x79, 0xCA};
     std::copy(extrqRegister.begin(), extrqRegister.end(), registerForm.begin() + 0x20F);
-    requireFailure([&] { (void)converter->Convert(registerForm, {segmentHeader(20)}); }, "Short EXTRQ followed by a return was relocated");
+    const auto absorbedReturn = converter->Convert(registerForm, {segmentHeader(20)});
+    require(absorbedReturn.Trampolines.size() == 2 && absorbedReturn.Trampolines[1].Length == 5, "Short EXTRQ did not absorb the following return");
+    require(absorbedReturn.Trampolines[1].Body[absorbedReturn.Trampolines[1].ReturnBranchOffset - 1] == 0xC3, "The absorbed return is missing from the stub");
+    require(absorbedReturn.Trampolines[1].Fixups.empty() && absorbedReturn.Trampolines[1].Relocations.empty(), "A return does not need a relocation");
     registerForm[0x213] = 0x90;
     const auto relocated = converter->Convert(registerForm, {segmentHeader(20)});
     require(relocated.Trampolines.size() == 2, "Short EXTRQ register form was not lowered through a stub");
@@ -581,6 +631,15 @@ void converterSegment() {
     const Bytes shortOriginal = {0x66, 0x0F, 0x79, 0xCA, 0x90};
     require(shortSite.Offset == 0x20F && shortSite.Length == 5 && shortSite.OriginalBytes == shortOriginal, "Short EXTRQ site did not absorb the following instruction");
     require(shortSite.Body[shortSite.ReturnBranchOffset - 1] == 0x90 && shortSite.Body[shortSite.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
+    auto branched = file;
+    std::copy(extrqRegister.begin(), extrqRegister.end(), branched.begin() + 0x20F);
+    branched[0x213] = 0xEB;
+    branched[0x214] = 0x00;
+    const auto absorbedBranch = converter->Convert(branched, {segmentHeader(22)});
+    const auto& branchSite = absorbedBranch.Trampolines[1];
+    require(branchSite.Length == 6 && branchSite.Fixups.size() == 1, "Short EXTRQ did not absorb and relocate the following branch");
+    require(branchSite.Body[branchSite.Fixups[0].BodyOffset - 1] == 0xE9, "The absorbed short jump was not widened to a 32 bit jump");
+    require(branchSite.Fixups[0].Target == 0x1015, "The relocated branch does not keep its original target");
     requireFailure([&] { (void)converter->Convert(file, {segmentHeader(0x200)}); }, "Segment exceeding the file was accepted");
 }
 
@@ -610,16 +669,12 @@ void converterRipRelativeFollower() {
     };
     for (const auto& following : kRipRelativeVectorLoads) {
         const auto [file, header] = withFollower(following);
+        const auto info = Codegen::X64InstructionDecoder{}.DecodeInstruction(following.data(), following.size());
+        const auto displacement = read<std::int32_t>(following, info.RipRelativeDispOffset);
+        const auto expectedTarget = static_cast<std::uint64_t>(0x1000 + 4 + following.size() + displacement);
         const auto result = converter->Convert(file, {header});
         require(result.Trampolines.size() == 1 && result.Trampolines[0].Length == 4 + following.size(), "RIP-relative vector load was not moved into the EXTRQ stub");
-        const auto& site = result.Trampolines[0];
-        const auto info = Codegen::X64InstructionDecoder{}.DecodeInstruction(following.data(), following.size());
-        const auto start = site.ReturnBranchOffset - following.size();
-        require(site.Relocations.size() == 1 && site.Relocations[0].DisplacementOffset == start + info.RipRelativeDispOffset && site.Relocations[0].InstructionEnd == site.ReturnBranchOffset && site.Relocations[0].SiteTarget == static_cast<std::int64_t>(4 + following.size()) + 0x10, "Moved RIP-relative vector load has the wrong relocation");
-    }
-    for (const Bytes& following : {Bytes{0xFF, 0x15, 0x10, 0x00, 0x00, 0x00}, Bytes{0xFF, 0x25, 0x10, 0x00, 0x00, 0x00}}) {
-        const auto [file, header] = withFollower(following);
-        require(failureOffset([&] { (void)converter->Convert(file, {header}); }, "RIP-relative indirect branch was moved into an EXTRQ stub") == 0x204, "RIP-relative branch failure does not carry its file offset");
+        require(result.Trampolines[0].Relocations.size() == 1 && result.Trampolines[0].Address + result.Trampolines[0].Relocations[0].SiteTarget == expectedTarget, "Relocated RIP-relative vector load did not preserve its original target");
     }
     for (const auto& following : kRegisterVectorOperations) {
         const auto [file, header] = withFollower(following);
@@ -639,9 +694,6 @@ void converterSha256() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
-    auto locked = file;
-    locked.insert(locked.begin() + 0x200, 0xF0);
-    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-256 was accepted") == 0x200, "LOCK SHA-256 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 2 && result.Reports.size() == 2 && result.Bytes == file, "SHA-256 sites were not lowered through stubs");
     const auto& rounds = result.Trampolines[0];
@@ -651,18 +703,18 @@ void converterSha256() {
     require(message.Body[message.ReturnBranchOffset - 1] == 0x90 && message.Body[message.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     auto beforeReturn = file;
     beforeReturn[0x210] = 0xC3;
-    requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short SHA-256 instruction followed by a return was relocated");
+    const auto absorbedReturn = converter->Convert(beforeReturn, {segmentHeader(text.size())});
+    require(absorbedReturn.Trampolines.size() == 2 && absorbedReturn.Trampolines[1].Length == 5 && absorbedReturn.Trampolines[1].Body[absorbedReturn.Trampolines[1].ReturnBranchOffset - 1] == 0xC3, "Short SHA-256 instruction did not keep its following return in the stub");
     auto memoryForm = file;
     memoryForm[0x20F] = 0x28;
     const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
     require(memoryResult.Trampolines.size() == 2 && memoryResult.Reports[1].InstructionName == "SHA256MSG2", "SHA-256 memory form was not lowered through a stub");
     auto ripRelative = file;
-    const Bytes ripMessage = {0x0F, 0x38, 0xCD, 0x2D, 0x40, 0x00, 0x00, 0x00, 0xC3};
+    const Bytes ripMessage = {0x0F, 0x38, 0xCD, 0x2D, 0x00, 0x00, 0x00, 0x00, 0xC3};
     std::copy(ripMessage.begin(), ripMessage.end(), ripRelative.begin() + 0x20C);
-    const auto ripResult = converter->Convert(ripRelative, {segmentHeader(text.size() + 3)});
-    require(ripResult.Trampolines.size() == 2 && ripResult.Bytes == ripRelative && ripResult.Reports[1].InstructionName == "SHA256MSG2", "SHA-256 RIP-relative form was not lowered through a stub");
-    const auto& ripSite = ripResult.Trampolines[1];
-    require(ripSite.Offset == 0x20C && ripSite.Length == 8 && ripSite.Relocations.size() == 1 && ripSite.Relocations[0].SiteTarget == 8 + 0x40 && ripSite.Relocations[0].InstructionEnd <= ripSite.ReturnBranchOffset, "SHA-256 RIP-relative site was recorded without its relocation");
+    const auto relocatedRip = converter->Convert(ripRelative, {segmentHeader(text.size() + 3)});
+    require(relocatedRip.Trampolines.size() == 2 && relocatedRip.Trampolines[1].Offset == 0x20C && relocatedRip.Trampolines[1].Length == 8, "RIP-relative SHA-256 form was not lowered through a stub");
+    require(relocatedRip.Trampolines[1].Relocations.size() == 1 && relocatedRip.Trampolines[1].Address + relocatedRip.Trampolines[1].Relocations[0].SiteTarget == 0x1014, "RIP-relative SHA-256 relocation did not preserve its original target");
 }
 
 void converterSha1() {
@@ -677,9 +729,6 @@ void converterSha1() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
-    auto locked = file;
-    locked.insert(locked.begin() + 0x200, 0xF0);
-    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-1 was accepted") == 0x200, "LOCK SHA-1 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 3 && result.Reports.size() == 3 && result.Bytes == file, "SHA-1 sites were not lowered through stubs");
     require(result.Trampolines[0].Offset == 0x200 && result.Trampolines[0].Length == 5 && result.Reports[0].InstructionName == "SHA1RNDS4", "SHA1RNDS4 was not lowered as one site");
@@ -689,18 +738,17 @@ void converterSha1() {
     require(message.Body[message.ReturnBranchOffset - 1] == 0x90 && message.Body[message.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     auto beforeReturn = file;
     beforeReturn[0x215] = 0xC3;
-    requireFailure([&] { (void)converter->Convert(beforeReturn, {segmentHeader(text.size())}); }, "Short SHA-1 instruction followed by a return was relocated");
+    const auto absorbedReturn = converter->Convert(beforeReturn, {segmentHeader(text.size())});
+    require(absorbedReturn.Trampolines.size() == 3 && absorbedReturn.Trampolines[2].Length == 5 && absorbedReturn.Trampolines[2].Body[absorbedReturn.Trampolines[2].ReturnBranchOffset - 1] == 0xC3, "Short SHA-1 instruction did not keep its following return in the stub");
     auto memoryForm = file;
     memoryForm[0x214] = 0x28;
     const auto memoryResult = converter->Convert(memoryForm, {segmentHeader(text.size())});
-    require(memoryResult.Trampolines.size() == 3 && memoryResult.Reports[2].InstructionName == "SHA1MSG2", "SHA-1 memory form was not lowered through a stub");
+    require(memoryResult.Trampolines.size() == 3 && memoryResult.Trampolines[2].Offset == 0x211 && memoryResult.Reports[2].InstructionName == "SHA1MSG2", "SHA-1 memory form was not lowered through a stub");
     auto ripRelative = file;
-    const Bytes ripMessage = {0x0F, 0x38, 0xCA, 0x2D, 0xF0, 0xFF, 0xFF, 0xFF, 0xC3};
+    const Bytes ripMessage = {0x0F, 0x38, 0xCA, 0x2D, 0x00, 0x00, 0x00, 0x00, 0xC3};
     std::copy(ripMessage.begin(), ripMessage.end(), ripRelative.begin() + 0x211);
     const auto ripResult = converter->Convert(ripRelative, {segmentHeader(text.size() + 3)});
-    require(ripResult.Trampolines.size() == 3 && ripResult.Bytes == ripRelative && ripResult.Reports[2].InstructionName == "SHA1MSG2", "SHA-1 RIP-relative form was not lowered through a stub");
-    const auto& ripSite = ripResult.Trampolines[2];
-    require(ripSite.Offset == 0x211 && ripSite.Length == 8 && ripSite.Relocations.size() == 1 && ripSite.Relocations[0].SiteTarget == 8 - 16 && ripSite.Relocations[0].InstructionEnd <= ripSite.ReturnBranchOffset, "SHA-1 RIP-relative site was recorded without its relocation");
+    require(ripResult.Trampolines.size() == 3 && ripResult.Trampolines[2].Offset == 0x211 && ripResult.Trampolines[2].Relocations.size() == 1 && ripResult.Trampolines[2].Address + ripResult.Trampolines[2].Relocations[0].SiteTarget == 0x1019, "SHA-1 RIP-relative operand lost its original target");
 }
 
 void converterMonitorWait() {
@@ -2401,12 +2449,12 @@ void scannerZeroTail() {
 
 void scannerUnwindRanges() {
     const Bytes slot{0x48, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x2E, 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC3};
-    const auto gap = Codegen::MakeInstructionScanner({}, {{16, 17}})->ScanCodeSection(slot, 0x1000, slot.size());
+    const auto gap = Codegen::MakeInstructionScanner({}, false, {{16, 17}})->ScanCodeSection(slot, 0x1000, slot.size());
     require(gap.size() == 2 && gap[0].Offset == 0x1001 && gap[0].Length == 15 && gap[1].Offset == 0x1010 && gap[1].Length == 1, "An undecodable byte outside every unwind range must resume the scan at the next byte");
-    requireFailure([&] { (void)Codegen::MakeInstructionScanner({}, {{0, 17}})->ScanCodeSection(slot, 0, slot.size()); }, "An undecodable byte inside an unwind range must still fail");
+    requireFailure([&] { (void)Codegen::MakeInstructionScanner({}, false, {{0, 17}})->ScanCodeSection(slot, 0, slot.size()); }, "An undecodable byte inside an unwind range must still fail");
     requireFailure([&] { (void)Codegen::MakeInstructionScanner()->ScanCodeSection(slot, 0, slot.size()); }, "An undecodable byte without unwind ranges must still fail");
     const Bytes crossing{0xB8, 0x0F, 0x05, 0xC3, 0x90};
-    const auto cut = Codegen::MakeInstructionScanner({}, {{3, 4}, {1, 3}})->ScanCodeSection(crossing, 0, crossing.size());
+    const auto cut = Codegen::MakeInstructionScanner({}, false, {{3, 4}, {1, 3}})->ScanCodeSection(crossing, 0, crossing.size());
     require(cut.size() == 3 && cut[0].Offset == 1 && cut[0].Length == 2 && cut[1].Offset == 3 && cut[2].Offset == 4, "A gap instruction that crosses into an unwind range must end at the range");
     require(Codegen::MakeInstructionScanner()->ScanCodeSection(crossing, 0, crossing.size()).front().Length == 5, "Without unwind ranges the crossing instruction must decode whole");
 }

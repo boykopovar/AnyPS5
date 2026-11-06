@@ -147,6 +147,12 @@ void WindowsLoadImage::WritePointer(const std::uint64_t address, const std::uint
     Io::WriteU64(block.Bytes, offset - block.Offset, value);
 }
 
+void WindowsLoadImage::WritePointer32(const std::uint64_t address, const std::uint32_t value) {
+    const auto offset = GetRva(address, 4) - LoadRva;
+    auto& block = backBlock(offset, 4);
+    Io::WriteU32(block.Bytes, offset - block.Offset, value);
+}
+
 void WindowsLoadImage::RequireWritable(const std::uint64_t address, const std::uint64_t size) const {
     const auto offset = GetRva(address, size) - LoadRva;
     for (auto page = offset / SectionAlignment; page <= (offset + size - 1) / SectionAlignment; ++page) {

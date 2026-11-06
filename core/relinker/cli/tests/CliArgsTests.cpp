@@ -370,6 +370,7 @@ void verifyMode() {
     expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "unused-filter=1", "in.elf"}, "unused-filter= cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--linux-fixed-base", "0x10000", "in.elf"}, "--linux-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--icon", "icon.png", "in.elf"}, "--icon cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--macos-fixed-base", "0x20000", "in.elf"}, "--macos-fixed-base cannot be used with --verify-patches");
     expectThrows({"--verify-output", "in.elf", "out.elf"}, "--verify-output requires --verify-patches");
     expectThrows({"--verify-patches"}, "--verify-patches requires a file");

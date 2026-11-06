@@ -2,11 +2,30 @@
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <limits>
 #include <string>
 
 namespace Codegen {
+
+namespace {
+
+constexpr std::size_t MaxInstructionLength = 15;
+constexpr std::uint8_t PaddingOpcode = 0x90;
+
+bool _isCutByTheEnd(const X64InstructionDecoder& decoder, const std::uint8_t* cursor, const std::size_t available) {
+    std::array<std::uint8_t, MaxInstructionLength * 2> padded{};
+    padded.fill(PaddingOpcode);
+    std::copy(cursor, cursor + available, padded.begin());
+    try {
+        return decoder.Decode(padded.data(), padded.size()) > available;
+    } catch (const CodegenException&) {
+        return false;
+    }
+}
+
+}
 
 std::vector<Domain::CodeRange> MergeCodeRanges(std::vector<Domain::CodeRange> ranges) {
     std::erase_if(ranges, [](const Domain::CodeRange& range) { return range.End <= range.Begin; });
@@ -23,17 +42,19 @@ std::vector<Domain::CodeRange> MergeCodeRanges(std::vector<Domain::CodeRange> ra
 
 class InstructionScanner : public IInstructionScanner {
 public:
-    InstructionScanner(std::function<void(std::uint64_t, std::uint64_t)> progress, std::vector<Domain::CodeRange> unwindRanges) : progress(std::move(progress)), unwindRanges(MergeCodeRanges(std::move(unwindRanges))) {}
+    InstructionScanner(std::function<void(std::uint64_t, std::uint64_t)> progress, bool allowTruncatedTail, std::vector<Domain::CodeRange> unwindRanges)
+        : progress(std::move(progress)), allowTruncatedTail(allowTruncatedTail), unwindRanges(MergeCodeRanges(std::move(unwindRanges))) {}
     [[nodiscard]] std::vector<InstructionMatch> ScanCodeSection(const std::vector<std::uint8_t>& codeSection, Domain::FileByteOffset codeSectionOffset, Domain::FileByteOffset codeSectionSize) const override;
     void VisitCodeSection(const std::vector<std::uint8_t>& codeSection, Domain::FileByteOffset codeSectionOffset, Domain::FileByteOffset codeSectionSize, const std::function<void(const InstructionMatch&)>& visit) const override;
 
 private:
+    bool allowTruncatedTail;
     std::function<void(std::uint64_t, std::uint64_t)> progress;
     std::vector<Domain::CodeRange> unwindRanges;
 };
 
 template<typename TVisitor>
-void ScanCodeSection(const std::vector<std::uint8_t>& codeSection, const Domain::FileByteOffset codeSectionOffset, const Domain::FileByteOffset codeSectionSize, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::vector<Domain::CodeRange>& unwindRanges, TVisitor&& visit) {
+void ScanCodeSection(const std::vector<std::uint8_t>& codeSection, const Domain::FileByteOffset codeSectionOffset, const Domain::FileByteOffset codeSectionSize, const std::function<void(std::uint64_t, std::uint64_t)>& progress, bool allowTruncatedTail, const std::vector<Domain::CodeRange>& unwindRanges, TVisitor&& visit) {
     if (codeSectionSize > codeSection.size()) throw CodegenException("Code section exceeds the input buffer", codeSectionOffset);
     if (codeSectionSize > std::numeric_limits<Domain::FileByteOffset>::max() - codeSectionOffset) throw CodegenException("Code section offset overflow", codeSectionOffset);
     const auto limit = static_cast<std::size_t>(codeSectionSize);
@@ -55,6 +76,8 @@ void ScanCodeSection(const std::vector<std::uint8_t>& codeSection, const Domain:
         try {
             length = decoder.Decode(cursor, available);
         } catch (const CodegenException& e) {
+            if (allowTruncatedTail && available < MaxInstructionLength && _isCutByTheEnd(decoder, cursor, available))
+                break;
             if (std::all_of(cursor, cursor + available, [](const std::uint8_t b) { return b == 0; })) break;
             if (!outsideUnwindRanges) throw CodegenException(std::string("Cannot decode instruction: ") + e.what(), codeSectionOffset + i);
             ++i;
@@ -81,16 +104,16 @@ void ScanCodeSection(const std::vector<std::uint8_t>& codeSection, const Domain:
 
 std::vector<InstructionMatch> InstructionScanner::ScanCodeSection(const std::vector<std::uint8_t>& codeSection, const Domain::FileByteOffset codeSectionOffset, const Domain::FileByteOffset codeSectionSize) const {
     std::vector<InstructionMatch> matches;
-    Codegen::ScanCodeSection(codeSection, codeSectionOffset, codeSectionSize, progress, unwindRanges, [&](const InstructionMatch& match) { matches.push_back(match); });
+    Codegen::ScanCodeSection(codeSection, codeSectionOffset, codeSectionSize, progress, allowTruncatedTail, unwindRanges, [&](const InstructionMatch& match) { matches.push_back(match); });
     return matches;
 }
 
 void InstructionScanner::VisitCodeSection(const std::vector<std::uint8_t>& codeSection, const Domain::FileByteOffset codeSectionOffset, const Domain::FileByteOffset codeSectionSize, const std::function<void(const InstructionMatch&)>& visit) const {
-    Codegen::ScanCodeSection(codeSection, codeSectionOffset, codeSectionSize, progress, unwindRanges, visit);
+    Codegen::ScanCodeSection(codeSection, codeSectionOffset, codeSectionSize, progress, allowTruncatedTail, unwindRanges, visit);
 }
 
-std::unique_ptr<IInstructionScanner> MakeInstructionScanner(std::function<void(std::uint64_t, std::uint64_t)> progress, std::vector<Domain::CodeRange> unwindRanges) {
-    return std::make_unique<InstructionScanner>(std::move(progress), std::move(unwindRanges));
+std::unique_ptr<IInstructionScanner> MakeInstructionScanner(std::function<void(std::uint64_t, std::uint64_t)> progress, bool allowTruncatedTail, std::vector<Domain::CodeRange> unwindRanges) {
+    return std::make_unique<InstructionScanner>(std::move(progress), allowTruncatedTail, std::move(unwindRanges));
 }
 
 }

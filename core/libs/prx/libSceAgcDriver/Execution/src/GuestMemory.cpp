@@ -128,6 +128,9 @@ std::atomic<std::uint64_t> collectDirtyRuns{0};
 #endif
 std::atomic<std::uint64_t> trackerWaits{0};
 std::atomic<std::uint64_t> trackerAcquisitions{0};
+// Extra Collect rounds inside walkWrites (buffer full => another pass). Diagnostic,
+// APS5_COLLECT_SUBPHASE only: an extra round costs a whole additional walk.
+std::atomic<std::uint64_t> walkExtraRounds{0};
 std::uintptr_t PagesBase();
 std::size_t PagesSize();
 std::uintptr_t ImagePagesBase();
@@ -140,8 +143,8 @@ std::size_t ImagePagesSize();
 // folded at report time; a finished thread's totals move to `retired`. Nothing is counted without
 // the profile switch (the counters are only ever printed under it).
 // Debug aid: APS5_SHARED_MEMORY_COUNTERS=1 accumulates into one shared set with atomic RMWs as before.
-enum MemoryCounterKind { CounterRead, CounterCompare, CounterWrite, CounterChangedWrite, CounterCollect, CounterVerify, CounterQuery, MemoryCounterCount };
-constexpr const char* MemoryCounterNames[MemoryCounterCount] = {"read", "compare", "write", "write-changed", "collect", "verify", "query"};
+enum MemoryCounterKind { CounterRead, CounterCompare, CounterWrite, CounterChangedWrite, CounterCollect, CounterCollectWalkUnbumped, CounterCollectWalkBumped, CounterVerify, CounterQuery, MemoryCounterCount };
+constexpr const char* MemoryCounterNames[MemoryCounterCount] = {"read", "compare", "write", "write-changed", "collect", "collect-walk-unbumped (requested)", "collect-walk-bumped (requested)", "verify", "query"};
 
 struct MemoryCounter {
     std::atomic<std::uint64_t> calls{0};
@@ -191,6 +194,17 @@ struct MemoryProfile {
     AgcDriver::Mutex callersMutex;
     std::array<std::pair<unsigned long long, std::uint64_t>, 16> callers{};
     std::array<std::pair<unsigned long long, std::uint64_t>, 16> writeCallers{};
+    struct CollectCaller {
+        unsigned long long offset = 0;
+        std::uint64_t calls = 0;
+        std::uint64_t bytes = 0;
+        std::uint64_t nanoseconds = 0;
+        std::uint64_t minBytes = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t maxBytes = 0;
+    };
+    std::mutex collectCallersMutex;
+    std::array<CollectCaller, 64> collectCallers{};
+    CollectCaller collectCallerOverflow{};
 };
 
 // Never destroyed: worker threads' counters unregister at thread exit, which can follow static
@@ -335,6 +349,30 @@ bool MemoryProfiled() {
     return profile;
 }
 
+bool CollectCallersProfiled() {
+    static const bool profile = MemoryProfiled() && std::getenv("APS5_PROFILE_COLLECT_CALLERS") != nullptr;
+    return profile;
+}
+
+void RecordCollectCaller(unsigned long long offset, std::uint64_t bytes, std::uint64_t nanoseconds) {
+    auto& profile = Profile();
+    std::lock_guard lock(profile.collectCallersMutex);
+    auto* slot = &profile.collectCallerOverflow;
+    for (auto& candidate : profile.collectCallers) {
+        if (candidate.calls != 0 && candidate.offset == offset) {
+            slot = &candidate;
+            break;
+        }
+        if (candidate.calls == 0 && slot == &profile.collectCallerOverflow) slot = &candidate;
+    }
+    ++slot->calls;
+    slot->bytes += bytes;
+    slot->nanoseconds += nanoseconds;
+    slot->minBytes = std::min(slot->minBytes, bytes);
+    slot->maxBytes = std::max(slot->maxBytes, bytes);
+    if (slot != &profile.collectCallerOverflow) slot->offset = offset;
+}
+
 class TimedAccess {
 public:
     TimedAccess(MemoryCounterKind kind, std::uint64_t bytes) : kind(kind), bytes(bytes), start(MemoryProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
@@ -354,6 +392,17 @@ public:
         AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu, collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
+        if (std::getenv("APS5_COLLECT_SUBPHASE") != nullptr) {
+            std::uint64_t parts[26] = {};
+            GuestArena::GuestArenaCollectSubphase_nid_postfix(parts);
+            const auto extraRounds = walkExtraRounds.exchange(0, std::memory_order_relaxed);
+            const auto timedSections = parts[0] + parts[3] + parts[6] + parts[9] + parts[12] + parts[15];
+            const auto controlPerSection = parts[24] != 0 ? static_cast<double>(parts[25]) / static_cast<double>(parts[24]) : 0.0;
+            AgcDriver::ProfilePrint_nid_no_patch(" | collect subphase shared %llu/%.0fMiB/%.1fs private %llu/%.0fMiB/%.1fs coverage %llu/%.1fs lock %llu/%.1fs\n", static_cast<unsigned long long>(parts[0]), parts[1] / 1048576.0, parts[2] / 1e9, static_cast<unsigned long long>(parts[3]), parts[4] / 1048576.0, parts[5] / 1e9, static_cast<unsigned long long>(parts[6]), parts[8] / 1e9, static_cast<unsigned long long>(parts[9]), parts[11] / 1e9);
+            AgcDriver::ProfilePrint_nid_no_patch(" | collect enum %llu/%.0fMiB/%.1fs arm %llu/%.0fMiB/%.1fs\n", static_cast<unsigned long long>(parts[12]), parts[13] / 1048576.0, parts[14] / 1e9, static_cast<unsigned long long>(parts[15]), parts[16] / 1048576.0, parts[17] / 1e9);
+            AgcDriver::ProfilePrint_nid_no_patch(" | collect work sharedPages %llu pinned %llu protect %llu memcmp %.0fMiB memcpy %.0fMiB returnedPages %llu extraRounds %llu\n", static_cast<unsigned long long>(parts[18]), static_cast<unsigned long long>(parts[19]), static_cast<unsigned long long>(parts[20]), parts[21] / 1048576.0, parts[22] / 1048576.0, static_cast<unsigned long long>(parts[23]), static_cast<unsigned long long>(extraRounds));
+            AgcDriver::ProfilePrint_nid_no_patch(" | collect timer control %llu empty pairs %.0f ns each => ~%.0f ms of the %.0f ms above is timer overhead\n", static_cast<unsigned long long>(parts[24]), controlPerSection, controlPerSection * static_cast<double>(timedSections) / 1e6, (parts[2] + parts[5] + parts[8] + parts[11] + parts[14] + parts[17]) / 1e6);
+        }
         {
             std::lock_guard lock(state.callersMutex);
             AgcDriver::ProfilePrint_nid_no_patch(" | read callers:");
@@ -371,6 +420,15 @@ public:
             if (count != 0) AgcDriver::ProfilePrint_nid_no_patch(" %s=%llu", ReadSiteName(static_cast<ReadSite>(site)), static_cast<unsigned long long>(count));
         }
         AgcDriver::ProfilePrint_nid_no_patch("\n");
+        if (CollectCallersProfiled()) {
+            std::lock_guard lock(state.collectCallersMutex);
+            for (const auto& caller : state.collectCallers) {
+                if (caller.calls == 0) continue;
+                AgcDriver::ProfilePrint_nid_no_patch("[collect-caller] +0x%llx calls %llu MiB %.3f seconds %.3f rangeBytes %llu..%llu (cumulative, includes memo hits/lock time)\n", caller.offset, static_cast<unsigned long long>(caller.calls), caller.bytes / 1048576.0, caller.nanoseconds / 1e9, static_cast<unsigned long long>(caller.minBytes), static_cast<unsigned long long>(caller.maxBytes));
+            }
+            const auto& overflow = state.collectCallerOverflow;
+            if (overflow.calls != 0) AgcDriver::ProfilePrint_nid_no_patch("[collect-caller] overflow calls %llu MiB %.3f seconds %.3f rangeBytes %llu..%llu (cumulative, includes memo hits/lock time)\n", static_cast<unsigned long long>(overflow.calls), overflow.bytes / 1048576.0, overflow.nanoseconds / 1e9, static_cast<unsigned long long>(overflow.minBytes), static_cast<unsigned long long>(overflow.maxBytes));
+        }
     }
 private:
     MemoryCounterKind kind;
@@ -1171,7 +1229,7 @@ struct WriteTracker {
         if (first >= stop) return;
         bool started = false;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) {
-            if (!coverage.Covers(blockBegin(block), static_cast<std::size_t>(std::min<std::uint64_t>(WriteBlockBytes, base + size - blockBegin(block))))) continue;
+            if (!coverage.Covers(blockBegin(block), 1)) continue;
             if (!started) ++generation;
             started = true;
             stampHint(block);
@@ -1181,7 +1239,7 @@ struct WriteTracker {
     bool hinted(std::uint64_t first, std::uint64_t stop) const {
         if (first >= stop || first < base || stop > base + size) return false;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) {
-            if (hintOf(block) == 0 || coverage.Covers(blockBegin(block), static_cast<std::size_t>(std::min<std::uint64_t>(WriteBlockBytes, base + size - blockBegin(block))))) return false;
+            if (hintOf(block) == 0 || coverage.Covers(blockBegin(block), 1)) return false;
         }
         return !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
     }
@@ -1685,6 +1743,7 @@ bool collectWindowsWrites(StampRuns& runs, std::uint64_t first, std::uint64_t st
     }
     const auto collect = fresh ? &GuestArena::GuestArenaCollectFreshWrites_nid_postfix : armedOnly ? &GuestArena::GuestArenaCollectArmedWrites_nid_postfix : &GuestArena::GuestArenaCollectWrites_nid_postfix;
     static const bool singlePass = std::getenv("APS5_NO_SINGLE_PASS_COLLECT") == nullptr;
+    static const bool subphaseOn = std::getenv("APS5_COLLECT_SUBPHASE") != nullptr;
     const auto walk = [&](bool clear) {
         auto cursor = first;
         while (cursor < stop) {
@@ -1695,6 +1754,7 @@ bool collectWindowsWrites(StampRuns& runs, std::uint64_t first, std::uint64_t st
                 stampWrittenRun(&runs, page, page + WritePageBytes);
             }
             if (count < tracker.pages.size()) break;
+            if (subphaseOn) walkExtraRounds.fetch_add(1, std::memory_order_relaxed);
             cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
         }
         return true;
@@ -1751,31 +1811,34 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     // must not differ between them.
     const auto epoch = currentCollectEpoch();
     const auto unwatched = unwatchSerial.load(std::memory_order_acquire);
-    const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto observedMapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const bool useMemo = memoized && collectMemoEnabled() && bytes != 0;
     if (useMemo && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
         if (epochCollectMapEnabled()) {
             const auto& map = epochCollectMap(epoch);
-            if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == mapping && stop <= found->second.end) {
+            if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == observedMapping && stop <= found->second.end) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
-                return tracker.stable.load(std::memory_order_acquire);
+                const auto stable = tracker.stable.load(std::memory_order_acquire);
+                if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() == observedMapping) return stable;
             }
         }
         for (const auto& entry : threadCollectMemo().entries) {
-            if (entry.epoch == epoch && entry.unwatched == unwatched && entry.mapping == mapping && entry.begin <= first && stop <= entry.end) {
+            if (entry.epoch == epoch && entry.unwatched == unwatched && entry.mapping == observedMapping && entry.begin <= first && stop <= entry.end) {
                 // The current generation, not the memoized one: blocks stamped since (MarkWritten, an
                 // overlapping collect) were written before this caller reads, and an older value would
                 // make every later UnchangedSince fail until the epoch ends.
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
-                return tracker.stable.load(std::memory_order_acquire);
+                const auto stable = tracker.stable.load(std::memory_order_acquire);
+                if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() == observedMapping) return stable;
             }
         }
     }
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return 0;
+    const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     auto cursor = first;
     if (useMemo && sharedCollectMemo()) {
         for (const auto& entry : tracker.memo) {
@@ -1785,7 +1848,6 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             }
         }
     }
-    const TimedAccess timed(CounterCollect, bytes);
     const auto requestedFirst = first;
     const auto requestedStop = stop;
     if (useMemo && HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0 && bytes <= WriteBlockBytes) {
@@ -1796,16 +1858,23 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             stop = end;
         }
     }
-    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) {
+    bool walked;
+    {
+        const auto walkKind = ThreadCollectEpoch() == 0 ? CounterCollectWalkUnbumped : CounterCollectWalkBumped;
+        const TimedAccess walkTimed(walkKind, bytes);
+        walked = true;
+        if (!walkWrites(tracker, first, stop, StampKind::Cpu)) {
 #ifdef _WIN32
-        if (first == requestedFirst && stop == requestedStop) return 0;
-        first = requestedFirst;
-        stop = requestedStop;
-        if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+            if (first == requestedFirst && stop == requestedStop) return 0;
+            first = requestedFirst;
+            stop = requestedStop;
+            walked = walkWrites(tracker, first, stop, StampKind::Cpu);
 #else
-        return 0;
+            walked = false;
 #endif
+        }
     }
+    if (!walked) return 0;
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
@@ -1825,10 +1894,26 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
 }
 
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes) {
+    if (CollectCallersProfiled()) {
+        const auto offset = ModuleOffset(__builtin_return_address(0));
+        const auto start = std::chrono::steady_clock::now();
+        const auto generation = collectWrites(address, bytes, true);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+        RecordCollectCaller(offset, bytes, static_cast<std::uint64_t>(elapsed));
+        return generation;
+    }
     return collectWrites(address, bytes, true);
 }
 
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes) {
+    if (CollectCallersProfiled()) {
+        const auto offset = ModuleOffset(__builtin_return_address(0));
+        const auto start = std::chrono::steady_clock::now();
+        const auto generation = collectWrites(address, bytes, false);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+        RecordCollectCaller(offset, bytes, static_cast<std::uint64_t>(elapsed));
+        return generation;
+    }
     return collectWrites(address, bytes, false);
 }
 

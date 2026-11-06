@@ -12,6 +12,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -299,9 +300,20 @@ static void TraceSleep(const void* caller, std::uint64_t microseconds) {
     std::fprintf(stderr, "\n");
 }
 
+// Thread the waits probe is narrowed to, set by another module through
+// sceKernelTraceWaitsFocus_nid_postfix; 0 reports the whole process.
+static std::atomic<unsigned long> traceFocusThread{0};
+
+void sceKernelTraceWaitsFocus_nid_postfix(unsigned long thread) {
+    traceFocusThread.store(thread, std::memory_order_relaxed);
+}
+
 void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint64_t waitedNanos, bool timedOut) {
     static const bool enabled = std::getenv("APS5_TRACE_WAITS") != nullptr;
     if (!enabled) return;
+    // APS5_TRACE_WAITS_TID: key each site by the calling OS thread, and label each report with its
+    // process-relative window. Off by default: the key and the line format stay as before.
+    static const bool perThread = std::getenv("APS5_TRACE_WAITS_TID") != nullptr;
     struct Site { std::uint64_t calls = 0; std::uint64_t timeouts = 0; std::uint64_t nanos = 0; std::uint64_t longest = 0; unsigned long lastThread = 0; };
     static std::mutex mutex;
     static std::unordered_map<std::string, Site> sites;
@@ -309,10 +321,27 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
     static std::unordered_map<const void*, std::string> callSites;
     char key[224];
     const unsigned long thread = CurrentThreadIdForTrace();
+    // A focus set by another module (VideoOut names the thread that submits flips) narrows both the
+    // samples and the report to that thread; other threads are dropped before the key is built, and
+    // the key becomes per-thread so one call site cannot merge the focused thread with the others.
+    const unsigned long focus = traceFocusThread.load(std::memory_order_relaxed);
+    if (focus != 0 && thread != focus) return;
     std::lock_guard lock(mutex);
+    // A new focus starts from an empty table: samples of other threads would otherwise keep being
+    // reported next to the focused thread until the 3 s window rolls over.
+    static unsigned long lastFocus = 0;
+    if (focus != lastFocus) {
+        sites.clear();
+        lastFocus = focus;
+    }
     auto callSite = callSites.find(caller);
     if (callSite == callSites.end()) callSite = callSites.emplace(caller, DescribeCallSite(caller)).first;
-    std::snprintf(key, sizeof(key), "%s %s", kind, callSite->second.c_str());
+    if (perThread || focus != 0) {
+        std::snprintf(key, sizeof(key), "%s %s tid %lu", kind, callSite->second.c_str(), thread);
+        if (sites.find(key) == sites.end() && sites.size() >= 1024) std::snprintf(key, sizeof(key), "overflow %s", kind);
+    } else {
+        std::snprintf(key, sizeof(key), "%s %s", kind, callSite->second.c_str());
+    }
     auto& site = sites[key];
     ++site.calls;
     site.timeouts += timedOut ? 1u : 0u;
@@ -320,14 +349,24 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
     site.longest = std::max(site.longest, waitedNanos);
     site.lastThread = thread;
     const auto now = GetMonotonicNanos();
+    const std::uint64_t windowStart = lastReport;
     if (lastReport == 0) lastReport = now;
     if (now - lastReport < 3000000000ULL) return;
     lastReport = now;
     std::vector<std::pair<std::string, Site>> hot(sites.begin(), sites.end());
     std::erase_if(hot, [](const auto& item) { return item.second.calls == 0; });
     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.nanos > b.second.nanos; });
-    std::fprintf(stderr, "[waits]");
-    for (std::size_t i = 0; i < hot.size() && i < 8; ++i) {
+    if (perThread || focus != 0) {
+        std::fprintf(stderr, "[waits focus tid %lu %.3f..%.3f s]", focus,
+            static_cast<double>(windowStart - GetStartNanos()) / 1e9,
+            static_cast<double>(now - GetStartNanos()) / 1e9);
+    } else {
+        std::fprintf(stderr, "[waits]");
+    }
+    // The per-thread key splits the same call sites across threads, so the top 8 hides a specific
+    // thread more often; print a bounded top 24 in that mode and keep the old top 8 otherwise.
+    const std::size_t topLimit = perThread ? 24 : 8;
+    for (std::size_t i = 0; i < hot.size() && i < topLimit; ++i) {
         const auto& s = hot[i].second;
         std::fprintf(stderr, " | %s x%llu %.1fs (avg %.1f ms, max %.0f ms, %llu timeouts, tid %lu)", hot[i].first.c_str(), static_cast<unsigned long long>(s.calls), s.nanos / 1e9, s.nanos / 1e6 / static_cast<double>(s.calls), s.longest / 1e6, static_cast<unsigned long long>(s.timeouts), s.lastThread);
     }

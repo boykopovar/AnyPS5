@@ -1052,4 +1052,3 @@ int main() {
     std::puts("SPIR-V optimizer checks passed");
     return 0;
 }
-

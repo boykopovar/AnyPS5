@@ -6,7 +6,7 @@
 extern "C" {
 
 uint32_t APS5_VABI sceAgcDriverInitResourceRegistration(void);
-uint32_t APS5_VABI sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(uint64_t* sizeInBytes);
+uint32_t APS5_VABI sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(uint64_t* size_in_bytes, uint32_t count_a, uint32_t count_b);
 
 }
 

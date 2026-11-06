@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <bit>
@@ -56,46 +57,10 @@ float readFloat(const Registers& registers, std::uint32_t offset) {
     return value;
 }
 
-float readDepthBound(const Registers& registers, std::uint32_t offset) {
-    const auto value = std::bit_cast<float>(read(registers, offset));
-    if (std::isnan(value)) Require(false, "NaN depth bound at DWORD " + std::to_string(offset));
-    return value;
-}
-
 std::string zeroMessage(std::uint32_t offset, std::uint32_t value, const char* name) {
     char detail[64];
     std::snprintf(detail, sizeof(detail), " (register 0x%x = 0x%08x)", offset, value);
     return std::string(name) + " is unsupported" + detail;
-}
-
-VkPolygonMode decodePolygonMode(const Registers& cx, std::uint32_t raster, const State& state, bool pointsOrLines) {
-    const auto mode = (raster >> 3u) & 3u;
-    if (mode == 0) return VK_POLYGON_MODE_FILL;
-    if (mode != 1) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "a reserved POLY_MODE"));
-    const auto front = (raster >> 5u) & 7u;
-    const auto back = (raster >> 8u) & 7u;
-    if (front > 2 || back > 2) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "a reserved polygon type"));
-    if (pointsOrLines && (state.stages.path == ShaderPath::Vertex || state.stages.mesh.has_value())) return VK_POLYGON_MODE_FILL;
-    const bool frontDrawn = (state.cullMode & VK_CULL_MODE_FRONT_BIT) == 0;
-    const bool backDrawn = (state.cullMode & VK_CULL_MODE_BACK_BIT) == 0;
-    if (!frontDrawn && !backDrawn) return VK_POLYGON_MODE_FILL;
-    if (frontDrawn && backDrawn && front != back) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "different front and back polygon modes"));
-    const auto type = frontDrawn ? front : back;
-    if (type == 2) return VK_POLYGON_MODE_FILL;
-    if (state.rectList) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "a point or line polygon mode on a rect list"));
-    if ((raster & 0x3800u) != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "depth bias with a point or line polygon mode"));
-    if (type == 1) {
-        const auto line = find(cx, 0x282);
-        if (line == cx.end()) throw std::runtime_error("AGC graphics: a line polygon mode needs PA_SU_LINE_CNTL");
-        if ((line->second & 0xffffu) != 8u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x282, line->second, "a line polygon mode wider or narrower than one pixel"));
-        return VK_POLYGON_MODE_LINE;
-    }
-    const auto size = find(cx, 0x280);
-    const auto limits = find(cx, 0x281);
-    if (size == cx.end() || limits == cx.end()) throw std::runtime_error("AGC graphics: a point polygon mode needs PA_SU_POINT_SIZE and PA_SU_POINT_MINMAX");
-    if (size->second != 0x80008u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x280, size->second, "a point polygon mode with a point size other than one pixel"));
-    if ((limits->second & 0xffffu) > 8u || (limits->second >> 16u) < 8u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x281, limits->second, "a point polygon mode whose size limits exclude one pixel"));
-    return VK_POLYGON_MODE_POINT;
 }
 
 std::string tessellationMessage(std::uint32_t config, std::uint32_t parameters, const ShaderRecompiler::TessellationConfiguration& tess) {
@@ -279,9 +244,8 @@ constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
 constexpr std::uint32_t PixelSampleCoverageInput = 0x4000u;
 constexpr std::uint32_t PixelSampleRateInputs = 0x2011u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
-// Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space;
-// bit 16 disables clipping.
-constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
+// Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space.
+constexpr std::uint32_t ClipControlMask = ~(0x80000u | 0x01000000u | 0x0c000000u);
 
 bool zFormatSupported(std::uint32_t format) {
     return format == 0u || format == 1u || format == 2u || format == 3u || format == 9u;
@@ -381,16 +345,6 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
                 }
                 const auto value = op == 2 ? 0xffu : op == 3 ? test : opValue;
                 if (((reference ^ value) & fixed & face.writeMask) != 0) {
-                    const auto compared = test & face.compareMask;
-                    const bool passKnown = compare == 2 || (compare == 3 && compared == face.compareMask) || (compare == 6 && compared == 0u);
-                    const bool failKnown = compare == 5 || (compare == 1 && compared == 0u) || (compare == 4 && compared == face.compareMask);
-                    const bool testValueKnown = testFailed ? failKnown : passKnown;
-                    const auto flipped = (test ^ value) & face.writeMask;
-                    if (testValueKnown && (face.writeMask & ~face.compareMask) == 0 && (invertMask == 0 || invertMask == flipped)) {
-                        invertMask = flipped;
-                        ++inverted;
-                        return VK_STENCIL_OP_INVERT;
-                    }
                     std::snprintf(detail, sizeof(detail), "AGC graphics: stencil replacement 0x%02x against test value 0x%02x (masks 0x%02x/0x%02x) is unsupported", value, test, face.compareMask, face.writeMask);
                     throw std::runtime_error(detail);
                 }
@@ -544,8 +498,8 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     result.depthBoundsTest = (depthControl & 8u) != 0;
     if (result.depthBoundsTest) {
         Require(zFormat != 0, "depth bounds without a depth plane");
-        result.minDepthBounds = readDepthBound(cx, 0x008);
-        result.maxDepthBounds = readDepthBound(cx, 0x009);
+        result.minDepthBounds = readFloat(cx, 0x008);
+        result.maxDepthBounds = readFloat(cx, 0x009);
     }
     if (depthClear) {
         result.depthTest = true;
@@ -555,17 +509,16 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     }
     result.stencilTest = (depthControl & 1u) != 0;
     if (stencilClear) {
+        // A DB clear uses the draw's rasterized coverage, including its scissor;
+        // replacing on all stencil/depth outcomes preserves that coverage.
+        Require(stencil && !stencilReadOnly, "stencil clear without a writable stencil plane");
         VkStencilOpState clear{};
-        clear.failOp = VK_STENCIL_OP_REPLACE;
-        clear.passOp = VK_STENCIL_OP_REPLACE;
-        clear.depthFailOp = VK_STENCIL_OP_REPLACE;
         clear.compareOp = VK_COMPARE_OP_ALWAYS;
-        clear.compareMask = 0xffu;
-        clear.writeMask = 0xffu;
+        clear.failOp = clear.passOp = clear.depthFailOp = VK_STENCIL_OP_REPLACE;
+        clear.compareMask = clear.writeMask = 0xffu;
         clear.reference = depth.clearStencil;
         result.stencilTest = true;
-        result.stencilFront = clear;
-        result.stencilBack = clear;
+        result.stencilFront = result.stencilBack = clear;
     } else if (result.stencilTest) {
         const auto ops = read(cx, 0x10b);
         result.stencilFront = stencilFace((depthControl >> 8u) & 7u, ops, read(cx, 0x10c), stencilReadOnly, testValExport, opValExport, opValReference);
@@ -1108,11 +1061,14 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
     }
 }
 
+// The scissors other than the screen one carry WINDOW_OFFSET_DISABLE (TL bit 31). Clear, the CP
+// adds PA_SC_WINDOW_OFFSET to the corners; DecodeState only accepts a zero window offset (the
+// vertex shift is not modelled), so either setting yields the same rectangle here.
 void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offset, bool screen) {
     const auto tl = read(registers, offset);
     const auto br = read(registers, offset + 1);
-    if (!screen) Require((tl & 0x8000u) == 0 && (br & 0x80008000u) == 0, "scissor reserved bits are unsupported");
-    const auto x = tl & 0xffffu;
+    if (!screen) Require((tl & 0x00008000u) == 0 && (br & 0x80008000u) == 0, "scissor reserved bits are set");
+    const auto x = tl & (screen ? 0xffffu : 0x7fffu);
     const auto y = (tl >> 16u) & (screen ? 0xffffu : 0x7fffu);
     const auto right = br & 0xffffu;
     const auto bottom = br >> 16u;
@@ -1272,19 +1228,21 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto outputType = read(queue.context, 0x29b);
         validate(outputType == 2 || ((outputType == 0 || outputType == 1) && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
         const auto outputSize = outputType == 0 ? 1u : outputType == 1 ? 2u : 3u;
-        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
-        const auto inputSize = inputPrimitive == 1 ? 1u : inputPrimitive == 2 ? 2u : 3u;
+        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 3 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
+        ShaderRecompiler::ShaderMeshInputInfo input;
+        input.inputPrimitive = inputPrimitive;
+        const auto inputSize = input.InputPrimitiveSize();
+        const auto inputStep = input.InputPrimitiveStep();
         validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
-        const auto inputStep = inputPrimitive == 5 || inputPrimitive == 6 ? 1u : inputSize;
         const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
-        const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
+        const auto groupPrimitives = std::min({primitives, input.InputPrimitiveCount(vertices), outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
         const auto resources = read(queue.shader, 0x8b, RegisterBank::Shader);
         const auto esgsItemSize = read(queue.context, 0x2ab);
         validate(esgsItemSize != 0 && esgsItemSize * vertices <= 0xffffu, "invalid VGT_ESGS_RING_ITEMSIZE");
         const auto amplification = fastLaunch ? read(queue.context, 0x2d3) & 0x1ffu : verticesPerPrimitive - outputSize + 1u;
         validate(amplification != 0, "fast launch subgroup amplifies to no primitives");
-        const auto maxPrimitives = outputSize <= 2u && !fastLaunch ? std::max(primitives * amplification, maxVertices) : primitives * amplification;
+        const auto maxPrimitives = outputSize == 2u && !fastLaunch ? std::max(primitives * amplification, maxVertices) : primitives * amplification;
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
         const auto raster = find(queue.context, 0x205);
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
@@ -1650,13 +1608,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     const auto raster = read(cx, 0x205);
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on
     // explicitly; KEEP_TOGETHER_ENABLE (bit 24) only affects primitive distribution across the chip.
-    const bool pointsOrLines = result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || (result.stages.mesh.has_value() && result.stages.mesh->outputPrimitiveSize <= 2u);
+    const bool pointsOrLines = result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || (result.stages.mesh.has_value() && result.stages.mesh->outputPrimitiveSize == 2u);
     const auto lineOffset = (raster & 0x1800u) != 0 && !pointsOrLines ? 0x2000u : 0u;
-    const auto rasterMode = raster & ~0x7u & ~0x7f8u & ~(1u << 24u) & ~0x1800u & ~lineOffset & ~(1u << 19u) & ~(1u << 16u);
-    if (rasterMode != 0) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "depth bias or nonstandard rasterization"));
+    const auto rasterMode = raster & ~0x7u & ~(1u << 24u) & ~0x1800u & ~lineOffset & ~(1u << 19u) & ~(1u << 16u);
+    if (rasterMode != 0 && rasterMode != 0x240u && rasterMode != 0x248u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "polygon mode, depth bias or nonstandard rasterization"));
     result.cullMode = ((raster & 1u) != 0 ? VK_CULL_MODE_FRONT_BIT : 0u) | ((raster & 2u) != 0 ? VK_CULL_MODE_BACK_BIT : 0u);
     if (result.rectList) result.cullMode = VK_CULL_MODE_NONE;
-    result.polygonMode = decodePolygonMode(cx, raster, result, pointsOrLines);
     if ((raster & 0x1800u) != 0 && result.depth) decodeDepthBias(cx, raster, result);
     result.frontFace = (raster & 4u) != 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     result.provokingVertexMode = (raster & (1u << 19u)) != 0 ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
@@ -1740,8 +1697,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     } else {
         const auto screenBottomRight = read(cx, 0xd);
         APS5_LOG_OUT_DEBUG("No color target, screen BR register=0x%x", screenBottomRight);
-        result.renderExtent = {std::max(screenBottomRight & 0xffffu, 1u), std::max(screenBottomRight >> 16u, 1u)};
+        result.renderExtent = {screenBottomRight & 0xffffu, screenBottomRight >> 16u};
         APS5_LOG_OUT_DEBUG("Render extent from screen=%ux%u", result.renderExtent.width, result.renderExtent.height);
+        Require(result.renderExtent.width != 0 && result.renderExtent.height != 0, "empty framebuffer extent for a draw without color writes");
     }
     result.quadSampleMask = decodeQuadSampleMask(cx, result.samples);
     result.pixelEarlyZ = !PixelProgramSkipped(queue) && PixelEarlyZ(read(cx, 0x203));
@@ -2051,7 +2009,6 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state) {
 
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state) {
     if (state.rectList) return ShaderRecompiler::RasterPrimitive::Rectangle;
-    if (state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u) return ShaderRecompiler::RasterPrimitive::Point;
     if (state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 2u) return ShaderRecompiler::RasterPrimitive::Line;
     if (state.stages.mesh.has_value() || state.stages.tessellation.has_value()) return ShaderRecompiler::RasterPrimitive::Triangle;
     switch (state.topology) {
@@ -2595,6 +2552,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     }
     if (auto reason = nonzero(cx, 0x1c4, zFormatSupported(zFormat) ? 0u : ~0u, "depth or sample-mask export"); !reason.empty()) return reason;
     if (PixelProgramSkipped(queue)) return NullPixelProgramRejection(queue);
+    // A real pixel program needs its input registers; the null program above supplies defaults.
     for (const auto offset : {0x1b3u, 0x1b4u, 0x1c5u}) {
         if (find(cx, offset) != cx.end()) continue;
         char text[64];
@@ -2622,9 +2580,7 @@ std::string NullPixelProgramRejection(const QueueState& queue) {
     const auto targetMask = find(queue.context, 0x8e);
     const auto shaderMask = find(queue.context, 0x8f);
     if (targetMask == queue.context.end() || shaderMask == queue.context.end()) return "AGC graphics: a draw without a pixel program needs CB_TARGET_MASK and CB_SHADER_MASK";
-    const auto colorControl = find(queue.context, 0x202);
-    const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
-    if (!colorDisabled && ColorWriteMask(queue.context) != 0) return "AGC graphics: a draw without a pixel program writes color";
+    if (ColorWriteMask(queue.context) != 0) return "AGC graphics: a draw without a pixel program writes color";
     return {};
 }
 

@@ -121,6 +121,12 @@ int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader*
     std::copy_n(values.begin(), count, output);
     return 0;
 }
+}
+
+extern "C" {
+int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue, true);
+}
 
 }
 
@@ -162,10 +168,19 @@ int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Sh
 }
 
 int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    if (gs != nullptr && ps == nullptr) {
+        for (std::uint32_t i = 0; i < InterpolantRegisterCount; ++i) SetInterpolantRegister(regs, i, 0);
+        return 0;
+    }
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16, true);
 }
 
 int APS5_VABI sceAgcUpdateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    if (ps == nullptr) {
+        if (regs == nullptr) throw std::runtime_error(std::string(__func__) + ": regs is null");
+        for (std::uint32_t i = 0; i < InterpolantRegisterCount; ++i) SetInterpolantRegister(regs, i, 0);
+        return 0;
+    }
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16, false);
 }
 

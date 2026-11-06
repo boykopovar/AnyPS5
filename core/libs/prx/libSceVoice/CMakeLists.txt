@@ -1,6 +1,7 @@
 add_library(libSceVoice SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceVoice PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceVoice)
+target_link_libraries(libSceVoice PRIVATE libc libkernel)
 
 if(BUILD_TESTING)
     add_test_executable(guest_voice_tests ${LIBS_INCLUDE_DIR}/tests/GuestVoice.cpp)

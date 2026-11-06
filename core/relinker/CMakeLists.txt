@@ -44,6 +44,11 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha256Operands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha256Lowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShaNiLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/SystemInstructionLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/TrampolineWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsResourceBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha1Operands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha1Lowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ClzeroOperands.cpp
@@ -1175,4 +1180,73 @@ if(BUILD_TESTING)
     get_property(relinkerTests DIRECTORY PROPERTY TESTS)
     set_property(TEST ${relinkerTests} APPEND PROPERTY ENVIRONMENT_MODIFICATION
         "TMPDIR=set:${relinkerTestTemp};TEMP=set:${relinkerTestTemp};TMP=set:${relinkerTestTemp};PYTHONUTF8=set:1")
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(amd64_only_converter_upstream_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/Amd64OnlyConverterUpstreamTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/Amd64OnlyConverter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionRewriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MulxLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aOperands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShaNiLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sse4aLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/SystemInstructionLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha256Operands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha256Lowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha1Operands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Sha1Lowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ClzeroOperands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ClzeroLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalOperands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ReciprocalLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreOperands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WideStoreLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ShiftLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BitfieldLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/TrampolineWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/ProgramHeaderLayoutBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SectionHeaderTableBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/src/NidCompute.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/src/Sha1.cpp
+    )
+    target_include_directories(amd64_only_converter_upstream_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/include
+    )
+    add_test(NAME amd64_only_converter_upstream COMMAND amd64_only_converter_upstream_tests)
+endif()
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME windows_icon_png COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_icon_png.py $<TARGET_FILE:relinker>)
+    add_test(NAME windows_auto_icon COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_auto_icon.py $<TARGET_FILE:relinker>)
+    add_test(NAME guest_intel_stub COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_intel_stub.py $<TARGET_FILE:relinker>)
+    add_test(NAME linux_stub_execution COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_stub_execution.py $<TARGET_FILE:relinker>)
+    add_test(NAME phase1_reloc32 COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_phase1_reloc32.py $<TARGET_FILE:relinker>)
+    set_tests_properties(phase1_reloc32 PROPERTIES TIMEOUT 30 LABELS phase1)
+    add_test(NAME phase1_imported_tls COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_phase1_imported_tls.py $<TARGET_FILE:relinker>)
+    set_tests_properties(phase1_imported_tls PROPERTIES TIMEOUT 30 LABELS phase1)
 endif()

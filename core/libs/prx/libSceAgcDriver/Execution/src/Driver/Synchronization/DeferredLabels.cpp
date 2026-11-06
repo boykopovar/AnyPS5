@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include "ThreadOwned.hpp"
 #include <cstdlib>
@@ -98,8 +99,8 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
     auto& deferred = deferredLabels();
     if (deferred.labels.empty()) return;
 
-    static thread_local std::vector<DeferredLabel>* recording = nullptr;
-    auto& labels = ShaderRecompiler::ThreadOwned(recording);
+    struct DrainLabelsTag {};
+    auto& labels = HostThreadLocal<std::vector<DeferredLabel>, DrainLabelsTag>();
     labels.clear();
     labels.swap(deferred.labels);
     struct Clear {

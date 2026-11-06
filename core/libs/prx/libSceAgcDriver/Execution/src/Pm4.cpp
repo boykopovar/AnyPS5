@@ -526,8 +526,6 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x49: {
             size(8);
             const auto dataSelect = packet[2] >> 29u;
-            require(dataSelect != 4, "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
-            require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");
             require(dataSelect <= 3, "GDS RELEASE_MEM data is not implemented");
             require(dataSelect == 0 || address(packet[3], packet[4]) == 0 || (packet[3] & (dataSelect == 1 ? 3u : 7u)) == 0, "misaligned RELEASE_MEM destination");
             break;
@@ -1018,16 +1016,30 @@ void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<c
     require(pairs.size() == static_cast<std::size_t>(packet[4]) * 2, "indirect register list does not match its packet");
     const auto usable = [&](std::uint32_t value) { return !skipInvalid || IndirectRegistersValid(std::span(&value, 1)); };
     for (std::size_t i = 0; i < pairs.size(); i += 2) {
-        if (usable(pairs[i])) registerOffset(pairs[i]);
+        if (skipInvalid && !IndirectRegistersValid(std::span(&pairs[i], 1))) continue;
+        if (IndirectRegistersValid(std::span(&pairs[i], 1))) continue;
+        if (pairs[i] == 0xffffffffu) registerOffset(pairs[i]);
+        if (pairs[i] != 0xffffffffu && (pairs[i] & ~0x70000000u) > 0xffffu) {
+            registerOffset(pairs[i]);
+            continue;
+        }
+        std::string dump;
+        for (std::size_t j = 0; j < std::min<std::size_t>(pairs.size(), 16); ++j) dump += " " + ToHex(pairs[j]);
+        if (std::getenv("APS5_DUMP_BAD_REGISTER_LOAD") != nullptr) {
+            if (FILE* file = std::fopen("bad_register_load.bin", "wb")) {
+                std::fwrite(packet.data(), sizeof(std::uint32_t), packet.size(), file);
+                std::fwrite(pairs.data(), sizeof(std::uint32_t), pairs.size(), file);
+                std::fclose(file);
+            }
+        }
+        throw std::runtime_error("indirect register load 0x" + ToHex(opcode) + " count 0x" + ToHex(packet[4]) + ": pair " + std::to_string(i / 2) + " has register dword 0x" + ToHex(pairs[i]) + "; first dwords:" + dump);
     }
     for (std::size_t i = 0; i < pairs.size(); i += 2) {
         if (usable(pairs[i])) writeRegister(queue, opcode, registerOffset(pairs[i]), pairs[i + 1]);
     }
     if (queue.savedContext.has_value() && TraceContextState()) {
         std::fprintf(stderr, "[context]   indirect 0x%x:", opcode);
-        for (std::size_t i = 0; i < pairs.size(); i += 2) {
-            if (usable(pairs[i])) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
-        }
+        for (std::size_t i = 0; i < pairs.size(); i += 2) if (usable(pairs[i])) std::fprintf(stderr, " %x", registerOffset(pairs[i]));
         std::fprintf(stderr, "\n");
     }
 }

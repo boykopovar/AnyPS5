@@ -262,6 +262,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.spirvVersion = target.spirvVersion;
     state.supportedCapabilities = target.supportedCapabilities;
     state.supportedExtensions = target.supportedExtensions;
+    state.fragmentShaderBarycentricEnabled = target.fragmentShaderBarycentricEnabled;
     state.nonConstantImageOffsets = target.nonConstantImageOffsets;
     state.shaderImageMinLod = target.shaderImageMinLod;
     state.narrowSubgroupClock = target.narrowSubgroupClock;

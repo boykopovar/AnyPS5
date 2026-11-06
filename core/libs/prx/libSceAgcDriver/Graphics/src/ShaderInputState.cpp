@@ -40,6 +40,8 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     NoteRegisterRead(bank, offset);
     const auto it = registers.find(offset);
     if (it == registers.end()) {
+        // PA_PS_INPUT_ENA/ADDR (0x1b3/0x1b4) may be absent in deferred pipeline setups; treat as zero.
+        if (offset == spiPsInputEna || offset == spiPsInputAddr) return 0u;
         char text[64];
         std::snprintf(text, sizeof(text), "AGC graphics: missing register at DWORD 0x%x", offset);
         throw std::runtime_error(text);

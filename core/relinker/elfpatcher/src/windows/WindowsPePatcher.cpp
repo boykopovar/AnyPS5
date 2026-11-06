@@ -5,6 +5,7 @@
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <elfpatcher/windows/WindowsRelocationBuilder.hpp>
+#include <elfpatcher/windows/WindowsResourceBuilder.hpp>
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <io/BufferUtils.hpp>
@@ -123,7 +124,16 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".reloc", nextRva, SectionRead | 0x02000040u, std::move(relocationData)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    directories[2] = icon ? WindowsIconResourceBuilder().Build(*icon, iconName, sections, nextRva) : PeDirectory{};
+    if (icon) {
+        if (iconName.extension() == ".ico") {
+            auto resources = WindowsResourceBuilder().Build(*icon, nextRva);
+            directories[2] = resources.Directory;
+            sections.push_back(std::move(resources.Section));
+            nextRva = AlignRva(nextRva + sections.back().Data.size());
+        } else {
+            directories[2] = WindowsIconResourceBuilder().Build(*icon, iconName, sections, nextRva);
+        }
+    }
     report(9500);
     auto result = WindowsPeWriter().Write(sections, entryRva, directories, windowsGui, image.GetImageBase(), fixedBase.has_value(), false);
     report(10000);

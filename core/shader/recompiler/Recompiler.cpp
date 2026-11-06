@@ -639,6 +639,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.bdaAbiVersion = request.target.bdaAbiVersion;
     targetOptions.supportedCapabilities = request.target.supportedCapabilities;
     targetOptions.supportedExtensions = request.target.supportedExtensions;
+    targetOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled;
     targetOptions.nonConstantImageOffsets = request.target.nonConstantImageOffsets;
     targetOptions.shaderImageMinLod = request.target.shaderImageMinLod;
     targetOptions.narrowSubgroupClock = request.target.narrowSubgroupClock;

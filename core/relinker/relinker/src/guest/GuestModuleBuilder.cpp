@@ -164,6 +164,35 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         images.push_back(std::move(image));
     }
+    // Preserve ELF strong-over-weak resolution after filtering by the requested library.
+    const auto exportedSymbol = [&](std::size_t provider, const std::string& name) -> const GuestSymbol* {
+        const GuestSymbol* chosen = nullptr;
+        for (const auto& candidate : images[provider].Symbols) {
+            if (candidate.Section == 0 || candidate.Section == AbsoluteSection || candidate.Name != name ||
+                (candidate.Info >> 4) == 0 || candidate.Visibility == 1 || candidate.Visibility == 2) continue;
+            if (chosen == nullptr || (chosen->Info >> 4) == 2) chosen = &candidate;
+            if ((candidate.Info >> 4) != 2) break;
+        }
+        return chosen;
+    };
+    const auto preferStrong = [&](auto& providers, const std::string& name) {
+        const auto strong = [&](const auto& provider) {
+            const auto* symbol = exportedSymbol(provider.Provider, name);
+            return symbol != nullptr && (symbol->Info >> 4) != 2;
+        };
+        if (std::any_of(providers.begin(), providers.end(), strong)) {
+            std::erase_if(providers, [&](const auto& provider) { return !strong(provider); });
+        } else if (providers.size() > 1) {
+            providers.resize(1);
+        }
+    };
+    if (!windows) {
+        for (auto& [name, providers] : exports) {
+            preferStrong(providers, name);
+            sharedExports.erase(name);
+            if (providers.size() > 1) for (const auto& provider : providers) sharedExports[name].insert(provider.Provider);
+        }
+    }
     std::map<std::string, std::size_t> guestNames;
     std::map<std::string, std::size_t> windowsGuestFiles;
     for (std::size_t index = 0; index < images.size(); ++index) {

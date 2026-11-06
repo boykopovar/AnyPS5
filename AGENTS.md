@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## Regola principale: un solo worktree per progetto
+
+Tutti gli agenti, subagent e orchestratori devono riutilizzare l'unico checkout/worktree canonico del progetto. Prima di lavorare verificare `git worktree list`, branch e `git status --short`; usare il percorso concordato nel Plan. Non creare altri worktree, cloni isolati o copie dei sorgenti per task, review, pubblicazione o build senza una richiesta esplicita dell'utente. Questa regola prevale sulle precedenti istruzioni di isolamento automatico.
+
+Coordinare la proprieta dei file e serializzare le modifiche incompatibili; non cambiare branch durante il lavoro di altri agenti. Preservare modifiche locali e operazioni in corso: niente reset, stash o cancellazioni per ottenere un checkout pulito. Build, log e artefatti possono avere directory separate senza duplicare il checkout Git. I worktree storici non vanno cancellati automaticamente.
+
 AnyPS5 relinks PS5 executables into native Linux or Windows programs that run against reimplemented system libraries; it is not an emulator. The rules are [CONTRIBUTING.md](CONTRIBUTING.md) and [CONVENTIONS](docs/dev/CONVENTIONS.md); these are the ones agents break.
 
 - No comments in code, except `#endif` and namespace ends.

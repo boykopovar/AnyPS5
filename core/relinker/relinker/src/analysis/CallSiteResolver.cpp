@@ -78,7 +78,7 @@ std::vector<FileByteOffset> CallSiteResolver::ResolveCallSites(const std::vector
         throw RelinkerException("Text section range exceeds the address space");
     if (textSection.empty()) return {};
     if (_cachedTextPtr != &textSection || _cachedTextVAddr != textSectionVAddr || _cachedUnwindRanges != unwindRanges) {
-        auto scanner = Codegen::MakeInstructionScanner({}, unwindRanges);
+        auto scanner = Codegen::MakeInstructionScanner({}, false, unwindRanges);
         _cachedTargetToInstr.clear();
         const auto candidateCount = std::count_if(textSection.begin(), textSection.end(), [](std::uint8_t b) {
             return b == OneByteGrp5Rm || b == OneByteModRmRangeJMax;

@@ -215,6 +215,7 @@ public:
         std::vector<Snapshot> snapshots;
         ~DrawBindings();
     };
+    void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, const DrawBindings* bindings) const;
     struct MovedBuffer {
         std::size_t allocation;
         std::uint64_t address;
@@ -574,6 +575,13 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        // Snapshot textures the lookup left in the texture cache: their cache key (descriptor words,
+        // component mapping, depth compare; the device is the context's), so a proof over memory
+        // without write generations can repeat the lookup's hit check on the entry (fastRevalidate).
+        bool keyed = false;
+        std::array<std::uint32_t, 8> keyWords{};
+        std::array<std::uint32_t, 4> keyComponents{};
+        bool keyDepthCompare = false;
     };
     bool keepsTemplateRecords() const;
     void captureValidation();

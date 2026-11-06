@@ -19,6 +19,7 @@
 #else
 #include <cerrno>
 #include <fstream>
+#include <pthread.h>
 #include <sstream>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -420,7 +421,19 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  // region around the address is the honest extent; unmapped memory is an error, as on the PS5.
  #ifdef _WIN32
  MEMORY_BASIC_INFORMATION host{};
- if (VirtualQuery(addr, &host, sizeof(host)) == 0 || host.State != MEM_COMMIT) return SCE_KERNEL_ERROR_EACCES;
+ if (VirtualQuery(addr, &host, sizeof(host)) == 0 || host.State == MEM_FREE) return SCE_KERNEL_ERROR_EACCES;
+ // sceKernelReserveVirtualRange registers its range without access, so the lease above skips it.
+ // Titles (Unity's virtual allocator) query a reservation before committing into it and expect it
+ // reported as present and uncommitted rather than as unmapped.
+ if (host.State != MEM_COMMIT || host.Protect == PAGE_NOACCESS) {
+  const auto page = address & ~static_cast<uintptr_t>(PS5_PAGE_SIZE - 1);
+  if (!GuestAllocations::Mutation().Covers(reinterpret_cast<const void*>(page), PS5_PAGE_SIZE)) return SCE_KERNEL_ERROR_EACCES;
+  info->start = reinterpret_cast<uintptr_t>(host.BaseAddress);
+  info->end = info->start + host.RegionSize;
+  info->is_committed = 0;
+  ApplyRangeName(address, info);
+  return 0;
+ }
  info->start = reinterpret_cast<uintptr_t>(host.BaseAddress);
  info->end = info->start + host.RegionSize;
  const bool writable = (host.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
@@ -504,6 +517,8 @@ int APS5_VABI sceKernelQueryMemoryProtection(void* addr, void** start, void** en
  return 0;
 }
 
+// Answers for the calling thread's stack, which is what titles ask about (Unity's garbage collector
+// locates the bounds of the stack it is scanning from); other threads' stacks are not tracked.
 int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end) {
  std::uintptr_t stackStart = 0;
  std::uintptr_t stackEnd = 0;

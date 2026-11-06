@@ -378,6 +378,9 @@ void baseRelocations() {
     const auto spanning = builder.BuildBaseRelocations({0x10ffc, 0x10fff});
     require(spanning.size() == 12 && Io::ReadU32(spanning, 0) == 0x10000, "A page-spanning base relocation was not placed in its first page");
     require(Io::ReadU16(spanning, 8) == 0xaffc && Io::ReadU16(spanning, 10) == 0xafff, "Wrong page-spanning base relocation entries");
+    const auto mixed = builder.BuildBaseRelocations({0x10000}, {0x10000});
+    require(mixed.size() == 12, "Mixed base relocation block has the wrong size");
+    require(Io::ReadU16(mixed, 8) == 0xa000 && Io::ReadU16(mixed, 10) == 0x3000, "DIR64 and HIGHLOW base relocation types were not separated");
 }
 
 std::size_t fileOffset(const std::vector<std::uint8_t>& pe, std::uint32_t address) {

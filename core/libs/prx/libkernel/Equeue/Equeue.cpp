@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/Equeue/EqueueIdentityTrace.hpp"
 #include "Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
@@ -9,10 +10,189 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
+
+// Opt-in probe (APS5_TRACE_EQUEUE_IDENTITY): identity and wait/producer correlation for equeues.
+// Default off. Any value of the variable enables it, like the other APS5 probes; the launcher
+// disables probes by removing the variable, not by setting it to 0.
+static bool EqueueIdentityEnabled() {
+    static const bool enabled = std::getenv("APS5_TRACE_EQUEUE_IDENTITY") != nullptr;
+    return enabled;
+}
+
+// Process-relative nanoseconds on the same source the submit probe prints (sceKernelGetProcessTime
+// returns microseconds since the same trace origin), so lines from different probes can be aligned.
+static std::uint64_t EqueueIdentityProcNs() {
+    return sceKernelGetProcessTime() * 1000ULL;
+}
+
+// OS thread id of the waiting thread, same domain the waits and submit probes print.
+static unsigned long EqueueIdentityThreadId() {
+#if defined(_WIN32)
+    return static_cast<unsigned long>(::GetCurrentThreadId());
+#else
+    return static_cast<unsigned long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+#endif
+}
+
+// Call site of the guest-facing producer call, captured at the exported entry point of the current
+// thread, so the probe never reports the internal wrapper as the producer.
+static thread_local const void* t_equeueProducerSite = nullptr;
+
+// Probe registry: one slot per live equeue, keyed by handle, bounded. The object is intentionally
+// never destroyed, so teardown of equeues during process exit cannot touch a destroyed registry.
+// Nothing here stores a pointer to KernelEqueuePrivate: deletion of an equeue only clears the slot,
+// so there is no dereference after delete.
+struct EqueueIdentityRegistry {
+    std::mutex mutex;
+    EqueueIdentityTraceDetail::State slots[32];
+    EqueueIdentityTraceDetail::CoordinatorState coordinator;
+    std::uint64_t nextId = 1;
+    std::uint64_t slotsOverflow = 0;
+};
+
+static EqueueIdentityRegistry& IdentityRegistry() {
+    static EqueueIdentityRegistry* registry = new EqueueIdentityRegistry();
+    return *registry;
+}
+
+static EqueueIdentityTraceDetail::State* IdentityFindLocked(EqueueIdentityRegistry& registry, std::uint64_t handle) {
+    for (auto& slot : registry.slots) {
+        if (slot.id != 0 && slot.handle == handle) return &slot;
+    }
+    return nullptr;
+}
+
+static void MaybeReportEqueueIdentity(std::uint64_t handle, std::uint64_t nowNs, std::uint64_t nowProcNs);
+
+static void IdentityAttach(std::uint64_t handle, const char* name) {
+    if (!EqueueIdentityEnabled()) return;
+    auto& registry = IdentityRegistry();
+    std::lock_guard lock(registry.mutex);
+    for (auto& slot : registry.slots) {
+        if (slot.id == 0) {
+            EqueueIdentityTraceDetail::Attach(slot, registry.nextId++, handle, name, EqueueIdentityProcNs());
+            return;
+        }
+    }
+    ++registry.slotsOverflow;
+}
+
+static void IdentityDetach(std::uint64_t handle) {
+    if (!EqueueIdentityEnabled()) return;
+    bool report = false;
+    {
+        auto& registry = IdentityRegistry();
+        std::lock_guard lock(registry.mutex);
+        auto* slot = IdentityFindLocked(registry, handle);
+        if (slot == nullptr) return;
+        // A delete is not a window: the final line goes through the same admission as every other
+        // report, so the bounded output contract (one line per equeue per window, MaxLines overall)
+        // still holds. Activity that is not admitted here is dropped, not printed outside budget.
+        // While a wait is still open nothing is classified yet, so the final report is deferred to
+        // the release path in IdentityWaitExit, where the late exit is already counted.
+        report = slot->openWaitCount == 0 && EqueueIdentityTraceDetail::HasActivity(*slot) &&
+                 slot->lastPrintedWindow != registry.coordinator.windowIndex;
+        if (slot->openWaitCount != 0) {
+            // A wait can still be blocked on the object the caller just deleted. Keep a tombstone
+            // so its late exit is classified (err) and attributed, instead of disappearing; the
+            // slot is released when the last open wait closes (see WaitExit).
+            EqueueIdentityTraceDetail::Retire(*slot);
+        }
+    }
+    if (report) MaybeReportEqueueIdentity(handle, KernelEqueuePrivate::MonotonicNs(), EqueueIdentityProcNs());
+    auto& registry = IdentityRegistry();
+    std::lock_guard lock(registry.mutex);
+    auto* slot = IdentityFindLocked(registry, handle);
+    // Reclaim the slot when nothing is in flight. Without this a deleted equeue kept its slot
+    // forever and the 32-entry registry was exhausted after 32 deletes, so later equeues were
+    // never tracked (the site report was missing for exactly this reason).
+    if (slot != nullptr && slot->openWaitCount == 0) *slot = EqueueIdentityTraceDetail::State{};
+}
+
+static int IdentityWaitEnter(std::uint64_t handle, std::uint64_t nowNs, std::uint64_t procNs, unsigned long tid,
+                              const void* site) {
+    if (!EqueueIdentityEnabled()) return -1;
+    auto& registry = IdentityRegistry();
+    std::lock_guard lock(registry.mutex);
+    if (auto* slot = IdentityFindLocked(registry, handle)) return EqueueIdentityTraceDetail::WaitEnter(*slot, nowNs, procNs, tid, site);
+    return -1;
+}
+
+static void IdentityWaitExit(std::uint64_t handle, int token, std::uint64_t nowNs, std::uint64_t procNs, int delivered) {
+    if (!EqueueIdentityEnabled()) return;
+    bool release = false;
+    bool report = false;
+    {
+        auto& registry = IdentityRegistry();
+        std::lock_guard lock(registry.mutex);
+        auto* slot = IdentityFindLocked(registry, handle);
+        if (slot == nullptr) return;
+        EqueueIdentityTraceDetail::WaitExit(*slot, token, nowNs, procNs, delivered);
+        release = slot->retired && slot->openWaitCount == 0;
+        report = release && EqueueIdentityTraceDetail::HasActivity(*slot) &&
+                 slot->lastPrintedWindow != registry.coordinator.windowIndex;
+    }
+    if (!release) return;
+    // Last chance to report a deleted equeue's late exit inside the normal output budget, then give
+    // the slot back so the 32-entry registry is not exhausted by tombstones.
+    if (report) MaybeReportEqueueIdentity(handle, nowNs, procNs);
+    auto& registry = IdentityRegistry();
+    std::lock_guard lock(registry.mutex);
+    if (auto* slot = IdentityFindLocked(registry, handle)) EqueueIdentityTraceDetail::ReleaseIfUnused(*slot);
+}
+
+// Called from the producer paths while the equeue mutex is held: the probe mutex is the only
+// additional lock and no path takes the equeue mutex while holding it.
+static void IdentityProducer(std::uint64_t handle, std::int16_t filter, std::uintptr_t ident, const void* udata,
+                             const void* site) {
+    if (!EqueueIdentityEnabled()) return;
+    auto& registry = IdentityRegistry();
+    std::lock_guard lock(registry.mutex);
+    if (auto* slot = IdentityFindLocked(registry, handle)) {
+        EqueueIdentityTraceDetail::Producer(*slot, filter, ident, udata, site, EqueueIdentityProcNs());
+    }
+}
+
+// Snapshot under the probe mutex, print outside it: no I/O is done while a lock is held.
+static void MaybeReportEqueueIdentity(std::uint64_t handle, std::uint64_t nowNs, std::uint64_t nowProcNs) {
+    if (!EqueueIdentityEnabled()) return;
+    EqueueIdentityTraceDetail::Snapshot snapshot{};
+    std::uint64_t admittedWindow = 0;
+    bool admitted = false;
+    {
+        auto& registry = IdentityRegistry();
+        std::lock_guard lock(registry.mutex);
+        auto* slot = IdentityFindLocked(registry, handle);
+        if (slot == nullptr || !EqueueIdentityTraceDetail::HasActivity(*slot)) return;
+        const auto decision = EqueueIdentityTraceDetail::Admit(registry.coordinator, nowNs, slot->lastPrintedWindow);
+        if (!decision.admit) return;
+        admittedWindow = decision.windowIndex;
+        admitted = true;
+        EqueueIdentityTraceDetail::TakeSnapshot(*slot, snapshot, nowProcNs);
+        snapshot.slotsOverflow = registry.slotsOverflow;
+    }
+    if (!admitted) return;
+    char line[8192];
+    if (EqueueIdentityTraceDetail::FormatLine(snapshot, nowProcNs, line, sizeof line)) {
+        {
+            auto& registry = IdentityRegistry();
+            std::lock_guard lock(registry.mutex);
+            auto* slot = IdentityFindLocked(registry, handle);
+            if (slot != nullptr) {
+                EqueueIdentityTraceDetail::ResetWindow(*slot, nowProcNs);
+                slot->lastPrintedWindow = admittedWindow;
+            }
+        }
+        std::fputs(line, stderr);
+        std::fflush(stderr);
+    }
+}
 
 static constexpr std::uint64_t FileRepollNs = 1000000;
 
@@ -84,7 +264,8 @@ struct KernelEqueuePrivate::WaitSet {
 
 extern "C" {
 
-KernelEqueuePrivate::KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait) : m_handle(handle), m_reportOncePerWait(reportOncePerWait) {}
+KernelEqueuePrivate::KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait)
+    : m_handle(handle), m_reportOncePerWait(reportOncePerWait) {}
 
 KernelEqueuePrivate::~KernelEqueuePrivate() {
     Close();
@@ -533,6 +714,10 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         m_events.push_back(event);
         if (event.triggered) ++m_activations;
     }
+    if (event.triggered && EqueueIdentityEnabled()) {
+        const void* const site = t_equeueProducerSite != nullptr ? t_equeueProducerSite : __builtin_return_address(0);
+        IdentityProducer(m_handle, event.event.filter, event.event.ident, event.event.udata, site);
+    }
     m_cond.NotifyOne();
     WakePollers();
     return EQUEUE_OK;
@@ -562,6 +747,10 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
         if (!was && it->triggered) ++m_activations;
+        if (EqueueIdentityEnabled()) {
+            const void* const site = t_equeueProducerSite != nullptr ? t_equeueProducerSite : __builtin_return_address(0);
+            IdentityProducer(m_handle, filter, ident, it->event.udata, site);
+        }
     }
     m_cond.NotifyOne();
     WakePollers();
@@ -699,6 +888,7 @@ int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name) {
     *eq = static_cast<KernelEqueue>(g_nextEqueue++);
     auto owner = std::make_shared<KernelEqueuePrivate>(*eq);
     owner->SetName(std::string(name));
+    IdentityAttach(*eq, name);
     g_equeues.emplace(*eq, std::move(owner));
     return EQUEUE_OK;
 }
@@ -714,6 +904,7 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
         owner = std::move(it->second);
         g_equeues.erase(it);
     }
+    IdentityDetach(eq);
     owner->Close();
     return EQUEUE_OK;
 }
@@ -730,12 +921,35 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
         return SCE_KERNEL_ERROR_EINVAL;
     }
     const auto waitStart = std::chrono::steady_clock::now();
-    if (timo == nullptr) {
-        *out = owner->WaitForEvents(ev, num, 0);
-    } else if (*timo == 0) {
-        *out = owner->GetTriggeredEvents(ev, num);
-    } else {
-        *out = owner->WaitForEvents(ev, num, *timo);
+    const bool identity = EqueueIdentityEnabled();
+    const std::uint64_t identityStartNs = identity ? KernelEqueuePrivate::MonotonicNs() : 0;
+    const int identityWaitToken = identity
+        ? IdentityWaitEnter(eq, identityStartNs, EqueueIdentityProcNs(), EqueueIdentityThreadId(),
+                            __builtin_return_address(0))
+        : -1;
+    // The probe accounting identity waits = prod + noprod + empty + err requires every entered wait
+    // to close exactly once. The wait can unwind (for example a socket path throwing on a descriptor
+    // that is not a socket), so the catch-all closes it as an error before rethrowing.
+    try {
+        if (timo == nullptr) {
+            *out = owner->WaitForEvents(ev, num, 0);
+        } else if (*timo == 0) {
+            *out = owner->GetTriggeredEvents(ev, num);
+        } else {
+            *out = owner->WaitForEvents(ev, num, *timo);
+        }
+    } catch (...) {
+        if (identity) {
+            const std::uint64_t endNs = KernelEqueuePrivate::MonotonicNs();
+            IdentityWaitExit(eq, identityWaitToken, endNs, EqueueIdentityProcNs(), -1);
+            MaybeReportEqueueIdentity(eq, endNs, EqueueIdentityProcNs());
+        }
+        throw;
+    }
+    if (identity) {
+        const std::uint64_t endNs = KernelEqueuePrivate::MonotonicNs();
+        IdentityWaitExit(eq, identityWaitToken, endNs, EqueueIdentityProcNs(), *out);
+        MaybeReportEqueueIdentity(eq, endNs, EqueueIdentityProcNs());
     }
     if (timo == nullptr || *timo != 0) {
         KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
@@ -766,7 +980,11 @@ int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id) {
             e->event.data = 0;
         }
     };
-    return EqueueAddEvent_nid_postfix(eq, event);
+    const void* const site = __builtin_return_address(0);
+    struct ProducerSiteScope { const void* previous; ~ProducerSiteScope() { t_equeueProducerSite = previous; } } scope{t_equeueProducerSite};
+    if (EqueueIdentityEnabled()) t_equeueProducerSite = site;
+    const int result = EqueueAddEvent_nid_postfix(eq, event);
+    return result;
 }
 
 int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id) {
@@ -786,10 +1004,17 @@ int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id) {
             e->event.data = 0;
         }
     };
-    return EqueueAddEvent_nid_postfix(eq, event);
+    const void* const site = __builtin_return_address(0);
+    struct ProducerSiteScope { const void* previous; ~ProducerSiteScope() { t_equeueProducerSite = previous; } } scope{t_equeueProducerSite};
+    if (EqueueIdentityEnabled()) t_equeueProducerSite = site;
+    const int result = EqueueAddEvent_nid_postfix(eq, event);
+    return result;
 }
 
 int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata) {
+    const void* const site = __builtin_return_address(0);
+    struct ProducerSiteScope { const void* previous; ~ProducerSiteScope() { t_equeueProducerSite = previous; } } scope{t_equeueProducerSite};
+    if (EqueueIdentityEnabled()) t_equeueProducerSite = site;
     return EqueueTriggerEvent_nid_postfix(eq, static_cast<uintptr_t>(id), EVFILT_USER, udata);
 }
 

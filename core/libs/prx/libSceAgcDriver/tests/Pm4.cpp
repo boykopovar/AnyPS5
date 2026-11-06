@@ -2203,6 +2203,13 @@ int main(int argc, char** argv) {
             std::printf("PM4 %s test passed\n", mode);
             return 0;
         }
+        if (argc == 2 && std::string(argv[1]) == "registers") {
+            testRegisters();
+            testRegisterFile();
+            LibcRunShutdown_nid_postfix();
+            std::puts("PM4 register tests passed");
+            return 0;
+        }
         testCatalog();
         testNopPad();
         testWorkloadNopPayloadsIgnored();

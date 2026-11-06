@@ -56,6 +56,12 @@ void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes);
 void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes);
 bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection);
 bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
+// Collect sub-phase drain (APS5_COLLECT_SUBPHASE): 26 scalars. 0-17 are
+// calls/bytes/nanoseconds triples for shared, private, coverage, lock,
+// enum, arm; 18 sharedPages, 19 pinnedPages, 20 armedProtectCalls,
+// 21 memcmpBytes, 22 memcpyBytes, 23 returnedPages, 24 controlCalls,
+// 25 controlNanoseconds. Returns and zeroes the window in one lock.
+void GuestArenaCollectSubphase_nid_postfix(std::uint64_t* out);
 bool GuestArenaCollectArmedWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
 bool GuestArenaCollectFreshWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
 bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes);

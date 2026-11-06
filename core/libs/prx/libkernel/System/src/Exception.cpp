@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -1427,6 +1428,9 @@ asm(".text\n"
 
 extern "C" {
 
+
+// Exception payloads belong to the guest C++ runtime. Keep the diagnostic
+// useful without interpreting a host-incompatible exception object layout.
 int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
  if (!Allowed(signum) || handler == nullptr) return SCE_KERNEL_ERROR_EINVAL;
  void* expected = nullptr;

@@ -137,7 +137,10 @@ void DisplayWindow::UpdateTitle() {
     char text[160];
     std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
     SDL_SetWindowTitle(window, text);
-    if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr && (frameNum == 1 || frameNum % 30 == 0)) telemetry->EmitPresent(frameNum, currentFps);
+    if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr) {
+        const std::uint64_t sampleInterval = VideoOutTelemetry::PresentSampleInterval();
+        if (frameNum == 1 || frameNum % sampleInterval == 0) telemetry->EmitPresent(frameNum, currentFps);
+    }
 }
 
 void DisplayWindow::installSubclass() {

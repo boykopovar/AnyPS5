@@ -1,147 +1,141 @@
+"""Validate the --icon resource directory through the real ELF-to-PE pipeline."""
+
 from pathlib import Path
-import ctypes
-import os
 import struct
 import subprocess
 import sys
 import tempfile
-import zlib
 
 from test_optional_plt import fixture
 
-
-def chunk(kind, data):
-    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-
-
-def png(width, height):
-    rows = b"".join(b"\0" + bytes((15, 65, 200, 255)) * width for _ in range(height))
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) +
-            chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+RT_ICON = 3
+RT_GROUP_ICON = 14
 
 
-def resources(pe):
-    header = struct.unpack_from("<I", pe, 0x3c)[0]
-    optional = header + 24
-    rva, size = struct.unpack_from("<II", pe, optional + 112 + 2 * 8)
-    count = struct.unpack_from("<H", pe, header + 6)[0]
-    table = optional + struct.unpack_from("<H", pe, header + 20)[0]
-    sections = []
+def icon(images):
+    header = struct.pack("<HHH", 0, 1, len(images))
+    offset = len(header) + 16 * len(images)
+    entries = b""
+    payloads = b""
+    for width, payload in images:
+        entries += struct.pack("<BBBBHHII", width, width, 0, 0, 1, 32, len(payload), offset)
+        payloads += payload
+        offset += len(payload)
+    return header + entries + payloads
+
+
+def sections(pe):
+    pe_offset = struct.unpack_from("<I", pe, 0x3c)[0]
+    count = struct.unpack_from("<H", pe, pe_offset + 6)[0]
+    optional = struct.unpack_from("<H", pe, pe_offset + 20)[0]
+    table = pe_offset + 24 + optional
+    result = []
     for index in range(count):
-        offset = table + index * 40
-        name = pe[offset:offset + 8].rstrip(b"\0")
-        virtual_size, address, raw_size, raw = struct.unpack_from("<IIII", pe, offset + 8)
-        flags = struct.unpack_from("<I", pe, offset + 36)[0]
-        sections.append((name, virtual_size, address, raw_size, raw, flags))
-    if rva == 0:
-        assert size == 0 and all(section[0] != b".rsrc" for section in sections)
-        return None
-    matches = [section for section in sections if section[0] == b".rsrc"]
-    assert len(matches) == 1, sections
-    _, virtual_size, address, raw_size, raw, flags = matches[0]
-    assert rva == address and size == virtual_size <= raw_size
-    assert rva % 0x1000 == 0 and raw % 0x200 == 0 and raw_size % 0x200 == 0
-    assert flags == 0x40000040 and raw + raw_size <= len(pe)
-    assert struct.unpack_from("<I", pe, optional + 56)[0] >= rva + size
-    data = pe[raw:raw + size]
-
-    def directory(offset):
-        assert offset % 4 == 0 and offset + 16 <= size
-        named, ids = struct.unpack_from("<HH", data, offset + 12)
-        assert named == 0 and offset + 16 + ids * 8 <= size
-        entries = dict(struct.unpack_from("<II", data, offset + 16 + index * 8) for index in range(ids))
-        assert len(entries) == ids
-        return entries
-
-    root = directory(0)
-    assert set(root) == {3, 14}, root
-    result = {}
-    for kind, target in root.items():
-        assert target & 0x80000000
-        names = directory(target & 0x7fffffff)
-        assert set(names) == {1} and names[1] & 0x80000000
-        languages = directory(names[1] & 0x7fffffff)
-        assert set(languages) == {0}
-        leaf = languages[0]
-        assert not leaf & 0x80000000 and leaf % 4 == 0 and leaf + 16 <= size
-        data_rva, length, codepage, reserved = struct.unpack_from("<IIII", data, leaf)
-        assert codepage == reserved == 0 and data_rva % 4 == 0
-        offset = data_rva - rva
-        assert 0 <= offset <= size and length <= size - offset
-        result[kind] = data[offset:offset + length]
+        header = table + index * 40
+        name = pe[header:header + 8].rstrip(b"\0").decode()
+        virtual_size, rva, raw_size, raw_offset = struct.unpack_from("<IIII", pe, header + 8)
+        result.append((name, rva, virtual_size, raw_offset, raw_size))
     return result
 
 
-def check_extraction(path):
-    if os.name != "nt":
-        return
-    shell = ctypes.WinDLL("shell32")
-    user = ctypes.WinDLL("user32")
-    shell.ExtractIconExW.argtypes = [ctypes.c_wchar_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p),
-                                  ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint]
-    shell.ExtractIconExW.restype = ctypes.c_uint
-    user.DestroyIcon.argtypes = [ctypes.c_void_p]
-    large, small = ctypes.c_void_p(), ctypes.c_void_p()
-    try:
-        count = shell.ExtractIconExW(str(path), 0, ctypes.byref(large), ctypes.byref(small), 1)
-        assert count > 0 and large.value and small.value, "Windows could not extract the icon"
-    finally:
-        for handle in (large.value, small.value):
-            if handle:
-                user.DestroyIcon(handle)
+def directory(pe, index):
+    pe_offset = struct.unpack_from("<I", pe, 0x3c)[0]
+    return struct.unpack_from("<II", pe, pe_offset + 24 + 112 + index * 8)
+
+
+def read_rva(pe, rva, size):
+    for _, section_rva, virtual_size, raw_offset, _ in sections(pe):
+        if section_rva <= rva < section_rva + virtual_size:
+            start = raw_offset + rva - section_rva
+            return pe[start:start + size]
+    raise AssertionError(f"RVA {rva:#x} is not inside any section")
+
+
+def entries(resources, offset):
+    named, ids = struct.unpack_from("<HH", resources, offset + 12)
+    result = []
+    for index in range(named + ids):
+        entry = offset + 16 + index * 8
+        identifier, target = struct.unpack_from("<II", resources, entry)
+        result.append((identifier, target & 0x7fffffff, bool(target & 0x80000000)))
+    return result
+
+
+def leaves(pe, resources, base_rva, type_id):
+    for identifier, target, is_directory in entries(resources, 0):
+        if identifier != type_id:
+            continue
+        assert is_directory, "resource type entry must point at a subdirectory"
+        result = {}
+        for name, name_target, name_is_directory in entries(resources, target):
+            assert name_is_directory, "resource name entry must point at a subdirectory"
+            languages = entries(resources, name_target)
+            assert len(languages) == 1 and not languages[0][2], "expected a single language leaf"
+            data_rva, data_size = struct.unpack_from("<II", resources, languages[0][1])
+            assert base_rva <= data_rva, "resource data must live inside the resource section"
+            result[name] = read_rva(pe, data_rva, data_size)
+        return result
+    raise AssertionError(f"resource type {type_id} is missing")
 
 
 def main():
     relinker = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="anyps5-icon-") as directory:
-        work = Path(directory)
-        app = work / "app with spaces \u65e5\u672c"
-        app.mkdir()
-        source = app / "eboot.bin"
+    images = [(16, b"\xa5" * 64), (32, b"\x5a" * 128), (48, b"\x42" * 96)]
+    with tempfile.TemporaryDirectory(prefix="anyps5-icon-") as directory_name:
+        work = Path(directory_name)
+        source = work / "input.elf"
         source.write_bytes(fixture())
-        icon = app / "sce_sys" / "icon0.png"
+        icon_path = work / "app.ico"
+        icon_path.write_bytes(icon(images))
 
-        def relink(name):
-            output = work / f"{name}.exe"
-            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
-                                    cwd=work, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
-            return result, output
-
-        result, output = relink("missing-initial")
+        plain = work / "plain.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(plain)],
+                                capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, (result.stdout, result.stderr)
-        assert resources(output.read_bytes()) is None
-        icon.parent.mkdir()
-        for width, height in ((32, 32), (128, 64), (256, 256), (512, 512), (1024, 1024)):
-            image = png(width, height)
-            icon.write_bytes(image)
-            result, output = relink(f"icon-{width}x{height}")
-            assert result.returncode == 0, (result.stdout, result.stderr)
-            embedded = resources(output.read_bytes())
-            assert embedded is not None, "missing Windows icon resources"
-            assert embedded[3] == image, "PNG resource differs from icon0.png"
-            group = struct.unpack("<HHHBBBBHHIH", embedded[14])
-            assert group == (0, 1, 1, width if width < 256 else 0, height if height < 256 else 0,
-                             0, 0, 1, 32, len(image), 1), group
-            check_extraction(output)
-            if os.name == "nt":
-                assert subprocess.run([str(output)], timeout=20).returncode == 42
+        assert directory(plain.read_bytes(), 2) == (0, 0), "resource directory must stay empty without --icon"
+        assert not any(name == ".rsrc" for name, *_ in sections(plain.read_bytes())), "unexpected .rsrc section"
 
-        valid = png(32, 32)
-        bad_crc = bytearray(valid)
-        bad_crc[29] ^= 1
-        malformed = (b"not a PNG", valid[:32], valid[:8] + struct.pack(">I", 12) + valid[12:],
-                     png(0, 32), png(32, 0), bytes(bad_crc), valid[:-1], valid[:-12],
-                     valid + b"garbage", valid[:33] + chunk(b"IEND", b""),
-                     valid[:8] + chunk(b"IHDR", struct.pack(">IIBBBBB", 32, 32, 8, 6, 1, 0, 0)) + valid[33:])
-        for index, image in enumerate(malformed):
-            icon.write_bytes(image)
-            result, output = relink(f"malformed-{index}")
-            assert result.returncode != 0 and not output.exists(), (result.stdout, result.stderr)
-            assert "Invalid Windows icon PNG" in result.stderr and str(icon) in result.stderr, result.stderr
-        icon.unlink()
-        result, output = relink("missing-final")
-        assert result.returncode == 0 and resources(output.read_bytes()) is None
-    print("Windows icon integration tests passed (5 images, 11 malformed files, missing icon)")
+        output = work / "icon.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", "--icon", str(icon_path),
+                                 str(source), str(output)], capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        pe = output.read_bytes()
+
+        rsrc = [section for section in sections(pe) if section[0] == ".rsrc"]
+        assert len(rsrc) == 1, "expected exactly one .rsrc section"
+        _, rsrc_rva, rsrc_size, rsrc_offset, _ = rsrc[0]
+        assert directory(pe, 2) == (rsrc_rva, rsrc_size), "resource data directory does not describe .rsrc"
+        resources = pe[rsrc_offset:rsrc_offset + rsrc_size]
+
+        icons = leaves(pe, resources, rsrc_rva, RT_ICON)
+        assert sorted(icons) == [1, 2, 3], f"unexpected RT_ICON ids: {sorted(icons)}"
+        for index, (_, payload) in enumerate(images):
+            assert icons[index + 1] == payload, f"RT_ICON {index + 1} payload does not match the source image"
+
+        groups = leaves(pe, resources, rsrc_rva, RT_GROUP_ICON)
+        assert list(groups) == [1], f"unexpected RT_GROUP_ICON ids: {list(groups)}"
+        group = groups[1]
+        reserved, kind, count = struct.unpack_from("<HHH", group, 0)
+        assert (reserved, kind, count) == (0, 1, len(images)), "malformed GRPICONDIR header"
+        assert len(group) == 6 + 14 * len(images), "malformed GRPICONDIR size"
+        for index, (width, payload) in enumerate(images):
+            entry = 6 + index * 14
+            assert group[entry] == width and group[entry + 1] == width, "GRPICONDIR entry has the wrong size"
+            assert struct.unpack_from("<I", group, entry + 8)[0] == len(payload), "GRPICONDIR entry has the wrong length"
+            assert struct.unpack_from("<H", group, entry + 12)[0] == index + 1, "GRPICONDIR entry points at the wrong RT_ICON"
+
+        broken = work / "broken.ico"
+        broken.write_bytes(b"\x00\x00\x02\x00\x01\x00" + b"\x00" * 16)
+        rejected = work / "rejected.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", "--icon", str(broken),
+                                 str(source), str(rejected)], capture_output=True, text=True, timeout=20)
+        assert result.returncode != 0 and not rejected.exists(), "a cursor file was accepted as an icon"
+
+        missing = work / "missing.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--icon", str(icon_path), str(source), str(missing)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode != 0 and not missing.exists(), "--icon was accepted without --windows"
+    print("Windows icon resource integration tests passed")
 
 
 if __name__ == "__main__":

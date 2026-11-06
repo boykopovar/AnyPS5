@@ -60,6 +60,7 @@ static constexpr int SCE_OK = 0;
 static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
 static constexpr int GUEST_EINVAL = 22;
 
+static constexpr std::size_t DEFAULT_STACK_SIZE = 1u << 20;
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
@@ -108,6 +109,11 @@ static GuestThreadState& CurrentGuestState() {
     static thread_local GuestThreadState state;
     return state;
 #endif
+}
+PthreadPrivate* PthreadExchangeCurrent(PthreadPrivate* thread) {
+    auto* previous = CurrentGuestState().current;
+    CurrentGuestState().current = thread;
+    return previous;
 }
 static std::mutex& stackLock = *new std::mutex();
 static auto& liveStacks = *new std::map<PthreadPrivate*, std::pair<std::uintptr_t, std::uintptr_t>>();
@@ -1132,7 +1138,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     bool detached = false;
     if (attr && *attr) detached = ((*attr)->_detachstate == DETACH_DETACHED);
     p->_detached = detached;
-    p->stackSize = attr ? (*attr)->_stacksize : GetDefaultStackSize_nid_no_patch();
+    p->stackSize = attr ? (*attr)->_stacksize : DEFAULT_STACK_SIZE;
     if (attr) {
         if ((*attr)->_inheritsched != GUEST_INHERIT_SCHED)
             p->scope = (*attr)->_scope;
@@ -1362,6 +1368,13 @@ Pthread APS5_VABI scePthreadSelf() {
         adopted->nativeHandle = handle;
         adopted->initialThread.store(IsInitialPthread_nid_no_patch(), std::memory_order_release);
         adopted->threadId = std::this_thread::get_id();
+        // Report the real stack of the adopted (main) thread: a conservative collector reads the
+        // bounds through pthread_attr_getstack and would otherwise not scan this stack at all.
+        ULONG_PTR stackLow = 0;
+        ULONG_PTR stackHigh = 0;
+        GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+        adopted->stackAddress = reinterpret_cast<void*>(stackLow);
+        adopted->stackSize = static_cast<std::size_t>(stackHigh - stackLow);
         adopted->_detached = true;
         adopted->references.store(1, std::memory_order_relaxed);
         TimedWait::BindThreadWaitState(&adopted->waitCount);
@@ -1385,28 +1398,7 @@ Pthread APS5_VABI scePthreadSelf() {
 }
 
 void APS5_VABI scePthreadYield() {
-#ifdef _WIN32
-    thread_local unsigned int spins = 0;
-    thread_local std::uint64_t lastTsc = 0;
-    const auto now = __rdtsc();
-    if (now - lastTsc > 10000) {
-        spins = 0;
-    }
-    lastTsc = now;
-    if (SwitchToThread()) {
-        spins = 0;
-        return;
-    }
-    if (++spins < 512) {
-        _mm_pause();
-        return;
-    }
-    spins = 0;
-    Sleep(1);
-    lastTsc = __rdtsc();
-#else
     std::this_thread::yield();
-#endif
 }
 
 int APS5_VABI scePthreadCancel(Pthread thread) {

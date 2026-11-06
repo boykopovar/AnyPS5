@@ -28,6 +28,18 @@ static int Difference(std::uint8_t left, std::uint8_t right) {
     return left > right ? left - right : right - left;
 }
 
+static std::vector<std::uint8_t> FrameHeader(const std::vector<std::uint8_t>& jpeg) {
+    std::size_t cursor = 2;
+    while (cursor + 4 <= jpeg.size()) {
+        Require(jpeg[cursor] == 0xFF);
+        const auto marker = jpeg[cursor + 1];
+        const std::size_t length = (static_cast<std::size_t>(jpeg[cursor + 2]) << 8) | jpeg[cursor + 3];
+        if (marker == 0xC0) return {jpeg.begin() + static_cast<std::ptrdiff_t>(cursor + 4), jpeg.begin() + static_cast<std::ptrdiff_t>(cursor + 2 + length)};
+        cursor += 2 + length;
+    }
+    std::abort();
+}
+
 struct FrameInfo { int components; std::uint8_t sampling; };
 
 static FrameInfo ReadFrame(const std::vector<std::uint8_t>& jpeg) {
@@ -47,7 +59,60 @@ static FrameInfo ReadFrame(const std::vector<std::uint8_t>& jpeg) {
     std::abort();
 }
 
+static int MaximumDifference(const std::vector<std::uint8_t>& left, const std::vector<std::uint8_t>& right) {
+    Require(left.size() == right.size());
+    int worst = 0;
+    for (std::size_t index = 0; index < left.size(); ++index)
+        worst = worst > Difference(left[index], right[index]) ? worst : Difference(left[index], right[index]);
+    return worst;
+}
+
+static void CheckSampling() {
+    constexpr std::uint32_t width = 61;
+    constexpr std::uint32_t height = 37;
+    std::vector<std::uint8_t> rgb(width * height * 3);
+    std::vector<std::uint8_t> gray(width * height);
+    for (std::uint32_t y = 0; y < height; ++y) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            const auto index = y * width + x;
+            rgb[index * 3 + 0] = static_cast<std::uint8_t>((x * 4) & 0xFF);
+            rgb[index * 3 + 1] = static_cast<std::uint8_t>((y * 6) & 0xFF);
+            rgb[index * 3 + 2] = static_cast<std::uint8_t>((x * 3 + y * 5) & 0xFF);
+            gray[index] = static_cast<std::uint8_t>((x * 7 + y * 5) & 0xFF);
+        }
+    }
+
+    const auto grayscale = Decoder::Jpeg::Encode(gray, width, height, 1, 90, Decoder::Jpeg::Sampling::Yuv444);
+    Require(IsJpeg(grayscale));
+    const auto grayscaleHeader = FrameHeader(grayscale);
+    Require(grayscaleHeader[5] == 1);
+    Require(grayscaleHeader[7] == 0x11);
+    const auto decodedGrayscale = Decoder::Jpeg::Decode(grayscale);
+    Require(decodedGrayscale.has_value() && decodedGrayscale->channels == 1);
+    Require(MaximumDifference(decodedGrayscale->pixels, gray) < 24);
+
+    const auto full = Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv444);
+    const auto half = Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv422);
+    const auto quarter = Decoder::Jpeg::Encode(rgb, width, height, 3, 90, Decoder::Jpeg::Sampling::Yuv420);
+    Require(IsJpeg(full) && IsJpeg(half) && IsJpeg(quarter));
+    Require(FrameHeader(full)[5] == 3 && FrameHeader(full)[7] == 0x11);
+    Require(FrameHeader(half)[7] == 0x21);
+    Require(FrameHeader(quarter)[7] == 0x22);
+    Require(FrameHeader(half)[10] == 0x11 && FrameHeader(half)[13] == 0x11);
+
+    const auto decodedFull = Decoder::Jpeg::Decode(full);
+    const auto decodedHalf = Decoder::Jpeg::Decode(half);
+    const auto decodedQuarter = Decoder::Jpeg::Decode(quarter);
+    Require(decodedFull.has_value() && decodedHalf.has_value() && decodedQuarter.has_value());
+    Require(decodedFull->channels == 3 && decodedHalf->channels == 3 && decodedQuarter->channels == 3);
+    Require(decodedFull->width == width && decodedHalf->height == height);
+    Require(MaximumDifference(decodedFull->pixels, rgb) <= MaximumDifference(decodedHalf->pixels, rgb));
+    Require(MaximumDifference(decodedHalf->pixels, rgb) <= MaximumDifference(decodedQuarter->pixels, rgb));
+    Require(quarter.size() < half.size() && half.size() < full.size());
+}
+
 int main() {
+    CheckSampling();
     constexpr std::uint32_t width = 32;
     constexpr std::uint32_t height = 24;
 

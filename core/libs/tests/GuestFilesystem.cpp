@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/RenameDot.hpp"
@@ -986,6 +987,11 @@ int main() {
     }
     Require(mkdir_nid_postfix((root / "missing" / "child").string().c_str(), 0700) == -1 && *__error_nid_postfix() == 2);
     Require(mkdir_nid_postfix(nullptr, 0700) == -1 && *__error_nid_postfix() == 14);
+    const auto missingFile = (root / "missing").string();
+    Require(open_nid_postfix(missingFile.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 2);
+    Require(_open_nid_postfix(missingFile.c_str(), 0) == -1 && *__error_nid_postfix() == 2);
+    FileStat status{};
+    Require(fstat_nid_disambig1_nid_postfix(-1, &status) == -1 && *__error_nid_postfix() == 9);
     const auto file = root / "file.txt";
     { std::ofstream stream(file); stream << "retained until removal"; }
     Require(chflags_nid_postfix(nullptr, 0) == -1 && *__error_nid_postfix() == 14);
@@ -1446,7 +1452,7 @@ int main() {
     const auto missingName = missing.string();
     const auto rootName = root.string();
     { std::ofstream stream(present); stream << "posix"; }
-    FileStat status{};
+    status = {};
     Require(sceKernelStat("", &status) == static_cast<int>(0x80020002u));
     Require(sceKernelCheckReachability("") == static_cast<int>(0x80020002u));
     Require(sceKernelRename("", presentName.c_str()) == static_cast<int>(0x80020002u));

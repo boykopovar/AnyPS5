@@ -278,11 +278,11 @@ void RunBdaContractTests() {
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
-    request.target.fragmentShaderBarycentricEnabled = false;
+    request.target.fragmentShaderBarycentricEnabled = true;
     const RequestSerializer serializer;
     const auto encoded = serializer.Serialize(request);
     const auto decoded = serializer.Deserialize(encoded);
-    AgcDriver::Graphics::Require(decoded.request.target.bdaAbiVersion == BdaAbi::Version && decoded.request.target.supportedCapabilities.size() == capabilities.size() && decoded.request.target.supportedExtensions[1] == extensions[1], "BDA request serialization changed target contract");
+    AgcDriver::Graphics::Require(decoded.request.target.bdaAbiVersion == BdaAbi::Version && decoded.request.target.supportedCapabilities.size() == capabilities.size() && decoded.request.target.supportedExtensions[1] == extensions[1] && decoded.request.target.fragmentShaderBarycentricEnabled, "BDA request serialization changed target contract");
     auto invalid = encoded;
     invalid[0] = invalid[0] == 'A' ? 'B' : 'A';
     reject([&] { static_cast<void>(serializer.Deserialize(invalid)); }, "request signature");

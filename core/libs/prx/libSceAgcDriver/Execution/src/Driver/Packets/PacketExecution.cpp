@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <functional>
 #include <shared_mutex>
 #include <stdexcept>

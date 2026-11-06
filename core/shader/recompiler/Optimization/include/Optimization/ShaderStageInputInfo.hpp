@@ -91,16 +91,34 @@ struct ShaderMeshInputInfo: ShaderWorkgroupInputInfo {
     bool capturedInput = false;
 
     [[nodiscard]] std::uint32_t InputPrimitiveSize() const {
-        return inputPrimitive == 1u ? 1u : inputPrimitive == 2u ? 2u : 3u;
+        switch (inputPrimitive) {
+            case 1: return 1;
+            case 2:
+            case 3: return 2;
+            case 4:
+            case 5:
+            case 6: return 3;
+            default: throw std::runtime_error("unsupported mesh input primitive");
+        }
     }
     [[nodiscard]] std::uint32_t InputPrimitiveStep() const {
-        return inputPrimitive == 5u || inputPrimitive == 6u ? 1u : InputPrimitiveSize();
+        const auto size = InputPrimitiveSize();
+        return inputPrimitive == 3 || inputPrimitive == 5 || inputPrimitive == 6 ? 1u : size;
     }
     [[nodiscard]] std::uint32_t InputPrimitiveCount(std::uint32_t vertices) const {
-        return vertices < InputPrimitiveSize() ? 0u : (vertices - InputPrimitiveSize()) / InputPrimitiveStep() + 1u;
+        const auto size = InputPrimitiveSize();
+        const auto step = InputPrimitiveStep();
+        return vertices < size ? 0u : (vertices - size) / step + 1u;
     }
     [[nodiscard]] std::uint32_t InputVertexCount(std::uint32_t primitives) const {
-        return primitives == 0u ? 0u : (primitives - 1u) * InputPrimitiveStep() + InputPrimitiveSize();
+        const auto size = InputPrimitiveSize();
+        const auto step = InputPrimitiveStep();
+        if (primitives == 0) return 0;
+        const auto vertices = static_cast<std::uint64_t>(primitives - 1u) * step + size;
+        if (vertices > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("mesh input vertex count overflows");
+        }
+        return static_cast<std::uint32_t>(vertices);
     }
 };
 

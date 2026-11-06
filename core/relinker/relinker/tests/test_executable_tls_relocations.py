@@ -6,7 +6,10 @@ STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically ag
 AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
 rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
 ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
-PC32 and 32. Every target rejects a non-TLS relocation against an STT_TLS symbol, defined or imported."""
+PC32. R_X86_64_32 (type 10) is accepted on Windows in the symbol-free form (S == 0), where the addend
+is already an in-image virtual address; macOS still rejects it, and a defined-symbol form is rejected
+because the relinker pipeline discards the original defined-symbol table. Every target rejects a
+non-TLS relocation against an STT_TLS symbol, defined or imported."""
 
 from pathlib import Path
 import struct
@@ -231,9 +234,8 @@ def main():
             ("windows-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--windows",), "DTPMOD64 relocation is not supported"),
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
             ("windows-pc32", [(0x1000, 2, NULL, 0)], True, ("--windows",), "Relocation type 2 is not supported for this target"),
-            ("windows-32", [(0x1000, 10, NULL, 0)], True, ("--windows",), "Relocation type 10 is not supported for this target"),
             ("macos-pc32", [(0x1000, 2, NULL, 0)], True, ("--macos",), "Relocation type 2 is not supported for this target"),
-            ("macos-32", [(0x1000, 10, NULL, 0)], True, ("--macos",), "Relocation type 10 is not supported for this target"),
+            ("macos-32", [(0x1000, 10, NULL, 0)], True, ("--macos",), "R_X86_64_32 relocated value does not fit in 32 bits"),
             ("macos-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--macos",), "DTPMOD64 relocation is not supported"),
             ("macos-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--macos",), "Imported TLS relocation"),
         ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x} (offset 0x4700)")

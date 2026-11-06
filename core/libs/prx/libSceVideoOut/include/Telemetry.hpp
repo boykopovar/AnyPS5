@@ -67,6 +67,12 @@ private:
 bool EmitPadIfChanged(Writer& writer, PadChangeFilter& filter, std::uint64_t frame, const PadInputState& state);
 
 std::unique_ptr<Writer> OpenFromEnvironment(const char* directory, const std::string& commit);
+
+// Number of presents between two "present" lines. Defaults to 30, the documented cadence.
+// APS5_VIDEOOUT_TELEMETRY_EVERY overrides it; empty or invalid values fall back to the default.
+// Returns 0 when the text is empty or not a positive decimal integer.
+std::uint64_t ParsePresentSampleInterval(const std::string& value);
+std::uint64_t PresentSampleInterval();
 Writer* Instance();
 
 }

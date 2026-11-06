@@ -452,7 +452,7 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
 
     const std::string source(input);
     const auto functions = DiscoverRoutines(codeSection, limit, unwindRanges);
-    const auto scanner = Codegen::MakeInstructionScanner([&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Decode, source, completed, total}); }, functions);
+    const auto scanner = Codegen::MakeInstructionScanner([&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Decode, source, completed, total}); }, false, functions);
     RecentInstructions recent;
     std::vector<std::size_t> trapped;
     const auto insideFunction = [&](const std::size_t offset) { return ContainsOffset(functions, offset); };

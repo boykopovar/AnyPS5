@@ -783,6 +783,18 @@ int RwlockUnlock(UserRwlock* rwlock) {
 
 }  // namespace
 
+#ifdef APS5_SYNC_ON_ADDRESS_TEST_ACCESS
+namespace KernelSyncOnAddressTestAccess {
+std::size_t WaiterCount(const void* address) {
+    const auto key = reinterpret_cast<std::uintptr_t>(address);
+    auto& bucket = BucketOf(key);
+    std::lock_guard lock(bucket.mutex);
+    const auto found = bucket.waiters.find(key);
+    return found == bucket.waiters.end() ? 0 : found->second.size();
+}
+}
+#endif
+
 extern "C" {
 
 int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name) {

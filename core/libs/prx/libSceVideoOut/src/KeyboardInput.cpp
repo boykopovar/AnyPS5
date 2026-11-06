@@ -1,10 +1,12 @@
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
+#include "prx/libSceVideoOut/include/PhysicalInput.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 
 #include "SDL_keyboard.h"
 
 void KeyboardInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
+    if (PhysicalInputDisabled() && event.type != SDL_WINDOWEVENT) return;
     KeyboardInputEvent input{};
     switch (event.type) {
         case SDL_KEYDOWN:

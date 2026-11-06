@@ -100,15 +100,14 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
         bool trailing = false;
         bool queueUnlocked = false;
         double waitedMs = 0;
+        std::uint32_t drawableWidth = 0;
+        std::uint32_t drawableHeight = 0;
         {
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
             std::lock_guard lock(GuestMemory::GpuMutex());
             timing.Mark("gpu_mutex_wait");
             require(device != nullptr && device->Window() == window.context, "presentation window is not attached to the device");
             presenting = device;
-            timing.Mark("device_setup");
-            std::uint32_t drawableWidth = 0;
-            std::uint32_t drawableHeight = 0;
             window.getDrawableSize(window.context, &drawableWidth, &drawableHeight);
             presenting->Resize(drawableWidth, drawableHeight);
             presenting->SelectDynamicRange(buffer);
@@ -116,7 +115,6 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             presentable = presenting->Presentable();
             if (buffer != nullptr) require(buffer->width == window.width && buffer->height == window.height, "display buffer extent differs from output");
         }
-
         if (presentable && !syncFlip) {
             if (inFlight != 0) {
 

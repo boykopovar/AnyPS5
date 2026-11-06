@@ -14,6 +14,8 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Query.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Lifecycle.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -70,6 +72,8 @@ template<typename TAction>
 std::string expectFailure(TAction action) {
     try {
         action();
+    } catch (const std::invalid_argument& error) {
+        return error.what();
     } catch (const std::runtime_error& error) {
         return error.what();
     }
@@ -97,6 +101,26 @@ void testEvents() {
     expectFailure([&] { sceAgcDriverGetEqContextId(&event); });
     expectFailure([] { sceAgcDriverGetEqContextId(nullptr); });
     expectFailure([&] { sceAgcDriverGetEqContextId(reinterpret_cast<const KernelEvent*>(reinterpret_cast<const std::byte*>(&event) + 1)); });
+}
+
+void testResourceRegistrationRequirements() {
+    constexpr std::uint32_t unavailable = 0x8A6C9018;
+    std::uint32_t max_name_length = 0xA5A5A5A5u;
+    check(sceAgcDriverGetResourceRegistrationMaxNameLength(&max_name_length) == 0, "name-length query failed");
+    check(max_name_length == 0xfcu, "name-length query returned the wrong limit");
+    expectFailure([] { sceAgcDriverGetResourceRegistrationMaxNameLength(nullptr); });
+    std::uint64_t size_in_bytes = 0xA5A5A5A5A5A5A5A5ull;
+    check(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&size_in_bytes, 128, 64) == unavailable, "resource registration query returned unexpected status");
+    check(size_in_bytes == 0xA5A5A5A5A5A5A5A5ull, "resource registration query changed output on unavailable status");
+    check(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr, 128, 64) == unavailable, "resource registration query rejected null output");
+    check(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&size_in_bytes, 0, 0) == unavailable, "resource registration query changed status for zero counts");
+    check(size_in_bytes == 0xA5A5A5A5A5A5A5A5ull, "resource registration query changed output for zero counts");
+    check(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&size_in_bytes, 1, 1) == unavailable, "resource registration query changed status for small counts");
+    check(size_in_bytes == 0xA5A5A5A5A5A5A5A5ull, "resource registration query changed output for small counts");
+    std::uint32_t owner_handle = 0xA5A5A5A5u;
+    check(sceAgcDriverGetDefaultOwner(&owner_handle) == static_cast<int>(unavailable), "default owner query returned unexpected status");
+    check(owner_handle == 0xA5A5A5A5u, "default owner query changed output on unavailable status");
+    check(sceAgcDriverGetDefaultOwner(nullptr) == static_cast<int>(unavailable), "default owner query rejected null output");
 }
 
 void testValidation() {
@@ -1280,6 +1304,7 @@ int main(int argc, char** argv) {
         testRegisteredVertexWorkgroupRouting();
         testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
+        testResourceRegistrationRequirements();
         testValidation();
         testThreadDimensionGroups();
         testClearState();

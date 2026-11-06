@@ -166,6 +166,71 @@ int frameNumberMatchesCaption() {
     return 0;
 }
 
+void presentSampleIntervalParsing() {
+    using VideoOutTelemetry::ParsePresentSampleInterval;
+    check(ParsePresentSampleInterval("30") == 30, "the documented cadence must parse");
+    check(ParsePresentSampleInterval("1") == 1, "one present per line must parse");
+    check(ParsePresentSampleInterval("7") == 7, "a small interval must parse");
+    check(ParsePresentSampleInterval(" 45 ") == 45, "surrounding blanks must be ignored");
+    check(ParsePresentSampleInterval("") == 0, "an empty value must be invalid");
+    check(ParsePresentSampleInterval("   ") == 0, "a blank value must be invalid");
+    check(ParsePresentSampleInterval("0") == 0, "zero must be invalid");
+    check(ParsePresentSampleInterval("-5") == 0, "a negative value must be invalid");
+    check(ParsePresentSampleInterval("12x") == 0, "trailing text must be invalid");
+    check(ParsePresentSampleInterval("1.5") == 0, "a fractional value must be invalid");
+    check(ParsePresentSampleInterval("99999999999999999999999999") == 1000000, "a huge value must be clamped");
+}
+
+int presentEveryFrame() {
+    const auto directory = freshDirectory("everyframe");
+    std::filesystem::create_directories(directory / "app0" / "sce_sys");
+    std::ofstream(directory / "app0" / "sce_sys" / "param.json") << R"({"titleId":"PPSA00000","localizedParameters":{"defaultLanguage":"en-US","en-US":{"titleName":"Telemetry Test"}}})";
+    std::filesystem::current_path(directory);
+#ifdef _WIN32
+    check(_putenv_s("APS5_VIDEOOUT_TELEMETRY_DIR", directory.string().c_str()) == 0, "telemetry directory was not set");
+    check(_putenv_s("APS5_VIDEOOUT_TELEMETRY_EVERY", "1") == 0, "sample interval was not set");
+#else
+    check(setenv("APS5_VIDEOOUT_TELEMETRY_DIR", directory.string().c_str(), 1) == 0, "telemetry directory was not set");
+    check(setenv("APS5_VIDEOOUT_TELEMETRY_EVERY", "1", 1) == 0, "sample interval was not set");
+#endif
+    check(VideoOutTelemetry::PresentSampleInterval() == 1, "the opt-in interval must be one present");
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+        std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
+        std::filesystem::current_path(directory.parent_path());
+        std::filesystem::remove_all(directory);
+        return 77;
+    }
+    DisplayWindow window;
+    try {
+        window.Ensure(320, 180);
+    } catch (const std::exception& error) {
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        std::filesystem::current_path(directory.parent_path());
+        std::filesystem::remove_all(directory);
+        return 77;
+    }
+    constexpr std::uint64_t frames = 40;
+    for (std::uint64_t i = 0; i < frames; ++i) window.UpdateTitle();
+    window.Destroy();
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const auto lines = readLines(directory / "videoout.jsonl");
+    std::uint64_t presents = 0;
+    bool numbered = true;
+    for (const auto& line : lines) {
+        if (line.find("\"ev\":\"present\"") == std::string::npos) continue;
+        ++presents;
+        numbered = numbered && field(line, "n") == static_cast<long long>(presents);
+    }
+    std::filesystem::current_path(directory.parent_path());
+    // The telemetry writer keeps videoout.jsonl open for the process lifetime, so the directory
+    // cannot be deleted here; the process exit removes the handle and the OS cleans the temp root.
+    check(presents == frames, "every frame must be written when the interval is 1, got " + std::to_string(presents));
+    check(numbered, "present lines must carry consecutive frame numbers");
+    return 0;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -175,11 +240,17 @@ int main(int argc, char** argv) {
             if (result == 0) std::printf("VideoOut caption counter test passed\n");
             return result;
         }
+        if (argc > 1 && std::string(argv[1]) == "everyframe") {
+            const int result = presentEveryFrame();
+            if (result == 0) std::printf("VideoOut per-frame telemetry test passed\n");
+            return result;
+        }
         padChangeIgnoresSensors();
         padChangeSurvivesFullQueue();
         noEnvironmentOpensNothing();
         queueOverflowIsCounted();
         contractPadAndPresentLines();
+        presentSampleIntervalParsing();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

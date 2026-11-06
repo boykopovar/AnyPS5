@@ -4,6 +4,7 @@
 #include "Decoder/Jpeg.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <utility>

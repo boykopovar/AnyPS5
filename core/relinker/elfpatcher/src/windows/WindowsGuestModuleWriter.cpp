@@ -1,4 +1,5 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
+#include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
 #include <elfpatcher/windows/WindowsExportBuilder.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
