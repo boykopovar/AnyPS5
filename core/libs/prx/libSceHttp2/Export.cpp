@@ -13,6 +13,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <deque>
 #include <type_traits>
 #include <unordered_map>
 
@@ -21,6 +22,10 @@ static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
+static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
+
+static std::mutex g_completionsMutex;
+static std::unordered_map<int, std::deque<Http2AsyncResult>> g_completions;
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
 
@@ -62,8 +67,46 @@ static void ReleaseOwnedHandles(int owner) {
         ReleaseOwnedHandles(id);
         auto& handle = g_handles.at(id);
         if (handle.transport) handle.transport->Stop();
+        {
+            std::lock_guard lock(g_completionsMutex);
+            g_completions.erase(id);
+        }
         g_handles.erase(id);
     }
+}
+
+static int CompleteAsync(const char* function, int req_id, const Http2AsyncOption* kqueue_option, const void* option) {
+    if (std::getenv("APS5_NET_DISCONNECTED") == nullptr) {
+        NotImplemented_nid_no_patch(function);
+        return 0;
+    }
+    if (option != nullptr) {
+        NotImplemented_nid_no_patch(function);
+        return 0;
+    }
+    bool queued = false;
+    {
+        std::lock_guard handlesLock(g_handlesMutex);
+        if (FindHandle(req_id, Http2Kind::Request) != nullptr) {
+            std::lock_guard completionsLock(g_completionsMutex);
+            Http2AsyncResult completion{};
+            completion.req_id = req_id;
+            completion.result = ERROR_NETWORK;
+            g_completions[req_id].push_back(completion);
+            queued = true;
+        }
+    }
+    if (!queued) return ERROR_INVALID_ID;
+    if (kqueue_option == nullptr) return 0;
+    if (sceKernelTriggerUserEvent(kqueue_option->equeue, kqueue_option->user_event_id, kqueue_option->user_data) != 0) {
+        {
+            std::lock_guard lock(g_completionsMutex);
+            auto pending = g_completions.find(req_id);
+            if (pending != g_completions.end() && !pending->second.empty()) pending->second.pop_back();
+        }
+        NotImplemented_nid_no_patch(function);
+    }
+    return 0;
 }
 
 static bool HasSettings(const Http2Handle& handle) {
@@ -165,6 +208,10 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
     auto* handle = FindHandle(req_id, Http2Kind::Request);
     if (!handle) return ERROR_INVALID_ID;
     if (handle->transport) handle->transport->Stop();
+    {
+        std::lock_guard completionsLock(g_completionsMutex);
+        g_completions.erase(req_id);
+    }
     g_handles.erase(req_id);
     return 0;
 }
@@ -220,10 +267,9 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
 }
 
 int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, Http2AsyncOption* kqueue_option, void* option) {
-    std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(req_id, Http2Kind::Request)) return ERROR_INVALID_ID;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)post_data;
+    (void)size;
+    return CompleteAsync(__func__, req_id, kqueue_option, option);
 }
 
 int APS5_VABI sceHttp2SetAuthEnabled(int id, int is_enable) {
@@ -323,6 +369,17 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 }
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
+    (void)timeout;
+    if (result == nullptr || option != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
+        std::lock_guard lock(g_completionsMutex);
+        const auto pending = g_completions.find(req_id);
+        if (pending != g_completions.end() && !pending->second.empty()) {
+            *result = pending->second.front();
+            pending->second.pop_front();
+            return 0;
+        }
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
