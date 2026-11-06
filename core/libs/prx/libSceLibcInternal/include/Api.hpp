@@ -139,6 +139,9 @@ int APS5_VABI sceLibcPafMspaceCheckMemoryBounds();
 int APS5_VABI sceLibcHeapUnsetTraceMarker();
 int APS5_VABI sceLibcHeapGetAddressRanges();
 int APS5_VABI sceLibcHeapMutexFree();
+void APS5_VABI _ZNSt16nested_exceptionD0Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt16nested_exceptionD1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt16nested_exceptionD2Ev_nid_postfix(void* self);
 
 
 }
