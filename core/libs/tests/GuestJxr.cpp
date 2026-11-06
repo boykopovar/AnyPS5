@@ -10,6 +10,16 @@
 #include <cstdio>
 #include <stdexcept>
 
+extern "C" {
+void* JxrTileFixtureReset(std::uint32_t sliceCount);
+void* JxrTileFixtureTilePointer(void* codec);
+void* JxrTileFixtureSentinel();
+std::size_t JxrTileFixtureTileSize();
+std::size_t JxrTileFixtureMaxTiles();
+int JxrTileFixtureCodecIntact(void* codec);
+int JxrTileFixtureTilesInitialized(void* codec);
+}
+
 namespace {
 
 void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
@@ -22,8 +32,20 @@ std::size_t lastCount = 0;
 std::size_t lastSize = 0;
 void* lastAllocated = nullptr;
 int callocCalls = 0;
+int mallocCalls = 0;
+int failMallocAt = -1;
+std::array<void*, 32> mallocLog{};
+std::array<std::size_t, 32> mallocSizeLog{};
 
-void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
+void* APS5_VABI Allocate(std::size_t size) {
+    ++mallocCalls;
+    void* pointer = mallocCalls == failMallocAt ? nullptr : std::malloc(size);
+    if (mallocCalls <= static_cast<int>(mallocLog.size())) {
+        mallocLog[static_cast<std::size_t>(mallocCalls - 1)] = pointer;
+        mallocSizeLog[static_cast<std::size_t>(mallocCalls - 1)] = size;
+    }
+    return pointer;
+}
 void APS5_VABI Free(void* pointer) {
     if (pointer != nullptr) {
         lastFreed = pointer;
@@ -72,6 +94,43 @@ void InitializeHeap() {
 
 }
 
+void TestAllocateTileInfo() {
+    void* codec = nullptr;
+    const auto tileSize = JxrTileFixtureTileSize();
+    for (const auto count : {std::size_t{0}, std::size_t{2}, JxrTileFixtureMaxTiles() - 1}) {
+        codec = JxrTileFixtureReset(static_cast<std::uint32_t>(count));
+        const auto firstAllocation = mallocCalls;
+        Require(allocateTileInfo_nid_postfix(codec) == 0);
+        Require(mallocCalls == firstAllocation + 1);
+        auto* const tiles = JxrTileFixtureTilePointer(codec);
+        Require(tiles != nullptr && tiles != JxrTileFixtureSentinel());
+        Require(mallocLog[static_cast<std::size_t>(firstAllocation)] == tiles);
+        Require(mallocSizeLog[static_cast<std::size_t>(firstAllocation)] == (count + 1) * tileSize);
+        Require(JxrTileFixtureCodecIntact(codec));
+        Require(JxrTileFixtureTilesInitialized(codec));
+        free_nid_postfix(tiles);
+    }
+
+    codec = JxrTileFixtureReset(static_cast<std::uint32_t>(JxrTileFixtureMaxTiles()));
+    const auto allocationsBeforeLimit = mallocCalls;
+    auto* const priorTiles = JxrTileFixtureSentinel();
+    Require(JxrTileFixtureTilePointer(codec) == priorTiles);
+    Require(allocateTileInfo_nid_postfix(codec) == -1);
+    Require(mallocCalls == allocationsBeforeLimit);
+    Require(JxrTileFixtureTilePointer(codec) == priorTiles);
+    Require(JxrTileFixtureCodecIntact(codec));
+
+    codec = JxrTileFixtureReset(0);
+    const auto failedAllocation = mallocCalls + 1;
+    failMallocAt = failedAllocation;
+    Require(allocateTileInfo_nid_postfix(codec) == -1);
+    failMallocAt = -1;
+    Require(mallocCalls == failedAllocation);
+    Require(mallocSizeLog[static_cast<std::size_t>(failedAllocation - 1)] == tileSize);
+    Require(JxrTileFixtureTilePointer(codec) == nullptr);
+    Require(JxrTileFixtureCodecIntact(codec));
+}
+
 int main() {
     InitializeHeap();
     void* memory = malloc_nid_postfix(64);
@@ -111,5 +170,6 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+    TestAllocateTileInfo();
     return 0;
 }
