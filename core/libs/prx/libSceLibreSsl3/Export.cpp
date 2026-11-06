@@ -8,21 +8,6 @@
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI ASN1_INTEGER_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ASN1_OBJECT_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ASN1_STRING_get0_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI BIO_up_ref_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -120,11 +105,6 @@ int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_PKEY_set1_EC_KEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_size_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -276,47 +256,7 @@ int APS5_VABI X509_STORE_up_ref_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_get0_extensions_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get0_notAfter_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get0_notBefore_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get0_signature_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get_ext_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_get_ext_count_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_get_version_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_getm_notAfter_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_getm_notBefore_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
