@@ -270,5 +270,8 @@ extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_trai
 inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
 static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
 extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];
+inline constexpr std::size_t kTimePutCharVtableSlots = 7;
+static_assert(kTimePutCharVtableSlots * sizeof(std::uintptr_t) == 56);
+extern "C" std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots];
 
 #endif
