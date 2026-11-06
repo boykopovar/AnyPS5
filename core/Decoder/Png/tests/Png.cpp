@@ -193,11 +193,9 @@ static void RequireTruncatedTransparency() {
     const std::vector<std::uint8_t> png = GrayLowBitPng(1, samples, 0x0002);
     const std::size_t transparencyOffset = sizeof(PNG_SIGNATURE) + 25;
     const std::vector<std::uint8_t> truncated(png.begin(), png.begin() + transparencyOffset + 9);
-    const std::vector<std::uint8_t> original = truncated;
     const auto header = Decoder::Png::ParseHeader(truncated);
     Require(header.has_value() && !header->hasTransparency);
-    (void)Decoder::Png::Decode(truncated);
-    Require(truncated == original);
+    Require(!Decoder::Png::Decode(truncated).has_value());
 }
 
 static void RequireRoundTrip(std::uint32_t channels, Decoder::Png::ColorType colorType) {

@@ -2,16 +2,17 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include <cstdlib>
 #include <cstring>
 
 namespace AgcDriver::DriverDetail {
 
 SampledReadScope::SampledReadScope(std::atomic<std::uint64_t>& reads) : previous(Driver::sampledRead()) {
-    Driver::sampledRead() = Driver::writeEvidenceEnabled() && reads.fetch_add(1, std::memory_order_relaxed) % Driver::writeEvidenceSampleEvery() == 0;
+    Driver::setSampledRead(Driver::writeEvidenceEnabled() && reads.fetch_add(1, std::memory_order_relaxed) % Driver::writeEvidenceSampleEvery() == 0);
 }
 
-SampledReadScope::~SampledReadScope() { Driver::sampledRead() = previous; }
+SampledReadScope::~SampledReadScope() { Driver::setSampledRead(previous); }
 
 void PendingView::Load() {
     if (Driver::validateLegacy()) return;
@@ -26,9 +27,18 @@ bool PendingView::Overlaps(std::uint64_t address, std::size_t bytes) const {
     return Driver::validateLegacy() ? Graphics::Recorder::SnapshotWriteOverlaps(address, bytes) : Graphics::Recorder::SnapshotOverlaps(snapshot.get(), address, bytes);
 }
 
-bool& Driver::sampledRead() {
-    static thread_local bool sampled = false;
-    return sampled;
+namespace {
+
+struct SampledReadTag;
+
+}
+
+bool Driver::sampledRead() {
+    return HostThreadSlot<bool, SampledReadTag>::Get();
+}
+
+void Driver::setSampledRead(bool sampled) {
+    HostThreadSlot<bool, SampledReadTag>::Set(sampled);
 }
 
 bool Driver::writeEvidenceEnabled() {
@@ -39,6 +49,11 @@ bool Driver::writeEvidenceEnabled() {
 bool Driver::writerKeyedEvidence() {
     static const bool keyed = std::getenv("APS5_NO_WRITER_KEYED_EVIDENCE") == nullptr;
     return keyed;
+}
+
+bool Driver::storedKnownValues() {
+    static const bool enabled = std::getenv("APS5_NO_STORED_KNOWN_VALUES") == nullptr;
+    return enabled;
 }
 
 bool Driver::foreignWriters() {
@@ -149,6 +164,7 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
         reason = &ValidateCounters::syncedShadow;
         return Policy::Sync;
     }
+    if (storedKnownValues() && !known.empty() && known.size() == bytes && Graphics::Recorder::LookupStoredBytes(address, known)) return knownValueVerify() ? Policy::VerifyKnownValue : Policy::KnownValue;
     reason = &ValidateCounters::syncedOff;
     if (!writeEvidenceEnabled()) return Policy::Sync;
     const auto writer = newestWriter(address, address + bytes);
@@ -205,14 +221,23 @@ ShaderMemory::PendingWrite Driver::classifyPendingWrite(std::uint64_t address, s
 }
 
 ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {
+    using Policy = ShaderMemory::PendingWrite;
+    auto queued = DrawPipeline::QueuedWrite::None;
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
-        if (pipeline.Busy() && pipeline.Overlaps(address, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+        if (pipeline.Busy()) queued = pipeline.StoredBytes(address, bytes, known.size() == bytes ? known : std::span<std::byte>{});
+        if (queued == DrawPipeline::QueuedWrite::Stored && known.size() == bytes) {
+            if (!knownValueVerify()) return Policy::KnownValue;
+            pipeline.Drain(DrawPipeline::DrainReason::Capture);
+            return Policy::VerifyKnownValue;
+        }
+        if (queued == DrawPipeline::QueuedWrite::Unknown) pipeline.Drain(DrawPipeline::DrainReason::Capture);
     }
     std::uint64_t ValidateCounters::*reason = nullptr;
     PendingView pending;
     pending.Load();
-    return Get().classifyPendingWrite(address, bytes, reason, pending, known);
+    const auto policy = Get().classifyPendingWrite(address, bytes, reason, pending, known);
+    return queued == DrawPipeline::QueuedWrite::Stored && policy == Policy::None ? Policy::KnownValue : policy;
 }
 
 ShaderMemory::PendingWrite Driver::QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {

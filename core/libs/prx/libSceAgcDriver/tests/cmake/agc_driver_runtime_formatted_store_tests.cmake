@@ -1,5 +1,6 @@
 if(BUILD_TESTING)
     set_tests_properties(agc_driver_runtime_formatted_store PROPERTIES TIMEOUT 30)
+    set_tests_properties(agc_driver_null_buffer_substitutes PROPERTIES TIMEOUT 30)
     foreach(mode IN ITEMS x1 x2 x3 x1_d16 x2_d16 x3_d16 x4_d16)
         string(REGEX REPLACE "_d16$" "" components "${mode}")
         set(arguments "--${components}")
