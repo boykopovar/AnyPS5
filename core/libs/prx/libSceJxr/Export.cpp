@@ -37,6 +37,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+extern "C" std::int64_t PKImageEncode_Transcode_impl_nid_no_patch(void* encoder, void* converter, void* rectangle);
+
 namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
 constexpr std::int64_t WmpErrOutOfMemory = -101;
@@ -338,8 +340,8 @@ int APS5_VABI PKImageEncode_Terminate_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_Transcode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_Transcode_nid_postfix(void* encoder, void* converter, void* rectangle) {
+    return PKImageEncode_Transcode_impl_nid_no_patch(encoder, converter, rectangle);
 }
 
 int APS5_VABI PKImageEncode_WritePixels_nid_postfix() {
