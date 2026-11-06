@@ -104,6 +104,8 @@ std::uint32_t APS5_VABI WKNotificationGetTypeID();
 std::uint32_t APS5_VABI WKNotificationManagerGetTypeID();
 std::uint32_t APS5_VABI WKNotificationPermissionRequestGetTypeID();
 std::uint32_t APS5_VABI WKOpenPanelParametersGetTypeID();
+void APS5_VABI WKOpenPanelResultListenerCancel(const void* listenerRef);
+void APS5_VABI WKOpenPanelResultListenerChooseFiles(const void* listenerRef, const void* fileURLsRef, const void* allowedMimeTypesRef);
 std::uint32_t APS5_VABI WKOpenPanelResultListenerGetTypeID();
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
 std::uint32_t APS5_VABI WKPageGetTypeID();
