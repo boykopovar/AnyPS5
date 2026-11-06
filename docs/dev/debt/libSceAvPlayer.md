@@ -20,6 +20,8 @@
 
 ### Functional
 
+- [AvPlayer file replacement seeking](../../../core/libs/prx/libSceAvPlayer/include/FileReplacementStream.hpp) (libSceAvPlayer) - clamping callback seeks to the known file extent is a host choice; the console's out-of-range seek policy is unmeasured. Callback lengths above `INT64_MAX` cannot be represented by the host AVIO interface and are rejected.
+
 - [HTTP file sources](../../../core/libs/prx/libSceAvPlayer/src/HttpStream.cpp) remain unverified on PS5, and HLS remains unimplemented. Remote MP4/WebM inputs follow [SharpProspero's source types](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Media/AvPlayer.cs#L187-L205); host HTTP byte ranges and redirects follow [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#name-range), framing [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html#name-chunked-transfer-coding). Unsupported URL forms, TLS, encodings, proxy, cookie, authentication and console HTTP-context integration remain gaps in the [shared libSceHttp host client](libSceHttp.md#functional).
 - [HTTP source lifecycle](../../../core/libs/prx/libSceAvPlayer/src/HttpStream.cpp) still has no synchronous source-open deadline and cannot interrupt host DNS. Source opening waits for the shared client's initial response and known size, including full buffering of chunked, connection-close or ignored-range 200 responses. Stop cancels socket polling; failed reads use FFmpeg's existing demux-error path. Console timeout and network-error mapping remain unverified; transport validator and buffering limitations are listed in [libSceHttp](libSceHttp.md#functional).
 
