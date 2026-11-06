@@ -34,6 +34,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -194,8 +195,7 @@ int GuestError(const std::error_code& error) {
 
 std::int64_t CopyLinkTarget(const std::string& target, char* buffer, std::size_t size) {
     const auto count = std::min(size, target.size());
-    if (count != 0 && buffer == nullptr) return Fail(GuestEfault);
-    if (count != 0) std::memcpy(buffer, target.data(), count);
+    if (count != 0 && (buffer == nullptr || !GuestCopyOut_nid_no_patch(buffer, target.data(), count))) return Fail(GuestEfault);
     return static_cast<std::int64_t>(count);
 }
 
@@ -444,6 +444,10 @@ int APS5_VABI profil_nid_postfix(void* samples, std::size_t size, std::size_t of
 
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
+}
+
+std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset) {
+    return PosixPwrite_nid_no_patch(d, buf, nbytes, offset);
 }
 
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
@@ -773,6 +777,11 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     return 0;
 }
 
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
+    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
+    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
+}
+
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
 
 int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTimezone* tz) {
@@ -1008,13 +1017,14 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
 #endif
         if (symbolic) {
 #ifdef __APPLE__
-        if (::fchmodat(AT_FDCWD, native.c_str(), static_cast<mode_t>(mode & 07777), AT_SYMLINK_NOFOLLOW) != 0) {
-            return static_cast<int>(Fail(GuestFileError(errno)));
-        }
+            if (::fchmodat(AT_FDCWD, native.c_str(), static_cast<mode_t>(mode & 07777), AT_SYMLINK_NOFOLLOW) != 0)
+                return static_cast<int>(Fail(GuestFileError(errno)));
+#else
+            NotImplemented_nid_no_patch("fchmodat: the mode of a symbolic link on a host that cannot change it");
 #endif
-        RecordWrittenPath_nid_no_patch(native);
-        return 0;
-    }
+            RecordWrittenPath_nid_no_patch(native);
+            return 0;
+        }
     }
     if (ChmodNative_nid_no_patch(native, mode & 07777) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
     RecordWrittenPath_nid_no_patch(native);
@@ -1026,19 +1036,6 @@ int APS5_VABI lchmod_nid_postfix(const char* path, std::uint16_t mode) {
     if (path != nullptr) {
         if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     }
-#ifndef __APPLE__
-    std::filesystem::path native;
-    if (path != nullptr && ResolvePathError_nid_no_patch(path, native) == 0) {
-#ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
-        const bool symbolic = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-#else
-        std::error_code status;
-        const bool symbolic = std::filesystem::is_symlink(std::filesystem::symlink_status(native, status));
-#endif
-        if (symbolic) NotImplemented_nid_no_patch("lchmod: the mode of a symbolic link on a host that cannot change it");
-    }
-#endif
     return fchmodat_nid_postfix(GuestAtFdcwd, path, mode, GuestAtSymlinkNofollow);
 }
 

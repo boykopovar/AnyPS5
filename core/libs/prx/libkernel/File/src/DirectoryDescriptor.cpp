@@ -204,7 +204,10 @@ void Load(DirectoryState& state, int fd) {
             const auto utf8Name = it->path().filename().u8string();
             const std::string name(reinterpret_cast<const char*>(utf8Name.data()), utf8Name.size());
             FileStat entryStatus{};
-            if (!File::FillLinkStat(it->path(), &entryStatus)) throw std::system_error(errno, std::generic_category(), "stat directory entry");
+            if (!File::FillLinkStat(it->path(), &entryStatus)) {
+                if (errno == ENOENT) continue;
+                throw std::system_error(errno, std::generic_category(), "stat directory entry");
+            }
 #ifdef _WIN32
             Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), EntryType(it->path(), followLinks));
 #else
@@ -257,8 +260,8 @@ int OpenStreamDirectory(const wchar_t* path) {
 }
 
 struct StreamRegistration {
-    StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(&OpenStreamDirectory, &File::ForgetDirectoryDescriptor); }
-    ~StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(nullptr, nullptr); }
+    StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(&OpenStreamDirectory, &File::ForgetDirectoryDescriptor, &File::DuplicateDirectoryDescriptor); }
+    ~StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(nullptr, nullptr, nullptr); }
     StreamRegistration(const StreamRegistration&) = delete;
     StreamRegistration& operator=(const StreamRegistration&) = delete;
 };
