@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceHttpCache/include/InventoryExports.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include <array>
 #include <cerrno>
@@ -725,6 +727,15 @@ int MakeResponse(const HttpCacheResponseHeader* header, ResponseData& response) 
 
 extern "C" {
 
+int APS5_VABI sceHttpCacheEnableCacheInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
 int APS5_VABI sceHttpCacheClear(std::int32_t cacheId, std::int32_t userId, const char* tag) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -993,5 +1004,10 @@ int APS5_VABI sceHttpCacheRemoveTag() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y3bCbdeHzNg", libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch);
 
 }

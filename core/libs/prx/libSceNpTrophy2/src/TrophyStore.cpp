@@ -243,6 +243,10 @@ bool RecordUnlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t 
 }
 
 extern "C" bool NpTrophy2RecordUnlock_nid_no_patch(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId) {
+    if (trophyId < 0) {
+        std::fprintf(stderr, "[trophy] ignored the unlock of trophy %d for user %d: trophy ids are not negative\n", trophyId, userId);
+        return false;
+    }
     if (const auto* package = NpTrophy2::Package(serviceLabel)) {
         if (const auto refusal = NpTrophy2::PostedUnlockRefusal(*package, trophyId)) {
             std::fprintf(stderr, "[trophy] ignored the posted unlock of trophy %d for user %d: %s\n", trophyId, userId, refusal->c_str());
@@ -267,6 +271,5 @@ extern "C" void NpTrophy2RemoveUnlockListener_nid_no_patch(std::uint64_t id) {
     auto& registry = NpTrophy2::listeners();
     std::lock_guard dispatching(registry.dispatch);
     std::lock_guard lock(registry.mutex);
-    const auto removed = std::erase_if(registry.entries, [id](const NpTrophy2::Listener& entry) { return entry.id == id; });
-    if (removed == 0) throw std::invalid_argument("no trophy unlock listener has id " + std::to_string(id));
+    std::erase_if(registry.entries, [id](const NpTrophy2::Listener& entry) { return entry.id == id; });
 }

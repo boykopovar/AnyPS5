@@ -8,8 +8,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <iterator>
 #include <source_location>
 #include <span>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
@@ -171,7 +174,7 @@ static void CheckDimensionReporting(std::uint32_t width, std::uint32_t height) {
     constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80690001);
     constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80690003);
-    constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
     std::vector<std::uint8_t> rgb(static_cast<std::size_t>(width) * height * 3);
     for (std::size_t i = 0; i < rgb.size(); ++i) rgb[i] = static_cast<std::uint8_t>(i * 13 + 7);
     const auto png = Decoder::Png::Encode(rgb, width, height, 3);
@@ -224,11 +227,201 @@ static void CheckDimensionReporting(std::uint32_t width, std::uint32_t height) {
             Require(scePngDecDecode(handle, &decode, nullptr) == invalidParam);
             decode.pixel_format = format;
             decode.png_mem_size = 8;
-            Require(scePngDecDecode(handle, &decode, nullptr) == invalidData);
+            Require(scePngDecDecode(handle, &decode, nullptr) == decodeError);
             Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
         }
     }
     Require(scePngDecDelete(handle) == 0);
+}
+
+struct PngChunk {
+    const char* type;
+    std::vector<std::uint8_t> data;
+    bool badCrc = false;
+};
+
+static std::uint32_t ChunkCrc(const char* type, std::span<const std::uint8_t> data) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    const auto update = [&crc](std::uint8_t byte) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xEDB88320u : 0u);
+    };
+    for (int i = 0; i < 4; ++i) update(static_cast<std::uint8_t>(type[i]));
+    for (const std::uint8_t byte : data) update(byte);
+    return ~crc;
+}
+
+static std::vector<PngChunk> SplitChunks(std::span<const std::uint8_t> png) {
+    static const char* const NAMES[] = {"IHDR", "PLTE", "tRNS", "IDAT", "IEND"};
+    std::vector<PngChunk> chunks;
+    for (std::size_t offset = 8; offset + 12 <= png.size();) {
+        const std::uint32_t length = static_cast<std::uint32_t>(png[offset]) << 24 | png[offset + 1] << 16 | png[offset + 2] << 8 | png[offset + 3];
+        const char* type = *std::find_if(std::begin(NAMES), std::end(NAMES), [&](const char* name) { return std::memcmp(name, &png[offset + 4], 4) == 0; });
+        chunks.push_back({type, std::vector<std::uint8_t>(png.begin() + offset + 8, png.begin() + offset + 8 + length)});
+        offset += 12 + length;
+    }
+    return chunks;
+}
+
+static std::vector<std::uint8_t> JoinChunks(const std::vector<PngChunk>& chunks) {
+    std::vector<std::uint8_t> png = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    const auto append32 = [&png](std::uint32_t value) {
+        for (int shift = 24; shift >= 0; shift -= 8) png.push_back(static_cast<std::uint8_t>(value >> shift));
+    };
+    for (const PngChunk& chunk : chunks) {
+        append32(static_cast<std::uint32_t>(chunk.data.size()));
+        png.insert(png.end(), chunk.type, chunk.type + 4);
+        png.insert(png.end(), chunk.data.begin(), chunk.data.end());
+        append32(ChunkCrc(chunk.type, chunk.data) ^ (chunk.badCrc ? 1u : 0u));
+    }
+    return png;
+}
+
+static std::vector<PngChunk> WithChunk(std::vector<PngChunk> chunks, std::size_t index, PngChunk chunk) {
+    chunks.insert(chunks.begin() + static_cast<std::ptrdiff_t>(index), std::move(chunk));
+    return chunks;
+}
+
+static std::int32_t DecodeWith(void* handle, const std::vector<std::uint8_t>& png, std::vector<std::uint8_t>& image, PngDecImageInfo& info) {
+    std::fill(image.begin(), image.end(), 0xCC);
+    std::memset(&info, 0xA5, sizeof(info));
+    PngDecDecodeParam decode = DecodeParam(png, image);
+    return scePngDecDecode(handle, &decode, &info);
+}
+
+static std::int32_t ParseWith(const std::vector<std::uint8_t>& png, PngDecImageInfo& info) {
+    std::memset(&info, 0xA5, sizeof(info));
+    const PngDecParseParam parse{png.data(), static_cast<std::uint32_t>(png.size()), 0};
+    return scePngDecParseHeader(&parse, &info);
+}
+
+static void CheckChunkRules(void* handle, const std::vector<std::uint8_t>& rgbPng) {
+    constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80690012);
+    constexpr std::int32_t rgbResult = 3 << 16 | 2;
+    const auto untouched = [](const std::vector<std::uint8_t>& image) {
+        return std::all_of(image.begin(), image.end(), [](std::uint8_t byte) { return byte == 0xCC; });
+    };
+    const std::vector<PngChunk> rgb = SplitChunks(rgbPng);
+    Require(rgb.size() == 3 && std::strcmp(rgb[1].type, "IDAT") == 0);
+    std::vector<std::uint8_t> reference(3 * 2 * 4);
+    std::vector<std::uint8_t> image(3 * 2 * 4);
+    PngDecImageInfo info{};
+    Require(DecodeWith(handle, rgbPng, reference, info) == rgbResult);
+    const PngChunk text{"tEXt", {'k', 0, 'v'}};
+    const PngChunk unknownCritical{"ABCD", {1}};
+    const PngChunk invalidName{"aB1d", {1}};
+
+    auto badHeaderCrc = rgb;
+    badHeaderCrc[0].badCrc = true;
+    auto duplicateHeaderBadCrc = WithChunk(rgb, 1, rgb[0]);
+    duplicateHeaderBadCrc[1].badCrc = true;
+    const std::vector<std::pair<std::vector<std::uint8_t>, std::int32_t>> headerErrors = {
+        {JoinChunks(badHeaderCrc), decodeError},
+        {JoinChunks(WithChunk(rgb, 1, unknownCritical)), decodeError},
+        {JoinChunks(WithChunk(rgb, 1, invalidName)), decodeError},
+        {JoinChunks(WithChunk(rgb, 0, unknownCritical)), decodeError},
+        {JoinChunks(WithChunk(rgb, 1, rgb[0])), invalidData},
+        {JoinChunks(duplicateHeaderBadCrc), invalidData},
+        {JoinChunks(WithChunk(WithChunk(rgb, 1, {"PLTE", std::vector<std::uint8_t>(10)}), 2, {"PLTE", std::vector<std::uint8_t>(12)})), invalidData},
+        {JoinChunks({rgb[0], rgb[2]}), decodeError},
+        {JoinChunks(WithChunk(rgb, 0, {"tRNS", {0, 1, 0, 2, 0, 3}})), invalidData},
+        {JoinChunks(WithChunk(rgb, 0, rgb[1])), invalidData},
+        {JoinChunks(WithChunk(rgb, 0, rgb[2])), decodeError},
+        {std::vector<std::uint8_t>(rgbPng.begin(), rgbPng.begin() + 8), decodeError},
+        {std::vector<std::uint8_t>(rgbPng.begin(), rgbPng.begin() + 20), decodeError},
+        {std::vector<std::uint8_t>(rgbPng.begin(), rgbPng.begin() + 33), decodeError},
+        {std::vector<std::uint8_t>(rgbPng.begin(), rgbPng.begin() + 40), decodeError},
+    };
+    for (const auto& [png, result] : headerErrors) {
+        Require(ParseWith(png, info) == result);
+        Require(DecodeWith(handle, png, image, info) == result);
+        Require(untouched(image));
+    }
+
+    auto ignoredTextCrc = WithChunk(rgb, 1, text);
+    ignoredTextCrc[1].badCrc = true;
+    auto trailingData = rgbPng;
+    trailingData.insert(trailingData.end(), {0, 0, 0, 1, 'A', 'B'});
+    const std::vector<std::vector<std::uint8_t>> accepted = {
+        JoinChunks(ignoredTextCrc),
+        JoinChunks(WithChunk(rgb, 0, text)),
+        JoinChunks(WithChunk(rgb, 1, {"PLTE", std::vector<std::uint8_t>(10)})),
+        JoinChunks(WithChunk(rgb, 2, {"PLTE", std::vector<std::uint8_t>(12)})),
+        JoinChunks({rgb[0], rgb[1], {"IEND", {1}}}),
+        trailingData,
+    };
+    for (const auto& png : accepted) {
+        Require(ParseWith(png, info) == 0 && info.image_width == 3 && info.image_flag == 0);
+        Require(DecodeWith(handle, png, image, info) == rgbResult && image == reference);
+    }
+
+    auto badEndCrc = rgb;
+    badEndCrc[2].badCrc = true;
+    auto badEndTextCrc = WithChunk(rgb, 2, text);
+    badEndTextCrc[2].badCrc = true;
+    const std::vector<std::pair<std::vector<std::uint8_t>, std::int32_t>> imageErrors = {
+        {JoinChunks(badEndCrc), decodeError},
+        {JoinChunks({rgb[0], rgb[1]}), decodeError},
+        {JoinChunks(WithChunk(rgb, 2, rgb[0])), invalidData},
+        {JoinChunks(WithChunk(rgb, 2, unknownCritical)), decodeError},
+        {JoinChunks(WithChunk(rgb, 2, invalidName)), decodeError},
+        {JoinChunks({rgb[0], rgb[1], text}), decodeError},
+        {JoinChunks(badEndTextCrc), rgbResult},
+    };
+    for (const auto& [png, result] : imageErrors) {
+        Require(ParseWith(png, info) == 0);
+        Require(DecodeWith(handle, png, image, info) == result && image == reference);
+    }
+    Require(DecodeWith(handle, JoinChunks(WithChunk(WithChunk(rgb, 2, text), 3, rgb[1])), image, info) == decodeError && image == reference);
+
+    const std::vector<PngChunk> palette = SplitChunks(std::span<const std::uint8_t>(PALETTE_TRNS, sizeof(PALETTE_TRNS)));
+    Require(palette.size() == 5 && std::strcmp(palette[1].type, "PLTE") == 0 && std::strcmp(palette[2].type, "tRNS") == 0);
+    const std::vector<std::uint8_t> transparent = {255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128};
+    const std::vector<std::uint8_t> opaque = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255};
+    const std::vector<std::uint8_t> shortPalette = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255};
+    std::vector<std::uint8_t> paletteImage(2 * 2 * 4);
+    auto shortPlte = palette;
+    shortPlte[1].data.resize(10);
+    auto shortPlteBadCrc = shortPlte;
+    shortPlteBadCrc[1].badCrc = true;
+    auto longPlte = palette;
+    longPlte[1].data.resize(257 * 3);
+    const std::vector<std::vector<std::uint8_t>> paletteErrors = {
+        JoinChunks({palette[0], palette[2], palette[3], palette[4]}),
+        JoinChunks(shortPlte),
+        JoinChunks(shortPlteBadCrc),
+        JoinChunks(longPlte),
+        JoinChunks(WithChunk(palette, 2, palette[1])),
+        JoinChunks({palette[0], palette[3], palette[1], palette[4]}),
+    };
+    for (const auto& png : paletteErrors) {
+        Require(ParseWith(png, info) == invalidData);
+        Require(DecodeWith(handle, png, paletteImage, info) == invalidData);
+        Require(untouched(paletteImage));
+    }
+
+    auto twoEntries = palette;
+    twoEntries[1].data.resize(6);
+    auto noEntries = palette;
+    noEntries[1].data.clear();
+    auto badTransparencyCrc = palette;
+    badTransparencyCrc[2].badCrc = true;
+    const std::vector<std::tuple<std::vector<std::uint8_t>, std::uint32_t, std::vector<std::uint8_t>>> paletteImages = {
+        {JoinChunks({twoEntries[0], twoEntries[1], twoEntries[3], twoEntries[4]}), 0, shortPalette},
+        {JoinChunks(twoEntries), 0, shortPalette},
+        {JoinChunks({noEntries[0], noEntries[1], noEntries[3], noEntries[4]}), 0, {0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255}},
+        {JoinChunks(badTransparencyCrc), 0, opaque},
+        {JoinChunks(WithChunk({palette[0], palette[1], palette[3], palette[4]}, 2, {"tRNS", {}})), 0, opaque},
+        {JoinChunks({palette[0], palette[2], palette[1], palette[3], palette[4]}), 0, opaque},
+        {JoinChunks(WithChunk(palette, 3, {"tRNS", {0, 0, 0, 0}})), 2, transparent},
+        {JoinChunks(WithChunk(badTransparencyCrc, 3, palette[2])), 2, transparent},
+    };
+    for (const auto& [png, flag, expected] : paletteImages) {
+        Require(ParseWith(png, info) == 0 && info.image_flag == flag);
+        Require(DecodeWith(handle, png, paletteImage, info) == (2 << 16 | 2));
+        Require(info.image_flag == flag && paletteImage == expected);
+    }
 }
 
 int main() {
@@ -279,13 +472,12 @@ int main() {
     const PngDecParseParam parsePalette{PALETTE_TRNS, sizeof(PALETTE_TRNS), 0};
     Require(scePngDecParseHeader(&parsePalette, &info) == 0);
     Require(info.color_space == 4 && info.bit_depth == 2 && info.image_flag == 2);
-    for (const std::uint32_t size : {69u, 71u}) {
+    for (const std::uint32_t size : {69u, 71u, 73u, 80u}) {
         const PngDecParseParam truncatedPalette{PALETTE_TRNS, size, 0};
-        Require(scePngDecParseHeader(&truncatedPalette, &info) == 0);
-        Require(info.color_space == 4 && info.bit_depth == 2 && info.image_flag == 0);
+        Require(scePngDecParseHeader(&truncatedPalette, &info) == decodeError);
     }
-    const PngDecParseParam completeTransparency{PALETTE_TRNS, 73, 0};
-    Require(scePngDecParseHeader(&completeTransparency, &info) == 0 && info.image_flag == 2);
+    const PngDecParseParam imageDataHeader{PALETTE_TRNS, 81, 0};
+    Require(scePngDecParseHeader(&imageDataHeader, &info) == 0 && info.image_flag == 2);
     Require(scePngDecParseHeader(nullptr, &info) == invalidAddr);
     Require(scePngDecParseHeader(&parse, nullptr) == invalidAddr);
     const PngDecParseParam parseNull{nullptr, 16, 0};
@@ -443,6 +635,8 @@ int main() {
     decode = DecodeParam(rgbPng, image);
     Require(scePngDecDecode(deepHandle, &decode, &info) == (3 << 16 | 2));
     Require(scePngDecDelete(deepHandle) == 0);
+
+    CheckChunkRules(handle, rgbPng);
 
     Require(scePngDecDelete(nullptr) == invalidHandle);
     Require(scePngDecDelete(static_cast<unsigned char*>(handle) + 1) == invalidHandle);

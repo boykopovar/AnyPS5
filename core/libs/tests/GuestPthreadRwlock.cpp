@@ -157,7 +157,9 @@ static void CheckDestroyLifecycle() {
     Require(held == DestroyedRwlock);
     Require(scePthreadRwlockUnlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockRdlock(&held) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockWrlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockTryrdlock(&held) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockTrywrlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockDestroy(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_rwlock_rdlock_nid_postfix(&held) == GUEST_EINVAL);
     Require(held == DestroyedRwlock);

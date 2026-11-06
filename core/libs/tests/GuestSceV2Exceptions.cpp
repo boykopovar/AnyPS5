@@ -106,7 +106,7 @@ static void CheckThrowers() {
         {"_Xoverflow_error", AsThrower(_ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix), nullptr, exception, &logicError, 2,
             "NSt8__sce_v214overflow_errorE|"},
         {"_Xbad_alloc", AsThrower(_ZNSt8__sce_v211_Xbad_allocEv_nid_postfix), nullptr, &_ZTISt9bad_alloc_nid_postfix, errorException, 2,
-            "St9bad_alloc|std::bad_alloc"},
+            "St9bad_alloc|bad allocation"},
         {"_Xbad_function_call", AsThrower(_ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix), nullptr, exception, errorException, 2,
             "NSt8__sce_v217bad_function_callE|bad function call"},
         {"_Throw(bad_optional_access)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix), nullptr, exception, errorException, 2,
@@ -152,6 +152,18 @@ static void CheckCopies() {
     Require(inspectedSystem.code.value == 5, "ios_base::_Throw(failure) copies the code");
     inspectBytes = sizeof(LibcException::ExceptionObject);
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&error.base);
+}
+
+static void CheckCppErrorCode() {
+    const TypeRecord systemError = Named("NSt8__sce_v212system_errorE");
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
+    SceV2CatchType = &systemError;
+    SceV2OtherType = &_ZTISt12system_error_nid_postfix;
+    SceV2Catch(AsThrower(_ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix), reinterpret_cast<const void*>(1));
+    Require(inspectedSystem.code.reserved == 22, "_Throw_Cpp_error stores the value in the first code word");
+    Require(inspectedSystem.code.value == 0, "_Throw_Cpp_error leaves the second code word clear");
+    Require(inspectedSystem.code.category == _ZSt16generic_categoryv_nid_postfix(), "_Throw_Cpp_error uses the generic category");
+    inspectBytes = sizeof(LibcException::ExceptionObject);
 }
 
 static void CheckErrorException() {
@@ -227,6 +239,7 @@ int main() {
     CheckErrorException();
     CheckThrowers();
     CheckCopies();
+    CheckCppErrorCode();
     CheckSyserrorMap();
     CheckLocinfo();
     CheckTicks();
