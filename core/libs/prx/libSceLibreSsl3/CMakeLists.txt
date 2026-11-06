@@ -1,4 +1,4 @@
-add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyParam.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjCmp.cpp)
+add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyParam.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjCmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Extensions.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl libc)
 configure_windows_unwind(libSceLibreSsl3)
@@ -161,6 +161,28 @@ if(BUILD_TESTING)
         set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference guest_libressl3_evp guest_libressl3_version guest_libressl3_x509_pubkey_param PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+
+    add_test_executable(guest_libressl3_asn1_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3Asn1.cpp)
+    target_include_directories(guest_libressl3_asn1_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_asn1_string_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_asn1_string_tests)
+    add_test(NAME guest_libressl3_asn1_string COMMAND guest_libressl3_asn1_string_tests)
+    set_tests_properties(guest_libressl3_asn1_string PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_asn1_string PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
+    add_test_executable(guest_libressl3_x509_extensions_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3X509Extensions.cpp)
+    target_include_directories(guest_libressl3_x509_extensions_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_extensions_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_x509_extensions_tests)
+    add_test(NAME guest_libressl3_x509_extensions COMMAND guest_libressl3_x509_extensions_tests)
+    set_tests_properties(guest_libressl3_x509_extensions PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_extensions PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
 endif()
 
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLUDE_DIR}/prx/libSceLibreSsl/src/Evp.cpp")
@@ -185,4 +207,18 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
         -P ${LIBS_INCLUDE_DIR}/tests/LibreSsl3MixedEvp.cmake
         -- $<TARGET_FILE:guest_libressl3_mixed_evp_loader>)
     set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyQueries.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_pkey_queries_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyQueries.cpp)
+    target_include_directories(guest_libressl3_pkey_queries_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_pkey_queries_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_pkey_queries_tests)
+    add_test(NAME guest_libressl3_pkey_queries COMMAND guest_libressl3_pkey_queries_tests)
+    set_tests_properties(guest_libressl3_pkey_queries PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_pkey_queries PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
 endif()
