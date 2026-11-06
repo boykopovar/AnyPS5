@@ -552,6 +552,72 @@ static void CheckNullPointers() {
     Require(inet_pton_nid_postfix(9999, "1.2.3.4", nullptr) == -1 && *__error_nid_postfix() == 47);
 }
 
+static void CheckUnusablePointers() {
+    constexpr std::size_t Page = 0x4000;
+    auto* memory = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, 4 * Page, 3, 0x1002, -1, 0));
+    Require(memory != reinterpret_cast<unsigned char*>(static_cast<std::uintptr_t>(-1)));
+    unsigned char* const unreadable = memory;
+    unsigned char* const readOnly = memory + Page;
+    unsigned char* const writable = memory + 2 * Page;
+    unsigned char* const guarded = memory + 3 * Page;
+    Require(mprotect_nid_postfix(unreadable, Page, 0) == 0);
+    Require(mprotect_nid_postfix(readOnly, Page, 1) == 0);
+    Require(mprotect_nid_postfix(guarded, Page, 0) == 0);
+    const void* const badSources[] = {reinterpret_cast<const void*>(0x10), unreadable, guarded - 2};
+    char* const badDestinations[] = {reinterpret_cast<char*>(0x10), reinterpret_cast<char*>(unreadable), reinterpret_cast<char*>(readOnly)};
+    const unsigned char quad[4] = {1, 2, 3, 4};
+    unsigned char loopback[16]{};
+    loopback[15] = 1;
+    char text[64];
+    for (Ntop ntop : {__inet_ntop_nid_postfix, inet_ntop_nid_postfix}) {
+        for (const void* source : badSources) {
+            for (const int family : {2, 28}) {
+                for (const std::uint32_t size : {0u, 1u, 64u}) {
+                    *__error_nid_postfix() = 0;
+                    Require(ntop(family, source, text, size) == nullptr && *__error_nid_postfix() == 14);
+                    *__error_nid_postfix() = 0;
+                    Require(ntop(family, source, badDestinations[0], size) == nullptr && *__error_nid_postfix() == 14);
+                }
+            }
+            *__error_nid_postfix() = 0;
+            Require(ntop(9999, source, text, sizeof(text)) == nullptr && *__error_nid_postfix() == 47);
+        }
+        for (char* destination : badDestinations) {
+            *__error_nid_postfix() = 0;
+            Require(ntop(2, quad, destination, 8) == nullptr && *__error_nid_postfix() == 14);
+            *__error_nid_postfix() = 0;
+            Require(ntop(28, loopback, destination, 4) == nullptr && *__error_nid_postfix() == 14);
+            *__error_nid_postfix() = 0;
+            Require(ntop(2, quad, destination, 7) == nullptr && *__error_nid_postfix() == 28);
+            *__error_nid_postfix() = 0;
+            Require(ntop(28, loopback, destination, 3) == nullptr && *__error_nid_postfix() == 28);
+            *__error_nid_postfix() = 0;
+            Require(ntop(9999, quad, destination, 64) == nullptr && *__error_nid_postfix() == 47);
+        }
+        std::memset(writable, 'Z', Page);
+        char* const quadEnd = reinterpret_cast<char*>(guarded) - 8;
+        *__error_nid_postfix() = 13;
+        Require(ntop(2, quad, quadEnd, 8) == quadEnd && std::strcmp(quadEnd, "1.2.3.4") == 0 && *__error_nid_postfix() == 13);
+        std::memset(writable, 'Z', Page);
+        *__error_nid_postfix() = 0;
+        Require(ntop(2, quad, quadEnd, 7) == nullptr && *__error_nid_postfix() == 28 && quadEnd[0] == 'Z');
+        char* const padded = reinterpret_cast<char*>(guarded) - 16;
+        *__error_nid_postfix() = 13;
+        Require(ntop(28, loopback, padded, 16) == padded && std::strcmp(padded, "::1") == 0 && *__error_nid_postfix() == 13);
+        Require(padded[4] == 0 && padded[15] == 0);
+        std::memset(writable, 'Z', Page);
+        *__error_nid_postfix() = 0;
+        Require(ntop(28, loopback, padded, 17) == nullptr && *__error_nid_postfix() == 14);
+        Require(std::strcmp(padded, "::1") == 0);
+        *__error_nid_postfix() = 0;
+        Require(ntop(2, quad, quadEnd + 4, 8) == nullptr && *__error_nid_postfix() == 14);
+        std::memcpy(guarded - 4, quad, sizeof(quad));
+        Require(ntop(2, guarded - 4, text, sizeof(text)) == text && std::strcmp(text, "1.2.3.4") == 0);
+    }
+    Require(munmap_nid_postfix(memory, 4 * Page) == 0);
+    *__error_nid_postfix() = 0;
+}
+
 static void CheckErrnoKept() {
     unsigned char bytes[16]{};
     char text[64];
@@ -643,5 +709,6 @@ int main() {
     CheckConsolePadding(ConsolePaddingLarge, sizeof(ConsolePaddingLarge) / sizeof(ConsolePaddingLarge[0]), __inet_ntop_nid_postfix);
     CheckConsolePadding(ConsolePaddingLarge, sizeof(ConsolePaddingLarge) / sizeof(ConsolePaddingLarge[0]), inet_ntop_nid_postfix);
     CheckNullPointers();
+    CheckUnusablePointers();
     CheckErrnoKept();
 }
