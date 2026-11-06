@@ -184,6 +184,8 @@ struct Context {
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
+    bool sparseResidencyImage2D = false;
+    PFN_vkGetPhysicalDeviceSparseImageFormatProperties sparseImageFormatProperties = nullptr;
     std::uint32_t queueFamily = 0;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     VkQueue sparseQueue = VK_NULL_HANDLE;
@@ -214,6 +216,7 @@ struct Context {
     bool dualSrcBlend = false;
     bool logicOp = false;
     bool samplerFilterMinmax = false;
+    bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
@@ -221,6 +224,7 @@ struct Context {
     bool conservativeRasterization = false;
     bool meshWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
+    VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
@@ -247,6 +251,7 @@ struct Context {
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
+    bool wideLines = false;
     bool maintenance5 = false;
     bool storageImageMultisample = false;
     bool storageImageWriteWithoutFormat = false;
@@ -259,6 +264,7 @@ struct Context {
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
+    bool fmaFloat16 = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
     bool shaderResourceMinLod = false;

@@ -501,15 +501,22 @@ void EndClosingDescriptor_nid_no_patch(void* closing) {
 #ifdef _WIN32
 static int (*g_openDirectoryDescriptor)(const wchar_t*) = nullptr;
 static void (*g_forgetDirectoryDescriptor)(int) = nullptr;
+static void (*g_duplicateDirectoryDescriptor)(int, int) = nullptr;
 
-void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t*), void (*forget)(int)) {
+void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t*), void (*forget)(int), void (*duplicate)(int, int)) {
     g_openDirectoryDescriptor = open;
     g_forgetDirectoryDescriptor = forget;
+    g_duplicateDirectoryDescriptor = duplicate;
 }
 
 void ForgetDirectoryStream_nid_no_patch(int descriptor) {
     if (!g_forgetDirectoryDescriptor) throw std::runtime_error("ForgetDirectoryStream: libkernel has not registered its directory descriptors");
     g_forgetDirectoryDescriptor(descriptor);
+}
+
+void DuplicateDirectoryStream_nid_no_patch(int from, int to) {
+    if (!g_duplicateDirectoryDescriptor) throw std::runtime_error("DuplicateDirectoryStream: libkernel has not registered its directory descriptors");
+    g_duplicateDirectoryDescriptor(from, to);
 }
 
 static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path, const std::string& = {}) {
@@ -572,8 +579,7 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
         }
 #ifdef _WIN32
         if (std::error_code status; !parsed->writes && std::filesystem::is_directory(path, status)) {
-            if (stream->IsHostStandard()) throw std::runtime_error("freopen: reopening a standard stream onto a directory is not implemented");
-            if (!stream->Reopen(path, parsed->native.c_str(), OpenDirectoryHandle)) {
+            if (!stream->Reopen(path, parsed->native.c_str(), OpenDirectoryHandle, true)) {
                 const int error = errno;
                 if (stream->IsDynamic()) delete stream;
                 errno = error;
@@ -989,38 +995,40 @@ void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t co
     return nullptr;
 }
 
-int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
-    if (size < 4) {
-        errno = 22;
-        return -1;
+void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count,
+    size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
+    if (!count) throw std::invalid_argument("lfind: null element count");
+    if (*count == 0) return nullptr;
+    if (!key || !base || !compare || size == 0)
+        throw std::invalid_argument("lfind: invalid arguments");
+    if (*count > std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lfind: array size overflow");
+    const auto* bytes = static_cast<const unsigned char*>(base);
+    for (size_t index = 0; index < *count; ++index) {
+        const auto* element = bytes + index * size;
+        if (compare(key, element) == 0) return const_cast<unsigned char*>(element);
     }
-    if (count == 0) return 0;
-    if (!compare) throw std::invalid_argument("mergesort: null comparator");
-    if (!base) throw std::invalid_argument("mergesort: null base");
-    if (count > (std::numeric_limits<size_t>::max() - 8) / size) throw std::overflow_error("mergesort: array size overflow");
-    auto* const scratch = static_cast<unsigned char*>(malloc_nid_postfix(count * size + 8));
-    if (!scratch) return -1;
-    auto* source = static_cast<unsigned char*>(base);
-    auto* target = scratch;
-    for (size_t width = 1; width < count; width *= 2) {
-        for (size_t low = 0; low < count; low += 2 * width) {
-            const size_t middle = std::min(low + width, count);
-            const size_t high = std::min(low + 2 * width, count);
-            size_t left = low, right = middle, out = low;
-            while (left < middle && right < high) {
-                const size_t taken = compare(source + left * size, source + right * size) <= 0 ? left++ : right++;
-                std::memcpy(target + out++ * size, source + taken * size, size);
-            }
-            std::memcpy(target + out * size, source + left * size, (middle - left) * size);
-            out += middle - left;
-            std::memcpy(target + out * size, source + right * size, (high - right) * size);
-        }
-        std::swap(source, target);
-    }
-    if (source != base) std::memcpy(base, source, count * size);
-    free_nid_postfix(scratch);
+    return nullptr;
+}
 
-    return 0;
+void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
+    size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
+    if (!count) throw std::invalid_argument("lsearch: null element count");
+    if (!key || !base || !compare || size == 0)
+        throw std::invalid_argument("lsearch: invalid arguments");
+    if (*count > std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lsearch: array size overflow");
+    auto* bytes = static_cast<unsigned char*>(base);
+    for (size_t index = 0; index < *count; ++index) {
+        auto* element = bytes + index * size;
+        if (compare(key, element) == 0) return element;
+    }
+    if (*count >= std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lsearch: append capacity overflow");
+    auto* tail = bytes + *count * size;
+    std::memcpy(tail, key, size);
+    ++*count;
+    return tail;
 }
 
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
