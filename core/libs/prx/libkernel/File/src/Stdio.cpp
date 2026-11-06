@@ -719,15 +719,28 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
 }
 #endif
 
-extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
+extern "C" int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags) {
     if (!descriptors) return PosixFailure(GUEST_EFAULT);
+    if ((flags & ~(SCE_KERNEL_O_NONBLOCK | SCE_KERNEL_O_CLOEXEC)) != 0) return PosixFailure(GUEST_EINVAL);
     int native[2];
 #ifdef _WIN32
-    const int result = ::_pipe(native, 65536, _O_BINARY);
+    int mode = _O_BINARY;
+    if (flags & SCE_KERNEL_O_CLOEXEC) mode |= _O_NOINHERIT;
+    const int result = ::_pipe(native, 65536, mode);
 #else
-    const int result = ::pipe(native);
+    int hostFlags = 0;
+    if (flags & SCE_KERNEL_O_NONBLOCK) hostFlags |= O_NONBLOCK;
+    if (flags & SCE_KERNEL_O_CLOEXEC) hostFlags |= O_CLOEXEC;
+    const int result = ::pipe2(native, hostFlags);
 #endif
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+#ifdef _WIN32
+    if ((flags & SCE_KERNEL_O_NONBLOCK) != 0) {
+        u_long nonblock = 1;
+        ::ioctlsocket(native[0], FIONBIO, &nonblock);
+        ::ioctlsocket(native[1], FIONBIO, &nonblock);
+    }
+#endif
     File::RememberPipe(native[0]);
     File::RememberPipe(native[1]);
     if (!GuestCopyOut_nid_no_patch(descriptors, native, sizeof(native))) {
@@ -736,6 +749,10 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
         return PosixFailure(GUEST_EFAULT);
     }
     return 0;
+}
+
+extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
+    return pipe2_nid_postfix(descriptors, 0);
 }
 
 static int PathError(const char* path, std::string& copy) {
