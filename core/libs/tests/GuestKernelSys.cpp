@@ -340,6 +340,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return lutimes_nid_postfix(paths.Unreadable(), nullptr); });
     posixFault([&] { return readlink_nid_postfix(paths.Unreadable(), linkBuffer, sizeof(linkBuffer)); });
     posixFault([&] { return pathconf_nid_postfix(paths.Unreadable(), 4); });
+    posixFault([&] { return chroot_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return link_nid_postfix(paths.Unreadable(), "unused-link"); });
     posixFault([&] { return link_nid_postfix(renameSource.c_str(), paths.Unreadable()); });
     posixFault([&] { return symlink_nid_postfix(paths.Unreadable(), "unused-symlink"); });
@@ -604,10 +605,12 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrGetclock(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
     Require(scePthreadCondattrGetclock(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrGetclock(reinterpret_cast<const PthreadCondattr*>(0x10), &clock) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondattrInit(&attr) == 0 && attr != nullptr);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Realtime);
     Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
+    Require(scePthreadCondattrGetclock(&attr, reinterpret_cast<KernelClockid*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     bool getclockThrew = false;
     try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::invalid_argument&) { getclockThrew = true; }
     Require(getclockThrew);
@@ -849,6 +852,7 @@ void CheckAmmMapperCalls() {
     std::array<std::uint64_t, 8> param{};
     param.fill(0xAAAAAAAAAAAAAAAAull);
     Require(sceKernelMapperGetParam(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMapperGetParam(reinterpret_cast<std::uint64_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     param[0] = 0x39;
     Require(sceKernelMapperGetParam(param.data()) == SCE_KERNEL_ERROR_EINVAL && param[0] == 0x39 && param[1] == 0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x28;
@@ -1440,6 +1444,8 @@ int main() {
         Require(std::memcmp(buffer, "sub", 3) == 0 && buffer[3] == '#');
         Require(readlink_nid_postfix(link.c_str(), nullptr, 0) == 0);
         Require(readlink_nid_postfix(link.c_str(), nullptr, sizeof(buffer)) == -1 && Error() == 14);
+        auto* unmapped = reinterpret_cast<char*>(0x800000000000);
+        Require(readlink_nid_postfix(link.c_str(), unmapped, sizeof(buffer)) == -1 && Error() == 14);
         Require(readlink_nid_postfix((root / "LINK").string().c_str(), buffer, sizeof(buffer)) == 14);
         const int linkDir = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
         Require(linkDir >= 0);
@@ -1449,9 +1455,11 @@ int main() {
         Require(readlinkat_nid_postfix(linkDir, "link", buffer, 3) == 3 && std::memcmp(buffer, "sub", 3) == 0);
         Require(readlinkat_nid_postfix(linkDir, "link", nullptr, 0) == 0);
         Require(readlinkat_nid_postfix(linkDir, "link", nullptr, sizeof(buffer)) == -1 && Error() == 14);
+        Require(readlinkat_nid_postfix(linkDir, "link", unmapped, sizeof(buffer)) == -1 && Error() == 14);
         const auto guestLink = "/" + root.filename().string() + "/link";
         Require(readlinkat_nid_postfix(-1, guestLink.c_str(), buffer, sizeof(buffer)) == 14 && std::memcmp(buffer, "sub/target.txt", 14) == 0);
         Require(readlinkat_nid_postfix(-100, link.c_str(), buffer, sizeof(buffer)) == 14 && std::memcmp(buffer, "sub/target.txt", 14) == 0);
+        Require(readlinkat_nid_postfix(-100, link.c_str(), unmapped, sizeof(buffer)) == -1 && Error() == 14);
         Require(sceKernelClose(linkDir) == 0);
 #ifndef _WIN32
         std::filesystem::create_symlink("loopB", root / "loopA");
@@ -2049,6 +2057,10 @@ int main() {
     Require(fstatat_nid_postfix(base, "missing.bin", &stat, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, nullptr, &stat, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
+    Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);
     Require(fstatat_nid_postfix(-1, "file.txt", &stat, 0) == -1 && Error() == 9);
     const int notDirectory = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
