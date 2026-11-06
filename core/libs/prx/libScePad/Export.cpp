@@ -357,6 +357,7 @@ int APS5_VABI scePadSetFeatureReport(std::int32_t handle, std::uint8_t reportId,
 int APS5_VABI scePadOutputReport(std::int32_t handle, std::uint8_t reportId, const void* data, std::uint64_t size) { NotImplemented_nid_no_patch(__func__); return 0; }
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr || num <= 0) return PAD_ERROR_INVALID_ARG;
  if (RemoteHandle(handle)) {
@@ -367,7 +368,6 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
   data[0] = SpecialData();
   return 1;
  }
- if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  return Pad::Read(data, num, PortOf(handle));
 }
 
@@ -717,7 +717,7 @@ int APS5_VABI scePadSetVibrationForce(std::int32_t handle, const PadVibrationPar
     if (param == nullptr) return PAD_ERROR_INVALID_ARG;
     if (SpecialHandle(handle)) return PAD_OK;
     const int port = PortOf(handle);
-    if (port < 0) return PAD_ERROR_INVALID_HANDLE;
+    if (port < 0) NotImplemented_nid_no_patch("scePadSetVibrationForce: a handle with no pad port");
     Pad::SetVibration(port, param->large_motor, param->small_motor);
     return PAD_OK;
 }
