@@ -2181,6 +2181,38 @@ void BufferPublication(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
         device->DispatchRecipe(warm, 1u, 1u, 1u, 0u, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome);
     }, false, FillOnes);
     std::puts("native buffer publication: recipe dispatch reads native words");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const CompiledShader compiled{ShaderStage::Compute, &warm, 0u};
+        ShaderResources resources(context, compiled);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(resources.Revalidate(compiled), "the direct buffer proof did not start current");
+        arm();
+        ShaderResources::ProofReport proof;
+        const auto current = resources.Revalidate(compiled, &proof);
+        RequireNoMultisampleTarget(block.Address(), bytes, "after direct reuse proof");
+        for (std::size_t offset = 0u; offset < bytes; offset += sizeof(FillOnes)) Require(std::memcmp(block.data + offset, &FillOnes, sizeof(FillOnes)) == 0, "the reuse proof did not publish current native samples");
+        std::printf("native buffer proof: epoch-enabled=%u epoch=%llu current=%u; publication precedes reuse proof\n", ShaderResources::EpochProofs(), static_cast<unsigned long long>(AgcDriver::GuestMemory::CollectEpoch()), current);
+    }
+    auto unused = color;
+    unused.tileMode = ColorTileMode::Standard4KB;
+    unused.bytes = ColorTargetLayout(Side, Side, unused.tileMode, unused.elementBytes).Bytes();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        MultisampleTargetView(context, unused);
+    }
+    Block movedSource(4u * BlockBytes);
+    const auto movedColor = DecodeTarget(movedSource);
+    Draw(*device, TargetState(movedColor));
+    NoteColorMetadataFill(movedSource.Address(), static_cast<std::size_t>(MultisampledColorBytes(movedColor)), FillOnes);
+    CheckUniform(LoadSamples(*device, movedSource), Ones, "before moved dispatch publication");
+    const auto beforeMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    check([&] { dispatch(CompileBufferLoad(*device, movedSource.Address() + 4u, output.Address())); }, false, FillOnes);
+    const auto afterMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
+    Require(afterMoves.moved == beforeMoves.moved + 1u, "the moved native buffer rebuilt instead of reusing its template");
+    Require(Refused(block.Address(), Threads * 4u, "the unused original dispatch buffer"), "the moved dispatch consumed or retired its unused original range");
+    RequireNoMultisampleTarget(movedSource.Address(), static_cast<std::size_t>(MultisampledColorBytes(movedColor)), "after moved dispatch publication");
+    std::puts("native moved dispatch: current source published and unused old guard retained");
 
 }
 

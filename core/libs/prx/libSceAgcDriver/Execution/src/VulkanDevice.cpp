@@ -6232,7 +6232,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
                     if (data.has_value() && std::ranges::any_of(*moved, [&](const Graphics::ShaderResources::MovedBuffer& entry) { return entry.allocation == *data; })) moved.reset();
                 }
             }
-            if (moved.has_value() && cached->Revalidate(shaders[0], nullptr, *moved)) {
+            if (!moved.has_value() || cached->Revalidate(shaders[0], nullptr, *moved)) {
                 bool usable = true;
                 if (DispatchMove() && !exactEntry) {
                     auto& moves = DispatchMoves();
