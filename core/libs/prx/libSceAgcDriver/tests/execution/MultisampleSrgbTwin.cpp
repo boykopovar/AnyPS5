@@ -26,9 +26,6 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
-#include <span>
-#include <string>
-#include <vector>
 #include <utility>
 
 namespace AgcDriver {
@@ -64,7 +61,6 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
-    std::span<std::byte> Bytes() const { return {block, BlockBytes}; }
 
 private:
     std::byte* block = nullptr;
@@ -97,6 +93,7 @@ struct Acquired {
 
 Acquired Acquire(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Context& context, const ColorTarget& target) {
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::Graphics::PrepareMultisampleTargetForDraw_nid_no_patch(context, target);
     Acquired acquired;
     acquired.view = AgcDriver::Graphics::MultisampleTargetView(context, target, acquired.owner, &acquired.image);
     Require(acquired.view != VK_NULL_HANDLE && acquired.image != VK_NULL_HANDLE && acquired.owner != nullptr, "the multisampled target has no view");

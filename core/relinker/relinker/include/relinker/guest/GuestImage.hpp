@@ -19,6 +19,9 @@ inline constexpr char GuestModuleSuffix[] = ".guest.prx";
 inline constexpr char GuestModulePattern[] = "sce_module/*.prx";
 inline constexpr std::uint16_t AbsoluteSection = 0xfff1;
 inline constexpr char GuestInitializeExport[] = "__aps5_guest_initialize";
+inline constexpr std::uint32_t GuestDeferredDependenciesMagic = 0x44504541;
+inline constexpr std::uint32_t GuestDeferredSweepMagic = 0x57534550;
+inline constexpr std::size_t GuestMaximumDeferredDependencies = 4096;
 
 struct GuestSymbol {
     std::string Name;
