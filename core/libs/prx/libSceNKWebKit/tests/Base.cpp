@@ -494,52 +494,6 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
-    ath/to/file.txt");
-    WKRelease(fileArray);
-
-    WKOpenPanelResultListenerChooseFiles(ref, nullptr, nullptr);
-    Require(listener->chosenFiles.empty());
-
-    bool threw = false;
-    try {
-        WKOpenPanelResultListenerCancel(nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-
-    threw = false;
-    try {
-        WKOpenPanelResultListenerChooseFiles(nullptr, nullptr, nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
-static void TestCertificateInfo() {
-    Require(WKCertificateInfoGetTypeID() == 0);
-    Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
-    Require(WKCertificateInfoGetVerificationError(nullptr) == 0);
-    Require(WKCertificateInfoCopyVerificationErrorDescription(nullptr) == nullptr);
-    Require(WKCertificateInfoGetCertificateChainSize(nullptr) == 0);
-    Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
-}
-
-int main() {
-    TestTypeIDs();
-    TestSecurityOrigin();
-    TestRetainRelease();
-    TestStrings();
-    TestURL();
-    TestArray();
-    TestDictionary();
-    TestData();
-    TestNumbers();
-    TestGeometry();
-    TestUserContentURLPattern();
-    TestURLRequestResponse();
-    TestError();
     TestOpenPanelResultListener();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
