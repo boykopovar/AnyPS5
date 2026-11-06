@@ -378,6 +378,9 @@ private:
         append(key, value.ldsLockFences);
         append(key, value.meshWindowBuffer);
         append(key, value.hostInterpolationFirst);
+        append(key, value.shaderImageMinLod);
+        append(key, value.float16WidenNans);
+        append(key, value.float16NarrowNans);
     }
 };
 

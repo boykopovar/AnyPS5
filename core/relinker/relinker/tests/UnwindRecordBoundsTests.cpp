@@ -352,6 +352,103 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        Domain::ProgramHeader augLoad{}; augLoad.Type = 1; augLoad.MappedAddress = 0x1000; augLoad.FileSize = 128;
+        Domain::ProgramHeader augEh = augLoad; augEh.Type = 0x6474E550; augEh.FileSize = 32;
+        auto unterminatedAugBytes = Fixture();
+        unterminatedAugBytes[73] = 'z';
+        unterminatedAugBytes[74] = 'R';
+        unterminatedAugBytes[75] = 'L';
+        unterminatedAugBytes[76] = 'P';
+        bool unterminatedAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedAugRejected = std::string(error.what()).find("unterminated CIE augmentation") != std::string::npos;
+        }
+        Require(unterminatedAugRejected);
+        auto outOfBoundsAugBytes = Fixture();
+        Io::WriteU32(outOfBoundsAugBytes, 64, 12);
+        outOfBoundsAugBytes[73] = 'z';
+        outOfBoundsAugBytes[74] = 0;
+        outOfBoundsAugBytes[75] = 1;
+        outOfBoundsAugBytes[76] = 0x78;
+        outOfBoundsAugBytes[77] = 16;
+        outOfBoundsAugBytes[78] = 10;
+        bool outOfBoundsAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(outOfBoundsAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            outOfBoundsAugRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(outOfBoundsAugRejected);
+        auto unterminatedRecordBytes = Fixture();
+        Io::WriteU32(unterminatedRecordBytes, 64, 8);
+        bool unterminatedRecordRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedRecordBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedRecordRejected = std::string(error.what()).find("CIE fields exceed record") != std::string::npos;
+        }
+        Require(unterminatedRecordRejected);
+        auto fdeZeroBytes = Fixture();
+        Io::WriteU32(fdeZeroBytes, 96, 0);
+        bool fdeZeroRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeZeroBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            fdeZeroRejected = std::string(error.what()).find("unsupported FDE record size") != std::string::npos;
+        }
+        Require(fdeZeroRejected);
+        auto fdeOverflowBytes = Fixture();
+        Io::WriteU32(fdeOverflowBytes, 96, 1000);
+        bool fdeOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeOverflowBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            fdeOverflowRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
+        }
+        Require(fdeOverflowRejected);
+        std::vector<std::uint8_t> landingPadBytes(0x400, 0);
+        Io::WriteU32(landingPadBytes, 0x200, 25);
+        landingPadBytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), landingPadBytes.begin() + 0x209);
+        landingPadBytes[0x212] = 0;
+        Io::WriteU64(landingPadBytes, 0x213, 0x1000);
+        landingPadBytes[0x21B] = 0;
+        landingPadBytes[0x21C] = 0;
+        Io::WriteU32(landingPadBytes, 0x220, 29);
+        Io::WriteU32(landingPadBytes, 0x224, 0x24);
+        Io::WriteU64(landingPadBytes, 0x228, 0x1000);
+        Io::WriteU64(landingPadBytes, 0x230, 0x20);
+        landingPadBytes[0x238] = 8;
+        Io::WriteU64(landingPadBytes, 0x239, 0x280);
+        landingPadBytes[0x280] = 0;
+        Io::WriteU64(landingPadBytes, 0x281, 0x1000);
+        landingPadBytes[0x289] = 0xFF;
+        landingPadBytes[0x28A] = 11;
+        landingPadBytes[0x28B] = 13;
+        Io::WriteU32(landingPadBytes, 0x28C, 0);
+        Io::WriteU32(landingPadBytes, 0x290, 1);
+        Io::WriteU32(landingPadBytes, 0x294, static_cast<std::uint32_t>(-0x1001));
+        landingPadBytes[0x298] = 0;
+        landingPadBytes[0x300] = 1;
+        landingPadBytes[0x302] = 3;
+        Io::WriteU64(landingPadBytes, 0x304, 0x200);
+        Io::WriteU32(landingPadBytes, 0x30C, 1);
+        Io::WriteU64(landingPadBytes, 0x310, 0x1000);
+        Io::WriteU64(landingPadBytes, 0x318, 0x220);
+        Domain::ProgramHeader landingPadLoad{}; landingPadLoad.Type = 1; landingPadLoad.Flags = 4; landingPadLoad.FileSize = landingPadBytes.size(); landingPadLoad.MemorySize = landingPadBytes.size(); landingPadLoad.Alignment = 8;
+        Domain::ProgramHeader landingPadEh = landingPadLoad; landingPadEh.Type = 0x6474E550; landingPadEh.Offset = 0x300; landingPadEh.MappedAddress = 0x300; landingPadEh.FileSize = 32; landingPadEh.MemorySize = 32; landingPadEh.Alignment = 4;
+        bool landingPadUnderflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(landingPadBytes, {landingPadLoad, landingPadEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            landingPadUnderflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
+        }
+        Require(landingPadUnderflowRejected);
+        auto landingPadPosBytes = landingPadBytes;
+        Io::WriteU64(landingPadPosBytes, 0x281, std::numeric_limits<std::uint64_t>::max() - 16);
+        Io::WriteU32(landingPadPosBytes, 0x294, 17);
+        bool landingPadOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(landingPadPosBytes, {landingPadLoad, landingPadEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            landingPadOverflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
+        }
+        Require(landingPadOverflowRejected);
+        std::cout << "37 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
