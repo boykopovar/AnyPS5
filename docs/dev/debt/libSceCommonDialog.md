@@ -19,10 +19,6 @@
 | `Unknown` | `txNJzxX6yrA` |
 | `Unknown` | `yxjgDvqUbGQ` |
 
-### Silent stubs
-
-- [libSceCommonDialog](../../../core/libs/prx/libSceCommonDialog/Export.cpp)
-
 ### Unknown function info
 
 - 14 additional pending imports in [InventoryExports.cpp](../../../core/libs/prx/libSceCommonDialog/InventoryExports.cpp) are listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceCommonDialog.c). Their signatures and behavior are unverified; each uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`, for import resolution only.
