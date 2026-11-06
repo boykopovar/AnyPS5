@@ -74,6 +74,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
 #endif
 #include <atomic>
 #include <chrono>
