@@ -1,10 +1,7 @@
 #pragma once
 
-#include "prx/libSceJxr/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <stdexcept>
 
 namespace Jxr {
 
@@ -54,28 +51,5 @@ static_assert(offsetof(ImageEncodeMetadataPrefix, xmpMetadataByteCount) == 272);
 static_assert(offsetof(ImageEncodeMetadataPrefix, photoshopMetadata) == 280);
 static_assert(offsetof(ImageEncodeMetadataPrefix, photoshopMetadataByteCount) == 288);
 static_assert(sizeof(ImageEncodeMetadataPrefix) == 296);
-
-inline std::int64_t SetImageEncodeMetadata(void* encoder, const std::uint8_t* metadata, std::uint32_t size,
-                                          std::size_t dataOffset, std::size_t sizeOffset) {
-    if (!encoder) throw std::invalid_argument("metadata setter requires an encoder");
-    auto* record = static_cast<std::byte*>(encoder);
-    const auto* prefix = static_cast<const ImageEncodeMetadataPrefix*>(encoder);
-    if (prefix->headerDone != 0) return WmpErrOutOfSequence;
-    auto** stored = reinterpret_cast<std::uint8_t**>(record + dataOffset);
-    auto* storedSize = reinterpret_cast<std::uint32_t*>(record + sizeOffset);
-    void* previous = *stored;
-    PKFree_nid_postfix(&previous);
-    *stored = static_cast<std::uint8_t*>(previous);
-    *storedSize = 0;
-
-    void* allocated = *stored;
-    const auto allocationResult = PKAlloc_nid_postfix(&allocated, size);
-    *stored = static_cast<std::uint8_t*>(allocated);
-    if (allocationResult < 0) return allocationResult;
-    if (size != 0 && metadata == nullptr) throw std::invalid_argument("metadata setter requires input bytes");
-    if (size != 0) std::memcpy(*stored, metadata, size);
-    *storedSize = size;
-    return allocationResult;
-}
 
 }
