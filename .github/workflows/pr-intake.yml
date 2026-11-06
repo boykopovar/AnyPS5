@@ -23,6 +23,16 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const pull_number = context.payload.pull_request.number;
+            const reopened = context.payload.action === 'reopened';
+            const removeLimitLabel = async () => {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: 'open PR limit' });
+              } catch (error) {
+                if (error.status !== 404) {
+                  core.warning(`Could not remove the open PR limit label: ${error.message}`);
+                }
+              }
+            };
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
             if (pr.state !== 'open' || pr.base.ref !== 'main') {
               return;
@@ -38,13 +48,7 @@ jobs:
                 core.warning(`Could not check the permission of ${context.payload.sender.login}, so the open PR limit applies: ${error.message}`);
               }
               if (maintainer) {
-                try {
-                  await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: 'open PR limit' });
-                } catch (error) {
-                  if (error.status !== 404) {
-                    core.warning(`Could not remove the open PR limit label: ${error.message}`);
-                  }
-                }
+                await removeLimitLabel();
                 return;
               }
             }
@@ -57,18 +61,23 @@ jobs:
             }
             const merged = mergedPRs.total_count;
             if (merged >= 20) {
+              if (reopened) {
+                await removeLimitLabel();
+              }
               return;
             }
             const allowedOpen = merged >= 1 ? 20 : 1;
             const openPRs = await github.paginate(github.rest.pulls.list, {
               owner, repo, state: 'open', base: 'main', per_page: 100
             });
-            const reopened = context.payload.action === 'reopened';
             const open = new Set(openPRs
               .filter((p) => p.user.login === pr.user.login && (reopened || p.number < pull_number))
               .map((p) => p.number));
             open.add(pull_number);
             if (open.size <= allowedOpen) {
+              if (reopened) {
+                await removeLimitLabel();
+              }
               return;
             }
             const name = 'open PR limit';
