@@ -14,6 +14,10 @@ struct RectValue;
 extern "C" {
 
 std::uint32_t APS5_VABI WKAXObjectGetTypeID();
+const void* APS5_VABI WKAXObjectCopyTitle(const void* objectRef);
+const void* APS5_VABI WKAXObjectCopyDescription(const void* objectRef);
+const void* APS5_VABI WKAXObjectCopyHelpText(const void* objectRef);
+const void* APS5_VABI WKAXObjectCopyURL(const void* objectRef);
 std::uint32_t APS5_VABI WKApplicationCacheManagerGetTypeID();
 void APS5_VABI WKArrayAppendItem(void* arrayRef, const void* itemRef);
 const void* APS5_VABI WKArrayCreate(const void** values, std::size_t numberOfValues);
@@ -67,6 +71,9 @@ const void* APS5_VABI WKDoubleCreate(double value);
 std::uint32_t APS5_VABI WKDoubleGetTypeID();
 double APS5_VABI WKDoubleGetValue(const void* doubleRef);
 std::uint32_t APS5_VABI WKDownloadGetTypeID();
+const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef);
+const void* APS5_VABI WKDownloadGetOriginatingPage(const void* downloadRef);
+bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
