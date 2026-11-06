@@ -110,6 +110,7 @@ public:
     Retained<URL> firstPartyForCookies;
     std::string httpMethod = "GET";
     Retained<Data> httpBody;
+};
 
 class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
 public:
