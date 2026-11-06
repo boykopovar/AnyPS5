@@ -160,6 +160,27 @@ void CheckAssignPointer() {
     _ZNSs6assignEPKcm_nid_postfix(&string, string.pointer, 2);
     Require(Holds(string, "de"), "assign(s, n) from the start of *this truncates");
     GuestLocale::ReleaseStringStorage(string);
+
+    String terminator = Make("abc");
+    _ZNSs6assignEPKcm_nid_postfix(&terminator, Data(terminator) + 1, 3);
+    Require(terminator.size == 3 && std::memcmp(Data(terminator), "bc\0", 3) == 0 && Data(terminator)[3] == 0,
+        "assign(s, n) preserves the initialized terminator in an overlapping range");
+    GuestLocale::ReleaseStringStorage(terminator);
+
+    String inlineGrowth = Make("abcdefghijklmno");
+    _ZNSs6assignEPKcm_nid_postfix(&inlineGrowth, Data(inlineGrowth), 16);
+    Require(inlineGrowth.size == 16 && inlineGrowth.capacity == 31
+        && std::memcmp(Data(inlineGrowth), "abcdefghijklmno\0", 16) == 0 && Data(inlineGrowth)[16] == 0,
+        "assign(s, n) copies an overlapping inline range before growing");
+    GuestLocale::ReleaseStringStorage(inlineGrowth);
+
+    String heapOverlap = Make("abcdefghijklmnopqrs");
+    heapOverlap.pointer[20] = 'x';
+    _ZNSs6assignEPKcm_nid_postfix(&heapOverlap, heapOverlap.pointer + 1, 20);
+    Require(heapOverlap.size == 20 && std::memcmp(Data(heapOverlap), "bcdefghijklmnopqrs\0x", 20) == 0
+        && Data(heapOverlap)[20] == 0,
+        "assign(s, n) moves an overlapping heap range beyond the logical terminator");
+    GuestLocale::ReleaseStringStorage(heapOverlap);
 }
 
 void CheckAssignSubstring() {

@@ -52,10 +52,23 @@ void EraseRange(String* string, std::size_t position, std::size_t count) {
     SetSize(string, string->size - count);
 }
 
-void AssignOutside(String* string, const char* source, std::size_t count) {
-    Reserve(string, count);
-    if (count != 0) std::memcpy(Data(string), source, count);
-    SetSize(string, count);
+void Assign(String* string, const char* source, std::size_t count) {
+    if (count <= string->capacity) {
+        if (count != 0) std::memmove(Data(string), source, count);
+        SetSize(string, count);
+        return;
+    }
+    if (count > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
+    const std::size_t capacity = std::min(count | GuestLocale::StringCapacityMask, MaxSize);
+    auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
+    std::memcpy(data, source, count);
+    data[count] = 0;
+    char* old = Data(string);
+    const std::size_t oldCapacity = string->capacity;
+    if (oldCapacity > GuestLocale::StringInlineCapacity) GuestStringStorage::Deallocate(old, oldCapacity + 1);
+    string->pointer = data;
+    string->capacity = capacity;
+    string->size = count;
 }
 
 }
@@ -99,7 +112,7 @@ String* APS5_VABI _ZNSs6appendEmc_nid_postfix(String* self, std::size_t count, c
 String* APS5_VABI _ZNSs6assignERKSsmm_nid_postfix(String* self, const String* source, std::size_t position, std::size_t count) {
     count = Clamp(source, position, count);
     if (source != self) {
-        AssignOutside(self, Data(source) + position, count);
+        Assign(self, Data(source) + position, count);
         return self;
     }
     EraseRange(self, position + count, self->size - position - count);
@@ -108,11 +121,7 @@ String* APS5_VABI _ZNSs6assignERKSsmm_nid_postfix(String* self, const String* so
 }
 
 String* APS5_VABI _ZNSs6assignEPKcm_nid_postfix(String* self, const char* source, std::size_t count) {
-    const char* data = Data(static_cast<const String*>(self));
-    if (source != nullptr && source >= data && source < data + self->size) {
-        return _ZNSs6assignERKSsmm_nid_postfix(self, self, static_cast<std::size_t>(source - data), count);
-    }
-    AssignOutside(self, source, count);
+    Assign(self, source, count);
     return self;
 }
 
