@@ -2418,7 +2418,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (base.numericClass != IrTextureNumericClass::Float || base.conversionFormat != IrBufferFormat::Invalid || base.packedFormat != IrBufferFormat::Invalid || base.depthBits || base.srgbDecode || (base.emulatedCompare & EmulatedCompare::Enabled) != 0u) continue;
             for (const auto bits : {8u, 16u}) {
                 auto mode = base;
-                mode.scaledUnormBits = bits;
+                mode.scaledUnormBits = static_cast<std::uint8_t>(bits);
                 modes.push_back(mode);
             }
         }
