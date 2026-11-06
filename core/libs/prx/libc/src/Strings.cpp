@@ -738,6 +738,39 @@ int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
     }
 }
 
+int APS5_VABI _Strcoll_nid_postfix(const char* first, const char* firstEnd, const char* second, const char* secondEnd) {
+    const auto firstLength = static_cast<size_t>(firstEnd - first);
+    const auto secondLength = static_cast<size_t>(secondEnd - second);
+    const size_t common = firstLength < secondLength ? firstLength : secondLength;
+    if (const int compared = std::memcmp(first, second, common)) return compared;
+    if (firstLength == secondLength) return 0;
+    return firstLength < secondLength ? -1 : 1;
+}
+
+size_t APS5_VABI _Strxfrm_nid_postfix(char* destination, char* destinationEnd, const char* source, const char* sourceEnd) {
+    const auto length = static_cast<size_t>(sourceEnd - source);
+    if (static_cast<size_t>(destinationEnd - destination) >= length) std::memcpy(destination, source, length);
+    return length;
+}
+
+int APS5_VABI _Wcscoll_nid_postfix(const char16_t* first, const char16_t* firstEnd, const char16_t* second, const char16_t* secondEnd) {
+    const auto firstLength = static_cast<size_t>(firstEnd - first);
+    const auto secondLength = static_cast<size_t>(secondEnd - second);
+    const size_t common = firstLength < secondLength ? firstLength : secondLength;
+    for (size_t index = 0; index < common; ++index) {
+        if (first[index] != second[index]) return first[index] < second[index] ? -1 : 1;
+    }
+    if (firstLength == secondLength) return 0;
+    return firstLength < secondLength ? -1 : 1;
+}
+
+size_t APS5_VABI _Wcsxfrm_nid_postfix(char16_t* destination, char16_t* destinationEnd, const char16_t* source, const char16_t* sourceEnd) {
+    const auto length = static_cast<size_t>(sourceEnd - source);
+    if (static_cast<size_t>(destinationEnd - destination) >= length)
+        std::memcpy(destination, source, length * sizeof(char16_t));
+    return length;
+}
+
 int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
     return SonyCopyStringS("strncpy_s", dest, destsz, src, count, true);
 }
