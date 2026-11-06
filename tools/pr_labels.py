@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import performance_compare
 
 UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)')
-CHECKLIST_UNBLOCKS = re.compile(r"^[ \t]*-[ \t]*\[[ xX]\][ \t]*Unblocks:[ \t]*([^\r\n]*)", re.M)
+CHECKLIST_UNBLOCKS = re.compile(r"^[ \t]*-[ \t]*\[[ xX]\][ \t]*Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)", re.M)
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
 NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
