@@ -5340,6 +5340,7 @@ struct RecordedDispatch {
     int cpuReason = 0;
     std::array<std::uint32_t, 3> threadGroup{};
     std::array<std::uint32_t, 3> threadLimit{};
+    std::span<const Graphics::ShaderResources::MovedBuffer> movedBuffers{};
 };
 
 struct DispatchCompletion {
@@ -5358,6 +5359,7 @@ struct DispatchCompletion {
     DispatchTimer& timer;
     PerformanceTimer& timing;
     char* groupsText;
+    std::span<const Graphics::ShaderResources::MovedBuffer> movedBuffers{};
 };
 
 VkDevice VulkanDevice::Device() const {
@@ -5729,7 +5731,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinearTouching("dispatch access", touches, resources.HoldsLease()));
-    resources.RequireGuestBuffers();
+    resources.RequireGuestBuffers(record.movedBuffers);
     std::shared_ptr<ScratchPool> pool;
     if (const auto slotDwords = record.shader->program->scratchPoolSlotDwords; slotDwords != 0) {
         const std::uint64_t groups = argumentImport != nullptr ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(record.x) * record.y * record.z;
@@ -6136,6 +6138,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     bool refusedMove = false;
     double revalidateMs = 0;
     std::shared_ptr<Graphics::ShaderResources::DrawBindings> overlay;
+    std::vector<Graphics::ShaderResources::MovedBuffer> movedBuffers;
     // The batches the pre-sync (PrepareDispatch) waited for are reaped first: their completions
     // (CPU write-backs) land before stage B or a cached object's Revalidate reads, and the flush
     // hook then finds nothing pending over their surfaces.
@@ -6270,6 +6273,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
                 }
                 if (usable) {
                     if (refusedMove || exactEntry) DispatchMoves().served.fetch_add(1, std::memory_order_relaxed);
+                    if (overlay != nullptr && moved.has_value()) movedBuffers = std::move(*moved);
                     resources = std::move(cached);
                     fromCache = true;
                     ++d.cacheHits;
@@ -6332,7 +6336,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         timing.Mark("pipeline_create");
         timer.phase(PhasePipeline);
     }
-    DispatchCompletion completion{context, shaders, pushStages, pushBytes, objects, resources, contentKey, cacheable, fromCache, revalidateMs, overlay, lookupsBefore, timer, timing, groupsText};
+    DispatchCompletion completion{context, shaders, pushStages, pushBytes, objects, resources, contentKey, cacheable, fromCache, revalidateMs, overlay, lookupsBefore, timer, timing, groupsText, movedBuffers};
     return recordCompletedDispatch(shader, x, y, z, arguments, programAddress, recipeOut, threadGroup, htileClear, completion);
 }
 
@@ -6360,6 +6364,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer, htileClear};
     record.resourceKeyMatched = fromCache;
     record.bindings = overlay;
+    record.movedBuffers = completion.movedBuffers;
     record.threadGroup = threadGroup;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     // The indirect hold total below still covers the whole call of a CPU-resolved one.
