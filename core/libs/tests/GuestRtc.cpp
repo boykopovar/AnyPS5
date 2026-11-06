@@ -90,6 +90,21 @@ int main(int argc, char** argv) {
         char text[64];
         RtcTick tick{std::numeric_limits<std::uint64_t>::max()};
         Require(sceRtcFormatRFC3339(text, &tick, 1) == static_cast<int>(0x80B50003));
+        Require(sceRtcFormatRFC3339Precise(text, &tick, 60, 6) == static_cast<int>(0x80B50003));
+        const RtcTick year65536{2068084742400000000ull}, year65537{2068116364800000000ull}, year75535{2383622726400000000ull}, distant{4239646359910459728ull};
+        Require(sceRtcFormatRFC3339(text, &year65536, 0) == static_cast<int>(0x80B50008));
+        Require(sceRtcFormatRFC2822(text, &year65536, 0) == static_cast<int>(0x80B50008));
+        Require(sceRtcFormatRFC3339Precise(text, &year65536, 0, 6) == static_cast<int>(0x80B50008));
+        Require(sceRtcFormatRFC3339(text, &year65537, 60) == 0 && std::strcmp(text, "0001-01-01T01:00:00.00+01:00") == 0);
+        Require(sceRtcFormatRFC2822(text, &year65537, 0) == 0 && std::strcmp(text, "Mon, 01 Jan 0001 00:00:00 +0000") == 0);
+        Require(sceRtcFormatRFC3339Precise(text, &year65537, 60, 6) == 0 && std::strcmp(text, "0001-01-01T01:00:00.000000+01:00") == 0);
+        Require(sceRtcFormatRFC3339(text, &year75535, -60) == 0 && std::strcmp(text, "9998-12-31T23:00:00.00-01:00") == 0);
+        Require(sceRtcFormatRFC2822(text, &year75535, 0) == 0 && std::strcmp(text, "Fri, 01 Jan 9999 00:00:00 +0000") == 0);
+        Require(sceRtcFormatRFC3339Precise(text, &year75535, -60, 6) == 0 && std::strcmp(text, "9998-12-31T23:00:00.000000-01:00") == 0);
+        Require(sceRtcFormatRFC2822(text, &distant, -821) == 0 && std::strcmp(text, "Mon, 17 Jan 3278 10:44:10 -1341") == 0);
+        const RtcTick westBound{3600000000ull}, westBelow{3599999999ull};
+        Require(sceRtcFormatRFC3339Precise(text, &westBound, -60, 6) == 0 && std::strcmp(text, "0001-01-01T00:00:00.000000-01:00") == 0);
+        Require(sceRtcFormatRFC3339Precise(text, &westBelow, -60, 6) == static_cast<int>(0x80B50003));
         return 0;
     }
     EnterTitleDirectory("CUSA00000");
@@ -991,6 +1006,15 @@ int main(int argc, char** argv) {
     Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == 0 && std::strcmp(ranges, "9999-12-31T23:59:00.00-00:01") == 0);
     Require(sceRtcInit() == 0);
     Require(sceRtcEnd() == 0);
+    Require(sceRtcGetCurrentTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentClock(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+    Require(sceRtcGetCurrentClockLocalTime(reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentClockUtc(reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentRawNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentAdNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentDebugNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcSetCurrentTick(reinterpret_cast<const RtcTick*>(0x10)) == invalidPointer);
     for (const std::uint64_t value : {maxTick + 1, std::uint64_t{1} << 63, std::numeric_limits<std::uint64_t>::max()}) {
         const RtcTick outOfRange{value};
         Require(sceRtcSetCurrentTick(&outOfRange) == 0);

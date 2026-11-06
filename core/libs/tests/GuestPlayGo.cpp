@@ -291,6 +291,79 @@ static int CheckNoPlayGoFileAnswered(const char* root, const char* answer) {
     return 0;
 }
 
+static int CheckNoPlayGoFileExplicit(const char* root, const char* value) {
+    constexpr int badChunkId = static_cast<int>(0x80B2000C);
+    SetUnlistedChunks(value);
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t listed[2] = {0, 1};
+    std::int8_t loci[2] = {0, 0};
+    Require(scePlayGoGetLocus(handle, listed, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
+    const std::uint16_t unlisted[2] = {2, 999};
+    Require(scePlayGoGetLocus(handle, unlisted, 2, loci) == badChunkId);
+    std::uint32_t chunkCount = 0;
+    Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 2);
+    std::uint16_t ids[2] = {0xFFFF, 0xFFFF};
+    Require(scePlayGoGetChunkId(handle, ids, 2, &chunkCount) == 0 && chunkCount == 2 && ids[0] == 0 && ids[1] == 1);
+    PlayGoProgress progress{};
+    Require(scePlayGoGetProgress(handle, listed, 2, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
+    Require(scePlayGoGetProgress(handle, unlisted, 2, &progress) == badChunkId);
+    Require(scePlayGoClose(handle) == 0);
+    return 0;
+}
+
+static int CheckNoPlayGoFileExplicitInvalid(const char* root, const char* value) {
+    SetUnlistedChunks(value);
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t chunk = 0;
+    std::int8_t locus = 0;
+    bool threw = false;
+    try {
+        scePlayGoGetLocus(handle, &chunk, 1, &locus);
+    } catch (const std::runtime_error& error) {
+        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed, absent, or a comma-separated list") != std::string_view::npos;
+    }
+    Require(threw);
+    return 0;
+}
+
+static int CheckPackageChunkTableExplicit(const char* root) {
+    SetUnlistedChunks("0,1");
+    return CheckPackageChunkTable(root);
+}
+
+static int CheckScenarioWithoutChunkTableExplicit(const char* root) {
+    constexpr int badChunkId = static_cast<int>(0x80B2000C);
+    SetUnlistedChunks("0,1");
+    std::filesystem::current_path(root);
+    PlayGoInitParams init{};
+    int handle = 0;
+    Require(scePlayGoInitialize(&init) == 0);
+    Require(scePlayGoOpen(&handle, nullptr) == 0);
+    const std::uint16_t listed[2] = {0, 999};
+    std::int8_t loci[2] = {0, 0};
+    Require(scePlayGoGetLocus(handle, listed, 2, loci) == 0 && loci[0] == 3 && loci[1] == 3);
+    std::uint32_t chunkCount = 0;
+    Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 1000);
+    const std::uint16_t unlisted = 1000;
+    bool threw = false;
+    try {
+        scePlayGoGetLocus(handle, &unlisted, 1, loci);
+    } catch (const std::runtime_error& error) {
+        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent") != std::string_view::npos;
+    }
+    Require(threw);
+    Require(scePlayGoClose(handle) == 0);
+    return 0;
+}
+
 static int CheckScenarioWithoutChunkTableAnswered(const char* root, const char* answer) {
     constexpr int badChunkId = static_cast<int>(0x80B2000C);
     SetUnlistedChunks(answer);
@@ -326,7 +399,7 @@ static int CheckUnknownUnlistedChunkAnswer(const char* root) {
         scePlayGoGetLocus(handle, &unlisted, 1, &locus);
 
     } catch (const std::runtime_error& error) {
-        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed or absent") != std::string_view::npos;
+        threw = std::string_view(error.what()).find("APS5_PLAYGO_UNLISTED_CHUNKS must be installed, absent, or a comma-separated list") != std::string_view::npos;
     }
     Require(threw);
     return 0;
@@ -362,7 +435,14 @@ int main(int argc, char** argv) {
         if (mode == "--no-file-installed") return CheckNoPlayGoFileAnswered(argv[2], "installed");
         if (mode == "--no-file-absent") return CheckNoPlayGoFileAnswered(argv[2], "absent");
         if (mode == "--no-file-unknown-answer") return CheckUnknownUnlistedChunkAnswer(argv[2]);
+        if (mode == "--no-file-explicit") return CheckNoPlayGoFileExplicit(argv[2], "0,1");
+        if (mode == "--no-file-explicit-one") return CheckNoPlayGoFileExplicit(argv[2], "1");
+        if (mode == "--no-file-explicit-empty") return CheckNoPlayGoFileExplicitInvalid(argv[2], "0,");
+        if (mode == "--no-file-explicit-range") return CheckNoPlayGoFileExplicitInvalid(argv[2], "65536");
+        if (mode == "--no-file-explicit-text") return CheckNoPlayGoFileExplicitInvalid(argv[2], "0,x");
         if (mode == "--package-chunk-table" || mode == "--scenario-with-chunk-table") return CheckPackageChunkTable(argv[2]);
+        if (mode == "--package-chunk-table-explicit") return CheckPackageChunkTableExplicit(argv[2]);
+        if (mode == "--scenario-only-explicit") return CheckScenarioWithoutChunkTableExplicit(argv[2]);
         if (mode == "--scenario-only") return CheckScenarioWithoutChunkTable(argv[2]);
         if (mode == "--scenario-only-installed") return CheckScenarioWithoutChunkTableAnswered(argv[2], "installed");
         if (mode == "--scenario-only-absent") return CheckScenarioWithoutChunkTableAnswered(argv[2], "absent");
@@ -374,7 +454,14 @@ int main(int argc, char** argv) {
     RunLayout(argv[0], "--no-file-installed", {});
     RunLayout(argv[0], "--no-file-absent", {});
     RunLayout(argv[0], "--no-file-unknown-answer", {});
+    RunLayout(argv[0], "--no-file-explicit", {});
+    RunLayout(argv[0], "--no-file-explicit-one", {});
+    RunLayout(argv[0], "--no-file-explicit-empty", {});
+    RunLayout(argv[0], "--no-file-explicit-range", {});
+    RunLayout(argv[0], "--no-file-explicit-text", {});
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}});
+    RunLayout(argv[0], "--package-chunk-table-explicit", {{"playgo-chunk.dat", ChunkTableFile()}});
+    RunLayout(argv[0], "--scenario-only-explicit", {{"playgo-scenario.json", "{}"}});
     RunLayout(argv[0], "--package-chunk-table", {{"playgo-chunk.dat", ChunkTableFile("plgo")}});
     RunLayout(argv[0], "--scenario-with-chunk-table", {{"playgo-chunk.dat", ChunkTableFile()}, {"playgo-scenario.json", "{}"}});
     std::int64_t eta = -1;

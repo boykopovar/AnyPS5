@@ -10,6 +10,11 @@ export const locales = [
         "direction": "ltr"
     },
     {
+        "code": "sv",
+        "name": "Svenska",
+        "direction": "ltr"
+    },
+    {
         "code": "es",
         "name": "Español",
         "direction": "ltr"
@@ -191,6 +196,86 @@ export const messages = {
         "removeLabel": "Remove {binding}",
         "searchOptions": "Search options",
         "noOptions": "No matching options."
+    },
+    "sv": {
+        "controls": "Kontroller",
+        "configuration": "Konfiguration",
+        "help": "Hjälp",
+        "settings": "Inställningar",
+        "language": "Språk",
+        "close": "Stäng",
+        "eyebrow": "Tillbehör / Anpassade kontroller",
+        "intro": "Välj en kontroll och tilldela sedan tangentbords- eller musinmatning.",
+        "search": "Sök kontroller",
+        "import": "Importera INI",
+        "reset": "Återställ",
+        "group0": "Åtgärdsknappar",
+        "group1": "Axelknappar",
+        "group2": "Styrkors",
+        "group3": "Vänster spak",
+        "group4": "Höger spak",
+        "group5": "Pekskärm och verktyg",
+        "select": "Välj…",
+        "add": "+ Lägg till bindning",
+        "capture": "Fånga",
+        "remove": "Ta bort",
+        "builtin": "Inbyggt: {inputs}",
+        "custom": "Egna inmatningar ersätter inbyggda inmatningar.",
+        "noResults": "Inga kontroller matchar sökningen.",
+        "download": "Hämta INI",
+        "copy": "Kopiera konfiguration",
+        "previewEmpty": "Lägg till en bindning för att börja.",
+        "backControls": "Tillbaka till kontroller",
+        "switchGroup": "Byt grupp",
+        "moveFocus": "Flytta fokus",
+        "helpIntro": "Några svar som hjälper dig att komma igång.",
+        "configIntro": "Granska inmatningarna och kopiera eller hämta sedan filen.",
+        "captureTitle": "Tryck på en tangent för {action}",
+        "cancelCapture": "Avbryt inmatning",
+        "keepEditing": "Fortsätt redigera",
+        "discard": "Förkasta ändringar",
+        "faq0Question": "Hur tilldelar jag en tangent?",
+        "faq0Answer": "Välj en grupp, välj Lägg till bindning och välj sedan Fånga eller en tangent i listan. Flera bindningar fungerar som alternativ.",
+        "faq1Question": "Var ska min INI-fil ligga?",
+        "faq1Answer": "Hämta anyps5-input.ini och lägg den bredvid den skapade körbara spelfilen. För en annan plats anger du filsökvägen i ANYPS5_INPUT_CONFIG.",
+        "faq2Question": "Varför fångas inte tangenten?",
+        "faq2Answer": "Webbläsar- eller systemkortkommandon kan fånga den. Välj den manuellt i listan. Escape avbryter inmatningen. Välj Escape i listan om du vill tilldela den.",
+        "faq3Question": "Sparas ändringarna automatiskt?",
+        "faq3Answer": "Indataändringar finns bara i minnet. Kopiera eller hämta innan du läser in sidan på nytt. Bara språkvalet sparas i webbläsaren. Åtgärder utan inställning behåller sina standardvärden.",
+        "skip": "Hoppa till innehållet",
+        "mainNav": "Huvudnavigering",
+        "groups": "Kontrollgrupper",
+        "find": "Hitta en åtgärd",
+        "clock": "Lokal tid",
+        "output": "Konfigurationsutdata",
+        "captureHelp": "Inmatning använder fysiska tangentpositioner. Escape avbryter inmatningen. Välj Escape i listan för att tilldela den. En del webbläsar- och systemkortkommandon måste väljas manuellt.",
+        "replaceTitle": "Förkasta osparade ändringar?",
+        "replaceHelp": "Kopiera eller hämta konfigurationen först om du vill behålla den.",
+        "captureCancelled": "Inmatningen avbröts.",
+        "captureBlur": "Inmatningen avbröts eftersom fönstret tappade fokus.",
+        "captured": "{value} har fångats för {action}.",
+        "resetDone": "Konfigurationen har återställts.",
+        "importRejected": "Importen avvisades",
+        "importRead": "Importen lästes in",
+        "line": "Rad {line}: {message}",
+        "preserved": "Din aktuella konfiguration har bevarats.",
+        "imported": "{name} importerades.",
+        "importFailed": "Importen misslyckades: {message}",
+        "fileTooLarge": "INI-filen måste vara mindre än 1 MiB.",
+        "invalidUtf8": "Filen måste vara giltig UTF-8-text.",
+        "downloaded": "Hämtning av konfigurationen begärdes.",
+        "copied": "Konfigurationen har kopierats.",
+        "clipboardFailed": "Urklipp är inte tillgängligt. Kopiera den markerade förhandsvisningen med Ctrl+C.",
+        "noScript": "Aktivera JavaScript för att använda den här konfiguratorn.",
+        "noDefault": "ingen tangentbords- eller musinmatning",
+        "bindingLabel": "{action}-bindning {number}",
+        "typeLabel": "Inmatningstyp för {binding}",
+        "valueLabel": "Inmatningsvärde för {binding}",
+        "addLabel": "Lägg till bindning för {action}",
+        "captureLabel": "Fånga tangent för {binding}",
+        "removeLabel": "Ta bort {binding}",
+        "searchOptions": "Sök alternativ",
+        "noOptions": "Inga matchande alternativ."
     },
     "ar-EG": {
         "controls": "التحكم",
@@ -1271,23 +1356,77 @@ export function translate(locale, key, values = {}) {
     return text.replace(/\{(\w+)\}/gu, (match, name) => String(values[name] ?? match));
 }
 
+const diagnostics = {
+    'ar-EG': [
+        [/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم من $2 لـ $3.'],
+        [/(\w+): unknown input setting\./gu, 'الإعداد $1 مش معروف.'],
+        ['Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.'],
+        ['Unknown or empty action.', 'الحركة مش معروفة أو فاضية.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 مينفعش يستخدم $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'قيمة $1 مش معروفة أو فاضية.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'اسم الزرار ده مينفعش يتحفظ بالصيغة الحالية لملف INI.'],
+        [/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.'],
+        [' controls ', ' بيشغّل '],
+        [' (built-in)', ' (افتراضي)', true],
+        [' and ', ' و ', true],
+        ['Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.'],
+    ],
+    'sv': [
+        ['Configuration must be a list of bindings.', 'Konfigurationen måste vara en lista med bindningar.'],
+        ['Unknown or empty action.', 'Okänd eller tom åtgärd.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'Indatatypen måste vara KEY, MOUSE eller WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 kan inte använda $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Okänt eller tomt $1-värde.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Det här SDL-tangentnamnet kan inte representeras med den aktuella INI-kommentarsyntaxen.'],
+        [/duplicate (.+) will be omitted\./gu, 'den dubbla bindningen $1 utelämnas.'],
+        [' controls ', ' styr '],
+        [' (built-in)', ' (inbyggd)', true],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.'],
+        [' and ', ' och ', true],
+        ['Expected Action = TYPE:VALUE.', 'Förväntat format: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Dubblettbindning ignorerades.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.'],
+    ],
+    'pt-BR': [
+        [/(\w+) is set more than once\./gu, '$1 está definido mais de uma vez.'],
+        [/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 deve ser uma porcentagem inteira de 0 a 90.'],
+        [/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 deve ser um número maior que 0 e no máximo 10.'],
+        [/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 deve ser um número de $2 a $3.'],
+        [/(\w+) must be LEFT or RIGHT\./gu, '$1 deve ser LEFT ou RIGHT.'],
+        [/(\w+): unknown input setting\./gu, '$1: configuração de entrada desconhecida.'],
+        ['Configuration must be a list of bindings.', 'A configuração deve ser uma lista de atribuições.'],
+        ['Unknown or empty action.', 'Ação desconhecida ou vazia.'],
+        ['Input type must be KEY, MOUSE or WHEEL.', 'O tipo de entrada deve ser KEY, MOUSE ou WHEEL.'],
+        [/(\w+) cannot use (\w+)\./gu, '$1 não pode usar $2.'],
+        [/Unknown or empty (\w+) value\./gu, 'Valor $1 desconhecido ou vazio.'],
+        ['This SDL key name cannot be represented in the current INI comment syntax.', 'Este nome de tecla SDL não pode ser representado na sintaxe de comentário INI atual.'],
+        [/duplicate (.+) will be omitted\./gu, 'duplicado $1 será omitido.'],
+        ['Composition and dead keys are ambiguous. Select an SDL key from the list.', 'A composição e as teclas mortas são ambíguas. Escolha uma tecla SDL na lista.'],
+        [' controls ', ' controla '],
+        [' (built-in)', ' (padrão)', true],
+        [' and ', ' e ', true],
+        ['Binding: ', 'Atribuição: '],
+        ['Expected Action = TYPE:VALUE.', 'Formato esperado: Action = TYPE:VALUE.'],
+        ['Duplicate binding ignored.', 'Atribuição duplicada ignorada.'],
+        ['This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Esta tecla física não pode ser capturada no formato INI atual. Escolha uma tecla SDL na lista.'],
+    ]
+};
+
+function applyDiagnostic(message, [find, replace, all]) {
+    if (typeof find !== 'string') return message.replace(find, replace);
+    return all ? message.replaceAll(find, replace) : message.replace(find, replace);
+}
+
 export function diagnostic(locale, message) {
-    if (locale !== 'ar-EG') return message;
-    return message
-        .replace('Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.')
-        .replace('Unknown or empty action.', 'الحركة مش معروفة أو فاضية.')
-        .replace('Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.')
-        .replace(/(\w+) cannot use (\w+)\./gu, '$1 مينفعش يستخدم $2.')
-        .replace(/Unknown or empty (\w+) value\./gu, 'قيمة $1 مش معروفة أو فاضية.')
-        .replace('This SDL key name cannot be represented in the current INI comment syntax.', 'اسم الزرار ده مينفعش يتحفظ بالصيغة الحالية لملف INI.')
-        .replace(/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.')
-        .replace(' controls ', ' بيشغّل ')
-        .replaceAll(' (built-in)', ' (افتراضي)')
-        .replaceAll(' and ', ' و ')
-        .replace('Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.')
-        .replace('Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
+    const entries = Object.hasOwn(diagnostics, locale) ? diagnostics[locale] : [];
+    return entries.reduce(applyDiagnostic, message);
 }
 
 export function initialLocale(savedLocale) {

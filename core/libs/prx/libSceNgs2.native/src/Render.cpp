@@ -363,7 +363,8 @@ static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, s
             std::uint32_t outputs = 0;
             auto gains = PortGains(voice, *source, port, outputs);
             if (port.mixed && (port.mixedOutputs != outputs || port.mixedSources != source->channels)) port.mixed = false;
-            if (source->hasSamples && !source->KilledForRender()) {
+            const bool unmixedInput = destInput != 0 && voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER;
+            if (source->hasSamples && !source->KilledForRender() && !unmixedInput) {
                 const auto sourceBuffer = source->rack->customPortBuffers.empty() ? 0u : source->rack->customPortBuffers[p];
                 MixPort(voice, *source, port, sourceBuffer, gains, grain);
                 voice.hasSamples = true;

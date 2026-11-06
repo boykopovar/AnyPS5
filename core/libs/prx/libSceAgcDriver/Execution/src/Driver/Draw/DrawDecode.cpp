@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
@@ -114,12 +115,13 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         require(snapshot.header.empty() || snapshot.type == type, "graphics program refers to an incompatible shader binary type");
         if (!nullPixel && snapshot.header.empty()) NoteRawGraphicsDraw(snapshot);
         const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
+        const auto memory = nullPixel || DriverOwnedProgram(snapshot.codeAddress) ? std::array<ShaderRecompiler::MemoryRegion, 2>{} : std::array<ShaderRecompiler::MemoryRegion, 2>{{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}};
         DrawProgram result{
             {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
             userDataBase,
             stage == Stage::Fragment || userDataBase == 0x04cu ? 0u : 8u,
             {},
-            {{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}},
+            memory,
             program,
             codeOffset
         };
