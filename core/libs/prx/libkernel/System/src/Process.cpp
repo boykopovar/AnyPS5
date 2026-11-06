@@ -577,7 +577,6 @@ bool ExecWindowsImage(const std::filesystem::path& target) {
 
 extern "C" {
 
-// unknown data
 const char* __progname_nid_postfix = "eboot.bin";
 static char* emptyEnvironment[1];
 char** environ_nid_postfix = emptyEnvironment;
@@ -953,7 +952,8 @@ void APS5_VABI sceKernelSetGPO(std::uint32_t bits) {
 int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
     if (!openPsIdOutput)
         throw std::invalid_argument("sceKernelGetOpenPsId: null output");
-    std::memcpy(openPsIdOutput, openPsId.data(), openPsId.size());
+    if (!GuestCopyOut_nid_no_patch(openPsIdOutput, openPsId.data(), openPsId.size()))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
