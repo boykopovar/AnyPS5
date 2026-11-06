@@ -333,6 +333,20 @@ class Check:
                 for target, resolved in links(path, text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
+        deleted = {path for path, status in self.status.items() if status == "D"}
+        if deleted:
+            for path in sorted(self.tree):
+                if path.startswith("3rdparty/") or PurePosixPath(path).suffix != ".md" or path in deleted:
+                    continue
+                checked = {number for number, _ in files.get(path, [])}
+                source = self.show(path)
+                fenced = fenced_lines(source)
+                for number, text in enumerate(source.split("\n"), 1):
+                    if number in checked or number in fenced:
+                        continue
+                    for target, resolved in links(path, text):
+                        if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
+                            self.report("doc-link", path, number, target)
 
     def debt_entries(self):
         for path, lines in self.files(lambda p: is_debt(p.as_posix())):
