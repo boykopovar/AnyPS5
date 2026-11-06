@@ -152,7 +152,30 @@ struct NetInfoDumpParameter {
     char path[64];
 };
 
-struct NetInterfaceInfo;
+struct NetInterfaceInfo {
+    char name[32];
+    std::uint32_t interfaceId;
+    std::uint32_t reserved24;
+    std::uint32_t address;
+    std::uint32_t broadcast;
+    std::uint32_t destination;
+    std::uint32_t netmask;
+    std::uint32_t reserved38;
+    std::uint32_t reserved3c;
+    std::uint64_t reserved40;
+    std::uint16_t flags;
+    std::uint16_t flags2;
+    std::uint32_t mediaLink;
+    std::uint8_t mac[6];
+    std::uint16_t reserved56;
+    std::uint32_t mtu;
+    std::uint32_t metric;
+    std::uint8_t counters[0x100];
+    std::uint8_t address6[0x60];
+    std::uint8_t reserved1c0[0x20];
+};
+static_assert(sizeof(NetInterfaceInfo) == 0x1e0);
+
 struct NetInterfaceStatistics;
 
 struct NetResolverConnectOption {

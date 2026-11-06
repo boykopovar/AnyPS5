@@ -1,5 +1,6 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -182,9 +183,7 @@ void CheckValidation() {
     Require(Failed(sceNetGetIfList(1, nullptr, 1), kEinval));
     Require(Failed(sceNetGetIfList(1, interfaces, 0), kEinval));
     Require(Failed(sceNetGetIfList(1, interfaces, 2), kEinval));
-    Require(Throws([] { sceNetGetIfList(1, nullptr, 0); }));
-    Require(Throws([&] { sceNetGetIfList(1, interfaces, 1); }));
-    Require(Throws([&] { sceNetGetIfList(-1, interfaces, 5); }));
+    Require(sceNetGetIfList(1, nullptr, 0) == 0);
     Require(Failed(sceNetGetIfListOnce(-1, statistics, 1), kEinval));
     Require(Failed(sceNetGetIfListOnce(1, nullptr, 1), kEinval));
     Require(Failed(sceNetGetIfListOnce(1, statistics, 2), kEinval));
@@ -263,6 +262,61 @@ void CheckValidation() {
     Require(Throws([&] { sceNetResolverConnectAbort(connection, 1); }));
 }
 
+void CheckGetIfList() {
+    static_assert(sizeof(NetInterfaceInfo) == 0x1e0);
+    static_assert(offsetof(NetInterfaceInfo, name) == 0x00);
+    static_assert(offsetof(NetInterfaceInfo, interfaceId) == 0x20);
+    static_assert(offsetof(NetInterfaceInfo, address) == 0x28);
+    static_assert(offsetof(NetInterfaceInfo, broadcast) == 0x2c);
+    static_assert(offsetof(NetInterfaceInfo, destination) == 0x30);
+    static_assert(offsetof(NetInterfaceInfo, netmask) == 0x34);
+    static_assert(offsetof(NetInterfaceInfo, flags) == 0x48);
+    static_assert(offsetof(NetInterfaceInfo, flags2) == 0x4a);
+    static_assert(offsetof(NetInterfaceInfo, mediaLink) == 0x4c);
+    static_assert(offsetof(NetInterfaceInfo, mac) == 0x50);
+    static_assert(offsetof(NetInterfaceInfo, mtu) == 0x58);
+    static_assert(offsetof(NetInterfaceInfo, metric) == 0x5c);
+    static_assert(offsetof(NetInterfaceInfo, counters) == 0x60);
+    static_assert(offsetof(NetInterfaceInfo, address6) == 0x160);
+
+    std::vector<NetInterfaceInfo> records(8);
+    const int count = sceNetGetIfList(-1, records.data(), static_cast<std::uint32_t>(records.size()));
+    Require(count >= 1);
+    const NetInterfaceInfo* loopback = nullptr;
+    const NetInterfaceInfo* nonLoopback = nullptr;
+    for (int index = 0; index < count; ++index) {
+        if (std::strcmp(records[index].name, "lo0") == 0) loopback = &records[index];
+        else nonLoopback = &records[index];
+    }
+    Require(loopback != nullptr);
+    Require(loopback->interfaceId == 2);
+    const auto* loopbackBytes = reinterpret_cast<const std::uint8_t*>(&loopback->address);
+    Require(loopbackBytes[0] == 127 && loopbackBytes[1] == 0 && loopbackBytes[2] == 0 && loopbackBytes[3] == 1);
+    Require((loopback->flags & 0x8) != 0);
+    bool loopbackMacZero = true;
+    for (const std::uint8_t octet : loopback->mac) if (octet != 0) loopbackMacZero = false;
+    Require(loopbackMacZero);
+    for (const std::uint8_t byte : loopback->counters) Require(byte == 0);
+
+    if (nonLoopback != nullptr) {
+        Require(nonLoopback->mtu != 0 && nonLoopback->metric == nonLoopback->mtu);
+        bool macPresent = false;
+        for (const std::uint8_t octet : nonLoopback->mac) if (octet != 0) macPresent = true;
+        Require(macPresent);
+        Require((nonLoopback->flags & 0x1) != 0);
+    }
+
+    Require(sceNetGetIfList(-1, records.data(), 0) == 0);
+    NetInterfaceInfo one{};
+    Require(sceNetGetIfList(-1, &one, 1) == 1);
+
+    NetInterfaceInfo lo{};
+    Require(sceNetGetIfList(2, &lo, 1) == 1 && std::strcmp(lo.name, "lo0") == 0 && lo.interfaceId == 2);
+    NetInterfaceInfo eth{};
+    const int ethCount = sceNetGetIfList(1, &eth, 1);
+    Require(ethCount == 0 || (ethCount == 1 && std::strcmp(eth.name, "eth0") == 0 && eth.interfaceId == 1));
+}
+
 }
 
 int main() {
@@ -272,6 +326,7 @@ int main() {
     Require(sceNetInit_nid_postfix() == 0);
     CheckSync();
     CheckValidation();
+    CheckGetIfList();
     CheckDaemonsNeverStarted();
     return 0;
 }

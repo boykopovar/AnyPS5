@@ -151,6 +151,7 @@ constexpr std::size_t NET_RESOLVER_CONNECTION_FLAGS = 0x1D8;
 constexpr int NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION = 0x1;
 constexpr int NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION = 0x2;
 constexpr std::uint32_t NET_IFF_UP = 0x1;
+constexpr std::uint32_t NET_IFF_BROADCAST = 0x2;
 constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
 constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
 constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
@@ -3097,7 +3098,48 @@ int APS5_VABI sceNetGetDnsInfo(NetDnsInfo* info, std::uint32_t flags) {
 int APS5_VABI sceNetGetIfList(std::int32_t interfaceId, NetInterfaceInfo* interfaces, std::uint32_t capacity) {
     if (!net_initialized()) return fail(NET_ENOTINIT);
     if (interfaceId != -1 && (interfaces != nullptr || capacity != 0) && (interfaces == nullptr || capacity != 1)) return fail(NET_EINVAL);
-    NotImplemented_nid_no_patch(__func__);
+    std::vector<NetInterfaceInfo> records;
+    std::uint32_t address = 0;
+    std::uint32_t netmask = 0;
+    std::uint32_t mtu = 0;
+    if (NetCtlHostIpv4Address_nid_no_patch(&address, &netmask, &mtu)) {
+        NetInterfaceInfo eth{};
+        std::strncpy(eth.name, "eth0", sizeof(eth.name) - 1);
+        eth.interfaceId = 1;
+        eth.address = address;
+        eth.broadcast = address | ~netmask;
+        eth.destination = eth.broadcast;
+        eth.netmask = netmask;
+        eth.flags = static_cast<std::uint16_t>(NET_IFF_UP | NET_IFF_BROADCAST | NET_IFF_RUNNING | NET_IFF_MULTICAST);
+        eth.mediaLink = 1;
+        NetEtherAddr mac{};
+        sceNetGetMacAddress(&mac, 0);
+        std::memcpy(eth.mac, mac.data, sizeof(eth.mac));
+        eth.mtu = mtu;
+        eth.metric = mtu;
+        records.push_back(eth);
+    }
+    NetInterfaceInfo lo{};
+    std::strncpy(lo.name, "lo0", sizeof(lo.name) - 1);
+    lo.interfaceId = 2;
+    const std::uint8_t loopbackOctets[4] = {127, 0, 0, 1};
+    const std::uint8_t loopbackMask[4] = {255, 0, 0, 0};
+    std::memcpy(&lo.address, loopbackOctets, sizeof(loopbackOctets));
+    std::memcpy(&lo.broadcast, loopbackOctets, sizeof(loopbackOctets));
+    std::memcpy(&lo.destination, loopbackOctets, sizeof(loopbackOctets));
+    std::memcpy(&lo.netmask, loopbackMask, sizeof(loopbackMask));
+    lo.flags = static_cast<std::uint16_t>(NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_MULTICAST);
+    lo.mtu = 16384;
+    lo.metric = 16384;
+    records.push_back(lo);
+    std::uint32_t written = 0;
+    for (const auto& record : records) {
+        if (interfaceId != -1 && record.interfaceId != static_cast<std::uint32_t>(interfaceId)) continue;
+        if (written >= capacity) break;
+        if (!GuestCopyOut_nid_no_patch(interfaces + written, &record, sizeof(record))) return fail(NET_EFAULT);
+        ++written;
+    }
+    return static_cast<int>(written);
 }
 
 int APS5_VABI sceNetGetIfListEx(std::int32_t interfaceId, NetInterfaceInfo* interfaces, std::uint32_t capacity, std::uint32_t flags) {
