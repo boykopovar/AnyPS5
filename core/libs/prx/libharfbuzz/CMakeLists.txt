@@ -8,13 +8,15 @@ set_target_properties(harfbuzz_backend PROPERTIES
 install(FILES ${harfbuzzSourceDir}/COPYING DESTINATION licenses/harfbuzz)
 install(FILES ${harfbuzzSourceDir}/src/ms-use/COPYING DESTINATION licenses/harfbuzz/ms-use)
 
-add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp FontFunctions.cpp)
+add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp FontFunctions.cpp Layout.cpp)
 target_include_directories(libharfbuzz PUBLIC ${LIBS_INCLUDE_DIR})
 target_link_libraries(libharfbuzz PRIVATE harfbuzz_backend)
 configure_windows_unwind(libharfbuzz)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libharfbuzz PRIVATE LINKER:--exclude-libs,ALL)
 endif()
+
+include(Layout.cmake)
 
 if(BUILD_TESTING)
     add_test_executable(guest_harfbuzz_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestHarfBuzzFont.cpp)
