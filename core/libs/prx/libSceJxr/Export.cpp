@@ -432,10 +432,6 @@ int APS5_VABI advanceOneMBRow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI allocateBitIOInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI allocatePredInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

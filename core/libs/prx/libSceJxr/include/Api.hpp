@@ -114,7 +114,7 @@ int APS5_VABI WriteWS_List_nid_postfix();
 std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const void* buffer, std::size_t size);
 int APS5_VABI advanceMRPtr_nid_postfix();
 int APS5_VABI advanceOneMBRow_nid_postfix();
-int APS5_VABI allocateBitIOInfo_nid_postfix();
+std::int32_t APS5_VABI allocateBitIOInfo_nid_postfix(void* codec);
 int APS5_VABI allocatePredInfo_nid_postfix();
 int APS5_VABI allocateQuantizer_nid_postfix();
 int APS5_VABI allocateTileInfo_nid_postfix();
