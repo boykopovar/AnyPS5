@@ -46,6 +46,7 @@ struct GuestFace {
 };
 
 void RegisterBitmap_nid_no_patch(GuestFace& face);
+int NewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target);
 
 GuestFace* FaceOf(const GuestFaceRec* face);
 GuestFace* FaceOf(const GuestGlyphSlotRec* slot);

@@ -1439,5 +1439,6 @@ if(BUILD_TESTING)
 
 endif()
 
+include(prx/libfreetype/NewGlyph.cmake)
 include(prx/libSceFreeType/CurveBounds.cmake)
 include(prx/libSceBeisobmf/Tests.cmake)

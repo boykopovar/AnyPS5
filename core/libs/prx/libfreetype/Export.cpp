@@ -1,5 +1,6 @@
 #include "prx/libfreetype/include/LegacyExports.hpp"
 #include "prx/libfreetype/include/InventoryExports.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
@@ -119,8 +120,8 @@ int APS5_VABI freetypeLegacyGzipUncompress_nid_no_patch() {
 }
 APS5_EXPORT("hKvvpNeUdKo", freetypeLegacyGzipUncompress_nid_no_patch);
 
-int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t format, FreeType::GuestGlyphRec** target) {
+    return FreeType::NewGlyph_nid_no_patch(library, format, target);
 }
 APS5_EXPORT("sZq9oSwMGSs", freetypeLegacyNewGlyph_nid_no_patch);
 

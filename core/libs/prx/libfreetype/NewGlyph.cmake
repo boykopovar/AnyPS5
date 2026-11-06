@@ -1,0 +1,16 @@
+target_link_libraries(libfreetype PRIVATE libSceFreeType freetype)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_legacy_freetype_new_glyph_tests ${LIBS_INCLUDE_DIR}/tests/GuestLegacyFreeTypeNewGlyph.cpp)
+    target_include_directories(guest_legacy_freetype_new_glyph_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_legacy_freetype_new_glyph_tests PRIVATE libSceFreeType libkernel freetype libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_legacy_freetype_new_glyph_tests)
+    add_dependencies(guest_legacy_freetype_new_glyph_tests libs)
+    add_test(NAME guest_legacy_freetype_new_glyph COMMAND guest_legacy_freetype_new_glyph_tests $<TARGET_FILE:libfreetype> unpatched)
+    add_test(NAME guest_legacy_freetype_new_glyph_nid COMMAND guest_legacy_freetype_new_glyph_tests ${PATCHED_DIR}/libfreetype.prx nid)
+    set_tests_properties(guest_legacy_freetype_new_glyph guest_legacy_freetype_new_glyph_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_legacy_freetype_new_glyph guest_legacy_freetype_new_glyph_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libfreetype>")
+    endif()
+endif()
