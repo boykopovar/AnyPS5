@@ -29,6 +29,7 @@
 - [EVP_MD_CTX_md](../../../core/libs/prx/libSceLibreSsl3/src/DigestContext.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_digest.c) `evp_digest.c`, a null context returns null and any other returns its first field, `digest`. That field is first in 4.0.0's `evp_local.h` and in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the contexts the forwarded libSceLibreSsl exports handle; the layouts differ after it, so the context and digest are declared opaque. Closes when: compared with the console.
 - [EVP_CIPHER_key_length and EVP_CIPHER_iv_length](../../../core/libs/prx/libSceLibreSsl3/src/Cipher.cpp) (libSceLibreSsl3) - nothing is checked on the console. They return `key_len` and `iv_len` from the 80-byte `EVP_CIPHER` of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `evp_local.h` and `evp_cipher.c`. The fields are at offsets 8 and 12, as in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the ciphers the forwarded libSceLibreSsl exports handle. A null cipher, which LibreSSL dereferences, throws. Closes when: compared with the console.
 - [X509_VERIFY_PARAM_set_flags](../../../core/libs/prx/libSceLibreSsl3/src/X509VerifyParam.cpp) (libSceLibreSsl3) - nothing is checked on the console. It ORs the flags into `flags` and returns 1, as both [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/x509/x509_vpm.c) and [4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_vpm.c) `x509_vpm.c` do. They differ when `EXPLICIT_POLICY`, `INHIBIT_ANY` or `INHIBIT_MAP` is set while `POLICY_CHECK` is neither set nor requested: 2.5.4 also adds `POLICY_CHECK` and 4.0.0 does not. The console's choice is unknown, so that case throws through `NotImplemented_nid_no_patch` and leaves the parameters unchanged. It writes libSceLibreSsl's 2.5.4 `LibreSslX509VerifyParam`, whose `flags` is at offset 24 as in 4.0.0. Null parameters throw. Closes when: the console's policy behaviour is measured.
+- [SSL_CIPHER_get_id](../../../core/libs/prx/libSceLibreSsl3/src/Cipher.cpp) (libSceLibreSsl3) - returns `id` at offset 16 from the 88-byte `SSL_CIPHER` following [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl_ciph.c#L571-L574) `ssl_ciph.c` and [`ssl.h`](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h#L368-L382), matching libSceLibreSsl's cipher layout. The libSceLibreSsl3 layout is not console-verified; LibreSSL 4.0.0 uses an 80-byte layout (`0x03000000 | cipher->value`) where offset 16 is `algorithm_mkey`. A null cipher returns 0 where upstream dereferences it. Closes when: compared with the console.
 - [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 - [ASN1_STRING_get0_data, ASN1_INTEGER_free](../../../core/libs/prx/libSceLibreSsl3/src/Asn1.cpp) (libSceLibreSsl3) - nothing is checked on the console. The 24-byte `ASN1_STRING` layout and the results follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1) `asn1.h`, `a_string.c`, `a_int.c` and `tasn_fre.c`, the version in the [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). No export of this module creates a string yet, so only strings the caller builds reach them. `ASN1_INTEGER_free` zeroes and frees the data unless `ASN1_STRING_FLAG_NDEF` is set, then frees the string, through the guest `free` as the module would through libc. A null string in `ASN1_STRING_get0_data`, which LibreSSL dereferences, and a negative length with data in `ASN1_INTEGER_free`, which `freezero` would take as a huge size, throw
 - [X509_get0_extensions, X509_get_ext_count, X509_get_ext](../../../core/libs/prx/libSceLibreSsl3/src/X509Extensions.cpp) (libSceLibreSsl3) - nothing is checked on the console. The `X509`, `X509_CINF` and stack layouts and the results follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `x509_local.h`, `stack_local.h`, `x509_set.c`, `x509_ext.c`, `x509_v3.c` and `stack.c`, the version in the [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). No export of this module creates a certificate yet, so only certificates the caller builds reach them. A null certificate or certificate info, and an extension stack with a positive count and a null entry array, which LibreSSL dereferences, throw
@@ -41,7 +42,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 171 remaining callable exports: 161 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 166 remaining callable exports: 156 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -62,7 +63,6 @@
 | `BIO_clear_flags` | `3sypCuBDdQs` |
 | `EVP_chacha20` | `3tGgkjBQ82A` |
 | `ASN1_INTEGER_set` | `3v2Omd4sqcU` |
-| `RSA_set0_factors` | `3wlK0tLONvk` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `BIO_get_shutdown` | `44M+SEbpNdQ` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
@@ -82,7 +82,6 @@
 | `unknown` | `A-Hs-8mau+8` |
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `tls_config_set_key_mem` | `A65b+ZhOt9k` |
-| `BN_clear_free` | `ABcJv8S1KEM` |
 | `unknown` | `AiNud8LR8B4` |
 | `X509_cmp_current_time` | `Ax+Uu++rnrA` |
 | `SSL_CTX_set_timeout` | `BBOgwZLvXHA` |
@@ -119,9 +118,7 @@
 | `unknown` | `PBYz0kpXwg8` |
 | `X509_new` | `PNfwr3s6dEs` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
-| `RSA_set0_crt_params` | `QTV9Nyi7ryg` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
-| `SSL_CIPHER_get_id` | `QaiPrM-RrrM` |
 | `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
 | `X509_get_signature_nid` | `QnjD8S6Rgk4` |
 | `ECDSA_SIG_new` | `R3NyckUcClU` |
@@ -196,7 +193,6 @@
 | `EC_POINT_dup` | `uITUdhDDAg8` |
 | `HKDF` | `uJ2ZXq4z3As` |
 | `EVP_aes_128_ccm` | `uM9UnC8KFjY` |
-| `RSA_set0_key` | `uihDBp74nLI` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `tls_free` | `uz3bWkbHZu4` |
 | `tls_config_verify_client` | `v1vHv4jOJxQ` |
@@ -217,4 +213,10 @@
 | `ECDSA_SIG_get0` | `z8fsXF8JuL0` |
 | `EVP_MD_block_size` | `zCa75KLWWn4` |
 
-- 111 of the 126 exports the 13.60 table lists only by NID carry, in the table above and in [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp), the LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior; each keeps the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
+- 107 of the 126 exports the 13.60 table lists only by NID carry, in the table above and in [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp), the LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior; each keeps the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
+
+### Functional
+
+- [RSA_set0_key, RSA_set0_factors, RSA_set0_crt_params and BN_clear_free](../../../core/libs/prx/libSceLibreSsl3/src/RsaSetters.cpp) have no console verification or key-constructor/destructor interoperability measurement. They use the existing 152-byte RSA layout and the 24-byte BIGNUM layout of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto), following `rsa/rsa_lib.c` and `bn/bn_lib.c`: a successful setter owns supplied components, retains omitted components and clears replaced components through the guest allocator; static limb arrays are borrowed. Missing required components return zero before mutation. Null RSA objects and negative owned limb capacities throw instead of dereferencing invalid memory or erasing an unbounded range. Malformed pointers and aliased component ownership are unverified. Closes when: compared with the console and complete key lifetimes.
+
+- [Forwarded BN_new and BN_free](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) still throw in the parent library. Future implementations must allocate owned BIGNUM limbs and structs from the same guest heap used by the RSA setters and set `BN_FLG_MALLOCED` on heap-owned structs. Constructor/setter/destructor interoperability remains unverified.

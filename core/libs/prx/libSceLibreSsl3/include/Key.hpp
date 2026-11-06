@@ -3,6 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 
+struct LibreSsl3Bignum {
+    std::uint64_t* data;
+    std::int32_t top;
+    std::int32_t capacity;
+    std::int32_t negative;
+    std::int32_t flags;
+};
+
+static_assert(sizeof(LibreSsl3Bignum) == 24);
+static_assert(offsetof(LibreSsl3Bignum, flags) == 20);
+
 struct LibreSsl3EvpPkey {
     std::int32_t type;
     std::int32_t references;
