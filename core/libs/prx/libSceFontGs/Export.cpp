@@ -1,6 +1,7 @@
 #include "prx/libSceFontGs/include/InventoryExports.hpp"
 #include "prx/libSceFontGs/GnmInitData.hpp"
 #include "prx/libSceFont/include/Api.hpp"
+#include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include <algorithm>
@@ -14,7 +15,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-extern "C" void APS5_VABI sceGnmFlushGarlic();
 
 namespace {
 
