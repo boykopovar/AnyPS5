@@ -394,15 +394,25 @@ static void ProcessCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32
                 if (!lfeApart || channel != 3) level[channel] = loudest;
             }
         }
+        const float kneeStart = param.threshold * (1.0f - param.knee * 0.5f);
+        const float kneeWidth = param.threshold - kneeStart;
         for (std::uint32_t channel = 0; channel < channels; channel++) {
             const float x = level[channel];
-            const float target = x > param.threshold ? (param.threshold + (x - param.threshold) * param.ratio) / x : 1.0f;
+            float target = 1.0f;
+            if (x > kneeStart && x - kneeStart <= kneeWidth) {
+                const float d = x - kneeStart;
+                target = (kneeStart + d * (1.0f + 0.5f * (d / kneeWidth) * (param.ratio - 1.0f))) / x;
+            } else if (x > kneeStart) {
+                target = (param.threshold + (x - param.threshold) * param.ratio) / x;
+            }
             float& gain = compressor.gain[channel];
+            const float coefficient = gain <= target ? release : attack;
             float* samples = voice.samples.data() + static_cast<std::size_t>(channel) * grain + start;
             for (std::uint32_t i = 0; i < count; i++) {
-                gain = target + (gain - target) * (target < gain ? attack : release);
+                gain = coefficient * gain + (1.0f - coefficient) * target;
                 samples[i] *= gain * param.level;
             }
+            if (std::abs(target - gain) <= 0.01f && coefficient * gain + (1.0f - coefficient) * target == gain) gain = target;
         }
     }
 }

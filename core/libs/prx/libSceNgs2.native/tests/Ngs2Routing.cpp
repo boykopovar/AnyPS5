@@ -312,8 +312,8 @@ struct CompressorGraph {
 
     ~CompressorGraph() { Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK); }
 
-    void Set(std::uint32_t flags, float attack = 0.0f, float level = 1.0f) {
-        Control(compressor, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, flags, 0.5f, 0.5f, 0.0f, attack, 0.0f, level, 0});
+    void Set(std::uint32_t flags, float attack = 0.0f, float level = 1.0f, float knee = 0.0f) {
+        Control(compressor, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, flags, 0.5f, 0.5f, knee, attack, 0.0f, level, 0});
     }
 
     std::vector<float> Render() {
@@ -385,19 +385,31 @@ static void TestSubmixerCompressor() {
         graph.Expect({0.1625f, 0.1625f, 0.1625f, 0.2f, 0.65f, 0.1625f});
     }
     {
+        CompressorGraph graph({0.45f, 0.45f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.44375f, 0.44375f});
+    }
+    {
+        CompressorGraph graph({0.3f, 0.3f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.3f, 0.3f});
+    }
+    {
+        CompressorGraph graph({0.8f, 0.8f});
+        graph.Set(0, 0.0f, 1.0f, 0.4f);
+        graph.Expect({0.65f, 0.65f});
+    }
+    {
         CompressorGraph graph({0.8f, 0.8f});
         graph.Set(0, 0.01f);
         const auto out = graph.Render();
         const float coefficient = std::exp(-1.0f / 480.0f);
         float gain = 1.0f;
         for (std::uint32_t i = 0; i < 32; i++) {
-            const float next = 0.8125f + (gain - 0.8125f) * coefficient;
-            const float applied = out[i * 2] / 0.8f;
-            Require(applied <= gain + 0.00001f && applied >= next - 0.00001f);
-            gain = next;
+            gain = coefficient * gain + (1.0f - coefficient) * 0.8125f;
+            Require(std::fabs(out[i * 2] - 0.8f * gain) <= 0.00001f);
         }
         Require(std::fabs(gain - 0.987908f) <= 0.00001f);
-        Require(std::fabs(out[31 * 2] / 0.8f - 0.987908f) <= 0.0004f);
     }
 }
 #endif

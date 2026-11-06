@@ -562,7 +562,7 @@ static void CheckSubmixerCompressor(const Ngs2Voice& voice, const Ngs2SubmixerVo
         throw std::runtime_error("NGS2: submixer compressor flags " + Ngs2Hex(flags) + " are not implemented");
     }
     if (PS4_LIBRARY || (flags & 1u) != 0) return;
-    if (param.knee != 0.0f) throw std::runtime_error("NGS2: a submixer compressor knee is not implemented");
+    if (!(param.knee >= 0.0f && param.knee <= 2.0f)) throw std::runtime_error("NGS2: a submixer compressor knee outside 0 to 2 is not implemented");
     if ((flags & 8u) != 0 && voice.rack->maxInputs > 1) throw std::runtime_error("NGS2: a submixer compressor side-chain from a second input is not implemented");
     if (!(param.threshold > 0.0f) || !std::isfinite(param.threshold) || !std::isfinite(param.ratio) || !std::isfinite(param.level) ||
         !(param.attack_time >= 0.0f) || !std::isfinite(param.attack_time) || !(param.release_time >= 0.0f) || !std::isfinite(param.release_time)) {
