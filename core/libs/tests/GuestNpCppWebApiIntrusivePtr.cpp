@@ -337,8 +337,9 @@ static void TestVectorCopyFromSelfPreservesElements() {
     std::memcpy(sourceBody + 0x48, &two, sizeof(two));
     IntrusivePtr source{sourceBody, RecordDelete, &context};
 
+    NpCppWebApiTest::LibContext ownerContext;
     IntrusivePtr vector;
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, &context);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, ownerContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE8copyFromERKS9_(&vector, &source) == 0);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(&vector) == 2);
     Require(ReadCount(objectA, 0) == 2 && ReadCount(objectB, 0) == 2);
@@ -437,14 +438,14 @@ static void TestScalarVectorAssignment() {
 }
 
 static void TestVectorFunctionsAcceptTheHandleObject() {
-    int context = 0;
+    NpCppWebApiTest::LibContext context;
 
     IntrusivePtr vector;
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, &context);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, context.value());
     unsigned char object[ObjectSize];
     std::memset(object, 0x5a, sizeof(object));
     WriteCount(object, 0, 1);
-    IntrusivePtr filled{object, RecordDelete, &context};
+    IntrusivePtr filled{object, RecordDelete, context.value()};
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE8pushBackERKS8_(&vector, &filled) == 0);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 1);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(vector.object) == 1);
@@ -460,7 +461,7 @@ static void TestVectorFunctionsAcceptTheHandleObject() {
     *reinterpret_cast<IntrusivePtr**>(body + 0x38) = elements;
     *reinterpret_cast<std::uint64_t*>(body + 0x40) = 2;
     *reinterpret_cast<std::uint64_t*>(body + 0x48) = 2;
-    IntrusivePtr handle{body, nullptr, &context};
+    IntrusivePtr handle{body, nullptr, context.value()};
 
     const auto presenceBegin = reinterpret_cast<void* (APS5_VABI*)(void*, void*)>(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE5beginEv);
     const auto presenceEnd = reinterpret_cast<void* (APS5_VABI*)(void*, void*)>(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE3endEv);
@@ -813,8 +814,9 @@ static void TestResidualAccessors() {
     alignas(8) unsigned char element[ObjectSize];
     std::memset(element, 0x5a, sizeof(element));
     WriteCount(element, 0, 1);
+    NpCppWebApiTest::LibContext vectorContext;
     IntrusivePtr vector{};
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, &context);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, vectorContext.value());
     IntrusivePtr owner{element, RecordDelete, &context};
     for (unsigned index = 0; index < 3; ++index)
         Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(&vector, &owner) == 0);

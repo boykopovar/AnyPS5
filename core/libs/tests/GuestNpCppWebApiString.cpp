@@ -510,8 +510,8 @@ unsigned TestVectorAliased() {
 }
 
 void TestVectorCopyFromStrings() {
-    std::uint64_t sourceContext = 1;
-    std::uint64_t targetContext = 2;
+    NpCppWebApiTest::LibContext sourceContext;
+    NpCppWebApiTest::LibContext targetContext;
     VectorStorage source;
     VectorStorage target;
     Storage element;
@@ -519,9 +519,9 @@ void TestVectorCopyFromStrings() {
     std::memset(target.bytes, kFill, sizeof(target.bytes));
     std::memset(element.bytes, kFill, sizeof(element.bytes));
 
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), &sourceContext);
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), &targetContext);
-    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &sourceContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), sourceContext.value());
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), targetContext.value());
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), sourceContext.value());
     const char* payload = "copied string element";
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), payload) == 0);
     for (unsigned index = 0; index < 3; ++index)
@@ -562,7 +562,7 @@ void TestVectorCopyFromStrings() {
 }
 
 void TestVectorCopyFromEmptySourceEndsAtBegin() {
-    std::uint64_t libContext = 1;
+    NpCppWebApiTest::LibContext libContext;
     VectorStorage target;
     IteratorStorage first;
     IteratorStorage last;
@@ -576,10 +576,10 @@ void TestVectorCopyFromEmptySourceEndsAtBegin() {
     std::memcpy(emptyBody, &magic, sizeof(magic));
     std::memcpy(emptyBody + kBodyReferenceCountOffset, &one, sizeof(one));
     std::memcpy(emptyBody + kBodyElementKindOffset, &two, sizeof(two));
-    const IntrusivePtr source{emptyBody, nullptr, &libContext};
+    const IntrusivePtr source{emptyBody, nullptr, libContext.value()};
 
     auto* self = reinterpret_cast<IntrusivePtr*>(target.bytes);
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &libContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, libContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(self, &source) == 0);
     void* emptyTargetBody = LoadBody<void*>(target.bytes, kObjectOffset);
     Require(emptyTargetBody != nullptr);
@@ -603,8 +603,8 @@ void TestVectorCopyFromEmptySourceEndsAtBegin() {
 }
 
 void TestVectorCopyFromResolvesDirectBodies() {
-    std::uint64_t sourceContext = 1;
-    std::uint64_t targetContext = 2;
+    NpCppWebApiTest::LibContext sourceContext;
+    NpCppWebApiTest::LibContext targetContext;
     const char* payload = "direct body payload";
 
     auto* directElements = static_cast<unsigned char*>(std::calloc(1, kStringSize));
@@ -615,7 +615,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     const std::uint64_t payloadSize = std::strlen(payload) + 1;
     std::memcpy(directElements + kBufferOffset, &directBuffer, sizeof(directBuffer));
     std::memcpy(directElements + kBufferSizeOffset, &payloadSize, sizeof(payloadSize));
-    void* elementContext = &sourceContext;
+    void* elementContext = sourceContext.value();
     std::memcpy(directElements + kLibContextOffset, &elementContext, sizeof(elementContext));
 
     alignas(8) unsigned char sourceBody[0x50];
@@ -639,7 +639,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     IteratorStorage last;
     std::memset(target.bytes, kFill, sizeof(target.bytes));
     auto* self = reinterpret_cast<IntrusivePtr*>(target.bytes);
-    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &targetContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, targetContext.value());
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(self, sourceBody) == 0);
     void* copiedBody = LoadBody<void*>(target.bytes, kObjectOffset);
     Require(copiedBody != nullptr && copiedBody != sourceBody);
@@ -654,7 +654,7 @@ void TestVectorCopyFromResolvesDirectBodies() {
     std::memcpy(targetBody + kBodyElementKindOffset, &kindTwo, sizeof(kindTwo));
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(targetBody, self) == 0);
     Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 1);
-    Require(LoadBody<void*>(targetBody, 0x08) == &targetContext);
+    Require(LoadBody<void*>(targetBody, 0x08) == targetContext.value());
     auto* directCopied = LoadBody<unsigned char*>(targetBody, kBodyElementsOffset);
     Require(std::strcmp(LoadBody<char*>(directCopied, kBufferOffset), payload) == 0);
     Require(LoadBody<unsigned char*>(targetBody, kBodyElementsOffset) != directElements);
