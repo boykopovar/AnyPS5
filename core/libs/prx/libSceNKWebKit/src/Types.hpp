@@ -128,6 +128,15 @@ public:
     bool isContentEditable = false;
 };
 
+class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
+public:
+    Retained<String> name;
+    static BundleScriptWorld* NormalWorld() {
+        static auto world = Make<BundleScriptWorld>();
+        return world.Get();
+    }
+};
+
 class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
 public:
     Retained<URL> absoluteImageURL;
