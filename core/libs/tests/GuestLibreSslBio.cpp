@@ -1,15 +1,18 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -621,6 +624,73 @@ void TestFileAndSocket() {
     Require(BIO_ctrl_nid_postfix(socket, 8, 0, nullptr) == 0, "socket BIO no-close flag");
     Require(BIO_free_nid_postfix(socket) == 1, "free unowned guest socket BIO");
 }
+
+std::uint64_t ChainFileErrorCode(int library, int function, int reason) {
+    return (static_cast<std::uint64_t>(library) << 24) | (static_cast<std::uint64_t>(function) << 12) |
+           static_cast<std::uint64_t>(reason);
+}
+
+void RequireChainFileErrorSequence(const std::vector<std::uint64_t>& expected) {
+    for (const auto code : expected) Require(ERR_get_error_nid_postfix() == code, "certificate-chain error FIFO/code");
+    Require(ERR_get_error_nid_postfix() == 0, "unexpected certificate-chain error");
+}
+
+void AddChainFilePriorErrors() {
+    LibreSslPutError_nid_no_patch(8, 5, 101);
+    LibreSslPutError_nid_no_patch(9, 7, 201);
+}
+
+void TestCertificateChainFileErrorPaths() {
+    const auto path = std::filesystem::temp_directory_path() / "anyps5-libressl-certificate-chain-test.pem";
+    const auto missingPath = std::filesystem::temp_directory_path() / "anyps5-libressl-certificate-chain-missing.pem";
+    constexpr const char* AliasPrefix = "/anyps5-chainfile-test";
+    const std::string guestFilename = std::string(AliasPrefix) + "/" + path.filename().string();
+    const std::string guestMissingFilename = std::string(AliasPrefix) + "/" + missingPath.filename().string();
+    AddPathAlias_nid_no_patch(AliasPrefix, path.parent_path().string().c_str());
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(missingPath, ignored);
+
+    ERR_clear_error_nid_postfix();
+    AddChainFilePriorErrors();
+    Require(SSL_CTX_use_certificate_chain_file_nid_postfix(nullptr, guestMissingFilename.c_str()) == 0,
+            "missing certificate-chain file returns failure before reading ctx");
+    const int guestOpenError = errno;
+    RequireChainFileErrorSequence({ChainFileErrorCode(8, 5, 101), ChainFileErrorCode(9, 7, 201),
+                                   ChainFileErrorCode(2, 0xfff, guestOpenError), ChainFileErrorCode(32, 0xfff, 2),
+                                   ChainFileErrorCode(20, 0xfff, 2)});
+    Require(allocations == 0, "missing certificate-chain file leaked BIO storage");
+
+    ERR_clear_error_nid_postfix();
+    AddChainFilePriorErrors();
+    allocationsUntilFailure = 0;
+    Require(SSL_CTX_use_certificate_chain_file_nid_postfix(nullptr, guestFilename.c_str()) == 0,
+            "BIO allocation failure returns before reading ctx");
+    allocationsUntilFailure = -1;
+    RequireChainFileErrorSequence({ChainFileErrorCode(8, 5, 101), ChainFileErrorCode(9, 7, 201),
+                                   ChainFileErrorCode(32, 0xfff, 65), ChainFileErrorCode(20, 0xfff, 7)});
+    Require(allocations == 0, "failed certificate-chain BIO allocation leaked storage");
+
+    {
+        std::ofstream output(path, std::ios::binary);
+        Require(output.is_open(), "create certificate-chain decoder input");
+        output << "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    }
+    LibreSslCtx context{};
+    ERR_clear_error_nid_postfix();
+    AddChainFilePriorErrors();
+    bool threw = false;
+    try {
+        static_cast<void>(SSL_CTX_use_certificate_chain_file_nid_postfix(&context, guestFilename.c_str()));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "unsupported certificate-chain decoder path must not report fake success");
+    Require(ERR_get_error_nid_postfix() == 0, "chain helper clears prior errors after opening the BIO");
+    Require(std::filesystem::remove(path), "certificate-chain BIO path released its input file");
+    Require(allocations == 0, "unsupported certificate-chain decode leaked BIO storage");
+    RemovePathAlias_nid_no_patch(AliasPrefix);
+}
 #endif
 
 }  // namespace
@@ -644,6 +714,7 @@ int main(int argc, char** argv) {
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
     TestFileAndSocket();
+    TestCertificateChainFileErrorPaths();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
