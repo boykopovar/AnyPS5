@@ -1,4 +1,5 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
@@ -46,7 +47,21 @@ int main(int argc, char** argv) {
     Require(baselineResolution.fullWidth == 1920 && baselineResolution.fullHeight == 1080, "wrong baseline dimensions");
     Require(sceVideoOutConfigureOutput(handle, 0, nullptr, nullptr, 0) == static_cast<int>(0x8029001Eu), "unknown mode 0 did not fail");
     Require(sceVideoOutConfigureOutput(handle, 4, nullptr, nullptr, 0) == static_cast<int>(0x80290016u), "unsupported mode 4 did not fail");
+    Require(sceVideoOutConfigureOutput(handle, 1, nullptr, &baselineResolution, 0) == static_cast<int>(0x80290001u), "non-null reservedPtr in configure did not fail");
+    Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 1) == static_cast<int>(0x80290001u), "non-zero reserved in configure did not fail");
+    Require(sceVideoOutIsOutputSupported(handle, 1, nullptr, &baselineResolution, 0) == static_cast<int>(0x80290001u), "non-null reservedPtr in support check did not fail");
+    Require(sceVideoOutIsOutputSupported(handle, 1, nullptr, nullptr, 1) == static_cast<int>(0x80290001u), "non-zero reserved in support check did not fail");
+    Require(sceVideoOutConfigureOutput(handle, 15, nullptr, &baselineResolution, 0) == static_cast<int>(0x80290001u), "non-null reservedPtr in 120Hz configure did not fail");
+    Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 1) == static_cast<int>(0x80290001u), "non-zero reserved in 120Hz configure did not fail");
+    Require(sceVideoOutIsOutputSupported(handle, 15, nullptr, &baselineResolution, 0) == static_cast<int>(0x80290001u), "non-null reservedPtr in 120Hz support check did not fail");
+    Require(sceVideoOutIsOutputSupported(handle, 15, nullptr, nullptr, 1) == static_cast<int>(0x80290001u), "non-zero reserved in 120Hz support check did not fail");
     if (supported == 0 && !requireDisplay) {
+        AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::DisplayHdrFromOutput(true, 1000.0f, 0.005f, 600.0f));
+        AgcDriverSetSurfaceHdr10_nid_postfix(true);
+        Require(sceVideoOutIsOutputSupported(handle, 15, nullptr, nullptr, 0) == 0, "120Hz output without display support was accepted under HDR10");
+        Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unavailable, "an output without 120 Hz accepted high-frame-rate output under HDR10");
+        AgcDriverSetHostDisplayHdr_nid_postfix({});
+        AgcDriverSetSurfaceHdr10_nid_postfix(false);
         Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unavailable, "an output without 120 Hz accepted high-frame-rate output");
         Require(sceVideoOutClose(handle) == 0, "close failed");
         LibcRunShutdown_nid_postfix();
@@ -61,6 +76,16 @@ int main(int argc, char** argv) {
     Require(sceVideoOutGetOutputStatus(handle, &output) == 0 && output.refreshRate == 13, "wrong output refresh rate");
     Require(sceVideoOutGetResolutionStatus(handle, &resolution) == 0 && resolution.refreshRate == 13, "wrong resolution refresh rate");
     Require(resolution.fullWidth == 1920 && resolution.fullHeight == 1080, "wrong high-frame-rate dimensions");
+    AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::DisplayHdrFromOutput(true, 1000.0f, 0.005f, 600.0f));
+    AgcDriverSetSurfaceHdr10_nid_postfix(true);
+    VideoOutOutputStatus hdrOutput{};
+    Require(sceVideoOutGetOutputStatus(handle, &hdrOutput) == 0, "failed to get HDR output status");
+    Require(hdrOutput.dynamicRange == 2 && hdrOutput.refreshRate == 13, "120Hz under HDR10 did not report HDR dynamic range and 119.88Hz refresh rate");
+    VideoOutResolutionStatus hdrResolution{};
+    Require(sceVideoOutGetResolutionStatus(handle, &hdrResolution) == 0, "failed to get HDR resolution status");
+    Require(hdrResolution.refreshRate == 13 && hdrResolution.fullWidth == 1920 && hdrResolution.fullHeight == 1080, "120Hz under HDR10 resolution status mismatch");
+    AgcDriverSetHostDisplayHdr_nid_postfix({});
+    AgcDriverSetSurfaceHdr10_nid_postfix(false);
     const double fast = Measure(handle);
     Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0, "default mode restore failed");
     Require(sceVideoOutGetOutputStatus(handle, &output) == 0 && output.refreshRate == 3, "default output refresh rate not restored");
