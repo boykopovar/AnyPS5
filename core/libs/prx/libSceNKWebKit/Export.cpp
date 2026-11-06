@@ -13524,18 +13524,6 @@ int APS5_VABI WKContextClearVisitedLinks() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextCreateWithConfiguration() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextCreateWithInjectedBundlePath() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextDisableProcessTermination() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -13565,10 +13553,6 @@ int APS5_VABI WKContextGetGlobalStatistics() {
 }
 
 int APS5_VABI WKContextGetNotificationManager() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextGetUsesSingleWebProcess() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -13685,10 +13669,6 @@ int APS5_VABI WKContextSetPrewarmsProcessesAutomatically() {
 }
 
 int APS5_VABI WKContextSetUseSeparateServiceWorkerProcess() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetUsesSingleWebProcess() {
     NotImplemented_nid_no_patch(__func__);
 }
 
