@@ -46,7 +46,20 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RecursiveCritic
 target_link_libraries(libwebrtc PRIVATE opus libkernel)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/TaskQueueBase.cpp)
 
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RateTracker.cpp)
+target_link_libraries(libwebrtc PRIVATE libc)
+
 if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_rate_tracker_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RateTracker.cpp)
+    target_include_directories(guest_webrtc_rate_tracker_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_rate_tracker_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_rate_tracker_tests)
+    add_test(NAME guest_webrtc_rate_tracker COMMAND guest_webrtc_rate_tracker_tests)
+    set_tests_properties(guest_webrtc_rate_tracker PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_rate_tracker PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_webrtc_audio_codec_info_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/AudioCodecInfo.cpp)
     target_include_directories(guest_webrtc_audio_codec_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_webrtc_audio_codec_info_tests PRIVATE libwebrtc libc)
