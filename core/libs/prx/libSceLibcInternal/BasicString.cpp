@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -31,10 +32,10 @@ void Reserve(String* string, std::size_t size) {
     if (size > MaxSize) _ZNKSs5_XlenEv_nid_postfix(string);
     if (size <= string->capacity) return;
     const std::size_t capacity = std::min(size | GuestLocale::StringCapacityMask, MaxSize);
-    auto* data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
+    auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
     char* old = Data(string);
     std::memcpy(data, old, string->size + 1);
-    if (string->capacity > GuestLocale::StringInlineCapacity) GuestLocale::DeallocateStringStorage(old, string->capacity + 1);
+    if (string->capacity > GuestLocale::StringInlineCapacity) GuestStringStorage::Deallocate(old, string->capacity + 1);
     string->pointer = data;
     string->capacity = capacity;
 }

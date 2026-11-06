@@ -81,7 +81,6 @@ constexpr std::size_t StringInlineCapacity = 15;
 constexpr std::size_t StringCapacityMask = 15;
 
 void* AllocateStringStorage(std::size_t bytes);
-void DeallocateStringStorage(void* storage, std::size_t bytes);
 void ReleaseStringStorage(String& string);
 
 struct CollateFacet {

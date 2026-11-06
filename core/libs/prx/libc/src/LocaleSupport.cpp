@@ -25,6 +25,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libc/GuestStringStorage.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -89,10 +90,6 @@ const GuestLocale::FacetVtable g_localeVtable{DestroyClassicLocale, DestroyClass
 const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, DestroyCopiedLocale, RetainCopiedLocale, ReleaseCopiedLocale};
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
-
-constexpr std::size_t GuestStringLargeAllocation = 0x1000;
-constexpr std::size_t GuestLargeAllocationPadding = 0x27;
-constexpr std::uintptr_t GuestLargeAllocationAlignment = 0x20;
 
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
@@ -404,7 +401,7 @@ std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::Str
     method(&value, AsNumpunct(facet));
     const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) GuestLocale::DeallocateStringStorage(value.pointer, value.capacity + 1);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, value.capacity + 1);
     return text;
 }
 
@@ -606,21 +603,11 @@ int ConvertCharacter(int value, bool upper) {
 }
 
 void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
-    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
-    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
-    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
-}
-
-void GuestLocale::DeallocateStringStorage(void* storage, std::size_t bytes) {
-    if (bytes >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
-    _ZdlPv_nid_postfix(storage);
+    return GuestStringStorage::Allocate(bytes);
 }
 
 void GuestLocale::ReleaseStringStorage(String& string) {
-    if (string.capacity > StringInlineCapacity) DeallocateStringStorage(string.pointer, string.capacity + 1);
+    if (string.capacity > StringInlineCapacity) GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
     string = {};
     string.capacity = StringInlineCapacity;
 }
