@@ -10,7 +10,11 @@
 
 namespace NKWebKit {
 
-class ProcessPool : public ObjectOf<ObjectType::ProcessPool> {};
+class ProcessPool : public ObjectOf<ObjectType::ProcessPool> {
+public:
+    bool processTerminationEnabled = true;
+    std::vector<std::string> visitedLinks;
+};
 class Page : public ObjectOf<ObjectType::Page> {};
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};

@@ -246,4 +246,9 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+void APS5_VABI WKContextDisableProcessTermination(const void* contextRef);
+void APS5_VABI WKContextEnableProcessTermination(const void* contextRef);
+void APS5_VABI WKContextAddVisitedLink(const void* contextRef, const void* visitedURLRef);
+void APS5_VABI WKContextClearVisitedLinks(const void* contextRef);
+
 }
