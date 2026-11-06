@@ -9,6 +9,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -980,6 +981,35 @@ static void CheckPortZeroWithdrawn() {
     if (!wasOpen) Require(scePadClose_nid_postfix(handle) == PAD_OK);
 }
 
+static void CheckAudioFunctionSupport() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+        Require(scePadIsValidHandle(handles[p], PAD_PORT_TYPE_STANDARD));
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadIsSupportedAudioFunction(handles[p]) == 1);
+        PadSetPortConnected_nid_postfix(p, false);
+        Require(scePadIsSupportedAudioFunction(handles[p]) == static_cast<int>(0x80920007));
+        PadSetPortConnected_nid_postfix(p, true);
+        Require(scePadIsSupportedAudioFunction(handles[p]) == 1);
+    }
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadIsSupportedAudioFunction(invHandle) == PAD_ERROR_INVALID_HANDLE);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1295,5 +1325,6 @@ int main() {
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    CheckAudioFunctionSupport();
     CheckPortZeroWithdrawn();
 }
