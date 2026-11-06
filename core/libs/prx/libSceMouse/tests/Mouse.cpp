@@ -38,10 +38,10 @@ int main() {
     Require(sceMouseDeviceOpen() == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseDisconnectDevice() == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseDisconnectPort() == MOUSE_ERROR_NOT_INITIALIZED);
-    Require(sceMouseGetDeviceInfo() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseGetDeviceInfo(0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseMbusInit() == MOUSE_ERROR_NOT_INITIALIZED);
-    Require(sceMouseSetHandType() == MOUSE_ERROR_NOT_INITIALIZED);
-    Require(sceMouseSetPointerSpeed() == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseSetHandType(0, 0) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseSetPointerSpeed(0, 0) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseSetProcessPrivilege() == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseInit() == MOUSE_OK);
     Require(sceMouseInit() == MOUSE_OK);

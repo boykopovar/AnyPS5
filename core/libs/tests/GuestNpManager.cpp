@@ -504,7 +504,18 @@ void CheckUserIdQueries() {
         Require(sceNpGetAccountLanguageA(request, userId, output) == SignedOut, "sceNpGetAccountLanguageA must report the user as signed out");
         Require(sceNpGetParentalControlInfoA(request, userId, &age, output) == SignedOut, "sceNpGetParentalControlInfoA must report the user as signed out");
         Require(sceNpGetAccountDateOfBirthA(userId, output) == SignedOut, "sceNpGetAccountDateOfBirthA must report the user as signed out");
+        Require(sceNpSetGamePresenceOnlineA(request, userId, 0) == SignedOut, "sceNpSetGamePresenceOnlineA must report NP as signed out");
     }
+    NpCreateAsyncRequestParameter asyncParam{};
+    const int asyncRequest = sceNpCreateAsyncRequest(&asyncParam);
+    Require(asyncRequest > 0, "sceNpCreateAsyncRequest must return a positive request id");
+    Require(sceNpSetGamePresenceOnlineA(asyncRequest, InitialUserId, 0) == SignedOut, "sceNpSetGamePresenceOnlineA must report NP as signed out");
+    Require(sceNpDeleteRequest(asyncRequest) == 0, "sceNpDeleteRequest failed");
+    Require(sceNpSetGamePresenceOnlineA(asyncRequest, InitialUserId, 0) == RequestNotFound, "sceNpSetGamePresenceOnlineA must reject a deleted request");
+    Require(sceNpSetGamePresenceOnlineA(request, InvalidUserId, 0) == InvalidArgument, "sceNpSetGamePresenceOnlineA must reject the invalid user id");
+    Require(sceNpSetGamePresenceOnlineA(0, InitialUserId, 0) == InvalidArgument, "sceNpSetGamePresenceOnlineA must reject request id 0");
+    Require(sceNpSetGamePresenceOnlineA(NeverCreated, InitialUserId, 0) == RequestNotFound, "sceNpSetGamePresenceOnlineA must reject a request that was never created");
+    Require(sceNpSetGamePresenceOnlineA(NeverCreated, InvalidUserId, 0) == InvalidArgument, "sceNpSetGamePresenceOnlineA must check the user before the request");
     Require(sceNpCheckNpAvailabilityA(request, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject the invalid user id");
     Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
@@ -526,6 +537,7 @@ void CheckUserIdQueries() {
     Require(sceNpCheckNpAvailabilityA(request, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a deleted request");
     Require(sceNpGetAccountLanguageA(request, InitialUserId, output) == RequestNotFound, "sceNpGetAccountLanguageA must reject a deleted request");
     Require(sceNpGetParentalControlInfoA(request, InitialUserId, &age, output) == RequestNotFound, "sceNpGetParentalControlInfoA must reject a deleted request");
+    Require(sceNpSetGamePresenceOnlineA(request, InitialUserId, 0) == RequestNotFound, "sceNpSetGamePresenceOnlineA must reject a deleted request");
     Require(std::memcmp(output, untouched, sizeof(output)) == 0 && age == 0x5a, "a signed-out account query wrote its output");
     constexpr std::uint32_t Sentinel = 0x5a5a5a5au;
     constexpr std::uint32_t Offline = 0;
@@ -608,7 +620,20 @@ void CheckUnregisteredClientError() {
     for (const std::uint32_t error : others) Require(!sceNpManagerIntIsUnregisteredClientError(static_cast<int>(error)), "only 0x82E0104D is the unregistered client error");
 }
 
+static void CheckSandboxInfo() {
+    unsigned char info[0x60];
+    std::memset(info, 0xa5, sizeof(info));
+    Require(sceNpGetSandboxInfo(info) == 0, "sceNpGetSandboxInfo failed");
+    Require(std::memcmp(info, "RETAIL", 7) == 0, "sceNpGetSandboxInfo must report the RETAIL platform at offset 0");
+    Require(std::memcmp(info + 0x28, "LIVE", 5) == 0, "sceNpGetSandboxInfo must report the LIVE environment at offset 0x28");
+    for (std::size_t index = 7; index < 0x28; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the platform field");
+    for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
+    for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
+    Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+}
+
 int main() {
+    CheckSandboxInfo();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
