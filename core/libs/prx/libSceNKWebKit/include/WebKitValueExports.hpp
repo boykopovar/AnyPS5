@@ -246,4 +246,9 @@ std::uint32_t APS5_VABI WKWebsiteDataStoreGetTypeID();
 std::uint32_t APS5_VABI WKWebsitePoliciesGetTypeID();
 std::uint32_t APS5_VABI WKWindowFeaturesGetTypeID();
 
+std::uint32_t APS5_VABI WKContextGetCacheModel(const void* contextRef);
+void APS5_VABI WKContextSetCacheModel(const void* contextRef, std::uint32_t cacheModel);
+bool APS5_VABI WKContextGetAccessibilityEnabled(const void* contextRef);
+void APS5_VABI WKContextSetAccessibilityEnabled(const void* contextRef, bool enabled);
+
 }
