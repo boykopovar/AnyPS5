@@ -820,6 +820,110 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestBundleScriptWorld() {
+    Require(WKBundleScriptWorldGetTypeID() == 127);
+    const void* normal = WKBundleScriptWorldNormalWorld();
+    Require(normal != nullptr);
+    Require(WKGetTypeID(normal) == WKBundleScriptWorldGetTypeID());
+    auto* normalName = WKBundleScriptWorldCopyName(normal);
+    Require(normalName != nullptr);
+    Require(WKStringIsEqualToUTF8CString(normalName, ""));
+    WKRelease(normalName);
+
+    auto world = NKWebKit::Make<NKWebKit::BundleScriptWorld>();
+    const void* ref = world.Get();
+    auto* unsetWorldName = WKBundleScriptWorldCopyName(ref);
+    Require(unsetWorldName != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetWorldName, ""));
+    WKRelease(unsetWorldName);
+
+    world->name = NKWebKit::String::FromUtf8("CustomWorld");
+    auto* name = WKBundleScriptWorldCopyName(ref);
+    Require(name != nullptr);
+    Require(WKStringIsEqualToUTF8CString(name, "CustomWorld"));
+    WKRelease(name);
+
+    bool threw = false;
+    try {
+        WKBundleScriptWorldCopyName(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestBundleHitTestResult() {
+    Require(WKBundleHitTestResultGetTypeID() == 120);
+    auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
+    const void* ref = hit.Get();
+
+    Require(WKBundleHitTestResultCopyAbsoluteImageURL(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyAbsoluteLinkURL(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyAbsoluteMediaURL(ref) == nullptr);
+    Require(WKBundleHitTestResultCopyAbsolutePDFURL(ref) == nullptr);
+    auto* unsetLabel = WKBundleHitTestResultCopyLinkLabel(ref);
+    Require(unsetLabel != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetLabel, ""));
+    WKRelease(unsetLabel);
+    auto* unsetTitle = WKBundleHitTestResultCopyLinkTitle(ref);
+    Require(unsetTitle != nullptr);
+    Require(WKStringIsEqualToUTF8CString(unsetTitle, ""));
+    WKRelease(unsetTitle);
+
+    hit->absoluteImageURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/img.png");
+    hit->absoluteLinkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/link");
+    hit->absoluteMediaURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/media.mp4");
+    hit->absolutePDFURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/doc.pdf");
+    hit->linkLabel = NKWebKit::String::FromUtf8("Example Link");
+    hit->linkTitle = NKWebKit::String::FromUtf8("Example Title");
+
+    auto* imgUrl = WKBundleHitTestResultCopyAbsoluteImageURL(ref);
+    Require(imgUrl != nullptr);
+    auto* imgStr = WKURLCopyString(imgUrl);
+    Require(WKStringIsEqualToUTF8CString(imgStr, "https://example.com/img.png"));
+    WKRelease(imgStr);
+    WKRelease(imgUrl);
+
+    auto* linkUrl = WKBundleHitTestResultCopyAbsoluteLinkURL(ref);
+    Require(linkUrl != nullptr);
+    auto* linkStr = WKURLCopyString(linkUrl);
+    Require(WKStringIsEqualToUTF8CString(linkStr, "https://example.com/link"));
+    WKRelease(linkStr);
+    WKRelease(linkUrl);
+
+    auto* mediaUrl = WKBundleHitTestResultCopyAbsoluteMediaURL(ref);
+    Require(mediaUrl != nullptr);
+    auto* mediaStr = WKURLCopyString(mediaUrl);
+    Require(WKStringIsEqualToUTF8CString(mediaStr, "https://example.com/media.mp4"));
+    WKRelease(mediaStr);
+    WKRelease(mediaUrl);
+
+    auto* pdfUrl = WKBundleHitTestResultCopyAbsolutePDFURL(ref);
+    Require(pdfUrl != nullptr);
+    auto* pdfStr = WKURLCopyString(pdfUrl);
+    Require(WKStringIsEqualToUTF8CString(pdfStr, "https://example.com/doc.pdf"));
+    WKRelease(pdfStr);
+    WKRelease(pdfUrl);
+
+    auto* label = WKBundleHitTestResultCopyLinkLabel(ref);
+    Require(label != nullptr);
+    Require(WKStringIsEqualToUTF8CString(label, "Example Link"));
+    WKRelease(label);
+
+    auto* title = WKBundleHitTestResultCopyLinkTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Example Title"));
+    WKRelease(title);
+
+    bool threw = false;
+    try {
+        WKBundleHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestDownload() {
     Require(WKDownloadGetTypeID() == 52);
     auto download = NKWebKit::Make<NKWebKit::Download>();
@@ -1000,6 +1104,8 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestBundleScriptWorld();
+    TestBundleHitTestResult();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();

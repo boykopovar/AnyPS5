@@ -102,6 +102,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_radix64 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_queue_tests ${LIBS_INCLUDE_DIR}/tests/GuestQueue.cpp)
+    target_include_directories(guest_queue_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_queue_tests PRIVATE libc)
+    configure_windows_unwind(guest_queue_tests)
+    add_test(NAME guest_queue COMMAND guest_queue_tests)
+    set_tests_properties(guest_queue PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_queue PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -197,6 +207,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
 )
 
 find_package(Git QUIET)
@@ -738,6 +749,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_atomic_builtins COMMAND guest_atomic_builtins_tests)
     if(WIN32)
         set_tests_properties(guest_atomic_builtins PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_strpbrk_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrpbrkBoundary.cpp)
+    target_include_directories(guest_strpbrk_boundary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_strpbrk_boundary_tests PRIVATE libc)
+    configure_windows_unwind(guest_strpbrk_boundary_tests)
+    add_test(NAME guest_strpbrk_boundary COMMAND guest_strpbrk_boundary_tests)
+    set_tests_properties(guest_strpbrk_boundary PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_strpbrk_boundary PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_multibyte_locale_tests ${LIBS_INCLUDE_DIR}/tests/GuestMultibyteLocale.cpp)
