@@ -1,11 +1,16 @@
 #include "prx/libScePlayerInvitationDialog/libScePlayerInvitationDialog.h"
-#include "prx/libSceCommonDialog/CommonDialog.hpp"
 
 #include <mutex>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
 
 namespace {
+
+constexpr std::int32_t COMMON_DIALOG_RESULT_USER_CANCELED = 1;
+constexpr auto COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<std::int32_t>(0x80B80003u);
+constexpr auto COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<std::int32_t>(0x80B80004u);
+constexpr auto COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<std::int32_t>(0x80B80005u);
+constexpr auto COMMON_DIALOG_ERROR_ARG_NULL = static_cast<std::int32_t>(0x80B8000Du);
 
 std::mutex g_dialog_mutex;
 PlayerInvitationDialogStatus g_dialog_status = PlayerInvitationDialogStatus::None;
