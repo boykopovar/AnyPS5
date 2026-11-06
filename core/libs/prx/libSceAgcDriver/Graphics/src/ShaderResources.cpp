@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -58,24 +59,18 @@ bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, s
 
 bool registeredImageViewsCurrent(std::span<const ShaderRecompiler::RegisteredImageView> views) {
     if (views.empty()) return true;
-    for (std::uint32_t attempt = 0; attempt < 2u; ++attempt) {
-        const auto before = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        bool current = true;
-        for (const auto& view : views) {
-            const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(view.address), false);
-            if (view.hasRange != (range != nullptr)) {
-                current = false;
-                break;
-            }
-            if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) {
-                current = false;
-                break;
-            }
-        }
-        const auto after = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-        if (before == after) return current;
+    std::vector<std::uintptr_t> addresses;
+    addresses.reserve(views.size());
+    for (const auto& view : views) addresses.push_back(static_cast<std::uintptr_t>(view.address));
+    std::vector<std::shared_ptr<const GuestAllocations::Range>> ranges(views.size());
+    GuestAllocations::GuestAllocationsLookupEach_nid_postfix(addresses.data(), addresses.size(), ranges.data());
+    for (std::size_t index = 0; index < views.size(); ++index) {
+        const auto& view = views[index];
+        const auto& range = ranges[index];
+        if (view.hasRange != (range != nullptr)) return false;
+        if (range != nullptr && (range->address != view.rangeAddress || range->bytes != view.rangeBytes || range->allocationAddress != view.allocationAddress || range->allocationBytes != view.allocationBytes || range->backingSerial != view.backingSerial || range->readable != view.readable || range->writable != view.writable || range->gpu != view.gpu)) return false;
     }
-    return false;
+    return true;
 }
 
 VkComponentSwizzle ComponentSwizzleFor(std::uint8_t dstSel) {
@@ -3409,17 +3404,17 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     if (validatedTextures.size() != textures.size()) return fail(FastFail::NoRecord);
     const bool unchanged = pendingSerialSeen != 0 && pendingSerialSeen == serialBefore;
     const bool keyProofs = KeyFastPath();
-    thread_local std::vector<GuestMemory::UnchangedQuery>* queriesSlot = nullptr;
-    auto& queries = ShaderRecompiler::ThreadOwned(queriesSlot);
-    thread_local std::vector<StorageTexture::PendingQuery>* pendingSlot = nullptr;
-    auto& pending = ShaderRecompiler::ThreadOwned(pendingSlot);
+    struct QueriesTag {};
+    auto& queries = ThreadScratch<std::vector<GuestMemory::UnchangedQuery>, QueriesTag>();
+    struct PendingTag {};
+    auto& pending = ThreadScratch<std::vector<StorageTexture::PendingQuery>, PendingTag>();
     // The element each pending query stands for, in query order.
-    thread_local std::vector<PendingOverlap>* ownersSlot = nullptr;
-    auto& owners = ShaderRecompiler::ThreadOwned(ownersSlot);
-    thread_local std::vector<const StorageTexture*>* imagesSlot = nullptr;
-    auto& images = ShaderRecompiler::ThreadOwned(imagesSlot);
-    thread_local std::vector<DccKeys>* scannedKeysSlot = nullptr;
-    auto& scannedKeys = ShaderRecompiler::ThreadOwned(scannedKeysSlot);
+    struct OwnersTag {};
+    auto& owners = ThreadScratch<std::vector<PendingOverlap>, OwnersTag>();
+    struct ImagesTag {};
+    auto& images = ThreadScratch<std::vector<const StorageTexture*>, ImagesTag>();
+    struct ScannedKeysTag {};
+    auto& scannedKeys = ThreadScratch<std::vector<DccKeys>, ScannedKeysTag>();
     queries.clear();
     pending.clear();
     owners.clear();
@@ -3923,10 +3918,10 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         captureValidation();
         return true;
     };
-    thread_local std::vector<PendingOverlap>* overlappingSlot = nullptr;
-    auto& overlapping = ShaderRecompiler::ThreadOwned(overlappingSlot);
-    thread_local std::vector<PendingOverlap>* refreshedSlot = nullptr;
-    auto& refreshed = ShaderRecompiler::ThreadOwned(refreshedSlot);
+    struct OverlappingTag {};
+    auto& overlapping = ThreadScratch<std::vector<PendingOverlap>, OverlappingTag>();
+    struct RefreshedTag {};
+    auto& refreshed = ThreadScratch<std::vector<PendingOverlap>, RefreshedTag>();
     refreshed.clear();
     FastFail reason = FastFail::Count;
     bool accepted = false;
@@ -3983,8 +3978,8 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             // The walk after the refresh, or beside a proof that accepted a foreign overlap, must
             // find every object in place and current: another object, or an upload (a moved
             // content version), is a decision the proof got wrong.
-            thread_local std::vector<std::pair<const StorageTexture*, std::uint64_t>>* versionsSlot = nullptr;
-            auto& versions = ShaderRecompiler::ThreadOwned(versionsSlot);
+            struct VersionsTag {};
+            auto& versions = ThreadScratch<std::vector<std::pair<const StorageTexture*, std::uint64_t>>, VersionsTag>();
             versions.clear();
             for (const auto& surface : validatedTextures) {
                 if (surface.source != nullptr) versions.emplace_back(surface.source, surface.source->Version());
@@ -4021,8 +4016,8 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     };
     if (EpochRevalidate()) {
         if ((!directRegions.empty() || !guestMemory.Writes().empty()) && !(pendingSerialSeen != 0 && pendingSerialSeen == StorageTexture::PendingSerial())) {
-            thread_local std::vector<StorageTexture::PendingQuery>* regionsSlot = nullptr;
-            auto& regions = ShaderRecompiler::ThreadOwned(regionsSlot);
+            struct RegionsTag {};
+            auto& regions = ThreadScratch<std::vector<StorageTexture::PendingQuery>, RegionsTag>();
             regions.clear();
             for (const auto& region : directRegions) regions.push_back({region.begin, region.end, nullptr, nullptr, false});
             for (const auto& [begin, end] : guestMemory.Writes()) regions.push_back({begin, end, nullptr, nullptr, false});
@@ -5467,6 +5462,7 @@ void ShaderResources::addSamplerTable(const ShaderRecompiler::DescriptorBinding&
                 auto resource = DecodeSamplerResource(elementWords);
                 resource.compareEnable = binding.samplerDepthCompare.at(element);
                 Sampler::Validate(context, resource);
+                Require(!Sampler::ShaderAppliesLodBias(resource), "a sampler table entry with a LOD bias beyond the sampler limit needs a per-entry shader bias, which is not implemented");
                 Require(!Sampler::ReadsOpaqueBlackBorder(resource), "a sampler table entry with an opaque black border needs dynamic texture BC-swizzle pairing, which is not implemented");
                 Require(resource.addressModeU != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && resource.addressModeV != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && resource.addressModeW != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "a sampler table entry with a border needs dynamic texture numeric-class pairing, which is not implemented");
                 Require(!resource.nonSeamlessCube || context.nonSeamlessCubeMap, "a sampler table entry that disables seamless cube filtering needs VK_EXT_non_seamless_cube_map because dynamic texture/sampler pairing is not implemented");
