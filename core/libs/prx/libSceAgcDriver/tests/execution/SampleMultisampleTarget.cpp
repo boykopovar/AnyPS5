@@ -2194,6 +2194,7 @@ void BufferPublication(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
         for (std::size_t offset = 0u; offset < bytes; offset += sizeof(FillOnes)) Require(std::memcmp(block.data + offset, &FillOnes, sizeof(FillOnes)) == 0, "the reuse proof did not publish current native samples");
         std::printf("native buffer proof: epoch-enabled=%u epoch=%llu current=%u; publication precedes reuse proof\n", ShaderResources::EpochProofs(), static_cast<unsigned long long>(AgcDriver::GuestMemory::CollectEpoch()), current);
     }
+    check([&] { dispatch(warm); }, false, FillOnes);
     auto unused = color;
     unused.tileMode = ColorTileMode::Standard4KB;
     unused.bytes = ColorTargetLayout(Side, Side, unused.tileMode, unused.elementBytes).Bytes();
@@ -2207,7 +2208,21 @@ void BufferPublication(std::unique_ptr<AgcDriver::VulkanDevice>& device) {
     NoteColorMetadataFill(movedSource.Address(), static_cast<std::size_t>(MultisampledColorBytes(movedColor)), FillOnes);
     CheckUniform(LoadSamples(*device, movedSource), Ones, "before moved dispatch publication");
     const auto beforeMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
-    check([&] { dispatch(CompileBufferLoad(*device, movedSource.Address() + 4u, output.Address())); }, false, FillOnes);
+    auto movedProgram = warm;
+    std::size_t movedBindings = 0u;
+    for (auto& binding : movedProgram.bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        Require(binding.guestDescriptor.size() == binding.count * 4u && binding.bufferWritten.size() == binding.count, "the moved dispatch bindings have another shape");
+        for (std::uint32_t element = 0u; element < binding.count; ++element) {
+            if (binding.bufferWritten[element]) continue;
+            const auto address = movedSource.Address() + 4u;
+            binding.guestDescriptor[element * 4u] = static_cast<std::uint32_t>(address);
+            binding.guestDescriptor[element * 4u + 1u] = (binding.guestDescriptor[element * 4u + 1u] & 0xffff0000u) | static_cast<std::uint32_t>((address >> 32u) & 0xffffu);
+            ++movedBindings;
+        }
+    }
+    Require(movedBindings == 1u, "the moved dispatch does not have one read-only buffer");
+    check([&] { dispatch(movedProgram); }, false, FillOnes);
     const auto afterMoves = AgcDriver::VulkanDevice::DispatchMoveCounts();
     Require(afterMoves.moved == beforeMoves.moved + 1u, "the moved native buffer rebuilt instead of reusing its template");
     Require(Refused(block.Address(), Threads * 4u, "the unused original dispatch buffer"), "the moved dispatch consumed or retired its unused original range");
