@@ -128,4 +128,10 @@ public:
     bool isContentEditable = false;
 };
 
+class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResultListener> {
+public:
+    bool cancelled = false;
+    std::vector<Retained<String>> chosenFiles;
+};
+
 }  // namespace NKWebKit

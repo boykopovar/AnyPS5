@@ -14350,13 +14350,7 @@ int APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKOpenPanelResultListenerCancel() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI WKOpenPanelResultListenerChooseFiles() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPageAreScrollbarAnimationsSuppressed() {
     NotImplemented_nid_no_patch(__func__);

@@ -622,6 +622,48 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestOpenPanelResultListener() {
+    Require(WKOpenPanelResultListenerGetTypeID() == 80);
+
+    auto listener = NKWebKit::Make<NKWebKit::OpenPanelResultListener>();
+    const void* ref = listener.Get();
+
+    Require(!listener->cancelled);
+    Require(listener->chosenFiles.empty());
+
+    WKOpenPanelResultListenerCancel(ref);
+    Require(listener->cancelled);
+
+    auto urlObj = NKWebKit::Make<NKWebKit::URL>("file:///path/to/file.txt");
+    const void* urlValues[] = { urlObj.Get() };
+    const void* fileArray = WKArrayCreate(urlValues, 1);
+
+    WKOpenPanelResultListenerChooseFiles(ref, fileArray, nullptr);
+    Require(!listener->cancelled);
+    Require(listener->chosenFiles.size() == 1);
+    Require(listener->chosenFiles[0]->Utf8() == "/path/to/file.txt");
+    WKRelease(fileArray);
+
+    WKOpenPanelResultListenerChooseFiles(ref, nullptr, nullptr);
+    Require(listener->chosenFiles.empty());
+
+    bool threw = false;
+    try {
+        WKOpenPanelResultListenerCancel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKOpenPanelResultListenerChooseFiles(nullptr, nullptr, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -645,6 +687,7 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    TestOpenPanelResultListener();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
