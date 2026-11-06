@@ -1020,6 +1020,21 @@ class TraceDigestTests(unittest.TestCase):
         self.assertNotIn("a.prx+0x10", total)
         self.assertEqual(total, {"a.prx+0x20": 60.0, "a.prx+0x30": 40.0, "a.prx+0x40": 20.0})
 
+    def test_large_stack_weights_keep_finite_percentages(self):
+        for scale in (10**306, 10**400):
+            with self.subTest(scale=scale):
+                self.stacks.write_text(f"root;draw {3 * scale}\nroot;wait {scale}\n[truncated];dispatch {scale}\n",
+                                       encoding="utf-8")
+                result = self.json_output(self.trace, "--stacks", str(self.stacks))
+                stacks = result["stacks"]
+                self.assertEqual(stacks["samples"], 5 * scale)
+                self.assertEqual(stacks["truncated_pct"], 20.0)
+                self.assertEqual(stacks["common_frames"], 1)
+                for field in ("self", "total"):
+                    self.assertEqual({entry["frame"]: entry["pct"] for entry in stacks[field]},
+                                     {"draw": 60.0, "wait": 20.0, "dispatch": 20.0})
+                json.dumps(result, allow_nan=False)
+
     def test_largest_gpu_batches_with_their_recording(self):
         def tagged(tid, name, ts, dur, batch):
             return dict(complete(tid, name, ts, dur), args={"batch": batch})
