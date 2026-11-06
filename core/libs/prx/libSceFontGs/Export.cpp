@@ -1038,10 +1038,20 @@ std::uint8_t* GnmFlush(std::uint8_t* command) {
     return cursor;
 }
 
+void GnmLinkPending(std::uint8_t* aux, std::uint8_t* begin, std::uint8_t* end) {
+    std::uint8_t* const pending = LoadPtr(aux, 0x70);
+    if (pending != nullptr) {
+        GnmIndirectBuffer(aux + 0x30, pending, static_cast<std::uint32_t>((end - pending) >> 2));
+        return;
+    }
+    StorePtr(aux, 0x20, begin);
+    StorePtr(aux, 0x28, end);
+}
+
 std::uint8_t* GnmSyncReserved(std::uint8_t* command) {
     const std::uint32_t skip = Load<std::uint32_t>(command, 0);
     std::uint8_t* const cursor = LoadPtr(command, 0x18);
-    std::uint8_t* at = LoadPtr(command, 8) + skip * 4u;
+    std::uint8_t* at = LoadPtr(command, 8) + static_cast<std::uintptr_t>(skip) * 4;
     if (cursor > at) {
         Store(command, 0, skip + static_cast<std::uint32_t>((cursor - at) >> 2));
         at = cursor;
@@ -1150,9 +1160,7 @@ std::uint32_t GnmCallLoop(std::uint8_t* cb) {
     std::uint8_t* const end = GnmCbCur(cb);
     if (end < start || end > LoadPtr(cb, GnmCbEnd)) return 0;
     std::uint8_t* const aux = LoadPtr(cb, 0x40);
-    if (LoadPtr(aux, 0x70) != nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_47000001");
-    StorePtr(aux, 0x20, LoadPtr(cb, GnmCbBegin));
-    StorePtr(aux, 0x28, end);
+    GnmLinkPending(aux, LoadPtr(cb, GnmCbBegin), end);
     Store<std::uint64_t>(aux, 0x70, 0);
     GnmCbInit(aux + 0x30, nullptr, 0);
     return static_cast<std::uint32_t>(end - start);
@@ -1677,9 +1685,8 @@ void GnmOpenChain(std::uint8_t* cb) {
     std::uint8_t* const start = GnmCbCur(cb);
     GnmNop(cb, dwords);
     std::uint8_t* const end = GnmCbCur(cb);
-    if (end < start || end > LoadPtr(cb, GnmCbEnd) || LoadPtr(aux, 0x70) != nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_47000001");
-    StorePtr(aux, 0x20, LoadPtr(cb, GnmCbBegin));
-    StorePtr(aux, 0x28, end);
+    if (end < start || end > LoadPtr(cb, GnmCbEnd)) return;
+    GnmLinkPending(aux, LoadPtr(cb, GnmCbBegin), end);
     StorePtr(aux, 0x70, end);
     GnmCbInit(aux + 0x30, start, dwords * 4);
 }
@@ -2243,6 +2250,373 @@ int GnmSurfaceInit(void* surface, const void* config) {
     return 0;
 }
 
+void GnmDmaData(std::uint8_t* cb, std::uint32_t dstSel, const void* dst, std::uint32_t srcSel, const void* src, std::uint32_t bytes,
+                std::uint32_t blocking) {
+    const auto to = reinterpret_cast<std::uintptr_t>(dst);
+    const auto from = reinterpret_cast<std::uintptr_t>(src);
+    GnmEmit(cb, {0xc0055000, (blocking << 31) + ((srcSel & 3) << 29 | (dstSel & 1) << 20) + 0x4004000, static_cast<std::uint32_t>(from),
+                 static_cast<std::uint32_t>(from >> 32), static_cast<std::uint32_t>(to), static_cast<std::uint32_t>(to >> 32),
+                 (bytes & 0x1fffff) | (dstSel & 8) << 26 | (dstSel & 4) << 25 | (srcSel & 4) << 24 | (srcSel & 8) << 25});
+}
+
+void GnmCount(std::uint8_t* command, std::uint32_t dwords) {
+    GnmSyncReserved(command);
+    Store(command, 0, Load<std::uint32_t>(command, 0) + dwords);
+}
+
+std::uint32_t GnmLoopDwords(const std::uint8_t* cb) { return Load<std::uint32_t>(LoadPtr(LoadPtr(cb, 0x40), 0), 0x2c); }
+
+std::uint32_t GnmRoom(const std::uint8_t* cb, const std::uint8_t* from) {
+    return (Load<std::uint32_t>(cb, GnmCbEnd) - static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(from))) & ~3u;
+}
+
+std::uint32_t GnmLow(const void* pointer) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer)); }
+
+void GnmCallPatched(std::uint8_t* cb, const void* target, std::uint32_t dwords, std::uint8_t** cursorOut, std::uint32_t gap) {
+    std::uint8_t* const header = LoadPtr(LoadPtr(cb, 0x40), 0);
+    const std::uint32_t loopBytes = Load<std::uint32_t>(header, 0x2c) * 4;
+    std::uint8_t* const loop = LoadPtr(header, 0x38);
+    std::uint8_t* const start = GnmCbCur(cb);
+    std::uint8_t local[0x40];
+    GnmCbInit(local, start, GnmRoom(cb, start));
+    GnmDmaData(local, 0, start, 0, loop, loopBytes, 1);
+    GnmDmaData(local, 0, loop, 0, start + loopBytes, loopBytes, 1);
+    GnmIndirectBuffer(local, target, dwords);
+    std::uint8_t* const patch = GnmCbCur(local) + static_cast<std::uintptr_t>(gap) * 4;
+    GnmDmaData(cb, 0, patch, 0, loop, loopBytes, 1);
+    std::uint8_t* const resume = patch + loopBytes;
+    GnmDmaData(cb, 0, loop, 0, resume, loopBytes, 1);
+    if (cursorOut != nullptr) *cursorOut = GnmCbCur(cb);
+    std::uint8_t* const end = GnmCbCur(cb) + static_cast<std::uintptr_t>(Load<std::uint32_t>(header, 0x2c) * 3 + gap) * 4;
+    StorePtr(cb, GnmCbCursor, end);
+    GnmDmaData(cb, 0, loop, 0, patch, loopBytes, 1);
+    if (GnmCbCur(cb) < start || GnmCbCur(cb) > LoadPtr(cb, GnmCbEnd)) return;
+    std::uint8_t* const aux = LoadPtr(cb, 0x40);
+    GnmLinkPending(aux, LoadPtr(local, 0), GnmCbCur(local));
+    StorePtr(aux, 0x70, end);
+    GnmCbInit(aux + 0x30, resume, loopBytes);
+    GnmCbInit(local, LoadPtr(aux, 0x40), GnmRoom(aux + 0x30, LoadPtr(aux, 0x40)));
+    GnmNop(local, Load<std::uint32_t>(header, 0x2c));
+}
+
+void GnmOpenLocalChain(GnmChain& chain, std::uint8_t* state, std::uint8_t* header, std::uint8_t* begin, std::uint32_t bytes) {
+    std::memset(&chain, 0, sizeof(chain));
+    StorePtr(state, 0xcb0, chain.command);
+    StorePtr(chain.aux, 0, header);
+    StorePtr(chain.aux, 8, state);
+    StorePtr(chain.aux, 0x18, begin);
+    GnmCbInit(chain.aux + 0x30, nullptr, 0);
+    GnmCbInit(chain.command + 8, begin, bytes);
+    StorePtr(chain.command, 0x48, chain.aux);
+}
+
+void GnmLinkSequence(std::uint8_t* command, bool hasBuffer, std::uint8_t* state, std::uint8_t* ctx, std::uint8_t* resume) {
+    std::uint8_t* const header = LoadPtr(command, 0x50);
+    const std::uint32_t loop = Load<std::uint32_t>(header, 0x2c);
+    std::uint8_t* const cb = command + 8;
+    GnmChain chain;
+    if (resume != nullptr) {
+        GnmOpenLocalChain(chain, state, header, LoadPtr(ctx, 0x70), loop * 4);
+        if (!hasBuffer) return;
+        GnmIndirectBuffer(chain.command + 8, resume, loop);
+        std::uint8_t local[0x40];
+        GnmCbInit(local, LoadPtr(ctx, 0x78), loop * 12);
+        std::uint8_t* const begin = LoadPtr(command, 0x80);
+        const std::uint32_t bytes = GnmLow(LoadPtr(command, 0x88)) - GnmLow(begin);
+        GnmIndirectBuffer(local, begin, bytes);
+        StorePtr(local, GnmCbCursor, GnmCbCur(local) + static_cast<std::uintptr_t>(Load<std::uint32_t>(header, 0x2c)) * 4);
+        GnmIndirectBuffer(local, begin, bytes);
+        return;
+    }
+    std::uint8_t* const out = LoadPtr(ctx, 0x80);
+    if (hasBuffer) {
+        std::uint8_t* const aux = LoadPtr(command, 0x48);
+        if (aux == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002e");
+        std::uint8_t* const loopHeader = LoadPtr(aux, 0);
+        const std::uint32_t loopBytes = Load<std::uint32_t>(loopHeader, 0x2c) * 4;
+        std::uint8_t local[0x40];
+        GnmCbInit(local, GnmCbCur(cb), GnmRoom(cb, GnmCbCur(cb)));
+        GnmDmaData(local, 0, nullptr, 0, nullptr, loopBytes, 1);
+        GnmEmit(local, {0xc0004200, 0});
+        GnmIndirectBuffer(local, nullptr, 0);
+        const std::uintptr_t step = static_cast<std::uintptr_t>(Load<std::uint32_t>(loopHeader, 0x2c)) * 4;
+        std::uint8_t* const copyA = GnmCbCur(local) + step;
+        std::uint8_t* const copyB = copyA + step;
+        GnmDmaData(cb, 0, copyB, 0, copyA, loopBytes, 1);
+        GnmEmit(cb, {0xc0004200, 0});
+        GnmOpenChain(cb);
+        const std::uint32_t twice = Load<std::uint32_t>(loopHeader, 0x2c) * 2;
+        std::uint8_t* const mid = GnmCbCur(cb);
+        std::uint8_t* const skipTo = mid + static_cast<std::uintptr_t>(twice) * 4;
+        if (LoadPtr(cb, GnmCbEnd) >= skipTo) {
+            if (twice != 0) StorePtr(cb, GnmCbCursor, skipTo);
+            StorePtr(LoadPtr(command, 0x48), 0x70, skipTo);
+        }
+        GnmOpenChain(cb);
+        GnmDmaData(cb, 0, copyB, 0, mid, loopBytes, 1);
+        GnmOpenChain(cb);
+        std::memcpy(mid, copyB, loopBytes);
+        std::memcpy(copyA, copyB, loopBytes);
+        StorePtr(ctx, 0x78, mid);
+    } else {
+        const std::uint32_t loopNow = GnmLoopDwords(cb);
+        GnmCount(command, 9);
+        GnmCount(command, loopNow);
+        std::uint8_t* const first = GnmSyncReserved(command);
+        if (first + static_cast<std::uintptr_t>(loopNow) * 8 <= LoadPtr(command, 0x10) && loopNow * 2 != 0) {
+            Store(command, 0, Load<std::uint32_t>(command, 0) + loopNow * 2);
+            GnmSyncReserved(command);
+        }
+        GnmCount(command, loopNow);
+        GnmCount(command, 7);
+        GnmCount(command, loopNow);
+        GnmSyncReserved(command);
+        StorePtr(ctx, 0x78, first);
+    }
+    std::uint8_t* const tail = GnmSyncReserved(command);
+    GnmOpenLocalChain(chain, state, header, tail, GnmLow(LoadPtr(command, 0x10)) - GnmLow(tail));
+    std::uint8_t* mark = nullptr;
+    std::uint8_t* const local = chain.command;
+    if (hasBuffer) {
+        GnmCallPatched(local + 8, nullptr, 0, &mark, 0);
+    } else {
+        GnmCount(local, 0xe);
+        mark = GnmSyncReserved(local);
+        Store(local, 0, Load<std::uint32_t>(local, 0) + Load<std::uint32_t>(header, 0x2c) * 3);
+        GnmCount(local, 7);
+        GnmSyncReserved(local);
+    }
+    std::uint8_t* const resumeAt = GnmSyncReserved(local);
+    if (hasBuffer) {
+        GnmIndirectBuffer(local + 8, nullptr, 0);
+    } else {
+        GnmCount(local, 4);
+        GnmSyncReserved(local);
+    }
+    std::uint8_t* const call = GnmSyncReserved(local);
+    if (hasBuffer) {
+        GnmIndirectBuffer(local + 8, nullptr, 0);
+        GnmCallPatched(cb, call, loop, &mark, 0);
+        GnmOpenChain(cb);
+        GnmOpenChain(cb);
+    } else {
+        GnmCount(local, 4);
+        GnmSyncReserved(local);
+        const std::uint32_t loopNow = GnmLoopDwords(cb);
+        GnmCount(command, 0xe);
+        mark = GnmSyncReserved(command);
+        Store(command, 0, Load<std::uint32_t>(command, 0) + loopNow * 3);
+        GnmCount(command, 7);
+        GnmCount(command, loopNow);
+        GnmCount(command, loopNow);
+        GnmSyncReserved(command);
+    }
+    StorePtr(out, 0, call);
+    StorePtr(ctx, 0x70, resumeAt);
+}
+
+void GnmCallBlock(std::uint8_t* ctx, const void* target, std::uint32_t dwords) {
+    std::uint8_t* const command = ctx + 0x100;
+    if (Load<std::uint32_t>(ctx, 0) != 0) {
+        GnmCallPatched(command + 8, target, dwords, nullptr, 0);
+        return;
+    }
+    GnmCount(command, GnmLoopDwords(command + 8) * 3 + 0x15);
+    GnmSyncReserved(command);
+}
+
+int GnmEndSequence(std::uint8_t* ctx, std::uint8_t* record) {
+    const bool hasBuffer = Load<std::uint32_t>(ctx, 0) != 0;
+    std::uint8_t* const command = ctx + 0x100;
+    std::uint8_t* const cb = ctx + 0x108;
+    std::uint8_t* start = nullptr;
+    std::uint32_t size = 0;
+    if (ctx[4] != 1) {
+        const bool opened = Load<std::uint16_t>(ctx, 6) != 0;
+        if (!opened) {
+            std::uint8_t* const header = LoadPtr(ctx, 0x150);
+            GnmCallBlock(ctx, LoadPtr(header, 0x70), Load<std::uint32_t>(header, 0x68));
+            if ((ctx[5] & 2) != 0) {
+                std::uint8_t* const targets = LoadPtr(ctx, 0x80);
+                if (targets == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002e");
+                GnmCallBlock(ctx, LoadPtr(targets, 0x10), GnmLoopDwords(cb));
+            }
+        }
+        if (hasBuffer) {
+            std::uint8_t* const before = GnmCbCur(cb);
+            std::uint8_t* const header = LoadPtr(LoadPtr(ctx, 0x148), 0);
+            GnmIndirectBuffer(cb, LoadPtr(header, 0x20), Load<std::uint32_t>(header, 0x28));
+            std::uint8_t* const after = GnmCbCur(cb);
+            if (after >= before && after <= LoadPtr(cb, GnmCbEnd)) {
+                std::uint8_t* const aux = LoadPtr(ctx, 0x148);
+                GnmLinkPending(aux, LoadPtr(cb, GnmCbBegin), after);
+                Store<std::uint64_t>(aux, 0x70, 0);
+                GnmCbInit(aux + 0x30, nullptr, 0);
+            }
+        } else {
+            GnmCount(command, 4);
+            GnmSyncReserved(command);
+        }
+        start = LoadPtr(ctx, 0x170);
+        std::uint8_t* finish = nullptr;
+        if (start != nullptr) {
+            finish = LoadPtr(ctx, 0x178);
+        } else {
+            start = LoadPtr(cb, GnmCbBegin);
+            finish = GnmSyncReserved(command);
+        }
+        size = static_cast<std::uint32_t>(finish - start);
+        if (!opened) {
+            std::uint8_t* const resume = GnmSyncReserved(command);
+            std::uint8_t* const state = LoadPtr(ctx, 0x158);
+            const std::uint32_t loop = GnmLoopDwords(cb);
+            if (!hasBuffer) {
+                GnmCount(command, loop + 4);
+                GnmSyncReserved(command);
+            } else {
+                std::uint8_t* const cursor = GnmCbCur(cb);
+                std::uint8_t* const pad = cursor + static_cast<std::uintptr_t>(loop) * 4;
+                GnmIndirectBuffer(cb, pad, loop);
+                std::memset(pad, 0, static_cast<std::size_t>(loop) * 4);
+                GnmNop(cb, loop);
+                std::uint8_t* const after = GnmCbCur(cb);
+                if (after >= cursor && after <= LoadPtr(cb, GnmCbEnd)) {
+                    std::uint8_t* const aux = LoadPtr(ctx, 0x148);
+                    std::uint8_t* const pending = LoadPtr(aux, 0x70);
+                    if (pending == nullptr) {
+                        StorePtr(aux, 0x20, LoadPtr(cb, GnmCbBegin));
+                        StorePtr(aux, 0x28, after);
+                    } else if (pad > pending) {
+                        GnmIndirectBuffer(aux + 0x30, pending, static_cast<std::uint32_t>((pad - pending) >> 2));
+                    }
+                    StorePtr(aux, 0x70, after);
+                    GnmCbInit(aux + 0x30, pad, loop * 4);
+                }
+            }
+            GnmLinkSequence(command, hasBuffer, state, ctx, resume);
+        }
+    }
+    const std::uint32_t constants = Load<std::uint32_t>(ctx, 0x1d8) - Load<std::uint32_t>(ctx, 0x1c8);
+    Store(ctx, 0xc, constants);
+    const std::uint32_t used = GnmLow(GnmSyncReserved(command)) - Load<std::uint32_t>(ctx, 0x168);
+    Store(ctx, 0x10, (hasBuffer ? 0 : constants) + used);
+    std::uint8_t* const state = LoadPtr(ctx, 0x158);
+    Store(ctx, 0x14, Load<std::uint32_t>(state, 0xcc8) - Load<std::uint32_t>(state, 0xcb8));
+    if (record != nullptr && hasBuffer) {
+        StorePtr(record, 0x28, start);
+        Store(record, 0x30, size);
+        StorePtr(record, 0x38, LoadPtr(ctx, 0x180));
+        Store(record, 0x34, Load<std::uint32_t>(ctx, 0x188) - Load<std::uint32_t>(ctx, 0x180));
+        const std::uint8_t* const targets = LoadPtr(ctx, 0x80);
+        if (targets != nullptr) {
+            for (std::uint32_t i = 0; i < 3; ++i) {
+                const std::uint8_t* const target = LoadPtr(targets, i * 8);
+                if (target != nullptr) Store(record, 0x4e + i * 2, static_cast<std::uint16_t>(target - start));
+            }
+        }
+    }
+    return 0;
+}
+
+int APS5_VABI GnmBackendEndSequence(void* ctx, void* record) {
+    return GnmEndSequence(static_cast<std::uint8_t*>(ctx), static_cast<std::uint8_t*>(record));
+}
+
+int GnmBeginSequence(std::uint8_t* ctx, std::uint8_t* instance, std::uint8_t* param, std::uint32_t flags) {
+    const bool hasBuffer = Load<std::uint32_t>(ctx, 0) != 0;
+    std::uint32_t bytes = 0x3ffffc;
+    std::uint32_t constantBytes = 0x10000000;
+    std::uint8_t* buffer = nullptr;
+    std::uint8_t* constants = nullptr;
+    if (hasBuffer) {
+        bytes = Load<std::uint32_t>(ctx, 0x10);
+        constantBytes = Load<std::uint32_t>(ctx, 0x14);
+        buffer = LoadPtr(ctx, 0x18);
+        constants = LoadPtr(ctx, 0x20);
+    } else {
+        Store<std::uint64_t>(ctx, 0xc, 0);
+        Store<std::uint32_t>(ctx, 0x14, 0);
+    }
+    std::uint8_t* const header = LoadPtr(instance, 8);
+    std::uint8_t* const command = ctx + 0x100;
+    std::uint8_t* const state = ctx + 0x1f0;
+    StorePtr(state, 0xcb0, command);
+    StorePtr(ctx, 0x150, header);
+    std::memset(ctx + 0x158, 0, 0x10);
+    StorePtr(ctx, 0x168, buffer);
+    std::memset(ctx + 0x170, 0, 0x10);
+    GnmCbInit(ctx + 0x180, nullptr, 0);
+    std::memset(ctx + 0x1c0, 0, 0x30);
+    StorePtr(ctx, 0x158, state);
+    Store<std::uint64_t>(command, 0, 0);
+    GnmCbInit(command + 8, buffer, bytes);
+    StorePtr(command, 0x48, ctx + 0x150);
+    Store<std::uint64_t>(state, 0x6e8, 0);
+    Store<std::uint64_t>(state, 0xca0, 0);
+    StorePtr(state, 0xca8, state + 0x6d8);
+    Store<std::uint64_t>(state, 0xcd0, 0);
+    Store<std::uint32_t>(state, 0xd50, 0);
+    Store<std::uint64_t>(state, 0xd48, 0);
+    std::memset(state + 0xce0, 0, 0x10);
+    std::memset(state + 0xcf8, 0, 0x10);
+    std::memset(state + 0xd68, 0, 0x10);
+    Store<std::uint64_t>(state, 0xd78, 0);
+    CopyRo(state + 0xe18, 0x28900, 0x20);
+    Store<std::uint16_t>(state, 0xe38, 8);
+    Store<std::uint64_t>(state, 0xe40, 0x3f8000003f800000);
+    Store<std::uint32_t>(state, 0xe48, 0);
+    CopyRo(state + 0xe50, 0x27e00, 0x10);
+    std::memset(state + 0xe60, 0, 0x10);
+    Store<std::uint64_t>(state, 0xe70, 0);
+    Store<std::uint64_t>(state, 0xe78, 0x3f8000003f800000);
+    Store<std::uint32_t>(state, 0xe80, 0x3f800000);
+    StorePtr(state, 0xcb0, command);
+    StorePtr(state, 0xcb8, constants);
+    StorePtr(state, 0xcc0, constants + constantBytes);
+    StorePtr(state, GnmStateConstants, constants);
+    Store<std::uint64_t>(state, 0xcd8, 0x4487000044f00000);
+    StorePtr(state, 0xe88, header + 0x2c8);
+    if (flags == 0x200) return 0;
+    Store<std::uint32_t>(ctx, 0x54, 0);
+    std::memset(ctx + 0x64, 0, 0x1c);
+    const std::uint32_t mode = flags & 0xff;
+    std::memset(state + 0xd58, 0, 0x10);
+    CopyRo(state + 0xe08, 0x27e00, 0x10);
+    Store(state, 0xd68, mode);
+    Store(state, 0xd48, Load<std::uint64_t>(header, 0x3b8));
+    Store(state, 0xcf0, Load<std::uint64_t>(ctx, 0x28));
+    std::uint8_t* const cb = command + 8;
+    std::uint8_t* base = nullptr;
+    const std::uint32_t previous = Load<std::uint32_t>(ctx, 0xc);
+    if (hasBuffer) {
+        GnmOpenChain(cb);
+        base = GnmCbCur(cb);
+        std::uint8_t* resume = base;
+        if (previous != 0) {
+            resume = base + ((static_cast<std::uintptr_t>(previous) + 3) & ~std::uintptr_t{3});
+            StorePtr(cb, GnmCbCursor, resume);
+        }
+        StorePtr(LoadPtr(ctx, 0x148), 0x70, resume);
+    } else {
+        GnmCount(command, GnmLoopDwords(cb));
+        base = GnmSyncReserved(command);
+        if (previous != 0) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    }
+    StorePtr(ctx, 0x1c8, base);
+    StorePtr(ctx, 0x1d0, base + previous);
+    StorePtr(ctx, 0x1d8, base);
+    if (param != nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    Store<std::uint16_t>(ctx, 6, 1);
+    StorePtr(state, 0xce0, LoadPtr(header, 0x328));
+    Store<std::uint64_t>(state, 0xce8, 0);
+    Store(state, 0xd68, mode == 0x10 ? 1u : mode);
+    NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+}
+
+int APS5_VABI GnmBackendBeginSequence(void* ctx, void* instance, void* param, std::uint32_t flags) {
+    return GnmBeginSequence(static_cast<std::uint8_t*>(ctx), static_cast<std::uint8_t*>(instance), static_cast<std::uint8_t*>(param), flags);
+}
+
 const FontGnmSurface* ReadGnmSurface(const void* surface) {
     const auto* const gnm = static_cast<const FontGnmSurface*>(surface);
     if (gnm->tag != FontGnmSurfaceTag || gnm->head == nullptr || gnm->initialized != 1 || gnm->busy != 0) return nullptr;
@@ -2295,8 +2669,8 @@ const GnmBackend g_gnmBackend = {
     {0x0e08, 4, 0x200, &g_gnmInstance, 0x20000, 0, GnmBackendEnumerate},
     {{0x47000001, 0, reinterpret_cast<std::uint64_t>(&GnmBackendInit)},
      {0x47000002, 0, reinterpret_cast<std::uint64_t>(&GnmBackendTerminate)},
-     GnmUnportedEntry<0x4700002d>(),
-     GnmUnportedEntry<0x4700002e>(),
+     {0x4700002d, 0, reinterpret_cast<std::uint64_t>(&GnmBackendBeginSequence)},
+     {0x4700002e, 0, reinterpret_cast<std::uint64_t>(&GnmBackendEndSequence)},
      GnmUnportedEntry<0x470000c0>(),
      GnmUnportedEntry<0x470000cb>(),
      GnmUnportedEntry<0x470000ce>(),

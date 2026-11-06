@@ -11,6 +11,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -229,7 +230,7 @@ void GnmSelect() {
         else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
         else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
         else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
-        else if (entry.opcode != 0x47000001) RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
+        else if (entry.opcode != 0x47000001 && entry.opcode != 0x4700002d && entry.opcode != 0x4700002e) RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
     }
 }
 
@@ -279,6 +280,8 @@ void GnmInstanceImage(const std::uint8_t* instance, bool neo) {
     Require(Fnv(instance, 0x10000, 0x10064) == 0x9182e12201b215d1ull && Fnv(instance, 0x11100, 0x18358) == 0x837f4c8fe1728b74ull);
 }
 
+void GnmSequenceCases(std::uint8_t* instance);
+
 void GnmServiceCreate(bool neo) {
     const FontGraphicsServiceParam* const backend = GnmBackend();
     GnmAllocations allocations;
@@ -292,6 +295,7 @@ void GnmServiceCreate(bool neo) {
     const auto* const instance = static_cast<const std::uint8_t*>(*backend->instanceSlot);
     Require(instance != nullptr && instance != reinterpret_cast<const std::uint8_t*>(~std::uintptr_t{0}) && Word(instance, 4) == 1);
     GnmInstanceImage(instance, neo);
+    GnmSequenceCases(const_cast<std::uint8_t*>(instance));
     Require(sceFontDestroyGraphicsService(&service) == 0 && service == nullptr && allocations.live == 0 && *backend->instanceSlot == nullptr);
 }
 
@@ -600,6 +604,53 @@ GnmStructureTextureHandler GnmStructureTexture() {
     for (std::int32_t i = 0; i < list->count; ++i)
         if (list->entries[i].opcode == 0x47000005) return reinterpret_cast<GnmStructureTextureHandler>(list->entries[i].value);
     return nullptr;
+}
+
+using GnmBeginHandler = int(APS5_VABI*)(void*, void*, void*, std::uint32_t);
+using GnmEndHandler = int(APS5_VABI*)(void*, void*);
+
+std::uint64_t GnmEntry(std::uint32_t opcode) {
+    const auto* const list = reinterpret_cast<const FontGraphicsBackendList*>(reinterpret_cast<const std::uint8_t*>(GnmBackend()) + 0x170);
+    for (std::int32_t i = 0; i < list->count; ++i)
+        if (list->entries[i].opcode == opcode) return list->entries[i].value;
+    return 0;
+}
+
+std::uint64_t Quad(const std::uint8_t* bytes, std::size_t offset) {
+    std::uint64_t value = 0;
+    std::memcpy(&value, bytes + offset, sizeof(value));
+    return value;
+}
+
+void GnmSequenceCases(std::uint8_t* instance) {
+    const auto begin = reinterpret_cast<GnmBeginHandler>(GnmEntry(0x4700002d));
+    const auto end = reinterpret_cast<GnmEndHandler>(GnmEntry(0x4700002e));
+    std::vector<std::uint8_t> buffer(0x1000), constants(0x400);
+    for (std::uint32_t hasBuffer = 0; hasBuffer < 2; ++hasBuffer) {
+        alignas(16) std::uint8_t ctx[0x1400] = {};
+        std::uint8_t record[0x80];
+        std::memset(record, 0xcc, sizeof(record));
+        Put32(ctx, 0, hasBuffer);
+        ctx[4] = 1;
+        Put32(ctx, 8, 0x10203060);
+        Put32(ctx, 0x10, 0x1000);
+        Put32(ctx, 0x14, 0x400);
+        Put64(ctx, 0x18, reinterpret_cast<std::uintptr_t>(buffer.data()));
+        Put64(ctx, 0x20, reinterpret_cast<std::uintptr_t>(constants.data()));
+        Require(begin(ctx, instance, nullptr, 0x200) == 0 && end(ctx, record) == 0);
+        const auto base = reinterpret_cast<std::uintptr_t>(ctx);
+        const std::uintptr_t cb = hasBuffer != 0 ? reinterpret_cast<std::uintptr_t>(buffer.data()) : 0;
+        const std::uintptr_t table = hasBuffer != 0 ? reinterpret_cast<std::uintptr_t>(constants.data()) : 0;
+        Require(Quad(ctx, 0x150) == Quad(instance, 8) && Quad(ctx, 0x158) == base + 0x1f0 && Quad(ctx, 0x148) == base + 0x150);
+        Require(Quad(ctx, 0x108) == cb && Quad(ctx, 0x118) == cb && Quad(ctx, 0x110) == cb + (hasBuffer != 0 ? 0x1000 : 0x3ffffc));
+        Require(Quad(ctx, 0xea8) == table && Quad(ctx, 0xeb8) == table && Quad(ctx, 0xeb0) == table + (hasBuffer != 0 ? 0x400 : 0x10000000));
+        Require(Quad(ctx, 0xe98) == base + 0x8c8 && Quad(ctx, 0xec8) == 0x4487000044f00000 && Quad(ctx, 0x1078) == Quad(instance, 8) + 0x2c8);
+        Require(Fnv(ctx, 0x1000, 0x1080) == 0xee4032166b435c6bull && Word(ctx, 0xc) == 0 && Word(ctx, 0x10) == 0 && Word(ctx, 0x14) == 0);
+        if (hasBuffer != 0) Require(Quad(record, 0x28) == 0 && Word(record, 0x30) == 0 && Word(record, 0x34) == 0 && Quad(record, 0x38) == 0);
+        else Require(Quad(record, 0x28) == 0xccccccccccccccccull);
+        RequireNotImplemented([&] { begin(ctx, instance, nullptr, 0x110); }, GnmHandlerName(0x4700002d));
+        RequireNotImplemented([&] { begin(ctx, instance, nullptr, 0x40); }, GnmHandlerName(0x4700002d));
+    }
 }
 
 void GnmStructureTextureCases() {
