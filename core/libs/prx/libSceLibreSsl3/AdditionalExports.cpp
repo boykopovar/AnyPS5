@@ -629,10 +629,6 @@ int APS5_VABI EC_POINT_dup_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_aes_128_ccm_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI RSA_set0_key_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

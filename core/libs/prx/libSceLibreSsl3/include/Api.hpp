@@ -303,7 +303,6 @@ int APS5_VABI X509_add1_ext_i2d_nid_postfix();
 int APS5_VABI EC_GROUP_cmp_nid_postfix();
 int APS5_VABI EVP_PKEY_sign_init_nid_postfix();
 int APS5_VABI EC_POINT_dup_nid_postfix();
-int APS5_VABI EVP_aes_128_ccm_nid_postfix();
 int APS5_VABI RSA_set0_key_nid_postfix();
 int APS5_VABI tls_config_verify_client_nid_postfix();
 int APS5_VABI EVP_PKEY_cmp_nid_postfix(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second);
