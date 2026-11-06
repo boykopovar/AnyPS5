@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -259,6 +260,27 @@ void TestKernelEventQueue() {
     Require(sceKernelDeleteEqueue(eq) == 0);
 }
 
+void TestMeasuredWaitsAndBufferSize() {
+    Recorder recorder(2048);
+    Require(sceAmprCommandBufferGetSize(&recorder.buffer) == 2048);
+    alignas(8) std::uint64_t value = 0;
+    Require(sceAmprCommandBufferWaitOnAddress(&recorder.buffer, &value, 0, 0, 0) == 0);
+    RequireAppended(recorder, 0, 0, Apr::Opcode::WaitOnAddress, sceAmprMeasureCommandSizeWaitOnAddress());
+    const std::uint32_t offset = recorder.Offset();
+    Require(sceAmprCommandBufferWaitOnCounter(&recorder.buffer, 3, 1, 0, 0) == 0);
+    RequireAppended(recorder, offset, 1, Apr::Opcode::WaitOnCounter, sceAmprMeasureCommandSizeWaitOnCounter());
+    Require(sceAmprCommandBufferGetSize(&recorder.buffer) == 2048);
+}
+
+void TestUdivti3() {
+    const unsigned __int128 high = (static_cast<unsigned __int128>(1) << 100) + 12345u;
+    const unsigned __int128 wide = (static_cast<unsigned __int128>(0x123456789ABCDEFull) << 64) | 0xFEDCBA9876543210ull;
+    for (const auto& [dividend, divisor] : {std::pair{high, static_cast<unsigned __int128>(3)}, std::pair{wide, static_cast<unsigned __int128>(0x10000000000ull)},
+                                            std::pair{wide, high}, std::pair{high, wide}, std::pair{~static_cast<unsigned __int128>(0), ~static_cast<unsigned __int128>(0)},
+                                            std::pair{static_cast<unsigned __int128>(41), static_cast<unsigned __int128>(7)}})
+        Require(sceAmprUdivti3(dividend, divisor) == dividend / divisor);
+}
+
 void TestWaits() {
     Recorder recorder;
     alignas(8) std::uint64_t value = 5;
@@ -468,6 +490,13 @@ void TestVersionedCommands() {
     Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPair_04_00(&pair, 11) == rejected);
     Require(sceAmprMeasureCommandSizeWaitOnAddress_04_00(&value, 0, 6, 1) == sizeof(Apr::WaitCommand));
     Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPair_04_00(&pair, 10) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(&time) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(nullptr) == rejected);
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(&single, 128) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(nullptr, 0) == rejected);
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(&pair, 10) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(&pair, 11) == rejected);
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(nullptr, 10) == rejected);
 }
 
 void SubmitWithin10Seconds(const Recorder& recorder) {
@@ -754,6 +783,45 @@ void TestResolveForEachVariants() {
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0 && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     std::remove(paths[0]);
+}
+
+void TestPrefixedResolveWithoutSizes() {
+    std::uint32_t probe = 0;
+    const std::string prefix = "ampr_ids_" + std::to_string(reinterpret_cast<std::uintptr_t>(&probe)) + "_";
+    { std::ofstream file(prefix + "first.bin", std::ios::binary); file << "aaaa"; }
+    { std::ofstream file(prefix + "second.bin", std::ios::binary); file << "bb"; }
+    const char* names[]{"first.bin", "second.bin"};
+    std::uint32_t ids[]{0x123456, 0x123456};
+    std::uint32_t failed = 99;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 2, ids, &failed) == 0);
+    Require(ids[0] != 0xffffffffu && ids[0] != 0x123456 && ids[1] != 0xffffffffu && ids[1] != 0x123456 && ids[0] != ids[1]);
+    Require(failed == 99);
+    std::uint32_t sizedIds[]{0x123456, 0x123456};
+    std::uint64_t sizes[]{0, 0};
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(prefix.c_str(), names, 2, sizedIds, sizes, &failed) == 0);
+    Require(sizedIds[0] == ids[0] && sizedIds[1] == ids[1] && sizes[0] == 4 && sizes[1] == 2);
+    const char* mixed[]{"first.bin", "missing.bin", "second.bin"};
+    std::uint32_t mid[]{0x123456, 0x123456, 0x123456};
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), mixed, 3, mid, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && mid[0] == ids[0] && mid[1] == 0xffffffffu && mid[2] == 0x123456);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), mixed, 3, mid, nullptr) == -1);
+    Require(*__error_nid_postfix() == 2);
+    const char* nulled[]{"first.bin", nullptr};
+    std::uint32_t dropped[]{0x123456, 0x123456};
+    failed = 99;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), nulled, 2, dropped, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && dropped[0] == ids[0] && dropped[1] == 0xffffffffu);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(nullptr, names, 1, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), nullptr, 1, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 1, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    std::uint32_t untouched[]{0x123456};
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, untouched, &failed) == 0);
+    Require(untouched[0] == 0x123456 && failed == 1);
+    std::remove((prefix + "first.bin").c_str());
+    std::remove((prefix + "second.bin").c_str());
 }
 
 void TestMalformedCommandSizes() {
@@ -1411,6 +1479,50 @@ void TestAmmRemapAndProtect() {
     ReleaseRecorderBuffer(exact);
 }
 
+struct ObservedMapping {
+    std::uintptr_t address = 0;
+    std::size_t bytes = 0;
+    std::uint64_t generation = 0;
+};
+
+std::vector<ObservedMapping> observedMappings;
+
+void ObserveMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation) {
+    observedMappings.push_back({address, bytes, generation});
+}
+
+void RequireZeroMappingObserved(std::uint64_t address, std::uint64_t size, std::uint64_t before) {
+#ifdef _WIN32
+    bool found = false;
+    for (const auto& mapping : observedMappings) {
+        if (mapping.address <= address && mapping.address + mapping.bytes >= address + size && mapping.generation > before) found = true;
+    }
+    Require(found);
+    Require(GuestArena::GuestArenaCommitGeneration_nid_postfix() > before);
+#else
+    (void)address;
+    (void)size;
+    (void)before;
+#endif
+}
+
+void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
+#ifdef _WIN32
+    for (std::uint64_t offset = 0; offset < size; offset += page) {
+        auto* pointer = reinterpret_cast<void*>(address + offset);
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(pointer, &info, sizeof(info)) == sizeof(info));
+        Require(info.Type == MEM_MAPPED && info.AllocationProtect == PAGE_READONLY && info.Protect == PAGE_READONLY);
+        DWORD previous = 0;
+        Require(!VirtualProtect(pointer, page, PAGE_READWRITE, &previous));
+        Require(At(address + offset) == 0);
+    }
+#else
+    (void)address;
+    (void)size;
+#endif
+}
+
 void TestAmmPrt() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1432,6 +1544,7 @@ void TestAmmPrt() {
     SubmitAmm(reserve);
     Require(Protection(prt) == 0x10 && Protection(prt + 3 * page) == 0x10);
     Require(At(prt) == 0 && At(prt + 4 * page - 8) == 0);
+    RequireReadOnlyZeroPages(prt, 4 * page);
     At(source) = 0x88;
 
     Recorder back;
@@ -1452,8 +1565,20 @@ void TestAmmPrt() {
     commands = release.Commands();
     Require(sceAmprAmmCommandBufferUnmapToPrt(&release.buffer, prt + page, 2 * page) == 0);
     RequireAppended(release, offset, commands, Apr::Opcode::AmmUnmapToPrt, sceAmprAmmMeasureAmmCommandSizeUnmap(prt + page, 2 * page));
+#ifdef _WIN32
+    const auto beforeRelease = GuestArena::GuestArenaCommitGeneration_nid_postfix();
+    observedMappings.clear();
+    GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&ObserveMapping);
+#else
+    const std::uint64_t beforeRelease = 0;
+#endif
     SubmitAmm(release);
+#ifdef _WIN32
+    GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(nullptr);
+#endif
+    RequireZeroMappingObserved(prt + page, 2 * page, beforeRelease);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
+    RequireReadOnlyZeroPages(prt + page, 2 * page);
 
     Recorder rebuild;
     Require(sceAmprAmmCommandBufferAllocatePaForPrt(&rebuild.buffer, prt, 3 * page, 0, cpuReadWrite) == 0);
@@ -1751,6 +1876,8 @@ int main() {
     TestSubmission();
     TestWriteAddressCommand();
     TestKernelEventQueue();
+    TestMeasuredWaitsAndBufferSize();
+    TestUdivti3();
     TestWaits();
     TestWaitSatisfiedAfterSubmission();
     TestAmmNotBehindAprWait();
@@ -1767,6 +1894,7 @@ int main() {
     TestReadAtUnseekableOffsetThrows();
     TestResolveFailures();
     TestResolveForEachVariants();
+    TestPrefixedResolveWithoutSizes();
     TestMalformedCommandSizes();
     TestResolveSymbolicLink();
     TestGatherScatter();

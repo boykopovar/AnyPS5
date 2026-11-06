@@ -164,15 +164,15 @@ void Integers() {
     Require(value.length == original.length && value.type == original.type && value.data == original.data
         && value.flags == original.flags && minimum == std::array<unsigned char, 8>{0x80, 0, 0, 0, 0, 0, 0, 0}, "minimum integer preserves input");
     value.type = 2;
-    RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
+    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
     value.type = 0x102;
     minimum.back() = 1;
-    RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
+    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
     value.data = maximum.data();
     maximum[0] = 0x80;
     for (int type : {2, 0x102}) {
         value.type = type;
-        RequireThrows([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
+        RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
     }
     std::array<unsigned char, 9> zero{};
     value = {9, 2, zero.data(), 0};
