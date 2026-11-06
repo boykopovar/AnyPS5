@@ -74,29 +74,32 @@ class PeModule:
             self.code.append((start, start + size, [address for address, _ in inside], [name for _, name in inside]))
         self.names = [name for _, name in symbols]
 
+    def mapped_range(self, rva):
+        matches = [section for section in self.sections if section[0] <= rva < section[0] + section[1]]
+        if not matches:
+            raise ValueError(f"RVA {rva:#x} is in no section")
+        if len(matches) != 1:
+            raise ValueError(f"RVA {rva:#x} is in overlapping PE sections")
+        start, size, raw_size, raw_pointer, _ = matches[0]
+        end = min([start + size] + [other for other, length, *_ in self.sections if length and other > rva])
+        return rva - start, end - rva, raw_size, raw_pointer
+
     def read_bytes(self, data, rva, count):
         if rva + count > 0x100000000:
             raise ValueError("RVA exceeds address space")
         result = bytearray()
         while count > 0:
-            for start, size, raw_size, raw_pointer, _ in self.sections:
-                if start <= rva < start + size:
-                    offset = rva - start
-                    chunk = min(count, size - offset)
-                    if offset < raw_size:
-                        raw_chunk = min(chunk, raw_size - offset)
-                        if raw_pointer + raw_size > len(data):
-                            raise ValueError("Truncated section raw data")
-                        result.extend(data[raw_pointer + offset:raw_pointer + offset + raw_chunk])
-                        rva += raw_chunk
-                        count -= raw_chunk
-                    else:
-                        result.extend(b"\0" * chunk)
-                        rva += chunk
-                        count -= chunk
-                    break
+            offset, available, raw_size, raw_pointer = self.mapped_range(rva)
+            chunk = min(count, available)
+            if offset < raw_size:
+                chunk = min(chunk, raw_size - offset)
+                if raw_pointer + raw_size > len(data):
+                    raise ValueError("Truncated section raw data")
+                result.extend(data[raw_pointer + offset:raw_pointer + offset + chunk])
             else:
-                raise ValueError(f"RVA {rva:#x} is in no section")
+                result.extend(b"\0" * chunk)
+            rva += chunk
+            count -= chunk
         return bytes(result)
 
     def read_string(self, data, rva):
@@ -104,27 +107,20 @@ class PeModule:
         while True:
             if rva >= 0x100000000:
                 raise ValueError("RVA exceeds address space")
-            for start, size, raw_size, raw_pointer, _ in self.sections:
-                if start <= rva < start + size:
-                    offset = rva - start
-                    if offset < raw_size:
-                        if raw_pointer + raw_size > len(data):
-                            raise ValueError("Truncated section raw data")
-                        raw_left = raw_size - offset
-                        scan_len = min(raw_left, 4096, 0x100000000 - rva)
-                        file_offset = raw_pointer + offset
-                        chunk = data[file_offset:file_offset + scan_len]
-                        nul = chunk.find(b"\0")
-                        if nul >= 0:
-                            chunks.append(chunk[:nul])
-                            return b"".join(chunks).decode("utf-8", "replace")
-                        chunks.append(chunk)
-                        rva += scan_len
-                    else:
-                        return b"".join(chunks).decode("utf-8", "replace")
-                    break
-            else:
-                raise ValueError(f"RVA {rva:#x} is in no section")
+            offset, available, raw_size, raw_pointer = self.mapped_range(rva)
+            if offset >= raw_size:
+                return b"".join(chunks).decode("utf-8", "replace")
+            if raw_pointer + raw_size > len(data):
+                raise ValueError("Truncated section raw data")
+            scan_len = min(raw_size - offset, available, 4096, 0x100000000 - rva)
+            file_offset = raw_pointer + offset
+            chunk = data[file_offset:file_offset + scan_len]
+            nul = chunk.find(b"\0")
+            if nul >= 0:
+                chunks.append(chunk[:nul])
+                return b"".join(chunks).decode("utf-8", "replace")
+            chunks.append(chunk)
+            rva += scan_len
 
     def coff_symbols(self, data, table, count):
         strings = table + count * 18
@@ -158,7 +154,9 @@ class PeModule:
                     raise ValueError("COFF string table name is unterminated")
                 text = data[at:end]
             else:
-                text = name.rstrip(b"\0")
+                text, terminator, padding = name.partition(b"\0")
+                if terminator and padding.strip(b"\0"):
+                    raise ValueError("COFF short name has nonzero padding after its terminator")
             result.append((start + value, text.decode("utf-8", "replace")))
         return result
 

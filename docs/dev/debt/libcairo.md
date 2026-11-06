@@ -2,9 +2,13 @@
 
 ### Functional
 
-- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 132 pending surface, font or rendering exports.
+- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These operations do not depend on rendering or font functionality.
 
 - [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp) does not yet provide a rasterizer or console-verified surface semantics. Its 19 image/surface/stride exports support owned and borrowed pixels, surface references, format, stride, scale, subsurfaces and error surfaces; CPU flush/mark-dirty do not perform deferred device synchronization.
+
+### Functional font options
+
+- [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
 
 - [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) does not yet support drawing or rasterization. Its seventeen context lifecycle, matrix save/restore and coordinate-transform exports retain an owned surface reference and sticky error state, depend on the image/surface lifecycle and use guest System V calling conventions.
 
@@ -16,7 +20,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 83 NIDs still throw; the complete table below also includes implemented exports. The map matches the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated; unsupported functions still throw through `NotImplemented_nid_no_patch`, and their prototypes and behavior remain unverified.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 75 NIDs still throw; the complete table below also includes implemented exports. The map matches the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated; unsupported functions still throw through `NotImplemented_nid_no_patch`, and their prototypes and behavior remain unverified.
 
 | Name | NID |
 | --- | --- |
