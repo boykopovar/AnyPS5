@@ -1107,6 +1107,44 @@ static void CheckAudioHapticsPortMapping() {
     }
 }
 
+static void CheckVolumeGainBounds() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const int otherPort = (p + 1) % PAD_MAX_CONTROLLERS;
+        const PadOutputState otherBefore = OutputOf(otherPort);
+        const PadVolumeGain gain{static_cast<std::uint8_t>(20 + p * 10), static_cast<std::uint8_t>(30 + p * 10), 0, static_cast<std::uint8_t>(40 + p * 10)};
+        Require(scePadSetVolumeGain(handles[p], &gain) == PAD_OK);
+        const PadOutputState out = OutputOf(p);
+        Require(out.volumeGainValid);
+        Require(out.speakerVolume == 20 + p * 10);
+        Require(out.headsetVolume == 30 + p * 10);
+        Require(out.micGain == 40 + p * 10);
+        Require(OutputOf(otherPort).speakerVolume == otherBefore.speakerVolume);
+        Require(OutputOf(otherPort).headsetVolume == otherBefore.headsetVolume);
+        Require(OutputOf(otherPort).micGain == otherBefore.micGain);
+        Require(scePadSetVolumeGain(handles[p], nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    const PadVolumeGain dummyGain{10, 20, 0, 30};
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadSetVolumeGain(invHandle, &dummyGain) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetVolumeGain(invHandle, nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1425,5 +1463,6 @@ int main() {
     CheckAudioFunctionSupport();
     CheckAudioOutPathRouting();
     CheckAudioHapticsPortMapping();
+    CheckVolumeGainBounds();
     CheckPortZeroWithdrawn();
 }
