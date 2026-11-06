@@ -176,4 +176,12 @@ public:
     std::vector<Retained<String>> chosenFiles;
 };
 
+
+class Connection final : public ObjectOf<ObjectType::Connection> {
+public:
+    Retained<Object> lastMessageName;
+    Retained<Object> lastMessageBody;
+    bool clientConfigured = false;
+};
+
 }  // namespace NKWebKit
