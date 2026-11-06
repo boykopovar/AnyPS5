@@ -2,6 +2,7 @@
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -199,7 +200,12 @@ int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
 
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
     if (!gain) return AUDIO_IN_ERROR_INVALID_POINTER;
-    *gain = 1.0f;
+    constexpr float defaultGain = 1.0f;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(gain, &defaultGain, sizeof(defaultGain))) {
+        errno = savedErrno;
+        return AUDIO_IN_ERROR_INVALID_POINTER;
+    }
     std::lock_guard lock(g_mutex);
     return find(handle) ? 0 : AUDIO_IN_ERROR_INVALID_HANDLE;
 }
