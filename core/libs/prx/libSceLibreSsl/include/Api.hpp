@@ -523,6 +523,26 @@ struct LibreSslX509Name {
     int canonEnclen;
 };
 
+struct LibreSslAsn1Encoding {
+    unsigned char* enc;
+    std::int64_t len;
+    int modified;
+};
+
+struct LibreSslX509CertInfo {
+    void* version;
+    void* serialNumber;
+    void* signature;
+    void* issuer;
+    void* validity;
+    void* subject;
+    void* key;
+    void* issuerUid;
+    void* subjectUid;
+    void* extensions;
+    LibreSslAsn1Encoding enc;
+};
+
 struct LibreSslCertKey {
     void* x509;
     void* privatekey;
@@ -553,12 +573,12 @@ std::int64_t APS5_VABI BIO_ctrl_nid_postfix(LibreSsl::Bio* bio, int command, std
 int APS5_VABI BIO_f_ssl_nid_postfix(void);
 int APS5_VABI BIO_free_nid_postfix(LibreSsl::Bio* bio);
 LibreSsl::Bio* APS5_VABI BIO_new_nid_postfix(const LibreSsl::BioMethod* method);
-int APS5_VABI BIO_new_fp_nid_postfix(void);
+LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* stream, int closeFlag);
 LibreSsl::Bio* APS5_VABI BIO_new_mem_buf_nid_postfix(const void* source, int size);
-int APS5_VABI BIO_new_socket_nid_postfix(void);
+LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag);
 int APS5_VABI BIO_printf_nid_postfix(void);
 int APS5_VABI BIO_puts_nid_postfix(LibreSsl::Bio* bio, const char* source);
-int APS5_VABI BIO_s_file_nid_postfix(void);
+const LibreSsl::BioMethod* APS5_VABI BIO_s_file_nid_postfix();
 const LibreSsl::BioMethod* APS5_VABI BIO_s_mem_nid_postfix();
 int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int size);
 void APS5_VABI BN_CTX_end_nid_postfix(BignumContext* ctx);
@@ -669,7 +689,7 @@ int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void);
 void APS5_VABI EVP_PKEY_free_nid_postfix(void* pkey);
 int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void);
 int APS5_VABI EVP_PKEY_get1_RSA_nid_postfix(void);
-int APS5_VABI EVP_PKEY_id_nid_postfix(void);
+int APS5_VABI EVP_PKEY_id_nid_postfix(const void* value);
 void* APS5_VABI EVP_PKEY_new_nid_postfix(void);
 int APS5_VABI EVP_PKEY_set1_RSA_nid_postfix(void);
 int APS5_VABI EVP_PKEY_type_nid_postfix(int type);
@@ -878,10 +898,10 @@ void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyPar
 int APS5_VABI X509_check_issued_nid_postfix(void);
 int APS5_VABI X509_free_nid_postfix(void);
 int APS5_VABI X509_get_ext_d2i_nid_postfix(void);
-int APS5_VABI X509_get_issuer_name_nid_postfix(void);
+void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate);
 int APS5_VABI X509_get_pubkey_nid_postfix(void);
-int APS5_VABI X509_get_serialNumber_nid_postfix(void);
-int APS5_VABI X509_get_subject_name_nid_postfix(void);
+void* APS5_VABI X509_get_serialNumber_nid_postfix(const LibreSslX509* certificate);
+void* APS5_VABI X509_get_subject_name_nid_postfix(const LibreSslX509* certificate);
 int APS5_VABI X509_load_crl_file_nid_postfix(void);
 int APS5_VABI X509_print_ex_nid_postfix(void);
 int APS5_VABI X509_verify_cert_nid_postfix(void);
