@@ -898,7 +898,7 @@ int UnsupportedLevelError(const Socket& socket, int level, int option, bool set)
         if (handledByFreeBsd) NotImplemented_nid_no_patch("setsockopt, getsockopt: LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT on an AF_UNIX socket");
         return 45;
     }
-    const bool ownProtocol = level == 17 && socket.type == 2;
+    const bool ownProtocol = level == 17 && socket.type == 2 && socket.family == 2;
     const bool ownFamily = socket.family == 2 && level == 0;
     return ownProtocol || ownFamily ? 42 : 22;
 }
