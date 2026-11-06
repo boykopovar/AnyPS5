@@ -28,6 +28,7 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
+#include "src/EncoderMetadata.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -309,8 +310,11 @@ int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix(
+    tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size) {
+    return Jxr::SetImageEncodeMetadata(
+        static_cast<void*>(encoder), metadata, size, offsetof(Jxr::ImageEncodeMetadataPrefix, iptcNaaMetadata),
+        offsetof(Jxr::ImageEncodeMetadataPrefix, iptcNaaMetadataByteCount));
 }
 
 int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix() {
