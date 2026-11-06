@@ -433,6 +433,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
     if (symCount == 0u) throw std::runtime_error(".dynsym is empty");
+    if (versymOffset != 0u) {
+        RequireElfRange(elf, versymOffset, versymSize, "versym");
+        if (versymSize < symCount * sizeof(std::uint16_t))
+            throw std::runtime_error("invalid ELF version symbol table size");
+    }
     if (sysvHashOffset != 0u) {
         if (sysvHashLink != dynSymSectionIndex) throw std::runtime_error("invalid ELF hash symbol table link");
         ValidateSysvHash(elf, sysvHashOffset, sysvHashSize, symCount);
@@ -653,8 +658,6 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     if (gnuHashOffset != 0u) {
         const auto bucketCount = Read<std::uint32_t>(elf, gnuHashOffset);
         std::vector<std::uint32_t> oldToNewIndex(symCount);
-        if (versymOffset != 0u && versymSize < symCount * sizeof(std::uint16_t))
-            throw std::runtime_error("invalid ELF version symbol table size");
         ReorderDynSymForGnuHash(elf, dynSymOffset, symCount, gnuHashSymOffset, bucketCount, newSymbolNames, oldToNewIndex, versymOffset);
         FixupRelocationSymbolIndices(elf, ehdr, dynSymSectionIndex, oldToNewIndex);
         RebuildGnuHash(elf, gnuHashOffset, gnuHashSize, symCount, newSymbolNames);
