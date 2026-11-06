@@ -589,8 +589,8 @@ void testCopies() {
     execute(state, copyToGds);
     destination = {};
     const auto copyFromGds = makePacket(0x40, {0x203, 0x20, 0, low(destination.data()), high(destination.data())});
-    const auto gdsStore = AgcDriver::Pm4::ResolveStore(copyFromGds, state, 64);
-    check(gdsStore.has_value() && gdsStore->Bytes().size() == 4, "COPY_DATA from GDS did not resolve its source bytes");
+    const auto copyFromGdsStore = AgcDriver::Pm4::ResolveStore(copyFromGds, state, 64);
+    check(copyFromGdsStore.has_value() && copyFromGdsStore->Bytes().size() == 4, "COPY_DATA from GDS did not resolve its source bytes");
     execute(state, copyFromGds);
     check(destination[0] == 0x89abcdef, "COPY_DATA GDS round trip failed");
     alignas(8) std::array<std::uint32_t, 2> gdsWords{0x11223344, 0x55667788};
