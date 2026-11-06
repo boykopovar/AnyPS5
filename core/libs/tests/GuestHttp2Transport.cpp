@@ -9,6 +9,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceHttp2/Transport.hpp"
 #include "prx/libSceNet/include/Net.hpp"
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -54,7 +56,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -249,7 +251,7 @@ private:
         static_cast<Server*>(data)->ended = true;
         return 0;
     }
-    static nghttp2_ssize Body(nghttp2_session*, std::int32_t, std::uint8_t* bytes, std::size_t size,
+    static nghttp2_ssize Body(nghttp2_session* session, std::int32_t streamId, std::uint8_t* bytes, std::size_t size,
         std::uint32_t* flags, nghttp2_data_source*, void* data) {
         auto& server = *static_cast<Server*>(data);
         if (server.mode == Mode::StallBody || server.mode == Mode::EarlyResetIncomplete) return NGHTTP2_ERR_DEFERRED;
@@ -261,7 +263,17 @@ private:
         }
         if (size) std::memcpy(bytes, server.body.data() + server.offset, size);
         server.offset += size;
-        if (server.offset == server.body.size()) *flags |= NGHTTP2_DATA_FLAG_EOF;
+        if (server.offset == server.body.size()) {
+            *flags |= NGHTTP2_DATA_FLAG_EOF;
+            if (server.mode == Mode::Trailers) {
+                *flags |= NGHTTP2_DATA_FLAG_NO_END_STREAM;
+                nghttp2_nv trailers[] = {
+                    {reinterpret_cast<std::uint8_t*>(const_cast<char*>("x-trailer")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("yes")), 9, 3, 0},
+                    {reinterpret_cast<std::uint8_t*>(const_cast<char*>("x-trailer-two")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("2")), 13, 1, 0},
+                };
+                if (nghttp2_submit_trailer(session, streamId, trailers, 2) != 0) return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+        }
         return static_cast<nghttp2_ssize>(size);
     }
 
@@ -1207,10 +1219,34 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     Require(headers.count("content-length") == (mode == Mode::NoLength ? 0u : 1u), "request length policy");
     Require(headers.count("x-duplicate") == 2, "duplicate count");
     Require(headers.find("x-duplicate")->second == "last", "duplicate overwrite");
-    char* rawHeaders = reinterpret_cast<char*>(std::uintptr_t{1});
-    std::size_t rawSize = 987;
-    Require(Throws([&] { sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize); }) &&
-        rawHeaders == reinterpret_cast<char*>(std::uintptr_t{1}) && rawSize == 987, "unknown header serialization leaves outputs untouched");
+    char* rawHeaders = nullptr;
+    std::size_t rawSize = 0;
+    Require(sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize) == 0, "response header serialization");
+    const std::string blob(rawHeaders, rawSize);
+    Require(blob.starts_with("HTTP/2.0 ") && blob.ends_with("\r\n\r\n") && blob.find("x-loopback: yes\r\n") != std::string::npos,
+        "response header block");
+    const std::size_t statusEnd = blob.find("\r\n");
+    Require(statusEnd != std::string::npos, "response status line terminator");
+    std::int32_t major = 0;
+    std::int32_t minor = 0;
+    std::int32_t code = 0;
+    const char* phrase = nullptr;
+    std::size_t phraseLength = 0;
+    Require(sceHttpParseStatusLine(blob.data(), statusEnd + 2, &major, &minor, &code, &phrase, &phraseLength) ==
+        static_cast<int>(statusEnd + 2), "response status line parses");
+    Require(major == 2 && minor == 0 && code == expected, "response status line values");
+    Require(phraseLength == std::strlen(" HTTP2 NO PHRASE") && std::strncmp(phrase, " HTTP2 NO PHRASE", phraseLength) == 0,
+        "response reason phrase");
+    const char* value = nullptr;
+    std::size_t valueLength = 0;
+    Require(sceHttpParseResponseHeader(blob.data(), blob.size(), "x-loopback", &value, &valueLength) > 0 &&
+        std::string(value, valueLength) == "yes", "response header parses");
+    if (mode == Mode::Trailers) {
+        char* rawTrailers = nullptr;
+        std::size_t rawTrailerSize = 0;
+        Require(sceHttp2GetAllTrailingHeaders(client.request, &rawTrailers, &rawTrailerSize) == 0, "trailing header serialization");
+        Require(std::string(rawTrailers, rawTrailerSize) == "x-trailer: yes\r\nx-trailer-two: 2\r\n\r\n", "trailing header block");
+    }
     Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported reuse throws");
 }
 
@@ -1692,7 +1728,7 @@ int main(int argc, char** argv) {
         RedirectFailures(ssl);
     } else {
         Require(argc == 1, "test arguments");
-        for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational}) Success(ssl, mode);
+        for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational, Mode::Trailers}) Success(ssl, mode);
         Gzip(ssl);
         GzipSplit(ssl);
         GzipLarge(ssl);
