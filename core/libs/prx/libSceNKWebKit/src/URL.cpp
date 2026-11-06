@@ -482,7 +482,6 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
 
 const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* identifier) {
     const auto* string = NKWebKit::Cast<NKWebKit::String>(identifier, __func__);
-    if (string->null) return nullptr;
     const auto& text = string->characters;
     const auto separator1 = text.find(u'_');
     const auto separator2 = text.rfind(u'_');
