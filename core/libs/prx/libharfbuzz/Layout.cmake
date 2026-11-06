@@ -35,20 +35,14 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_harfbuzz_layout PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libharfbuzz>")
         set_tests_properties(guest_harfbuzz_layout_nid PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${UNPATCHED_DIR}"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_layout_tests>"
-            "PATH=path_list_prepend:${harfbuzzLayoutModuleDir}")
+            "PATH=path_list_prepend:${UNPATCHED_DIR};PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_layout_tests>;PATH=path_list_prepend:${harfbuzzLayoutModuleDir}")
     elseif(APPLE)
         set_tests_properties(guest_harfbuzz_layout PROPERTIES ENVIRONMENT_MODIFICATION "DYLD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR}")
         set_tests_properties(guest_harfbuzz_layout_nid PROPERTIES ENVIRONMENT_MODIFICATION
-            "DYLD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR}"
-            "DYLD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_layout_tests>"
-            "DYLD_LIBRARY_PATH=path_list_prepend:${harfbuzzLayoutModuleDir}")
+            "DYLD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};DYLD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_layout_tests>;DYLD_LIBRARY_PATH=path_list_prepend:${harfbuzzLayoutModuleDir}")
     else()
         set_tests_properties(guest_harfbuzz_layout PROPERTIES ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR}")
         set_tests_properties(guest_harfbuzz_layout_nid PROPERTIES ENVIRONMENT_MODIFICATION
-            "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR}"
-            "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_layout_tests>"
-            "LD_LIBRARY_PATH=path_list_prepend:${harfbuzzLayoutModuleDir}")
+            "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_layout_tests>;LD_LIBRARY_PATH=path_list_prepend:${harfbuzzLayoutModuleDir}")
     endif()
 endif()
