@@ -1207,6 +1207,37 @@ void CheckUnsupportedPathconf(F fn, int descriptor) {
         Require(fn(descriptor, name) == -1 && Error() == 45);
 }
 
+void CheckRawGetcwdErrors() {
+    std::array<char, 4096> previous{};
+    Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
+    const std::string directory = "anyps5-getcwd-errors-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(mkdirat_nid_postfix(-100, directory.c_str(), 0755) == 0);
+    Require(chdir_nid_postfix(directory.c_str()) == 0);
+    std::array<char, 4096> expected{};
+    Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
+    const std::size_t length = std::strlen(expected.data());
+    Require(length >= 2);
+
+    std::array<char, 4096> buffer;
+    buffer.fill('#');
+    Require(__getcwd_nid_postfix(buffer.data(), length) == -1 && Error() == 12);
+    Require(buffer[0] == '#');
+    Require(__getcwd_nid_postfix(buffer.data(), length + 1) == 0);
+    Require(std::strcmp(buffer.data(), expected.data()) == 0);
+
+    Require(__getcwd_nid_postfix(nullptr, 0) == -1 && Error() == 22);
+    Require(__getcwd_nid_postfix(nullptr, 1) == -1 && Error() == 22);
+    Require(__getcwd_nid_postfix(buffer.data(), (std::size_t{1} << 32) + 1) == -1 && Error() == 22);
+
+    GuardedPaths guards;
+    Require(__getcwd_nid_postfix(guards.Unreadable(), buffer.size()) == -1 && Error() == 14);
+    Require(__getcwd_nid_postfix(guards.Crossing(), buffer.size()) == -1 && Error() == 14);
+
+    Require(chdir_nid_postfix(previous.data()) == 0);
+    Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
+}
+
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
     Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
@@ -1217,7 +1248,7 @@ void CheckRawGetcwd() {
     Require(buffer[std::strlen(expected.data()) + 1] == '#');
 
     std::array<char, 1> shortBuffer{'#'};
-    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1 && Error() == 34);
+    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1 && Error() == 22);
     Require(shortBuffer[0] == '#');
     Require(__getcwd_nid_postfix(buffer.data(), 0) == -1 && Error() == 22);
     Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 14);
@@ -1231,6 +1262,7 @@ int main() {
 #endif
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
+    CheckRawGetcwdErrors();
     CheckRawGetcwd();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
