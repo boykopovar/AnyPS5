@@ -2304,15 +2304,22 @@ int APS5_VABI sceNetShowNetstatWithMemory(int memid) {
 }
 
 int APS5_VABI sceNetGetMemoryPoolStats(int memid, NetMemoryPoolStats* stats) {
-    std::lock_guard lk(g_mutex);
-    const auto pool = g_pools.find(memid);
-    if (pool == g_pools.end()) {
-        return fail(NET_EBADF);
+    NetMemoryPoolStats output{};
+    {
+        std::lock_guard lk(g_mutex);
+        const auto pool = g_pools.find(memid);
+        if (pool == g_pools.end()) {
+            return fail(NET_EBADF);
+        }
+        if (stats == nullptr) {
+            return fail(NET_EINVAL);
+        }
+        output = {pool->second, 0, 0};
     }
-    if (stats == nullptr) {
-        return fail(NET_EINVAL);
-    }
-    *stats = {pool->second, 0, 0};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &output, sizeof(output));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -3097,7 +3104,12 @@ int APS5_VABI sceNetInitParam(const NetInitializeParameter* parameter) {
     std::lock_guard lk(g_mutex);
     if (g_net_init_param_set) return fail(NET_EBUSY);
     if (parameter == nullptr) return fail(NET_EINVAL);
-    std::memcpy(g_net_init_param.data(), parameter, g_net_init_param.size());
+    std::array<std::uint8_t, 32> buffer{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(buffer.data(), parameter, buffer.size());
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
+    g_net_init_param = buffer;
     g_net_init_param_set = true;
     g_net_inited = true;
     return 0;
