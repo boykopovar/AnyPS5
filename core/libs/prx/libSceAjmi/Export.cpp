@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -12,6 +14,7 @@ extern "C" {
 APS5_DUMMY_FUN
 
 void* APS5_VABI sceAjmBatchJobInlineBuffer_nid_disambig1(void* position, const void* data_input, size_t data_input_size, const void** batch_address) {
+    if (data_input_size > std::numeric_limits<std::uint32_t>::max() - 7) throw std::invalid_argument("AJMI: an inline buffer of more than 4 GiB - 8 bytes does not fit the 32-bit job size");
     const std::size_t size = (data_input_size + 7) & ~std::size_t{7};
     auto* at = static_cast<std::uint8_t*>(position);
     std::uint32_t words[2];
