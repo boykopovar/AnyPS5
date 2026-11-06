@@ -213,7 +213,7 @@ std::optional<TValue> TryLoadAddressValue(TValue* address) {
         const auto rangeEnd = range->address + range->bytes;
         if (rangeEnd <= cursor) return std::nullopt;
         pins[pinCount++] = std::move(range);
-        cursor = std::min(end, rangeEnd);
+        cursor = std::min<std::uintptr_t>(end, rangeEnd);
     }
     if (hasUnregistered) {
         TValue value;

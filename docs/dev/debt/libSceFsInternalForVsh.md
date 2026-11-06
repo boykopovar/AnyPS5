@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceFsErriCtl and sceFsErriGetState](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) return 0x8002002d without managing error reporting control or state.
+- [sceFsErriCtl and sceFsErriGetState](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) return 0x8002002d without managing error reporting control or state; return values are covered by unit tests in [GuestFsInternalForVsh.cpp](../../../core/libs/tests/GuestFsInternalForVsh.cpp).
 
 ### Unknown function info
 

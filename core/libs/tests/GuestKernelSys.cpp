@@ -87,7 +87,7 @@ void ThreadAndSessionTests(int descriptor) {
     Require(tcsetsid_nid_postfix(-1, session) == -1 && Error() == 9);
     const int socketDescriptor = socket_nid_postfix(2, 2, 0);
     Require(socketDescriptor >= 0);
-    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 25);
+    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 49);
     Require(close_nid_postfix(socketDescriptor) == 0);
 }
 
@@ -340,6 +340,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return lutimes_nid_postfix(paths.Unreadable(), nullptr); });
     posixFault([&] { return readlink_nid_postfix(paths.Unreadable(), linkBuffer, sizeof(linkBuffer)); });
     posixFault([&] { return pathconf_nid_postfix(paths.Unreadable(), 4); });
+    posixFault([&] { return chroot_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return link_nid_postfix(paths.Unreadable(), "unused-link"); });
     posixFault([&] { return link_nid_postfix(renameSource.c_str(), paths.Unreadable()); });
     posixFault([&] { return symlink_nid_postfix(paths.Unreadable(), "unused-symlink"); });
@@ -604,10 +605,12 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrGetclock(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
     Require(scePthreadCondattrGetclock(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrGetclock(reinterpret_cast<const PthreadCondattr*>(0x10), &clock) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondattrInit(&attr) == 0 && attr != nullptr);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Realtime);
     Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
+    Require(scePthreadCondattrGetclock(&attr, reinterpret_cast<KernelClockid*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     bool getclockThrew = false;
     try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::invalid_argument&) { getclockThrew = true; }
     Require(getclockThrew);
@@ -849,6 +852,7 @@ void CheckAmmMapperCalls() {
     std::array<std::uint64_t, 8> param{};
     param.fill(0xAAAAAAAAAAAAAAAAull);
     Require(sceKernelMapperGetParam(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMapperGetParam(reinterpret_cast<std::uint64_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     param[0] = 0x39;
     Require(sceKernelMapperGetParam(param.data()) == SCE_KERNEL_ERROR_EINVAL && param[0] == 0x39 && param[1] == 0xAAAAAAAAAAAAAAAAull);
     param[0] = 0x28;
