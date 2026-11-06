@@ -17,26 +17,31 @@ namespace {
 
 struct Decoded {
     std::wstring text;
-    UINT codepage;
+    bool utf8;
 };
 
-Decoded decodeWide(const std::string& text) {
-    if (text.empty()) return {{}, CP_UTF8};
-    int count = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    UINT codepage = CP_UTF8;
-    if (count <= 0) {
-        codepage = CP_ACP;
-        count = ::MultiByteToWideChar(CP_ACP, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-        if (count <= 0) return {{}, CP_ACP};
-    }
-    Decoded decoded{std::wstring(static_cast<std::size_t>(count), L'\0'), codepage};
-    const auto flags = codepage == CP_UTF8 ? MB_ERR_INVALID_CHARS : 0;
-    ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), decoded.text.data(), count);
-    return decoded;
+std::wstring decodeWide(const std::string& text, bool utf8) {
+    if (text.empty()) return {};
+    const auto codepage = utf8 ? CP_UTF8 : CP_ACP;
+    const auto flags = utf8 ? MB_ERR_INVALID_CHARS : 0;
+    const auto count = ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (count <= 0) return {};
+    std::wstring out(static_cast<std::size_t>(count), L'\0');
+    ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), out.data(), count);
+    return out;
 }
 
-std::string encodeNarrow(const std::wstring& text, UINT codepage) {
+Decoded decodeWide(const std::string& text) {
+    if (text.empty()) return {{}, true};
+    auto wide = decodeWide(text, true);
+    if (!wide.empty()) return {std::move(wide), true};
+    wide = decodeWide(text, false);
+    return {std::move(wide), false};
+}
+
+std::string encodeNarrow(const std::wstring& text, bool utf8) {
     if (text.empty()) return {};
+    const auto codepage = utf8 ? CP_UTF8 : CP_ACP;
     const int count = ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
     if (count <= 0) return {};
     std::string out(static_cast<std::size_t>(count), '\0');
@@ -58,22 +63,22 @@ std::size_t findWideName(const std::wstring& text, const std::wstring& name, std
     return std::wstring::npos;
 }
 
-std::wstring replaceNames(std::wstring text, const std::vector<std::string>& names) {
+std::wstring replaceNames(std::wstring text, const std::vector<std::string>& names, bool utf8) {
     for (const auto& name : names) {
         if (name.empty()) continue;
-        const auto decoded = decodeWide(name);
-        if (decoded.text.empty()) continue;
+        const auto decoded = decodeWide(name, utf8);
+        if (decoded.empty()) continue;
         std::wstring result;
         std::size_t cursor = 0;
         for (;;) {
-            const auto found = findWideName(text, decoded.text, cursor);
+            const auto found = findWideName(text, decoded, cursor);
             if (found == std::wstring::npos) break;
-            const auto end = found + decoded.text.size();
+            const auto end = found + decoded.size();
             const bool before = found == 0 || !nameCharacter(text[found - 1]);
             const bool after = end == text.size() || !nameCharacter(text[end]);
             result.append(text, cursor, found - cursor);
             if (before && after) result += L"<redacted>";
-            else result.append(text, found, decoded.text.size());
+            else result.append(text, found, decoded.size());
             cursor = end;
         }
         result.append(text, cursor, std::wstring::npos);
@@ -84,7 +89,7 @@ std::wstring replaceNames(std::wstring text, const std::vector<std::string>& nam
 
 std::string replaceNames(std::string text, const std::vector<std::string>& names) {
     const auto decoded = decodeWide(text);
-    auto encoded = encodeNarrow(replaceNames(std::move(decoded.text), names), decoded.codepage);
+    auto encoded = encodeNarrow(replaceNames(std::move(decoded.text), names, decoded.utf8), decoded.utf8);
     if (encoded.empty() && !text.empty()) return text;
     return std::move(encoded);
 }

@@ -256,6 +256,8 @@ void NamedValuesAreRedacted() {
     Check(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user <redacted>", "a UTF-8 Cyrillic name in another case was kept");
     Check(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", "a name inside a longer word in another script was replaced");
     Check(AgcDriver::RedactHostText("path Users/\xc3\x89lise/cache", {"\xc3\x89LISE"}) == "path Users/<redacted>/cache", "a UTF-8 name in another case in a path was kept");
+    Check(AgcDriver::RedactHostText("user \xd0\xb8 \x80", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI text was kept");
+    Check(AgcDriver::RedactHostText("user \xd0\xb8 \x80 \xd0\xb8", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI contextual text was kept");
 #else
     Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user AlIcE on WORKSTATION-7", "a POSIX name in another case was replaced");
 #endif
@@ -281,6 +283,11 @@ void NamedValuesAreRedacted() {
     const auto unicodeText = AgcDriver::FormatHostReport(unicode);
     Check(unicodeText.find("\xc3\xa9lise") == std::string::npos, "a UTF-8 name reached the Windows report");
     Check(unicodeText.find("APS5_NOTE: user <redacted>\n") != std::string::npos, "a UTF-8 name was not replaced in the Windows report");
+    auto ansi = SampleFacts();
+    ansi.redactions = {"\xd0\xb8"};
+    ansi.environment.push_back({"APS5_NOTE", "user \xd0\xb8 \x80 \xd0\xb8"});
+    const auto ansiText = AgcDriver::FormatHostReport(ansi);
+    Check(ansiText.find("\xd0\xb8") == std::string::npos, "a case-exact name reached the Windows report in native ANSI text");
 #endif
 }
 
