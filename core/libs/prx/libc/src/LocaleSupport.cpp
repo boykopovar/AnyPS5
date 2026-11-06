@@ -689,6 +689,7 @@ std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_ni
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
+std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots] {};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
@@ -790,9 +791,65 @@ GuestLocaleFacade g_sceV2ClassicLocaleFacade{&g_classicLocale};
 constexpr std::uint32_t SceV2AllLocaleCategories = 0x3f;
 constexpr int SceV2LocaleCategoryCount = 6;
 
+std::recursive_mutex g_sceV2LocimpMutex;
+
+void APS5_VABI DestroySceV2Locimp_nid_no_patch(GuestLocale::Facet* self) {
+    _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(self));
+}
+
+void APS5_VABI DeleteSceV2Locimp_nid_no_patch(GuestLocale::Facet* self) {
+    _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(reinterpret_cast<GuestLocale::Implementation*>(self));
+    _ZdlPv_nid_postfix(self);
+}
+
+const GuestLocale::FacetVtable g_sceV2LocimpVtable{DestroySceV2Locimp_nid_no_patch, DeleteSceV2Locimp_nid_no_patch, RetainFacet, ReleaseFacet};
+
+void ReleaseSceV2Facet(GuestLocale::Facet* facet) {
+    if (auto* released = facet->vtable->release(facet)) released->vtable->deleteObject(released);
+}
+
+bool CopySceV2Facets(GuestLocale::Implementation* self, const GuestLocale::Implementation* source) {
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    const std::size_t count = self->facetCount;
+    if (count == 0) return true;
+    if (count > SIZE_MAX / sizeof(GuestLocale::Facet*)) return false;
+    auto* facets = static_cast<GuestLocale::Facet**>(malloc_nid_postfix(count * sizeof(GuestLocale::Facet*)));
+    if (facets == nullptr) return false;
+    self->facets = facets;
+    for (std::size_t index = count; index-- != 0;) {
+        GuestLocale::Facet* facet = source->facets[index];
+        facets[index] = facet;
+        if (facet != nullptr) facet->vtable->retain(facet);
+    }
+    return true;
+}
+
+bool AddSceV2Facet(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    if (id >= self->facetCount) {
+        if (id >= SIZE_MAX / sizeof(GuestLocale::Facet*)) return false;
+        const std::size_t count = std::max<std::size_t>(id + 1, 40);
+        GuestLocale::Facet** grown;
+        if (self->facets == g_classicFacets) {
+            grown = static_cast<GuestLocale::Facet**>(malloc_nid_postfix(count * sizeof(GuestLocale::Facet*)));
+            if (grown != nullptr) std::memcpy(grown, g_classicFacets, self->facetCount * sizeof(GuestLocale::Facet*));
+        } else {
+            grown = static_cast<GuestLocale::Facet**>(realloc_nid_postfix(self->facets, count * sizeof(GuestLocale::Facet*)));
+        }
+        if (grown == nullptr) return false;
+        self->facets = grown;
+        std::fill(grown + self->facetCount, grown + count, nullptr);
+        self->facetCount = count;
+    }
+    facet->vtable->retain(facet);
+    if (GuestLocale::Facet* old = self->facets[id]) ReleaseSceV2Facet(old);
+    self->facets[id] = facet;
+    return true;
+}
+
 GuestLocale::Implementation* NewSceV2Locimp(bool transparent) {
     auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
-    *self = {{&g_copiedLocaleVtable, 1, 0}, nullptr, 0, 0, transparent, "*"};
+    *self = {{&g_sceV2LocimpVtable, 1, 0}, nullptr, 0, 0, transparent, "*"};
     return self;
 }
 
@@ -879,15 +936,34 @@ void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(Gu
     g_sceV2RegisteredFacets.push_back(facet);
 }
 
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_ctorEPS1_RKS1__nid_postfix(GuestLocale::Implementation* self, const GuestLocale::Implementation* source) {
+    if (self == nullptr || source == nullptr) throw std::invalid_argument("_Locimp_ctor: null object");
+    if (!CopySceV2Facets(self, source)) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(GuestLocale::Implementation* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locimp_dtor: null object");
+    std::lock_guard lock(g_sceV2LocimpMutex);
+    for (std::size_t index = self->facetCount; index-- != 0;) {
+        if (GuestLocale::Facet* facet = self->facets[index]) ReleaseSceV2Facet(facet);
+    }
+    if (self->facets != g_classicFacets) free_nid_postfix(self->facets);
+}
+
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(const GuestLocale::Implementation* source) {
     if (source == nullptr) throw std::invalid_argument("_Locimp constructor: null source");
     auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
-    _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(self, source);
+    *self = {{&g_sceV2LocimpVtable, 1, 0}, nullptr, source->facetCount, source->category, source->transparent, source->name};
+    if (!CopySceV2Facets(self, source)) {
+        _ZdlPv_nid_postfix(self);
+        _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+    }
     return self;
 }
 
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
-    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(self, facet, id);
+    if (self == nullptr || facet == nullptr) throw std::invalid_argument("_Locimp_Addfac: null object");
+    if (!AddSceV2Facet(self, facet, id)) _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
 }
 
 GuestLocale::Implementation* _ZNSt8__sce_v26locale7_Locimp8_ClocptrE_nid_postfix = &g_classicLocale;
