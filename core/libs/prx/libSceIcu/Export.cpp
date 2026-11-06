@@ -110,11 +110,6 @@ int APS5_VABI u_charType_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuUnknown_1SsridDRBYQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("1SsridDRBYQ", sceIcuUnknown_1SsridDRBYQ_nid_no_patch);
-
 int APS5_VABI u_enumCharNames_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
