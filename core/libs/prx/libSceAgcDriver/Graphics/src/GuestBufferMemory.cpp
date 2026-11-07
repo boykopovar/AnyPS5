@@ -1660,6 +1660,15 @@ std::pair<std::size_t, std::size_t> continuedRun(const GuestAllocations::Lease& 
     return entry.run;
 }
 
+bool joinedWithin(const HostImports& state, std::uint64_t begin, std::uint64_t end) {
+    auto it = state.imports.lower_bound(begin);
+    if (it != state.imports.begin() && std::prev(it)->second.joined && std::prev(it)->first + std::prev(it)->second.bytes > begin) return true;
+    for (; it != state.imports.end() && it->first < end; ++it) {
+        if (it->second.joined) return true;
+    }
+    return false;
+}
+
 RunBounds importRunBounds(const GuestAllocations::Lease& lease, std::uint64_t address, std::uint64_t largest = std::numeric_limits<std::uint64_t>::max(), std::uint64_t budget = 0) {
     const auto index = leasedIndexContaining(lease, address);
     if (index == lease.size()) return {};
@@ -1692,7 +1701,7 @@ RunBounds importRunBounds(const GuestAllocations::Lease& lease, std::uint64_t ad
         const auto blockLast = bounding(index, last, blockHigh, false);
         if (blockFirst == lease.size() || blockLast == lease.size()) continue;
         if (blockFirst == blockLast) break;
-        if (skipped(blockFirst, blockLast)) continue;
+        if (skipped(blockFirst, blockLast) || joinedWithin(state, blockLow, blockHigh)) continue;
         return {blockFirst, blockLast, true};
     }
     return single;
@@ -2412,6 +2421,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         const bool exhausted = result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
         if (std::string_view(step) == "vkAllocateMemory") {
             state.allocationFailed = true;
+            if (!exhausted) state.allocationFailures = 0;
             if (exhausted && (++state.allocationFailures >= 3 || state.liveBytes + bytes + budget / 8 >= budget)) {
                 state.ceiling = std::max<std::uint64_t>(state.liveBytes, 1);
                 std::fprintf(stderr, "[gpu] host import budget lowered to the %.1f MiB live after vkAllocateMemory failed %s\n", state.liveBytes / 1048576.0, state.allocationFailures >= 3 ? "3 times in a row" : "within an eighth of the budget");
@@ -2912,6 +2922,7 @@ struct RefreshBlock {
     std::size_t length;
     std::uint64_t generation = 0;
     std::uint8_t fill = 0;
+    mutable bool unchanged = false;
 };
 
 constexpr std::uint8_t SparseCopy = 1;
@@ -2927,8 +2938,14 @@ bool compareBlock(const RefreshBlock& block) {
             if (target != nullptr) std::memset(target, 0, block.length);
             return true;
         }
+        const auto index = static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536);
+        if (target != nullptr && block.fill == 0 && block.generation != 0 && std::memcmp(target, guest, block.length) == 0) {
+            block.mirror->generations[index] = block.generation;
+            block.unchanged = true;
+            return false;
+        }
         if (target != nullptr) std::memcpy(target, guest, block.length);
-        if (block.fill == 0) block.mirror->generations[static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536)] = block.generation;
+        if (block.fill == 0) block.mirror->generations[index] = block.generation;
         return target != nullptr;
     }
     if (block.fill != 0) {
@@ -2938,9 +2955,12 @@ bool compareBlock(const RefreshBlock& block) {
         return true;
     }
     if (block.mirror->heap) {
-        std::memcpy(block.mirror->buffer->Bytes().data() + offset, guest, block.length);
-        block.mirror->generations[static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536)] = block.generation;
-        return true;
+        const auto index = static_cast<std::size_t>(block.address / 65536 - block.mirror->base / 65536);
+        auto* target = block.mirror->buffer->Bytes().data() + offset;
+        const bool same = block.generation != 0 && std::memcmp(target, guest, block.length) == 0;
+        if (!same) std::memcpy(target, guest, block.length);
+        block.mirror->generations[index] = block.generation;
+        return !same;
     }
     if (std::memcmp(block.mirror->shadow.data() + offset, guest, block.length) == 0) return false;
     std::memcpy(block.mirror->buffer->Bytes().data() + offset, guest, block.length);
@@ -3107,7 +3127,7 @@ void compareBlocks(std::span<const RefreshBlock> blocks) {
     bindHeapBlocks(blocks);
     const auto copied = RefreshPool::Get().Run(blocks);
     for (const auto& block : blocks) {
-        if (block.mirror->resident != nullptr && block.mirror->resident->Block(block.address) != nullptr) block.mirror->resident->MarkChanged(block.address, block.address + block.length);
+        if (!block.unchanged && block.mirror->resident != nullptr && block.mirror->resident->Block(block.address) != nullptr) block.mirror->resident->MarkChanged(block.address, block.address + block.length);
     }
     auto& state = Mirrors();
     state.blocksCompared += blocks.size();
@@ -5646,8 +5666,10 @@ VkBufferUsageFlags gpuCopyUsage(const Context& context, bool addressable) {
 // byte the shader leaves alone must hold the import's bytes), bound in the import's place, and
 // copied back by RecordCopyBacks after the work, with the pending-write note and the direct-write
 // marks of an in-place write. Only builds whose every use records the work and calls
-// RecordCopyBacks take it (dispatches, see AllowDeviceStaging; a synchronous draw would store the
-// staging bytes from the CPU, which a device-local buffer cannot serve). In an address-based build
+// RecordCopyBacks take it (dispatches and recorded draws without BDA page tables, see
+// AllowDeviceStaging; a synchronous draw would store the staging bytes from the CPU, which a
+// device-local buffer cannot serve, so a draw that ends up synchronous is rebuilt unstaged).
+// APS5_NO_DRAW_STAGING=1 keeps draws' elements in place. In an address-based build
 // a written element inside one direct import region of the space becomes an overlay region
 // (resolveOverlays), and AddressRanges cuts the import's range around it so that its pointers reach
 // the shadow as its descriptor does. The
@@ -6882,6 +6904,16 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() 
     return merged;
 }
 
+std::optional<std::pair<std::uint64_t, std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>>>> GuestBufferMemory::TrySnapshotAddressSpace() noexcept {
+    try {
+        const auto space = Spaces().current.load();
+        if (space == nullptr) return std::nullopt;
+        return std::make_pair(space->serial, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(space->ranges));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTable() const {
     if (space == nullptr) return std::nullopt;
     Require(uploaded && !committed, "guest GPU address ranges are not available");
@@ -6976,8 +7008,9 @@ void GuestBufferMemory::MarkDirectWrites() const {
         if (found == nullptr) continue;
         const auto& region = *found;
         if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) {
-            const auto generation = GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin));
-            if (generation != 0) directWritesGeneration = std::max(directWritesGeneration, generation);
+            std::uint64_t order = 0;
+            static_cast<void>(GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin), order));
+            directWritesGeneration = std::max(directWritesGeneration, order);
         }
     }
 }

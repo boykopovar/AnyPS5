@@ -413,6 +413,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
@@ -561,6 +562,12 @@ set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceAgcDriver)
 if(WIN32)
     target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-symbols=_Znwy:_Znay:_ZnwyRKSt9nothrow_t:_ZnayRKSt9nothrow_t:_ZdlPv:_ZdaPv:_ZdlPvy:_ZdaPvy:_ZdlPvRKSt9nothrow_t:_ZdaPvRKSt9nothrow_t)
+endif()
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(agcStdExportScript "${CMAKE_CURRENT_BINARY_DIR}/libSceAgcDriverStdExports.ver")
+    file(CONFIGURE OUTPUT "${agcStdExportScript}" CONTENT "{\n  local:\n    _ZSt*;\n    _ZNSt*;\n    _ZNKSt*;\n    _ZNRSt*;\n    _ZNKRSt*;\n    _ZNOSt*;\n    _ZNKOSt*;\n    _ZNSa*;\n    _ZNKSa*;\n};\n")
+    target_link_options(libSceAgcDriver PRIVATE "LINKER:--version-script=${agcStdExportScript}")
+    set_property(TARGET libSceAgcDriver APPEND PROPERTY LINK_DEPENDS "${agcStdExportScript}")
 endif()
 
 if(WIN32)
@@ -855,6 +862,7 @@ if(BUILD_TESTING)
         agc_driver_prepared_shaders_indirect agc_driver_prepared_shaders_uncached
         agc_driver_prepared_shaders_debug agc_driver_prepared_shaders_debug_failure
         PROPERTIES RESOURCE_LOCK shader_failure_capture)
+    set_property(TEST agc_driver_prepared_shaders APPEND PROPERTY ENVIRONMENT "APS5_NO_MASKED_RESULT_MEMO=1")
 endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)
@@ -1059,8 +1067,23 @@ endif()
 
 if(BUILD_TESTING)
     get_directory_property(agcRegisteredTests TESTS)
-    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
+    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal(_undecodable_module)?|agc_pipeline_store_replay_growth)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
+endif()
+
+add_test_executable(agc_run_report_shader_failure_tests EXCLUDE_FROM_ALL tests/RunReportShaderFailure.cpp)
+target_link_libraries(agc_run_report_shader_failure_tests PRIVATE shader_recompiler_agc_driver libc)
+target_include_directories(agc_run_report_shader_failure_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
+set_target_properties(agc_run_report_shader_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_run_report_shader_failure_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_run_report_shader_failure_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_run_report_shader_failure COMMAND agc_run_report_shader_failure_tests)
+    set_tests_properties(agc_run_report_shader_failure PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1")
+    if(WIN32)
+        set_tests_properties(agc_run_report_shader_failure PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
