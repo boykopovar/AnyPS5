@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -111,14 +113,24 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
         std::filesystem::remove(temporary, error);
         return {};
     }
-    if (std::filesystem::exists(target, error)) std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add, error);
-    std::filesystem::rename(temporary, target, error);
-    if (error) {
-        std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add, error);
-        std::filesystem::remove(temporary, error);
-        return ReadFile(target) == bundle ? target : std::filesystem::path{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (true) {
+        std::filesystem::rename(temporary, target, error);
+        if (!error) return target;
+        if (ReadFile(target) == bundle) {
+            std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add, error);
+            std::filesystem::remove(temporary, error);
+            std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::remove, error);
+            return target;
+        }
+        if (!std::filesystem::is_regular_file(target, error) || std::chrono::steady_clock::now() > deadline) {
+            std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add, error);
+            std::filesystem::remove(temporary, error);
+            return {};
+        }
+        std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add, error);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    return target;
 }
 
 std::filesystem::path CertificateList(const std::filesystem::path& root) {
