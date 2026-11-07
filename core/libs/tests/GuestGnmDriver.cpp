@@ -126,10 +126,10 @@ void TestFillerSubmit() {
 
 void TestQueries() {
     check(sceGnmGetTheTessellationFactorRingBufferBaseAddress() == 0xff0000000ull, "the tessellation factor ring base address is not 0xff0000000");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(0, 0x1fu) == 0x1fu, "the CU mask of engine 0 was translated");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask of engine 1 was translated");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "an out-of-range engine changed the CU mask");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was translated");
+    check(sceGnmLogicalCuMaskToPhysicalCuMask(0, 0x1fu) == 0x1fu, "the CU mask with a first argument of 0 was changed");
+    check(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask with a first argument of 1 was changed");
+    check(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "the CU mask with a first argument of 0xffffffff was changed");
+    check(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was changed");
 }
 
 }
