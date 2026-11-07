@@ -5,13 +5,103 @@
 #include <exception>
 #include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace AgcDriver {
 
 namespace {
 
+#ifdef _WIN32
+
+struct Decoded {
+    std::wstring text;
+    bool utf8;
+};
+
+std::wstring decodeWide(const std::string& text, bool utf8) {
+    if (text.empty()) return {};
+    const auto codepage = utf8 ? CP_UTF8 : CP_ACP;
+    const auto flags = utf8 ? MB_ERR_INVALID_CHARS : 0;
+    const auto count = ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (count <= 0) return {};
+    std::wstring out(static_cast<std::size_t>(count), L'\0');
+    ::MultiByteToWideChar(codepage, flags, text.data(), static_cast<int>(text.size()), out.data(), count);
+    return out;
+}
+
+Decoded decodeWide(const std::string& text) {
+    if (text.empty()) return {{}, true};
+    auto wide = decodeWide(text, true);
+    if (!wide.empty()) return {std::move(wide), true};
+    wide = decodeWide(text, false);
+    return {std::move(wide), false};
+}
+
+std::string encodeNarrow(const std::wstring& text, bool utf8) {
+    if (text.empty()) return {};
+    const auto codepage = utf8 ? CP_UTF8 : CP_ACP;
+    const int count = ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (count <= 0) return {};
+    std::string out(static_cast<std::size_t>(count), '\0');
+    ::WideCharToMultiByte(codepage, 0, text.data(), static_cast<int>(text.size()), out.data(), count, nullptr, nullptr);
+    return out;
+}
+
+bool nameCharacter(wchar_t value) {
+    if (value == L'_') return true;
+    if (value < 0x80) return std::isalnum(static_cast<unsigned char>(value)) != 0;
+    WORD type = 0;
+    if (!::GetStringTypeW(CT_CTYPE1, &value, 1, &type)) return false;
+    return (type & (C1_ALPHA | C1_DIGIT)) != 0;
+}
+
+std::size_t findWideName(const std::wstring& text, const std::wstring& name, std::size_t cursor) {
+    for (std::size_t at = cursor; at + name.size() <= text.size(); ++at)
+        if (::CompareStringOrdinal(text.c_str() + at, static_cast<int>(name.size()), name.c_str(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL) return at;
+    return std::wstring::npos;
+}
+
+std::wstring replaceNames(std::wstring text, const std::vector<std::string>& names, bool utf8) {
+    for (const auto& name : names) {
+        if (name.empty()) continue;
+        const auto decoded = decodeWide(name, utf8);
+        if (decoded.empty()) continue;
+        std::wstring result;
+        std::size_t cursor = 0;
+        for (;;) {
+            const auto found = findWideName(text, decoded, cursor);
+            if (found == std::wstring::npos) break;
+            const auto end = found + decoded.size();
+            const bool before = found == 0 || !nameCharacter(text[found - 1]);
+            const bool after = end == text.size() || !nameCharacter(text[end]);
+            result.append(text, cursor, found - cursor);
+            if (before && after) result += L"<redacted>";
+            else result.append(text, found, decoded.size());
+            cursor = end;
+        }
+        result.append(text, cursor, std::wstring::npos);
+        text = std::move(result);
+    }
+    return text;
+}
+
+std::string replaceNames(std::string text, const std::vector<std::string>& names) {
+    const auto decoded = decodeWide(text);
+    auto encoded = encodeNarrow(replaceNames(std::move(decoded.text), names, decoded.utf8), decoded.utf8);
+    if (encoded.empty() && !text.empty()) return text;
+    return std::move(encoded);
+}
+
+#else
+
 bool nameCharacter(unsigned char value) {
     return std::isalnum(value) != 0 || value == '_';
+}
+
+std::size_t findName(const std::string& text, const std::string& name, const std::size_t cursor) {
+    return text.find(name, cursor);
 }
 
 std::string replaceNames(std::string text, const std::vector<std::string>& names) {
@@ -20,7 +110,7 @@ std::string replaceNames(std::string text, const std::vector<std::string>& names
         std::string result;
         std::size_t cursor = 0;
         for (;;) {
-            const auto found = text.find(name, cursor);
+            const auto found = findName(text, name, cursor);
             if (found == std::string::npos) break;
             const auto end = found + name.size();
             const bool before = found == 0 || !nameCharacter(static_cast<unsigned char>(text[found - 1]));
@@ -35,6 +125,8 @@ std::string replaceNames(std::string text, const std::vector<std::string>& names
     }
     return text;
 }
+
+#endif
 
 bool hardwareAddress(const std::string& token) {
     if (token.size() != 17) return false;
