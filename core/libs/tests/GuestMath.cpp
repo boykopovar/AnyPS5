@@ -130,6 +130,16 @@ static void CheckNearbyint() {
     Require(nearbyint_nid_postfix(INFINITY) == INFINITY && nearbyint_nid_postfix(-INFINITY) == -INFINITY);
     Require(std::isnan(nearbyint_nid_postfix(NAN)));
     Require(std::fetestexcept(FE_INEXACT) != 0);
+    for (const double exact : {1.0, -3.0, 0x1p52, 1e300}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(nearbyint_nid_postfix(exact) == exact);
+        Require(std::fetestexcept(FE_INEXACT) == 0);
+    }
+    for (const float exact : {1.0f, -3.0f, 0x1p23f, 3e38f}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(nearbyintf_nid_postfix(exact) == exact);
+        Require(std::fetestexcept(FE_INEXACT) == 0);
+    }
     std::feclearexcept(FE_ALL_EXCEPT);
     std::uint16_t savedControl;
     asm volatile("fnstcw %0" : "=m"(savedControl));
