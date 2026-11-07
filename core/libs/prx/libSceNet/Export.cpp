@@ -131,6 +131,7 @@ constexpr int NET_ETIMEDOUT = 60;
 constexpr int NET_ECONNREFUSED = 61;
 constexpr int NET_EHOSTUNREACH = 65;
 constexpr int NET_ENOTINIT = 200;
+constexpr int NET_ENODATA = 0xA4;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
 constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
@@ -195,6 +196,19 @@ constexpr int NET_MSG_TRUNC = 0x10;
 constexpr int NET_MSG_DONTWAIT = 0x80;
 constexpr int NET_MSG_NOSIGNAL = 0x20000;
 constexpr int NET_UIO_MAXIOV = 1024;
+
+bool RawProtocolEntry(int family, int protocol) {
+    if (family == NET_AF_INET6) {
+        switch (protocol) {
+        case 4: case 41: case 43: case 44: case 47: case 58: case 60: case 103: case 255: return true;
+        default: return false;
+        }
+    }
+    switch (protocol) {
+    case 1: case 2: case 4: case 41: case 46: case 47: case 55: case 97: case 103: case 255: return true;
+    default: return false;
+    }
+}
 
 #ifdef _WIN32
 using NativeSocket = SOCKET;
@@ -1827,9 +1841,10 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_PROTOCOL) {
-        if (socket.type == NET_SOCK_RAW) NotImplemented_nid_no_patch(__func__);
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(socket.protocol)));
-        std::memcpy(optval, &socket.protocol, *optlen);
+        if (socket.type == NET_SOCK_RAW && socket.protocol == 0) NotImplemented_nid_no_patch(__func__);
+        const int protocol = socket.type == NET_SOCK_RAW && !RawProtocolEntry(socket.family, socket.protocol) ? 0 : socket.protocol;
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(protocol)));
+        std::memcpy(optval, &protocol, *optlen);
         return 0;
     }
     if (level == NET_IPPROTO_IPV6) {
@@ -3049,13 +3064,24 @@ const char* APS5_VABI sceNetGetIfName(std::uint32_t index) {
 }
 
 int APS5_VABI sceNetGetIfnameNumList(std::uint32_t* interfaceIds, std::int32_t capacity, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (interfaceIds == nullptr || capacity <= 0 || flags > 1) return fail(NET_EINVAL);
+    const std::uint32_t first = (flags & 1) != 0 ? 0 : 1;
+    const std::uint32_t last = (flags & 1) != 0 ? 9 : 8;
+    std::int32_t count = 0;
+    for (std::uint32_t interfaceId = first; interfaceId <= last && count < capacity; ++interfaceId) {
+        if (!HostInterfaceIndex(interfaceId)) continue;
+        interfaceIds[count++] = interfaceId;
+    }
+    return count;
 }
 
 int APS5_VABI sceNetGetNameToIndex(std::uint32_t interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (interfaceId == 0xffffffffu) return fail(NET_EINVAL);
+    const auto index = HostInterfaceIndex(interfaceId);
+    if (!index) return fail(NET_ENODATA);
+    return static_cast<int>(*index);
 }
 
 int APS5_VABI sceNetGetRandom(std::uint32_t* output) {

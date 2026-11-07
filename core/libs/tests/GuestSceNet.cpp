@@ -503,6 +503,28 @@ static void CheckDefaultRoute() {
     Require(threw);
 }
 
+static void CheckIfNameIndex() {
+    Require(Failed(sceNetGetNameToIndex(0xffffffffu), 22));
+    Require(Failed(sceNetGetNameToIndex(10), 164));
+    const int loopback = sceNetGetNameToIndex(0);
+    Require(loopback > 0);
+    const int primary = sceNetGetNameToIndex(1);
+    if (primary > 0) Require(primary != loopback);
+    *sceNetErrnoLoc() = 0;
+    Require(Failed(sceNetGetIfnameNumList(nullptr, 1, 0), 22));
+    Require(Failed(sceNetGetIfnameNumList(nullptr, 0, 0), 22));
+    std::array<std::uint32_t, 16> ids{};
+    const int withLoopback = sceNetGetIfnameNumList(ids.data(), ids.size(), 1);
+    Require(withLoopback >= 1);
+    Require(ids[0] == 0);
+    for (int i = 1; i < withLoopback; ++i) Require(ids[i] > ids[i - 1] && ids[i] < 10);
+    const int withoutLoopback = sceNetGetIfnameNumList(ids.data(), ids.size(), 0);
+    Require(withoutLoopback <= withLoopback);
+    for (int i = 0; i < withoutLoopback; ++i) Require(ids[i] >= 1 && ids[i] <= 8);
+    Require(sceNetGetIfnameNumList(ids.data(), 1, 1) == 1 && ids[0] == 0);
+    Require(Failed(sceNetGetIfnameNumList(ids.data(), 1, 2), 22));
+}
+
 static void CheckRandom() {
     Require(Failed(sceNetGetRandom(nullptr), 22));
     Require(errno == 22);
@@ -2513,6 +2535,8 @@ int main() {
     Require(Failed(sceNetUsleep(-1), 200));
     Require(Failed(sceNetShowNetstat(), 200));
     Require(Failed(sceNetShowIfconfig(), 200));
+    Require(Failed(sceNetGetNameToIndex(0), 200));
+    Require(Failed(sceNetGetIfnameNumList(nullptr, 0, 0), 200));
     Require(sceNetInit_nid_postfix() == 0);
     CheckInitParam();
     CheckEpollWritable();
@@ -2525,6 +2549,7 @@ int main() {
     CheckExForwards();
     CheckSysctl();
     CheckScopeIdText();
+    CheckIfNameIndex();
     CheckRandom();
     CheckByteOrderConversion();
     CheckNetMemory();
