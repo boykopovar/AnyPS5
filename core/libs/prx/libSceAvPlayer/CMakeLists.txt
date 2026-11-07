@@ -49,7 +49,7 @@ if(BUILD_TESTING)
             if(WIN32 AND TARGET mimalloc)
                 add_dependencies(avplayer_http_patched_closure mimalloc pe_import_first)
                 set(httpPatchedAllocatorArguments
-                    -DALLOCATOR_DIRECTORY=$<TARGET_FILE_DIR:mimalloc>
+                    -DALLOCATOR=$<TARGET_FILE:mimalloc>
                     -DIMPORT_FIRST=$<TARGET_FILE:pe_import_first>)
             endif()
             add_dependencies(avplayer_http_patched_modules_tests avplayer_http_patched_closure
