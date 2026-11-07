@@ -74,8 +74,12 @@ int APS5_VABI sceHttp2WebSocketCreateRequest(std::int32_t templateId, const char
 int APS5_VABI sceHttp2WebSocketCloseAsync(std::int32_t requestId, const std::uint16_t* status, const char* reason, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option);
 int APS5_VABI sceHttp2WebSocketSendTextMessageAsync(std::int32_t requestId, const char* text, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option);
 int APS5_VABI sceHttp2WebSocketSendDataMessageAsync(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option);
+int APS5_VABI sceHttp2WebSocketClose(std::int32_t requestId, const std::uint16_t* status, const char* reason, std::uint8_t flags, const void* option);
+int APS5_VABI sceHttp2WebSocketSendTextMessage(std::int32_t requestId, const char* text, std::uint8_t flags, const void* option);
+int APS5_VABI sceHttp2WebSocketSendDataMessage(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint8_t flags, const void* option);
 int APS5_VABI sceHttp2WebSocketSetPingInterval(std::int32_t requestId, std::uint32_t intervalMicroseconds);
 int APS5_VABI sceHttp2WebSocketSetPingTimeout(std::int32_t requestId, std::uint32_t timeoutMicroseconds);
+int APS5_VABI sceHttp2WebSocketSetCloseTimeout(std::int32_t requestId, std::uint32_t timeoutMicroseconds);
 int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* cookie, std::size_t cookieLength);
 int APS5_VABI sceHttp2AuthCacheFlush(int libHttp2CtxId);
 int APS5_VABI sceHttp2CookieExport(void);
