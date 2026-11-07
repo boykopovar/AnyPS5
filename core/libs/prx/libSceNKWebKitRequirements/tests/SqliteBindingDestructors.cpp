@@ -121,7 +121,7 @@ std::vector<int> Run(bool guest, std::string_view mode) {
         Database database(guest, encoding);
         if (mode == "errors") {
             for (bool text : {false, true}) {
-                for (int index : {0, 2, INT_MIN, INT_MAX}) {
+                for (int index : {0, 2, INT_MIN + 1, INT_MAX}) {
                     for (const void* pointer : {static_cast<const void*>(first.data()), static_cast<const void*>(nullptr)}) {
                         sqlite3_stmt* statement = database.Prepare();
                         trace.Result(database.Bind(statement, index, pointer, 8, text, 1));
