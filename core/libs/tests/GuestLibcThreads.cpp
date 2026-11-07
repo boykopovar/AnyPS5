@@ -267,7 +267,7 @@ struct HostPadThread {
 
 static const void* lastCreateAttrSlot = nullptr;
 
-static int APS5_VABI HostPthreadCreate(void** thread, const void* attrSlot, void* (APS5_VABI* entry)(void*), void* arg) {
+static int APS5_VABI HostPthreadCreate(void** thread, const void* attrSlot, void* (APS5_VABI* entry)(void*), void* arg, const char*) {
     lastCreateAttrSlot = attrSlot;
     auto* handle = new HostPadThread{};
     handle->worker = std::thread([handle, entry, arg] { handle->result = entry(arg); });
