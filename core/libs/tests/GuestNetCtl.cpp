@@ -174,8 +174,11 @@ int CurrentEvent() {
 }
 
 void CheckIpcIntGetters() {
+    auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetStateIpcInt(nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetStateV6IpcInt(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetStateIpcInt(unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetStateV6IpcInt(unwritable) == kErrInvalidAddr);
     int state = -1;
     int twin = -2;
     Require(sceNetCtlGetStateIpcInt(&state) == 0 && sceNetCtlGetState(&twin) == 0 && state == twin);
@@ -184,6 +187,7 @@ void CheckIpcIntGetters() {
     Require(sceNetCtlGetStateV6IpcInt(&state) == 0 && sceNetCtlGetStateV6(&twin) == 0 && state == twin);
 
     Require(sceNetCtlGetResultIpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetResultIpcInt(kEventDisconnected, unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetResultV6IpcInt(kEventDisconnected, nullptr) == kErrInvalidAddr);
     for (const int eventType : {kEventDisconnected, 2, kEventIpObtained}) {
         int errorCode = -1;
@@ -689,10 +693,18 @@ int main() {
 #endif
     constexpr int invalidId = static_cast<int>(0x80412105);
     Require(sceNetCtlCheckCallback() == 0);
+    auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetState(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetState(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetStateV6(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetInfo(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(kEventDisconnected, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetResult(kEventIpObtained, unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetEtherLinkMode(unwritable) == kErrInvalidAddr);
+    Require(sceNetCtlGetWifiType(unwritable) == kErrInvalidAddr);
     Require(sceNetCtlGetNatInfo(nullptr) == kErrInvalidAddr);
     Require(sceNetCtlRegisterCallback(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, nullptr) == kErrInvalidAddr);
