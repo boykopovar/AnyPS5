@@ -13,6 +13,7 @@
 #include <climits>
 #include <stdexcept>
 #include <cmath>
+#include <limits>
 
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -248,6 +249,20 @@ bool DecimalOutOfRange(const std::string& field) {
     errno = 0;
     const long double value = std::strtold(field.c_str(), nullptr);
     return errno == ERANGE && (std::isinf(value) || value == 0.0L);
+}
+
+template <typename T>
+void StoreDefaultNaN(void* target, std::size_t bytes) {
+    T value{};
+    std::memcpy(&value, target, std::min(bytes, sizeof(value)));
+    if (!std::isnan(value)) return;
+    if (bytes == 10) {
+        constexpr unsigned char quiet[10]{0, 0, 0, 0, 0, 0, 0, 0xc0, 0xff, 0x7f};
+        std::memcpy(target, quiet, sizeof(quiet));
+    } else {
+        value = std::numeric_limits<T>::quiet_NaN();
+        std::memcpy(target, &value, bytes);
+    }
 }
 
 class StringSource {
@@ -510,6 +525,11 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         }
         source.Advance(consumed);
         if (narrowInteger) std::memcpy(target, &wideInteger, length == "hh" ? 1 : length == "h" ? 2 : 4);
+        if (floating && !suppress) {
+            if (length == "L") StoreDefaultNaN<long double>(target, 10);
+            else if (length == "l") StoreDefaultNaN<double>(target, sizeof(double));
+            else StoreDefaultNaN<float>(target, sizeof(float));
+        }
         if (capped && conversion != 'c') {
             const int next = source.Peek();
             bool overflow = false;

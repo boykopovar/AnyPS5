@@ -422,6 +422,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 if (kind != ResourceKind::Lds && kind != ResourceKind::Gds) {
                     throw std::runtime_error("shared operation has invalid resource kind");
                 }
+                if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64 && kind == ResourceKind::Gds) {
+                    requirements.gdsInt64Atomics = true;
+                }
                 if (program.Resources().stage != IrShaderStage::Compute && program.Resources().stage != IrShaderStage::Mesh && kind == ResourceKind::Lds) {
                     requirements.functionLds = true;
                 } else if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64 && kind == ResourceKind::Lds) {
