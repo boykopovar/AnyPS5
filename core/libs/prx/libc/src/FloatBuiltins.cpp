@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <bit>
+#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -213,6 +214,77 @@ TFloat GeneratedNan(TFloat result, TFloat a, TFloat b) {
     return IsNan(result) && !IsNan(a) && !IsNan(b) ? QuietNan<TFloat>() : result;
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+
+template<typename TFloat>
+TFloat QuietOperand(TFloat value) {
+    using Rep = typename FloatFormat<TFloat>::Rep;
+    return std::bit_cast<TFloat>(static_cast<Rep>(std::bit_cast<Rep>(value) | (static_cast<Rep>(1) << (FloatFormat<TFloat>::SignificandBits - 1))));
+}
+
+template<typename TFloat>
+TFloat DefaultNan() {
+    using Rep = typename FloatFormat<TFloat>::Rep;
+    return Negate(std::bit_cast<TFloat>(std::bit_cast<Rep>(QuietNan<TFloat>())));
+}
+
+template<typename TResult, typename TOperation>
+TResult InStandardEnvironment(int rounding, TOperation operation) {
+    std::fenv_t saved;
+    std::fegetenv(&saved);
+    std::fesetenv(FE_DFL_ENV);
+    std::fesetround(rounding);
+    const volatile TResult result = operation();
+    std::fesetenv(&saved);
+    return result;
+}
+
+template<typename TFloat, typename TOperation>
+TFloat Standard(TFloat a, TFloat b, int rounding, TOperation operation) {
+    if (IsNan(a)) return QuietOperand(a);
+    if (IsNan(b)) return QuietOperand(b);
+    const TFloat result = InStandardEnvironment<TFloat>(rounding, [&] {
+        const volatile TFloat left = a;
+        const volatile TFloat right = b;
+        return operation(left, right);
+    });
+    return IsNan(result) ? DefaultNan<TFloat>() : result;
+}
+
+double AddDouble(double a, double b) {
+    return Standard(a, b, FE_TONEAREST, [](double x, double y) { return x + y; });
+}
+
+double MultiplyDouble(double a, double b) {
+    return Standard(a, b, FE_TONEAREST, [](double x, double y) { return x * y; });
+}
+
+double DivideDouble(double a, double b) {
+    return Standard(a, b, FE_TONEAREST, [](double x, double y) { return x / y; });
+}
+
+float AddFloat(float a, float b) {
+    return Standard(a, b, FE_TONEAREST, [](float x, float y) { return x + y; });
+}
+
+float MultiplyFloat(float a, float b) {
+    return Standard(a, b, FE_TONEAREST, [](float x, float y) { return x * y; });
+}
+
+float DivideFloat(float a, float b) {
+    return Standard(a, b, FE_TONEAREST, [](float x, float y) { return x / y; });
+}
+
+double DivideDoubleTowardZero(double a, double b) {
+    return Standard(a, b, FE_TOWARDZERO, [](double x, double y) { return x / y; });
+}
+
+float DivideFloatTowardZero(float a, float b) {
+    return Standard(a, b, FE_TOWARDZERO, [](float x, float y) { return x / y; });
+}
+
+#else
+
 double AddDouble(double a, double b) {
     std::uint32_t saved = 0;
     asm volatile("stmxcsr %[saved]\n\tldmxcsr %[standard]\n\taddsd %[b], %[a]\n\tldmxcsr %[saved]"
@@ -271,6 +343,8 @@ float DivideFloatTowardZero(float a, float b) {
     return a;
 }
 
+#endif
+
 template<typename TFloat>
 TFloat FlushSubnormalQuotient(TFloat quotient, TFloat truncated) {
     using Format = FloatFormat<TFloat>;
@@ -281,6 +355,22 @@ TFloat FlushSubnormalQuotient(TFloat quotient, TFloat truncated) {
     return std::bit_cast<TFloat>(static_cast<Rep>(std::bit_cast<Rep>(truncated) & signBit));
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+
+float TruncateDouble(double value) {
+    if (IsNan(value)) {
+        const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+        const auto sign = static_cast<std::uint32_t>(bits >> 32) & 0x80000000u;
+        return std::bit_cast<float>(sign | 0x7fc00000u | static_cast<std::uint32_t>((bits & 0xfffffffffffffull) >> 29));
+    }
+    return InStandardEnvironment<float>(FE_TONEAREST, [&] {
+        const volatile double source = value;
+        return static_cast<float>(source);
+    });
+}
+
+#else
+
 float TruncateDouble(double value) {
     std::uint32_t saved = 0;
     float result;
@@ -288,6 +378,8 @@ float TruncateDouble(double value) {
                  : [result] "=x"(result), [saved] "+m"(saved) : [value] "x"(value), [standard] "m"(DefaultMxcsr));
     return result;
 }
+
+#endif
 
 double ExtendFloat(float value) {
     const std::uint32_t bits = std::bit_cast<std::uint32_t>(value);

@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#if defined(__SSE2__)
 #include <emmintrin.h>
+#endif
 #include <limits>
 #include <stdexcept>
 
@@ -286,6 +288,24 @@ TFloat ExpProduct(TFloat y, TFloat ratio) {
     return product;
 }
 
+#if !defined(__SSE2__)
+std::int64_t ConvertToInteger(double x) {
+    if (!(x >= -0x1p63 && x < 0x1p63)) {
+        std::feraiseexcept(FE_INVALID);
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return static_cast<std::int64_t>(std::rint(x));
+}
+
+int TruncateToInteger(double x) {
+    if (!(x > -0x1p31 - 1 && x < 0x1p31)) {
+        std::feraiseexcept(FE_INVALID);
+        return std::numeric_limits<int>::min();
+    }
+    return static_cast<int>(x);
+}
+#endif
+
 template<typename TFloat, typename TScale>
 short VersionedExp(TFloat* value, TFloat y, short scale, TScale scaleBits) {
     constexpr bool single = sizeof(TFloat) == sizeof(float);
@@ -306,8 +326,12 @@ short VersionedExp(TFloat* value, TFloat y, short scale, TScale scaleBits) {
     const TFloat scaled = x * Constants::inverseLog;
     const TFloat rounded = scaled + (scaled < 0 ? -Constants::half : Constants::half);
     int whole;
+#if defined(__SSE2__)
     if constexpr (single) whole = _mm_cvtt_ss2si(_mm_set_ss(rounded));
     else whole = _mm_cvttsd_si32(_mm_set_sd(rounded));
+#else
+    whole = TruncateToInteger(rounded);
+#endif
     const TFloat count = static_cast<TFloat>(static_cast<short>(whole));
     x = std::fma(count, Constants::highLog, x);
     x = std::fma(count, Constants::lowLog, x);
@@ -460,6 +484,7 @@ float APS5_VABI rintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std:
 float APS5_VABI nearbyintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rintf(x); }
 double APS5_VABI nearbyint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 
+#if defined(__SSE2__)
 std::int64_t APS5_VABI lrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
 std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_set_ss(x)); }
@@ -467,6 +492,15 @@ std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_s
 long long APS5_VABI llrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
 long long APS5_VABI llrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_set_ss(x)); }
+#else
+std::int64_t APS5_VABI lrint_nid_postfix(double x) { return ConvertToInteger(x); }
+
+std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return ConvertToInteger(x); }
+
+long long APS5_VABI llrint_nid_postfix(double x) { return ConvertToInteger(x); }
+
+long long APS5_VABI llrintf_nid_postfix(float x) { return ConvertToInteger(x); }
+#endif
 
 double APS5_VABI drem_nid_postfix(double x, double y) {
     return Remainder(x, y);
