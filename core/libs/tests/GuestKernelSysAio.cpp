@@ -196,6 +196,7 @@ void ReadAndWrite(int file) {
     Require(aio_suspend_nid_postfix(none, 0, nullptr) == 0);
     Require(aio_suspend_nid_postfix(none, -1, nullptr) == -1 && Error() == Einval);
     Require(aio_suspend_nid_postfix(none, 257, nullptr) == -1 && Error() == Einval);
+    Require(aio_suspend_nid_postfix(nullptr, 1, nullptr) == -1 && Error() == Efault);
     const KernelTimespec badTime{0, 1000000000};
     Require(aio_suspend_nid_postfix(none, 1, &badTime) == -1 && Error() == Einval);
 }
