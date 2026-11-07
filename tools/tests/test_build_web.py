@@ -68,11 +68,14 @@ class LibraryPublicationTests(unittest.TestCase):
             license_file = source / "3rdparty/vgmstream/COPYING"
             license_file.parent.mkdir(parents=True)
             license_file.write_bytes(b"decoder license")
+            allocator_license = source / "3rdparty/mimalloc/LICENSE"
+            allocator_license.parent.mkdir(parents=True)
+            allocator_license.write_bytes(b"allocator license")
             runtime = root / "compiler"
             runtime.mkdir()
             for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
                 (runtime / name).write_bytes(b"compiler runtime")
-            for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            for name in ("mimalloc.dll", "mimalloc-redirect.dll", "libmimalloc.so"):
                 (libraries / name).write_bytes(b"allocator runtime")
             (build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + "\n", encoding="utf-8")
             (build / "core/libs/release-implibs.txt").write_text(
@@ -99,6 +102,7 @@ class LibraryPublicationTests(unittest.TestCase):
                             modules,
                         )
                         self.assertEqual(packaged.read("libs/licenses/vgmstream.txt"), b"decoder license")
+                        self.assertEqual(packaged.read("libs/licenses/mimalloc.txt"), b"allocator license")
                         if platform == "windows":
                             self.assertEqual(packaged.read("libs/libstdc++-6.dll"), b"compiler runtime")
             self.publish(archives["windows"], archives["linux"])
