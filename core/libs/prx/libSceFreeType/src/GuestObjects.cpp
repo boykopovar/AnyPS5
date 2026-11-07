@@ -129,3 +129,7 @@ void SyncSlot(GuestFace& face) {
 }
 
 }
+
+extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face) {
+    if (auto* owner = FreeType::FaceOf(face)) FreeType::SyncFace(*owner);
+}
