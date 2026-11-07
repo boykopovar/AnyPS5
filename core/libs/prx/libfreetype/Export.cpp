@@ -5,11 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI libfreetypePaletteDataGet_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("+AF9KH7aZbc", libfreetypePaletteDataGet_nid_no_patch);
-
 int APS5_VABI libfreetypeGetVarAxisFlags_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19,16 +14,6 @@ int APS5_VABI libfreetypeSetDefaultProperties_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("iuebdW9Mi0U", libfreetypeSetDefaultProperties_nid_no_patch);
-
-int APS5_VABI libfreetypePaletteSelect_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("qCyybpSyZzI", libfreetypePaletteSelect_nid_no_patch);
-
-int APS5_VABI libfreetypeGetColorGlyphLayer_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("ypZKJwPSVgQ", libfreetypeGetColorGlyphLayer_nid_no_patch);
 
 }
 
