@@ -6,7 +6,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcurl/Export.cpp) - 76 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcurl.c) and the [selected export metadata](https://gist.github.com/kyon-eth/996975adc28d0d270d032fb47eb297a7/52f3b6179ff69fbc0725e02ba146279ecd451f49) from two version-labelled images (SHA-256 `69baa557f91eba487275aa1b8e0aecd8dde1caa261eb2dd04106f8fa00e65361`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libcurl/Export.cpp) - these callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcurl.c) and the [selected export metadata](https://gist.github.com/kyon-eth/996975adc28d0d270d032fb47eb297a7/52f3b6179ff69fbc0725e02ba146279ecd451f49) from two version-labelled images (SHA-256 `69baa557f91eba487275aa1b8e0aecd8dde1caa261eb2dd04106f8fa00e65361`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -90,5 +90,7 @@
 ### Functional
 
 - [String lists and URL escaping](../../../core/libs/prx/libcurl/Export.cpp) have no console verification of their signatures, behavior or curl revision. The public signatures and 16-byte LP64 `curl_slist` layout follow curl 8.10.1's [list](https://github.com/curl/curl/blob/curl-8_10_1/lib/slist.c) and [escaping](https://github.com/curl/curl/blob/curl-8_10_1/lib/escape.c) APIs. Custom curl allocators are unavailable because `curl_global_init_mem` throws; allocations use the guest libc heap.
+
 - [Null string arguments](../../../core/libs/prx/libcurl/Export.cpp) to list append or escaping with a nonnegative length throw. curl 8.5.0 faults there; 8.10.1 returns null from escaping. The console behavior is unknown. Invalid non-null pointers and damaged lists are not validated.
+
 - [Escaping version differences](../../../core/libs/prx/libcurl/Export.cpp) remain unverified: the easy handle is ignored, as curl does from 7.82.0, and input size follows 8.10.1 rather than 8.5.0's dynamic-buffer cap. Older per-handle character conversion is not modeled. Tests do not exercise the unescape output-length overflow for strings larger than `INT_MAX`.

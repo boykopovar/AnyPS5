@@ -2,7 +2,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh/Export.cpp) - 65 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libReactNative.Modules.Vsh.c) and the [selected export metadata](https://gist.github.com/kyon-eth/c09d6fdb71ceddd6d272f23ccc02ea4d/c875018fc77e54dcf76c639ceb7a58b0a85cf16b) from two version-labelled images (SHA-256 `ee343a3ad0c3badb1ed2ebff777bcc24cc00fbfedf7797ae37ed51b4d46dcd9e`). The labels are not authenticated. Prototypes and behavior are unverified; the declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Data exports are not included. Three other functions shared with the WebAppLauncher library need separate provider-resolution analysis.
+- [Callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh/Export.cpp) - these callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libReactNative.Modules.Vsh.c) and the [selected export metadata](https://gist.github.com/kyon-eth/c09d6fdb71ceddd6d272f23ccc02ea4d/c875018fc77e54dcf76c639ceb7a58b0a85cf16b) from two version-labelled images (SHA-256 `ee343a3ad0c3badb1ed2ebff777bcc24cc00fbfedf7797ae37ed51b4d46dcd9e`). The labels are not authenticated. Prototypes and behavior are unverified; the declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Data exports are not included. Three other functions shared with the WebAppLauncher library need separate provider-resolution analysis.
 
 | Name | NID |
 | --- | --- |
