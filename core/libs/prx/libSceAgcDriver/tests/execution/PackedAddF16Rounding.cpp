@@ -30,9 +30,10 @@ struct Row {
     std::uint32_t lhs;
     std::uint32_t rhs;
     std::array<std::uint32_t, 4> expected;
+    std::uint32_t quiet = 0u;
 };
 
-constexpr std::array<Row, 12> Rows{{
+constexpr std::array<Row, 15> Rows{{
     {0xbc003c00u, 0x90001000u, {0xbc003c00u, 0xbc003c01u, 0xbc013c00u, 0xbc003c00u}},
     {0xbc003c00u, 0x80010001u, {0xbc003c00u, 0xbc003c01u, 0xbc013c00u, 0xbc003c00u}},
     {0xbc003c00u, 0x3c00bc00u, {0u, 0u, 0x80008000u, 0u}},
@@ -45,6 +46,9 @@ constexpr std::array<Row, 12> Rows{{
     {0x00000000u, 0x80008000u, {0u, 0u, 0x80008000u, 0u}},
     {0xbc003c00u, 0x10009000u, {0xbbff3bffu, 0xbbff3bffu, 0xbbff3bffu, 0xbbff3bffu}},
     {0x00010001u, 0x00010001u, {0x00020002u, 0x00020002u, 0x00020002u, 0x00020002u}},
+    {0xfbff7bffu, 0xbc003c00u, {0xfbff7bffu, 0xfbff7c00u, 0xfc007bffu, 0xfbff7bffu}},
+    {0xfd237c01u, 0x3c003c00u, {0xfd237c01u, 0xfd237c01u, 0xfd237c01u, 0xfd237c01u}, 0x02000200u},
+    {0x3c003c00u, 0x7e01fc05u, {0x7e01fc05u, 0x7e01fc05u, 0x7e01fc05u, 0x7e01fc05u}, 0x00000200u},
 }};
 
 std::uint32_t Add(std::uint32_t a, std::uint32_t b, std::uint32_t rounding, std::uint32_t denorm, bool ieee, bool overflow) {
@@ -149,7 +153,7 @@ int main(int argc, char** argv) {
                                             }
                                             expected |= bits << (half * 16u);
                                         }
-                                        if (op == 0u && denorm == 3u && !overflow) Require(expected == Rows[tid % Rows.size()].expected[rounding], "fixed rounding reference");
+                                        if (op == 0u && denorm == 3u && !overflow) Require(expected == (Rows[tid % Rows.size()].expected[rounding] | (ieee ? Rows[tid % Rows.size()].quiet : 0u)), "fixed rounding reference");
                                         if (Output[tid * 4u + op] != expected) {
                                             std::printf("integer=%u round=%u denorm=%u ieee=%u dx10=%u overflow=%u row=%u op=%u actual=%08x expected=%08x\n", integer, rounding, denorm, ieee, dx10, overflow, tid % static_cast<std::uint32_t>(Rows.size()), op, Output[tid * 4u + op], expected);
                                             throw std::runtime_error("packed add f16 rounding mismatch");
