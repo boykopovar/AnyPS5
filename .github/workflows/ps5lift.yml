@@ -1,0 +1,32 @@
+name: ps5lift
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  pull_request:
+    paths:
+      - ps5lift/**
+      - .github/workflows/ps5lift.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps5lift-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out SoftFloat
+        run: git submodule update --init --depth 1 3rdparty/softfloat
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18 python3
+      - name: Build the runtime
+        run: python3 ps5lift/tools/ps5lift.py runtime --triple aarch64-unknown-linux-gnu --output build/runtime --clang /usr/lib/llvm-18/bin/clang --clangxx /usr/lib/llvm-18/bin/clang++
