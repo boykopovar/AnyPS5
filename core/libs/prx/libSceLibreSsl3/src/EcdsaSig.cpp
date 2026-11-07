@@ -1,3 +1,59 @@
+/* $OpenBSD: ecdsa.c,v 1.19 2024/04/15 15:49:37 tb Exp $ */
+/* ====================================================================
+ * Copyright (c) 2000-2002 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
+
+#include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/libc.hpp"
@@ -62,6 +118,15 @@ void FreeObject(LibreSslAsn1Object* object) {
 
 extern "C" {
 
+void APS5_VABI ECDSA_SIG_get0_nid_postfix(const LibreSsl3EcdsaSig* sig, const void** r, const void** s) {
+    if (!sig && (r || s))
+        throw std::invalid_argument("ECDSA_SIG_get0 requires a signature when outputs are requested");
+    if (r)
+        *r = sig->r;
+    if (s)
+        *s = sig->s;
+}
+
 void APS5_VABI ASN1_TYPE_free_nid_postfix(Asn1Type* value) {
     if (!value) return;
     void* element = value->value.pointer;
@@ -77,8 +142,8 @@ void APS5_VABI ASN1_TYPE_free_nid_postfix(Asn1Type* value) {
     free_nid_postfix(value);
 }
 
-EcdsaSig* APS5_VABI ECDSA_SIG_new_nid_postfix(void) {
-    auto* signature = static_cast<EcdsaSig*>(malloc_nid_postfix(sizeof(EcdsaSig)));
+LibreSsl3EcdsaSig* APS5_VABI ECDSA_SIG_new_nid_postfix(void) {
+    auto* signature = static_cast<LibreSsl3EcdsaSig*>(malloc_nid_postfix(sizeof(LibreSsl3EcdsaSig)));
     if (!signature) {
         PutError(MallocFailure);
         return nullptr;
@@ -88,20 +153,20 @@ EcdsaSig* APS5_VABI ECDSA_SIG_new_nid_postfix(void) {
     return signature;
 }
 
-int APS5_VABI ECDSA_SIG_set0_nid_postfix(EcdsaSig* signature, Bignum* r, Bignum* s) {
+int APS5_VABI ECDSA_SIG_set0_nid_postfix(LibreSsl3EcdsaSig* signature, Bignum* r, Bignum* s) {
     if (!signature) throw std::invalid_argument(std::string(__func__) + ": null signature");
     if (!r || !s) return 0;
-    BN_free_nid_postfix(signature->r);
-    BN_free_nid_postfix(signature->s);
+    BN_free_nid_postfix(static_cast<Bignum*>(signature->r));
+    BN_free_nid_postfix(static_cast<Bignum*>(signature->s));
     signature->r = r;
     signature->s = s;
     return 1;
 }
 
-void APS5_VABI ECDSA_SIG_free_nid_postfix(EcdsaSig* signature) {
+void APS5_VABI ECDSA_SIG_free_nid_postfix(LibreSsl3EcdsaSig* signature) {
     if (!signature) return;
-    BN_free_nid_postfix(signature->r);
-    BN_free_nid_postfix(signature->s);
+    BN_free_nid_postfix(static_cast<Bignum*>(signature->r));
+    BN_free_nid_postfix(static_cast<Bignum*>(signature->s));
     free_nid_postfix(signature);
 }
 
