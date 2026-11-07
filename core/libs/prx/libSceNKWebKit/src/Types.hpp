@@ -164,6 +164,7 @@ public:
     Retained<Object> request;
     Retained<Object> originatingPage;
     bool wasUserInitiated = false;
+    bool isCancelled = false;
 };
 
 class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
