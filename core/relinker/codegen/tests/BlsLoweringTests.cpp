@@ -148,6 +148,30 @@ void execution() {
                     check(state, *Codegen::DecodeBls(site.data(), site.size()), value);
                 }
             }
+            for (const std::uint8_t dst : std::array<std::uint8_t, 2>{0, 4}) {
+                for (const std::int32_t displacement : {-176, -160, -152, -151, -145, -144, -140, -136}) {
+                    Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>((wide ? 0x80 : 0) | ((~dst & 15) << 3)), 0xF3,
+                        static_cast<std::uint8_t>(0x84 | (extension(operation) << 3)), 0x24};
+                    for (unsigned shift = 0; shift < 32; shift += 8)
+                        site.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
+                    constexpr std::uint64_t value = 0xFEDCBA9876543210ull;
+                    const auto operands = *Codegen::DecodeBls(site.data(), site.size());
+                    const Execution run(site, value, false, [&](Codegen::StubBodyBuilder& body, const Bytes&) {
+                        for (int part = 0; part < 2; ++part) {
+                            Bytes store{0xC7, 0x84, 0x24};
+                            const auto slot = static_cast<std::uint32_t>(displacement + part * 4);
+                            const auto word = static_cast<std::uint32_t>(value >> (part * 32));
+                            for (unsigned shift = 0; shift < 32; shift += 8) store.push_back(static_cast<std::uint8_t>(slot >> shift));
+                            for (unsigned shift = 0; shift < 32; shift += 8) store.push_back(static_cast<std::uint8_t>(word >> shift));
+                            body.Raw(store);
+                        }
+                        Codegen::EmitBls(body, operands);
+                    });
+                    auto state = LoweringExecution::InitialState();
+                    run.Run(state);
+                    check(state, operands, value);
+                }
+            }
         }
     }
 }
