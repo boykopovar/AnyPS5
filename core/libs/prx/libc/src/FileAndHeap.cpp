@@ -903,6 +903,19 @@ int APS5_VABI malloc_stats_fast_nid_postfix(void* stats) {
     return ApplicationHeapStatsFast_nid_no_patch(stats);
 }
 
+void APS5_VABI malloc_initialize_nid_postfix() {
+    ApplicationHeapEnsureInitialized_nid_no_patch();
+}
+
+void APS5_VABI malloc_finalize_nid_postfix() {
+    ApplicationHeapFinalize_nid_no_patch();
+}
+
+int APS5_VABI _malloc_fini_nid_postfix() {
+    malloc_finalize_nid_postfix();
+    return 0;
+}
+
 size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer) {
     return ApplicationHeapUsableSize_nid_no_patch(pointer);
 }

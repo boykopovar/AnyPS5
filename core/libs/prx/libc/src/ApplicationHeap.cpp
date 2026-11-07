@@ -198,6 +198,16 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
     if (heapFailure) std::rethrow_exception(heapFailure);
 }
 
+void ApplicationHeapEnsureInitialized_nid_no_patch() {
+    std::unique_lock lock(heapMutex);
+    ensureInitialized(lock);
+    if (heapFailure) std::rethrow_exception(heapFailure);
+}
+
+void ApplicationHeapFinalize_nid_no_patch() {
+    finalize();
+}
+
 void* ApplicationHeapAllocate_nid_no_patch(std::size_t bytes) {
     const auto allocate = callback<Allocate>(0);
     CallbackScope scope;
