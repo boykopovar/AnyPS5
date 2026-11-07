@@ -1,9 +1,11 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
@@ -43,6 +45,50 @@ static void Require(bool condition, std::source_location location = std::source_
 template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
     try { action(); } catch (const std::exception&) { return; }
     Require(false, location);
+}
+
+static void TestUseCertificateNull() {
+    constexpr std::uint64_t nullCertificateError = (20ULL << 24) | (0xfffULL << 12) | 67;
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_certificate_nid_postfix(nullptr, nullptr) == 0);
+    Require(ERR_get_error_nid_postfix() == nullCertificateError);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_certificate_nid_postfix(reinterpret_cast<LibreSslCtx*>(1), nullptr) == 0);
+    Require(ERR_peek_error_nid_postfix() == nullCertificateError);
+    Require(ERR_get_error_nid_postfix() == nullCertificateError);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    TestCtx ctx;
+    TestCtxInternal internal;
+    auto* ctxBytes = reinterpret_cast<unsigned char*>(&ctx);
+    auto* internalBytes = reinterpret_cast<unsigned char*>(&internal);
+    for (std::size_t index = 0; index < sizeof(ctx); ++index) ctxBytes[index] = static_cast<unsigned char>(index * 13 + 7);
+    for (std::size_t index = 0; index < sizeof(internal); ++index) internalBytes[index] = static_cast<unsigned char>(index * 17 + 11);
+    ctx.internal = &internal;
+    unsigned char ctxBefore[sizeof(ctx)];
+    unsigned char internalBefore[sizeof(internal)];
+    std::memcpy(ctxBefore, &ctx, sizeof(ctx));
+    std::memcpy(internalBefore, &internal, sizeof(internal));
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(1, 2, 3);
+    Require(SSL_CTX_use_certificate_nid_postfix(Context(&ctx), nullptr) == 0);
+    Require(std::memcmp(ctxBefore, &ctx, sizeof(ctx)) == 0);
+    Require(std::memcmp(internalBefore, &internal, sizeof(internal)) == 0);
+    Require(ERR_get_error_nid_postfix() == ((1ULL << 24) | (2ULL << 12) | 3));
+    Require(ERR_get_error_nid_postfix() == nullCertificateError);
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
+static void TestUseCertificateNonNull() {
+    int certificate = 0;
+    ERR_clear_error_nid_postfix();
+    RequireThrows([&] { SSL_CTX_use_certificate_nid_postfix(nullptr, &certificate); });
+    Require(ERR_get_error_nid_postfix() == 0);
+    TestCtx ctx;
+    RequireThrows([&] { SSL_CTX_use_certificate_nid_postfix(Context(&ctx), &certificate); });
+    Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestGetVerifyMode() {
@@ -104,6 +150,8 @@ static void TestSetPasswordUserdata() {
 }
 
 int main() {
+    TestUseCertificateNull();
+    TestUseCertificateNonNull();
     TestGetVerifyMode();
     TestGetCertStore();
     TestSetQuietShutdown();
