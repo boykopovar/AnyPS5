@@ -7,8 +7,6 @@ struct cairo_font_face_t;
 struct cairo_user_data_key_t {
     int unused;
 };
-struct FcPattern;
-
 namespace FreeType {
 struct GuestFaceRec;
 }
@@ -142,6 +140,7 @@ int APS5_VABI cairo_set_dash();
 int APS5_VABI cairo_pattern_set_filter();
 int APS5_VABI cairo_new_path();
 int APS5_VABI cairo_push_group();
+int APS5_VABI cairo_ft_font_options_substitute();
 int APS5_VABI cairo_device_to_user();
 int APS5_VABI cairo_glyph_free();
 int APS5_VABI cairo_select_font_face();
@@ -182,6 +181,4 @@ void* APS5_VABI cairo_font_face_get_user_data(cairo_font_face_t* face, const cai
 cairo_font_face_t* APS5_VABI cairo_font_face_reference(cairo_font_face_t* face);
 int APS5_VABI cairo_font_face_set_user_data(cairo_font_face_t* face, const cairo_user_data_key_t* key,
                                             void* data, cairo_destroy_func_t destroy);
-void APS5_VABI cairo_ft_font_options_substitute(cairo_font_options_t* options, FcPattern* pattern);
-
 }

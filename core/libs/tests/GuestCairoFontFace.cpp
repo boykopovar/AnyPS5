@@ -1,7 +1,6 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libcairo/include/InventoryExports.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
-#include "prx/libfontconfig/include/InventoryExports.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -10,7 +9,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <type_traits>
 #include <type_traits>
 
 namespace {
@@ -45,7 +43,6 @@ int main() {
     static_assert(std::is_same_v<decltype(cairo_font_face_destroy(nullptr)), void>);
     static_assert(std::is_same_v<decltype(cairo_font_face_get_user_data(nullptr, nullptr)), void*>);
     static_assert(std::is_same_v<decltype(cairo_font_face_set_user_data(nullptr, nullptr, nullptr, nullptr)), int>);
-    static_assert(std::is_same_v<decltype(cairo_ft_font_options_substitute(nullptr, nullptr)), void>);
 
     FreeType::GuestLibrary* guestLibrary = nullptr;
     FT_Library nativeLibrary = nullptr;
@@ -114,62 +111,6 @@ int main() {
     Require(cairo_font_face_get_user_data(nullFace, &first) == nullptr, "error face returned user data");
     Require(cairo_font_face_reference(nullFace) == nullFace, "error face reference changed its identity");
     cairo_font_face_destroy(nullFace);
-
-    auto* defaultOptions = cairo_font_options_create();
-    auto* emptyPattern = FcPatternCreate();
-    Require(defaultOptions != nullptr && emptyPattern != nullptr, "default options or pattern allocation failed");
-    cairo_ft_font_options_substitute(defaultOptions, emptyPattern);
-    int integerValue = -1;
-    FcBool booleanValue = -1;
-    Require(FcPatternGetBool(emptyPattern, "antialias", 0, &booleanValue) == FcResultNoMatch,
-            "default antialias option unexpectedly changed the pattern");
-    Require(FcPatternGetInteger(emptyPattern, "rgba", 0, &integerValue) == FcResultNoMatch,
-            "default subpixel order unexpectedly changed the pattern");
-    Require(FcPatternGetInteger(emptyPattern, "hintstyle", 0, &integerValue) == FcResultNoMatch,
-            "default hint style unexpectedly changed the pattern");
-    Require(FcPatternGetBool(emptyPattern, "hinting", 0, &booleanValue) == FcResultNoMatch,
-            "default hint metrics unexpectedly changed the pattern");
-    cairo_ft_font_options_substitute(nullptr, emptyPattern);
-    cairo_font_options_destroy(defaultOptions);
-    FcPatternDestroy(emptyPattern);
-
-    auto* options = cairo_font_options_create();
-    auto* pattern = FcPatternCreate();
-    Require(options != nullptr && pattern != nullptr, "options or pattern allocation failed");
-    cairo_font_options_set_antialias(options, CAIRO_ANTIALIAS_SUBPIXEL);
-    cairo_font_options_set_subpixel_order(options, CAIRO_SUBPIXEL_ORDER_VBGR);
-    cairo_font_options_set_hint_style(options, CAIRO_HINT_STYLE_FULL);
-    cairo_font_options_set_hint_metrics(options, CAIRO_HINT_METRICS_OFF);
-    cairo_ft_font_options_substitute(options, pattern);
-    Require(FcPatternGetBool(pattern, "antialias", 0, &booleanValue) == FcResultMatch && booleanValue == 1,
-            "subpixel antialias option was not substituted");
-    Require(FcPatternGetInteger(pattern, "rgba", 0, &integerValue) == FcResultMatch && integerValue == 4,
-            "vertical BGR subpixel order was not substituted");
-    Require(FcPatternGetInteger(pattern, "hintstyle", 0, &integerValue) == FcResultMatch && integerValue == 3,
-            "full hint style was not substituted");
-    Require(FcPatternGetBool(pattern, "hinting", 0, &booleanValue) == FcResultMatch && booleanValue == 0,
-            "disabled hint metrics were not substituted");
-    cairo_font_options_destroy(options);
-    FcPatternDestroy(pattern);
-
-    options = cairo_font_options_create();
-    pattern = FcPatternCreate();
-    Require(options != nullptr && pattern != nullptr, "second options or pattern allocation failed");
-    cairo_font_options_set_antialias(options, CAIRO_ANTIALIAS_NONE);
-    cairo_font_options_set_subpixel_order(options, CAIRO_SUBPIXEL_ORDER_RGB);
-    cairo_font_options_set_hint_style(options, CAIRO_HINT_STYLE_NONE);
-    cairo_font_options_set_hint_metrics(options, CAIRO_HINT_METRICS_ON);
-    cairo_ft_font_options_substitute(options, pattern);
-    Require(FcPatternGetBool(pattern, "antialias", 0, &booleanValue) == FcResultMatch && booleanValue == 0,
-            "disabled antialias option was not substituted");
-    Require(FcPatternGetInteger(pattern, "rgba", 0, &integerValue) == FcResultNoMatch,
-            "non-subpixel antialias option set an RGBA mode");
-    Require(FcPatternGetInteger(pattern, "hintstyle", 0, &integerValue) == FcResultMatch && integerValue == 0,
-            "no hint style was not substituted");
-    Require(FcPatternGetBool(pattern, "hinting", 0, &booleanValue) == FcResultMatch && booleanValue == 1,
-            "enabled hint metrics were not substituted");
-    cairo_font_options_destroy(options);
-    FcPatternDestroy(pattern);
 
     Require(FT_Done_FreeType_nid_postfix(guestLibrary) == 0, "guest FreeType shutdown failed");
     Require(FT_Done_FreeType(nativeLibrary) == 0, "native FreeType shutdown failed");

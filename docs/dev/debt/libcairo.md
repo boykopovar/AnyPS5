@@ -14,11 +14,11 @@
 
 ### Functional FreeType font-face integration
 
-- [FontFace.cpp](../../../core/libs/prx/libcairo/FontFace.cpp) implements six Cairo font-face lifetime, user-data and FreeType option-substitution exports. Font faces retain guest `FT_Face` objects with `FT_Reference_Face_nid_postfix` and release them on final destruction; user-data keys use pointer identity and invoke guest `APS5_VABI` destroy callbacks. Font options map to Fontconfig antialias, RGBA, hint-style and hinting pattern values. The FreeType bridge uses pinned `3rdparty/freetype` commit `37515cf56ba3349656049edbed89ffc6f6466f2d`. The caller must keep the owning `FT_Library` alive until its Cairo font faces are destroyed. Scaled fonts and glyph rasterization remain unimplemented.
+- [FontFace.cpp](../../../core/libs/prx/libcairo/FontFace.cpp) implements five Cairo font-face lifetime, user-data and FreeType face-construction exports. Font faces retain guest `FT_Face` objects with `FT_Reference_Face_nid_postfix` and release them on final destruction; user-data keys use pointer identity and invoke guest `APS5_VABI` destroy callbacks. The FreeType bridge uses pinned `3rdparty/freetype` commit `37515cf56ba3349656049edbed89ffc6f6466f2d`. The caller must keep the owning `FT_Library` alive until its Cairo font faces are destroyed. Fontconfig option substitution, scaled fonts and glyph rasterization remain unimplemented here.
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 118 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - the remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -115,6 +115,7 @@
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_new_path` | `hhuvB3JXuMM` |
 | `cairo_push_group` | `hlh15JjNtWg` |
+| `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
 | `cairo_device_to_user` | `jyf32aEUoMs` |
 | `cairo_glyph_free` | `lAEbTbSUTTo` |
 | `cairo_select_font_face` | `ldk9m5h+-no` |

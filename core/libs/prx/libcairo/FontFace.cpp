@@ -1,6 +1,5 @@
-#include "prx/libcairo/include/FontOptions.hpp"
+#include "prx/libcairo/include/InventoryExports.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
-#include "prx/libfontconfig/include/InventoryExports.hpp"
 
 #include <atomic>
 #include <limits>
@@ -138,19 +137,6 @@ int APS5_VABI cairo_font_face_set_user_data(cairo_font_face_t* face, const cairo
         }
     }
     return kSuccess;
-}
-
-void APS5_VABI cairo_ft_font_options_substitute(cairo_font_options_t* options, FcPattern* pattern) {
-    CairoFontOptionsValues values{};
-    if (!pattern || !CairoFontOptionsRead(options, values)) return;
-    if (values.antialias != CAIRO_ANTIALIAS_DEFAULT)
-        FcPatternAddBool(pattern, "antialias", values.antialias != CAIRO_ANTIALIAS_NONE);
-    if (values.antialias == CAIRO_ANTIALIAS_SUBPIXEL && values.subpixelOrder != CAIRO_SUBPIXEL_ORDER_DEFAULT)
-        FcPatternAddInteger(pattern, "rgba", values.subpixelOrder);
-    if (values.hintStyle != CAIRO_HINT_STYLE_DEFAULT)
-        FcPatternAddInteger(pattern, "hintstyle", values.hintStyle - CAIRO_HINT_STYLE_NONE);
-    if (values.hintMetrics != CAIRO_HINT_METRICS_DEFAULT)
-        FcPatternAddBool(pattern, "hinting", values.hintMetrics != CAIRO_HINT_METRICS_OFF);
 }
 
 }
