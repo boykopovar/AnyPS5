@@ -38,7 +38,7 @@ PeDirectory WindowsExportBuilder::Build(const std::map<std::string, std::uint32_
     return directory;
 }
 
-PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSection& dynamic, const WindowsLoadImage& image, const std::vector<Domain::ProgramHeader>& headers, const std::uint32_t tlsIndex, std::vector<std::uint32_t>& relocations, const std::string& name, std::vector<PeSection>& sections, std::uint32_t& nextRva) const {
+PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSection& dynamic, const WindowsLoadImage& image, const std::vector<Domain::ProgramHeader>& headers, const std::uint32_t tlsIndex, std::vector<std::uint32_t>& relocations, const std::string& name, std::vector<PeSection>& sections, std::uint32_t& nextRva, const bool functionSymbolRoots) const {
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     std::map<std::string, Relinker::GuestSymbol> symbols;
     std::map<std::string, std::uint32_t> exports;
@@ -71,7 +71,7 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
             relocations.push_back(rva);
         } else {
             if (type != 0 && type != 1 && type != 2) throw Domain::RelinkerException("Unsupported executable export type: " + symbolName);
-            rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
+            rva = image.GetRva(symbol.Value, functionSymbolRoots && type == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1));
         }
         exports.emplace(symbolName, rva);
     }
