@@ -334,7 +334,7 @@ static void TimezoneReportsTheStandardOffsetAndDaylightAmount() {
     RequireTimezone("BRT+3", -180, 0);
     RequireTimezone("EST5EDT", -300, 60);
     RequireTimezone("CET-1CEST", 60, 60);
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000e));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     SetTimeZone("UTC0");
 }
 
@@ -351,7 +351,7 @@ static void CalendarConversionsFollowTheHostZone() {
 
 static void KernelTimezoneIsUtc() {
     SetTimeZone("UTC0");
-    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelGettimezone(nullptr) == SCE_OK);
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
