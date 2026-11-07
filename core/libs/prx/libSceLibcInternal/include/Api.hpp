@@ -154,6 +154,14 @@ void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+[[noreturn]] void APS5_VABI _ZNKSs5_XranEv_nid_postfix(const GuestLocale::String* self);
+[[noreturn]] void APS5_VABI _ZNKSs5_XlenEv_nid_postfix(const GuestLocale::String* self);
+GuestLocale::String* APS5_VABI _ZNSs5eraseEmm_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6appendERKSsmm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6appendEmc_nid_postfix(GuestLocale::String* self, std::size_t count, char character);
+GuestLocale::String* APS5_VABI _ZNSs6assignEPKcm_nid_postfix(GuestLocale::String* self, const char* source, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6assignERKSsmm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6assignEmc_nid_postfix(GuestLocale::String* self, std::size_t count, char character);
 char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 char APS5_VABI sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
