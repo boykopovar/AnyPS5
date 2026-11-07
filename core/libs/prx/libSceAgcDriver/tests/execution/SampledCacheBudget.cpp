@@ -868,6 +868,36 @@ void releasedTests(Context context) {
     std::puts("resource cache released texture tests passed");
 }
 
+void pressureReleaseTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    ClearCachedTextures(context.device);
+    auto& cache = SharedResourceCache();
+    cache.Clear();
+    try {
+        Block block(context);
+        auto pinned = ImageResources(context, block, 0, 1, true);
+        const std::weak_ptr<Texture> texture = pinned->SampledTextures().front();
+        const std::weak_ptr<ShaderResources> pinnedSet = pinned;
+        cache.Insert({1}, pinned);
+        Require(cache.Find({1}) == pinned, "the resource cache rejected a descriptor set whose texture is cached");
+        pinned.reset();
+        const auto held = ImageResources(context, block, 1, 1, true);
+        ReleaseTextureCaches(~std::uint64_t{0});
+        Require(cache.Find({1}) == nullptr && pinnedSet.expired(), "a full release of the texture caches kept a cached descriptor set holding a sampled texture");
+        Require(texture.expired(), "a full release of the texture caches left alive a sampled texture only a cached descriptor set held");
+        Require(Sampled(context, block.Surface(1)) == held->SampledTextures().front(), "a full release of the texture caches dropped a sampled texture its caller holds");
+    } catch (...) {
+        cache.Clear();
+        throw;
+    }
+    cache.Clear();
+    ClearCachedTextures(context.device);
+    std::puts("texture cache release of cached descriptor sets passed");
+}
+
 void rescanTests(const Context& context) {
     constexpr std::uint32_t SmallSide = 128;
     constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide * 4u;
@@ -1568,6 +1598,7 @@ int main(int argc, char** argv) {
             recycleTests(context);
             heldTests(context);
             releasedTests(context);
+            pressureReleaseTests(context);
             rescanTests(context);
             viewEvictionTests(context);
             viewTests(context);
