@@ -1,6 +1,7 @@
 #include "prx/libSceNetCtlApDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
@@ -98,6 +99,9 @@ int main() {
     Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kResultUserCanceled);
     RequireCanceled(result);
+    errno = 71;
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
 
     Require(sceNetCtlApDialogOpen(&param) == 0);
     Require(sceNetCtlApDialogClose() == static_cast<int>(0x80B8000Bu));
