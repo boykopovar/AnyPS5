@@ -988,12 +988,12 @@ int APS5_VABI libSceHmdUnknown_mVIneDkja6c_nid_no_patch() {
 APS5_EXPORT("mVIneDkja6c", libSceHmdUnknown_mVIneDkja6c_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_miduc55U7q8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("miduc55U7q8", libSceHmdUnknown_miduc55U7q8_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("nlAZlOKJy+c", libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch);
 
@@ -1013,7 +1013,7 @@ int APS5_VABI libSceHmdUnknown_qS18I6w2SZM_nid_no_patch() {
 APS5_EXPORT("qS18I6w2SZM", libSceHmdUnknown_qS18I6w2SZM_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("rczCXLh2-b4", libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch);
 
@@ -1023,7 +1023,7 @@ int APS5_VABI libSceHmdUnknown_sWZSZB_minus_mnw4_nid_no_patch() {
 APS5_EXPORT("sWZSZB-mnw4", libSceHmdUnknown_sWZSZB_minus_mnw4_nid_no_patch);
 
 int APS5_VABI libSceHmdUnknown_smQw6nT8PcA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Hmd::ParameterInvalid;
 }
 APS5_EXPORT("smQw6nT8PcA", libSceHmdUnknown_smQw6nT8PcA_nid_no_patch);
 
