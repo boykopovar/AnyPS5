@@ -20,6 +20,8 @@
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
+#include <relinker/analysis/SceCodeExtent.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <map>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
@@ -68,9 +70,24 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         }
     }
     std::vector<Codegen::TrampolineSite> trampolines;
+    std::optional<std::vector<Domain::CodeRange>> dataTables;
     if (options.ToIntel) {
-        const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        Relinker::ElfReader reader(std::move(sourceBytes));
+        const auto segments = reader.ReadProgramHeaders();
+        std::vector<Relinker::UnusedNidFilter::StrictCodeRegion> functions;
+        Domain::VirtualAddress pltGot = 0;
+        Domain::ByteCount pltRelocationsSize = 0;
+        if (std::any_of(segments.begin(), segments.end(), [](const Domain::ProgramHeader& header) { return header.Type == Elfpatcher::PT_SCE_DYNLIBDATA || header.Type == Elfpatcher::PT_GNU_EH_FRAME; })) {
+            for (const auto& header : segments)
+                if (header.Type == Elfpatcher::PT_DYNAMIC)
+                    for (const auto& tag : reader.ReadDynamicTags(header)) {
+                        if (tag.Tag == Elfpatcher::DT_PLTGOT || tag.Tag == Elfpatcher::DT_OS_PLTGOT) pltGot = tag.Value;
+                        if (tag.Tag == Elfpatcher::DT_PLTRELSZ || tag.Tag == Elfpatcher::DT_OS_PLTRELSZ) pltRelocationsSize = tag.Value;
+                    }
+            functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(reader.GetRawBytes(), segments, {}, {});
+        }
+        dataTables = Relinker::DataTableRanges(reader.GetRawBytes(), segments, functions, pltGot, pltRelocationsSize);
+        auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(reader.TakeBytes(), segments, *dataTables);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
@@ -99,7 +116,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         std::make_shared<Relinker::ValidationPolicy>(),
         std::make_shared<Relinker::SysVDynamicSectionBuilder>(),
         options.UnusedFilterLevel == 2 ? Relinker::MakeStrictUnusedNidFilter(inputProgress) : Relinker::MakeUnusedNidFilter(),
-        options.UnusedFilterLevel, inputProgress
+        options.UnusedFilterLevel, inputProgress, std::move(dataTables)
     );
 
     { std::ostringstream message; message << "System: " << (windows ? "Windows" : macos ? "macOS" : "Linux") << "; unused-filter=" << options.UnusedFilterLevel << "\n"; inputProgress.Message(message.str()); }

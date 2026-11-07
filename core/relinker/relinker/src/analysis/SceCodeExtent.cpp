@@ -1,4 +1,5 @@
 #include <relinker/analysis/SceCodeExtent.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <algorithm>
 #include <cstring>
 
@@ -52,6 +53,26 @@ std::vector<CodeRange> SceUnwindRanges(std::span<const std::uint8_t> segment, Vi
     for (const auto& function : functions)
         if (function.Begin >= segmentVAddr && function.Begin - segmentVAddr < segment.size() && function.End > function.Begin)
             ranges.push_back({function.Begin - segmentVAddr, std::min<ByteCount>(function.End - segmentVAddr, segment.size())});
+    return ranges;
+}
+
+std::vector<CodeRange> DataTableRanges(std::span<const std::uint8_t> image, const std::vector<ProgramHeader>& headers, const std::vector<UnusedNidFilter::StrictCodeRegion>& functions, VirtualAddress pltGot, ByteCount pltRelocationsSize) {
+    std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
+    for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
+    std::sort(unwindRanges.begin(), unwindRanges.end());
+    const bool sceImage = std::any_of(headers.begin(), headers.end(), [](const ProgramHeader& header) { return header.Type == 0x61000000; });
+    std::vector<CodeRange> ranges;
+    for (const auto& header : headers) {
+        if (header.Type != 1 || (header.Flags & 1) == 0 || header.Offset > image.size() || header.FileSize > image.size() - header.Offset) continue;
+        auto code = image.subspan(header.Offset, header.FileSize);
+        if (sceImage)
+            if (const auto end = FindSceCodeEnd(code, header.MappedAddress, functions, pltGot, pltRelocationsSize))
+                code = code.first(*end - header.MappedAddress);
+        for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
+            const auto end = std::min<VirtualAddress>(table.End, header.MappedAddress + code.size());
+            if (table.Begin >= header.MappedAddress && table.Begin < end) ranges.push_back({table.Begin, end});
+        }
+    }
     return ranges;
 }
 
