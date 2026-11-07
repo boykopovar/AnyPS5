@@ -2790,45 +2790,7 @@ float APS5_VABI atanhf_nid_postfix(float x) {
     return std::signbit(x) ? -t : t;
 }
 
-/*-
- * ====================================================
- * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
- *
- * Developed at SunSoft, a Sun Microsystems, Inc. business.
- * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
- * is preserved.
- * ====================================================
- * 
- * k_sin.c and k_cos.c merged by Steven G. Kargl.
- */
-static void KernelSincos(double x, double y, int iy, double* sinp, double* cosp) {
-    const double S1 = -1.66666666666666324348e-01;
-    const double S2 = 8.33333333332248946124e-03;
-    const double S3 = -1.98412698298579493134e-04;
-    const double S4 = 2.75573137070700676789e-06;
-    const double S5 = -2.50507602534068634195e-08;
-    const double S6 = 1.58969099521155010221e-10;
-    const double C1 = 4.16666666666666019037e-02;
-    const double C2 = -1.38888888888741095749e-03;
-    const double C3 = 2.48015872894767294178e-05;
-    const double C4 = -2.75573143513906633035e-07;
-    const double C5 = 2.08757232129817482790e-09;
-    const double C6 = -1.13596475577881948265e-11;
-    const double z = x * x;
-    double w = z * z;
-    double r = S2 + z * (S3 + z * S4) + z * w * (S5 + z * S6);
-    const double v = z * x;
-    if (iy == 0)
-        *sinp = x + v * (S1 + z * r);
-    else
-        *sinp = x - ((z * (y / 2 - v * r) - y) - v * S1);
-    r = z * (C1 + z * (C2 + z * C3)) + w * w * (C4 + z * (C5 + z * C6));
-    const double hz = z / 2;
-    w = 1 - hz;
-    *cosp = w + (((1 - w) - hz) + (z * r - x * y));
-}
-
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_sincos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_sincos.c */
 /*-
  * ====================================================
  * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
@@ -2850,7 +2812,8 @@ void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
             *cosp = 1;
             return;
         }
-        KernelSincos(x, 0, 0, sinp, cosp);
+        *sinp = KernelSin(x, 0, 0);
+        *cosp = KernelCos(x, 0);
         return;
     }
     if (ix >= 0x7ff00000) {
@@ -2864,20 +2827,20 @@ void APS5_VABI sincos_nid_postfix(double x, double* sinp, double* cosp) {
     double y[2];
     switch (RemPio2(x, y) & 3) {
         case 0:
-            KernelSincos(y[0], y[1], 1, sinp, cosp);
+            *sinp = KernelSin(y[0], y[1], 1);
+            *cosp = KernelCos(y[0], y[1]);
             break;
         case 1:
-            KernelSincos(y[0], y[1], 1, cosp, sinp);
-            *cosp = -*cosp;
+            *sinp = KernelCos(y[0], y[1]);
+            *cosp = -KernelSin(y[0], y[1], 1);
             break;
         case 2:
-            KernelSincos(y[0], y[1], 1, sinp, cosp);
-            *sinp = -*sinp;
-            *cosp = -*cosp;
+            *sinp = -KernelSin(y[0], y[1], 1);
+            *cosp = -KernelCos(y[0], y[1]);
             break;
         default:
-            KernelSincos(y[0], y[1], 1, cosp, sinp);
-            *sinp = -*sinp;
+            *sinp = -KernelCos(y[0], y[1]);
+            *cosp = KernelSin(y[0], y[1], 1);
     }
 }
 
