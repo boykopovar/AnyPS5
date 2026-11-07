@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1126,6 +1127,95 @@ static void TestEvpCleanup() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+static void RequireCcmVector(const Cipher* cipher, const Bytes& key, const Bytes& nonce, const Bytes& aad, const Bytes& plain, const Bytes& encrypted, const Bytes& tag) {
+    unsigned char context[ContextBytes] {};
+    Bytes output(plain.size(), 0);
+    unsigned char computed[16] {};
+    int written = -1;
+    const int plainLength = static_cast<int>(plain.size());
+    const int aadLength = static_cast<int>(aad.size());
+    const int nonceLength = static_cast<int>(nonce.size());
+    const int tagLength = static_cast<int>(tag.size());
+    for (std::size_t chunk : {plain.size(), std::size_t {1}, std::size_t {7}}) {
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x9, nonceLength, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, tagLength, nullptr) == 1);
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), nonce.data()) == 1);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, nullptr, plainLength) == 1 && written == plainLength);
+        Require(EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, aad.data(), aadLength) == 1);
+        for (std::size_t offset = 0; offset < plain.size();) {
+            const std::size_t size = chunk < plain.size() - offset ? chunk : plain.size() - offset;
+            Require(EVP_EncryptUpdate_nid_postfix(Context(context), output.data() + offset, &written, plain.data() + offset, static_cast<int>(size)) == 1);
+            Require(written == static_cast<int>(size));
+            offset += size;
+        }
+        Require(output == encrypted);
+        Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), output.data(), &written) == 1 && written == 0);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x10, tagLength, computed) == 1);
+        Require(Bytes(computed, computed + tagLength) == tag);
+
+        auto expected = tag;
+        Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x9, nonceLength, nullptr) == 1);
+        Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, tagLength, expected.data()) == 1);
+        Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), nonce.data()) == 1);
+        Require(EVP_DecryptUpdate_nid_postfix(Context(context), nullptr, &written, nullptr, plainLength) == 1 && written == plainLength);
+        Require(EVP_DecryptUpdate_nid_postfix(Context(context), nullptr, &written, aad.data(), aadLength) == 1);
+        std::fill(output.begin(), output.end(), 0);
+        for (std::size_t offset = 0; offset < plain.size();) {
+            const std::size_t size = chunk < plain.size() - offset ? chunk : plain.size() - offset;
+            Require(EVP_DecryptUpdate_nid_postfix(Context(context), output.data() + offset, &written, encrypted.data() + offset, static_cast<int>(size)) == 1);
+            Require(written == static_cast<int>(size));
+            offset += size;
+        }
+        Require(output == plain);
+        Require(EVP_DecryptFinal_ex_nid_postfix(Context(context), output.data(), &written) == 1 && written == 0);
+        Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+    }
+}
+
+static void TestAesCcm128() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_128_ccm_nid_postfix());
+    Require(cipher != nullptr && cipher->nid == 896 && cipher->blockSize == 1 && cipher->keyLength == 16);
+    Require(cipher->ivLength == 12 && cipher->flags == 0x104077 && cipher->contextSize == 512);
+    Require(cipher->init != nullptr && cipher->doCipher != nullptr && cipher->control != nullptr);
+    Require(cipher->applicationData == nullptr && cipher->setAsn1Parameters == nullptr && cipher->getAsn1Parameters == nullptr);
+
+    RequireCcmVector(cipher, Hex("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"), Hex("00000003020100a0a1a2a3a4a5"), Hex("0001020304050607"),
+        Hex("08090a0b0c0d0e0f101112131415161718191a1b1c1d1e"), Hex("588c979a61c663d2f066d0c2c0f989806d5f6b61dac384"), Hex("17e8d12cfdf926e0"));
+    RequireCcmVector(cipher, Hex("404142434445464748494a4b4c4d4e4f"), Hex("10111213141516"), Hex("0001020304050607"),
+        Hex("20212223"), Hex("7162015b"), Hex("4dac255d"));
+
+    unsigned char context[ContextBytes] {};
+    unsigned char tag[16] {};
+    unsigned char out[8] {};
+    int written = -1;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x9, 14, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x9, 6, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, 7, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, 2, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, 8, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x10, 4, tag) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x9, 13, nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, 8, nullptr) == 1);
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, Hex("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf").data(), Hex("00000003020100a0a1a2a3a4a5").data()) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, Hex("08090a0b0c0d0e0f").data(), 8) == 1 && written == 8);
+    Require(EVP_EncryptFinal_ex_nid_postfix(Context(context), out, &written) == 1 && written == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x9, 7, nullptr) == 1);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, 4, nullptr) == 0);
+    Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), 0x11, 4, tag) == 1);
+    Require(EVP_DecryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, Hex("404142434445464748494a4b4c4d4e4f").data(), Hex("10111213141516").data()) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), nullptr, &written, nullptr, 4) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), nullptr, &written, Hex("0001020304050607").data(), 8) == 1);
+    Require(EVP_DecryptUpdate_nid_postfix(Context(context), out, &written, Hex("7162015b").data(), 4) == 0 && written == 0);
+    Require(std::all_of(out, out + 4, [](unsigned char value) { return value == 0; }));
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1148,6 +1238,7 @@ int main() {
     TestAesGcmVectors();
     TestAesGcmControl();
     TestAesGcmTls();
+    TestAesCcm128();
     TestEvpCleanup();
     return 0;
 }
