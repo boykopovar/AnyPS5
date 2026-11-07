@@ -62,7 +62,8 @@ void HostHdrProbe::Poll(SDL_Window* window) {
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
     if (SDL_GetWindowWMInfo(window, &info) != SDL_TRUE || info.subsystem != SDL_SYSWM_WINDOWS) {
-        if (!published) AgcDriverSetHostDisplayHdr_nid_postfix({});
+        Release();
+        AgcDriverSetHostDisplayHdr_nid_postfix({});
         published = true;
         return;
     }
