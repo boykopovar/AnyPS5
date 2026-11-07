@@ -112,6 +112,24 @@ int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value) {
     return value->length;
 }
 
+int APS5_VABI ASN1_STRING_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* value) {
+    if (!value) return 0;
+    if (value->length > 0 && !value->data) APS5_INVALID_ARG_EX;
+    char buffer[80];
+    int used = 0;
+    for (int index = 0; index < value->length; ++index) {
+        const unsigned char character = value->data[index];
+        const bool printable = (character >= ' ' && character <= '~') || character == '\n' || character == '\r';
+        buffer[used++] = printable ? static_cast<char>(character) : '.';
+        if (used == sizeof(buffer)) {
+            if (LibreSslBioWrite_nid_no_patch(bio, buffer, used) <= 0) return 0;
+            used = 0;
+        }
+    }
+    if (used > 0 && LibreSslBioWrite_nid_no_patch(bio, buffer, used) <= 0) return 0;
+    return 1;
+}
+
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value) {
     if (!value) APS5_INVALID_ARG_EX;
     return value->type;
@@ -152,6 +170,26 @@ int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String
     *cursor = 0;
     *output = result;
     return static_cast<int>(size);
+}
+
+int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object) {
+    if (!object || !object->data) return LibreSslBioWrite_nid_no_patch(bio, "NULL", 4);
+    int capacity = 256;
+    auto* text = static_cast<char*>(malloc_nid_postfix(capacity));
+    if (!text) return -1;
+    int length = i2t_ASN1_OBJECT_nid_postfix(text, capacity, object);
+    if (length > capacity - 1) {
+        std::memset(text, 0, capacity);
+        free_nid_postfix(text);
+        capacity = length + 1;
+        text = static_cast<char*>(malloc_nid_postfix(capacity));
+        if (!text) return -1;
+        length = i2t_ASN1_OBJECT_nid_postfix(text, capacity, object);
+    }
+    const int written = length <= 0 ? LibreSslBioWrite_nid_no_patch(bio, "<INVALID>", 9) : LibreSslBioWrite_nid_no_patch(bio, text, length);
+    std::memset(text, 0, capacity);
+    free_nid_postfix(text);
+    return written;
 }
 
 }
