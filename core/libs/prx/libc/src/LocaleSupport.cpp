@@ -1043,7 +1043,42 @@ const SceV2CtypeWideVtable g_sceV2CtypeWideVtable{
     SceV2WideCtypeToLower_nid_no_patch, SceV2WideCtypeToLowerRange_nid_no_patch, SceV2WideCtypeToUpper_nid_no_patch, SceV2WideCtypeToUpperRange_nid_no_patch,
     SceV2WideCtypeWiden_nid_no_patch, SceV2WideCtypeWidenRange_nid_no_patch, SceV2WideCtypeNarrow_nid_no_patch, SceV2WideCtypeNarrowRange_nid_no_patch};
 constexpr auto g_sceV2CtypeUshortVtable = MakeSceV2FacetVtable<12, g_sceV2CtypeFamily, DestroySceV2WideCtypeFacet_nid_no_patch>();
-constexpr auto g_sceV2NumGetCharVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
+template<typename Text> struct SceV2InputIterator {
+    GuestLocale::Streambuf* buffer;
+    bool got;
+    Text value;
+};
+
+static_assert(sizeof(SceV2InputIterator<char>) == 0x10);
+
+template<typename Text> struct SceV2NumGetVtable {
+    GuestLocale::FacetVtable facet;
+    SceV2InputIterator<Text> (APS5_VABI *getBool)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, bool* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedShort)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint16_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedInt)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint32_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getLongLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+    SceV2InputIterator<Text> (APS5_VABI *getUnsignedLongLong)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+    void (APS5_VABI *getFloating[3])();
+    SceV2InputIterator<Text> (APS5_VABI *getPointer)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value);
+};
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetBool_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, bool* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedShort_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint16_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedInt_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint32_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetPointer_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value);
+
+template<typename Text> const SceV2NumGetVtable<Text> g_sceV2NumGetVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2NumGetBool_nid_no_patch<Text>, SceV2NumGetUnsignedShort_nid_no_patch<Text>, SceV2NumGetUnsignedInt_nid_no_patch<Text>, SceV2NumGetLong_nid_no_patch<Text>,
+    SceV2NumGetUnsignedLong_nid_no_patch<Text>, SceV2NumGetLongLong_nid_no_patch<Text>, SceV2NumGetUnsignedLongLong_nid_no_patch<Text>,
+    {SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>},
+    SceV2NumGetPointer_nid_no_patch<Text>};
 constexpr auto g_sceV2NumGetWideVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 template<typename Text> struct SceV2NumPutVtable {
@@ -1816,7 +1851,7 @@ bool InitializeSceV2TimePutFacet(GuestLocale::Facet* self, bool) {
 }
 
 SceV2FacetKind g_sceV2CtypeChar{&_ZNSt8__sce_v25ctypeIcE2idE_nid_postfix, sizeof(SceV2CtypeFacet), &g_sceV2CtypeCharVtable.facet, InitializeSceV2CtypeFacet, nullptr};
-SceV2FacetKind g_sceV2NumGetChar{&_ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetChar{&_ZNSt8__sce_v27num_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumPutChar{&_ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumpunctChar{&_ZNSt8__sce_v28numpunctIcE2idE_nid_postfix, sizeof(GuestLocale::NumpunctFacet), &g_sceV2NumpunctCharVtable.facet, InitializeSceV2NumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtChar{&_ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CodecvtCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
@@ -2161,6 +2196,336 @@ template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongDou
 template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutPointer_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const void* value) {
     char digits[64];
     return PutSceV2IntegerDigits(out, stream, fill, digits, sprintf_s_nid_postfix(digits, sizeof(digits), "%p", value));
+}
+
+constexpr char g_sceV2IntegerAtoms[] = "0123456789ABCDEFabcdef-+Xx";
+constexpr std::size_t SceV2AtomZero = 0;
+constexpr std::size_t SceV2AtomMinus = 22;
+constexpr std::size_t SceV2AtomPlus = 23;
+constexpr std::size_t SceV2AtomUpperX = 24;
+constexpr std::size_t SceV2AtomLowerX = 25;
+constexpr std::size_t SceV2AtomCount = 26;
+constexpr std::size_t SceV2IntegerDigits = 32;
+constexpr std::uint32_t SceV2BadGrouping = 0x100;
+constexpr std::int32_t SceV2IosEofBit = 0x1;
+constexpr std::int32_t SceV2IosFailBit = 0x2;
+
+struct SceV2InputStreambufVtable {
+    const void* reserved[7];
+    int (APS5_VABI *underflow)(GuestLocale::Streambuf* self);
+    int (APS5_VABI *uflow)(GuestLocale::Streambuf* self);
+};
+
+const SceV2InputStreambufVtable& SceV2InputVirtuals(const GuestLocale::Streambuf* buffer) {
+    return *reinterpret_cast<const SceV2InputStreambufVtable*>(buffer->vtable);
+}
+
+char** SceV2GetNext(const GuestLocale::Streambuf* buffer) {
+    return static_cast<char**>(const_cast<void*>(buffer->reserved[6]));
+}
+
+std::int32_t* SceV2GetCount(const GuestLocale::Streambuf* buffer) {
+    return static_cast<std::int32_t*>(const_cast<void*>(buffer->reservedCounts[1]));
+}
+
+template<typename Text> Text PeekSceV2Character(SceV2InputIterator<Text>& in) {
+    if (in.got) return in.value;
+    if (in.buffer != nullptr) {
+        const auto* next = reinterpret_cast<const Text*>(*SceV2GetNext(in.buffer));
+        if (next != nullptr && *SceV2GetCount(in.buffer) > 0) {
+            in.value = *next;
+        } else {
+            const int character = SceV2InputVirtuals(in.buffer).underflow(in.buffer);
+            if (character == -1) in.buffer = nullptr;
+            else in.value = static_cast<Text>(character);
+        }
+    }
+    in.got = true;
+    return in.value;
+}
+
+template<typename Text> void AdvanceSceV2Character(SceV2InputIterator<Text>& in) {
+    if (in.buffer != nullptr) {
+        char** next = SceV2GetNext(in.buffer);
+        std::int32_t* count = SceV2GetCount(in.buffer);
+        if (*next != nullptr && *count > 0) {
+            --*count;
+            *next += sizeof(Text);
+            in.got = false;
+            return;
+        }
+        if (SceV2InputVirtuals(in.buffer).uflow(in.buffer) != -1) {
+            in.got = false;
+            return;
+        }
+        in.buffer = nullptr;
+    }
+    in.got = true;
+}
+
+template<typename Text> bool SceV2InputEnded(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last) {
+    PeekSceV2Character(first);
+    PeekSceV2Character(last);
+    return (first.buffer == nullptr) == (last.buffer == nullptr);
+}
+
+template<typename Text> SceV2InputIterator<Text> FinishSceV2Get(SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, std::int32_t* state) {
+    if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
+    return first;
+}
+
+template<typename Text> bool SkipSceV2Separators(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, Text separator) {
+    bool skipped = false;
+    if (separator == Text{}) return skipped;
+    while (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == separator) {
+        AdvanceSceV2Character(first);
+        skipped = true;
+    }
+    return skipped;
+}
+
+bool SceV2GroupsMatch(const std::string& grouping, const std::string& groups, std::size_t count) {
+    std::size_t next = 0;
+    unsigned char size = 0;
+    for (;;) {
+        if (next != grouping.size()) size = static_cast<unsigned char>(grouping[next++]);
+        if (static_cast<unsigned char>(size - 1) <= 0x7d) {
+            if (count == 1) return static_cast<signed char>(groups[0]) <= static_cast<signed char>(size);
+            if (static_cast<unsigned char>(groups[count - 1]) != size) return false;
+        }
+        if (--count == 0) return true;
+    }
+}
+
+template<typename Text> std::uint32_t GetSceV2IntegerField(char* digits, SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, std::int32_t flags, const GuestLocale::Implementation* locale) {
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
+    const Text separator = grouping.empty() ? Text{} : SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
+    Text atoms[sizeof(g_sceV2IntegerAtoms)];
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2IntegerAtoms, g_sceV2IntegerAtoms + sizeof(g_sceV2IntegerAtoms), atoms);
+    bool bad = SkipSceV2Separators(first, last, separator);
+    std::size_t length = 0;
+    if (!SceV2InputEnded(first, last)) {
+        const Text sign = PeekSceV2Character(first);
+        if (sign == atoms[SceV2AtomPlus] || sign == atoms[SceV2AtomMinus]) {
+            digits[length++] = sign == atoms[SceV2AtomPlus] ? '+' : '-';
+            AdvanceSceV2Character(first);
+        }
+    }
+    bad = SkipSceV2Separators(first, last, separator) || bad;
+    const std::int32_t field = flags & SceV2IosBaseField;
+    const bool prefixAllowed = field == 0 || field == SceV2IosHex;
+    int base = field == 0 ? 0 : field == SceV2IosOct ? 8 : field == SceV2IosHex ? 16 : 10;
+    bool seen = false;
+    if (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == atoms[SceV2AtomZero]) {
+        AdvanceSceV2Character(first);
+        seen = true;
+        if (prefixAllowed && !SceV2InputEnded(first, last) && (PeekSceV2Character(first) == atoms[SceV2AtomLowerX] || PeekSceV2Character(first) == atoms[SceV2AtomUpperX])) {
+            AdvanceSceV2Character(first);
+            base = 16;
+            seen = false;
+        } else if (field == 0) {
+            base = 8;
+        }
+    }
+    const std::size_t digitLimit = base == 8 ? 8 : base == 16 ? 22 : 10;
+    std::string groups(1, static_cast<char>(seen));
+    std::size_t group = 0;
+    bool nonzero = false;
+    while (!SceV2InputEnded(first, last)) {
+        const Text character = PeekSceV2Character(first);
+        const auto index = static_cast<std::size_t>(std::find(atoms, atoms + SceV2AtomCount, character) - atoms);
+        if (index < digitLimit) {
+            digits[length] = g_sceV2IntegerAtoms[index];
+            if ((nonzero || index != SceV2AtomZero) && length < SceV2IntegerDigits - 1) {
+                ++length;
+                nonzero = true;
+            }
+            seen = true;
+            if (groups[group] != CHAR_MAX) ++groups[group];
+        } else if (separator == Text{} || character != separator) {
+            break;
+        } else if (groups[group] == '\0') {
+            bad = true;
+        } else {
+            groups.push_back('\0');
+            ++group;
+        }
+        AdvanceSceV2Character(first);
+    }
+    std::size_t count = 0;
+    if (group != 0) {
+        count = groups[group] > 0 ? group + 1 : group;
+        if (groups[group] <= 0) bad = true;
+    }
+    if (seen && !bad && count != 0) bad = !SceV2GroupsMatch(grouping, groups, count);
+    if (!seen) return static_cast<unsigned char>(~base);
+    if (!nonzero) digits[length++] = '0';
+    digits[length] = '\0';
+    return static_cast<unsigned char>(base) | (bad ? SceV2BadGrouping : 0);
+}
+
+int SceV2FieldBase(std::uint32_t field) {
+    return static_cast<signed char>(field & 0xff);
+}
+
+template<typename Text> int GetSceV2LocaleText(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, std::size_t fields, const Text* names) {
+    for (std::size_t offset = 0; names[0] != Text{} && names[offset] != Text{}; ++offset) {
+        if (names[offset] == names[0]) ++fields;
+    }
+    if (fields == 0) return -2;
+    std::string columns(fields, '\0');
+    int answer = -2;
+    for (std::size_t column = 1;; ++column) {
+        const char matched = static_cast<char>(column < 127 ? column : 127);
+        bool prefix = false;
+        std::size_t offset = 0;
+        for (std::size_t field = 0; field < fields; ++field) {
+            while (names[offset] != Text{} && names[offset] != names[0]) ++offset;
+            if (columns[field] != '\0') {
+                offset += static_cast<std::size_t>(static_cast<signed char>(columns[field]));
+            } else if (names[offset += column] == Text{} || names[offset] == names[0]) {
+                columns[field] = matched;
+                answer = static_cast<int>(field);
+            } else if (SceV2InputEnded(first, last) || names[offset] != PeekSceV2Character(first)) {
+                columns[field] = matched;
+            } else {
+                prefix = true;
+            }
+        }
+        if (!prefix || SceV2InputEnded(first, last)) return answer;
+        AdvanceSceV2Character(first);
+        answer = -1;
+    }
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetBool_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, bool* value) {
+    if ((stream->flags & SceV2IosBoolAlpha) == 0) {
+        char digits[SceV2IntegerDigits];
+        const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+        if (SceV2FieldBase(field) < 0) {
+            *value = false;
+            *state = SceV2IosFailBit;
+            return FinishSceV2Get(first, last, state);
+        }
+        char* end = nullptr;
+        int error = 0;
+        const std::int64_t parsed = _ZNSt8__sce_v26_StolxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error);
+        if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) {
+            *value = true;
+            *state = SceV2IosFailBit;
+        } else {
+            *value = parsed != 0;
+            if (static_cast<std::uint64_t>(parsed) >= 2) *state = SceV2IosFailBit;
+        }
+        return FinishSceV2Get(first, last, state);
+    }
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), *stream->locale);
+    std::basic_string<Text> names(1, Text{});
+    names += TakeSceV2String(SceV2Punctuation<Text>(punct).falsename, punct);
+    names.push_back(Text{});
+    names += TakeSceV2String(SceV2Punctuation<Text>(punct).truename, punct);
+    const int match = GetSceV2LocaleText(first, last, 2, names.c_str());
+    *value = match == 1;
+    if (match != 0 && match != 1) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedShort_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint16_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    const bool negative = digits[0] == '-';
+    char* start = digits + (negative ? 1 : 0);
+    char* end = nullptr;
+    int error = 0;
+    const std::uint64_t parsed = _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(start, &end, SceV2FieldBase(field), &error);
+    if (parsed > 0xffff || end == start || error != 0) {
+        *state = SceV2IosFailBit;
+        *value = 0xffff;
+    } else {
+        *value = static_cast<std::uint16_t>(negative ? 0 - parsed : parsed);
+    }
+    if ((field & SceV2BadGrouping) != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedInt_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint32_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0 || (field & SceV2BadGrouping) != 0) digits[0] = '\0';
+    if (digits[0] == '\0') {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = static_cast<std::uint32_t>(_ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error));
+    if (end == digits || error != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongLong_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = _ZNSt8__sce_v27_StollxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error);
+    if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLongLong_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, stream->flags, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = _ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error);
+    if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value) {
+    return SceV2NumGetLongLong_nid_no_patch<Text>(self, first, last, stream, state, value);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value) {
+    return SceV2NumGetUnsignedLongLong_nid_no_patch<Text>(self, first, last, stream, state, value);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetPointer_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value) {
+    char digits[SceV2IntegerDigits];
+    const std::uint32_t field = GetSceV2IntegerField(digits, first, last, SceV2IosHex, *stream->locale);
+    if (SceV2FieldBase(field) < 0) {
+        *state = SceV2IosFailBit;
+        *value = nullptr;
+        return FinishSceV2Get(first, last, state);
+    }
+    char* end = nullptr;
+    int error = 0;
+    *value = reinterpret_cast<void*>(static_cast<std::uintptr_t>(_ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(digits, &end, SceV2FieldBase(field), &error)));
+    if (end == digits || error != 0) {
+        *state = SceV2IosFailBit;
+        *value = nullptr;
+    }
+    if ((field & SceV2BadGrouping) != 0) *state = SceV2IosFailBit;
+    return FinishSceV2Get(first, last, state);
 }
 
 }
