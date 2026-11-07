@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -173,6 +174,36 @@ void CheckLegacyStateCallback() {
     Require(legacyStateCall.calls == 1, "the legacy callback got the state again");
     Require(sceNpUnregisterStateCallback() == 0, "unregistering the legacy callback");
     Require(sceNpUnregisterStateCallback() == NotRegistered, "unregistering the legacy callback twice");
+}
+
+void CheckGamePresenceCallbacksA() {
+    constexpr int CallbackMax = static_cast<int>(0x8055001Du);
+    int dummy = 0;
+    void* const cb1 = reinterpret_cast<void*>(&AbortingGamePresenceCallback);
+    void* const cb2 = reinterpret_cast<void*>(&dummy);
+    Require(sceNpRegisterGamePresenceCallbackA(nullptr, &dummy) == InvalidArgument, "null game presence callback");
+    Require(sceNpUnregisterGamePresenceCallbackA(0) == NotRegistered, "unregistering id 0");
+    Require(sceNpUnregisterGamePresenceCallbackA(-1) == NotRegistered, "unregistering negative id");
+    Require(sceNpUnregisterGamePresenceCallbackA(1) == NotRegistered, "unregistering unknown id");
+    int ids[8]{};
+    for (int i = 0; i < 8; ++i) {
+        void* const cb = (i % 2 == 0) ? cb1 : cb2;
+        ids[i] = sceNpRegisterGamePresenceCallbackA(cb, &dummy);
+        Require(ids[i] == i + 1, "game presence callback id must be monotonic starting at 1");
+    }
+    Require(sceNpRegisterGamePresenceCallbackA(cb1, &dummy) == CallbackMax, "ninth game presence callback");
+    Require(sceNpCheckCallback() == 0, "checking callbacks does not invoke game presence callback A");
+    Require(sceNpUnregisterGamePresenceCallbackA(ids[3]) == 0, "unregistering valid callback id");
+    Require(sceNpUnregisterGamePresenceCallbackA(ids[3]) == NotRegistered, "double unregistering callback id");
+    const int reusedId = sceNpRegisterGamePresenceCallbackA(cb2, &dummy);
+    Require(reusedId == 9, "re-registering into freed slot must receive next monotonic id 9");
+    Require(sceNpRegisterGamePresenceCallbackA(cb1, &dummy) == CallbackMax, "table must be full again");
+    for (int i = 0; i < 8; ++i) {
+        if (i == 3) continue;
+        Require(sceNpUnregisterGamePresenceCallbackA(ids[i]) == 0, "unregistering remaining callback");
+    }
+    Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == 0, "unregistering reused callback id");
+    Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == NotRegistered, "double unregistering reused id");
 }
 
 void CheckRequestTimeouts() {
@@ -682,7 +713,25 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckEmptyDestructors() {
+    unsigned char object[0x40];
+    unsigned char untouched[sizeof(object)];
+    std::memset(object, 0xa5, sizeof(object));
+    std::memcpy(untouched, object, sizeof(object));
+    for (auto destructor : {_ZN3sce2np10NpOnlineIdD1Ev, _ZN3sce2np10NpOnlineIdD2Ev, _ZN3sce2np12NpTitleTokenD1Ev, _ZN3sce2np12NpTitleTokenD2Ev,
+                            _ZN3sce2np13NpAccessTokenD1Ev, _ZN3sce2np13NpAccessTokenD2Ev, _ZN3sce2np4NpIdD1Ev, _ZN3sce2np4NpIdD2Ev,
+                            _ZN3sce2np4UserD1Ev, _ZN3sce2np4UserD2Ev}) {
+        destructor(object);
+        Require(std::memcmp(object, untouched, sizeof(object)) == 0, "an empty destructor wrote the object");
+    }
+    libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch();
+    libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch();
+    libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch();
+    libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
+}
+
 int main() {
+    CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckTicketTeardown();
     CheckUnregisteredClientError();
@@ -691,6 +740,7 @@ int main() {
     CheckUserIdQueries();
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
+    CheckGamePresenceCallbacksA();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
     CheckWaitAsync();
