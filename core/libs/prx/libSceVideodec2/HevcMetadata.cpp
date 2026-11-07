@@ -410,11 +410,11 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
             else if (type == 36) flags.endSequencePresent = 1;
             else if (type == 37) flags.endStreamPresent = 1;
             else if (type == 39 || type == 40) {
+                const bool hadPictureTiming = flags.pictureTimingPresent;
                 auto message = PictureTiming(bytes, flags, transferAmbiguous);
-                if (!message.empty()) {
-                    if (type != 39 || !timing.empty()) throw std::runtime_error("unsupported HEVC picture-timing association");
-                    timing = std::move(message);
-                }
+                if (!hadPictureTiming && flags.pictureTimingPresent && (type != 39 || pictureSps))
+                    throw std::runtime_error("unsupported HEVC picture-timing association");
+                if (!message.empty()) timing = std::move(message);
             } else if (type < 32) {
                 const bool first = bits.Read(1) != 0;
                 if (type >= 16 && type <= 23) bits.Skip(1);

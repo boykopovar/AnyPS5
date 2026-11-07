@@ -721,6 +721,22 @@ void CabacPadding() {
     Require(!invalid.unsupported.empty(), "missing emulation prevention was accepted");
 }
 
+void PictureTimingAssociation() {
+    for (const auto& message : std::array{
+             std::vector<std::uint8_t>{0, 0, 1, 0x50, 1, 1, 0, 0x80},
+             std::vector<std::uint8_t>{0, 0, 1, 0x4e, 1, 1, 0, 0x80},
+             std::vector<std::uint8_t>{0, 0, 1, 0x4e, 1, 1, 1, 0x11, 0x80}}) {
+        std::vector<std::uint8_t> bytes(HevcMetadataFixture::Rich.begin(), HevcMetadataFixture::Rich.end());
+        bytes.insert(bytes.end(), message.begin(), message.end());
+        Videodec2Hevc::State state;
+        const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, bytes);
+        Require(metadata.unsupported == "unsupported HEVC picture-timing association", "misplaced picture-timing metadata was accepted");
+    }
+    Videodec2Hevc::State state;
+    const auto metadata = Videodec2Hevc::Parse_nid_no_patch(state, HevcMetadataFixture::Interlaced);
+    Require(metadata.unsupported.empty() && metadata.info.pictureTimingPresent == 1 && metadata.info.picStruct == 1, "picture-timing prefix before picture");
+}
+
 void MalformedParameterHistory() {
     const std::vector<std::uint8_t> original(HevcFixture::HevcMain10Stream.begin(), HevcFixture::HevcMain10Stream.end());
     Decoder decoder(2);
@@ -797,6 +813,7 @@ int main(int argc, char** argv) {
     ParameterReplacements();
     ExtendedMetadata();
     CabacPadding();
+    PictureTimingAssociation();
     MalformedParameterHistory();
     TransferAssociation();
 }
