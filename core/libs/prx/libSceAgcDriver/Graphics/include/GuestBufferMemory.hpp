@@ -427,6 +427,7 @@ public:
         return false;
     }
     void MarkStagedWrites() const;
+    void NoteCarriedShadows(const Recorder& recorder) const;
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
