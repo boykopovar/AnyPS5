@@ -12,17 +12,7 @@
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000Au);
-constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
 constexpr int COMMON_DIALOG_ERROR_BUSY = static_cast<int>(0x80B80007u);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
-constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
 std::atomic<int> g_status{COMMON_DIALOG_STATUS_NONE};
 

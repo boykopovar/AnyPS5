@@ -1,4 +1,5 @@
 #include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include <atomic>
@@ -11,14 +12,6 @@ namespace {
 std::atomic<int> g_status{0};
 std::atomic<bool> g_presented{false};
 
-constexpr int COMMON_DIALOG_STATUS_RUNNING = 2;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
-constexpr int COMMON_DIALOG_RESULT_OK = 0;
-constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004u);
-constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
-constexpr int COMMON_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000Bu);
-constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 constexpr int BUTTON_ID_OK = 1;
 
 std::atomic<int> g_buttonId{BUTTON_ID_OK};
