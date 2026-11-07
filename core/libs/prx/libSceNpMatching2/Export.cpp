@@ -466,9 +466,9 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, st
     return 0;
 }
 
-int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+extern "C" bool NpMatching2IsInitialized_nid_no_patch() {
+    std::lock_guard lock(matching2Mutex);
+    return matching2Initialized;
 }
 
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo(void) {
