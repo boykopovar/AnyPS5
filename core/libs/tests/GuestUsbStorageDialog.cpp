@@ -80,6 +80,7 @@ int main() {
     Require(sceUsbStorageDialogGetStatus() == kStatusFinished);
 
     Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceUsbStorageDialogGetResult(reinterpret_cast<UsbStorageDialogResult*>(0x10)) == static_cast<int>(0x80B8000Au));
     result.size = 79;
     Require(sceUsbStorageDialogGetResult(&result) == static_cast<int>(0x80B8000Au));
     result.size = sizeof(result);
