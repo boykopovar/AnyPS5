@@ -191,6 +191,9 @@ static void TestSecurityOrigin() {
         StringCase{"http://example.com:/p", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
         StringCase{"http://example.com./p", "http", "example.com.", 0, "http://example.com.", "http_example.com._0"},
         StringCase{"http://example.1a/", "http", "example.1a", 0, "http://example.1a", "http_example.1a_0"},
+        StringCase{"http://example.0xfg/", "http", "example.0xfg", 0, "http://example.0xfg", "http_example.0xfg_0"},
+        StringCase{"http://example.0xg/", "http", "example.0xg", 0, "http://example.0xg", "http_example.0xg_0"},
+        StringCase{"http://example.0x1z/", "http", "example.0x1z", 0, "http://example.0x1z", "http_example.0x1z_0"},
         StringCase{"http://under_score.example/", "http", "under_score.example", 0, "http://under_score.example", "http_under_score.example_0"},
         StringCase{"http:/example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
         StringCase{"http:example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
@@ -256,7 +259,7 @@ static void TestSecurityOrigin() {
         CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromStr), sc.expectedDbId);
         WKRelease(fromStr);
     }
-    for (const char* input : {"http://[::1]/", "http://[::1]:8080/", "file://[::1]/x", "http://caf\xC3\xA9.example/", "http://a%20b.example/", "http://%41.example/", "http://xn--nxasmq6b.example/", "http://sub.XN--abc.example/", "http://127.0.0.1/", "http://0x7f.1/", "http://1.2.3.4./", "http://192.168.1/", "http://example.0x/", "blob:https://example.com/uuid", "BLOB:foo"}) {
+    for (const char* input : {"http://[::1]/", "http://[::1]:8080/", "file://[::1]/x", "http://caf\xC3\xA9.example/", "http://a%20b.example/", "http://%41.example/", "http://xn--nxasmq6b.example/", "http://sub.XN--abc.example/", "http://127.0.0.1/", "http://0x7f.1/", "http://1.2.3.4./", "http://192.168.1/", "http://example.0x/", "http://example.0xff/", "http://example.0XFF/", "http://example.0xAbC/", "blob:https://example.com/uuid", "BLOB:foo"}) {
         const auto* inStr = WKStringCreateWithUTF8CString(input);
         bool threw = false;
         const void* created = nullptr;
@@ -269,14 +272,14 @@ static void TestSecurityOrigin() {
         WKRelease(inStr);
         Require(threw);
     }
-    const auto noAccessScheme = _ZN3WTF10StringImpl6createEPKDsj(u"wss", 3);
-    const auto* wssInStr = WKStringCreateWithUTF8CString("wss://example.com");
-    const auto* beforeRegistration = WKSecurityOriginCreateFromString(wssInStr);
-    WKRelease(wssInStr);
-    CheckOriginString(WKSecurityOriginCopyToString(beforeRegistration), "wss://example.com");
+    const auto noAccessScheme = _ZN3WTF10StringImpl6createEPKDsj(u"http", 4);
+    const auto* httpInStr = WKStringCreateWithUTF8CString("http://example.com");
+    const auto* beforeRegistration = WKSecurityOriginCreateFromString(httpInStr);
+    WKRelease(httpInStr);
+    CheckOriginString(WKSecurityOriginCopyToString(beforeRegistration), "http://example.com");
     WKRelease(beforeRegistration);
     _ZN7WebCore20LegacySchemeRegistry27registerURLSchemeAsNoAccessERKN3WTF6StringE(noAccessScheme);
-    for (const char* input : {"wss://example.com", "WSS://example.com:443/path", "wss://[::1]/"}) {
+    for (const char* input : {"http://example.com", "HTTP://example.com:8080/path", "http://[::1]/"}) {
         const auto* inStr = WKStringCreateWithUTF8CString(input);
         const auto* noAccess = WKSecurityOriginCreateFromString(inStr);
         WKRelease(inStr);
@@ -286,11 +289,13 @@ static void TestSecurityOrigin() {
         CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(noAccess), "__0");
         WKRelease(noAccess);
     }
-    const auto* wsInStr = WKStringCreateWithUTF8CString("ws://example.com");
-    const auto* stillWs = WKSecurityOriginCreateFromString(wsInStr);
-    WKRelease(wsInStr);
-    CheckOriginString(WKSecurityOriginCopyToString(stillWs), "ws://example.com");
-    WKRelease(stillWs);
+    for (const char* input : {"https://example.com", "ws://example.com", "ftp://example.com"}) {
+        const auto* inStr = WKStringCreateWithUTF8CString(input);
+        const auto* stillValid = WKSecurityOriginCreateFromString(inStr);
+        WKRelease(inStr);
+        CheckOriginString(WKSecurityOriginCopyToString(stillValid), input);
+        WKRelease(stillValid);
+    }
     const auto* fromNull = WKSecurityOriginCreateFromString(nullString.Get());
     Require(fromNull != nullptr);
     Require(WKSecurityOriginGetPort(fromNull) == 0);

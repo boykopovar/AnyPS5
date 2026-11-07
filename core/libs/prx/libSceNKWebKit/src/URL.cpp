@@ -450,17 +450,6 @@ bool EqualsLettersIgnoringASCIICase(const std::u16string& text, std::u16string_v
     return copy == lowercaseLiteral;
 }
 
-bool IsValidScheme(const std::u16string& scheme) {
-    if (scheme.empty()) return false;
-    for (std::size_t i = 0; i < scheme.size(); ++i) {
-        const char16_t c = scheme[i];
-        const bool alpha = (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z');
-        const bool other = (c >= u'0' && c <= u'9') || c == u'+' || c == u'-' || c == u'.';
-        if (!(alpha || (i && other))) return false;
-    }
-    return true;
-}
-
 bool ParseAuthorityPort(std::u16string_view text, std::optional<std::uint16_t>& port) {
     if (text.empty()) return true;
     unsigned value = 0;
@@ -500,7 +489,6 @@ std::u16string EncodeForFileName(const std::u16string& text) {
     const auto output = _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(&input);
     if (!output.impl) throw std::bad_alloc();
     std::u16string result;
-    result.reserve(output.impl->length);
     const bool is8Bit = output.impl->hashAndFlags & 4;
     for (unsigned i = 0; i < output.impl->length; ++i) {
         result.push_back(is8Bit ? static_cast<const unsigned char*>(output.impl->data)[i]
@@ -527,13 +515,11 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     const auto schemeEnd = text.find(u':');
     if (schemeEnd == std::u16string::npos) return CreateOpaqueOrigin();
     auto protocol = text.substr(0, schemeEnd);
-    if (!IsValidScheme(protocol)) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(protocol);
     if (protocol == u"blob") throw std::runtime_error("WKSecurityOriginCreateFromString: blob URL origins are not implemented");
-    if (NKWebKit::IsURLSchemeRegisteredAsNoAccess(protocol)) return CreateOpaqueOrigin();
     const bool isFile = protocol == u"file";
     const bool isSpecial = isFile || protocol == u"http" || protocol == u"https" || protocol == u"ftp" || protocol == u"ws" || protocol == u"wss";
-    if (!isSpecial) return CreateOpaqueOrigin();
+    if (!isSpecial || NKWebKit::IsURLSchemeRegisteredAsNoAccess(protocol)) return CreateOpaqueOrigin();
 
     const auto isSlash = [](char16_t c) { return c == u'/' || c == u'\\'; };
     const std::u16string rest = text.substr(schemeEnd + 1);
