@@ -662,7 +662,36 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckAsmLifecycle() {
+    constexpr int AsmAlreadyInitialized = static_cast<int>(0x8055A201u);
+    constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
+    constexpr int ClientAlreadyInitialized = static_cast<int>(0x8055A281u);
+    constexpr int ClientNotInitialized = static_cast<int>(0x8055A282u);
+    constexpr int ClientInvalidArgument = static_cast<int>(0x8055A283u);
+    Require(sceNpAsmTerminate() == AsmNotInitialized, "sceNpAsmTerminate must reject an uninitialized service");
+    Require(sceNpAsmAbort() == AsmNotInitialized, "sceNpAsmAbort must reject an uninitialized service");
+    Require(sceNpAsmInitialize() == 0, "sceNpAsmInitialize failed");
+    Require(sceNpAsmInitialize() == AsmAlreadyInitialized, "sceNpAsmInitialize must reject a second initialization");
+    Require(sceNpAsmAbort() == 0, "sceNpAsmAbort failed");
+    Require(sceNpAsmTerminate() == 0, "sceNpAsmTerminate failed");
+    Require(sceNpAsmTerminate() == AsmNotInitialized, "sceNpAsmTerminate must reject a second termination");
+    int client = 0;
+    const char param[4] = {};
+    Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject an uninitialized client");
+    Require(sceNpAsmClientInitialize(&client, nullptr) == ClientInvalidArgument, "sceNpAsmClientInitialize must reject a null parameter");
+    Require(sceNpAsmClientInitialize(&client, param) == 0, "sceNpAsmClientInitialize failed");
+    Require(sceNpAsmClientInitialize(&client, nullptr) == ClientAlreadyInitialized, "sceNpAsmClientInitialize must reject a second initialization");
+    char titleId[16] = "PPSA00000_00";
+    Require(sceNpAsmClientSetNpTitleId(nullptr, titleId) == ClientInvalidArgument, "sceNpAsmClientSetNpTitleId must reject a null client");
+    Require(sceNpAsmClientSetNpTitleId(&client, nullptr) == ClientInvalidArgument, "sceNpAsmClientSetNpTitleId must reject a null title id");
+    Require(sceNpAsmClientSetNpTitleId(&client, titleId) == 0, "sceNpAsmClientSetNpTitleId failed");
+    Require(sceNpAsmClientTerminate(&client) == 0, "sceNpAsmClientTerminate failed");
+    Require(sceNpAsmClientSetNpTitleId(&client, titleId) == ClientNotInitialized, "sceNpAsmClientSetNpTitleId must reject a terminated client");
+    Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject a second termination");
+}
+
 int main() {
+    CheckAsmLifecycle();
     CheckSandboxInfo();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();

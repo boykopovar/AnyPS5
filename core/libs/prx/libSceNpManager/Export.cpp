@@ -39,6 +39,21 @@ static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
+static constexpr int SCE_NP_ASM_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055A201);
+static constexpr int SCE_NP_ASM_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055A202);
+static constexpr int SCE_NP_ASM_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055A203);
+static constexpr int SCE_NP_ASM_CLIENT_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055A281);
+static constexpr int SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055A282);
+static constexpr int SCE_NP_ASM_CLIENT_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055A283);
+
+namespace {
+std::mutex g_asmMutex;
+bool g_asmInitialized = false;
+bool g_asmClientInitialized = false;
+const void* g_asmClient = nullptr;
+std::array<char, 16> g_asmTitleId = {};
+}
+
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND = static_cast<int>(0x80552B05);
 
@@ -121,7 +136,8 @@ int nextGamePresenceHandle = 0;
 extern "C" {
 
 int APS5_VABI sceNpAsmAbort(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmInitialized) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
     return 0;
 }
 int APS5_VABI sceNpAsmClientAbortRequest(void) {
@@ -248,16 +264,33 @@ int APS5_VABI sceNpAsmClientGetServiceIdInfoA(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAsmClientInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmClientInitialize(void* client, const void* param) {
+    std::lock_guard lock(g_asmMutex);
+    if (g_asmClientInitialized) return SCE_NP_ASM_CLIENT_ERROR_ALREADY_INITIALIZED;
+    if (!param) return SCE_NP_ASM_CLIENT_ERROR_INVALID_ARGUMENT;
+    g_asmClientInitialized = true;
+    g_asmClient = client;
     return 0;
 }
-int APS5_VABI sceNpAsmClientSetNpTitleId(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmClientSetNpTitleId(void* client, const char* npTitleId) {
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmClientInitialized) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
+    if (!client || !npTitleId) return SCE_NP_ASM_CLIENT_ERROR_INVALID_ARGUMENT;
+    std::array<char, 16> title = {};
+    for (std::size_t index = 0; index < title.size(); ++index) {
+        if (!GuestCopyIn_nid_no_patch(&title[index], npTitleId + index, sizeof(char))) return SCE_NP_ASM_CLIENT_ERROR_INVALID_ARGUMENT;
+        if (title[index] == 0) break;
+    }
+    g_asmTitleId = title;
     return 0;
 }
-int APS5_VABI sceNpAsmClientTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmClientTerminate(void* client) {
+    (void)client;
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmClientInitialized) return SCE_NP_ASM_CLIENT_ERROR_NOT_INITIALIZED;
+    g_asmClientInitialized = false;
+    g_asmClient = nullptr;
+    g_asmTitleId.fill(0);
     return 0;
 }
 int APS5_VABI sceNpAsmCreateConnection(void) {
@@ -305,11 +338,15 @@ int APS5_VABI sceNpAsmGetServiceIdInfo(void) {
     return 0;
 }
 int APS5_VABI sceNpAsmInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_asmMutex);
+    if (g_asmInitialized) return SCE_NP_ASM_ERROR_ALREADY_INITIALIZED;
+    g_asmInitialized = true;
     return 0;
 }
 int APS5_VABI sceNpAsmTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmInitialized) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
+    g_asmInitialized = false;
     return 0;
 }
 int APS5_VABI sceNpCheckNpAvailabilityA(int reqId, int userId) {
