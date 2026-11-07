@@ -1561,7 +1561,6 @@ static void TestRunLoop() {
 
     Require(callCount == 11);
 }
-}
 
 int main() {
     TestTypeIDs();
