@@ -57,6 +57,7 @@ void APS5_VABI formatQuantizer_nid_postfix(void** quantizers, std::uint8_t mode,
                                            std::size_t position, std::int32_t shiftedUv, std::int32_t scaled);
 std::int32_t APS5_VABI getACPredMode_nid_postfix(void* macroblock, std::int32_t format);
 void APS5_VABI InitZigzagScan_nid_postfix(void* context);
+void APS5_VABI freeQuantizer_nid_postfix(void** quantizers);
 void APS5_VABI setUniformQuantizer_nid_postfix(void* codec, std::size_t band);
 void APS5_VABI useDCQuantizer_nid_postfix(void* codec, std::size_t tile);
 void APS5_VABI useLPQuantizer_nid_postfix(void* codec, std::size_t count, std::size_t tile);
@@ -148,7 +149,6 @@ int APS5_VABI checkImageBuffer_nid_postfix();
 int APS5_VABI detachISRead_nid_postfix();
 int APS5_VABI detachISWrite_nid_postfix();
 int APS5_VABI freePredInfo_nid_postfix();
-int APS5_VABI freeQuantizer_nid_postfix();
 int APS5_VABI freeTileInfo_nid_postfix();
 int APS5_VABI getTilePos_nid_postfix();
 int APS5_VABI initMRPtr_nid_postfix();

@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -54,6 +55,11 @@ std::int32_t APS5_VABI getACPredMode_nid_postfix(void* macroblock, std::int32_t 
 
 void APS5_VABI InitZigzagScan_nid_postfix(void* context) {
     JxrInitZigzagScan_nid_no_patch(context);
+}
+
+void APS5_VABI freeQuantizer_nid_postfix(void** quantizers) {
+    Require(quantizers != nullptr, __func__, "null quantizer table");
+    if (quantizers[0]) free_nid_postfix(quantizers[0]);
 }
 
 } // extern "C"
