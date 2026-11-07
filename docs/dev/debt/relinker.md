@@ -2,6 +2,8 @@
 
 ### Functional
 
+- [Function symbol roots](../../../core/relinker/relinker/src/analysis/CodeInstructionCollector.cpp) - code reachable only through unresolved computed jumps is not proved complete by `--function-symbol-roots`. Calls, including indirect calls, are assumed to return, so a noreturn call followed by zero padding or non-code can be rejected. The mode ignores defined function symbol sizes during code discovery and export validation, preserving their original metadata; coverage follows existing control-flow discovery and unwind information. The sfiii-ps5 companion's incorrect sizes are reported in [#14893](https://github.com/boykopovar/AnyPS5/issues/14893); no title execution or console loader validation has been performed.
+
 - Execution of a title using [MULX lowering](../../../core/relinker/codegen/src/x86/MulxLowering.cpp) under Rosetta and precise fault delivery inside its spill sequence have not been verified. The lowering test passes under Rosetta on an M5 with macOS 26.2. The Rosetta host observations below predate this lowering for MULX. The stub uses 192 bytes below RSP, leaving the 128-byte red zone intact; direct RSP references to its spill slots throw, while aliases through other registers are not detected. A 64-bit stack-relative displacement that exceeds signed disp32 after reserving the spill frame throws.
 
 - [Packed relative relocations](../../../core/relinker/relinker/src/parsing/RelrRelocations.cpp) require the table to fit in one file-backed PT_LOAD segment and each 8-byte storage unit to fit in one load segment. Units spanning load segments, overlapping RELR units and overlaps with RELA relocations are rejected; relocation composition is not implemented.
