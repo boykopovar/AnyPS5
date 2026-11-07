@@ -31,6 +31,7 @@ static constexpr int SCE_NGS2_ERROR_INVALID_PAN_PARAM = static_cast<int>(0x804A8
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_HANDLE = static_cast<int>(0x804A8203);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_VOICE_HANDLE = static_cast<int>(0x804A0300);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_STATE_SIZE = static_cast<int>(0x804A0054);
+static constexpr int SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS = static_cast<int>(0x804A0052);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_VOICE_CONTROL_ID = static_cast<int>(0x804A0308);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_VOICE_CONTROL_SIZE = static_cast<int>(0x804A030A);
 static constexpr int SCE_NGS2_ERROR_PS4_INVALID_FILTER_INDEX = static_cast<int>(0x804A0600);
