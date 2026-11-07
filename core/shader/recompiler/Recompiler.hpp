@@ -366,6 +366,7 @@ struct SpirvTarget {
     bool descriptorMemory = false;
     std::uint32_t heapDataUniformDwords = 0;
     bool heapBufferDescriptors = false;
+    bool pushedBufferAddresses = false;
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
@@ -804,6 +805,7 @@ struct CompiledShaderArtifact {
     std::uint32_t samplerSlotDword = 0;
     std::uint32_t bufferAddressDword = 0;
     std::uint32_t bufferAddressCount = 0;
+    std::uint32_t pushedBufferCount = 0;
     std::vector<std::uint32_t> pushedData;
     std::uint32_t pushItems = 0;
     bool dataAddressPush = false;

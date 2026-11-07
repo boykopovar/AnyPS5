@@ -8264,7 +8264,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTgAAAA=", "new requests did not use serialization version 56");
+    require(requestPrefix(encoded, 8u) == "NVNQQTkAAAA=", "new requests did not use serialization version 57");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8385,7 +8385,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTkAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8439,9 +8439,9 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
             bytes.push_back(static_cast<std::uint8_t>((chunk >> bits) & 0xffu));
         }
     }
-    if (bytes.size() > 13u && bytes[4] == 56u) {
-        require(std::all_of(bytes.end() - 13, bytes.end(), [](std::uint8_t value) { return value == 0u; }), "a version 56 request in these checks set a GPU heap target field");
-        bytes.resize(bytes.size() - 13u);
+    if (bytes.size() > 14u && bytes[4] == 57u) {
+        require(std::all_of(bytes.end() - 14, bytes.end(), [](std::uint8_t value) { return value == 0u; }), "a version 57 request in these checks set a GPU heap target field");
+        bytes.resize(bytes.size() - 14u);
         bytes[4] = 55u;
     }
     return bytes;
@@ -8449,8 +8449,8 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 
 std::string encodeBase64(std::vector<std::uint8_t> bytes) {
     if (bytes.size() > 4u && bytes[4] == 55u) {
-        bytes[4] = 56u;
-        bytes.insert(bytes.end(), 13u, 0u);
+        bytes[4] = 57u;
+        bytes.insert(bytes.end(), 14u, 0u);
     }
     constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string text;

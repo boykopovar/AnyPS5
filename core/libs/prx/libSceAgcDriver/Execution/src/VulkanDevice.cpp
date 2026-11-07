@@ -749,6 +749,7 @@ struct VulkanDevice::State {
     VkPhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     std::uint32_t heapDataUniformDwords = 0;
     bool heapBufferDescriptors = false;
+    bool pushedBufferAddresses = false;
     std::unique_ptr<Graphics::Recorder> recorder;
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
     // last; each is filled once by a doubling chain in device memory.
@@ -2286,6 +2287,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
             if (Graphics::BindlessHeap::RingInResourceHeap(state->descriptorHeapProperties, state->properties.limits.minUniformBufferOffsetAlignment))
                 state->heapBufferDescriptors = state->descriptorHeapProperties.bufferDescriptorSize == Graphics::BindlessHeap::BufferSlotBytes;
+            state->pushedBufferAddresses = Graphics::ChoosePushedBufferAddresses(state->properties.vendorID);
             deviceExtensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
             for (const char* required : {VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME}) {
                 if (std::find_if(deviceExtensions.begin(), deviceExtensions.end(), [&](const char* name) { return std::strcmp(name, required) == 0; }) == deviceExtensions.end()) deviceExtensions.push_back(required);
@@ -4689,6 +4691,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.descriptorMemory = Graphics::DescriptorHeapEnabled();
     target.heapDataUniformDwords = target.descriptorMemory ? state->heapDataUniformDwords : 0u;
     target.heapBufferDescriptors = target.descriptorMemory && state->heapBufferDescriptors;
+    target.pushedBufferAddresses = target.descriptorMemory && state->pushedBufferAddresses;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
     return target;

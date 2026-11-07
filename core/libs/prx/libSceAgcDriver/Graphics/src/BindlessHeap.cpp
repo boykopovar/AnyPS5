@@ -151,6 +151,32 @@ bool DescriptorHeapEnabled() {
 
 namespace {
 
+constexpr std::uint32_t NvidiaVendorId = 0x10deu;
+std::atomic<bool> pushedBufferAddresses{false};
+
+}
+
+bool ChoosePushedBufferAddresses(std::uint32_t vendorId) {
+    const char* forced = std::getenv("APS5_PUSHED_BUFFERS");
+    const bool chosen = forced != nullptr && *forced != '\0' ? std::strcmp(forced, "0") != 0 : vendorId == NvidiaVendorId;
+    pushedBufferAddresses.store(chosen, std::memory_order_relaxed);
+    return chosen;
+}
+
+std::uint32_t PushedBufferRecordCap() {
+    static const std::uint32_t cap = [] {
+        const char* value = std::getenv("APS5_PUSHED_BUFFER_RECORDS");
+        return value != nullptr && *value != '\0' ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : ShaderRecompiler::RuntimeAbi::PushedBufferLimit;
+    }();
+    return cap;
+}
+
+bool PushedBufferAddressesEnabled() {
+    return DescriptorHeapEnabled() && pushedBufferAddresses.load(std::memory_order_relaxed);
+}
+
+namespace {
+
 struct HeapSizes {
     std::uint32_t imageSlots = 0;
     VkDeviceSize imageStride = 0;

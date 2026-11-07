@@ -14,6 +14,7 @@ std::uint32_t EmitShaderDataWordLoad(SpirvEmitterState& state, std::uint32_t ind
 std::uint32_t ComposeAddress64(SpirvEmitterState& state, const std::function<std::uint32_t()>& loadLow, const std::function<std::uint32_t()>& loadHigh);
 std::uint32_t EmitAlignedLoadU32(SpirvEmitterState& state, std::uint32_t pointer);
 std::uint32_t EmitRootItemDword(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t word);
+std::uint32_t EmitBufferRootDword(SpirvEmitterState& state, std::uint32_t buffer, std::uint32_t word);
 std::uint32_t EmitRootAddressWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index);
 std::uint32_t EmitRootAddressReadOnlyWordPointer(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t index);
 std::uint32_t EmitRootAddress(SpirvEmitterState& state, RuntimeAbi::RootItem item);

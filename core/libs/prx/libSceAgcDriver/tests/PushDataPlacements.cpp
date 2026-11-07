@@ -26,6 +26,7 @@ struct Stage {
     ShaderStage stage;
     std::uint32_t items;
     std::size_t pushed;
+    std::uint32_t buffers = 0;
 };
 
 std::uint32_t bits(std::initializer_list<Item> items) {
@@ -43,6 +44,7 @@ std::vector<StagePushPlacement> place(const std::vector<Stage>& stages) {
         programs[index].gpuResolvedImages = true;
         programs[index].pushItems = stages[index].items;
         programs[index].pushedData.resize(stages[index].pushed);
+        programs[index].pushedBufferCount = stages[index].buffers;
         for (std::size_t dword = 0; dword < stages[index].pushed; ++dword) programs[index].pushedData[dword] = static_cast<std::uint32_t>(dword);
         shaders.push_back({stages[index].stage, &programs[index], 0u});
     }
@@ -72,6 +74,22 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
             if (Abi::RootAddressItem(kind)) require(position % 2u == 0u, std::string("a root address is not 8-byte aligned: ") + what);
             claim(position, Abi::RootAddressItem(kind) ? 2u : 1u, static_cast<std::uint32_t>(kind) < static_cast<std::uint32_t>(Abi::RootItem::ShaderData));
         }
+        const auto& placement = placements[index];
+        require(placement.pushedBuffers == stages[index].buffers, std::string("a stage's placement does not count its buffers: ") + what);
+        bool overflowed = stages[index].buffers > Abi::PushedBufferLimit;
+        for (std::uint32_t buffer = 0; buffer < Abi::PushedBufferLimit; ++buffer) {
+            const auto root = placement.bufferRoots[buffer];
+            if (buffer >= stages[index].buffers) require(root == Abi::NoPushPosition, std::string("a buffer the stage does not read has a root: ") + what);
+            overflowed = overflowed || (buffer < stages[index].buffers && root == Abi::NoPushPosition);
+            if (root == Abi::NoPushPosition) continue;
+            require(root % 2u == 0u, std::string("a pushed buffer address is not 8-byte aligned: ") + what);
+            claim(root, Abi::PushedBufferWords, false);
+        }
+        require(overflowed == (placement.bufferOverflow != Abi::NoPushPosition), std::string("a stage's overflow address and its unplaced buffers disagree: ") + what);
+        if (placement.bufferOverflow != Abi::NoPushPosition) {
+            require(placement.bufferOverflow % 2u == 0u, std::string("a buffer overflow address is not 8-byte aligned: ") + what);
+            claim(placement.bufferOverflow, 2u, false);
+        }
         claim(placements[index].pushed.base, placements[index].pushed.count, false);
         require(placements[index].pushed.count <= stages[index].pushed, std::string("a stage pushes more than it asked for: ") + what);
     }
@@ -81,6 +99,7 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
 
 int main() {
     try {
+        const bool defaultCap = AgcDriver::Graphics::PushedBufferRecordCap() == Abi::PushedBufferLimit;
         const auto vertexItems = bits({Item::PagetableAddress, Item::ShaderData, Item::FlattenedSrt});
         const auto pixelItems = bits({Item::PagetableAddress, Item::ShaderData, Item::TableMap});
         {
@@ -144,6 +163,57 @@ int main() {
             const std::vector<Stage> stages{{ShaderStage::Vertex, vertexItems, 6}, {ShaderStage::TessellationControl, 0u, 0}, {ShaderStage::Fragment, pixelItems, 20}};
             disjoint(stages, placements, ShaderRecompiler::PushBytesMask(200u, 8u) | ShaderRecompiler::PushFeatureDwords(false, true, false), "a pixel stage wider than the top free run");
             require(placements[2].pushed.count == 20, "a pixel stage wider than the top free run takes a lower run instead of being cut");
+        }
+        {
+            const auto all = (1u << Abi::RootItemCount) - 1u;
+            const auto stencil = Abi::RootItemBit(Item::StencilReference);
+            const std::vector<Stage> stages{{ShaderStage::Vertex, (all & ~stencil) | Abi::DepthRemapPushBit, 48, Abi::PushedBufferLimit}, {ShaderStage::Geometry, 0u, 0}, {ShaderStage::Fragment, all, 48, Abi::PushedBufferLimit}};
+            const auto placements = place(stages);
+            disjoint(stages, placements, ShaderRecompiler::PushFeatureDwords(true, false, true), "vertex and pixel stages with every root item and the most pushed buffers");
+            require(place({stages[2]})[0].bufferRoots == placements[2].bufferRoots, "a pixel stage's buffer root is placed as it is alone, so its fragment library is shared");
+        }
+        {
+            const auto all = (1u << Abi::RootItemCount) - 1u;
+            const auto stencil = Abi::RootItemBit(Item::StencilReference);
+            const std::vector<Stage> stages{{ShaderStage::Local, all & ~stencil, 4}, {ShaderStage::TessellationControl, all & ~stencil, 3}, {ShaderStage::TessellationEvaluation, (all & ~stencil) | Abi::DepthRemapPushBit, 10}, {ShaderStage::Fragment, all, 48, Abi::PushedBufferLimit}};
+            disjoint(stages, place(stages), ShaderRecompiler::PushFeatureDwords(false, true, true), "a tessellation pipeline whose stages hold every root item and whose pixel stage pushes the most buffers");
+        }
+        {
+            const auto all = (1u << Abi::RootItemCount) - 1u;
+            const std::vector<Stage> stages{{ShaderStage::Compute, all & ~Abi::RootItemBit(Item::StencilReference), 60, Abi::PushedBufferLimit}};
+            const auto placements = place(stages);
+            disjoint(stages, placements, ShaderRecompiler::StagePushFeatures(ShaderStage::Compute, 0u), "a compute stage with every root item and the most pushed buffers");
+            require(!defaultCap || placements[0] == ShaderRecompiler::StandalonePushPlacement(ShaderStage::Compute, stages[0].items, stages[0].pushed, stages[0].buffers), "the compiler's standalone compute placement with pushed buffers is the driver's");
+        }
+        {
+            namespace Ids = ShaderRecompiler::PipelineSpecialization;
+            for (std::uint32_t buffer = 0; buffer <= Ids::BufferRootCount; ++buffer) {
+                const auto id = Ids::BufferRootPosition + buffer;
+                require(id >= Ids::SamplerLodBiasBase + Abi::SamplerHeapCapacity && id < Ids::ImageComponentBase, "a buffer root specialization id lies inside another constant's range");
+                require(Ids::IsPushPlacement(id), "a buffer root specialization id is not a push placement");
+            }
+            for (std::uint32_t id = Ids::StoreQuantizeBase; id < Ids::DescriptorIndexBase; ++id) require(!Ids::IsPushPlacement(id), "a store quantization specialization id counts as a push placement");
+        }
+        {
+            const auto all = (1u << Abi::RootItemCount) - 1u;
+            const auto stencil = Abi::RootItemBit(Item::StencilReference);
+            for (const std::uint32_t buffers : {1u, 4u, 5u, 9u, 40u}) {
+                const std::vector<Stage> worst{{ShaderStage::Vertex, (all & ~stencil) | Abi::DepthRemapPushBit, 48, buffers}, {ShaderStage::Geometry, all & ~stencil, 8, buffers}, {ShaderStage::Fragment, all, 48, buffers}};
+                const auto placements = place(worst);
+                disjoint(worst, placements, ShaderRecompiler::PushFeatureDwords(true, false, true), ("stages with every root item and " + std::to_string(buffers) + " buffers each").c_str());
+                const std::vector<Stage> typical{{ShaderStage::Vertex, vertexItems, 6, buffers}, {ShaderStage::Fragment, pixelItems, 20, buffers}};
+                const auto roomy = place(typical);
+                disjoint(typical, roomy, 0, ("typical stages with " + std::to_string(buffers) + " buffers each").c_str());
+                require(!defaultCap || (buffers > Abi::PushedBufferLimit) == (roomy[1].bufferOverflow != Abi::NoPushPosition), "a typical pixel stage overflows only buffers past the push limit");
+                const auto alone = place({typical[1]})[0];
+                require(alone.items == roomy[1].items && alone.bufferRoots == roomy[1].bufferRoots && alone.bufferOverflow == roomy[1].bufferOverflow, "a typical pixel stage with buffers is placed as it is alone, so its fragment library is shared");
+                const std::vector<Stage> tessellation{{ShaderStage::Local, all & ~stencil, 4, buffers}, {ShaderStage::TessellationControl, all & ~stencil, 3, buffers}, {ShaderStage::TessellationEvaluation, (all & ~stencil) | Abi::DepthRemapPushBit, 10, buffers}, {ShaderStage::Fragment, all, 48, buffers}};
+                disjoint(tessellation, place(tessellation), ShaderRecompiler::PushFeatureDwords(false, true, true), ("a tessellation pipeline with " + std::to_string(buffers) + " buffers per stage").c_str());
+                const std::vector<Stage> compute{{ShaderStage::Compute, all & ~stencil, 60, buffers}};
+                const auto computed = place(compute);
+                disjoint(compute, computed, ShaderRecompiler::StagePushFeatures(ShaderStage::Compute, 0u), ("a compute stage with " + std::to_string(buffers) + " buffers").c_str());
+                require(!defaultCap || computed[0] == ShaderRecompiler::StandalonePushPlacement(ShaderStage::Compute, compute[0].items, compute[0].pushed, buffers), "the compiler's standalone compute placement with overflowing buffers is the driver's");
+            }
         }
         std::puts("push data placements passed");
         return 0;

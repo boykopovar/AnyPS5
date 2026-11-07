@@ -167,6 +167,12 @@ struct ImageTableReuseCounts {
     std::uint64_t variantRejected = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+struct HeapBufferPathCounts {
+    std::uint64_t ringRuns = 0;
+    std::uint64_t pushedStages = 0;
+    std::uint64_t overflowStages = 0;
+};
+HeapBufferPathCounts HeapBufferPaths();
 std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
 std::uint64_t SampledLookupKeyProofs();
@@ -372,6 +378,7 @@ public:
     }
     void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
     void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
+    void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDescriptorBufferInfo>* overrides) const;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     std::size_t BindingCount() const { return bindings.size(); }

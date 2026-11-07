@@ -233,12 +233,14 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
     if (state.addressedBuffers) {
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
         const auto dword = state.program.Metadata().bindings.BufferAddressDword() + element * RuntimeAbi::BufferAddressWords;
+        const bool pushed = state.program.Metadata().bindings.pushedBuffers;
+        const auto word = [&](std::uint32_t index) { return pushed ? EmitBufferRootDword(state, element, index) : EmitShaderDataDwordLoad(state, dword + index); };
         const auto u64 = TypeScalarU64(state);
-        auto address = ComposeAddress64(state, [&] { return EmitShaderDataDwordLoad(state, dword); }, [&] { return EmitShaderDataDwordLoad(state, dword + 1u); });
+        auto address = ComposeAddress64(state, [&] { return word(0u); }, [&] { return word(1u); });
         MemoryResourceAccess access;
         access.kind = memory.kind;
         access.physical = true;
-        access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), EmitShaderDataDwordLoad(state, dword + 2u), ConstantU32(state, wide ? 3u : 2u));
+        access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, wide ? 3u : 2u));
         if (state.program.Metadata().bindings.UsesDataAddress()) {
             const auto empty = Binary(state, spv::OpIEqual, TypeBool(state), access.length, ConstantU32(state, 0u));
             address = Select(state, u64, empty, EmitRootAddress(state, RuntimeAbi::RootItem::ShaderData), address);

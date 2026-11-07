@@ -6069,6 +6069,18 @@ std::uint64_t SampledTexturesCleared() {
     return TextureCounts().cleared.load(std::memory_order_relaxed);
 }
 
+namespace {
+
+std::atomic<std::uint64_t> heapRingRuns{0};
+std::atomic<std::uint64_t> heapPushedStages{0};
+std::atomic<std::uint64_t> heapOverflowStages{0};
+
+}
+
+HeapBufferPathCounts HeapBufferPaths() {
+    return {heapRingRuns.load(std::memory_order_relaxed), heapPushedStages.load(std::memory_order_relaxed), heapOverflowStages.load(std::memory_order_relaxed)};
+}
+
 ImageTableReuseCounts ImageTableReuses() {
     const auto& counters = TextureCounts();
     return {counters.tablesReused.load(std::memory_order_relaxed) + counters.tablesReplayed.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed), counters.tablesReplayed.load(std::memory_order_relaxed), counters.tableWritesKept.load(std::memory_order_relaxed), counters.tableWritesMade.load(std::memory_order_relaxed), counters.variantSurfaces.load(std::memory_order_relaxed), counters.variantSubstituted.load(std::memory_order_relaxed), counters.variantRejected.load(std::memory_order_relaxed)};
@@ -6846,6 +6858,7 @@ std::uint32_t ShaderResources::ringDescriptors(std::size_t stage, const std::vec
     auto& heap = BindlessHeap::For(context);
     const auto equal = [](const VkDeviceAddressRangeEXT& a, const VkDeviceAddressRangeEXT& b) { return a.address == b.address && a.size == b.size; };
     if (!std::ranges::equal(ranges, kept.ranges, equal) || !heap.Held(kept.mark)) {
+        heapRingRuns.fetch_add(1, std::memory_order_relaxed);
         kept.first = heap.RingBufferDescriptors(ranges, kept.mark);
         kept.ranges.assign(ranges.begin(), ranges.end());
     }
@@ -6932,9 +6945,46 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
         put(Abi::RootItem::SrtDwords, 0u, ringStage ? static_cast<std::uint32_t>(std::min<VkDeviceSize>(heapSrtDwords[stage], srt.size / sizeof(std::uint32_t))) : heapSrtDwords[stage]);
         putAddress(Abi::RootItem::TableMap, heapTableMapSet[stage] ? heapTableMaps[stage] : offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
         writePushedData(bytes, shader, placement.pushed);
+        if (shader.program->pushedBufferCount != 0u) writePushedBuffers(bytes, stage, placement, addressed ? &rewritten->addressOverrides : nullptr);
         rooted = true;
     }
     if (rooted) NoteDataAddressPush();
+}
+
+void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDescriptorBufferInfo>* overrides) const {
+    namespace Abi = ShaderRecompiler::RuntimeAbi;
+    struct RangeStorage {};
+    auto& ranges = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
+    ranges.clear();
+    writeBufferAddresses({}, static_cast<std::uint32_t>(stage), overrides, &ranges);
+    Require(ranges.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
+    heapPushedStages.fetch_add(1, std::memory_order_relaxed);
+    const auto record = [&](std::size_t index) {
+        return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(ranges[index].address), static_cast<std::uint32_t>(ranges[index].address >> 32u), static_cast<std::uint32_t>(std::min<VkDeviceSize>(ranges[index].size, 0xffffffffu)), 0u};
+    };
+    const auto put = [&](std::uint32_t position, std::span<const std::uint32_t> words) {
+        Require(position != Abi::NoPushPosition && (position + words.size()) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed buffer words lie outside the push data");
+        std::memcpy(bytes.data() + position * sizeof(std::uint32_t), words.data(), words.size_bytes());
+    };
+    bool overflowed = false;
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto root = index < Abi::PushedBufferLimit ? placement.bufferRoots[index] : Abi::NoPushPosition;
+        if (root == Abi::NoPushPosition) {
+            overflowed = true;
+            continue;
+        }
+        const auto words = record(index);
+        put(root, std::span(words).first(Abi::PushedBufferWords));
+    }
+    if (!overflowed) return;
+    heapOverflowStages.fetch_add(1, std::memory_order_relaxed);
+    const auto span = BindlessHeap::For(context).Allocate(ranges.size() * Abi::OverflowRecordWords);
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto words = record(index);
+        std::copy(words.begin(), words.end(), span.words.begin() + static_cast<std::ptrdiff_t>(index * Abi::OverflowRecordWords));
+    }
+    const std::array<std::uint32_t, 2> address{static_cast<std::uint32_t>(span.address), static_cast<std::uint32_t>(span.address >> 32u)};
+    put(placement.bufferOverflow, address);
 }
 
 void ShaderResources::writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const {
@@ -7313,7 +7363,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const std::size_t flatIndex = DataOffsetIndex(stageIndex, Abi::Binding::FlattenedSrt);
     const auto& program = *shader.program;
     if (program.dataAddressPush) writeHeapTableMap(shader, stageIndex);
-    const bool ringStage = context.heapBufferDescriptors && program.dataAddressPush;
+    const bool ringStage = context.heapBufferDescriptors && program.dataAddressPush && program.pushedBufferCount == 0u;
     ringDescriptorStages[stageIndex] = ringStage;
     if (ringStage) stageDataWords[stageIndex].clear();
     bool dataKept = false;
@@ -7359,7 +7409,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
             reinterpret_cast<std::byte*>(patched.data())[byte] = static_cast<std::byte>(adjustment);
         }
         patchHeapSlotWords(shader, stageState, patched, current);
-        if (addressedBuffers && !ringStage) {
+        if (addressedBuffers && !ringStage && program.pushedBufferCount == 0u) {
             HeapCostScope bufferCost(HeapCost::BufferAddresses);
             writeBufferAddresses(patched, static_cast<std::uint32_t>(stageIndex), nullptr);
             bufferCost.Stop();

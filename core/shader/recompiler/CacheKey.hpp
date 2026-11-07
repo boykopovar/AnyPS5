@@ -387,6 +387,7 @@ private:
         append(key, value.descriptorMemory);
         append(key, value.heapDataUniformDwords);
         append(key, value.heapBufferDescriptors);
+        append(key, value.pushedBufferAddresses);
         append(key, value.ldsLockFences);
         append(key, value.meshWindowBuffer);
         append(key, value.hostInterpolationFirst);

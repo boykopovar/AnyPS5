@@ -85,10 +85,10 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 328, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 336, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 240, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 648, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 656, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 704, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
@@ -532,6 +532,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.samplerSlotDword);
     writer.Value(result.bufferAddressDword);
     writer.Value(result.bufferAddressCount);
+    writer.Value(result.pushedBufferCount);
     writer.Values(std::span<const std::uint32_t>(result.pushedData));
     writer.Value(result.pushItems);
     writer.Value(result.dataAddressPush);
@@ -607,6 +608,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.samplerSlotDword);
     reader.Value(result.bufferAddressDword);
     reader.Value(result.bufferAddressCount);
+    reader.Value(result.pushedBufferCount);
     reader.Values(result.pushedData);
     reader.Value(result.pushItems);
     reader.Value(result.dataAddressPush);
@@ -772,6 +774,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.samplerSlotDwords);
     writer.Value(layout.imageSlotDwords);
     writer.Value(layout.bufferAddressDwords);
+    writer.Value(layout.pushedBuffers);
     writer.Values(std::span<const std::uint32_t>(layout.pushedData));
     writer.Value(layout.heapStorageImages);
     writer.Value(layout.gpuResolvedImages);
@@ -794,6 +797,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.samplerSlotDwords);
     reader.Value(layout.imageSlotDwords);
     reader.Value(layout.bufferAddressDwords);
+    reader.Value(layout.pushedBuffers);
     reader.Values(layout.pushedData);
     reader.Value(layout.heapStorageImages);
     reader.Value(layout.gpuResolvedImages);

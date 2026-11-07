@@ -729,7 +729,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     bool registration = request.target.registrationModules && (request.shader.stage == ShaderStage::Fragment || heapVertex);
     program.Metadata().bindingLayoutComplete = false;
     const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
-    AllocationOptions allocation {.registrationModules = registration, .stencilReplay = stencilReplay, .gpuResolvedImages = request.target.gpuResolvedImages, .descriptorMemory = request.target.descriptorMemory};
+    AllocationOptions allocation {.registrationModules = registration, .stencilReplay = stencilReplay, .gpuResolvedImages = request.target.gpuResolvedImages, .descriptorMemory = request.target.descriptorMemory, .pushedBufferAddresses = request.target.descriptorMemory && request.target.pushedBufferAddresses};
     auto bindings = bindingAllocator.Allocate(program, request.layout, allocation);
 
     SpirvTargetOptions targetOptions {};
@@ -830,6 +830,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.samplerSlotDword = result.gpuResolvedImages ? bindings.layout.SamplerSlotDword() : 0u;
     result.bufferAddressDword = bindings.layout.bufferAddressDwords != 0u ? bindings.layout.BufferAddressDword() : 0u;
     result.bufferAddressCount = bindings.layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
+    result.pushedBufferCount = bindings.layout.pushedBuffers ? result.bufferAddressCount : 0u;
     result.dataAddressPush = bindings.layout.UsesDataAddress();
     result.pushedData = bindings.layout.pushedData;
     result.bdaStores = emitted.bdaStores;
@@ -1292,6 +1293,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .samplerSlotDword = artifact.samplerSlotDword,
         .bufferAddressDword = artifact.bufferAddressDword,
         .bufferAddressCount = artifact.bufferAddressCount,
+        .pushedBufferCount = artifact.pushedBufferCount,
         .pushedData = artifact.pushedData,
         .pushItems = artifact.pushItems,
         .dataAddressPush = artifact.dataAddressPush,
@@ -1398,7 +1400,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             constants.push_back({PipelineSpecialization::MeshLayerBase, 0u});
             constants.push_back({PipelineSpecialization::MeshLayerCount, 0xffffffffu});
             constants.push_back({PipelineSpecialization::HeapImageSlots, RuntimeAbi::GpuImageHeapSlots});
-            if (artifact.dataAddressPush) AppendPushSpecialization(constants, StandalonePushPlacement(request.shader.stage, artifact.pushItems, artifact.pushedData.size()));
+            if (artifact.dataAddressPush) AppendPushSpecialization(constants, StandalonePushPlacement(request.shader.stage, artifact.pushItems, artifact.pushedData.size(), artifact.pushedBufferCount));
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
             if (StencilInPush(artifact, variant.bindings.layout)) constants.push_back({PipelineSpecialization::StencilReferenceOffset, moduleKey[index++]});

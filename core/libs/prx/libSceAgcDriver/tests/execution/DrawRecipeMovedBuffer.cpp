@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -349,9 +350,20 @@ int main() {
         const std::array<std::size_t, 2> slices{First, Moved};
         for (int round = 0; round < 2; ++round) Require(Submit(slices) == SecondAlphaByte, "the draw of the moved buffer did not read it");
         const auto hitsBefore = AgcDriver::VulkanDevice::DrawRecipeHits();
+        const auto pathsBefore = AgcDriver::Graphics::HeapBufferPaths();
         Require(Submit(slices) == SecondAlphaByte, "the repeated draw of the moved buffer did not read it");
         const auto hits = AgcDriver::VulkanDevice::DrawRecipeHits() - hitsBefore;
-        if (AgcDriver::Graphics::DrawRecipes() && std::getenv("APS5_VERIFY_DRAW_ENTRIES") == nullptr) Require(hits == slices.size(), "a repeated draw whose read-only buffer moved from its template's did not replay a recipe (" + std::to_string(hits) + " recipe hits for " + std::to_string(slices.size()) + " draws)");
+        const auto paths = AgcDriver::Graphics::HeapBufferPaths();
+        if (AgcDriver::Graphics::DrawRecipes() && std::getenv("APS5_VERIFY_DRAW_ENTRIES") == nullptr) {
+            Require(hits == slices.size(), "a repeated draw whose read-only buffer moved from its template's did not replay a recipe (" + std::to_string(hits) + " recipe hits for " + std::to_string(slices.size()) + " draws)");
+            if (AgcDriver::Graphics::PushedBufferAddressesEnabled()) {
+                Require(paths.ringRuns == pathsBefore.ringRuns, "a recipe hit whose moved buffer the stage reads through its push data wrote " + std::to_string(paths.ringRuns - pathsBefore.ringRuns) + " heap descriptor runs");
+                Require(paths.pushedStages - pathsBefore.pushedStages >= hits, "recipe hits over a moved buffer pushed the buffer addresses of " + std::to_string(paths.pushedStages - pathsBefore.pushedStages) + " stages for " + std::to_string(hits) + " hits");
+                if (AgcDriver::Graphics::PushedBufferRecordCap() == 0u) Require(paths.overflowStages - pathsBefore.overflowStages >= hits, "recipe hits whose buffers all overflow the push data wrote the overflow block of " + std::to_string(paths.overflowStages - pathsBefore.overflowStages) + " stages for " + std::to_string(hits) + " hits");
+            } else {
+                Require(paths.pushedStages == pathsBefore.pushedStages, "a stage pushed its buffer addresses although the device reads guest buffers through heap descriptors");
+            }
+        }
         BufferMemory[Moved] = BufferAlpha;
         Require(Submit(slices) == BufferAlphaByte, "a recipe over a moved buffer drew the buffer's old contents after they changed");
         BufferMemory[Moved] = SecondAlpha;

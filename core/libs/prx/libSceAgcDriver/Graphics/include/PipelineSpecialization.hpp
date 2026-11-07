@@ -90,6 +90,8 @@ public:
         for (auto& constant : values) {
             if (constant.id == Ids::PushedDataBase) constant.value = placement.pushed.base;
             if (constant.id == Ids::PushedDataCount) constant.value = placement.pushed.count;
+            if (constant.id >= Ids::BufferRootPosition && constant.id < Ids::BufferRootPosition + Ids::BufferRootCount) constant.value = placement.bufferRoots[constant.id - Ids::BufferRootPosition];
+            if (constant.id == Ids::BufferOverflowPosition) constant.value = placement.bufferOverflow;
             if (constant.id >= Ids::RootItemPositionBase && constant.id < Ids::RootItemPositionBase + ShaderRecompiler::RuntimeAbi::RootItemCount) {
                 constant.value = placement.items[constant.id - Ids::RootItemPositionBase];
                 Require(constant.value != ShaderRecompiler::RuntimeAbi::NoPushPosition, "a stage reads a root item its pipeline's push layout does not hold");

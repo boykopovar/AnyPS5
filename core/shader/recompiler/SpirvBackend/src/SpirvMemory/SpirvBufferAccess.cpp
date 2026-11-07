@@ -40,6 +40,42 @@ std::uint32_t EmitAlignedLoadU32(SpirvEmitterState& state, std::uint32_t pointer
     return value;
 }
 
+namespace {
+
+std::uint32_t placedPushDword(SpirvEmitterState& state, std::uint32_t specialization, std::uint32_t word) {
+    const auto u32 = TypeU32(state);
+    const auto position = state.module.SpecializationConstant(u32, specialization, RuntimeAbi::NoPushPosition);
+    const auto placed = Binary(state, spv::OpINotEqual, TypeBool(state), position, ConstantU32(state, RuntimeAbi::NoPushPosition));
+    const auto index = Select(state, u32, placed, Binary(state, spv::OpIAdd, u32, position, ConstantU32(state, word)), ConstantU32(state, 0u));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0), index);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, u32, value, pointer);
+    return value;
+}
+
+std::uint32_t overflowDword(SpirvEmitterState& state, std::uint32_t buffer, std::uint32_t word) {
+    const auto address = ComposeAddress64(state, [&] { return placedPushDword(state, PipelineSpecialization::BufferOverflowPosition, 0u); }, [&] { return placedPushDword(state, PipelineSpecialization::BufferOverflowPosition, 1u); });
+    const auto words = ReadOnlyStorageBufferType(state, TypeU32(state), 4u);
+    const auto block = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, words), block, address);
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePhysicalU32Pointer(state), pointer, block, ConstantU32(state, 0u), ConstantU32(state, buffer * RuntimeAbi::OverflowRecordWords + word));
+    return EmitAlignedLoadU32(state, pointer);
+}
+
+}
+
+std::uint32_t EmitBufferRootDword(SpirvEmitterState& state, std::uint32_t buffer, std::uint32_t word) {
+    if (!state.program.Metadata().bindings.pushedBuffers) FailEmit("only a stage with pushed buffer addresses reads the buffer root");
+    if (word >= RuntimeAbi::PushedBufferWords) FailEmit("a pushed buffer record has no such word");
+    if (buffer >= RuntimeAbi::PushedBufferLimit) return overflowDword(state, buffer, word);
+    const auto u32 = TypeU32(state);
+    const auto position = state.module.SpecializationConstant(u32, PipelineSpecialization::BufferRootPosition + buffer, RuntimeAbi::NoPushPosition);
+    const auto placed = Binary(state, spv::OpINotEqual, TypeBool(state), position, ConstantU32(state, RuntimeAbi::NoPushPosition));
+    return EmitValueIfElse(state, placed, u32, [&] { return placedPushDword(state, PipelineSpecialization::BufferRootPosition + buffer, word); }, [&] { return overflowDword(state, buffer, word); });
+}
+
 std::uint32_t EmitRootItemDword(SpirvEmitterState& state, RuntimeAbi::RootItem item, std::uint32_t word) {
     if (!state.program.Metadata().bindings.UsesDataAddress()) FailEmit("the root is read only by stages that take their data through it");
     state.pushItems |= RuntimeAbi::RootItemBit(item);

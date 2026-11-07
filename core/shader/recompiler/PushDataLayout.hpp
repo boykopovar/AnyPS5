@@ -25,11 +25,23 @@ struct PushStage {
     PushPart part = PushPart::PreRasterization;
     std::uint32_t items = 0;
     std::uint32_t pushedWanted = 0;
+    std::uint32_t pushedBuffers = 0;
 };
+
+static_assert(RuntimeAbi::PushedBufferLimit == PipelineSpecialization::BufferRootCount);
+
+constexpr std::array<std::uint32_t, RuntimeAbi::PushedBufferLimit> MakeBufferRoots() {
+    std::array<std::uint32_t, RuntimeAbi::PushedBufferLimit> roots{};
+    roots.fill(RuntimeAbi::NoPushPosition);
+    return roots;
+}
 
 struct StagePushPlacement {
     std::array<std::uint32_t, RuntimeAbi::RootItemCount> items{};
     RuntimeAbi::PushedPlacement pushed;
+    std::array<std::uint32_t, RuntimeAbi::PushedBufferLimit> bufferRoots = MakeBufferRoots();
+    std::uint32_t bufferOverflow = RuntimeAbi::NoPushPosition;
+    std::uint32_t pushedBuffers = 0;
 
     [[nodiscard]] std::uint32_t Item(RuntimeAbi::RootItem item) const { return items[static_cast<std::uint32_t>(item)]; }
     bool operator==(const StagePushPlacement&) const = default;
@@ -58,7 +70,7 @@ constexpr std::uint64_t StagePushFeatures(ShaderStage stage, std::uint32_t pushI
     return mask;
 }
 
-inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> stages, std::uint64_t occupied) {
+inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> stages, std::uint64_t occupied, std::uint32_t pushedRecords = RuntimeAbi::PushedBufferLimit) {
     namespace Abi = RuntimeAbi;
     constexpr std::uint32_t total = Abi::PushDataDwords;
     std::vector<StagePushPlacement> placements(stages.size());
@@ -70,14 +82,19 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
         }
         return true;
     };
-    const auto take = [&](std::uint32_t width, bool aligned, bool top) {
+    const auto tryTake = [&](std::uint32_t width, bool aligned, bool top) {
         for (std::uint32_t step = 0; step + width <= total; ++step) {
             const auto first = top ? total - width - step : step;
             if ((aligned && first % 2u != 0u) || !isFree(first, width)) continue;
             for (auto dword = first; dword < first + width; ++dword) used |= 1ull << dword;
             return first;
         }
-        throw std::runtime_error("the push data has no room for a pipeline's root");
+        return Abi::NoPushPosition;
+    };
+    const auto take = [&](std::uint32_t width, bool aligned, bool top) {
+        const auto first = tryTake(width, aligned, top);
+        if (first == Abi::NoPushPosition) throw std::runtime_error("the push data has no room for a pipeline's root");
+        return first;
     };
     const auto placeRoot = [&](std::uint32_t items, bool top, std::array<std::uint32_t, Abi::RootItemCount>& positions) {
         for (const bool addresses : {true, false}) {
@@ -89,7 +106,9 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
         }
     };
     constexpr auto globalItems = Abi::RootItemBit(Abi::RootItem::ShaderData) - 1u;
-    for (const auto part : {PushPart::Fragment, PushPart::Compute, PushPart::PreRasterization}) {
+    constexpr std::array parts{PushPart::Fragment, PushPart::Compute, PushPart::PreRasterization};
+    std::vector<std::uint32_t> overflows(stages.size(), Abi::NoPushPosition);
+    for (const auto part : parts) {
         const bool top = part != PushPart::PreRasterization;
         std::uint32_t globals = 0;
         for (const auto& stage : stages) {
@@ -104,8 +123,35 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
                 if ((stages[index].items & globalItems & (1u << item)) != 0u) placements[index].items[item] = shared[item];
             }
             placeRoot(stages[index].items & ~globalItems, top, placements[index].items);
+            placements[index].pushedBuffers = stages[index].pushedBuffers;
         }
     }
+    const auto recordsOf = [&](std::size_t index) { return std::min({stages[index].pushedBuffers, pushedRecords, Abi::PushedBufferLimit}); };
+    for (const auto part : parts) {
+        for (std::size_t index = 0; index < stages.size(); ++index) {
+            if (stages[index].part == part && stages[index].pushedBuffers != 0u) overflows[index] = tryTake(2u, true, part != PushPart::PreRasterization);
+        }
+    }
+    for (const auto part : parts) {
+        const bool top = part != PushPart::PreRasterization;
+        const auto reserved = part == PushPart::Fragment ? PushFeatureDwords(true, true, true) & ~used : 0u;
+        used |= reserved;
+        for (std::size_t index = 0; index < stages.size(); ++index) {
+            const auto buffers = stages[index].pushedBuffers;
+            if (stages[index].part != part || buffers == 0u) continue;
+            const auto records = recordsOf(index);
+            bool overflowed = buffers > records;
+            for (std::uint32_t buffer = 0; buffer < records; ++buffer) {
+                placements[index].bufferRoots[buffer] = tryTake(Abi::PushedBufferWords, true, top);
+                overflowed = overflowed || placements[index].bufferRoots[buffer] == Abi::NoPushPosition;
+            }
+            if (overflowed && overflows[index] == Abi::NoPushPosition) throw std::runtime_error("the push data has no room for a stage's buffer addresses");
+            if (overflowed) placements[index].bufferOverflow = overflows[index];
+            else if (overflows[index] != Abi::NoPushPosition) used &= ~(3ull << overflows[index]);
+        }
+        used &= ~reserved;
+    }
+
     std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
     for (std::uint32_t dword = 0; dword < total;) {
         if ((used >> dword & 1ull) != 0u) {
@@ -183,8 +229,8 @@ inline std::vector<StagePushPlacement> PlacePushData(std::span<const PushStage> 
     return placements;
 }
 
-inline StagePushPlacement StandalonePushPlacement(ShaderStage stage, std::uint32_t pushItems, std::size_t pushedWanted) {
-    const PushStage pushStage{PushPartOf(stage), pushItems & RootItemMask, static_cast<std::uint32_t>(pushedWanted)};
+inline StagePushPlacement StandalonePushPlacement(ShaderStage stage, std::uint32_t pushItems, std::size_t pushedWanted, std::uint32_t pushedBuffers = 0u) {
+    const PushStage pushStage{PushPartOf(stage), pushItems & RootItemMask, static_cast<std::uint32_t>(pushedWanted), pushedBuffers};
     return PlacePushData(std::span(&pushStage, 1), StagePushFeatures(stage, pushItems)).front();
 }
 
@@ -192,6 +238,8 @@ inline void AppendPushSpecialization(std::vector<PipelineSpecializationConstant>
     for (std::uint32_t item = 0; item < RuntimeAbi::RootItemCount; ++item) {
         if (placement.items[item] != RuntimeAbi::NoPushPosition) constants.push_back({PipelineSpecialization::RootItemPositionBase + item, placement.items[item]});
     }
+    for (std::uint32_t buffer = 0; buffer < std::min(placement.pushedBuffers, RuntimeAbi::PushedBufferLimit); ++buffer) constants.push_back({PipelineSpecialization::BufferRootPosition + buffer, placement.bufferRoots[buffer]});
+    if (placement.pushedBuffers != 0u) constants.push_back({PipelineSpecialization::BufferOverflowPosition, placement.bufferOverflow});
     constants.push_back({PipelineSpecialization::PushedDataBase, placement.pushed.base});
     constants.push_back({PipelineSpecialization::PushedDataCount, placement.pushed.count});
 }
