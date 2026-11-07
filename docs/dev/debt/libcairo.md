@@ -2,7 +2,11 @@
 
 ### Functional
 
-- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 124 pending surface, font or rendering exports.
+- [Mesh pattern construction](../../../core/libs/prx/libcairo/Patterns.cpp) implements seven source-backed construction exports for 4×4 tensor-product patches, including cubic and straight sides, implicit closing sides, clamped corner RGBA and Coons interior controls. The types and guest System V signatures follow the public Cairo interface, and completed patches and sticky error statuses were differential-checked with native Cairo 1.18.0. The existing gradient-pattern storage and reference counting are reused. The public PS5 image has not been measured; Cairo rendering and non-exported mesh getter APIs are not implemented. Native Cairo 1.18.0 can expose uninitialized corner-zero data after automatic closure if the caller omitted that color, whereas this implementation initializes untouched color storage to transparent black.
+
+- [Pattern semantics](../../../core/libs/prx/libcairo/Patterns.cpp) follow the public [Cairo pattern source](https://chromium.googlesource.com/chromiumos/third_party/cairo/+/master/src/cairo-pattern.c): refcounted lifetime, a shared immortal error pattern with `CAIRO_STATUS_NO_MEMORY` when allocation fails, `CAIRO_STATUS_PATTERN_TYPE_MISMATCH` for color stops on a non-gradient pattern and the `cairo_matrix_invert` status for a non-invertible matrix. The prototypes are the public Cairo ones and are unverified against the PS5 image. `extend` and `filter` values are stored without validation as upstream does. No status or getter export for patterns is in the catalogue, so the stored state is only observable through the reference-counted object.
+
+- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured.
 
 ### Functional image and surface exports
 
@@ -14,7 +18,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 124 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 109 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Fifteen pattern exports are implemented in [Patterns.cpp](../../../core/libs/prx/libcairo/Patterns.cpp), and nineteen surface exports are implemented in [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp). Prototypes and behavior of the remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -37,14 +41,12 @@
 | `cairo_get_dash` | `5OZ1YwHyHd8` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
-| `cairo_pattern_reference` | `6qRL52tLOII` |
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
 | `cairo_set_font_size` | `A-0StSi2AwA` |
 | `cairo_surface_write_to_png_stream` | `A3FLVZ4FHbY` |
 | `cairo_restore` | `AoAG2JE8GIo` |
-| `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_mask` | `D1KYCZ80Sac` |
@@ -56,9 +58,7 @@
 | `cairo_user_to_device_distance` | `F2ZShEhLU8Y` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_show_glyphs` | `FnhwGKKZOjU` |
-| `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
-| `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
 | `cairo_get_line_cap` | `Hkp7M+pJILk` |
 | `cairo_region_get_rectangle` | `I5wa74016LQ` |
 | `cairo_set_miter_limit` | `IKnEk6g6ZV0` |
@@ -66,7 +66,6 @@
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_has_current_point` | `JwQxC4dA5DY` |
-| `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_destroy` | `K6aayzvQMlE` |
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
@@ -75,7 +74,6 @@
 | `cairo_transform` | `OHgp1uE8P2c` |
 | `cairo_set_line_join` | `Ori3CK8Sx6g` |
 | `cairo_pop_group_to_source` | `Oyzf6kDk6Ns` |
-| `cairo_mesh_pattern_set_corner_color_rgba` | `P+Hm5enx01Y` |
 | `cairo_identity_matrix` | `PaSEtyxiC0o` |
 | `cairo_save` | `Pj8asGd55jA` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
@@ -84,13 +82,10 @@
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_path_extents` | `S6ieIssLpCA` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
-| `cairo_mesh_pattern_move_to` | `T0JOV6EajrA` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
 | `cairo_set_fill_rule` | `THcHgZElshs` |
 | `cairo_get_miter_limit` | `TWtGBP-grBM` |
 | `cairo_get_antialias` | `U4Ajvh3L57k` |
-| `cairo_mesh_pattern_begin_patch` | `Ux6XxakVN+8` |
-| `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
 | `cairo_get_target` | `Wr3nsor1aNc` |
 | `cairo_append_path` | `XX9tocaUX+g` |
 | `cairo_region_union_rectangle` | `Ya+vgrJjBQE` |
@@ -100,7 +95,6 @@
 | `cairo_get_line_join` | `azNGOQLubLc` |
 | `cairo_set_source` | `bU0QXekwNes` |
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
-| `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
 | `cairo_path_destroy` | `cOkxYTuZQyU` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
 | `cairo_set_operator` | `dc4bb-f5YEE` |
@@ -108,11 +102,8 @@
 | `cairo_fill_extents` | `dkoQNd4kBlQ` |
 | `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
 | `cairo_get_dash_count` | `eSwGXlKHIas` |
-| `cairo_pattern_destroy` | `eZpt6dzI9oo` |
-| `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
 | `cairo_surface_set_user_data` | `fFoWwCW2rDA` |
 | `cairo_set_dash` | `fx5nS1yOp-I` |
-| `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_new_path` | `hhuvB3JXuMM` |
 | `cairo_push_group` | `hlh15JjNtWg` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
@@ -135,10 +126,8 @@
 | `cairo_scale` | `suww6V0qqpU` |
 | `cairo_get_operator` | `tYTJIi4s6t0` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
-| `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
 | `cairo_region_destroy` | `vnHq+jcDKBM` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
-| `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
 | `cairo_region_num_rectangles` | `xoe4ss9GmYc` |
 | `cairo_set_line_width` | `zwMGP3ASKMI` |
