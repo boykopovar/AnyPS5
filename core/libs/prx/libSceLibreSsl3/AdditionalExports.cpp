@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <stdexcept>
 
 extern "C" {
 
@@ -7,12 +8,14 @@ int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_clear_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_clear_flags_nid_postfix(LibreSsl3Bio* bio, int flags) {
+    if (!bio) throw std::invalid_argument("BIO_clear_flags requires a BIO");
+    bio->flags &= ~flags;
 }
 
-int APS5_VABI BIO_set_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_flags_nid_postfix(LibreSsl3Bio* bio, int flags) {
+    if (!bio) throw std::invalid_argument("BIO_set_flags requires a BIO");
+    bio->flags |= flags;
 }
 
 int APS5_VABI BN_dup_nid_postfix() {
@@ -156,8 +159,9 @@ int APS5_VABI EC_KEY_set_asn1_flag_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_init_nid_postfix(LibreSsl3Bio* bio, int init) {
+    if (!bio) throw std::invalid_argument("BIO_set_init requires a BIO");
+    bio->initialized = init;
 }
 
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
@@ -201,8 +205,9 @@ int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_get_shutdown_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_get_shutdown_nid_postfix(const LibreSsl3Bio* bio) {
+    if (!bio) throw std::invalid_argument("BIO_get_shutdown requires a BIO");
+    return bio->shutdown;
 }
 
 int APS5_VABI tls_accept_socket_nid_postfix() {
@@ -448,8 +453,9 @@ int APS5_VABI X509_ALGOR_get0_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_shutdown_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_shutdown_nid_postfix(LibreSsl3Bio* bio, int shutdown) {
+    if (!bio) throw std::invalid_argument("BIO_set_shutdown requires a BIO");
+    bio->shutdown = shutdown;
 }
 
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix() {
