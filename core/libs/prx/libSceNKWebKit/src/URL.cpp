@@ -341,6 +341,7 @@ public:
     std::optional<std::uint16_t> port;
     bool protocolNull = false;
     bool hostNull = false;
+    bool opaque = false;
 };
 
 const void* CopyOriginString(std::u16string text) {
@@ -348,7 +349,9 @@ const void* CopyOriginString(std::u16string text) {
 }
 
 const void* CreateOpaqueOrigin() {
-    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
+    auto origin = NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt);
+    origin->opaque = true;
+    return NKWebKit::ToRef(std::move(origin));
 }
 
 std::u16string PortString(std::uint16_t port) {
@@ -447,17 +450,21 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     auto protocol = text.substr(0, schemeEnd);
     if (!IsValidScheme(protocol)) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(protocol);
-    if (protocol == u"file") {
-        return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::u16string(), std::nullopt));
-    }
+    const bool isFile = protocol == u"file";
+    const bool isSpecial = isFile || protocol == u"http" || protocol == u"https" || protocol == u"ftp" || protocol == u"ws" || protocol == u"wss";
+    if (!isSpecial) return CreateOpaqueOrigin();
     const auto hostStart = schemeEnd + 3;
     const auto pathStart = text.find_first_of(u"/?#", hostStart);
     auto authority = (pathStart != std::u16string::npos) ? text.substr(hostStart, pathStart - hostStart) : text.substr(hostStart);
     const auto atPos = authority.rfind(u'@');
-    if (atPos != std::u16string::npos) authority = authority.substr(atPos + 1);
+    if (atPos != std::u16string::npos) {
+        if (isFile) return CreateOpaqueOrigin();
+        authority = authority.substr(atPos + 1);
+    }
 
     std::u16string host;
     std::u16string portText;
+    bool hasPortSeparator = false;
     if (authority.starts_with(u"[")) {
         const auto bracketEnd = authority.find(u']');
         if (bracketEnd == std::u16string::npos) return CreateOpaqueOrigin();
@@ -465,18 +472,26 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
         const auto rest = authority.substr(bracketEnd + 1);
         if (!rest.empty()) {
             if (rest.front() != u':') return CreateOpaqueOrigin();
+            hasPortSeparator = true;
             portText = rest.substr(1);
         }
     } else {
         const auto colon = authority.rfind(u':');
         host = authority.substr(0, colon);
-        if (colon != std::u16string::npos) portText = authority.substr(colon + 1);
+        if (colon != std::u16string::npos) {
+            hasPortSeparator = true;
+            portText = authority.substr(colon + 1);
+        }
     }
     std::optional<std::uint16_t> port;
     if (!ParseAuthorityPort(portText, port)) return CreateOpaqueOrigin();
-    const bool requiresHost = protocol == u"http" || protocol == u"https" || protocol == u"ftp";
-    if (requiresHost && host.empty()) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(host);
+    if (isFile) {
+        if (hasPortSeparator) return CreateOpaqueOrigin();
+        if (host == u"localhost") host.clear();
+    } else if (host.empty()) {
+        return CreateOpaqueOrigin();
+    }
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
 }
 
@@ -520,6 +535,7 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* origin) {
 
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
+    if (value->opaque) return CopyOriginString(u"null");
     if (value->protocol == u"file") return CopyOriginString(u"file://");
     if (value->protocol.empty() && value->host.empty()) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
     auto text = value->protocol + u"://" + value->host;
