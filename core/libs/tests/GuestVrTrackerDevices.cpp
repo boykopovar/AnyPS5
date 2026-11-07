@@ -101,6 +101,7 @@ void CheckBeforeInit() {
     Require(Recalibrate(Pad) == NotInit);
     Require(sceVrTrackerSetDurationUntilStatusNotTracking(Pad, 10) == NotInit);
     Require(sceVrTrackerGpuWaitAndCpuProcess() == NotInit);
+    Require(sceVrTrackerResetOrientationRelative(Pad, 5) == NotInit);
 }
 
 void CheckInit() {
@@ -154,7 +155,16 @@ void CheckDevices() {
     Require(sceVrTrackerSetDurationUntilStatusNotTracking(Gun, 10) == 0);
     Require(sceVrTrackerSetDurationUntilStatusNotTracking(4, 10) == ArgumentInvalid);
 
+    Require(sceVrTrackerResetOrientationRelative(Pad, 5) == 0);
+    Require(sceVrTrackerResetOrientationRelative(Pad, 6) == DeviceNotRegistered);
+    Require(sceVrTrackerResetOrientationRelative(Move, 7) == 0);
+    Require(sceVrTrackerResetOrientationRelative(Gun, 8) == DeviceNotRegistered);
+    Require(sceVrTrackerResetOrientationRelative(4, 5) == ArgumentInvalid);
+    Require(sceVrTrackerResetOrientationRelative(-1, 5) == ArgumentInvalid);
+    Require(sceVrTrackerResetOrientationRelative(Pad, -1) == ArgumentInvalid);
+
     Require(sceVrTrackerUnregisterDevice(5) == 0);
+    Require(sceVrTrackerResetOrientationRelative(Pad, 5) == DeviceNotRegistered);
     Require(sceVrTrackerUnregisterDevice(5) == ArgumentInvalid);
     Require(sceVrTrackerUnregisterDevice(-1) == ArgumentInvalid);
     Require(Recalibrate(Pad) == DeviceNotRegistered);
@@ -166,6 +176,7 @@ void CheckTerm() {
     Require(sceVrTrackerTerm() == 0);
     Require(sceVrTrackerTerm() == NotInit);
     Require(sceVrTrackerRegisterDevice(Gun, 8) == NotInit);
+    Require(sceVrTrackerResetOrientationRelative(Gun, 8) == NotInit);
     const auto init = ValidInit();
     Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&init)) == 0);
     Require(sceVrTrackerRegisterDevice(Move, 11) == DeviceAlreadyRegistered);
