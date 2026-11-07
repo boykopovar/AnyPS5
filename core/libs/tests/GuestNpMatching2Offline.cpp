@@ -88,9 +88,15 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     unsigned char serverRequest[32] = {1};
     unsigned char roomRequest[64] = {5};
     unsigned char zeroed[64] = {};
+    unsigned char highServerByte[32] = {0, 0, 1};
+    unsigned char highRoomByte[64] = {0, 0, 0, 0, 0, 0, 0, 1};
     std::uint32_t requestId = 77;
 
     Require(getWorldInfoList(1, serverRequest, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2GetWorldInfoList", "a request before initialization did not return NOT_INITIALIZED");
+    Require(leaveRoom(1, nullptr, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2LeaveRoom", "a null request before initialization did not return NOT_INITIALIZED");
+    Require(getServerId(1, nullptr) == NotInitialized, "sceNpMatching2GetServerId", "a null output before initialization did not return NOT_INITIALIZED");
+    Require(getSlotMask(1, 5, nullptr) == NotInitialized, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "a null mask before initialization did not return NOT_INITIALIZED");
+    Require(getWorldIds(1, nullptr, 0, nullptr) == NotInitialized, "sceNpMatching2GetWorldIdArrayForAllServers", "a call before initialization did not return NOT_INITIALIZED");
     NpMatching2InitializeParameter init{};
     init.size = 0x30;
     NpMatching2CreateContextParameter create{};
@@ -107,12 +113,14 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     for (const RequestFn request : {getWorldInfoList, setUserInfo}) {
         Require(request(context, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "server id 0 did not return INVALID_SERVER_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "the server id was not checked before the context");
+        Require(request(99, highServerByte, nullptr, &requestId) == InvalidServerId, "server request", "the server id was read past its 16 bits");
         Require(request(99, serverRequest, nullptr, &requestId) == ContextNotFound && request(0, serverRequest, nullptr, &requestId) == ContextNotFound, "server request", "an unknown context did not return CONTEXT_NOT_FOUND");
     }
     for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
         Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");
+        Require(request(99, highRoomByte, nullptr, &requestId) == ContextNotFound, "room request", "a room id with only its top byte set was taken as room 0");
     }
     Require(requestId == 77, "request", "a refused request wrote a request id");
     Require(leaveRoom(context, roomRequest, nullptr, &requestId) == SessionNotFound && leaveRoom(contextA, roomRequest, nullptr, &requestId) == SessionNotFound && requestId == 77, "sceNpMatching2LeaveRoom", "leaving with no room joined did not return SESSION_NOT_FOUND");
@@ -165,6 +173,7 @@ int main() {
     NpMatching2CreateContextParameterA createA{1, 0, 0x10};
     unsigned char requestOpt[24] = {};
     std::uint16_t context = 77;
+    auto* const inaccessibleNetInfo = reinterpret_cast<NpMatching2SignalingNetInfo*>(std::uintptr_t{0x10});
 
     Require(sceNpMatching2CreateContext(nullptr, nullptr) == NotInitialized, "sceNpMatching2CreateContext", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpMatching2DestroyContext(1) == NotInitialized, "sceNpMatching2DestroyContext", "a call before initialization did not return NOT_INITIALIZED");
@@ -182,6 +191,13 @@ int main() {
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(registerLobbyMessage(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetDefaultRequestOptParam(1, nullptr) == NotInitialized, "sceNpMatching2SetDefaultRequestOptParam", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call before initialization did not return NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer before initialization did not return NOT_INITIALIZED without reading");
+    NpMatching2SignalingNetInfo beforeInitInfo{};
+    beforeInitInfo.size = 0;
+    Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 0 before initialization did not return NOT_INITIALIZED first");
+    beforeInitInfo.size = 25;
+    Require(sceNpMatching2SignalingGetLocalNetInfo(&beforeInitInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "invalid size 25 before initialization did not return NOT_INITIALIZED first");
     Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "terminating before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == InvalidArgument, "sceNpMatching2Initialize", "a null parameter did not return INVALID_ARGUMENT");
     init.size = 0x10;
@@ -191,6 +207,22 @@ int main() {
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
+    Require(sceNpMatching2Initialize(nullptr) == AlreadyInitialized, "sceNpMatching2Initialize", "the parameter was checked before the initialization state");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == InvalidArgument, "sceNpMatching2SignalingGetLocalNetInfo", "a null info was not refused with INVALID_ARGUMENT");
+    constexpr std::uint32_t NetLocalAddrSentinel = 0x12345678u;
+    constexpr std::uint32_t NetMappedAddrSentinel = 0x87654321u;
+    constexpr std::int32_t NetNatStatusSentinel = 0x5A5A5A5A;
+    constexpr std::uint32_t NetPadSentinel = 0xDEADBEEFu;
+    for (const std::uint64_t invalidSize : {std::uint64_t{0}, std::uint64_t{23}, std::uint64_t{25}, std::uint64_t{~0ull}}) {
+        NpMatching2SignalingNetInfo netInfo{};
+        netInfo.size = invalidSize;
+        netInfo.localAddr = NetLocalAddrSentinel;
+        netInfo.mappedAddr = NetMappedAddrSentinel;
+        netInfo.natStatus = NetNatStatusSentinel;
+        netInfo.padding = NetPadSentinel;
+        Require(sceNpMatching2SignalingGetLocalNetInfo(&netInfo) == InvalidArgument, "sceNpMatching2SignalingGetLocalNetInfo", "an invalid size was not refused with INVALID_ARGUMENT");
+        Require(netInfo.size == invalidSize && netInfo.localAddr == NetLocalAddrSentinel && netInfo.mappedAddr == NetMappedAddrSentinel && netInfo.natStatus == NetNatStatusSentinel && netInfo.padding == NetPadSentinel, "sceNpMatching2SignalingGetLocalNetInfo", "an invalid size modified output fields");
+    }
 
     Require(sceNpMatching2CreateContext(nullptr, &context) == InvalidArgument, "sceNpMatching2CreateContext", "a null parameter was taken");
     create.size = 0x30;
@@ -267,6 +299,11 @@ int main() {
     Require(sceNpMatching2AbortContextStart(1) == NotInitialized, "sceNpMatching2AbortContextStart", "a call after termination did not return NOT_INITIALIZED");
     status = StatusSentinel;
     Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, &status, nullptr, nullptr) == NotInitialized && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "a call after termination did not return NOT_INITIALIZED without writing the status");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after termination with null did not return NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after termination did not return NOT_INITIALIZED without reading");
+    NpMatching2SignalingNetInfo postTermInfo{};
+    postTermInfo.size = 0;
+    Require(sceNpMatching2SignalingGetLocalNetInfo(&postTermInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an invalid size after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initializing again failed");
     Require(sceNpMatching2RegisterRoomEventCallback(5, nullptr, nullptr) == InvalidContextId, "sceNpMatching2Terminate", "a context created before termination is still found");
     Require(sceNpMatching2CreateContext(&create, &created) == 0 && created == 1, "sceNpMatching2Terminate", "termination did not restart the context ids at 1");
@@ -278,6 +315,8 @@ int main() {
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(createContextA(&createA, &created) == NotInitialized, "sceNpMatching2CreateContextA", "a call after termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(nullptr) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "a call after final termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2SignalingGetLocalNetInfo(inaccessibleNetInfo) == NotInitialized, "sceNpMatching2SignalingGetLocalNetInfo", "an inaccessible pointer after final termination did not return NOT_INITIALIZED without reading");
 
     CheckOfflineRequests(createContextA);
 

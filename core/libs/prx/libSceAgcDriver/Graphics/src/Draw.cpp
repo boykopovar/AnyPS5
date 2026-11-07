@@ -49,7 +49,40 @@
 
 namespace AgcDriver::Graphics {
 
+void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue);
+void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue);
+
 namespace {
+
+bool DrawFaultTokens() {
+    static const bool enabled = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    return enabled;
+}
+
+void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, bool indirect) {
+    try {
+        if (!DrawFaultTokens()) return;
+        const auto queue = GuestMemory::GpuLockThreadTag();
+        if (queue != 0) return;
+        const auto faultToken = AgcDriver::FaultTokenRing::Instance().Claim();
+        if (faultToken == 0) return;
+        if (auto* entry = AgcDriver::FaultTokenRing::Instance().Mutable(faultToken)) {
+            entry->submitSerial = recorder.OpenSerial();
+            entry->programAddress = 0;
+            std::uint64_t variant = 0;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr && (variant == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) variant = shader.program->variantId;
+            }
+            entry->variantId = variant;
+            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", indirect ? " indirect" : "", draw.indexCount, draw.instanceCount);
+            recorder.NoteFaultToken(faultToken);
+            std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
+        }
+        WriteCheckpointMarker(context, commands, faultToken, queue);
+        WriteNvCheckpointToken(context, commands, faultToken, queue);
+    } catch (...) {
+    }
+}
 
 struct PixelFunctionLdsPool {
     Context context{};
@@ -372,21 +405,6 @@ std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std:
     if (!context.provokingVertexModePerPipeline) mix(state.provokingVertexMode);
     if (state.rasterizerDiscard) mix(0x6469736361726400ull);
     return key;
-}
-
-namespace {
-
-GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color) {
-    Require(color.arrayLastSlice != 0, "the color target is not a view of a 2D array");
-    auto surface = SurfaceForTarget(color);
-    surface.baseAddress = color.arrayAddress;
-    surface.width = color.surfaceExtent.width;
-    surface.height = color.surfaceExtent.height;
-    surface.depthOrLastArray = color.arrayLastSlice;
-    surface.dimension = TextureDimension::k2DArray;
-    return surface;
-}
-
 }
 
 namespace {
@@ -1049,6 +1067,7 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
         add(state.topology);
         add(state.cullMode);
         add(state.polygonMode);
+        add(state.lineWidth);
         add(state.blends.size());
         add(context.subgroup.subgroupSize);
         add(context.subgroup.supportedStages);
@@ -1406,13 +1425,13 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride) {
     Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
-    GuestMemory::FlushGpuWrites(address, bytes);
     auto readable = validBytes;
     if (stride != 0 && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), validBytes)) {
         const auto ranges = GuestMemory::CommittedRanges(address, validBytes);
         const std::size_t prefix = !ranges.empty() && ranges.front().first == address ? static_cast<std::size_t>(ranges.front().second - address) : 0;
         if (validBytes - prefix < stride) readable = prefix;
     }
+    if (readable != 0) GuestMemory::FlushGpuWrites(address, readable);
     DrawInputCopy copy;
     auto* recorder = context.recorder;
     const bool keep = recorder != nullptr && readable != 0 && readable <= std::numeric_limits<std::uint32_t>::max();
@@ -2805,6 +2824,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
+    noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -3190,6 +3210,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (color.staged) {
                 const auto packed = StagedMergeTarget(color);
                 binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
+                PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
                 static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
                 binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
                 Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
@@ -3197,6 +3218,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 timer.phase(PhaseReadTarget);
                 continue;
             }
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
             targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
             timer.phase(PhaseReadTarget);
             continue;
@@ -3784,6 +3806,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
+    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
