@@ -101,6 +101,9 @@ RdnaOperand TranslationContext::offsetOperand(const RdnaOperand& operand, std::u
 }
 
 RdnaOperand TranslationContext::scalarDestinationOperand(const RdnaOperand& operand, std::uint32_t offset) {
+    if (operand.kind == RdnaOperandKind::Null) {
+        return operand;
+    }
     std::uint32_t code = 0u;
     switch (operand.kind) {
         case RdnaOperandKind::ScalarRegister: code = operand.reg; break;
