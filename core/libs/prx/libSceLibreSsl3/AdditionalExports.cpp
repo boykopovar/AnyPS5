@@ -380,8 +380,9 @@ int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_get_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI BIO_get_data_nid_postfix(const LibreSsl3Bio* bio) {
+    if (!bio) throw std::invalid_argument("BIO_get_data requires a BIO");
+    return bio->data;
 }
 
 int APS5_VABI EVP_PKEY2PKCS8_nid_postfix() {
@@ -441,8 +442,9 @@ int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_data_nid_postfix(LibreSsl3Bio* bio, void* data) {
+    if (!bio) throw std::invalid_argument("BIO_set_data requires a BIO");
+    bio->data = data;
 }
 
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
