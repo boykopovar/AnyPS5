@@ -2437,6 +2437,46 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto guardedId = returnsValue ? ctx.Result(inst) : 0u;
     ctx.definitions.erase(&inst);
     const bool exits = !state.continueTarget;
+    bool equivalentModes = false;
+    for (std::size_t i = 0u; i < modes.size() && !equivalentModes; ++i) {
+        for (std::size_t j = i + 1u; j < modes.size(); ++j) {
+            if (SameImageModeForInstruction(inst, memory, modes[i], modes[j])) {
+                equivalentModes = true;
+                break;
+            }
+        }
+    }
+    if (returnsValue && !tables && exits && modes.size() > 1u && !equivalentModes) {
+        const auto emitRange = [&](const auto& self, std::uint32_t begin, std::uint32_t end) -> std::uint32_t {
+            if (end - begin == 1u) {
+                emitMode(modes[begin]);
+                const auto value = ctx.Def(&inst);
+                ctx.definitions.erase(&inst);
+                return value;
+            }
+            const auto middle = begin + (end - begin) / 2u;
+            const auto condition = Binary(state, spv::OpULessThan, TypeBool(state), selector, ConstantU32(state, middle));
+            return EmitValueIfElse(state, condition, TypeId(state, inst.Type()), [&] { return self(self, begin, middle); }, [&] { return self(self, middle, end); });
+        };
+        const auto body = state.module.AllocateId();
+        const auto invalid = state.module.AllocateId();
+        const auto merge = state.module.AllocateId();
+        const auto count = static_cast<std::uint32_t>(modes.size());
+        const auto valid = Binary(state, spv::OpULessThan, TypeBool(state), selector, ConstantU32(state, count));
+        state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, valid, body, invalid);
+        EmitLabel(state, body);
+        const auto value = emitRange(emitRange, 0u, count);
+        state.module.AddFunction(spv::OpBranch, merge);
+        EmitLabel(state, invalid);
+        state.module.AddFunction(spv::OpUnreachable);
+        EmitLabel(state, merge);
+        state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), guardedId, value);
+        state.runtimeImage = nullptr;
+        state.tableAccess = {};
+        ctx.definitions.emplace(&inst, guardedId);
+        return;
+    }
     const auto guardMerge = samplerGuard != 0u ? state.module.AllocateId() : 0u;
     const auto guardSkip = samplerGuard != 0u ? state.module.AllocateId() : 0u;
     if (samplerGuard != 0u) {
