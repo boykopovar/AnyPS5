@@ -25790,19 +25790,11 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient10sendH2PingERKN3WTF3URLEONS1_1
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient11prefetchDNSERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient12dispatchShowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient13didFinishLoadEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient13startDownloadERKNS_15ResourceRequestERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25838,19 +25830,11 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient18frameLoadCompletedEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent3Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient19dispatchDidFailLoadERKNS_13ResourceErrorE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25975,10 +25959,6 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPa
 }
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient33convertMainResourceLoadToDownloadEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

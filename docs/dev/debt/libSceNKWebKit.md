@@ -37,6 +37,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [EmptyFrameLoaderClient::dispatchDidChangeLocationWithinPage](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) (libSceNKWebKit) - no-op export based on upstream WebKit 11.x [EmptyClients.cpp:750-752](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp#L750-L752) and [EmptyFrameLoaderClient.h:78](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyFrameLoaderClient.h#L78). Returns void and performs no operation.
 - [EmptyFrameLoaderClient::dispatchDidClearWindowObjectInWorld](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) (libSceNKWebKit) - no-op export based on upstream WebKit 11.x [EmptyClients.cpp:1055-1057](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp#L1055-L1057) and [EmptyFrameLoaderClient.h:178](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyFrameLoaderClient.h#L178). Returns void and performs no operation.
+- [EmptyFrameLoaderClient resource callbacks](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) follow pinned [PS5 WebKit 11.x EmptyClients.cpp at 80f77e94c63ee7202eec3d4b5b1a021dd89011ba](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp): `prefetchDNS` 1084-1086, `startDownload` 839-841, `makeRepresentation` 637-639, `dispatchDidFailLoad` 786-788, `convertMainResourceLoadToDownload` 666-668. Console ABI parity is unverified.
 - [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 141 exports answer with a fixed value in the PS5 11.00 module: 115 execute `xor eax,eax; ret`, 13 `mov eax,imm32; ret` and 13 `mov al,1; ret` (addresses and bodies from the 11.00 `libSceNKWebKit.sprx`, SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`; NIDs recomputed from the declared names). The 128 EAX-writing bodies measure the 32-bit return; the 13 `mov al,1` bodies write only the low byte, so for them only AL is measured and the upper bits are unspecified. The declared prototypes stay the no-parameter `int` placeholders, so no other width, pointer or floating-point return is claimed. Only 11.00 was measured.
 - [Security origins](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKSecurityOriginCopyDatabaseIdentifier` still throws pending `encodeForFileName` (#14858). `WKSecurityOriginCreateFromString` and `WKSecurityOriginCreateFromDatabaseIdentifier` still throw; URL parsing and default-port normalization (#13766) are not wired into origin creation. Value objects follow [the pinned WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source); console execution and ABI are unverified.
 - [Field setters](../../../core/libs/prx/libSceNKWebKit/src/FieldSetters.cpp) (libSceNKWebKit) - 55 exports store an argument into a fixed field of the object in the PS5 11.00 module: 43 store the second argument at offset 0, 9 store it at offsets 8 to 56, and 3 store a 32-bit value at offsets 8, 16 and 32. The bodies, sizes and offsets come from the 11.00 `libSceNKWebKit.sprx`; object layouts, field meanings, wider values and other ABI cases are unverified. Only the measured store width is covered.
@@ -3430,10 +3431,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformDecryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `lC6NyPIlPns` |
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformEncryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `D4Jb9-xqqBk` |
 | `_ZN7WebCore22EmptyFrameLoaderClient10sendH2PingERKN3WTF3URLEONS1_17CompletionHandlerIFvONSt12experimental15fundamentals_v38expectedINS1_7SecondsENS_13ResourceErrorEEEEEE` | `aQZkTZSB9Q4` |
-| `_ZN7WebCore22EmptyFrameLoaderClient11prefetchDNSERKN3WTF6StringE` | `mkI7vGRy-U4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient12dispatchShowEv` | `ysdXgAoy-XY` |
 | `_ZN7WebCore22EmptyFrameLoaderClient13didFinishLoadEv` | `zQDZtAHh-RM` |
-| `_ZN7WebCore22EmptyFrameLoaderClient13startDownloadERKNS_15ResourceRequestERKN3WTF6StringE` | `fBhl01ZwcGc` |
 | `_ZN7WebCore22EmptyFrameLoaderClient14didChangeTitleEPNS_14DocumentLoaderE` | `CdtXvtmle9M` |
 | `_ZN7WebCore22EmptyFrameLoaderClient15finishedLoadingEPNS_14DocumentLoaderE` | `lNAJstgvTDI` |
 | `_ZN7WebCore22EmptyFrameLoaderClient15willChangeTitleEPNS_14DocumentLoaderE` | `G5ZDNtddzSk` |
@@ -3442,10 +3441,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClient17dispatchWillCloseEv` | `e8P9xcYmFp4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient17setCopiesOnScrollEv` | `SYuiZEPIJOg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient18frameLoadCompletedEv` | `xaZIwYQG0rw` |
-| `_ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE` | `xCC2+A1QU2M` |
 | `_ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent2Ev` | `BraS9NFJCzA` |
 | `_ZN7WebCore22EmptyFrameLoaderClient19detachedFromParent3Ev` | `TxBSWS65aos` |
-| `_ZN7WebCore22EmptyFrameLoaderClient19dispatchDidFailLoadERKNS_13ResourceErrorE` | `3Q1Rm8ZQILU` |
 | `_ZN7WebCore22EmptyFrameLoaderClient19saveViewStateToItemERNS_11HistoryItemE` | `h1Ft1kj6f0g` |
 | `_ZN7WebCore22EmptyFrameLoaderClient19updateGlobalHistoryEv` | `HpgdHWqIO28` |
 | `_ZN7WebCore22EmptyFrameLoaderClient20createDocumentLoaderERKNS_15ResourceRequestERKNS_14SubstituteDataE` | `HxybCxtAU6k` |
@@ -3477,7 +3474,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClient31prepareForDataSourceReplacementEv` | `6C8Npd4b2w4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPageEv` | `kxuIic9ejsg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv` | `701xv4i88-g` |
-| `_ZN7WebCore22EmptyFrameLoaderClient33convertMainResourceLoadToDownloadEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseE` | `Ts-nQ4c4kTg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient33dispatchDidReplaceStateWithinPageEv` | `h2l92tnR88Y` |
 | `_ZN7WebCore22EmptyFrameLoaderClient33dispatchWillPerformClientRedirectERKN3WTF3URLEdNS1_8WallTimeENS_19LockBackForwardListE` | `6q1eUV0OZoE` |
 | `_ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE` | `pHmVAreojKs` |
