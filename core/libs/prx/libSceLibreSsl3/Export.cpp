@@ -1,16 +1,23 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
 
-APS5_DUMMY_FUN
-int APS5_VABI BIO_vfree_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI BIO_vfree_nid_postfix(LibreSsl3Bio* bio) {
+    if (!bio) return;
+    if (bio->exData || bio->callback) NotImplemented_nid_no_patch(__func__);
+    if (std::atomic_ref<std::int32_t>(bio->references).fetch_sub(1) > 1) return;
+    if (bio->method) {
+        const auto* method = static_cast<const LibreSsl3BioMethod*>(bio->method);
+        if (method->destroy) reinterpret_cast<int(APS5_VABI*)(LibreSsl3Bio*)>(method->destroy)(bio);
+    }
+    free_nid_postfix(bio);
 }
 
 int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, std::size_t length) {
