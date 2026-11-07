@@ -10,6 +10,7 @@
 namespace Nid {
 
 bool IsSceImport(const std::string& name);
+bool IsMangledSceImport(const std::string& name);
 
 std::unordered_map<std::string, std::string> ResolveImportNids(const std::vector<std::string>& names, const std::unordered_set<std::string>& excluded, const PatchOptions& options);
 
