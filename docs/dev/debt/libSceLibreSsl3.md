@@ -59,6 +59,7 @@
 - [X509_get_X509_PUBKEY, X509_get_signature_nid and X509_get_ext_by_NID](../../../core/libs/prx/libSceLibreSsl3/src/X509Accessors.cpp) (libSceLibreSsl3) - nothing is checked on the console. The forwarded 2.5.4 `OBJ_create` numbers objects from 956, which [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/objects/obj_dat.c) gives to built-in objects, so `X509_get_ext_by_NID` reaches an added object only from NID 1056. Otherwise they follow 4.0.0 `x509_set.c`, `x_x509.c`, `x509_v3.c` and `obj_dat.c`. [Objects.cpp](../../../core/libs/prx/libSceLibreSsl3/src/Objects.cpp) adds 4.0.0's 100 newer objects to libSceLibreSsl's 2.5.4 table; a BSD `bsearch` gives NID 676 for the OID 1.3 it shares with 379. Null pointers it dereferences, a last position of `INT_MAX` and, once objects are added, a length that overflows its hash throw. Closes when: compared with the console.
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
+- [ERR_lib_error_string, ERR_func_error_string and ERR_reason_error_string](../../../core/libs/prx/libSceLibreSsl3/src/ErrorStrings.cpp) (libSceLibreSsl3) - nothing is checked on the console. They return null for every code. The [firmware 13.42 module run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) returned null from all three for all 917 LibreSSL table codes after its loaders ran, its string loader init routines are a single `ret`, its image holds none of the library names, and the module exports no `ERR_load_strings` that could add strings. Closes when: compared with the console.
 - [EVP_chacha20 and EVP_chacha20_poly1305](../../../core/libs/prx/libSceLibreSsl3/src/ChaCha.cpp) (libSceLibreSsl3) - nothing is checked on the console. They run inside libSceLibreSsl's forwarded 2.5.4 `EVP_*Update`, which passes a zero-length update to the cipher: with a null input, `EVP_chacha20_poly1305` takes it as the final call and computes or checks the tag early, where LibreSSL 4.0.0 returns 1 without calling the cipher. Otherwise they follow [4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `e_chacha.c` and `e_chacha20poly1305.c`, with Poly1305 from mbedtls; a zero-length update with an input, or a negative length, leaves the state alone. A null input or output with a non-zero length, or a null pointer for `EVP_CTRL_AEAD_GET_IVLEN`, `EVP_CTRL_AEAD_GET_TAG` or `EVP_CTRL_AEAD_SET_IV_FIXED`, which LibreSSL dereferences, throws. Closes when: compared with the console.
 - [BIO_get_data, BIO_set_data, BIO_set_init, BIO_get_shutdown, BIO_set_shutdown, BIO_set_flags and BIO_clear_flags](../../../core/libs/prx/libSceLibreSsl3/src/BioFields.cpp) (libSceLibreSsl3) - nothing is checked on the console. They read or write `ptr`, `init`, `shutdown` and `flags` as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_lib.c#L205-L266) `bio_lib.c` does. This port's BIOs come from libSceLibreSsl's forwarded `BIO_new`, so the fields are at their 2.5.4 offsets in the 104-byte `LibreSsl::Bio`; 4.0.0 adds `callback_ex` before them, which moves them 8 bytes, but its `BIO` is opaque to titles. A null BIO, which LibreSSL dereferences, throws. Closes when: compared with the console.
 - [BIO_meth_new, BIO_meth_free, BIO_meth_set_write, BIO_meth_set_read, BIO_meth_set_ctrl, BIO_meth_set_create and BIO_meth_set_destroy](../../../core/libs/prx/libSceLibreSsl3/src/BioMethod.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_meth.c) `bio_meth.c`, `BIO_meth_new` returns a zeroed `BIO_METHOD` from the guest heap with its type and name, or null without an error when the allocation fails, `BIO_meth_free` frees it, and each setter stores its callback and returns 1. The 80-byte `BIO_METHOD` is laid out as in 2.5.4, so the forwarded libSceLibreSsl `BIO_new`, `BIO_write`, `BIO_ctrl` and `BIO_free` call the callbacks. A null method passed to a setter, which LibreSSL dereferences, throws. Closes when: compared with the console.
@@ -86,7 +87,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 96 still-unimplemented callable exports: 87 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 93 still-unimplemented callable exports: 84 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -113,7 +114,6 @@
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `TLS_server_method` | `EtM5Jwx4EFo` |
-| `ERR_lib_error_string` | `F7jknWesBTY` |
 | `unknown` | `GjO5Ap3E-t4` |
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `X509_set_version` | `IOutZPRNNPo` |
@@ -138,7 +138,6 @@
 | `SSL_CTX_set0_chain` | `UHkYqkyfwOs` |
 | `EVP_PKEY2PKCS8` | `UT6E1YgI8mw` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
-| `ERR_func_error_string` | `VXuysR7ySzw` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
@@ -171,7 +170,6 @@
 | `unknown` | `pdxCm9+CCc4` |
 | `unknown` | `qGsc6uT6p1E` |
 | `EVP_PKEY_verify_init` | `qseLIVbdvMQ` |
-| `ERR_reason_error_string` | `rJZ-aiNIYCA` |
 | `X509_add1_ext_i2d` | `s8WMaKNjwvE` |
 | `EC_GROUP_cmp` | `sENJFZ7WbLU` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
