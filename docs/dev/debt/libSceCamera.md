@@ -1,5 +1,9 @@
 # libSceCamera technical debt
 
+### Silent stubs
+
+- [sceCameraSetAttributeInternal, sceCameraAudioClose, sceCameraDeviceOpen, sceCameraAudioReset](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera) - return 0 without performing hardware device initialization or audio stream teardown: camera peripheral states remain unmeasured on hardware.
+
 ### Unknown function info
 
 - [sceCameraIsVrCaptureEnable](../../../core/libs/prx/libSceCamera/InventoryExports.cpp) (NID `bpet5OSAr1E`) has an unknown signature and behaviour. The parameterless `int` declaration is an import-resolution placeholder, not a confirmed ABI signature, and every call throws through `NotImplemented_nid_no_patch`. Only the name and NID are established by the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscecamera-4529c174dc.jsonl); not measured on a console.

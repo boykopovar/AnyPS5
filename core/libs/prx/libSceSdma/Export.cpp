@@ -197,6 +197,7 @@ int APS5_VABI sceSdmaCancelQueue(void* handle) {
 }
 
 int APS5_VABI sceSdmaClose(void* handle) {
+    if (!handle) return SdmaErrorInvalidArgument;
     std::lock_guard lock(g_mutex);
     *static_cast<SdmaSlot*>(handle) = SdmaSlot{};
     return 0;

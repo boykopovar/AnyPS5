@@ -35,6 +35,7 @@
 
 ### Silent stubs
 
+- [scePadSetProcessPrivilege, scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return PAD_OK without altering process capabilities or trigger effect rumble suppression while the embedded microphone is active: AnyPS5 does not model controller microphone suppression policies or privileged process capabilities.
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
 - [scePadSetLightBarBaseBrightness](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns success for known handles without changing the hardware state. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
 

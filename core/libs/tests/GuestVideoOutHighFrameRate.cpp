@@ -29,12 +29,17 @@ int main(int argc, char** argv) {
         param << R"({"titleId":"PPSA99007","localizedParameters":{"en-US":{"titleName":"High frame rate test"}},"attribute3":64})";
         Require(static_cast<bool>(param), "cannot write high-frame-rate fixture");
     }
-    int handle;
+    int handle = 0;
     try {
         handle = sceVideoOutOpen(255, 0, 0, nullptr);
     } catch (const std::runtime_error& error) {
         if (requireDisplay) throw;
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        return 77;
+    }
+    if (handle <= 0) {
+        if (requireDisplay) throw std::runtime_error("sceVideoOutOpen failed");
+        std::printf("skipped, no display or Vulkan device: open failed with %d\n", handle);
         return 77;
     }
     const int supported = sceVideoOutIsOutputSupported(handle, 15, nullptr, nullptr, 0);

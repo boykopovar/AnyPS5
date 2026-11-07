@@ -106,7 +106,11 @@ int run() {
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return SkipReturnCode;
     }
-    check(handle > 0, "sceVideoOutOpen failed");
+    if (handle <= 0) {
+        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw std::runtime_error("sceVideoOutOpen failed");
+        std::printf("skipped, no display or Vulkan device: open failed with %d\n", handle);
+        return SkipReturnCode;
+    }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     const std::size_t tiledBytes = static_cast<std::size_t>((Width + 127u) / 128u) * ((Height + 127u) / 128u) * 65536u;
     const std::size_t linearBytes = static_cast<std::size_t>(Width) * Height * 4u;

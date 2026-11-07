@@ -1,5 +1,9 @@
 # libSceNetCtl technical debt
 
+### Silent stubs
+
+- [sceNetCtlTerm, sceNetCtlApRpCheckCallback, sceNetCtlApRpClearEvent, sceNetCtlApRpRegisterCallback, sceNetCtlApRpUnregisterCallback, sceNetCtlApRpGetResult, sceNetCtlApRpGetState, sceNetCtlApRpGetInfo, sceNetCtlApRpStart, sceNetCtlApRpStartWithRetry, sceNetCtlApRpStartConf, sceNetCtlApRpStop](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - return 0 or perform no-op termination without consuming arguments: native access point routing callbacks and control states remain unmeasured on hardware.
+
 ### Unknown function info
 
 - [sceNetCtlGetIfStat](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - the signature and 56-byte layout come from PPSA09030's call site and SharpProspero's `SceNetCtlIfStat`; the device kind is always 0, the byte counters are the host's totals over its up non-loopback interfaces (Windows: hardware interfaces only; Linux: every up non-loopback AF_PACKET interface; other hosts throw) (not "since cleared"), and the not-connected result is assumed to match `sceNetCtlGetState`
