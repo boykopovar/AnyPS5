@@ -283,18 +283,18 @@ int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
 }
 
 void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path) {
-    return opendir_nid_postfix(path);
+    return OpenDirectory_nid_no_patch(path);
 }
 
 int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle) {
-    return closedir_nid_postfix(handle);
+    return CloseDirectory_nid_no_patch(handle);
 }
 
 GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle) {
-    return readdir_nid_postfix(handle);
+    return ReadDirectory_nid_no_patch(handle);
 }
 
 int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
-    return readdir_r_nid_postfix(handle, entry, result);
+    return ReadDirectoryEntry_nid_no_patch(handle, entry, result);
 }
 }
