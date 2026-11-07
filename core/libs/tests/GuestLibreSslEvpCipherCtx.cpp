@@ -1172,6 +1172,13 @@ static void TestAesWrap128() {
         Hex("1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5"));
 }
 
+static void TestAesWrap192() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_192_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 789, 24);
+    RequireWrapVector(cipher, Hex("000102030405060708090a0b0c0d0e0f1011121314151617"), Hex("00112233445566778899aabbccddeeff"),
+        Hex("96778b25ae6ca435f92b5b97c050aed2468ab8a17ad84e5d"));
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1195,6 +1202,7 @@ int main() {
     TestAesGcmControl();
     TestAesGcmTls();
     TestAesWrap128();
+    TestAesWrap192();
     TestEvpCleanup();
     return 0;
 }
