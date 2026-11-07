@@ -298,6 +298,31 @@ std::vector<Leaf> widenedLeaves() {
     };
 }
 
+std::vector<Leaf> relocatedLeaves() {
+    return {
+        {"leaf without prologue pushes that pushes and pops rbx around its spill below rsp", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x53, 0x48, 0x89, 0xf3, 0x48, 0x8b, 0x44, 0x24, 0xf8,
+            0x48, 0x01, 0xd8, 0x5b, 0x48, 0x03, 0x44, 0x24, 0xf0, 0xc3,
+        }, 2 * kA + kB},
+        {"leaf whose jne lands on its 1-byte ret after a spill below rsp", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x8b, 0x44, 0x24, 0xf0, 0x48, 0x39, 0xf7, 0x75, 0x03,
+            0x48, 0x01, 0xf0, 0xc3,
+        }, kA},
+        {"frame-pointer leaf allocating with sub in its body and leaving through leave", {
+            0x55, 0x48, 0x89, 0xe5, 0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x7d, 0xe0, 0x48, 0x89, 0x34, 0x24,
+            0x48, 0x8b, 0x45, 0xe0, 0x48, 0x03, 0x04, 0x24, 0xc9, 0xc3,
+        }, kA + kB},
+        {"leaf pushing a register after its first instruction and spilling to the bottom of its red zone", {
+            0x48, 0x89, 0xf8, 0x57, 0x48, 0x89, 0x74, 0x24, 0x80, 0x48, 0x03, 0x44, 0x24, 0x80, 0x5f,
+            0x48, 0x01, 0xf8, 0xc3,
+        }, 2 * kA + kB},
+        {"leaf allocating a local with push rax, using it at rsp and freeing it with add", {
+            0x48, 0x89, 0xf8, 0x50, 0x48, 0x89, 0x34, 0x24, 0x48, 0x89, 0x7c, 0x24, 0xc0, 0x48, 0x03, 0x04,
+            0x24, 0x48, 0x03, 0x44, 0x24, 0xc0, 0x48, 0x83, 0xc4, 0x08, 0xc3,
+        }, 2 * kA + kB},
+    };
+}
+
 void writeRel32(std::uint8_t* at, const std::uint64_t target, const std::uint64_t next) {
     const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(next);
     require(displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max(), "a stub jump is out of rel32 range");
@@ -346,7 +371,7 @@ struct Framing {
     std::vector<Codegen::RedZoneDisplacement> Displacements;
 };
 
-Framing load(const Image& image, const bool frame) {
+Framing load(const Image& image, const bool frame, const bool relocate = false) {
     std::fill_n(arena, kArenaBytes, 0xcc);
     std::copy(image.Bytes.begin(), image.Bytes.end(), arena);
 #ifdef _WIN32
@@ -363,7 +388,7 @@ Framing load(const Image& image, const bool frame) {
     const std::vector<Domain::ProgramHeader> segments{{1, 5, 0, base, base, image.Bytes.size(), image.Bytes.size(), 16}};
     std::vector<Codegen::RedZoneFunction> functions;
     for (std::size_t index = 0; index < image.Starts.size(); ++index) functions.push_back({base + image.Starts[index], base + image.Ends[index]});
-    framing.Sites = Codegen::FrameRedZoneFunctions(image.Bytes, segments, functions, {}, framing.Report, framing.Displacements);
+    framing.Sites = Codegen::FrameRedZoneFunctions(image.Bytes, segments, functions, {}, framing.Report, framing.Displacements, relocate);
     for (const auto& moved : framing.Displacements) std::copy(moved.Bytes.begin(), moved.Bytes.end(), arena + moved.Offset);
     std::size_t cursor = kStubBase;
     for (const auto& site : framing.Sites) {
@@ -414,7 +439,7 @@ std::string hex(const std::uint64_t value) {
     return text.str();
 }
 
-Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
+Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves, const bool relocate = false) {
     const auto image = place(leaves);
     load(image, false);
     std::vector<Run> plain, clobbered;
@@ -425,8 +450,10 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
         require(clobbered.back().Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run");
         require(clobbered.back().Result != leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf survived writes below rsp, so the case proves nothing");
     }
-    const auto framing = load(image, true);
-    require(framing.Report.Framed == leaves.size(), "only " + std::to_string(framing.Report.Framed) + " of " + std::to_string(leaves.size()) + " leaves were framed");
+    const auto framing = load(image, true, relocate);
+    const auto framed = relocate ? framing.Report.Relocated : framing.Report.Framed;
+    require(framed == leaves.size(), "only " + std::to_string(framed) + " of " + std::to_string(leaves.size()) + " leaves were " + (relocate ? "relocated" : "framed"));
+    require(!relocate || framing.Report.Framed == 0, "a leaf meant for relocation was framed in place");
     for (std::size_t index = 0; index < leaves.size(); ++index) {
         const auto calm = run(image.Starts[index], false);
         const auto framed = run(image.Starts[index], true);
@@ -453,6 +480,8 @@ int main() {
         require(stubbed.OperandStubs == 3 && stubbed.StubbedOperands == 5, "the leaves were framed with " + std::to_string(stubbed.OperandStubs) + " operand stubs carrying " + std::to_string(stubbed.StubbedOperands) + " rsp operands, not 3 carrying 5");
         const auto backward = runLeaves(backwardStubbedLeaves());
         require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
+        const auto relocated = runLeaves(relocatedLeaves(), true);
+        require(relocated.RelocatedOperands == 13, "the relocated leaves moved " + std::to_string(relocated.RelocatedOperands) + " rsp operands, not 13");
         const auto widened = runLeaves(widenedLeaves());
         require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
         std::cout << "red-zone framer execution tests passed\n";

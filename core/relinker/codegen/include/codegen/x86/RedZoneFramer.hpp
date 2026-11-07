@@ -28,7 +28,11 @@ struct RedZoneFrameReport {
     std::size_t MovedOperands = 0;
     std::size_t OperandStubs = 0;
     std::size_t StubbedOperands = 0;
+    std::size_t Relocated = 0;
+    std::size_t RelocatedOperands = 0;
+    std::size_t OutOfRange = 0;
     std::map<std::string, std::size_t> Skipped;
+    std::map<std::string, std::size_t> NotRelocated;
 };
 
 struct RedZoneDisplacement {
@@ -42,7 +46,8 @@ std::vector<TrampolineSite> FrameRedZoneFunctions(
     const std::vector<RedZoneFunction>& functions,
     const std::vector<TrampolineSite>& existing,
     RedZoneFrameReport& report,
-    std::vector<RedZoneDisplacement>& displacements
+    std::vector<RedZoneDisplacement>& displacements,
+    bool relocateRefused = false
 );
 
 }
