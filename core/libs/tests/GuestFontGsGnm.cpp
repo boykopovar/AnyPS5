@@ -230,7 +230,11 @@ void GnmSelect() {
         else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
         else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
         else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
-        else if (entry.opcode != 0x47000001 && entry.opcode != 0x4700002d && entry.opcode != 0x4700002e) RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
+        else if (entry.opcode == 0x470000ec) {
+            std::uint8_t ctx[0x60] = {};
+            Require(reinterpret_cast<int(APS5_VABI*)(void*, void*)>(entry.value)(ctx, nullptr) == Fatal);
+        } else if (entry.opcode != 0x47000001 && entry.opcode != 0x4700002d && entry.opcode != 0x4700002e && entry.opcode != 0x470000e2 &&
+                   entry.opcode != 0x470000f0) RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
     }
 }
 
@@ -622,6 +626,91 @@ std::uint64_t Quad(const std::uint8_t* bytes, std::size_t offset) {
     return value;
 }
 
+std::uint64_t PacketDigest(const std::uint8_t* begin, const std::uint8_t* end, bool contextValues) {
+    std::uint64_t hash = 0xcbf29ce484222325;
+    for (const std::uint8_t* at = begin; at < end;) {
+        const std::uint32_t header = Word(at, 0);
+        const std::uint32_t dwords = (header >> 30) == 3 ? ((header >> 16) & 0x3fff) + 2 : 1;
+        const bool context = (header >> 30) == 3 && ((header >> 8) & 0xff) == 0x69;
+        for (std::uint32_t i = contextValues ? 1 : 0; i < (contextValues ? (context ? dwords : 1) : 1); ++i)
+            for (std::uint32_t k = 0; k < 4; ++k) hash = (hash ^ ((Word(at, 4 * i) >> (8 * k)) & 0xff)) * 0x100000001b3;
+        at += dwords * 4;
+    }
+    return hash;
+}
+
+void GnmRenderCases(std::uint8_t* instance) {
+    const auto begin = reinterpret_cast<GnmBeginHandler>(GnmEntry(0x4700002d));
+    const auto end = reinterpret_cast<GnmEndHandler>(GnmEntry(0x4700002e));
+    const auto call = reinterpret_cast<GnmEndHandler>(GnmEntry(0x470000f0));
+    constexpr std::uint32_t BufferedBlocks[11] = {0x004000e0, 0x00380050, 0x00380050, 0x00380050, 0, 0x00280000, 0x00280000, 0x00280000, 0x00280000, 0x00340000, 0x00340000};
+    for (const std::uint32_t flags : {0x110u, 0x14au}) {
+        const bool called = flags == 0x14a;
+        for (std::uint32_t hasBuffer = 0; hasBuffer < 2; ++hasBuffer) {
+            std::vector<std::uint8_t> buffer(0x4000), constants(0x1000), blocks(11 * 0x40), patch(0x100), param(0x40);
+            alignas(16) std::uint8_t ctx[0x1400] = {};
+            std::uint8_t record[0x80];
+            std::memset(record, 0xcc, sizeof(record));
+            Put32(ctx, 0, hasBuffer);
+            Put32(ctx, 8, 0x10203060);
+            Put32(ctx, 0x10, 0x4000);
+            Put32(ctx, 0x14, 0x1000);
+            Put64(ctx, 0x18, reinterpret_cast<std::uintptr_t>(buffer.data()));
+            Put64(ctx, 0x20, reinterpret_cast<std::uintptr_t>(constants.data()));
+            Put64(ctx, 0x28, 0x3f8000003f000000);
+            Put64(ctx, 0x78, reinterpret_cast<std::uintptr_t>(patch.data()));
+            for (std::size_t i = 0; i < 11; ++i) Put64(ctx, 0x90 + 8 * i, reinterpret_cast<std::uintptr_t>(blocks.data() + 0x40 * i));
+            Put64(param.data(), 0x28, reinterpret_cast<std::uintptr_t>(buffer.data() + 0x3000));
+            Put32(param.data(), 0x30, 0x40);
+            Require(begin(ctx, instance, nullptr, flags) == 0);
+            if (called) Require(call(ctx, param.data()) == 0);
+            Require(end(ctx, record) == 0);
+            const std::uint32_t used = called ? 0x40c : 0x388;
+            Require(Word(ctx, 4) == 0x10000 && Word(ctx, 0xc) == 0 && Word(ctx, 0x10) == used && Word(ctx, 0x14) == 0x240 && Word(ctx, 0x54) == 0);
+            for (std::size_t i = 0; i < 11; ++i) Require(Word(blocks.data(), 0x40 * i + 0x20) == (hasBuffer != 0 || i != 0 ? BufferedBlocks[i] : 0));
+            if (hasBuffer == 0) {
+                Require(Word(record, 0x30) == 0xcccccccc && Word(record, 0x34) == 0xcccccccc);
+                continue;
+            }
+            const auto* const cursor = reinterpret_cast<const std::uint8_t*>(Quad(ctx, 0x118));
+            Require(cursor == buffer.data() + used && Word(record, 0x30) == 0x10 && Word(record, 0x34) == 0);
+            Require(PacketDigest(buffer.data(), cursor, false) == (called ? 0x39d4d6b1a4d3b01dull : 0xbceb16e5f0c7764cull));
+            Require(PacketDigest(buffer.data(), cursor, true) == (called ? 0x651ae855e5d9e32bull : 0x51e66d23f13c8b84ull));
+        }
+    }
+}
+
+void GnmDrawStateCases() {
+    const auto pop = reinterpret_cast<GnmEndHandler>(GnmEntry(0x470000ec));
+    const auto copy = reinterpret_cast<GnmEndHandler>(GnmEntry(0x470000e2));
+    alignas(16) std::uint8_t ctx[0x200] = {};
+    std::vector<std::uint8_t> state(0xe90), frame(0x300), next(0x300), blocks(3 * 0x40), out(0x1b0), param(0x10);
+    for (std::size_t i = 0; i < frame.size(); ++i) frame[i] = static_cast<std::uint8_t>(i * 7 + 1);
+    const auto at = [&](std::size_t i) { return reinterpret_cast<std::uintptr_t>(blocks.data() + 0x40 * i); };
+    Put64(blocks.data(), 0x18, at(1));
+    Put64(blocks.data(), 0x58, at(2));
+    Put64(blocks.data(), 0x98, at(2));
+    for (const std::size_t offset : {0x170, 0x220, 0xd0, 0x110, 0x158, 0x160, 0x200, 0x1f8, 0x2a8}) Put64(frame.data(), offset, at(0));
+    Put64(frame.data(), 0x110, at(1));
+    Put64(frame.data(), 0, reinterpret_cast<std::uintptr_t>(next.data()));
+    Put64(ctx, 0x158, reinterpret_cast<std::uintptr_t>(state.data()));
+    Put64(state.data(), 0xd78, reinterpret_cast<std::uintptr_t>(frame.data()));
+    Require(copy(ctx, out.data()) == 0);
+    Require(std::memcmp(out.data() + 8, frame.data() + 0x28, 0x80) == 0 && std::memcmp(out.data() + 0x88, frame.data() + 0x118, 0x40) == 0);
+    Require(std::memcmp(out.data() + 0xc8, frame.data() + 0x178, 0x40) == 0 && std::memcmp(out.data() + 0x110, frame.data() + 0x228, 0x40) == 0);
+    Require(std::memcmp(out.data() + 0x158, frame.data() + 0xe8, 0x18) == 0 && Quad(out.data(), 0) == 0);
+    for (const std::size_t offset : {0x108, 0x150, 0x170, 0x178, 0x180, 0x188, 0x190, 0x198, 0x1a0}) Require(Quad(out.data(), offset) == at(2));
+    const std::uint8_t shader[4] = {0, 0, 0x4a, 0};
+    Put64(param.data(), 8, reinterpret_cast<std::uintptr_t>(shader));
+    Put32(ctx, 0x54, 2);
+    Put32(state.data(), 0xd68, 7);
+    Require(pop(ctx, param.data()) == 0 && Word(ctx, 0x54) == 1 && Quad(state.data(), 0xd78) == reinterpret_cast<std::uintptr_t>(next.data()));
+    Require(Quad(state.data(), 0xd70) == reinterpret_cast<std::uintptr_t>(shader) && Word(state.data(), 0xd68) == 0x4a);
+    Put64(param.data(), 8, 0);
+    Require(pop(ctx, param.data()) == 0 && Word(ctx, 0x54) == 0 && Quad(state.data(), 0xd78) == 0 && Quad(state.data(), 0xd70) == 0);
+    Require(Word(state.data(), 0xd68) == 0x4a && pop(ctx, param.data()) == Fatal && Word(ctx, 0x54) == 0);
+}
+
 void GnmSequenceCases(std::uint8_t* instance) {
     const auto begin = reinterpret_cast<GnmBeginHandler>(GnmEntry(0x4700002d));
     const auto end = reinterpret_cast<GnmEndHandler>(GnmEntry(0x4700002e));
@@ -648,9 +737,9 @@ void GnmSequenceCases(std::uint8_t* instance) {
         Require(Fnv(ctx, 0x1000, 0x1080) == 0xee4032166b435c6bull && Word(ctx, 0xc) == 0 && Word(ctx, 0x10) == 0 && Word(ctx, 0x14) == 0);
         if (hasBuffer != 0) Require(Quad(record, 0x28) == 0 && Word(record, 0x30) == 0 && Word(record, 0x34) == 0 && Quad(record, 0x38) == 0);
         else Require(Quad(record, 0x28) == 0xccccccccccccccccull);
-        RequireNotImplemented([&] { begin(ctx, instance, nullptr, 0x110); }, GnmHandlerName(0x4700002d));
         RequireNotImplemented([&] { begin(ctx, instance, nullptr, 0x40); }, GnmHandlerName(0x4700002d));
     }
+    GnmRenderCases(instance);
 }
 
 void GnmStructureTextureCases() {
@@ -738,6 +827,7 @@ int main(int argc, char** argv) {
     GnmDrawupImage();
     GnmDrawupPattern();
     GnmSequences();
+    GnmDrawStateCases();
     GnmSurfaceValidation();
     GnmStructureTextureCases();
     GnmSurfaceModes(argv[0]);

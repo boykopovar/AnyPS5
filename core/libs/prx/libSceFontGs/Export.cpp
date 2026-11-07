@@ -979,12 +979,13 @@ void GnmIndirectBuffer(std::uint8_t* cb, const void* address, std::uint32_t dwor
                  (dwords & 0xfffff) | 0x1900000});
 }
 
+constexpr std::uint16_t GnmShBases[8] = {0x2e40, 0x2c0c, 0x2c4c, 0x2c8c, 0x2ccc, 0x2d0c, 0x2d4c, 0};
+
 void GnmShRegs(std::uint8_t* cb, std::uint32_t stage, std::uint32_t reg, const std::uint32_t* values, std::uint32_t count) {
-    constexpr std::uint16_t Bases[8] = {0x2e40, 0x2c0c, 0x2c4c, 0x2c8c, 0x2ccc, 0x2d0c, 0x2d4c, 0};
     std::uint8_t* const at = GnmCbCur(cb);
     Store<std::uint64_t>(at, 0, 0x6875000dc0001000);
     Store(at, 8, count << 16 | (stage == 0 ? 2u : 0u) | 0xc0007600);
-    Store(at, 0xc, reg + Bases[stage] - 0x2c00);
+    Store(at, 0xc, reg + GnmShBases[stage] - 0x2c00);
     if (count <= 0x10) {
         if (count == 0) Store<std::uint64_t>(at, 8, 0xc0001000);
         for (std::uint32_t i = 0; i < count; ++i) Store(at, 0x10 + 4 * i, values[i]);
@@ -1658,7 +1659,8 @@ void GnmBindPsStage(std::uint8_t* state, std::uint8_t* header) {
     GnmBindPsBuffer(stage, object, 0x90, 0x98, header + 0x2a0, true);
 }
 
-void GnmEmitUserData(std::uint8_t* cb, std::uint8_t* stage, std::uint32_t shaderStage) {
+template <typename Emit>
+void GnmUserDataRuns(std::uint8_t* stage, Emit emit) {
     std::uint32_t pending = Load<std::uint32_t>(stage, 0x56c);
     if (pending == 0) return;
     const std::uint32_t count = Load<std::uint32_t>(stage, 0x568);
@@ -1671,11 +1673,22 @@ void GnmEmitUserData(std::uint8_t* cb, std::uint8_t* stage, std::uint32_t shader
             next = ++run;
             if (pending != 1) continue;
         }
-        if (run != 0) GnmShRegs(cb, shaderStage, LoadPtr(stage, 0x560)[2] + first, reinterpret_cast<const std::uint32_t*>(stage + 0x570 + first * 4), run);
+        if (run != 0) emit(first, run);
         if (pending < 2) break;
         run = next;
     }
     Store<std::uint32_t>(stage, 0x56c, 0);
+}
+
+void GnmEmitUserData(std::uint8_t* cb, std::uint8_t* stage, std::uint32_t shaderStage) {
+    GnmUserDataRuns(stage, [&](std::uint32_t first, std::uint32_t run) {
+        GnmShRegs(cb, shaderStage, LoadPtr(stage, 0x560)[2] + first, reinterpret_cast<const std::uint32_t*>(stage + 0x570 + first * 4), run);
+    });
+}
+
+void GnmCountUserData(std::uint8_t* command, std::uint8_t* stage) {
+    if (LoadPtr(stage, 0x560) == nullptr) return;
+    GnmUserDataRuns(stage, [&](std::uint32_t, std::uint32_t run) { Store(command, 0, Load<std::uint32_t>(command, 0) + run + 4); });
 }
 
 void GnmOpenChain(std::uint8_t* cb) {
@@ -2522,6 +2535,349 @@ int APS5_VABI GnmBackendEndSequence(void* ctx, void* record) {
     return GnmEndSequence(static_cast<std::uint8_t*>(ctx), static_cast<std::uint8_t*>(record));
 }
 
+void GnmShPointer(std::uint8_t* cb, std::uint32_t stage, std::uint32_t reg, const void* address) {
+    const auto value = reinterpret_cast<std::uintptr_t>(address);
+    GnmEmit(cb, {(stage == 0 ? 2u : 0u) + 0xc0027600, reg + GnmShBases[stage] - 0x2c00, static_cast<std::uint32_t>(value),
+                 static_cast<std::uint32_t>(value >> 32)});
+}
+
+std::uint32_t GnmResourceBytes(const std::uint8_t* usage) { return ((usage[3] << 4) & 0x10) + 0x10; }
+
+const std::uint8_t* GnmStageUsage(const std::uint8_t* stage, std::size_t offset) {
+    const std::uint8_t* const usage = LoadPtr(stage, offset);
+    if (usage == nullptr || usage[2] < 0x10) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    return usage;
+}
+
+void GnmCommitPsStage(std::uint8_t* stage, std::uint8_t* cb) {
+    const std::uint8_t* const table = LoadPtr(stage, 0x530);
+    if (table == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    GnmShPointer(cb, 1, table[2], LoadPtr(stage, 0x538));
+    std::uint8_t* const base = LoadPtr(stage, 0x538);
+    std::uint32_t bits = Load<std::uint32_t>(stage, 0);
+    for (std::uint32_t i = 0; bits != 0; ++i, bits >>= 1) {
+        if ((bits & 1) != 0) {
+            const std::uint8_t* const usage = GnmStageUsage(stage, 0x10 + i * 40);
+            if (base != nullptr) std::memcpy(base + (usage[2] - 0x10) * 4u, stage + 0x24 + i * 40, GnmResourceBytes(usage));
+        }
+        if (i > 0x12 || bits == 1) break;
+    }
+    bits = Load<std::uint32_t>(stage, 8);
+    for (std::uint32_t i = 0; bits != 0; ++i, bits >>= 1) {
+        if ((bits & 1) != 0) {
+            const std::uint8_t* const usage = GnmStageUsage(stage, 0x330 + i * 16);
+            if (base == nullptr || i > 0xe) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+            std::memcpy(base + (usage[2] - 0x10) * 4u, LoadPtr(stage, 0x338 + i * 16), GnmResourceBytes(usage));
+        }
+        if (bits == 1) break;
+    }
+    if (Load<std::uint32_t>(stage, 4) != 0) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    if (LoadPtr(stage, 0x560) != nullptr) GnmEmitUserData(cb, stage, 1);
+}
+
+void GnmCountPsStage(std::uint8_t* stage, std::uint8_t* command) {
+    if (LoadPtr(stage, 0x530) != nullptr) Store(command, 0, Load<std::uint32_t>(command, 0) + 4);
+    std::uint32_t bits = Load<std::uint32_t>(stage, 0);
+    for (std::uint32_t i = 0; bits != 0 && i <= 0x13; ++i, bits >>= 1)
+        if ((bits & 1) != 0) GnmStageUsage(stage, 0x10 + i * 40);
+    bits = Load<std::uint32_t>(stage, 8);
+    for (std::uint32_t i = 0; bits != 0 && i <= 0xf; ++i, bits >>= 1)
+        if ((bits & 1) != 0) GnmStageUsage(stage, 0x330 + i * 16);
+    if (Load<std::uint32_t>(stage, 4) != 0) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    GnmCountUserData(command, stage);
+}
+
+std::uint8_t* GnmOpenRecord(std::uint8_t* command, bool hasBuffer) {
+    if (hasBuffer) {
+        GnmOpenChain(command + 8);
+        return GnmCbCur(command + 8);
+    }
+    GnmCount(command, GnmLoopDwords(command + 8));
+    return GnmSyncReserved(command);
+}
+
+void GnmCommitRecord(std::uint8_t* command, bool hasBuffer, GnmChain& chain) {
+    if (hasBuffer) {
+        GnmCommitChain(command, chain);
+        return;
+    }
+    std::uint8_t* const end = GnmSyncReserved(chain.command);
+    std::uint8_t* const at = GnmReserveStart(command);
+    if (at > end || LoadPtr(command, 0x10) < end) return;
+    Store(command, 0, Load<std::uint32_t>(command, 0) + static_cast<std::uint32_t>((end - at) >> 2));
+}
+
+void GnmUserPointer(std::uint8_t* local, bool hasBuffer, std::uint32_t slot, const void* value) {
+    std::uint8_t* const aux = LoadPtr(local, 0x48);
+    if (aux == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* const state = LoadPtr(aux, 8);
+    std::uint8_t* const stage = state + GnmStagePs;
+    const std::size_t offset = 0xdc0 + slot * 4;
+    StorePtr(state, offset, value);
+    if (LoadPtr(stage, 0x560) == nullptr) return;
+    if (((reinterpret_cast<std::uintptr_t>(state) + offset) & 3) == 0 && Load<std::uint32_t>(stage, 0x568) >= slot + 2) {
+        Store(stage, 0x570 + slot * 4, Load<std::uint64_t>(state, offset));
+        Store(stage, 0x56c, Load<std::uint32_t>(stage, 0x56c) | 3u << slot);
+    }
+    if (hasBuffer) GnmEmitUserData(local + 8, stage, 1);
+    else GnmCountUserData(local, stage);
+}
+
+template <typename Body>
+void GnmRecordBlock(std::uint8_t* command, bool hasBuffer, std::uint8_t* state, std::uint8_t* block, std::uint32_t flags, std::uint8_t* data,
+                    Body body) {
+    GnmSyncReserved(command);
+    std::uint8_t* const header = LoadPtr(command, 0x50);
+    if ((flags & 0x95) != 0x81 || block == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* const constants = LoadPtr(state, GnmStateConstants);
+    std::uint8_t* const begin = GnmOpenRecord(command, hasBuffer);
+    GnmChain chain;
+    GnmOpenLocalChain(chain, state, header, begin, GnmLow(LoadPtr(command, 0x10)) - GnmLow(begin));
+    std::uint8_t* const local = chain.command;
+    std::uint8_t* const start = GnmReserveStart(local);
+    if (hasBuffer) {
+        GnmOpenChain(local + 8);
+        if (LoadPtr(local, 0x10) >= LoadPtr(local, 0x18)) StorePtr(chain.aux, 0x70, LoadPtr(local, 0x18));
+    } else {
+        GnmCount(local, GnmLoopDwords(local + 8));
+        GnmSyncReserved(local);
+    }
+    body(local);
+    const auto dwords = static_cast<std::uint32_t>((GnmSyncReserved(local) - start) >> 2);
+    if (hasBuffer) GnmCallLoop(local + 8);
+    else GnmCount(local, 4);
+    GnmCommitRecord(command, hasBuffer, chain);
+    const std::uint32_t used = (Load<std::uint32_t>(state, GnmStateConstants) - GnmLow(constants)) >> 2;
+    if (Load<std::uint64_t>(block, 0x30) == 0) {
+        if (hasBuffer) {
+            StorePtr(block, 0x10, data);
+            StorePtr(block, 0x28, constants);
+            StorePtr(block, 0x30, start);
+        }
+        Store(block, 0x20, static_cast<std::uint16_t>(used << 2));
+        Store(block, 0x22, static_cast<std::uint16_t>(dwords << 2));
+    }
+    GnmSyncReserved(command);
+}
+
+std::uint8_t* GnmBlockOwner(std::uint8_t* block) {
+    if (block == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* const owner = LoadPtr(block, 0x18);
+    return owner != nullptr ? owner : block;
+}
+
+void GnmRecordPsPointer(std::uint8_t* command, bool hasBuffer, std::uint8_t* state, std::uint8_t* block, std::uint32_t flags, std::uint32_t slot) {
+    std::uint8_t* const data = LoadPtr(GnmBlockOwner(block), 8);
+    if (data == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    GnmRecordBlock(command, hasBuffer, state, block, flags, data, [&](std::uint8_t* local) { GnmUserPointer(local, hasBuffer, slot, data); });
+}
+
+void GnmBindVsBuffer(std::uint8_t* local, bool hasBuffer, const std::uint8_t* data) {
+    std::uint8_t* const aux = LoadPtr(local, 0x48);
+    if (aux == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* const state = LoadPtr(aux, 8);
+    std::uint8_t* const stage = state + GnmStagePs;
+    std::uint8_t* at = LoadPtr(state, GnmStateConstants);
+    if (LoadPtr(stage, 0x530) != nullptr) {
+        if ((stage[0x548] & 1) == 0) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+        at = AlignPtr(at, 4);
+        StorePtr(stage, 0x538, at);
+        at += Load<std::uint64_t>(stage, 0x540);
+    }
+    StorePtr(state, GnmStateConstants, at);
+    if (hasBuffer && (stage[0] & 1) != 0) {
+        const std::uint32_t high = Load<std::uint32_t>(data, 4);
+        const std::uint64_t base = Load<std::uint32_t>(data, 0) | static_cast<std::uint64_t>(high & 0xfff) << 32;
+        const std::uint32_t stride = (high >> 16) & 0x3fff;
+        GnmBufferDescriptor(stage + 0x24, reinterpret_cast<const void*>(base), (stride != 0 ? stride : 1) * Load<std::uint32_t>(data, 8));
+    }
+    const std::uint8_t* const object = GnmShaderObject(8);
+    GnmBindPsBuffer(stage, object, 0x78, 0x80, data + 0x10, false);
+    const std::uint8_t* const extra = LoadPtr(data, 0x20);
+    GnmBindPsBuffer(stage, object, 0x90, 0x98, extra != nullptr ? extra : LoadPtr(aux, 0) + 0x2a0, true);
+    if (LoadPtr(stage, 0x560) != nullptr && Load<std::uint32_t>(stage, 0x568) >= 8) {
+        Store(stage, 0x588, Load<std::uint64_t>(data, 0x28));
+        stage[0x56c] |= 0xc0;
+    }
+    if (hasBuffer) GnmCommitPsStage(stage, local + 8);
+    else GnmCountPsStage(stage, local);
+}
+
+void GnmRecordVsBuffer(std::uint8_t* command, bool hasBuffer, std::uint8_t* state, std::uint8_t* block, std::uint32_t flags) {
+    std::uint8_t* data = LoadPtr(GnmBlockOwner(block), 8);
+    if (data == nullptr) data = LoadPtr(command, 0x50) + 0x1d8;
+    GnmRecordBlock(command, hasBuffer, state, block, flags, data, [&](std::uint8_t* local) { GnmBindVsBuffer(local, hasBuffer, data); });
+}
+
+struct GnmBlendFactor {
+    std::uint8_t source;
+    std::uint8_t op;
+    std::uint8_t destination;
+    bool set;
+};
+
+std::uint32_t GnmBlendColor(std::uint32_t control, const GnmBlendFactor& factor) {
+    if (!factor.set) return control;
+    return (control & 0xffffe000u) | (factor.source & 0x1fu) | ((factor.op << 5) & 0xffu) | (factor.destination & 0x1fu) << 8;
+}
+
+std::uint32_t GnmBlendAlpha(std::uint32_t control, const GnmBlendFactor& factor) {
+    if (!factor.set) return control;
+    return (control & 0xe000ffffu) | (factor.source & 0x1fu) << 16 | (factor.op & 7u) << 21 | (factor.destination & 0x1fu) << 24;
+}
+
+GnmBlendFactor GnmBlendPick(const GnmBlendFactor (&table)[13], std::uint32_t mode) { return mode <= 0xc ? table[mode] : GnmBlendFactor{}; }
+
+std::uint32_t GnmBlendFirst(std::uint32_t value, bool premultiplied) {
+    const std::uint8_t opaque = (value & 0xff00) == 0x700 ? 1 : 0;
+    const std::uint32_t color = premultiplied ? (value >> 8) & 0xff : value & 0xff;
+    const std::uint32_t alpha = premultiplied ? 4 : (value >> 8) & 0xff;
+    const std::uint8_t mixed = static_cast<std::uint8_t>(opaque | 4);
+    const std::uint8_t inverse = static_cast<std::uint8_t>(opaque ^ 5);
+    const GnmBlendFactor colors[13] = {{mixed, 0, inverse, true}, {1, 0, 0, true}, {mixed, 0, 1, true}, {mixed, 4, 1, true}, {0, 0, 1, true},
+                                       {9, 0, inverse, true}, {1, 3, 1, true}, {1, 2, 1, true}, {}, {}, {}, {}, {0, 0, 0, true}};
+    constexpr GnmBlendFactor Alphas[13] = {{4, 0, 5, true}, {1, 0, 0, true}, {1, 0, 1, true}, {1, 4, 1, true}, {0, 0, 1, true},
+                                           {7, 0, 5, true}, {1, 3, 1, true}, {1, 2, 1, true}, {}, {}, {}, {}, {0, 0, 0, true}};
+    return GnmBlendAlpha(GnmBlendColor(3u << 29, GnmBlendPick(colors, color)), GnmBlendPick(Alphas, alpha));
+}
+
+std::uint32_t GnmBlendSecond(std::uint32_t value) {
+    constexpr GnmBlendFactor Colors[13] = {{6, 0, 7, true}, {6, 0, 0, true}, {6, 0, 1, true}, {6, 4, 1, true}, {0, 0, 1, true},
+                                           {9, 0, 5, true}, {6, 3, 1, true}, {7, 2, 1, true}, {}, {}, {}, {}, {0, 0, 0, true}};
+    return GnmBlendColor(GnmBlendAlpha(3u << 29, {1, 0, 0, true}), GnmBlendPick(Colors, (value >> 8) & 0xff));
+}
+
+void GnmBindBlend(std::uint8_t* local, bool hasBuffer, const std::uint8_t* data, bool second) {
+    std::uint8_t* const aux = LoadPtr(local, 0x48);
+    if (aux == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    const std::uint8_t* const header = LoadPtr(aux, 0);
+    const std::uint32_t value = Load<std::uint16_t>(data, 0);
+    const std::uint32_t control = second ? GnmBlendSecond(value) : GnmBlendFirst(value, Load<std::uint32_t>(LoadPtr(aux, 8), 0xd68) == 0x30);
+    if (hasBuffer) GnmContextReg(local + 8, 0x1e0, control & 0xffff1fff);
+    else Store(local, 0, Load<std::uint32_t>(local, 0) + 3);
+    const bool opaque = (value & 0xff00) == 0x700;
+    std::size_t offset = (value & 0xff00) == 0x500 ? 0x380 : 0x368;
+    if (!second) offset = (value & 0xff) == 5 ? (opaque ? 0x388 : 0x370) : (opaque ? 0x378 : 0x368);
+    GnmUserPointer(local, hasBuffer, 4, LoadPtr(header, offset));
+}
+
+void GnmRecordBlend(std::uint8_t* command, bool hasBuffer, std::uint8_t* state, std::uint8_t* block, std::uint32_t flags, bool second) {
+    std::uint8_t* const field = GnmBlockOwner(block) + 8;
+    GnmRecordBlock(command, hasBuffer, state, block, flags, LoadPtr(field, 0),
+                   [&](std::uint8_t* local) { GnmBindBlend(local, hasBuffer, field, second); });
+}
+
+void GnmRecordVertexBlock(std::uint8_t* command, bool hasBuffer, std::uint8_t* state, std::uint8_t* block, std::uint32_t flags) {
+    std::uint8_t* const header = LoadPtr(command, 0x50);
+    const std::uint8_t* const source = LoadPtr(header, 0x338);
+    if (block == nullptr || (flags & 0x3d) != 9) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* const constants = LoadPtr(state, GnmStateConstants);
+    std::uint8_t* const start = GnmOpenRecord(command, hasBuffer);
+    GnmChain chain;
+    GnmOpenLocalChain(chain, state, header, start, GnmLow(LoadPtr(command, 0x10)) - GnmLow(start));
+    std::uint8_t* const local = chain.command;
+    StorePtr(state, 0xda0, constants);
+    if (LoadPtr(state, 0x560) != nullptr) {
+        if (((reinterpret_cast<std::uintptr_t>(state) + 0xda0) & 3) == 0 && Load<std::uint32_t>(state, 0x568) >= 0xa) {
+            StorePtr(state, 0x590, constants);
+            state[0x56d] |= 3;
+        }
+        if (hasBuffer) GnmEmitUserData(local + 8, state, 2);
+        else GnmCountUserData(local, state);
+    }
+    std::uint8_t* const stage = state + GnmStagePs;
+    if (LoadPtr(stage, 0x560) != nullptr) {
+        if (Load<std::uint32_t>(stage, 0x568) < 2) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+        StorePtr(stage, 0x570, constants + 0xc0);
+        Store(stage, 0x56c, Load<std::uint32_t>(stage, 0x56c) | 3);
+        if (hasBuffer) GnmEmitUserData(local + 8, stage, 1);
+        else GnmCountUserData(local, stage);
+    }
+    if (hasBuffer) GnmCallLoop(local + 8);
+    else GnmCount(local, 4);
+    std::uint8_t* const end = GnmSyncReserved(local);
+    const auto bytes = static_cast<std::uint32_t>(end - start);
+    if (hasBuffer) {
+        std::memcpy(constants, source, 0xc0);
+        std::memcpy(constants + 0xc0, state + 0xe08, 0x10);
+        Store(constants, 0xd0, Load<std::uint32_t>(state, 0xcf0));
+        Store(constants, 0xd4, Load<std::uint32_t>(state, 0xcf4));
+        Store<std::uint64_t>(constants, 0xd8, 0);
+    }
+    GnmCommitRecord(command, hasBuffer, chain);
+    if (hasBuffer) {
+        StorePtr(block, 8, start);
+        StorePtr(block, 0x30, start);
+        Store(block, 0x22, static_cast<std::uint16_t>(bytes & 0xfffc));
+        StorePtr(block, 0x28, constants);
+        Store<std::uint16_t>(block, 0x20, 0xe0);
+    }
+    StorePtr(state, GnmStateConstants, constants + 0xe0);
+}
+
+std::uint8_t* GnmPrepareBlock(std::uint8_t* ctx, std::size_t slot, std::uint64_t kind, std::uint8_t* data) {
+    std::uint8_t* const block = LoadPtr(ctx, slot);
+    Store(block, 0, kind);
+    std::memset(block + 0x20, 0, 0x20);
+    StorePtr(block, 8, data);
+    StorePtr(block, 0x10, data);
+    StorePtr(block, 0x18, block);
+    return block;
+}
+
+void GnmBeginRender(std::uint8_t* ctx, std::uint32_t flags) {
+    const bool hasBuffer = Load<std::uint32_t>(ctx, 0) != 0;
+    std::uint8_t* const command = ctx + 0x100;
+    std::uint8_t* const aux = LoadPtr(ctx, 0x148);
+    if (aux == nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* const binding = LoadPtr(aux, 0);
+    std::uint8_t* const bound = LoadPtr(aux, 8);
+    std::uint8_t* const stage = bound != nullptr ? bound + GnmStagePs : bound;
+    GnmBindVsStage(bound, GnmShaderObject(GnmFetchShaderIndex), 0x88);
+    GnmBindPsStage(bound, binding);
+    if (LoadPtr(bound, 0x530) != nullptr) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    std::uint8_t* at = LoadPtr(bound, GnmStateConstants);
+    if (LoadPtr(stage, 0x530) != nullptr) {
+        at = AlignPtr(at, 4);
+        StorePtr(stage, 0x558, at);
+        StorePtr(stage, 0x538, at);
+        at += Load<std::uint64_t>(stage, 0x540);
+    }
+    if (hasBuffer) {
+        CopyRo(at, 0x27e00, 0x10);
+        std::memcpy(at + 0x10, binding + 0x2d8, 0x10);
+    }
+    StorePtr(bound, GnmStateConstants, at + 0x20);
+    Store<std::uint32_t>(stage, 0x56c, 0);
+    if (LoadPtr(stage, 0x560) != nullptr && Load<std::uint32_t>(stage, 0x568) >= 4) {
+        StorePtr(stage, 0x578, at);
+        Store<std::uint32_t>(stage, 0x56c, 0xc);
+        if (Load<std::uint32_t>(stage, 0x568) >= 8) {
+            StorePtr(stage, 0x588, at + 0x10);
+            Store<std::uint32_t>(stage, 0x56c, 0xcc);
+        }
+    }
+    if (LoadPtr(stage, 0x530) != nullptr) StorePtr(stage, 0x538, LoadPtr(stage, 0x558));
+    if (hasBuffer) GnmCommitPsStage(stage, command + 8);
+    else GnmCountPsStage(stage, command);
+    std::uint8_t* const header = LoadPtr(ctx, 0x150);
+    std::uint8_t* const state = LoadPtr(ctx, 0x158);
+    if (LoadPtr(ctx, 0x90) != nullptr) GnmRecordVertexBlock(command, hasBuffer, state, LoadPtr(ctx, 0x90), 9);
+    GnmRecordPsPointer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xc8, 0x1000000000060, LoadPtr(header, 0x218)), 0x81, 8);
+    GnmRecordPsPointer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xd0, 0x1000000000062, LoadPtr(header, 0x360)), 0x81, 12);
+    GnmRecordPsPointer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xb8, 0x1000000000061, LoadPtr(header, 0x358)), 0x81, 10);
+    GnmRecordPsPointer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xc0, 0x1000000000061, LoadPtr(header, 0x358)), 0x81, 10);
+    GnmRecordVsBuffer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xa0, 0x1000000000050, header + 0x1a8), 0x81);
+    GnmRecordVsBuffer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0x98, 0x1000000000050, header + 0x1d8), 0x81);
+    GnmRecordVsBuffer(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xa8, 0x1000000000050, header + 0x178), 0x81);
+    const std::uint8_t mode = static_cast<std::uint8_t>(flags);
+    const std::size_t blend = mode == 0x4a ? 0x3a0 : mode == 0x40 ? 0x390 : 0x3a8;
+    GnmRecordBlend(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xd8, 0x1000000000063, LoadPtr(header, blend)), 0x81, false);
+    GnmRecordBlend(command, hasBuffer, state, GnmPrepareBlock(ctx, 0xe0, 0x1000000000063, LoadPtr(header, blend)), 0x81, true);
+    if (hasBuffer) GnmEmit(command + 8, {0xc0004200, 0});
+    else GnmCount(command, 2);
+}
+
 int GnmBeginSequence(std::uint8_t* ctx, std::uint8_t* instance, std::uint8_t* param, std::uint32_t flags) {
     const bool hasBuffer = Load<std::uint32_t>(ctx, 0) != 0;
     std::uint32_t bytes = 0x3ffffc;
@@ -2610,11 +2966,53 @@ int GnmBeginSequence(std::uint8_t* ctx, std::uint8_t* instance, std::uint8_t* pa
     StorePtr(state, 0xce0, LoadPtr(header, 0x328));
     Store<std::uint64_t>(state, 0xce8, 0);
     Store(state, 0xd68, mode == 0x10 ? 1u : mode);
-    NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    if ((flags & 0x100) == 0) NotImplemented_nid_no_patch("sceFontSelectGraphicsGnm_backend_4700002d");
+    GnmBeginRender(ctx, flags);
+    return 0;
 }
 
 int APS5_VABI GnmBackendBeginSequence(void* ctx, void* instance, void* param, std::uint32_t flags) {
     return GnmBeginSequence(static_cast<std::uint8_t*>(ctx), static_cast<std::uint8_t*>(instance), static_cast<std::uint8_t*>(param), flags);
+}
+
+std::uint8_t* GnmBlockRoot(std::uint8_t* block) {
+    for (;;) {
+        std::uint8_t* const next = LoadPtr(block, 0x18);
+        if (next == nullptr || next == block) return block;
+        block = next;
+    }
+}
+
+int APS5_VABI GnmBackendCopyDrawState(void* ctx, void* param) {
+    const std::uint8_t* const frame = LoadPtr(LoadPtr(ctx, 0x158), 0xd78);
+    auto* const out = static_cast<std::uint8_t*>(param);
+    std::memcpy(out + 0x08, frame + 0x28, 0x80);
+    std::memcpy(out + 0x88, frame + 0x118, 0x40);
+    std::memcpy(out + 0xc8, frame + 0x178, 0x40);
+    std::memcpy(out + 0x110, frame + 0x228, 0x40);
+    StorePtr(out, 0x108, GnmBlockRoot(LoadPtr(frame, 0x170)));
+    StorePtr(out, 0x150, GnmBlockRoot(LoadPtr(frame, 0x220)));
+    std::memcpy(out + 0x158, frame + 0xe8, 0x18);
+    constexpr std::size_t Roots[7][2] = {{0x170, 0xd0}, {0x178, 0x110}, {0x198, 0x158}, {0x1a0, 0x160}, {0x180, 0x200}, {0x188, 0x1f8}, {0x190, 0x2a8}};
+    for (const auto& [to, from] : Roots) StorePtr(out, to, GnmBlockRoot(LoadPtr(frame, from)));
+    return 0;
+}
+
+int APS5_VABI GnmBackendPopDrawState(void* ctx, void* param) {
+    const std::uint32_t depth = Load<std::uint32_t>(ctx, 0x54);
+    if (depth == 0) return FontGsFatal;
+    std::uint8_t* const state = LoadPtr(ctx, 0x158);
+    Store(ctx, 0x54, depth - 1);
+    const std::uint8_t* const shader = LoadPtr(param, 8);
+    StorePtr(state, 0xd78, LoadPtr(LoadPtr(state, 0xd78), 0));
+    StorePtr(state, 0xd70, shader);
+    if (shader != nullptr) Store<std::uint32_t>(state, 0xd68, shader[2]);
+    return 0;
+}
+
+int APS5_VABI GnmBackendCallCommands(void* ctx, void* param) {
+    GnmCallBlock(static_cast<std::uint8_t*>(ctx), LoadPtr(param, 0x28), Load<std::uint32_t>(param, 0x30) >> 2);
+    return 0;
 }
 
 const FontGnmSurface* ReadGnmSurface(const void* surface) {
@@ -2679,11 +3077,11 @@ const GnmBackend g_gnmBackend = {
      GnmUnportedEntry<0x470000d4>(),
      GnmUnportedEntry<0x470000e0>(),
      GnmUnportedEntry<0x470000e1>(),
-     GnmUnportedEntry<0x470000ec>(),
+     {0x470000ec, 0, reinterpret_cast<std::uint64_t>(&GnmBackendPopDrawState)},
      GnmUnportedEntry<0x470000d0>(),
-     GnmUnportedEntry<0x470000e2>(),
+     {0x470000e2, 0, reinterpret_cast<std::uint64_t>(&GnmBackendCopyDrawState)},
      GnmUnportedEntry<0x470000e3>(),
-     GnmUnportedEntry<0x470000f0>(),
+     {0x470000f0, 0, reinterpret_cast<std::uint64_t>(&GnmBackendCallCommands)},
      {0x47000003, 0, 0x1000000040},
      {0x47000004, 0, 0x4000000020},
      GnmUnportedEntry<0x4700000b>(),
