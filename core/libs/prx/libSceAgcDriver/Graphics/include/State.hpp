@@ -64,6 +64,7 @@ struct ColorTarget {
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     bool cmaskFastClear = false;
+    std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};
     std::uint32_t mipCount = 1;
@@ -178,6 +179,7 @@ struct State {
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+    float lineWidth = 1.0f;
     VkFrontFace frontFace;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;

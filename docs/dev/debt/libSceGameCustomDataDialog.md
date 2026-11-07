@@ -6,4 +6,8 @@
 
 ### Unknown function info
 
-- [sceGameCustomDataDialogGetResult and sceGameCustomDataDialogOpen](../../../core/libs/prx/libSceGameCustomDataDialog/Export.cpp) (libSceGameCustomDataDialog) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGameCustomDataDialog.c), but Orbital has prototypes only for the `A` variants and no credible prototypes were found for these. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceGameCustomDataDialogGetResult and sceGameCustomDataDialogOpen](../../../core/libs/prx/libSceGameCustomDataDialog/Export.cpp) (libSceGameCustomDataDialog) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGameCustomDataDialog.c), but Orbital has prototypes only for the `A` variants and no credible prototypes were found for these. The declarations have no parameters solely to resolve known imports; this is not an ABI claim, and initialized calls throw through `NotImplemented_nid_no_patch`.
+
+### Functional
+
+- [sceGameCustomDataDialogOpen and sceGameCustomDataDialogGetResult](../../../core/libs/prx/libSceGameCustomDataDialog/Export.cpp) (libSceGameCustomDataDialog) - return `COMMON_DIALOG_ERROR_NOT_INITIALIZED` (`0x80B80003`) when status is `NONE` before initialization and after termination, with both the error code and state-first check order inferred from the existing dialog lifecycle rather than export-specific evidence. Signatures, argument validation, error precedence and initialized behavior remain unknown and unmodelled; initialized calls throw through `NotImplemented_nid_no_patch`. Not measured on a console.

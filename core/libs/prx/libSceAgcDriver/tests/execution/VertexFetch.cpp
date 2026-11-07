@@ -89,7 +89,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         ShaderRecompiler::RecompileRequest pixelRequest{{ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}}, {32u, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}}, device.Target(), PixelPushLayout(pushBytes, device.Target())};
         if (value.specializedPixel) pixelRequest.target.registrationWordLimit = 1u;
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
-        if (device.Target().registrationModules) Require(vertex.registrationModule && pixel.registrationModule != value.specializedPixel, "registration modules: the word limit did not choose the module mode");
+        if (device.Target().registrationModules) Require(!vertex.registrationModule && pixel.registrationModule != value.specializedPixel, "registration modules: the vertex module was not specialized or the word limit did not choose the pixel module mode");
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(pushBytes, device.Target())}}};
         AgcDriver::Graphics::State state{};
         state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
