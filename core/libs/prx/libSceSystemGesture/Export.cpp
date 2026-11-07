@@ -59,6 +59,8 @@ std::mutex primitiveTouchMutex;
 struct GestureContext {
     std::int32_t handle = 0;
     std::vector<TrackedTouch> touches;
+    std::array<std::uint8_t, 32> touchArea{};
+    bool touchAreaConfigured = false;
 };
 
 std::array<GestureContext, 8> gestureContexts;
@@ -375,8 +377,15 @@ int APS5_VABI sceSystemGestureDebugGetVersion() {
 
 extern "C" {
 
-int APS5_VABI sceSystemGestureSetTouchAreaInformation() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSystemGestureSetTouchAreaInformation(int32_t gestureHandle, const void* information) {
+    std::lock_guard lock(primitiveTouchMutex);
+    if (!gestureInitialized) return static_cast<int>(0x80890003);
+    if (!information) return SCE_SYSTEM_GESTURE_ERROR_INVALID_ARGUMENT;
+    auto* context = findGestureContext(gestureHandle);
+    if (!context) return SCE_SYSTEM_GESTURE_ERROR_INVALID_HANDLE;
+    std::memcpy(context->touchArea.data(), information, context->touchArea.size());
+    context->touchAreaConfigured = true;
+    return 0;
 }
 
 }
