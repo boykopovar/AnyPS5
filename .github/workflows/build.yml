@@ -143,7 +143,7 @@ jobs:
                 edgeWatch: edits('edge-watch') || touches('core/libs/tests/edge_watch/', 'core/libs/tests/EdgeWatch.cpp',
                   'core/libs/prx/libkernel/Equeue/src/EdgeWatch.cpp', 'core/libs/prx/libkernel/Equeue/include/EdgeWatch.hpp', libc),
                 mingwHostTests: edits('eligibility') || edits('windows') || touches(
-                  'core/CMakeLists.txt', 'core/libs/', 'cmake/', '3rdparty/', '.gitmodules', 'tools/build_mingw_host_only_tests.py',
+                  'core/libs/', 'cmake/', '3rdparty/', '.gitmodules', 'tools/build_mingw_host_only_tests.py',
                   'tools/build_changed_guest_tests.py', 'tools/configure_seed.py', 'tools/select_tests.py',
                   'tools/tests/test_build_changed_guest_tests.py', 'tools/tests/test_mingw_host_only_test_targets.py', 'CMakeLists.txt'
                 ),
