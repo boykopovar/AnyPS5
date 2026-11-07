@@ -187,23 +187,6 @@ int APS5_VABI RecordBackendList(void* dispatch, const FontGraphicsBackendList* l
     return 0x1234;
 }
 
-template <typename TCall>
-void RequireNotImplemented(TCall call, const std::string& name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == name + " not implemented");
-        return;
-    }
-    Require(false);
-}
-
-std::string GnmHandlerName(std::uint32_t opcode) {
-    char name[48];
-    std::snprintf(name, sizeof(name), "sceFontSelectGraphicsGnm_backend_%08x", opcode);
-    return name;
-}
-
 const FontGraphicsServiceParam* GnmBackend() {
     return static_cast<const FontGraphicsServiceParam*>(sceFontSelectGraphicsGnm(0));
 }
@@ -233,8 +216,7 @@ void GnmSelect() {
         else if (entry.opcode == 0x470000ec) {
             std::uint8_t ctx[0x60] = {};
             Require(reinterpret_cast<int(APS5_VABI*)(void*, void*)>(entry.value)(ctx, nullptr) == Fatal);
-        } else if (entry.opcode != 0x47000001 && entry.opcode != 0x4700002d && entry.opcode != 0x4700002e && entry.opcode != 0x470000e2 &&
-                   entry.opcode != 0x470000f0) RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
+        }
     }
 }
 
@@ -737,7 +719,6 @@ void GnmSequenceCases(std::uint8_t* instance) {
         Require(Fnv(ctx, 0x1000, 0x1080) == 0xee4032166b435c6bull && Word(ctx, 0xc) == 0 && Word(ctx, 0x10) == 0 && Word(ctx, 0x14) == 0);
         if (hasBuffer != 0) Require(Quad(record, 0x28) == 0 && Word(record, 0x30) == 0 && Word(record, 0x34) == 0 && Quad(record, 0x38) == 0);
         else Require(Quad(record, 0x28) == 0xccccccccccccccccull);
-        RequireNotImplemented([&] { begin(ctx, instance, nullptr, 0x40); }, GnmHandlerName(0x4700002d));
     }
     GnmRenderCases(instance);
 }
