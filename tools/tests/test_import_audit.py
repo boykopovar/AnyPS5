@@ -2206,14 +2206,43 @@ class ImportAuditTests(unittest.TestCase):
         ])
 
     def test_pe_ignores_bytes_after_the_declared_directory_count(self):
-        image = bytearray(build_pe(["alpha"]))
-        struct.pack_into("<I", image, 0x58 + 108, 0)
-        with self.assertRaises(import_audit.AuditError):
-            import_audit.pe_exports(Path("lib.prx"), image)
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            for size in (directory, directory + 7, directory + 128):
+                image = with_pe_optional_header(build_pe(["alpha"]), magic, size, 0)
+                for reader in (import_audit.read_exports, import_audit.read_host_imports):
+                    with self.subTest(magic=magic, size=size, reader=reader.__name__):
+                        self.assertEqual(reader(Path("lib.prx"), image), set())
+
+    def test_pe_without_data_directories_reports_absent_imports(self):
+        work = self.work
+        registry, report = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", "empty.prx")])
+        for magic, size in ((0x10b, 96), (0x10b, 224), (0x20b, 112), (0x20b, 240)):
+            with self.subTest(magic=magic, size=size):
+                image = with_pe_optional_header(build_pe(["AAAAAAAAAAA"]), magic, size, 0)
+                (work.libs / "empty.prx").write_bytes(image)
+                (work.modules / "module.prx.guest.prx").write_bytes(image)
+                code, out, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (1, ""), out)
+                data = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["missing_host_dependencies"], [])
+                self.assertEqual(data["imports"][0]["class"], "absent")
+                self.assertEqual(data["imports"][0]["providers"], [])
+                self.assertEqual(data["stops"][0]["nid"], "AAAAAAAAAAA")
+
+    def test_pe_requires_the_complete_fixed_optional_header(self):
+        for magic, directory in ((0x10b, 96), (0x20b, 112)):
+            image = with_pe_optional_header(build_pe(["alpha"]), magic, directory - 1, 0)
+            for reader in (import_audit.read_exports, import_audit.read_host_imports):
+                with self.subTest(magic=magic, reader=reader.__name__):
+                    with self.assertRaisesRegex(import_audit.AuditError, "optional header"):
+                        reader(Path("lib.prx"), image)
 
     def test_pe_data_directories_must_fit_inside_optional_header(self):
         for magic, directory in ((0x10b, 96), (0x20b, 112)):
-            for size, count in ((directory + 8, 2), (directory + 15, 2),
+            for size, count in ((directory, 1), (directory + 7, 1),
+                                (directory + 8, 2), (directory + 15, 2),
                                 (directory + 128, 17), (directory + 8, 0xffffffff)):
                 image = with_pe_optional_header(build_pe(["alpha"]), magic, size, count)
                 for reader in (import_audit.pe_exports, import_audit.pe_imports):

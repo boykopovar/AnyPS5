@@ -1,8 +1,11 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace WebCore {
 
@@ -134,6 +137,17 @@ struct Color {
     std::uint64_t m_colorAndFlags{0};
 };
 
+struct RedirectChainCacheStatus {
+    enum class Status : std::uint8_t {
+        NoRedirection,
+        NotCachedRedirection,
+        CachedRedirection,
+    };
+
+    WTF::WallTime endOfValidity;
+    Status status{Status::NoRedirection};
+};
+
 static_assert(sizeof(IntPoint) == 8);
 static_assert(sizeof(IntSize) == 8);
 static_assert(sizeof(IntRect) == 16);
@@ -152,5 +166,9 @@ static_assert(sizeof(TransformationMatrix) == 128);
 static_assert(sizeof(MatrixTransformOperation) == 64);
 static_assert(offsetof(MatrixTransformOperation, m_a) == 16);
 static_assert(sizeof(Color) == 8);
+static_assert(sizeof(RedirectChainCacheStatus) == 16);
+static_assert(offsetof(RedirectChainCacheStatus, endOfValidity) == 0);
+static_assert(offsetof(RedirectChainCacheStatus, status) == 8);
+static_assert(std::is_trivially_copyable_v<RedirectChainCacheStatus>);
 
 }  // namespace WebCore

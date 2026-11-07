@@ -154,7 +154,8 @@ int APS5_VABI sceGameUpdateGetAddcontLatestVersion(uint32_t serviceLabel, const 
             return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
         }
     }
-    throw std::runtime_error("sceGameUpdateGetAddcontLatestVersion: entitlement version lookup is not implemented");
+    info->found = false;
+    return 0;
 }
 
 int APS5_VABI sceGameUpdateInitialize(void) {

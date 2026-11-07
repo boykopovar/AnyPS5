@@ -60,6 +60,7 @@ TextureTileMode resolveGcnTileMode(std::uint32_t index) {
         case 9u: return TextureTileMode::kGcnDisplay1D;
         case 10u: return TextureTileMode::kGcnDisplay2D;
         case 14u: return TextureTileMode::kGcnThin2D;
+        case 19u: return TextureTileMode::kGcnThick1D;
         default: throw std::runtime_error("AGC graphics: PS4 texture tile mode index " + std::to_string(index) + " (3D or thick) is not implemented");
     }
 }
@@ -70,8 +71,8 @@ TextureTileMode resolveDescriptorTileMode(std::span<const std::uint32_t> words, 
 
 std::uint64_t descriptorBaseAddress(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
-    const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
-    return base40 << 8u;
+    const auto base = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & (ShaderRecompiler::GcnGuestShaders() ? 0x3fffffffffull : 0xffffffffffull);
+    return base << 8u;
 }
 
 std::uint64_t normalizedDescriptorBaseAddress(std::uint64_t baseAddress, TextureTileMode tileMode, std::uint32_t* pipeBankXor) {
@@ -136,6 +137,10 @@ std::optional<std::array<std::uint32_t, 8>> R128ResidentLevelWords(std::span<con
     return rebased;
 }
 
+std::uint64_t descriptorBase(std::span<const std::uint32_t> words) {
+    return (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & (ShaderRecompiler::GcnGuestShaders() ? 0x3fffffffffull : 0xffffffffffull);
+}
+
 }
 
 std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const std::uint32_t> words) {
@@ -155,9 +160,8 @@ std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const st
 
 bool IsNullTextureResource(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
-    const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
     const auto type = (words[3] >> 28u) & 0xfu;
-    return base40 == 0 || type <= 1;
+    return descriptorBase(words) == 0 || type <= 1;
 }
 
 bool IsNullSampledTextureResource(std::span<const std::uint32_t> words) {
@@ -177,7 +181,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     if (gcn) local[6] = local[7] = 0u;
     const std::span<const std::uint32_t> words(local);
 
-    auto baseAddress = descriptorBaseAddress(words);
+    auto baseAddress = descriptorBase(words) << 8u;
     Require(baseAddress != 0, "guest texture descriptor has a null base address");
 
     const auto minLod = (words[1] >> 8u) & 0xfffu;

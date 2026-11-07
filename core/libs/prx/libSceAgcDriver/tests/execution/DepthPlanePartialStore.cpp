@@ -185,6 +185,71 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (argc == 2 && std::string_view(argv[1]) == "--partially-unmapped-plane") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a partial unmap did not cover the plane");
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Unmap(plane, Block, [](const void*, std::size_t, const void*, bool) {});
+                mutation.Add(plane, Block, true, true, true);
+            }
+            FillUnit(plane, 0, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(!AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane whose first unit was unmapped and mapped again stored none of its other units");
+            device->WaitIdle();
+            Require(Since(before).units == Units - 1u, "a read of a plane whose first unit was unmapped and mapped again did not store exactly its other units");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane whose first unit was unmapped and mapped again, that unit");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of a plane whose first unit was unmapped and mapped again, a unit that was not unmapped");
+            std::puts("depth plane partial store tests passed (partially unmapped plane)");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--unmapped-plane-fill") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a pending depth fill did not cover the plane");
+            AgcDriver::Graphics::NoteDepthMetadataFill(base, PlaneBytes, 0x3e800000u);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(blocks);
+                mutation.Add(blocks, Block + PlaneBytes, true, true, true);
+            }
+            FillUnit(plane, 0, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane unmapped and mapped again after a depth fill stored the fill recorded before the unmap");
+            device->WaitIdle();
+            Require(Since(before).stores == 0, "a read of a plane unmapped and mapped again after a depth fill counted a store");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again after a depth fill, the unit the CPU wrote");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "after a read of a plane unmapped and mapped again after a depth fill, a unit the CPU did not write");
+            std::puts("depth plane partial store tests passed (unmapped plane with a pending fill)");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--unmapped-plane") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before the unmap did not cover the plane");
+            Require(AgcDriver::Graphics::DepthPlanesStale(), "the draw writing depth before the unmap left the plane unregistered");
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(blocks);
+                mutation.Add(blocks, Block + PlaneBytes, true, true, true);
+            }
+            FillUnit(plane, 0, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane unmapped and mapped again stored the results drawn before the unmap");
+            device->WaitIdle();
+            Require(Since(before).stores == 0, "a read of a plane unmapped and mapped again counted a store");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again, the unit the CPU wrote");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "after a read of a plane unmapped and mapped again, a unit the CPU did not write");
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 after the unmap did not cover the plane");
+            before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(!AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of the plane drawn after the unmap stored nothing");
+            device->WaitIdle();
+            Require(Since(before).units == Units, "a read of the plane drawn after the unmap did not store every unit");
+            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of the plane drawn after the unmap");
+            std::puts("depth plane partial store tests passed (unmapped plane)");
+            return 0;
+        }
+
         Fill(plane, 1.0f);
         Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 did not cover the plane");
         Require(AgcDriver::Graphics::DepthPlanesStale(), "the draw writing depth left the plane unregistered");
