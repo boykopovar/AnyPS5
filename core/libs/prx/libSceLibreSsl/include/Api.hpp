@@ -568,7 +568,7 @@ int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value);
 int APS5_VABI ASN1_STRING_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* value);
 int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String* value);
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value);
-int APS5_VABI ASN1_TIME_print_nid_postfix(void);
+int APS5_VABI ASN1_TIME_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* time);
 std::int64_t APS5_VABI BIO_ctrl_nid_postfix(LibreSsl::Bio* bio, int command, std::int64_t argument, void* pointer);
 int APS5_VABI BIO_f_ssl_nid_postfix(void);
 int APS5_VABI BIO_free_nid_postfix(LibreSsl::Bio* bio);

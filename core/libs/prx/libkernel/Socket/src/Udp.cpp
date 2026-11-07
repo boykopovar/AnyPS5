@@ -131,6 +131,10 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool sendShut = false;
     bool localAddressCleared = false;
     bool connectStarted = false;
+#ifdef _WIN32
+    bool connecting = false;
+    int connectFailure = 0;
+#endif
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
@@ -1593,6 +1597,27 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         return Fail(12);
     }
 }
+#ifdef _WIN32
+static int ConnectFailure(Socket& socket) {
+    std::lock_guard lock(socket.modeMutex);
+    if (socket.connecting) {
+        int pending = 0;
+        int size = sizeof(pending);
+        if (::getsockopt(socket.value, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&pending), &size) == 0 && pending != 0) {
+            socket.connecting = false;
+            socket.connectFailure = GuestSockets::GuestErrorFromHost(WSAECONNREFUSED);
+        }
+    }
+    return socket.connectFailure;
+}
+static int NoteConnectError(Socket& socket) {
+    const int host = WSAGetLastError();
+    const int error = ConnectError();
+    std::lock_guard lock(socket.modeMutex);
+    socket.connecting = host == WSAEWOULDBLOCK || (socket.connecting && host == WSAEALREADY);
+    return error;
+}
+#endif
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
     const auto socket = Lookup(descriptor);
@@ -1601,6 +1626,7 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
         && Disconnect(*socket) != 0)
         return -1;
     if (socket->type == 1 && Listening(*socket)) return Fail(45);
+    if (socket->family == GuestUnix && socket->type != 2 && !socket->peer.expired()) return Fail(56);
     const int mapped = LongMappedDualStack(*socket, address, length);
     if (mapped < 0) return -1;
     sockaddr_storage native{};
@@ -1613,11 +1639,27 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
 #endif
     if (socket->type == 1 && Multicast(native) && !PeerConnected(*socket)) return Fail(47);
     if (ZeroPortConnect(*socket, address, length)) return -1;
+#ifdef _WIN32
+    if (socket->type == 1) {
+        if (const int failure = ConnectFailure(*socket)) return Fail(failure);
+    }
+#endif
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
     socket->connectStarted = true;
     if (socket->type != 2) lock.unlock();
-    if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(ConnectError());
+    if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) {
+#ifdef _WIN32
+        if (socket->type == 1) return Fail(NoteConnectError(*socket));
+#endif
+        return Fail(ConnectError());
+    }
+#ifdef _WIN32
+    if (socket->type == 1) {
+        std::lock_guard connected(socket->modeMutex);
+        socket->connecting = false;
+    }
+#endif
     if (socket->type == 2) socket->localAddressCleared = false;
     return 0;
 }
@@ -1902,9 +1944,16 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if (length > INT_MAX) return Fail(40);
     if (!address && SendBeforeConnect(*socket)) return Fail(57);
     if (!buffer && length) return Fail(14);
+    bool sendShut = false;
+    if (address && socket->family == GuestUnix) {
+        std::lock_guard lock(socket->modeMutex);
+        sendShut = socket->sendShut;
+    }
+    const bool paired = address && socket->family == GuestUnix && (socket->type != 2 || sendShut || !socket->peer.expired());
+    if (paired && socket->type == 2 && !sendShut) return Fail(56);
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     int result;
-    if (!address || (socket->type == 1 && PeerConnected(*socket))) {
+    if (!address || paired || (socket->type == 1 && PeerConnected(*socket))) {
         if (!address && addressLength != 0) return Fail(22);
 #ifdef _WIN32
         if (SourceFaults(buffer, length)) return Fail(14);
