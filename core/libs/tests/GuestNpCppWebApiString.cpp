@@ -673,9 +673,27 @@ void TestVectorCopyFromResolvesDirectBodies() {
     Require(VectorGuardIntact(target));
 }
 
+void TestVectorReserveThrows() {
+    std::uint64_t libContext = 1;
+    VectorStorage vector;
+    std::memset(vector.bytes, kFill, sizeof(vector.bytes));
+    auto* self = reinterpret_cast<IntrusivePtr*>(vector.bytes);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(self, &libContext);
+    bool threw = false;
+    try {
+        (void)_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE7reserveEi();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(self);
+    Require(VectorGuardIntact(vector));
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-append") == 0) return TestAppendAliased() ? 1 : 0;
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) return TestVectorAliased();
+    TestVectorReserveThrows();
     TestConstructedStringIsEmpty();
     TestNullLibContextIsStored();
     TestAppendBuildsAndClearsBuffer();
