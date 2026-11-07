@@ -247,6 +247,20 @@ int main() {
     Require(sceLibcMspaceDestroy_nid_postfix(nested) == 0);
     sceLibcMspaceFree_nid_postfix(arena, region);
 
+    alignas(16) std::array<unsigned char, 4096> vacancy{};
+    void* vacant = sceLibcMspaceCreate_nid_postfix("vacant", vacancy.data(), vacancy.size(), 0);
+    Require(vacant != nullptr);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(vacant) == 1);
+    void* held = sceLibcMspaceMalloc_nid_postfix(vacant, 48);
+    Require(held != nullptr);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(vacant) == 0);
+    sceLibcMspaceFree_nid_postfix(vacant, held);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(vacant) == 1);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(nullptr) == 0);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(vacancy.data() + vacancy.size()) == 0);
+    Require(sceLibcMspaceDestroy_nid_postfix(vacant) == 0);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(vacant) == 0);
+
     Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
     Require(sceLibcMspaceMalloc_nid_postfix(arena, 8) == nullptr);
     Require(sceLibcMspaceCreate_nid_postfix("reuse", storage.data(), storage.size(), 0) == arena);
