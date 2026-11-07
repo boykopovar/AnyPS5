@@ -1,8 +1,10 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -115,8 +117,10 @@ static void CheckGetcwd() {
     Require(buffer[0] == '/');
     Require(std::strlen(buffer) < sizeof(buffer));
     Require(__getcwd_nid_postfix(nullptr, sizeof(buffer)) == -1);
+    Require(*__error_nid_postfix() == EFAULT);
     char small[1] = {};
     Require(__getcwd_nid_postfix(small, sizeof(small)) == -1);
+    Require(*__error_nid_postfix() == ERANGE);
 }
 
 int main() {
