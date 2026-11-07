@@ -1,4 +1,5 @@
 #include "prx/libSceMoveTracker/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -47,8 +48,18 @@ int APS5_VABI sceMoveTrackerGetVersion() {
 
 int APS5_VABI sceMoveTrackerGetWorkingMemorySize(std::uint32_t* totalSize, std::uint32_t* processingSize) {
     if (totalSize == nullptr || processingSize == nullptr) return static_cast<int>(0x80ef0003);
-    *totalSize = 0xa00000;
-    *processingSize = 0x800000;
+    std::uint32_t originalTotal = 0;
+    const int savedErrno = errno;
+    const bool readableTotal = GuestCopyIn_nid_no_patch(&originalTotal, totalSize, sizeof(originalTotal));
+    const std::uint32_t total = 0xa00000;
+    const std::uint32_t processing = 0x800000;
+    const bool copiedTotal = GuestCopyOut_nid_no_patch(totalSize, &total, sizeof(total));
+    const bool copiedProcessing = copiedTotal ? GuestCopyOut_nid_no_patch(processingSize, &processing, sizeof(processing)) : false;
+    if (copiedTotal && !copiedProcessing && readableTotal) {
+        GuestCopyOut_nid_no_patch(totalSize, &originalTotal, sizeof(originalTotal));
+    }
+    errno = savedErrno;
+    if (!copiedTotal || !copiedProcessing) return static_cast<int>(0x80ef0003);
     return 0;
 }
 

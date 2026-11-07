@@ -39,6 +39,14 @@ int main() {
     Require(sceSigninDialogOpen(nullptr) == kErrArgNull);
     Require(sceSigninDialogGetResult(nullptr) == kErrNotFinished);
     Require(sceSigninDialogGetResult(result) == kErrNotFinished);
+    Require(result[0] == 0x5a);
+    Require(result[1] == 0x5a);
+    Require(result[2] == 0x5a);
+    Require(result[3] == 0x5a);
+    Require(result[4] == 0x5a);
+    Require(result[5] == 0x5a);
+    Require(result[6] == 0x5a);
+    Require(result[7] == 0x5a);
 
     Require(sceSigninDialogOpen(&param) == 0);
     Require(sceSigninDialogGetStatus() == kStatusFinished);
@@ -85,4 +93,7 @@ int main() {
     Require(result[3] == 0);
     Require(sceSigninDialogTerminate() == 0);
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetStatus() == kStatusNone);
 }
