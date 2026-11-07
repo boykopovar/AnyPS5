@@ -1504,48 +1504,6 @@ private:
         inst.Parent()->RemoveInstruction(&inst);
     }
 
-    static bool HoldsFoldableValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
-        value = value->Resolve();
-        if (value->HasImmediate()) {
-            return false;
-        }
-        switch (value->Opcode()) {
-            case IrOpcode::GetShaderBase:
-            case IrOpcode::GetExec:
-            case IrOpcode::GetExecLo:
-            case IrOpcode::GetExecHi:
-            case IrOpcode::Ballot:
-            case IrOpcode::LaneId:
-            case IrOpcode::ImageRead:
-            case IrOpcode::ImageSampleExplicitLod:
-            case IrOpcode::ImageSampleImplicitLod:
-            case IrOpcode::ImageSampleRaw: return true;
-            default: break;
-        }
-        if (depth == 0u) {
-            return false;
-        }
-        if (value->IsPhi()) {
-            if (std::ranges::find(seen, value) != seen.end()) {
-                return false;
-            }
-            seen.push_back(value);
-        } else if (!Detail::IsRuntimeUniformOp(value->Opcode()) && value->Opcode() != IrOpcode::CompositeExtractU32x4) {
-            return false;
-        }
-        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-            if (HoldsFoldableValue(value->Argument(index), depth - 1u, seen)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static bool HoldsFoldableValue(IrValue* value) {
-        std::vector<const IrValue*> seen;
-        return HoldsFoldableValue(value, phiSearchDepth, seen);
-    }
-
     struct DescriptorWeb {
         static constexpr std::size_t maxStates = 512u;
         static constexpr std::size_t maxArms = 64u;
@@ -1646,7 +1604,7 @@ private:
             return LaneSelector(tuple, *lane, web, position);
         }
         if (phi == tuple.end()) {
-            if (std::ranges::any_of(tuple, [](IrValue* value) { return HoldsFoldableValue(value); })) {
+            if (std::ranges::any_of(tuple, [](IrValue* value) { return Detail::HoldsFoldableValue(value, phiSearchDepth); })) {
                 if (StrictDescriptorWebs()) {
                     return GiveUp(web, "a descriptor dword depends on the program counter, EXEC, a lane mask, the lane index or texels");
                 }
