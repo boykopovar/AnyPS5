@@ -1425,13 +1425,13 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride) {
     Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
-    GuestMemory::FlushGpuWrites(address, bytes);
     auto readable = validBytes;
     if (stride != 0 && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), validBytes)) {
         const auto ranges = GuestMemory::CommittedRanges(address, validBytes);
         const std::size_t prefix = !ranges.empty() && ranges.front().first == address ? static_cast<std::size_t>(ranges.front().second - address) : 0;
         if (validBytes - prefix < stride) readable = prefix;
     }
+    if (readable != 0) GuestMemory::FlushGpuWrites(address, readable);
     DrawInputCopy copy;
     auto* recorder = context.recorder;
     const bool keep = recorder != nullptr && readable != 0 && readable <= std::numeric_limits<std::uint32_t>::max();
