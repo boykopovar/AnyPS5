@@ -13,9 +13,14 @@ std::int64_t JxrDecodeIid_nid_no_patch(const char* extension, std::uint32_t* val
 std::int64_t JxrAllocAligned_nid_no_patch(void** memory, std::size_t size, std::size_t alignment);
 std::int64_t JxrFreeAligned_nid_no_patch(void** memory);
 std::int32_t JxrIdpEmpty_nid_no_patch(void* codec);
+std::int32_t JxrAllocateTileInfo_nid_no_patch(void* codec);
 
 void* JxrGuestCalloc_nid_no_patch(std::size_t count, std::size_t size) {
     return calloc_nid_postfix(count, size);
+}
+
+void* JxrGuestMalloc_nid_no_patch(std::size_t size) {
+    return malloc_nid_postfix(size);
 }
 
 void JxrGuestFree_nid_no_patch(void* memory) {
@@ -76,6 +81,11 @@ std::int64_t APS5_VABI PKFreeAligned_nid_postfix(void** memory) {
 
 std::int32_t APS5_VABI IDPEmpty_nid_postfix(void* codec) {
     return JxrIdpEmpty_nid_no_patch(codec);
+}
+
+std::int32_t APS5_VABI allocateTileInfo_nid_postfix(void* codec) {
+    if (!codec) throw std::invalid_argument("allocateTileInfo requires a codec");
+    return JxrAllocateTileInfo_nid_no_patch(codec);
 }
 
 }

@@ -12,6 +12,16 @@
 #include <limits>
 #include <stdexcept>
 
+extern "C" {
+void* JxrTileFixtureReset(std::uint32_t sliceCount);
+void* JxrTileFixtureTilePointer(void* codec);
+void* JxrTileFixtureSentinel();
+std::size_t JxrTileFixtureTileSize();
+std::size_t JxrTileFixtureMaxTiles();
+int JxrTileFixtureCodecIntact(void* codec);
+int JxrTileFixtureTilesInitialized(void* codec);
+}
+
 namespace {
 
 void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
@@ -267,6 +277,43 @@ void TestInitPostProc() {
 
 }
 
+void TestAllocateTileInfo() {
+    void* codec = nullptr;
+    const auto tileSize = JxrTileFixtureTileSize();
+    for (const auto count : {std::size_t{0}, std::size_t{2}, JxrTileFixtureMaxTiles() - 1}) {
+        codec = JxrTileFixtureReset(static_cast<std::uint32_t>(count));
+        const auto firstAllocation = mallocCalls;
+        Require(allocateTileInfo_nid_postfix(codec) == 0);
+        Require(mallocCalls == firstAllocation + 1);
+        auto* const tiles = JxrTileFixtureTilePointer(codec);
+        Require(tiles != nullptr && tiles != JxrTileFixtureSentinel());
+        Require(mallocLog[static_cast<std::size_t>(firstAllocation)] == tiles);
+        Require(mallocSizeLog[static_cast<std::size_t>(firstAllocation)] == (count + 1) * tileSize);
+        Require(JxrTileFixtureCodecIntact(codec));
+        Require(JxrTileFixtureTilesInitialized(codec));
+        free_nid_postfix(tiles);
+    }
+
+    codec = JxrTileFixtureReset(static_cast<std::uint32_t>(JxrTileFixtureMaxTiles()));
+    const auto allocationsBeforeLimit = mallocCalls;
+    auto* const priorTiles = JxrTileFixtureSentinel();
+    Require(JxrTileFixtureTilePointer(codec) == priorTiles);
+    Require(allocateTileInfo_nid_postfix(codec) == -1);
+    Require(mallocCalls == allocationsBeforeLimit);
+    Require(JxrTileFixtureTilePointer(codec) == priorTiles);
+    Require(JxrTileFixtureCodecIntact(codec));
+
+    codec = JxrTileFixtureReset(0);
+    const auto failedAllocation = mallocCalls + 1;
+    failMallocAt = failedAllocation;
+    Require(allocateTileInfo_nid_postfix(codec) == -1);
+    failMallocAt = -1;
+    Require(mallocCalls == failedAllocation);
+    Require(mallocSizeLog[static_cast<std::size_t>(failedAllocation - 1)] == tileSize);
+    Require(JxrTileFixtureTilePointer(codec) == nullptr);
+    Require(JxrTileFixtureCodecIntact(codec));
+}
+
 void TestTermPostProc() {
     JxrGuestPostProcInfo sentinel{};
     JxrGuestPostProcInfo* slots[3][2];
@@ -351,5 +398,6 @@ int main() {
     TestTermPostProc();
     TestInitPostProc();
     TestExifMetadata();
+    TestAllocateTileInfo();
     return 0;
 }
