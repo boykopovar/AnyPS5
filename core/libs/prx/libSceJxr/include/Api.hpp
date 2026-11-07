@@ -6,6 +6,7 @@
 #include "prx/libSceJxr/GuestPixelInfo.h"
 #include "prx/libSceJxr/Stream.hpp"
 
+struct tagPKImageEncode;
 struct JxrGuestPostProcInfo {
     std::int32_t mbDc;
     std::uint8_t mbTexture;
@@ -100,7 +101,8 @@ int APS5_VABI PKImageEncode_Initialize_nid_postfix();
 int APS5_VABI PKImageEncode_Release_nid_postfix();
 int APS5_VABI PKImageEncode_SetColorContext_nid_postfix();
 int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix();
-int APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
+    tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size);
 int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix();
