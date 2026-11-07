@@ -1,14 +1,26 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceIcu/Version.hpp"
 #include "WtfStringAbi.hpp"
 
+#include <array>
 #include <cstdint>
+#include <mutex>
 #include <stdexcept>
 
 namespace {
 
 using NKWebKit::WtfAbi::ProcessPrivileges;
 unsigned g_processPrivileges = 0;
+
+const std::array<std::uint8_t, 4>& GetIcuVersion() {
+    static std::array<std::uint8_t, 4> version{};
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [] {
+        u_getVersion_nid_postfix(version.data());
+    });
+    return version;
+}
 
 }  // namespace
 
@@ -57,6 +69,14 @@ bool APS5_VABI _ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE(std::uint8
 bool APS5_VABI _ZN7WebCore8isReloadENS_13FrameLoadTypeE(std::uint8_t type) {
     if (type > 9) throw std::invalid_argument("invalid WebCore frame load type");
     return type == 4 || type == 8 || type == 9;
+}
+
+unsigned int APS5_VABI _ZN3WTF3ICU12majorVersionEv() {
+    return GetIcuVersion()[0];
+}
+
+unsigned int APS5_VABI _ZN3WTF3ICU12minorVersionEv() {
+    return GetIcuVersion()[1];
 }
 
 }
