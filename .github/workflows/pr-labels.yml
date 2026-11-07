@@ -23,6 +23,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
