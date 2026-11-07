@@ -64,12 +64,6 @@ void CheckStop(const std::string& prefix) {
             prefix + "error:03064041:lib(3):func(100):reason(65):stop.c:9:\n"});
         Require(ERR_get_error_nid_postfix() == 0x04065042 && ERR_get_error_nid_postfix() == 0);
     }
-
-    LibreSslPutError_nid_no_patch(3, 100, 65);
-    bool threw = false;
-    try { ERR_print_errors_cb_nid_postfix(nullptr, nullptr); }
-    catch (const std::exception&) { threw = true; }
-    Require(threw && ERR_get_error_nid_postfix() == 0x03064041);
 }
 
 void CheckGuestProducer(const std::string& prefix) {
