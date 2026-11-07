@@ -47,7 +47,7 @@ int APS5_VABI sceVideoOutDriverResetBufferLabel();
 int APS5_VABI sceVideoOutDriverTriggerEvent();
 int APS5_VABI sceVideoOutGetBufferInformation();
 int APS5_VABI sceVideoOutGetCoredumpOutputMode();
-int APS5_VABI sceVideoOutGetCurrentOutputMode_();
+int APS5_VABI sceVideoOutGetCurrentOutputMode_(std::uint64_t bus, void* mode);
 int APS5_VABI sceVideoOutGetDeviceInfoExOts_();
 int APS5_VABI sceVideoOutGetDeviceInfoEx_();
 int APS5_VABI sceVideoOutGetHdmiKsvList_();
