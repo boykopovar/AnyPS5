@@ -295,8 +295,12 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
+        add_test(NAME winlibs_digest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_winlibs_digest.py)
         add_test(NAME progress_comment_concurrency COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_comment_concurrency.py)
+        add_test(NAME eligibility_paths COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_eligibility_paths.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -310,6 +314,8 @@ if(BUILD_TESTING)
         add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
         set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
+        add_test(NAME emsdk_pin COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_emsdk_pin.py)
         set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${conventions_wrapped_declarations_source}")
         file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
