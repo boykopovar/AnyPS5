@@ -75,6 +75,7 @@ public:
     void SavePipelineCache();
     // Compute pipelines this device built, by dispatches and by the journal replay (tests).
     std::uint64_t ComputePipelinesCreated() const;
+    std::uint64_t DescriptorHeapComputePipelines() const;
     ~VulkanDevice();
     VulkanDevice(const VulkanDevice&) = delete;
     VulkanDevice& operator=(const VulkanDevice&) = delete;
@@ -353,6 +354,8 @@ public:
     static void NoteRecipe(RecipeEvent event, RecipeKind kind);
     enum class DrawRecipePrecheck : std::size_t { NoRecipe, Device };
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
+    static std::uint64_t DrawRecipeHits();
+    static std::uint64_t DispatchRecipeTemplatesGone();
     using DrawTraceContext = Graphics::DrawTraceContext;
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
@@ -374,6 +377,7 @@ public:
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
     bool PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders);
+    const Graphics::Context& contextRef(std::optional<Graphics::Context>& scratch) const;
 
 public:
     // The device's Graphics::Context: a copy of the one built at setup (its instance functions

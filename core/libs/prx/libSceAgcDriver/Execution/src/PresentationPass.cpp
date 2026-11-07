@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
@@ -8,8 +9,11 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/PresentationPassVert_spv.h"
 #include <array>
 #include <bit>
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
+#include <optional>
 
 namespace AgcDriver {
 namespace {
@@ -19,13 +23,24 @@ constexpr std::uint32_t ModeRedLow = 2;
 constexpr std::uint32_t ModeKeepTenBit = 4;
 constexpr std::uint32_t ModeSubsample = 8;
 constexpr std::uint32_t ModePq = 16;
+constexpr std::uint32_t PresentHeapKind = ShaderRecompiler::RuntimeAbi::FirstImageBinding + 9u;
+
+struct HeapPush {
+    std::int32_t parameters[9];
+    std::uint32_t pad;
+    std::uint64_t pqNits;
+    std::uint32_t slot;
+    std::uint32_t pad2;
+};
+
+static_assert(offsetof(HeapPush, pqNits) == 40 && offsetof(HeapPush, slot) == 48);
 
 }
 
 PresentationPass::PresentationPass(const Graphics::Context& context, std::size_t slotCount) : context(context), slots(slotCount) {
     Graphics::Require(slotCount != 0, "presentation pass needs at least one slot");
     try {
-        VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        heap = Graphics::DescriptorHeapEnabled() && Graphics::BindlessHeap::For(context).DescriptorHeapMode();
         samplerInfo.magFilter = VK_FILTER_NEAREST;
         samplerInfo.minFilter = VK_FILTER_NEAREST;
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -59,7 +74,7 @@ PresentationPass::PresentationPass(const Graphics::Context& context, std::size_t
             Graphics::Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &slot.set), "vkAllocateDescriptorSets presentation pass");
         }
         const auto& luminance = PqEotfNits();
-        pqNits = std::make_unique<Graphics::Buffer>(context, sizeof(luminance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        pqNits = std::make_unique<Graphics::Buffer>(context, sizeof(luminance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (heap ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
         std::memcpy(pqNits->Bytes().data(), luminance.data(), sizeof(luminance));
         const VkDescriptorBufferInfo tableInfo{pqNits->Handle(), 0, sizeof(luminance)};
         std::vector<VkWriteDescriptorSet> tableWrites(slots.size(), VkWriteDescriptorSet{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET});
@@ -91,6 +106,7 @@ void PresentationPass::release() noexcept {
     }
     for (const auto& [key, entry] : targets) {
         if (entry.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.pipeline, nullptr);
+        if (entry.heapPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.heapPipeline, nullptr);
         if (entry.renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, entry.renderPass, nullptr);
     }
     targets.clear();
@@ -125,6 +141,7 @@ void PresentationPass::Release(std::size_t index) noexcept {
         if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     }
     slot.transient.clear();
+    if (slot.source && heap) slot.ReleaseHeapSlots(context);
     if (slot.source) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, slot.source, nullptr);
     slot.source = VK_NULL_HANDLE;
 }
@@ -246,7 +263,33 @@ const PresentationPass::Target& PresentationPass::target(VkFormat format, VkImag
         pipelineInfo.layout = pipelineLayout;
         pipelineInfo.renderPass = created.renderPass;
         Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.pipeline), "vkCreateGraphicsPipelines presentation pass");
+        if (heap) {
+            const auto& bindless = Graphics::BindlessHeap::For(context);
+            std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{{{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT}, {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT}}};
+            mappings[0].firstBinding = 0;
+            mappings[0].bindingCount = 1;
+            mappings[0].resourceMask = VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT;
+            mappings[0].source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
+            mappings[0].sourceData.pushIndex.pushOffset = offsetof(HeapPush, slot);
+            mappings[0].sourceData.pushIndex.heapIndexStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
+            mappings[0].sourceData.pushIndex.heapArrayStride = static_cast<std::uint32_t>(bindless.ImageHeapStride());
+            mappings[0].sourceData.pushIndex.pEmbeddedSampler = &samplerInfo;
+            mappings[1].firstBinding = 1;
+            mappings[1].bindingCount = 1;
+            mappings[1].resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT;
+            mappings[1].source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
+            mappings[1].sourceData.pushAddressOffset = offsetof(HeapPush, pqNits);
+            VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
+            mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
+            mappingInfo.pMappings = mappings.data();
+            stages[1].pNext = &mappingInfo;
+            auto heapFlags = Graphics::DescriptorHeapFlags();
+            pipelineInfo.pNext = &heapFlags;
+            pipelineInfo.layout = VK_NULL_HANDLE;
+            Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.heapPipeline), "vkCreateGraphicsPipelines presentation pass heap");
+        }
     } catch (...) {
+        if (created.pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, created.pipeline, nullptr);
         if (created.renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, created.renderPass, nullptr);
         throw;
     }
@@ -343,18 +386,27 @@ void PresentationPass::BindTexels(std::size_t index, VkCommandBuffer commands, s
     Bind(index, slot.uploadImage, width, height, pixelFormat, whiteNits);
 }
 
-void PresentationPass::draw(VkCommandBuffer commands, const Slot& slot, const Target& entry, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const {
+void PresentationPass::draw(VkCommandBuffer commands, Slot& slot, const Target& entry, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const {
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass = entry.renderPass;
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
+    const auto heapSlot = entry.heapPipeline != VK_NULL_HANDLE ? Graphics::BindlessHeap::For(context).ViewSlot(PresentHeapKind, &slot, slot.source) : std::nullopt;
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, heapSlot ? entry.heapPipeline : entry.pipeline);
     const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
     context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
     context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &scissor);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, 0, nullptr);
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);
+    if (heapSlot) {
+        Graphics::BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        HeapPush pushed{{}, 0u, pqNits->DeviceAddress(), *heapSlot, 0u};
+        std::copy(std::begin(parameters), std::end(parameters), pushed.parameters);
+        const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {&pushed, sizeof(pushed)}};
+        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+    } else {
+        Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, Graphics::SetBindSite::Presentation);
+        Graphics::CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);
+    }
     context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
     context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
 }

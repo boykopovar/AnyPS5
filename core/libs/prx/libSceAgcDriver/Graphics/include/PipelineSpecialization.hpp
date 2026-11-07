@@ -79,6 +79,24 @@ public:
 
     [[nodiscard]] const VkSpecializationInfo* Info() const { return entries.empty() ? nullptr : &info; }
 
+    void PlaceHeapImageSlots(std::uint32_t slots) {
+        for (auto& constant : values) {
+            if (constant.id == ShaderRecompiler::PipelineSpecialization::HeapImageSlots) constant.value = slots;
+        }
+    }
+
+    void PlacePushData(const ShaderRecompiler::StagePushPlacement& placement) {
+        namespace Ids = ShaderRecompiler::PipelineSpecialization;
+        for (auto& constant : values) {
+            if (constant.id == Ids::PushedDataBase) constant.value = placement.pushed.base;
+            if (constant.id == Ids::PushedDataCount) constant.value = placement.pushed.count;
+            if (constant.id >= Ids::RootItemPositionBase && constant.id < Ids::RootItemPositionBase + ShaderRecompiler::RuntimeAbi::RootItemCount) {
+                constant.value = placement.items[constant.id - Ids::RootItemPositionBase];
+                Require(constant.value != ShaderRecompiler::RuntimeAbi::NoPushPosition, "a stage reads a root item its pipeline's push layout does not hold");
+            }
+        }
+    }
+
 private:
     void describe(std::span<const ShaderRecompiler::PipelineSpecializationConstant> constants) {
         entries.reserve(constants.size());

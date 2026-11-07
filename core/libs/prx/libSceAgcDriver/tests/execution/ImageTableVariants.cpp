@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -186,7 +187,7 @@ void FillTable(const GuestBlock& block) {
     }
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table, std::span<const std::uint32_t> code = TableCode) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table, std::span<const std::uint32_t> code = TableCode, bool heap = false) {
     const auto srtAddress = AddressOf(Srt.data());
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
     const std::span<const std::uint32_t> words(table.Table(), Records * Stride / 4u);
@@ -197,12 +198,16 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
         {AddressOf(Keys.data()), std::as_bytes(std::span(Keys))},
     }};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
-    const ShaderRecompiler::RecompileRequest request{
+    ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, AddressOf(code.data()), code, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
         {0, 0, 0, 128}
     };
+    if (heap) {
+        request.target.gpuResolvedImages = true;
+        request.useCache = false;
+    }
     auto result = ShaderRecompiler::Recompile(request);
     const auto binding = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& candidate) { return candidate.role == ShaderRecompiler::DescriptorRole::ImageTable; });
     Require(binding != result.bindings.end() && binding->guestDescriptor.size() == static_cast<std::size_t>(Records) * 8u, "image table variants: the shader does not bind the whole table");
@@ -381,6 +386,38 @@ void RunRejected(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     AgcDriver::Graphics::ClearDepthSurfaces(device.Device());
 }
 
+const std::vector<std::uint32_t>& TableWords(const ShaderRecompiler::RecompileResult& result) {
+    const auto binding = std::find_if(result.bindings.begin(), result.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& candidate) { return candidate.role == ShaderRecompiler::DescriptorRole::ImageTable; });
+    return binding->guestDescriptor;
+}
+
+void HeapStageWithOtherWords(AgcDriver::VulkanDevice& device, const GuestBlock& block, bool templateVariants, std::uint64_t substituted, const std::string& what) {
+    Prepare(block);
+    SetRecord(block, 1, templateVariants ? block.Texels(0) : block.Texels(1), templateVariants ? Narrow : Wide);
+    const auto shared = Compile(device, block, TableCode, true);
+    Require(shared.gpuResolvedImages, "image table variants: the heap compile did not make a GPU-mode program");
+    SetRecord(block, 1, templateVariants ? block.Texels(1) : block.Texels(0), templateVariants ? Wide : Narrow);
+    const auto own = Compile(device, block);
+    Require(TableWords(shared) != TableWords(own), "image table variants: the template and the stage read the same image table words");
+    ShaderRecompiler::HeapStageWords words;
+    words.bindings.resize(shared.bindings.size());
+    const auto table = std::find_if(shared.bindings.begin(), shared.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& candidate) { return candidate.role == ShaderRecompiler::DescriptorRole::ImageTable; });
+    words.bindings[static_cast<std::size_t>(table - shared.bindings.begin())] = TableWords(own);
+    const AgcDriver::Graphics::CompiledShader stage{ShaderStage::Compute, &shared, 0, nullptr, &words};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    {
+        AgcDriver::Graphics::ShaderResources resources(device.graphicsContext(), stage);
+    }
+    Expect(before, substituted, substituted, 0, what);
+}
+
+void RunHeapWords(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    if (!AgcDriver::Graphics::DescriptorHeapEnabled()) return;
+    HeapStageWithOtherWords(device, block, false, 1, "a heap stage whose own image table words make an entry a variant, built from a template whose words keep them apart");
+    HeapStageWithOtherWords(device, block, true, 0, "a heap stage whose own image table words keep two entries apart, built from a template whose words made one a variant");
+}
+
 ShaderRecompiler::RecompileResult ProofProgram(const float* variants, const float* other) {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     using ShaderRecompiler::DescriptorKind;
@@ -453,6 +490,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
     RunSize(device, block);
     RunDepth(device, block);
     RunRejected(device, block);
+    RunHeapWords(device, block);
 }
 
 }

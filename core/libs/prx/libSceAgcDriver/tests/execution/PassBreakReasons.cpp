@@ -143,7 +143,7 @@ int main() {
         const auto shaders = Compile(*device);
         device->WaitIdle();
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-        Recorder recorder(context);
+        Recorder recorder(context, true);
         recorder.Activate();
         Expect(MultisampledDepthBytes_nid_no_patch({Width, Height}, sizeof(float), Samples) == DepthA.Bytes().size(), "the depth backing differs from its multisample footprint");
         const auto depthA = DepthA.Address();

@@ -52,6 +52,10 @@ bool ScratchPoolActive(const SpirvEmitterState& state) {
     return state.requirements.functionScratch && state.program.Resources().stage == IrShaderStage::Compute;
 }
 
+bool GpuScratchPool(const SpirvEmitterState& state) {
+    return state.gpuResolvedImages && ScratchPoolActive(state);
+}
+
 std::uint32_t ScratchPoolSlotDwords(const SpirvEmitterState& state) {
     const auto* workgroup = ShaderWorkgroupInput(state);
     if (workgroup == nullptr) FailEmit("scratch pool needs a compute workgroup size");
@@ -69,7 +73,14 @@ void EmitScratchPoolAcquire(SpirvEmitterState& state) {
     const auto device = ConstantU32(state, spv::ScopeDevice);
     const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
     const auto length = state.module.AllocateId();
-    state.module.AddFunction(spv::OpArrayLength, TypeU32(state), length, state.scratchPoolVariable, 0u);
+    if (GpuScratchPool(state)) {
+        if (state.pushConstantVariable == 0u) FailEmit("a GPU-mode scratch pool has no push data for its length");
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, GpuScratchPoolDwordsPushByte / 4u));
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), length, pointer);
+    } else {
+        state.module.AddFunction(spv::OpArrayLength, TypeU32(state), length, state.scratchPoolVariable, 0u);
+    }
     const auto slotDwords = ScratchPoolSlotDwords(state);
     const auto slots = EmitBinaryU32(state, spv::OpUDiv, length, ConstantU32(state, slotDwords + HeaderWordsPerSlot));
     state.scratchPoolSlotCount = slots;

@@ -15,6 +15,9 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_draw_cache_reuse_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0;APS5_VERIFY_DRAW_RECIPE=1;APS5_VERIFY_REGISTER_KEYS=1" SKIP_RETURN_CODE 77)
     add_test(NAME agc_driver_draw_cache_reuse_indirect COMMAND agc_driver_draw_cache_reuse_tests)
     set_tests_properties(agc_driver_draw_cache_reuse_indirect PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_CACHE_INDIRECT=1;APS5_PROFILE_DRAW=1" SKIP_RETURN_CODE 77)
+    agc_add_env_test(agc_driver_draw_cache_reuse_indirect_gpu_heap agc_driver_draw_cache_reuse_tests NO_WORKING_DIRECTORY
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_DRAW_CACHE_INDIRECT=1 APS5_PROFILE_DRAW=1 APS5_GPU_HEAP=1 APS5_VERIFY_GPU_HEAP=1)
+    set_tests_properties(agc_driver_draw_cache_reuse_indirect_gpu_heap PROPERTIES FAIL_REGULAR_EXPRESSION "FATAL:")
     set_tests_properties(agc_driver_draw_cache_reuse agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_cache_reuse_indirect PROPERTIES FAIL_REGULAR_EXPRESSION "FATAL:")
     set_property(TEST agc_driver_draw_cache_reuse agc_driver_draw_cache_reuse_off APPEND PROPERTY ENVIRONMENT "APS5_VERIFY_DRAW_RECIPE=1" "APS5_VERIFY_REGISTER_KEYS=1")
     add_test(NAME agc_driver_draw_data_hit_user_words_verify COMMAND agc_driver_draw_data_hit_user_words_tests)
@@ -25,4 +28,8 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_cache_reuse_indirect agc_driver_draw_data_hit_user_words_verify agc_driver_draw_data_hit_user_words_refresh PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_draw_cache_reuse)
 endif()

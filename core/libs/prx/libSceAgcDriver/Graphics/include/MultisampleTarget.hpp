@@ -20,6 +20,14 @@
 
 namespace AgcDriver::Graphics {
 
+class HeapSlotOwner;
+
+struct MultisampleStorage {
+    VkImageView view = VK_NULL_HANDLE;
+    const HeapSlotOwner* owner = nullptr;
+    std::shared_ptr<void> keep;
+};
+
 class StorageTexture;
 class Texture;
 struct GuestTextureResource;
@@ -105,7 +113,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 void PrepareMultisampleTargetForDraw_nid_no_patch(const Context& context, const ColorTarget& target);
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);
-VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage = false);
+MultisampleStorage MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage = false);
 bool MultisampleTargetStorable(const Context& context, const ColorTarget& target);
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView);
 bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);

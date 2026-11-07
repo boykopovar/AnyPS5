@@ -129,7 +129,7 @@ int main() {
         device->WaitIdle();
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto captured = Capture::Install(base);
-        Recorder recorder(captured);
+        Recorder recorder(captured, true);
         recorder.Activate();
         const auto depthA = reinterpret_cast<std::uintptr_t>(DepthA.data());
         const auto depthB = reinterpret_cast<std::uintptr_t>(DepthB.data());

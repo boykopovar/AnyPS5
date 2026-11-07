@@ -244,14 +244,16 @@ struct Facts {
     bool functionArrayAccess = false;
 };
 
-Facts Inspect(std::span<const std::uint32_t> words) {
+Facts Inspect(const ShaderRecompiler::RecompileResult& result) {
+    const std::span<const std::uint32_t> words(result.spirv.data(), result.spirv.size());
+    const auto poolSet = result.gpuResolvedImages ? ShaderRecompiler::GpuScratchPoolDescriptorSet : ShaderRecompiler::ScratchPoolDescriptorSet;
     Facts facts;
     std::set<std::uint32_t> arrays, pointers, variables;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
         Require(count != 0u, "scratch pool: malformed SPIR-V");
-        if (op == spv::OpDecorate && words[cursor + 2u] == spv::DecorationDescriptorSet && words[cursor + 3u] == ShaderRecompiler::ScratchPoolDescriptorSet) facts.poolBinding = true;
+        if (op == spv::OpDecorate && words[cursor + 2u] == spv::DecorationDescriptorSet && words[cursor + 3u] == poolSet) facts.poolBinding = true;
         if (op == spv::OpTypeArray) arrays.insert(words[cursor + 1u]);
         if (op == spv::OpTypePointer && words[cursor + 2u] == spv::StorageClassFunction && arrays.contains(words[cursor + 3u])) pointers.insert(words[cursor + 1u]);
         if (op == spv::OpVariable && pointers.contains(words[cursor + 1u])) variables.insert(words[cursor + 2u]);
@@ -261,15 +263,23 @@ Facts Inspect(std::span<const std::uint32_t> words) {
     return facts;
 }
 
+void RequireHeapPipeline(const AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, std::uint64_t before, const std::string& name) {
+    if (std::getenv("APS5_GPU_HEAP") == nullptr) return;
+    Require(result.gpuResolvedImages, name + ": the scratch program is not GPU mode");
+    Require(device.DescriptorHeapComputePipelines() > before, name + ": the scratch program did not take the descriptor heap");
+}
+
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const Words& code, std::vector<std::uint32_t>& userData, std::uint32_t waveSize, std::uint32_t threads, bool groupId, std::uint32_t scratchDwords) {
     const std::span<const std::uint32_t> codeSpan(code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(codeSpan.data()), std::as_bytes(codeSpan)}}};
     ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0, {groupId, false, false}, false, 1};
     compute.scratchDwords = scratchDwords;
+    auto target = device.Target();
+    target.gpuResolvedImages = device.ComputeTarget(waveSize).gpuResolvedImages;
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(codeSpan.data()), codeSpan, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
@@ -294,11 +304,13 @@ void RunAlias(AgcDriver::VulkanDevice& device, Form form, bool atomic, std::uint
     std::copy(tableDescriptor.begin(), tableDescriptor.end(), userData.begin() + 4);
     const auto code = AliasKernel(form, atomic);
     const auto result = Compile(device, code, userData, waveSize, waveSize, false, AliasScratchDwords);
-    const auto facts = Inspect(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()));
+    const auto facts = Inspect(result);
     Require(facts.poolBinding && result.scratchPoolSlotDwords != 0u, name + ": the scratch program has no scratch pool binding");
     Require(!facts.functionArrayAccess, name + ": the scratch program indexes a Function array");
+    const auto heapPipelines = device.DescriptorHeapComputePipelines();
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    RequireHeapPipeline(device, result, heapPipelines, name);
     for (std::uint32_t lane = 0; lane < waveSize; ++lane) {
         const auto first = output[lane * 8u];
         const auto second = output[lane * 8u + 1u];
@@ -326,8 +338,10 @@ void RunCallee(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     const auto code = CalleeKernel();
     const auto result = Compile(device, code, userData, waveSize, waveSize, false, AliasScratchDwords);
     Require(result.scratchPoolSlotDwords != 0u, name + ": the scratch program has no scratch pool binding");
+    const auto heapPipelines = device.DescriptorHeapComputePipelines();
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    RequireHeapPipeline(device, result, heapPipelines, name);
     for (std::uint32_t lane = 0; lane < waveSize; ++lane) {
         Require(output[lane * 8u] == OperandA(lane), name + ": lane " + std::to_string(lane) + " read " + Hex(output[lane * 8u]) + " back, expected " + Hex(OperandA(lane)));
     }
@@ -343,7 +357,7 @@ void RunPlain(AgcDriver::VulkanDevice& device) {
     std::copy(tableDescriptor.begin(), tableDescriptor.end(), userData.begin() + 4);
     const auto code = PlainKernel();
     const auto result = Compile(device, code, userData, 32u, 32u, false, 0u);
-    const auto facts = Inspect(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()));
+    const auto facts = Inspect(result);
     Require(!facts.poolBinding && result.scratchPoolSlotDwords == 0u, "scratch pool: a program without scratch got a scratch pool binding");
 }
 
