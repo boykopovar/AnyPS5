@@ -104,6 +104,9 @@ static void CheckIsModuleLoaded() {
     }
     Require(sceKernelIsModuleLoaded("libSceNoSuchModule.sprx") == SCE_KERNEL_ERROR_ESRCH);
     Require(sceKernelIsModuleLoaded("") == expected(""));
+    const std::string longName(300, 'a');
+    Require(sceKernelIsModuleLoaded(longName.c_str()) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelIsModuleLoaded(reinterpret_cast<const char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 }
 
 int main() {
