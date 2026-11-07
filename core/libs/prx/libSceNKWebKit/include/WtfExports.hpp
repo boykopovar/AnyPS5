@@ -202,6 +202,8 @@ NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamENS_7SecondsE(
 NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamERKNS_3URLE(NKWebKit::WtfAbi::TextStream& stream, const NKWebKit::WtfAbi::URL& url);
 bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 bool APS5_VABI _ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE(std::uint8_t type);
+NKWebKit::WtfAbi::String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
+const NKWebKit::WtfAbi::String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv();
 NKWebKit::WtfAbi::HTMLNonNegativeIntegerResult APS5_VABI _ZN7WebCore27parseHTMLNonNegativeIntegerEN3WTF10StringViewE(NKWebKit::WtfAbi::StringView input);
 unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length);
 unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
