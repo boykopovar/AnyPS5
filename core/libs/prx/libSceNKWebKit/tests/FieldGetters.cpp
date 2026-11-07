@@ -163,7 +163,7 @@ static void Check(bool value, int line) {
 #define Require(value) Check((value), __LINE__)
 
 int main() {
-    alignas(16) unsigned char object[0x400] = {};
+    alignas(16) unsigned char object[0x1000] = {};
 
     Require(_ZN7WebCore17JSDOMGlobalObject24builtinInternalFunctionsEv(object) == object + 2368);
     Require(_ZN7WebCore17JSDOMGlobalObject6gcLockEv(object) == object + 2353);
