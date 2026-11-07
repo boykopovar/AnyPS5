@@ -160,5 +160,6 @@ int main() {
     CheckClose();
     RequireNotImplemented([] { sceCameraSetVideoSync(); }, "sceCameraSetVideoSync");
     RequireNotImplemented([] { sceCameraGetCalibData(); }, "sceCameraGetCalibData");
+    RequireNotImplemented([] { sceCameraGetDeviceIDWithoutOpen(); }, "sceCameraGetDeviceIDWithoutOpen");
     return 0;
 }
