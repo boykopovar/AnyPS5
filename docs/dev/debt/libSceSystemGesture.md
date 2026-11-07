@@ -7,6 +7,7 @@
 ### Unknown function info
 
 - [Primitive touch events](../../../core/libs/prx/libSceSystemGesture/Export.cpp): pad handles are not validated against native controller information. Begin, active and end states are confirmed, but cancellation state 4, motion thresholds and SDK-dependent duplicate-report handling remain unimplemented. Timing, coordinate conversion and update flags still use the host approximation. Recognizer allocation and native descriptor layouts remain incomplete.
+
 - [sceSystemGestureDebugGetVersion](../../../core/libs/prx/libSceSystemGesture/Export.cpp) (libSceSystemGesture) - its name and NID are in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSystemGesture.c), but no credible prototype was found. It is declared without parameters solely to resolve known imports; this is not an ABI claim
 
 ### Additional callable exports

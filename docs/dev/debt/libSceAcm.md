@@ -7,6 +7,7 @@
 ### Unknown function info
 
 - [sceAcmBatchStartBuffer, sceAcmBatchStartBuffers and sceAcmContextCreate](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - returning `0x81940006` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
+
 - [Additional ACM exports](../../../core/libs/prx/libSceAcm/Export.cpp) - the eleven name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`. No audio-chain, reverb or telemetry behaviour is implemented.
 
 | Name | NID |
@@ -24,7 +25,9 @@
 | `sceAcm_ConvReverb_SharedInput_2` | `wM41Cc+ieog` |
 
 - [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) context creation, batch submission and waiting use host identifiers instead of the native device and ioctl requests. Batch identifiers, timeout handling, DSP scheduling and service-side errors remain unimplemented. Panner source parameter and matrix payloads are forwarded by the native library; their DSP interpretation remains unverified.
+
 - [sceAcm_ConvReverb_SharedIr](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - its name and NID are in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAcm.c), but no credible prototype was found. It is declared without parameters solely to resolve known imports; this is not an ABI claim
+
 - [`sceAcm_FFT` and `sceAcm_IFFT`](../../../core/libs/prx/libSceAcm/Export.cpp) encode their jobs as `libSceAcm.sprx` does on firmware 13.40, where both exports call one encoder with a direction flag (read from the module's code and compared with that code run on x86-64, not measured on a console). PPSA14632 imports `sceAcm_FFT`; no known title imports `sceAcm_IFFT`. The DSP meaning of the job words is unverified.
 
 - [`sceAcmBatchJobNotification`](../../../core/libs/prx/libSceAcm/Export.cpp) is a parameterless pending declaration for import resolution. Its signature and behavior are unverified; it throws through `NotImplemented_nid_no_patch`.

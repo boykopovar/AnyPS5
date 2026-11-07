@@ -100,5 +100,7 @@
   - `eglCreateWindowSurface`
 
 - [State queries](../../../core/libs/prx/libSceGLSlimVSH/src/GlState.cpp): `glGetBooleanv`, `glGetFloatv` and `glGetIntegerv` throw for `GL_SHADER_COMPILER`; compiler availability cannot be advertised until a compiler is integrated. Other implemented state queries use host limits, not measured console limits. Calls requiring a GL context throw when none is current; GLES2 does not specify that case.
+
 - [Console-specific ABI](../../../core/libs/prx/libSceGLSlimVSH/include/Api.hpp) behavior and implementation-dependent limits are unmeasured. The host contracts come from [EGL 1.4](https://registry.khronos.org/EGL/specs/eglspec.1.4.pdf) sections 3.1-3.8 and [OpenGL ES 2.0.25](https://registry.khronos.org/OpenGL/specs/es/2.0/es_full_spec_2.0.pdf) sections 2.7-2.10, 3.7, 4 and 6. The backend has one default display, ES2 contexts, a single RGBA8/depth16/stencil8 pbuffer configuration, 2048-pixel image limits and eight vertex attributes and texture units. It supports no compressed texture formats, shader binary formats, EGL texture-binding configurations or extensions. Native-display handles other than the default do not resolve.
+
 - [Mipmap filtering](../../../core/libs/prx/libSceGLSlimVSH/src/Images.cpp) uses a CPU box filter; implementation-dependent rounding and dithering have not been compared with console output. The state/storage implementation does not establish shader execution precision or rendering capabilities; `glGetString` and `glGetShaderPrecisionFormat` remain throwing exports.

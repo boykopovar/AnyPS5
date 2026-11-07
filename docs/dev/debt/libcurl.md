@@ -90,5 +90,7 @@
 ### Functional
 
 - [String lists and URL escaping](../../../core/libs/prx/libcurl/Export.cpp) have no console verification of their signatures, behavior or curl revision. The public signatures and 16-byte LP64 `curl_slist` layout follow curl 8.10.1's [list](https://github.com/curl/curl/blob/curl-8_10_1/lib/slist.c) and [escaping](https://github.com/curl/curl/blob/curl-8_10_1/lib/escape.c) APIs. Custom curl allocators are unavailable because `curl_global_init_mem` throws; allocations use the guest libc heap.
+
 - [Null string arguments](../../../core/libs/prx/libcurl/Export.cpp) to list append or escaping with a nonnegative length throw. curl 8.5.0 faults there; 8.10.1 returns null from escaping. The console behavior is unknown. Invalid non-null pointers and damaged lists are not validated.
+
 - [Escaping version differences](../../../core/libs/prx/libcurl/Export.cpp) remain unverified: the easy handle is ignored, as curl does from 7.82.0, and input size follows 8.10.1 rather than 8.5.0's dynamic-buffer cap. Older per-handle character conversion is not modeled. Tests do not exercise the unescape output-length overflow for strings larger than `INT_MAX`.

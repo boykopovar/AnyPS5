@@ -3,9 +3,11 @@
 ### Silent stubs
 
 - [libSceSaveDataDialog.native](../../../core/libs/prx/libSceSaveDataDialog.native/Export.cpp) shows no UI and ignores progress values. Progress-bar mode (5) stays running until closed, matching Skyrim PPSA03747; other modes finish immediately returning button 1 and first nonempty directory. Console timing and selection remain unverified. Error codes follow shadPS4: `sceSaveDataDialogClose` returns `SAVE_DATA_DIALOG_ERROR_NOT_RUNNING` when not running, `sceSaveDataDialogGetResult` returns `SAVE_DATA_DIALOG_ERROR_NOT_FINISHED` when not finished (before null/unwritable checks), `sceSaveDataDialogTerminate` closes running dialogs, and progress updates (`sceSaveDataDialogProgressBarInc`, `sceSaveDataDialogProgressBarSetValue`) return `SAVE_DATA_DIALOG_ERROR_NOT_RUNNING` when not running, rejecting a nonzero target and a rate above 100 with `SAVE_DATA_DIALOG_ERROR_PARAM`. Parameter size in `sceSaveDataDialogOpen` is unvalidated as console behaviour is unmeasured.
+
 - [sceSaveDataDialogIsReadyToDisplay](../../../core/libs/prx/libSceSaveDataDialog.native/Export.cpp) returns 1 unconditionally without checking state, following shadPS4 (savedatadialog.cpp at ce74386283); native console readiness state is unmeasured.
 
 ### Unknown function info
 
 - [sceSaveDataDialogGetResult](../../../core/libs/prx/libSceSaveDataDialog.native/Export.cpp) (libSceSaveDataDialog.native) - returning `SAVE_DATA_DIALOG_ERROR_ARG_NULL` for a non-null unwritable result or directory name pointer is a host-safety fallback; console behaviour for unmapped memory is unmeasured. Closes when: measured on a PS5
+
 - [sceSaveDataDialogOpen](../../../core/libs/prx/libSceSaveDataDialog.native/Export.cpp) (libSceSaveDataDialog.native) - no overlay dialog is drawn for any mode: the layouts of the user message, system message and error code parameters that the `SaveDataDialogParam` pointers lead to have no source in this repository or measurement on a PS5, so a dialog is not built from them. Closes when: the parameter layouts are measured on a PS5
