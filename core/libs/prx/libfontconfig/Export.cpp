@@ -1,3 +1,4 @@
+#include "prx/libfontconfig/include/Configuration.hpp"
 #include "prx/libfontconfig/include/InventoryExports.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
@@ -21,8 +22,8 @@ static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
 
 extern "C" {
 
-int APS5_VABI FcConfigGetCurrent() {
-    NotImplemented_nid_no_patch(__func__);
+FcConfig* APS5_VABI FcConfigGetCurrent() {
+    return nullptr;
 }
 
 int APS5_VABI FcFontList() {
@@ -42,7 +43,7 @@ int APS5_VABI FcInit() {
 }
 
 int APS5_VABI FcInitBringUptoDate() {
-    NotImplemented_nid_no_patch(__func__);
+    return 1;
 }
 
 int APS5_VABI FcFontRenderPrepare() {

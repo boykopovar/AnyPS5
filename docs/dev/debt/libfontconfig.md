@@ -3,6 +3,7 @@
 ### Unknown function info
 
 - [FcCharSet and FcMatrix exports](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig) - `FcCharSetCreate`, `FcCharSetDestroy`, `FcCharSetAddChar`, `FcCharSetMerge`, `FcCharSetSubtractCount` and `FcMatrixMultiply` follow the public [fontconfig.h](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/fontconfig/fontconfig.h), [fccharset.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/src/fccharset.c) and [fcmatrix.c](https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/2.12.6/src/fcmatrix.c). The module's fontconfig version is unknown and no console or title caller was read. Character sets hold no reference count and no constant state, because nothing exported here can share one yet.
+- [FcConfigGetCurrent and FcInitBringUptoDate](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig, NIDs `2M54M-SKV-k` and `Ck9k-L7rz-I`) - return what firmware 13.42's `system_ex/common_ex/lib/libfontconfig.sprx` returns, read from disassembly, not measured on a console: `FcConfigGetCurrent` is `xor %eax,%eax; ret` (no current configuration, NULL) and `FcInitBringUptoDate` is `mov $0x1,%eax; ret` (FcTrue). Neither reads arguments or state in that module.
 
 ### Functional
 
@@ -14,16 +15,14 @@
 
 ### Callable exports
 
-- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 21 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Remaining callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 19 of the 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
-| `FcConfigGetCurrent` | `2M54M-SKV-k` |
 | `FcFontList` | `7+Gq-0xFybo` |
 | `FcFontSetMatch` | `8DLBHeMsS1k` |
 | `FcConfigSubstitute` | `8v4Xk2b+C1k` |
 | `FcInit` | `AwGzFwnaitQ` |
-| `FcInitBringUptoDate` | `Ck9k-L7rz-I` |
 | `FcFontRenderPrepare` | `CvqQqWqcO-0` |
 | `FcFontMatch` | `FqneT2syjGE` |
 | `FcPatternFilter` | `H9TOtqlqmHM` |

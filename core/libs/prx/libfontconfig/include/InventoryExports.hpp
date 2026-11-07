@@ -8,7 +8,6 @@ extern "C" {
 void APS5_VABI FcLangSetDestroy(FcLangSet* set);
 FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id);
 FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* object, int id, int* value);
-int APS5_VABI FcConfigGetCurrent();
 FcResult APS5_VABI FcPatternGetBool(const FcPattern* pattern, const char* object, int id, FcBool* value);
 FcBool APS5_VABI FcPatternAddBool(FcPattern* pattern, const char* object, FcBool value);
 int APS5_VABI FcFontList();
@@ -16,7 +15,6 @@ int APS5_VABI FcFontSetMatch();
 int APS5_VABI FcConfigSubstitute();
 FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value);
 int APS5_VABI FcInit();
-int APS5_VABI FcInitBringUptoDate();
 FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* object, int id, FcChar8** value);
 int APS5_VABI FcFontRenderPrepare();
 FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, double value);
