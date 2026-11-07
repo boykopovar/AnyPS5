@@ -135,6 +135,11 @@ class ReleasePackageTests(unittest.TestCase):
         libraries.mkdir(parents=True)
         self.library = libraries / "libc.prx"
         self.library.write_bytes(b"library bytes")
+        self.allocator = libraries / "libmimalloc.so"
+        self.allocator.write_bytes(b"allocator bytes")
+        self.allocator_license = self.source / "3rdparty/mimalloc/LICENSE"
+        self.allocator_license.parent.mkdir(parents=True)
+        self.allocator_license.write_bytes(b"allocator license")
         (libraries / "unpatched").mkdir()
         self.unpatched = libraries / "unpatched/libc.prx"
         self.unpatched.write_bytes(b"original exports")
@@ -154,10 +159,10 @@ class ReleasePackageTests(unittest.TestCase):
         before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (self.library, self.unpatched, self.implib)}
         package_release.package("linux", self.build, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-linux-unpatched-v1.zip") as archive:
-            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.read("libs/libc.prx"), b"original exports")
         with tarfile.open(self.output / "prx-linux-unpatched-v1.tar.gz") as archive:
-            self.assertEqual(archive.getnames(), ["libs/libc.prx"])
+            self.assertEqual(archive.getnames(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
         for path, (content, timestamp) in before.items():
             self.assertEqual(path.read_bytes(), content)
@@ -203,6 +208,61 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous release")
 
+    def test_linux_archives_include_mimalloc(self):
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                self.assertEqual(archive.read("libs/libmimalloc.so"), b"allocator bytes")
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                self.assertEqual(archive.extractfile("libs/libmimalloc.so").read(), b"allocator bytes")
+
+    def test_linux_package_without_mimalloc_preserves_existing_outputs(self):
+        self.allocator.unlink()
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, "Missing or empty release file: .*libmimalloc\\.so"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [previous])
+        self.assertEqual(previous.read_bytes(), b"previous release")
+
+    def test_mimalloc_license_in_archives(self):
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / (stem + ".zip")) as archive:
+                self.assertEqual(archive.read("libs/licenses/mimalloc.txt"), b"allocator license")
+            with tarfile.open(self.output / (stem + ".tar.gz")) as archive:
+                self.assertEqual(archive.extractfile("libs/licenses/mimalloc.txt").read(), b"allocator license")
+
+    def test_package_without_mimalloc_license_preserves_existing_outputs(self):
+        self.allocator_license.unlink()
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        with self.assertRaisesRegex(RuntimeError, r"Missing or empty release file: .*mimalloc[\\/]LICENSE"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual(list(self.output.iterdir()), [previous])
+        self.assertEqual(previous.read_bytes(), b"previous release")
+
+    def test_harfbuzz_release_includes_both_redistribution_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library bytes")
+        notices = {"COPYING": ("harfbuzz.txt", b"HarfBuzz notice"), "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE notice")}
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty/harfbuzz" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.namelist())
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.getnames())
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
     def test_ajm_vibration_decoder_license_in_archives(self):
         (self.source / "core/libs/prx/libSceAjm.native").mkdir()
         (self.unpatched.parent / "libSceAjm.native.prx").write_bytes(b"unpatched library")
@@ -246,7 +306,7 @@ class ReleasePackageTests(unittest.TestCase):
         (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
         package_release.package("windows", self.build, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-windows-v1.zip") as archive:
-            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", *("libs/" + name for name in names + allocator)})
+            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/licenses/mimalloc.txt", *("libs/" + name for name in names + allocator)})
             for name in names + allocator:
                 self.assertEqual(archive.read("libs/" + name), name.encode())
         with tarfile.open(self.output / "prx-windows-v1.tar.gz") as archive:
@@ -256,7 +316,7 @@ class ReleasePackageTests(unittest.TestCase):
         with zipfile.ZipFile(self.output / "prx-windows-unpatched-v1.zip") as archive:
             self.assertEqual(archive.read("libs/libc.prx"), b"original exports")
             self.assertEqual(archive.read("libs/implib/libc.dll.a"), b"import archive")
-            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/implib/libc.dll.a", *("libs/" + name for name in names + allocator)})
+            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/implib/libc.dll.a", "libs/licenses/mimalloc.txt", *("libs/" + name for name in names + allocator)})
         with tarfile.open(self.output / "prx-windows-unpatched-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
             self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
@@ -275,6 +335,44 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
                 self.assertEqual(archive.extractfile("libs/licenses/" + archive_name).read(), content)
+
+    def test_harfbuzz_library_archives_include_the_bundled_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched HarfBuzz library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library")
+        notices = {
+            "COPYING": ("harfbuzz.txt", b"HarfBuzz redistribution notice\n"),
+            "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE redistribution notice\n"),
+        }
+        for name, (_, content) in notices.items():
+            source = self.source / "3rdparty/harfbuzz" / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        for variant in ("", "-unpatched"):
+            with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.read("libs/licenses/" + name), content)
+            with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
+    def test_harfbuzz_release_without_a_required_notice_is_rejected(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched HarfBuzz library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library")
+        source = self.source / "3rdparty/harfbuzz"
+        (source / "src/ms-use").mkdir(parents=True)
+        for missing in ("COPYING", "src/ms-use/COPYING"):
+            for name in ("COPYING", "src/ms-use/COPYING"):
+                file = source / name
+                file.unlink(missing_ok=True)
+                if name != missing:
+                    file.write_bytes(b"Required notice\n")
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(RuntimeError, "COPYING"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertFalse(self.output.exists())
 
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
@@ -338,7 +436,9 @@ class ReleasePackageTests(unittest.TestCase):
                 client = directory / name
                 client.write_bytes(platform.encode() + b" Tracy client")
                 cache = "APS5_ENABLE_TRACY:BOOL=ON\n"
-                expected = {"libs/libc.prx", "libs/" + name}
+                expected = {"libs/libc.prx", "libs/" + name, "libs/licenses/mimalloc.txt"}
+                if platform == "linux":
+                    expected.add("libs/libmimalloc.so")
                 if platform == "windows":
                     runtime = self.root / "toolchain"
                     runtime.mkdir()
@@ -368,7 +468,7 @@ class ReleasePackageTests(unittest.TestCase):
                 output = self.output / str(index)
                 package_release.package("linux", self.build, output, "v1")
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
-                    self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
@@ -396,17 +496,17 @@ class ReleasePackageTests(unittest.TestCase):
         with working_directory(self.source):
             package_release.package("linux", self.build, self.output, "v1.0")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
-            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
     def test_removed_libraries_are_not_packaged_from_a_reused_build(self):
         stale = self.library.with_name("libRemoved.prx")
         stale.write_bytes(b"obsolete library")
         package_release.package("linux", self.build, self.output, "v1.0")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
-            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.read("libs/libc.prx"), b"library bytes")
         with tarfile.open(self.output / "prx-linux-v1.0.tar.gz") as archive:
-            self.assertEqual(archive.getnames(), ["libs/libc.prx"])
+            self.assertEqual(archive.getnames(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"library bytes")
         self.assertEqual(stale.read_bytes(), b"obsolete library")
 
@@ -733,9 +833,12 @@ class ReleaseAssetsTests(unittest.TestCase):
             root = Path(tmp)
             source = root / "source"
             (source / "core/libs/prx/libc").mkdir(parents=True)
+            (source / "3rdparty/mimalloc").mkdir(parents=True)
+            (source / "3rdparty/mimalloc/LICENSE").write_bytes(b"allocator license")
             build = root / "build"
             (build / "core/libs/libs").mkdir(parents=True)
             (build / "core/libs/libs/libc.prx").write_bytes(b"new library")
+            (build / "core/libs/libs/libmimalloc.so").write_bytes(b"new allocator")
             (build / "core/libs/libs/unpatched").mkdir()
             (build / "core/libs/libs/unpatched/libc.prx").write_bytes(b"original library")
             (build / "core/relinker").mkdir(parents=True)
