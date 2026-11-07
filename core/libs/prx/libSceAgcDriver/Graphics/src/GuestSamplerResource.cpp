@@ -91,8 +91,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     Require(!forceUnormCoords || unnormalizedProven, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
     if (forceUnormCoords) {
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
-        Require(clampX <= 3u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
-        Require(clampY <= 3u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
         Require(!mcCoordTrunc, "guest sampler descriptor uses unnormalized coordinates with MC_COORD_TRUNC, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
@@ -162,8 +160,12 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         result.unnormalizedCoordinates = true;
         result.minFilter = result.magFilter;
         result.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        result.addressModeU = clampX == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        result.addressModeV = clampY == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        const auto unnormalizedAddressMode = [&](std::uint32_t clamp) {
+            const bool border = clamp >= 6u || (clamp >= 4u && result.magFilter == VK_FILTER_LINEAR);
+            return border ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        };
+        result.addressModeU = unnormalizedAddressMode(clampX);
+        result.addressModeV = unnormalizedAddressMode(clampY);
         result.minLod = 0.0f;
         result.maxLod = 0.0f;
         result.lodBias = 0.0f;

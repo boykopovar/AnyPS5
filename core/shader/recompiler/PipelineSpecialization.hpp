@@ -53,6 +53,7 @@ inline constexpr std::uint32_t MinLodBase = 57600u;
 inline constexpr std::uint32_t VolumeGatherBase = 57664u;
 inline constexpr std::uint32_t SamplerLodBiasBase = 57728u;
 inline constexpr float SamplerLodBiasShaderThreshold = 15.0f;
+inline constexpr std::uint32_t HalfBorderUnnormalizedBase = 57792u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
