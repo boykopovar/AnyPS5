@@ -175,8 +175,9 @@ int APS5_VABI sceRegMgrGetStrInitVal(void) {
 }
 
 int APS5_VABI sceRegMgrGetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    constexpr int kPs5FirmwareVersion = 0x06000000;
+    APS5_LOG_OUT("sceRegMgrGetVersion -> 0x%08X", kPs5FirmwareVersion);
+    return kPs5FirmwareVersion;
 }
 
 int APS5_VABI sceRegMgrIsChange(void) {
