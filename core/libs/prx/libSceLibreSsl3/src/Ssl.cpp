@@ -58,6 +58,12 @@ int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
     return Retain_nid_no_patch(ssl->references);
 }
 
+int APS5_VABI SSL_is_quic_nid_postfix(const LibreSsl3Ssl* ssl) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_is_quic requires an SSL");
+    return ssl->quicMethod != nullptr;
+}
+
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
     if (!session)
         throw std::invalid_argument("SSL_SESSION_up_ref requires a session");
