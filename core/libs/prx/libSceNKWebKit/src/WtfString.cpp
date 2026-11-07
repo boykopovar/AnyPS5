@@ -23,6 +23,48 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/*
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved
+ * Copyright (C) Research In Motion Limited 2009. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHash.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
+/*
+ * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010 Patrick Gansterer <paroga@paroga.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -258,6 +300,10 @@ unsigned Hash(StringView view, bool masked = true) {
     return hasher.hash(masked);
 }
 
+unsigned AvoidDeletedHashValue(unsigned hash) {
+    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
+}
+
 StringImpl* EmptyImpl() {
     static const unsigned char empty[] = "";
     static StringImpl impl{1, 0, empty, (Hash({empty, 0, true}) << 8) | 28};
@@ -490,11 +536,80 @@ String SharedSubstring(const String* string, unsigned start, unsigned length) {
     return String(result);
 }
 
+std::size_t ReverseFind(StringView view, char16_t value, unsigned start) {
+    if (!view.length) return NotFound;
+    std::size_t i = std::min(start, view.length - 1);
+    do { if (Unit(view, static_cast<unsigned>(i)) == value) return i; } while (i--);
+    return NotFound;
+}
+
 template<typename T> String IntegerString(T value) {
     char buffer[32];
     auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
     if (result.ec != std::errc{}) throw std::runtime_error("WTF integer formatting failed");
     return String(CopyImpl({buffer, static_cast<unsigned>(result.ptr - buffer), true}));
+}
+
+char16_t FoldQuoteMark(char16_t value) {
+    switch (value) {
+    case 0x00AB:
+    case 0x00BB:
+    case 0x05F4:
+    case 0x201C:
+    case 0x201D:
+    case 0x201E:
+    case 0x201F:
+    case 0x2E42:
+    case 0x301D:
+    case 0x301E:
+    case 0x301F:
+    case 0xFF02:
+        return u'"';
+    case 0x05F3:
+    case 0x2018:
+    case 0x2019:
+    case 0x201A:
+    case 0x201B:
+    case 0x2039:
+    case 0x203A:
+    case 0x300C:
+    case 0x300D:
+    case 0x300E:
+    case 0x300F:
+    case 0xFE41:
+    case 0xFE42:
+    case 0xFE43:
+    case 0xFE44:
+    case 0xFF07:
+    case 0xFF62:
+    case 0xFF63:
+        return u'\'';
+    default:
+        return value;
+    }
+}
+
+String FoldQuoteMarks(const StringImpl* impl) {
+    auto view = View(impl);
+    unsigned first = 0;
+    while (first < view.length && FoldQuoteMark(Unit(view, first)) == Unit(view, first)) ++first;
+    if (first == view.length) return String(Retain(const_cast<StringImpl*>(impl)));
+    void* data;
+    auto* result = NewImpl(view.length, view.is8Bit, data);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = FoldQuoteMark(Unit(view, i));
+        if (view.is8Bit) static_cast<unsigned char*>(data)[i] = static_cast<unsigned char>(value);
+        else static_cast<char16_t*>(data)[i] = value;
+    }
+    return String(result);
+}
+
+const String* DefaultMIMEType() {
+    static const unsigned char characters[] = "application/octet-stream";
+    constexpr unsigned length = sizeof(characters) - 1;
+    static StringImpl impl{1, length, characters, (Hash({characters, length, true}) << 8) | 12};
+    static const String* value = new String(&impl);
+    return value;
 }
 
 }  // namespace
@@ -733,11 +848,7 @@ std::int32_t APS5_VABI _ZNK3WTF6String19characterStartingAtEj(const String* self
 }
 
 std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const StringImpl* self, char16_t value, unsigned start) {
-    auto view = View(&Checked(self));
-    if (!view.length) return NotFound;
-    std::size_t i = std::min(start, view.length - 1);
-    do { if (Unit(view, static_cast<unsigned>(i)) == value) return i; } while (i--);
-    return NotFound;
+    return ReverseFind(View(&Checked(self)), value, start);
 }
 
 String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const StringImpl* self, unsigned start, unsigned length) {
@@ -923,6 +1034,14 @@ bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const CString& a, co
     return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
 }
 
+String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const String* string) {
+    return FoldQuoteMarks(Checked(string).impl);
+}
+
+const String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv() {
+    return *DefaultMIMEType();
+}
+
 }
 
 namespace {
@@ -937,6 +1056,12 @@ StringView Slice(StringView view, unsigned start, unsigned length = MaxStringLen
 
 unsigned HostStart(const URL& url) {
     return url.passwordEnd == url.userStart ? url.passwordEnd : url.passwordEnd + 1;
+}
+
+unsigned CredentialsEnd(const URL& url, StringView view) {
+    unsigned end = url.passwordEnd;
+    if (end != url.hostEnd && end < view.length && Unit(view, end) == '@') ++end;
+    return end;
 }
 
 unsigned PathStart(const URL& url) {
@@ -1013,6 +1138,43 @@ String ConcatViews(const StringView* parts, unsigned count) {
     return String(impl);
 }
 
+bool IsLeadSurrogate(char16_t value) { return (value & 0xFC00) == 0xD800; }
+
+bool IsTrailSurrogate(char16_t value) { return (value & 0xFC00) == 0xDC00; }
+
+bool NeedsFileNameEscape(char16_t value, char16_t previous, char16_t next) {
+    if (value <= 127) {
+        if (value < 0x20 || value == 0x7F) return true;
+        switch (value) {
+        case ' ': case '"': case '%': case '*': case '/': case ':': case '<': case '>': case '?': case '\\': case '|':
+            return true;
+        default:
+            return false;
+        }
+    }
+    if (IsLeadSurrogate(value) && !IsTrailSurrogate(next)) return true;
+    return IsTrailSurrogate(value) && !IsLeadSurrogate(previous);
+}
+
+void AppendHex(std::u16string& output, unsigned value, unsigned digits) {
+    static constexpr char16_t Digits[] = u"0123456789ABCDEF";
+    for (unsigned shift = digits * 4; shift;) {
+        shift -= 4;
+        output.push_back(Digits[(value >> shift) & 15]);
+    }
+}
+
+bool IsHexUnit(char16_t value) {
+    return (value >= '0' && value <= '9') || ((value | 32) >= 'a' && (value | 32) <= 'f');
+}
+
+unsigned HexUnitValue(char16_t value) { return value < 'A' ? value - '0' : (value - 'A' + 10) & 15; }
+
+String FinishFileName(const std::u16string& output) {
+    if (output.size() > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}, true));
+}
+
 bool IsUnicodeCompatibleASCIIWhitespace(char32_t c) {
     return c <= ' ' && (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f');
 }
@@ -1070,6 +1232,27 @@ bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL*
     return EqualViews(ViewWithoutFragment(first), ViewWithoutFragment(second));
 }
 
+bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    unsigned schemeEndA = first.bits >> 6;
+    unsigned schemeEndB = second.bits >> 6;
+    if (schemeEndA != schemeEndB) return false;
+    unsigned hostStartA = HostStart(first);
+    unsigned hostStartB = HostStart(second);
+    if (first.hostEnd < hostStartA || second.hostEnd < hostStartB) return false;
+    unsigned hostLengthA = first.hostEnd - hostStartA;
+    unsigned hostLengthB = second.hostEnd - hostStartB;
+    if (hostLengthA != hostLengthB) return false;
+    auto viewA = View(first.impl);
+    auto viewB = View(second.impl);
+    if (schemeEndA > viewA.length || schemeEndB > viewB.length) return false;
+    if (hostStartA + hostLengthA > viewA.length || hostStartB + hostLengthB > viewB.length) return false;
+    if (!EqualViews(Slice(viewA, 0, schemeEndA), Slice(viewB, 0, schemeEndB), true)) return false;
+    if (!EqualViews(Slice(viewA, hostStartA, hostLengthA), Slice(viewB, hostStartB, hostLengthB), true)) return false;
+    return URLPort(first) == URLPort(second);
+}
+
 void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
     auto& url = Checked(self);
     url.bits = 0;
@@ -1098,6 +1281,46 @@ StringView APS5_VABI _ZNK3WTF3URL4pathEv(const URL* self) {
     if (!(url.bits & 1)) return {nullptr, 0, true};
     unsigned start = PathStart(url);
     return Slice(View(url.impl), start, url.pathEnd - start);
+}
+
+StringView APS5_VABI _ZNK3WTF3URL17lastPathComponentEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (url.pathEnd <= PathStart(url)) return {nullptr, 0, true};
+    auto view = View(url.impl);
+    if (url.pathEnd > view.length) throw std::out_of_range("invalid WTF URL path boundary");
+    unsigned end = url.pathEnd - 1;
+    if (Unit(view, end) == '/') --end;
+    std::size_t start = NotFound;
+    for (std::size_t i = std::min<std::size_t>(end, view.length - 1) + 1; i--;) {
+        if (Unit(view, static_cast<unsigned>(i)) == '/') {
+            start = i;
+            break;
+        }
+    }
+    if (start < PathStart(url)) return {nullptr, 0, true};
+    ++start;
+    return Slice(view, static_cast<unsigned>(start), end - static_cast<unsigned>(start) + 1);
+}
+
+String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const URL* self) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (!(url.bits & 1)) return String(Retain(url.impl));
+    if (url.userStart > url.passwordEnd || url.queryEnd > view.length) throw std::out_of_range("invalid WTF URL credential boundary");
+    unsigned end = CredentialsEnd(url, view);
+    if (url.userStart == end && url.queryEnd == view.length) return String(Retain(url.impl));
+    if (end > url.queryEnd) throw std::out_of_range("invalid WTF URL query boundary");
+    unsigned length = url.userStart + (url.queryEnd - end);
+    void* output;
+    auto* impl = NewImpl(length, view.is8Bit, output);
+    String result(impl);
+    if (!length) return result;
+    unsigned width = view.is8Bit ? 1 : 2;
+    auto* source = static_cast<const unsigned char*>(view.data);
+    auto* target = static_cast<unsigned char*>(output);
+    std::memcpy(target, source, std::size_t(url.userStart) * width);
+    std::memcpy(target + std::size_t(url.userStart) * width, source + std::size_t(end) * width, std::size_t(url.queryEnd - end) * width);
+    return result;
 }
 
 StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const URL* self) {
@@ -1181,6 +1404,84 @@ String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self,
     if (view.length <= length) return String(Retain(url.impl));
     const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
     return ConcatViews(parts, 3);
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length) {
+    return AvoidDeletedHashValue(Hash({characters, length, false}, false));
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const String* string) {
+    return AvoidDeletedHashValue(Hash(View(Checked(string).impl), false));
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    if (!view.length) return String(Retain(string.impl));
+    std::u16string output;
+    output.reserve(view.length);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = Unit(view, i);
+        auto previous = i ? Unit(view, i - 1) : char16_t{0};
+        auto next = i + 1 < view.length ? Unit(view, i + 1) : char16_t{0};
+        if (!NeedsFileNameEscape(value, previous, next)) {
+            output.push_back(value);
+            continue;
+        }
+        if (value <= 255) {
+            output.push_back(u'%');
+            AppendHex(output, value, 2);
+        } else {
+            output.push_back(u'%');
+            output.push_back(u'+');
+            AppendHex(output, value, 4);
+        }
+        if (output.size() > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    }
+    return FinishFileName(output);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    if (!view.length) return String(Retain(string.impl));
+    std::u16string output;
+    output.reserve(view.length);
+    for (unsigned i = 0; i < view.length; ++i) {
+        if (Unit(view, i) != '%') {
+            output.push_back(Unit(view, i));
+            continue;
+        }
+        if (std::size_t(i) + 2 >= view.length) return String();
+        if (Unit(view, i + 1) != '+') {
+            if (!IsHexUnit(Unit(view, i + 1)) || !IsHexUnit(Unit(view, i + 2))) return String();
+            output.push_back(static_cast<char16_t>(HexUnitValue(Unit(view, i + 1)) << 4 | HexUnitValue(Unit(view, i + 2))));
+            i += 2;
+            continue;
+        }
+        if (std::size_t(i) + 5 >= view.length) return String();
+        unsigned value = 0;
+        for (unsigned j = 2; j < 6; ++j) {
+            if (!IsHexUnit(Unit(view, i + j))) return String();
+            value = value << 4 | HexUnitValue(Unit(view, i + j));
+        }
+        output.push_back(static_cast<char16_t>(value));
+        i += 5;
+    }
+    return FinishFileName(output);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    std::size_t position = ReverseFind(view, u'/', 0xFFFFFFFFU);
+    if (position == NotFound) return String(Retain(string.impl));
+    std::size_t end = view.length - 1;
+    if (position == end) {
+        --end;
+        position = ReverseFind(view, u'/', static_cast<unsigned>(end));
+    }
+    return Substring(string.impl, static_cast<unsigned>(position + 1), static_cast<unsigned>(end - position));
 }
 
 }

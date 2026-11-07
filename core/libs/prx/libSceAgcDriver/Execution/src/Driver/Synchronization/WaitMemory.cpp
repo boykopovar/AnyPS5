@@ -356,6 +356,8 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool spinning = pauseSpin;
     std::uint32_t polls = 0;
     StallWatch stall(queue);
+    std::uint64_t producerToken = 0;
+    auto lastProducerScan = std::chrono::steady_clock::now() - std::chrono::milliseconds(100);
     while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
             if (writer != queue) notePendingWait(packet, queue, received);
@@ -386,6 +388,13 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             lastDone = done;
             start = std::chrono::steady_clock::now();
             stall.Progressed();
+        } else if (const auto now = std::chrono::steady_clock::now(); now - lastProducerScan >= std::chrono::milliseconds(100)) {
+            lastProducerScan = now;
+            if (std::uint64_t token = 0; findWaitProducer(awaited, awaitedBytes, token) && token != producerToken) {
+                producerToken = token;
+                start = now;
+                stall.Progressed();
+            }
         }
         stall.Check(((packet[0] >> 8u) & 0xffu) == 0x93u ? "WAIT_REG_MEM_64 at" : "WAIT_REG_MEM at", awaited);
 
