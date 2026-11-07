@@ -50,6 +50,11 @@ int main() {
     Require(sceAcmBatchStartBuffers(999999, 0, nullptr, nullptr, &batch2) == BadContext);
     Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, nullptr) == BadPointer);
     Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, &batch2) == 0 && batch2 != 0);
+    errno = 0;
+    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == BadPointer);
+    Require(errno == 0);
+    Require(sceAcmBatchStartBuffers(context2, 0, nullptr, reinterpret_cast<AcmBatchError*>(0x10), &batch2) == BadPointer);
+    Require(errno == 0);
     Require(sceAcmBatchWait(context2, batch2, 0) == 0);
 
     Require(sceAcm_ConvReverb_SharedInput(nullptr, 0, nullptr, 0, nullptr, nullptr, nullptr) == BadPointer);
