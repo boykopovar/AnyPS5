@@ -8,6 +8,15 @@
 extern "C" {
 
 std::int64_t APS5_VABI FT_MulDiv_No_Round_nid_postfix(std::int64_t a, std::int64_t b, std::int64_t c);
+std::int64_t APS5_VABI FreetypeMulDiv(std::int64_t a, std::int64_t b, std::int64_t c);
+std::int64_t APS5_VABI FreetypeMulFix(std::int64_t a, std::int64_t b);
+std::int64_t APS5_VABI FreetypeDivFix(std::int64_t a, std::int64_t b);
+std::int64_t APS5_VABI FreetypeRoundFix(std::int64_t a);
+std::int64_t APS5_VABI FreetypeCeilFix(std::int64_t a);
+std::int64_t APS5_VABI FreetypeFloorFix(std::int64_t a);
+void APS5_VABI FreetypeMatrixMultiply(const FreeType::GuestMatrix* a, FreeType::GuestMatrix* b);
+int APS5_VABI FreetypeMatrixInvert(FreeType::GuestMatrix* matrix);
+void APS5_VABI FreetypeVectorTransform(FreeType::GuestVector* vector, const FreeType::GuestMatrix* matrix);
 void APS5_VABI FT_Matrix_Multiply_Scaled_nid_postfix(const FreeType::GuestMatrix* a, FreeType::GuestMatrix* b, std::int64_t scaling);
 void APS5_VABI FT_Vector_Transform_Scaled_nid_postfix(FreeType::GuestVector* vector, const FreeType::GuestMatrix* matrix, std::int64_t scaling);
 std::int32_t APS5_VABI FT_SqrtFixed_nid_postfix(std::int32_t x);
