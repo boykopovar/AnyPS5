@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -24,6 +25,8 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
 enum class DepthPlaneScope { Overlapped, Whole };
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope = DepthPlaneScope::Overlapped);
 bool DepthPlanesStale();
+std::uint64_t NextRecordOrder();
+std::uint64_t KeepNewerDepthUnits(std::uint64_t address, std::size_t bytes, std::uint64_t recorded, const std::function<std::uint64_t()>& stamp);
 struct DepthPlaneStoreStatistics {
     std::uint64_t stores = 0;
     std::uint64_t units = 0;
