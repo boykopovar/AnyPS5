@@ -19,6 +19,7 @@
 namespace {
 
 constexpr int SaveDataErrorParameter = -2137063424;
+constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorBusy = -2137063421;
 
 int failures = 0;
@@ -84,10 +85,15 @@ int main() {
     Check(sceSaveDataDelete(nullptr) == SaveDataErrorParameter, "null del returns PARAMETER");
     SaveDataDelete nullDirDel{};
     Check(sceSaveDataDelete(&nullDirDel) == SaveDataErrorParameter, "null dir_name returns PARAMETER");
+    Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails before initialization");
+    Check(sceSaveDataDeleteTransactionResource(1) == SaveDataErrorNotInitialized, "delete transaction resource 1 fails before initialization");
 
     constexpr char mountedPayload[] = "live mounted save";
     constexpr char updatedPayload[] = "still mounted";
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
+    Check(sceSaveDataDeleteTransactionResource(0) == 0, "delete transaction resource 0 succeeds after initialization");
+    Check(sceSaveDataDeleteTransactionResource(1) == 0, "delete transaction resource 1 succeeds after initialization");
+    Check(sceSaveDataDeleteTransactionResource(-1) == 0, "delete transaction resource -1 succeeds after initialization");
     SceSaveDataDirName dirName{};
     std::memcpy(dirName.data, "kept", sizeof("kept"));
     SaveDataMount3 mount{};
@@ -128,6 +134,8 @@ int main() {
     Check(Delete("kept", 5) == 0, "a valid name is deleted");
     Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
     Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates");
+    Check(sceSaveDataDeleteTransactionResource(0) == SaveDataErrorNotInitialized, "delete transaction resource fails after termination");
 
     std::filesystem::current_path(previous);
     std::error_code error;
