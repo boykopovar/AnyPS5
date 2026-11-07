@@ -3,6 +3,7 @@ import io
 import json
 import os
 import ctypes
+import shutil
 import stat
 import subprocess
 import sys
@@ -119,6 +120,41 @@ class PublicHeaderPackageTests(unittest.TestCase):
         with patch.object(package_release, "ROOT", self.source):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
         self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
+
+
+class FontconfigLicenseInstallTests(unittest.TestCase):
+    def test_cmake_installs_both_notices_with_original_bytes(self):
+        cmake = shutil.which("cmake")
+        ninja = shutil.which("ninja")
+        compiler = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
+        if not cmake or not ninja or not compiler:
+            self.skipTest("CMake, Ninja and a C++ compiler are required")
+        root = Path(__file__).resolve().parents[2]
+        library = root / "core/libs/prx/libfontconfig"
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            build = Path(temporary) / "build"
+            install = Path(temporary) / "install"
+            copying = source / "3rdparty/fontconfig/COPYING"
+            copying.parent.mkdir(parents=True)
+            copying.write_bytes("Fontconfig notice ©\r\n".encode("utf-8"))
+            harness = '\n'.join([
+                "cmake_minimum_required(VERSION 3.22.1)",
+                "project(FontconfigNotices LANGUAGES CXX)",
+                "set(BUILD_TESTING OFF)",
+                "function(configure_windows_unwind target)",
+                "endfunction()",
+                f'add_subdirectory("{library.as_posix()}" fontconfig)',
+            ])
+            (source / "CMakeLists.txt").write_text(harness, encoding="utf-8")
+            configured = subprocess.run([cmake, "-S", str(source), "-B", str(build), "-G", "Ninja",
+                                         f"-DCMAKE_CXX_COMPILER={compiler}"], capture_output=True, text=True)
+            self.assertEqual(configured.returncode, 0, configured.stdout + configured.stderr)
+            installed = subprocess.run([cmake, "--install", str(build), "--prefix", str(install)], capture_output=True, text=True)
+            self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+            self.assertEqual((install / "licenses/fontconfig/COPYING").read_bytes(), copying.read_bytes())
+            self.assertEqual((install / "licenses/fontconfig/Unicode-LICENSE.txt").read_bytes(),
+                             (library / "Unicode-LICENSE.txt").read_bytes())
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -244,6 +280,25 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), [previous])
         self.assertEqual(previous.read_bytes(), b"previous release")
 
+    def test_harfbuzz_release_includes_both_redistribution_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library bytes")
+        notices = {"COPYING": ("harfbuzz.txt", b"HarfBuzz notice"), "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE notice")}
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty/harfbuzz" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.namelist())
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.getnames())
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
     def test_ajm_vibration_decoder_license_in_archives(self):
         (self.source / "core/libs/prx/libSceAjm.native").mkdir()
         (self.unpatched.parent / "libSceAjm.native.prx").write_bytes(b"unpatched library")
@@ -273,6 +328,63 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
             self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
 
+    def fontconfig_notices(self):
+        (self.source / "core/libs/prx/libfontconfig").mkdir()
+        (self.unpatched.parent / "libfontconfig.prx").write_bytes(b"unpatched Fontconfig library")
+        (self.library.parent / "libfontconfig.prx").write_bytes(b"Fontconfig library")
+        notices = {
+            self.source / "3rdparty/fontconfig/COPYING": ("fontconfig.txt", "Fontconfig notice ©\r\n".encode("utf-8")),
+            self.source / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt": ("fontconfig-unicode.txt", b"Unicode permission notice\n"),
+        }
+        for path, (_, content) in notices.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        return notices
+
+    def test_fontconfig_notices_in_patched_and_unpatched_archives(self):
+        notices = self.fontconfig_notices()
+        runtime = self.root / "toolchain"
+        runtime.mkdir()
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (runtime / name).write_bytes(b"runtime")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(b"allocator")
+        (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + "\n", encoding="utf-8")
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
+        fontconfig_implib = self.implib.parent / "libfontconfig.dll.a"
+        fontconfig_implib.write_bytes(b"Fontconfig import archive")
+        self.manifest.write_text(self.manifest.read_text(encoding="utf-8") + "libfontconfig=" + fontconfig_implib.as_posix() + "\n", encoding="utf-8")
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                package_release.package(platform, self.build, self.output, "v1")
+                for variant in ("", "-unpatched"):
+                    with zipfile.ZipFile(self.output / f"prx-{platform}{variant}-v1.zip") as archive:
+                        for name, content in notices.values():
+                            self.assertEqual(archive.read("libs/licenses/" + name), content)
+                    with tarfile.open(self.output / f"prx-{platform}{variant}-v1.tar.gz") as archive:
+                        for name, content in notices.values():
+                            self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
+    def test_missing_or_empty_fontconfig_notices_preserve_existing_outputs(self):
+        notices = self.fontconfig_notices()
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        for invalid in notices:
+            for content in (None, b""):
+                with self.subTest(notice=invalid, content=content):
+                    if content is None:
+                        invalid.unlink()
+                    else:
+                        invalid.write_bytes(content)
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(list(self.output.iterdir()), [previous])
+                    self.assertEqual(previous.read_bytes(), b"previous release")
+                    self.assertEqual((self.library.parent / "libfontconfig.prx").read_bytes(), b"Fontconfig library")
+                    self.assertEqual((self.unpatched.parent / "libfontconfig.prx").read_bytes(), b"unpatched Fontconfig library")
+                    invalid.write_bytes(notices[invalid][1])
+
     def test_windows_runtime_follows_the_configured_compiler_directory(self):
         runtime = self.root / "custom toolchain" / "bin"
         runtime.mkdir(parents=True)
@@ -301,6 +413,39 @@ class ReleasePackageTests(unittest.TestCase):
         with tarfile.open(self.output / "prx-windows-unpatched-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
             self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
+
+    def test_windows_packages_preserve_unicode_separators_in_compiler_paths(self):
+        names = ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(name.encode())
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=repr(separator), newline=repr(newline)):
+                    runtime = self.root / ("tool" + separator + "chain") / "bin"
+                    runtime.mkdir(parents=True, exist_ok=True)
+                    for name in names:
+                        (runtime / name).write_bytes(name.encode())
+                    cache = "CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    package_release.package("windows", self.build, self.output, "v1")
+                    for filename in ("prx-windows-v1.zip", "prx-windows-unpatched-v1.zip"):
+                        with zipfile.ZipFile(self.output / filename) as archive:
+                            for name in names:
+                                self.assertEqual(archive.read("libs/" + name), name.encode())
+
+    def test_tracy_cache_records_are_not_created_by_unicode_separators(self):
+        client = self.library.with_name("libTracyClient.dll")
+        client.write_bytes(b"Tracy client")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=repr(separator), newline=repr(newline)):
+                    cache = "OTHER:STRING=value" + separator + "APS5_ENABLE_TRACY:BOOL=ON" + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    self.assertEqual(package_release.tracy_runtime("windows", self.build), [])
+                    cache += "APS5_ENABLE_TRACY:BOOL=ON" + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
 
     def test_webrtc_library_archives_include_vad_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
