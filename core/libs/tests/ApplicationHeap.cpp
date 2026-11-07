@@ -308,7 +308,8 @@ int main(int argc, char** argv) {
         std::memset(replacement.data() + 0x20, 0, sizeof(partial));
         ApplicationHeapInitialize_nid_no_patch(process.data());
         require(initializes == 1);
-        auto* pointer = static_cast<unsigned char*>(ApplicationHeapCalloc_nid_no_patch(7, 9));
+        auto* pointer = static_cast<unsigned char*>(__std_calloc_crt_nid_postfix(7, 9));
+        require(pointer != nullptr);
         for (unsigned i = 0; i < 63; ++i) require(pointer[i] == 0);
         std::memset(pointer, 0x5a, 63);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(pointer, 150));
@@ -403,6 +404,10 @@ int main(int argc, char** argv) {
         require(ApplicationHeapPosixAlign_nid_no_patch(&refused, 256, SIZE_MAX) == 12 && refused == nullptr);
         require(posix_memalign_nid_postfix(&refused, 4096, SIZE_MAX - 4096) == 12 && refused == nullptr);
         ApplicationHeapFree_nid_no_patch(nullptr);
+        require(__std_calloc_crt_nid_postfix(SIZE_MAX, 2) == nullptr);
+        require(__std_calloc_crt_nid_postfix(std::size_t{1} << 33, std::size_t{1} << 33) == nullptr);
+        free_nid_postfix(__std_calloc_crt_nid_postfix(0, 9));
+        free_nid_postfix(__std_calloc_crt_nid_postfix(7, 0));
         reject([] { ApplicationHeapCalloc_nid_no_patch(SIZE_MAX, 2); });
         reject([] { ApplicationHeapAlign_nid_no_patch(3, 16); });
         ApplicationHeapInitialize_nid_no_patch(process.data());
@@ -566,4 +571,8 @@ int main(int argc, char** argv) {
 
     fail = false;
     require(frees == beforeScripting && lastSize == sizeBeforeScripting);
+    require(__std_calloc_crt_nid_postfix(3, 5) == storage.data() && lastSize == 15);
+    fail = true;
+    require(__std_calloc_crt_nid_postfix(3, 5) == nullptr);
+    fail = false;
 }
