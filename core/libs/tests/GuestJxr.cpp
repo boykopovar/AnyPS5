@@ -12,11 +12,22 @@
 #include <limits>
 #include <stdexcept>
 
+extern "C" {
+void* JxrFreeTileFixtureReset(std::uint32_t mode, std::int32_t subband, std::uint32_t lastTile, int empty);
+void* JxrFreeTileFixtureSlot(std::size_t tile, std::size_t band);
+void* JxrFreeTileFixtureTiles();
+int JxrFreeTileFixtureIntact();
+void JxrFreeTileFixtureClearTiles();
+}
+
 namespace {
 
 void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
 #define Require(value) Check((value), __LINE__)
 
+bool recordTileFrees = false;
+std::array<void*, 16> tileFrees{};
+std::size_t tileFreeCount = 0;
 void* lastFreed = nullptr;
 int frees = 0;
 std::array<void*, 32> freeLog{};
@@ -42,6 +53,11 @@ void* APS5_VABI Allocate(std::size_t size) {
     return pointer;
 }
 void APS5_VABI Free(void* pointer) {
+    if (recordTileFrees) {
+        Require(tileFreeCount < tileFrees.size());
+        tileFrees[tileFreeCount++] = pointer;
+        return;
+    }
     if (pointer != nullptr) {
         lastFreed = pointer;
         if (frees < static_cast<int>(freeLog.size())) freeLog[static_cast<std::size_t>(frees)] = pointer;
@@ -267,6 +283,46 @@ void TestInitPostProc() {
 
 }
 
+void TestFreeTileInfo() {
+    bool threw = false;
+    try { freeTileInfo_nid_postfix(nullptr); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    recordTileFrees = true;
+    for (std::uint32_t mode = 0; mode < 16; ++mode) {
+        for (std::int32_t band = 0; band <= 4; ++band) {
+            for (std::uint32_t lastTile = 0; lastTile < 3; ++lastTile) {
+                for (int empty : {0, 1}) {
+                    auto* codec = JxrFreeTileFixtureReset(mode, band, lastTile, empty);
+                    std::array<void*, 16> expected{};
+                    std::size_t count = 0;
+                    const std::size_t bands = band == 3 ? 1 : band == 2 ? 2 : 3;
+                    for (std::size_t current = 0; current < bands; ++current) {
+                        const auto end = mode & (1U << current) ? lastTile : 0;
+                        for (std::size_t tile = 0; tile <= end; ++tile) {
+                            if (auto* pointer = JxrFreeTileFixtureSlot(tile, current)) expected[count++] = pointer;
+                        }
+                    }
+                    expected[count++] = JxrFreeTileFixtureTiles();
+                    tileFreeCount = 0;
+                    freeTileInfo_nid_postfix(codec);
+                    Require(tileFreeCount == count);
+                    for (std::size_t i = 0; i < count; ++i) Require(tileFrees[i] == expected[i]);
+                    Require(JxrFreeTileFixtureIntact());
+                }
+            }
+        }
+    }
+    auto* codec = JxrFreeTileFixtureReset(0, 3, 0, 0);
+    JxrFreeTileFixtureClearTiles();
+    tileFreeCount = 0;
+    threw = false;
+    try { freeTileInfo_nid_postfix(codec); }
+    catch (const std::exception&) { threw = true; }
+    Require(threw && tileFreeCount == 0);
+    recordTileFrees = false;
+}
+
 void TestTermPostProc() {
     JxrGuestPostProcInfo sentinel{};
     JxrGuestPostProcInfo* slots[3][2];
@@ -351,5 +407,6 @@ int main() {
     TestTermPostProc();
     TestInitPostProc();
     TestExifMetadata();
+    TestFreeTileInfo();
     return 0;
 }

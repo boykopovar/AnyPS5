@@ -149,7 +149,7 @@ int APS5_VABI detachISRead_nid_postfix();
 int APS5_VABI detachISWrite_nid_postfix();
 int APS5_VABI freePredInfo_nid_postfix();
 int APS5_VABI freeQuantizer_nid_postfix();
-int APS5_VABI freeTileInfo_nid_postfix();
+void APS5_VABI freeTileInfo_nid_postfix(void* codec);
 int APS5_VABI getTilePos_nid_postfix();
 int APS5_VABI initMRPtr_nid_postfix();
 std::int32_t APS5_VABI initPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t mbWidth, std::size_t numChannels);
