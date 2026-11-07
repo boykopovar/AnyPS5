@@ -115,7 +115,8 @@ std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
     tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size);
 int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix();
 int APS5_VABI PKImageEncode_SetIPTCNAAMetadata_WMP_nid_postfix();
-int APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_SetPhotoshopMetadata_WMP_nid_postfix(
+    tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size);
 int APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix();
 int APS5_VABI PKImageEncode_SetResolution_nid_postfix();
 int APS5_VABI PKImageEncode_SetSize_nid_postfix();
