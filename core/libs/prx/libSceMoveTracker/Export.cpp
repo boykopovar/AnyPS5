@@ -13,16 +13,19 @@ int APS5_VABI sceMoveTrackerCalibrateReset() {
 }
 
 int APS5_VABI sceMoveTrackerCalibrateYaw(std::int32_t handle, const float* direction) {
+    if (direction == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveTrackerCameraUpdate(const MoveTrackerCameraFrame* frames) {
+    if (frames == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveTrackerCaptureInit(void* imageMemory, std::int32_t capacity, std::int32_t interval, const char* path, std::int32_t mode) {
+    if (imageMemory == nullptr || path == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -33,11 +36,13 @@ int APS5_VABI sceMoveTrackerCaptureTerm() {
 }
 
 int APS5_VABI sceMoveTrackerControllersUpdate(const MoveTrackerControllerInput* controllers) {
+    if (controllers == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveTrackerGetState(std::int32_t handle, std::uint64_t timestamp, MoveTrackerState* state) {
+    if (state == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -72,11 +77,13 @@ int APS5_VABI sceMoveTrackerInit(void* workMemory, std::uint64_t requiredArgumen
 }
 
 int APS5_VABI sceMoveTrackerPlayGetImages(MoveTrackerCameraFrame* frames) {
+    if (frames == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceMoveTrackerPlayGetStates(MoveTrackerPlaybackInfo* info, MoveTrackerState* states) {
+    if (info == nullptr || states == nullptr) return static_cast<int>(0x80ef0003);
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
