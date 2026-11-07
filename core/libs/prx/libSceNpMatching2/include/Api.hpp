@@ -26,6 +26,14 @@ struct NpMatching2CreateContextParameterA {
     std::uint64_t size;
 };
 
+struct NpMatching2SignalingNetInfo {
+    std::uint64_t size;
+    std::uint32_t localAddr;
+    std::uint32_t mappedAddr;
+    std::int32_t natStatus;
+    std::uint32_t padding;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpMatching2ContextStart(std::uint16_t ctxId, std::uint64_t timeout);
@@ -92,7 +100,7 @@ int APS5_VABI sceNpMatching2SignalingEnableManualUdpMode();
 int APS5_VABI sceNpMatching2SignalingEstablishConnection();
 int APS5_VABI sceNpMatching2SignalingGetConnectionInfoA(std::uint16_t ctxId, std::uint64_t roomId, std::uint16_t memberId, std::int32_t infoType, void* info);
 int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, std::uint64_t roomId, std::uint16_t memberId, std::int32_t* connStatus, void* peerAddr, std::uint16_t* peerPort);
-int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo();
+int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo(NpMatching2SignalingNetInfo* info);
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo();
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfoResult();
 int APS5_VABI sceNpMatching2SignalingGetPingInfo(std::uint16_t ctxId, const void* request, const void* requestOpt, std::uint32_t* requestId);
