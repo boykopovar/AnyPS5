@@ -4,14 +4,40 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
-        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp
+        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp src/LcdFilter.cpp src/ModuleManagement.cpp src/OutlineTransform.cpp src/VectorPolar.cpp
+        src/OutlineBitmap.cpp
+        src/SfntTable.cpp
         src/GuestObjects.cpp
         src/Names.cpp
         src/Trigonometry.cpp
         src/OutlineDecompose.cpp
 )
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_variant_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeVariants.cpp)
+    target_include_directories(guest_freetype_variant_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_variant_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_variant_tests)
+    add_test(NAME guest_freetype_variant COMMAND guest_freetype_variant_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_variant PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(libSceFreeType PRIVATE src/Advances.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_outline_bounds_extents_tests ${LIBS_INCLUDE_DIR}/tests/GuestOutlineBoundsExtents.cpp)
+    target_include_directories(guest_outline_bounds_extents_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_outline_bounds_extents_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_outline_bounds_extents_tests)
+    add_test(NAME guest_outline_bounds_extents COMMAND guest_outline_bounds_extents_tests)
+    set_tests_properties(guest_outline_bounds_extents PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_outline_bounds_extents PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_advances_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeAdvances.cpp)
@@ -28,6 +54,7 @@ endif()
 target_sources(libSceFreeType PRIVATE src/Glyph.cpp)
 target_link_libraries(libSceFreeType PRIVATE freetype)
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
+target_sources(libSceFreeType PRIVATE src/OutlineOrientation.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_request_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeRequestSize.cpp)
@@ -151,6 +178,106 @@ if(BUILD_TESTING)
         set_tests_properties(guest_freetype_outline_storage PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
+    add_test_executable(guest_freetype_track_kerning_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeTrackKerning.cpp)
+    target_include_directories(guest_freetype_track_kerning_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_track_kerning_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_track_kerning_tests)
+    add_test(NAME guest_freetype_track_kerning COMMAND guest_freetype_track_kerning_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_track_kerning PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_sfnt_table_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSfntTable.cpp)
+    target_include_directories(guest_freetype_sfnt_table_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_sfnt_table_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_sfnt_table_tests)
+    add_test(NAME guest_freetype_sfnt_table COMMAND guest_freetype_sfnt_table_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_sfnt_table PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_outline_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineBitmap.cpp)
+    target_include_directories(guest_freetype_outline_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_outline_bitmap_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_outline_bitmap_tests)
+    add_test(NAME guest_freetype_outline_bitmap COMMAND guest_freetype_outline_bitmap_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_outline_bitmap PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_slot_synthesis_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSlotSynthesis.cpp)
+    target_include_directories(guest_freetype_slot_synthesis_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_slot_synthesis_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_slot_synthesis_tests)
+    add_test(NAME guest_freetype_slot_synthesis COMMAND guest_freetype_slot_synthesis_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_slot_synthesis PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_bitmap_embolden_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeBitmapEmbolden.cpp)
+    target_include_directories(guest_freetype_bitmap_embolden_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_bitmap_embolden_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_bitmap_embolden_tests)
+    add_test(NAME guest_freetype_bitmap_embolden COMMAND guest_freetype_bitmap_embolden_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_bitmap_embolden PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_slot_own_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSlotOwnBitmap.cpp)
+    target_include_directories(guest_freetype_slot_own_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_slot_own_bitmap_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_slot_own_bitmap_tests)
+    add_test(NAME guest_freetype_slot_own_bitmap COMMAND guest_freetype_slot_own_bitmap_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_slot_own_bitmap PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+
+    add_test_executable(guest_freetype_lcd_filter_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeLcdFilter.cpp)
+    target_include_directories(guest_freetype_lcd_filter_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_lcd_filter_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_lcd_filter_tests)
+    add_test(NAME guest_freetype_lcd_filter COMMAND guest_freetype_lcd_filter_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_lcd_filter PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_module_management_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeModuleManagement.cpp)
+    target_include_directories(guest_freetype_module_management_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_module_management_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_module_management_tests)
+    add_test(NAME guest_freetype_module_management COMMAND guest_freetype_module_management_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_module_management PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_outline_transform_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineTransform.cpp)
+    target_include_directories(guest_freetype_outline_transform_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_outline_transform_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_outline_transform_tests)
+    add_test(NAME guest_freetype_outline_transform COMMAND guest_freetype_outline_transform_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_outline_transform PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_vector_polar_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeVectorPolar.cpp)
+    target_include_directories(guest_freetype_vector_polar_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_vector_polar_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_vector_polar_tests)
+    add_test(NAME guest_freetype_vector_polar COMMAND guest_freetype_vector_polar_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_vector_polar PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_open_face_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOpenFace.cpp)
+    target_include_directories(guest_freetype_open_face_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_open_face_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_open_face_tests)
+    add_test(NAME guest_freetype_open_face COMMAND guest_freetype_open_face_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_open_face PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
     target_include_directories(guest_freetype_charmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
@@ -202,3 +329,5 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/MemoryRecord.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")
+
+include("${CMAKE_CURRENT_LIST_DIR}/StrokerOutputs.cmake")
