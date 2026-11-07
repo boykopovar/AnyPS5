@@ -168,6 +168,9 @@ void testErrors() {
     const ConfigInfo shortConfig{sizeof(ConfigInfo) - 8};
     check(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+    PictureInfo freshPicture{sizeof(PictureInfo)};
+    FrameBuffer unset{sizeof(FrameBuffer), nullptr, FrameBytes};
+    check(sceVideodecFlush(&ctrl, &unset, &freshPicture) == ErrorFrameBufferPointer, "flush accepted a null frame buffer");
     check(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
     Ctrl shortCtrl{sizeof(Ctrl) - 8};
     check(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
@@ -213,6 +216,12 @@ void testErrors() {
     check(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
     PictureInfo shortPicture{sizeof(PictureInfo) - 8};
     check(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
+    check(sceVideodecDecode(&ctrl, &input, nullptr, nullptr) == ErrorArgumentPointer, "decode reported the frame buffer before a null picture info");
+    check(sceVideodecDecode(&ctrl, nullptr, nullptr, &picture) == ErrorArgumentPointer, "decode reported the frame buffer before a null input block");
+    const SceVideodec2::InputData shortInput{sizeof(SceVideodec2::InputData) - 8, units[0].data(), units[0].size(), 0, 0, 0};
+    check(sceVideodecDecode(&ctrl, &shortInput, &frame, &picture) == ErrorStructSize, "a short input structure was accepted");
+    check(sceVideodecFlush(&ctrl, nullptr, nullptr) == ErrorArgumentPointer, "flush reported the frame buffer before a null picture info");
+    check(sceVideodecFlush(&foreign, &frame, &picture) == ErrorHandle, "flush accepted an unknown decoder");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
     check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
     check(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
