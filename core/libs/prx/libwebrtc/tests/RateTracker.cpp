@@ -88,8 +88,8 @@ struct Tracker {
     static std::int64_t APS5_VABI RateTrackerTime_nid_no_patch(const WebRtcRateTracker* object) {
         return reinterpret_cast<const Tracker*>(object)->time;
     }
-    Tracker() {
-        _ZN3rtc11RateTrackerC1Elm_nid_postfix(&object, 100, 10);
+    explicit Tracker(std::int64_t bucketMilliseconds = 100, std::size_t bucketCount = 10) {
+        _ZN3rtc11RateTrackerC1Elm_nid_postfix(&object, bucketMilliseconds, bucketCount);
         static void* const table[] = {nullptr, nullptr, reinterpret_cast<void*>(&RateTrackerTime_nid_no_patch)};
         object.vtable = table;
     }
@@ -286,6 +286,20 @@ void TestPartialRounding() {
     Require(tracker.ComputeRateForInterval(0) == 0.0);
 }
 
+void TestOddBucketRounding() {
+    Tracker tracker(3, 1);
+    tracker.AddSamples(1);
+    const double expected[] = {0.0, 0.0, 0.0, 1000.0 / 3.0, 1000.0 / 3.0, 0.0, 0.0};
+    for (double rate : expected) {
+        Require(tracker.ComputeRateForInterval(3) == rate);
+        tracker.AdvanceTime(1);
+    }
+    tracker.time = 6;
+    tracker.AddSamples(7);
+    tracker.time = 9;
+    Require(tracker.ComputeRateForInterval(3) == 7000.0 / 3.0);
+}
+
 }
 
 int main() {
@@ -304,6 +318,7 @@ int main() {
         TestAbi();
         TestPartialRounding();
         TestReleaseSamples();
+        TestOddBucketRounding();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "RateTracker exception: %s\n", error.what());
         return 1;
