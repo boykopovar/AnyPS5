@@ -515,6 +515,24 @@ void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn) {
     registeredClockGetres.store(fn, std::memory_order_release);
 }
 
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* result, int base) {
+    if (base != 1) return 0;
+    if (result == nullptr) return 0;
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const uint64_t ticks = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
+    result->tv_sec = static_cast<int64_t>(ticks / 10000000ULL);
+    result->tv_nsec = static_cast<int64_t>(ticks % 10000000ULL) * 100;
+#else
+    timespec now{};
+    if (clock_gettime(CLOCK_REALTIME, &now) != 0) return 0;
+    result->tv_sec = static_cast<int64_t>(now.tv_sec);
+    result->tv_nsec = static_cast<int64_t>(now.tv_nsec);
+#endif
+    return 1;
+}
+
 int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
     if (base != 1) return 0;
     const auto clockGetres = registeredClockGetres.load(std::memory_order_acquire);
