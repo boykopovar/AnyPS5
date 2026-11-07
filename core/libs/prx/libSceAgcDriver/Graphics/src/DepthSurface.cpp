@@ -424,13 +424,27 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
         if (stencil && !stencilPlane && !htileProvesStencilClear(word)) return refuse("native multisample stencil initial HTILE does not prove its clear value");
     }
-    if (stencilPlane && !state.aliasStencil && !state.unprovenStencil) {
+    const bool provedPlane = stencilPlane && !state.aliasStencil && !state.unprovenStencil;
+    if (provedPlane) {
         std::vector<std::uint8_t> plane(state.initial[2].bytes);
         GuestMemory::Read(target.stencilAddress, std::as_writable_bytes(std::span(plane)));
+        if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::StencilPlaneRead);
         if (std::any_of(plane.begin(), plane.end(), [&](std::uint8_t value) { return value != target.clearStencil; })) return refuse("native multisample stencil plane does not hold its clear value");
     }
     for (const auto& range : state.initial) GuestMemory::CollectWritesUncached(range.address, range.bytes);
-    if (!GuestMemory::UnchangedSinceAll(state.initial)) return refuse("guest writes raced native multisample depth import");
+    std::vector<GuestMemory::UnchangedQuery> unchanged;
+    for (std::size_t index = 0u; index < state.initial.size(); ++index) {
+        if (!provedPlane || index != 2u) unchanged.push_back(state.initial[index]);
+    }
+    if (!GuestMemory::UnchangedSinceAll(unchanged)) return refuse("guest writes raced native multisample depth import");
+    if (provedPlane) {
+        auto& range = state.initial[2];
+        range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+        if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
+        std::vector<std::uint8_t> plane(range.bytes);
+        GuestMemory::Read(target.stencilAddress, std::as_writable_bytes(std::span(plane)));
+        if (std::any_of(plane.begin(), plane.end(), [&](std::uint8_t value) { return value != target.clearStencil; })) return refuse("guest writes raced native multisample depth import");
+    }
     return state;
 }
 
