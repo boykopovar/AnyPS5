@@ -234,8 +234,28 @@ static void CheckConstantTableCall() {
     Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(computed), swappc).empty());
 }
 
+static void CheckUserDataDescriptorTableCall() {
+    const SwappcInfo swappc{false, 0u, 16u};
+    const std::vector<std::uint32_t> caller{
+        0xf4280502u, 0xfa000000u, 0xbf8cc07fu, 0xbe920314u, 0xbe930315u, 0xbe922112u, 0xbf810000u};
+    const auto calls = FindTableCalls(RdnaInstructionDecoder{}.Decode(caller), swappc);
+    Require(calls.size() == 1u);
+    Require(calls[0].programCounter == 0x14u && calls[0].linkRegister == 18u && calls[0].targetRegister == 18u);
+    Require(calls[0].userDataRegister == 4u && calls[0].descriptorOffset == 0u && calls[0].entryOffset == 0u && calls[0].entryStride == 0u && calls[0].descriptorInUserData);
+    Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(caller), SwappcInfo{false, 0u, 4u}).empty());
+    for (const std::uint32_t soffset : {0xd4000000u, 0xf8000000u}) {
+        auto nonSgpr = caller;
+        nonSgpr[1] = soffset;
+        Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(nonSgpr), swappc).empty());
+    }
+    const std::vector<std::uint32_t> looped{
+        0xf4280502u, 0xfa000000u, 0xbf8cc07fu, 0xbe920314u, 0xbe930315u, 0xbe940316u, 0xbe950317u, 0xbe922112u, 0xbf82fffau, 0xbf810000u};
+    Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(looped), swappc).empty());
+}
+
 static void CheckTableCalls() {
     CheckConstantTableCall();
+    CheckUserDataDescriptorTableCall();
     const SwappcInfo swappc{false, 0u, 16u};
     const auto caller = TableCaller();
     const auto program = RdnaInstructionDecoder{}.Decode(caller);
