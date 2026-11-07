@@ -17,7 +17,7 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Threads = 64;
+constexpr std::uint32_t Threads = 65;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 4;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
@@ -94,7 +94,8 @@ constexpr std::uint32_t Rows[Threads][3] = {
     {0x1fe6f5d7u, 0x208cc5a7u, 0x80df394au},
     {0x1f2af88cu, 0x9e6ce54fu, 0x80000000u},
     {0x1eeac417u, 0x9e8ead57u, 0x00000000u},
-    {0x9e406f2cu, 0x20e09d8du, 0x004226bcu}
+    {0x9e406f2cu, 0x20e09d8du, 0x004226bcu},
+    {0x807fffffu, 0x3f7fffffu, 0x80000001u}
 };
 constexpr std::uint32_t Expected[Threads][Results] = {
     {0xffc00000u, 0xffc00000u, 0x3f000000u, 0xffc00000u},
@@ -161,6 +162,7 @@ constexpr std::uint32_t Expected[Threads][Results] = {
     {0x80000000u, 0x80000000u, 0x1f2af88bu, 0x80000000u},
     {0x80000000u, 0x80000000u, 0x1eeac416u, 0x80000000u},
     {0x00000000u, 0x00000000u, 0x9e406f2bu, 0x80000000u},
+    {0x80800000u, 0x80800000u, 0x80800000u, 0x80800000u}
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
