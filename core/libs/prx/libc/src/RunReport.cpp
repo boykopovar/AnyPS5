@@ -1877,6 +1877,14 @@ extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept {
     collector->Finish(RunReport::Exit::Clean, RunReport::Stop{RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, exitCode);
 }
 
+extern "C" void LibcRunReportTerminate_nid_no_patch(const char* what) noexcept {
+    if (collector == nullptr || collector->Finished()) return;
+    try {
+        collector->Finish(RunReport::Exit::Abort, RunReport::Stop{RunReport::Kind::Other, RunReport::Reason::RuntimeStop, std::nullopt, what != nullptr ? std::optional<std::string>(what) : std::nullopt}, std::nullopt);
+    } catch (...) {
+    }
+}
+
 extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept {
     if (collector != nullptr) collector->NoteQuitRequested();
 }
