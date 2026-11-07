@@ -209,6 +209,27 @@ void TestStod() {
     CheckStod("0x1.8p0", 0, 1.5, 7, 0, "unscaled hexadecimal");
 }
 
+template<typename TFloat>
+void CheckNoConversion(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, int*)) {
+    const struct { const char* text; bool negative; } cases[]{
+        {"", false}, {" ", false}, {"z", false}, {"+", false}, {"+z", false},
+        {"-", true}, {"-z", true}, {" \t-.", true}, {"-i", false}, {"-n", false},
+        {"-+1", true}, {"--1", true}, {"- 5", true}, {"\t-.", true}
+    };
+    for (const auto& test : cases) {
+        for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{-10}, std::int64_t{10}, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()}) {
+            for (const int saved : {0, RangeError, 97}) for (const bool nullEnd : {false, true}) for (const bool nullError : {false, true}) {
+                char* end = nullptr;
+                int error = 123;
+                *__error_nid_postfix() = saved;
+                const TFloat value = parse(test.text, nullEnd ? nullptr : &end, scale, nullError ? nullptr : &error);
+                Require(value == 0 && std::signbit(value) == test.negative, "no-conversion zero sign");
+                Require((nullEnd || end == test.text) && error == (nullError ? 123 : 0) && *__error_nid_postfix() == saved, "no-conversion end and errors");
+            }
+        }
+    }
+}
+
 void TestStoll() {
     char* end = nullptr;
     *__error_nid_postfix() = 0;
@@ -694,6 +715,9 @@ void TestLongLogAt53Bits() {
 
 int main() {
     TestStod();
+    CheckNoConversion(_Stodx_nid_postfix);
+    CheckNoConversion(_Stofx_nid_postfix);
+    CheckNoConversion(_Stoldx_nid_postfix);
     TestHexRange();
     TestUnscaledHexadecimal();
     TestLongDoubleHexadecimalPrecision();
