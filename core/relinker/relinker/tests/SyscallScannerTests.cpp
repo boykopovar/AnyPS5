@@ -198,6 +198,16 @@ void RequireNoNumber(const std::string& binary, const Bytes& code, const std::st
             "Relinker reported a syscall number for the " + description + ":\n" + output);
 }
 
+const std::string kStubHint = "; it is a ps5-payload-dev SDK syscall stub, which --trap-sdk-syscall-stubs replaces with UD2";
+
+void RequireHint(const std::string& binary, const Bytes& code, const bool expected, const std::string& description) {
+    const auto output = RunScanner(binary, code);
+    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+            "Relinker did not report the " + description + " as forbidden:\n" + output);
+    require((output.find(kStubHint) != std::string::npos) == expected,
+            std::string("Relinker ") + (expected ? "did not name" : "named") + " --trap-sdk-syscall-stubs for the " + description + ":\n" + output);
+}
+
 void RequireSdkStubsAreTrapped(const std::string& binary) {
     Bytes code = kConstantStub;
     const auto numberedOffset = code.size() - 3u;
@@ -260,6 +270,11 @@ int main(const int argc, char** argv) {
 
         RequireNumber(binary, kPrefixedConstantStub, "syscall number 9", "prefixed constant stub");
         RequireNoNumber(binary, kPrefixedClobberedStub, "prefixed stub whose intervening instruction writes rax");
+
+        RequireHint(binary, kConstantStub, true, "numbered SDK stub");
+        RequireHint(binary, kSdkGenericStub, true, "generic SDK stub");
+        for (const auto* bare : {&kUnsignedStub, &kRegisterStub, &kInt80Stub, &kSysenterStub, &kSysretStub, &kClobberedStub, &kPrefixedConstantStub})
+            RequireHint(binary, *bare, false, "bare syscall");
 
         RequireSdkStubsAreTrapped(binary);
         RequireUnknownSyscallsStillFail(binary);
