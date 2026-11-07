@@ -243,6 +243,7 @@ int main() {
     CheckShort(bench, "unsigned short negative zero", "-0", 0, EofBit);
     CheckShort(bench, "unsigned short no digits", "-", 0, FailBit | EofBit);
     CheckInt(bench, "unsigned int", "4294967295", 4294967295u, EofBit);
+    CheckInt(bench, "unsigned int overflow", "4294967296", 4294967295u, FailBit | EofBit);
     CheckInt(bench, "unsigned int no digits", "+", 0, FailBit | EofBit);
 
     CheckBool(bench, "bool one", "1", Dec, true, EofBit, 1);
