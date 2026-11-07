@@ -41,6 +41,8 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 using Color = std::array<float, 4>;
 
+constexpr Color BlendConstants{0.5f, 0.25f, 0.75f, 0.625f};
+
 constexpr std::uint32_t Width = 256;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t ScissorWidth = 128;
@@ -206,7 +208,7 @@ AgcDriver::QueueState Queue(const Block& block, const Format& format, const Swap
         {0x318, static_cast<std::uint32_t>(block.Address() >> 8u)}, {0x390, static_cast<std::uint32_t>(block.Address() >> 40u)},
         {0x31b, 0}, {0x31c, (format.format << 2u) | (format.number << 8u) | (swap.value << 11u) | (format.normalized ? 0x8000u : 0u)}, {0x31d, 0},
         {0x3b0, ((Width - 1u) << 14u) | (Height - 1u)}, {0x3b8, TiledAttrib3}, {0x1e0, control},
-        {0x105, 0}, {0x106, 0}, {0x107, 0}, {0x108, 0},
+        {0x105, std::bit_cast<std::uint32_t>(BlendConstants[0])}, {0x106, std::bit_cast<std::uint32_t>(BlendConstants[1])}, {0x107, std::bit_cast<std::uint32_t>(BlendConstants[2])}, {0x108, std::bit_cast<std::uint32_t>(BlendConstants[3])},
         {0xc, 0}, {0xd, (Height << 16u) | Width},
         {0x81, 0x80000000}, {0x82, (Height << 16u) | Width},
         {0x90, 0x80000000}, {0x91, (Height << 16u) | Width},
@@ -343,6 +345,10 @@ float Factor(std::uint32_t factor, std::uint32_t channel, const Color& source, c
         case 8: return destination[channel];
         case 9: return 1.0f - destination[channel];
         case 10: return alpha ? 1.0f : std::min(source[3], 1.0f - destination[3]);
+        case 13: return BlendConstants[channel];
+        case 14: return 1.0f - BlendConstants[channel];
+        case 19: return BlendConstants[3];
+        case 20: return 1.0f - BlendConstants[3];
         default: throw std::runtime_error("the reference blend has no factor " + std::to_string(factor));
     }
 }
@@ -429,11 +435,11 @@ std::vector<double> Stored(AgcDriver::VulkanDevice& device, const Block& block, 
     return values;
 }
 
-void CompareWithStandardOrder(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const Format& format, const Swap& swap, const std::vector<std::uint16_t>& standard, const std::string& what) {
+void CompareWithStandardOrder(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const Format& format, const Swap& swap, const std::vector<std::uint16_t>& standard, std::uint32_t tolerance, const std::string& what) {
     std::vector<std::uint16_t> reversed;
     const auto values = Stored(device, block, layout, format, swap, reversed);
     for (std::size_t at = 0; at < reversed.size(); ++at) {
-        if (reversed[at] == standard[at]) continue;
+        if (std::max(reversed[at], standard[at]) - std::min(reversed[at], standard[at]) <= static_cast<int>(tolerance)) continue;
         const auto pixel = at / 4u;
         char detail[224];
         std::snprintf(detail, sizeof(detail), ": channel %u of pixel (%u, %u) holds %.6g (bits 0x%04x), while the same draw into a SWAP_STD target, which Vulkan blends alone, holds bits 0x%04x", static_cast<unsigned>(at % 4u), static_cast<unsigned>(pixel % Width), static_cast<unsigned>(pixel / Width), values[at], reversed[at], standard[at]);
@@ -446,6 +452,7 @@ struct BlendCase {
     std::uint32_t control;
     std::uint32_t targetMask;
     bool shaded;
+    std::uint32_t standardTolerance = 0;
 };
 
 }
@@ -464,7 +471,7 @@ int main() {
         const auto compressed = Program(exported, true);
         const auto clamped = Program(outOfRange, false);
         const auto unclamped = Program(strongAlpha, false);
-        const std::array<BlendCase, 10> cases{{
+        const std::array<BlendCase, 14> cases{{
             {"SRC_ALPHA + ONE_MINUS_SRC_ALPHA, alpha ONE + ONE_MINUS_SRC_ALPHA", 0x65010504u, 0xfu, true},
             {"SRC_ALPHA + ONE_MINUS_SRC_ALPHA, alpha ONE + ONE_MINUS_SRC_ALPHA, red, green and blue written", 0x65010504u, 0x7u, true},
             {"SRC_ALPHA reverse-subtract ONE_MINUS_SRC_ALPHA, alpha ONE reverse-subtract ONE_MINUS_SRC_ALPHA", 0x65810584u, 0xfu, true},
@@ -475,6 +482,10 @@ int main() {
             {"DST_COLOR + ZERO, alpha DST_ALPHA + ZERO", 0x60060008u, 0xfu, false},
             {"ONE + ONE", 0x40000101u, 0xfu, false},
             {"ONE MIN ONE", 0x40000141u, 0xfu, false},
+            {"ONE + ZERO, alpha CONSTANT_ALPHA + ZERO", 0x60130001u, 0xfu, false, 1u},
+            {"CONSTANT_COLOR + ONE_MINUS_CONSTANT_COLOR", 0x40000e0du, 0xfu, false, 1u},
+            {"CONSTANT_ALPHA + ONE_MINUS_CONSTANT_ALPHA", 0x40001413u, 0xfu, false, 1u},
+            {"ONE_MINUS_CONSTANT_COLOR + ONE", 0x4000010eu, 0xfu, false, 1u},
         }};
         bool skipped = false;
         for (const auto& format : Formats) {
@@ -499,7 +510,7 @@ int main() {
                     }
                     Draw(renderer, decoded, exportFormat, program);
                     Check(*device, block, layout, format, swap, test.targetMask, before, test.control, values, what);
-                    CompareWithStandardOrder(*device, block, layout, format, swap, standard, what);
+                    CompareWithStandardOrder(*device, block, layout, format, swap, standard, test.standardTolerance, what);
                 };
                 for (const auto& test : cases) run(test, Float32Export, wide, exported, "32_ABGR exports");
                 run(cases[0], Float16Export, compressed, exported, "FP16_ABGR exports");
