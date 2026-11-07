@@ -3,6 +3,7 @@
 ### Functional
 
 - [sce::Np::CppWebApi::Common::IntrusivePtr body of ParameterToSubmitTicket](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - host-side fallback, not console behaviour: `InitializeParameterWithBody` returns `ParameterBodyMissing` (0x80553512) for a null body pointer and leaves the parameter uninitialized. The console module dereferences a null body in `ParameterToSubmitTicket::initialize` (NID `4TiZy24yFoQ`) without a check, so a null body faults there. The host check only prevents a host crash; `guest_np_cpp_web_api_matchmaking` pins the host behaviour, not a console result.
+- [SessionManager::V1 model accessors](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `LeaderWithOnlineId::getAccountId` reads the 64-bit word at +0x10 in both measured bundled SDK modules. Other model fields remain unsupported: `PlayerSessionForRead::customData1IsSet` is at +0x1a0 and +0x1e0 in those builds, so one fixed offset does not cover both layouts. Model creation and online response production are not supplied by this accessor.
 - [Matches factory output release](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) - releasing the last reference of an occupied output with a null deleter still throws through the shared `IntrusivePtr` release path. The bundled modules instead use the stored `LibContext` allocator and model destructor in that case; the host allocator remains in use, and that fallback is unimplemented.
 
 ### Silent stubs
@@ -16,10 +17,6 @@
 - [sce::Np::CppWebApi::UserProfile::V1 public profiles](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `BasicProfileApi::ParameterToGetPublicProfile` `{ctor,dtor,initialize,terminate}` and `TransactionBase<IntrusivePtr<GetPublicProfilesResponse>>::setResponseInformationOption` return success without keeping state, as the plural `ParameterToGetPublicProfiles` does, and the constructor and destructor of `Transaction<IntrusivePtr<GetPublicProfileResponse>>` do the same: `start` fails, so none of them is ever used
 
 - [sce::Np::CppWebApi::Activities::V1](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `ParameterToGetUserActivities::initialize` ignores the account-id vector, `setlimit` and `setnpServiceLabel` store their value in a host block that nothing reads, and `getUserActivities` returns `SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN`; the response accessors throw because an offline request never produces a response object. The 0x10-byte handle and the lifecycle codes come from the module bundled with PPSA21564/PPSA23732 (builds `J03093737`/`J03341606`, addresses `0x3e7a10`, `0x3e7a70`, `0x3e7cb0`, `0x3e7e50`, `0x3e7ec0`, `0x3e7f20`); the module's setters write no return value, so they stay `void`. Nothing here is measured on a console. PPSA22408 (Hot Wheels Infinite Rush) imports the 15 NIDs
-
-### Functional
-
-- [SessionManager::V1 model accessors](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `LeaderWithOnlineId::getAccountId` reads the 64-bit word at +0x10 in both measured bundled SDK modules. Other model fields remain unsupported: `PlayerSessionForRead::customData1IsSet` is at +0x1a0 and +0x1e0 in those builds, so one fixed offset does not cover both layouts. Model creation and online response production are not supplied by this accessor.
 
 ### Unknown function info
 
