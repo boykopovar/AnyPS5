@@ -13,6 +13,7 @@ namespace ShaderRecompiler {
 namespace {
 
 constexpr std::size_t MaxRefinementDepth = 64;
+constexpr std::size_t MaxRefinementRounds = 32;
 constexpr std::size_t None = static_cast<std::size_t>(-1);
 
 struct Fact {
@@ -292,7 +293,11 @@ private:
 
 GotoPhiRefinementStats GotoPhiRefiner::Refine(IrProgram& program) const {
     GotoPhiRefinementStats stats;
-    stats.replacedOperands = Refinement(program).Run();
+    for (std::size_t round = 0; round < MaxRefinementRounds; ++round) {
+        const std::uint32_t replaced = Refinement(program).Run();
+        if (replaced == 0u) break;
+        stats.replacedOperands += replaced;
+    }
     return stats;
 }
 
