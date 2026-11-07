@@ -62,6 +62,7 @@ void APS5_VABI useDCQuantizer_nid_postfix(void* codec, std::size_t tile);
 void APS5_VABI useLPQuantizer_nid_postfix(void* codec, std::size_t count, std::size_t tile);
 std::int32_t APS5_VABI getDCACPredMode_nid_postfix(void* codec, std::size_t column);
 void APS5_VABI updatePredInfo_nid_postfix(void* codec, void* macroblock, std::size_t column, std::int32_t format);
+std::int32_t APS5_VABI allocatePredInfo_nid_postfix(void* codec);
 
 int APS5_VABI AllocateCodingContextDec_nid_postfix();
 int APS5_VABI CloseWS_List_nid_postfix();
@@ -139,7 +140,6 @@ std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const voi
 int APS5_VABI advanceMRPtr_nid_postfix();
 int APS5_VABI advanceOneMBRow_nid_postfix();
 int APS5_VABI allocateBitIOInfo_nid_postfix();
-int APS5_VABI allocatePredInfo_nid_postfix();
 int APS5_VABI allocateQuantizer_nid_postfix();
 int APS5_VABI allocateTileInfo_nid_postfix();
 std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream, void* codec);
