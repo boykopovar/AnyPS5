@@ -320,7 +320,6 @@ int APS5_VABI sceKernelPltTrap();
 int APS5_VABI sceKernelSetAcKeyRegResult();
 int APS5_VABI sceKernelSetAppInfoByAppId();
 int APS5_VABI sceKernelSetUpdatemodeDirect();
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled2();
 int APS5_VABI sceKernelTraceAutoCaptureCreate();
 int APS5_VABI sceKernelTraceAutoCaptureDelete();
 int APS5_VABI sceKernelTraceAutoCaptureMap();
