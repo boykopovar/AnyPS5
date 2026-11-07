@@ -154,6 +154,7 @@ struct StorageTraffic {
     std::array<std::pair<std::uint64_t, std::uint64_t>, 4> uploads{};
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploadReasons;
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> drawnStores;
+    std::map<std::string, std::uint64_t> evictions;
     std::uint64_t directWriteBacks = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
@@ -193,6 +194,12 @@ void reportStorageTraffic(StorageTraffic& traffic) {
         std::snprintf(text, sizeof(text), " %llu/%.1f", static_cast<unsigned long long>(totals.first), totals.second / 1048576.0);
         line += " " + reason + text;
     }
+    line += "; evictions by reason (count/MiB flushed):";
+    for (const auto& [reason, count] : traffic.evictions) {
+        const auto flushed = traffic.writeBacks.find(reason);
+        std::snprintf(text, sizeof(text), " %llu/%.1f", static_cast<unsigned long long>(count), flushed != traffic.writeBacks.end() ? flushed->second.second / 1048576.0 : 0.0);
+        line += " " + reason + text;
+    }
     std::string drawnLine;
     for (const auto& [reason, totals] : traffic.drawnStores) {
         std::snprintf(text, sizeof(text), " %llu/%.1f", static_cast<unsigned long long>(totals.first), totals.second / 1048576.0);
@@ -206,6 +213,7 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     traffic.writeBacks.clear();
     traffic.uploadReasons.clear();
     traffic.drawnStores.clear();
+    traffic.evictions.clear();
     traffic.directWriteBacks = 0;
 }
 
@@ -235,6 +243,13 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct, bool drawn = false)
         stores.second += bytes;
     }
     reportStorageTraffic(traffic);
+}
+
+void countStorageEviction(const char* reason) {
+    if (!LookupOutcomes::Profiled()) return;
+    auto& traffic = Traffic();
+    std::lock_guard lock(traffic.mutex);
+    ++traffic.evictions[reason];
 }
 
 // Every storage image alive, for the fill HLE's cover check (StorageTexture::ClassifyFill): the
@@ -497,10 +512,13 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
     try {
         const auto colorFormat = SampledTextureFormat(context, descriptor.format);
         const bool srgbExpand = !depthCompare && SrgbExpandsToRgba8(context, descriptor.format);
-        Require(!depthCompare || colorFormat == VK_FORMAT_R32_SFLOAT || colorFormat == VK_FORMAT_R16_UNORM, "comparison sampling requires an R32 float or R16 unorm depth texture");
+        const bool nativeDepth = colorFormat == VK_FORMAT_D24_UNORM_S8_UINT || colorFormat == VK_FORMAT_D32_SFLOAT_S8_UINT;
+        Require(!depthCompare || nativeDepth || colorFormat == VK_FORMAT_R32_SFLOAT || colorFormat == VK_FORMAT_R16_UNORM, "comparison sampling requires an R32 float or R16 unorm depth texture");
         Require(!depthCompare || descriptor.dimension != TextureDimension::k3D, "comparison sampling does not support 3D depth textures");
-        const auto vkFormat = depthCompare ? (colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
-        const VkImageAspectFlags aspect = depthCompare ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        const auto vkFormat = depthCompare && !nativeDepth ? (colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
+        const VkImageAspectFlags aspect = depthCompare || nativeDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        const VkImageAspectFlags barrierAspect = nativeDepth ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT : aspect;
+        const bool depthToFloat = descriptor.format == 141u && colorFormat == VK_FORMAT_R32_SFLOAT;
         if (IsBlockCompressed(descriptor.format)) {
             Require(context.textureCompressionBC, "device does not support BC compressed textures");
         }
@@ -684,13 +702,13 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                     detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled->Handle(), geometry.GuestOffset(layer, mip), linear->Handle(), linearLayerOffset + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
-            if (IsRepackedTextureFormat(descriptor.format)) {
+            if (IsRepackedTextureFormat(descriptor.format) || depthToFloat) {
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
                 for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                     for (std::uint32_t level = skip; level < mips.size(); ++level) {
                         if (!geometry.HasLayer(level, layer)) continue;
                         const auto offset = geometry.LinearLayerOffset(layer) + mips[level].linearOffset;
-                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize);
+                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize, depthToFloat);
                     }
                 }
             }
@@ -712,7 +730,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             toTransferDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.image = uploadImage;
-            toTransferDst.subresourceRange = layerRows ? VkImageSubresourceRange{aspect, 0, 1, 0, 1} : VkImageSubresourceRange{aspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
+            toTransferDst.subresourceRange = layerRows ? VkImageSubresourceRange{barrierAspect, 0, 1, 0, 1} : VkImageSubresourceRange{barrierAspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearReadBarrier, 1, &toTransferDst);
 
             std::vector<VkBufferImageCopy> regions;
@@ -3128,7 +3146,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toClear.image = image;
-        toClear.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+        toClear.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toClear);
         clearImage(commands, clearValue, toClear.subresourceRange);
         VkImageMemoryBarrier toGeneral = toClear;
@@ -3254,7 +3272,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toTransfer.image = image;
-        toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+        toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearRead, 1, &toTransfer);
         const auto regions = CopyRegions(layers);
         context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear->Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
@@ -3334,7 +3352,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransfer.image = image;
-            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | (selectedCpu ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : 0u), VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearRead, 1, &toTransfer);
             const auto regions = CopyRegions(selectedCpu ? &cpuLayers : nullptr);
             context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
@@ -3608,7 +3626,7 @@ void StorageTexture::recordDirectUploadBarrier(VkCommandBuffer commands, bool di
     toWrite.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toWrite.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toWrite.image = image;
-    toWrite.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    toWrite.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &sourceReady, 0, nullptr, 1, &toWrite);
 }
 
@@ -3621,7 +3639,7 @@ void StorageTexture::recordDirectUploadDone(VkCommandBuffer commands) {
     written.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     written.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     written.image = image;
-    written.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    written.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &written);
 }
 
@@ -3751,7 +3769,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
     toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toTransfer.image = image;
-    toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearRead, 1, &toTransfer);
     context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear->Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
     VkImageMemoryBarrier toGeneral = toTransfer;
@@ -4031,7 +4049,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     toSource.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSource.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSource.image = image;
-    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     if (!direct) context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
     if (!seeds.empty() || !padding.copies.empty() || !holeCopies.empty()) {
         // The seeded units' import bytes (every earlier writer of them, host stores included)
@@ -4577,7 +4595,7 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
     toSource.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSource.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSource.image = image;
-    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     const VkMemoryBarrier importReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &importReady, 0, nullptr, 1, &toSource);
     VkBufferImageCopy region{};
@@ -4630,9 +4648,10 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
     return storedBytes;
 }
 
-void StorageTexture::Flush() {
+void StorageTexture::Flush(const char* reason) {
     for (const auto& source : std::exchange(adoptedSources, {})) source->Flush();
-    storeTrappedOverlaps("cache eviction");
+    storeTrappedOverlaps(reason);
+    countStorageEviction(reason);
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -4647,7 +4666,7 @@ void StorageTexture::Flush() {
         BumpPendingSerial();
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    const auto previous = std::exchange(flushReason, "cache eviction");
+    const auto previous = std::exchange(flushReason, reason);
     writeBack(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     flushReason = previous;
 }
@@ -5176,7 +5195,7 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
                 barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.image = texture->image;
-                barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, texture->descriptor.mipCount, 0, texture->geometry.imageLayers};
+                barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, texture->descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
                 context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
                 const auto regions = texture->CopyRegions();
                 context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, host.Handle(), static_cast<std::uint32_t>(regions.size()), regions.data());
@@ -5965,7 +5984,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toClear.image = image;
-    toClear.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    toClear.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toClear);
     clearImage(commands, clearValue, toClear.subresourceRange);
     VkImageMemoryBarrier toGeneral = toClear;
@@ -6226,7 +6245,7 @@ bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
         barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     }
     barriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -6640,7 +6659,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
         barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     }
     barriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -7067,7 +7086,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         toSource.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toSource.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         toSource.image = image;
-        toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+        toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
         if (!padding.copies.empty()) {
             // The current bytes of the copied ranges no element holds go under the retile (every
@@ -7220,7 +7239,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     toSource.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSource.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toSource.image = image;
-    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, VK_REMAINING_ARRAY_LAYERS};
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
     const auto regions = CopyRegions();
     context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, linear.Handle(), static_cast<std::uint32_t>(regions.size()), regions.data());

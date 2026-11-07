@@ -102,6 +102,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_radix64 PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_queue_tests ${LIBS_INCLUDE_DIR}/tests/GuestQueue.cpp)
+    target_include_directories(guest_queue_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_queue_tests PRIVATE libc)
+    configure_windows_unwind(guest_queue_tests)
+    add_test(NAME guest_queue COMMAND guest_queue_tests)
+    set_tests_properties(guest_queue PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_queue PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -120,6 +130,7 @@ endif()
 target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/General.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PreciseWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchive.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CreationMask.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FailureReport.cpp
@@ -145,6 +156,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPrefix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
@@ -197,6 +209,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
 )
 
 find_package(Git QUIET)
@@ -425,6 +438,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sce_v2_filesystem PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_exp_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exp.cpp)
+    target_include_directories(guest_sce_v2_exp_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_exp_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_exp_tests)
+    add_test(NAME guest_sce_v2_exp COMMAND guest_sce_v2_exp_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_exp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test_executable(guest_sce_v2_filesystem_calls_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FilesystemCalls.cpp)
     target_include_directories(guest_sce_v2_filesystem_calls_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -434,6 +456,15 @@ if(BUILD_TESTING)
     set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_pmsw_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Pmsw.cpp)
+    target_include_directories(guest_sce_v2_pmsw_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_pmsw_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_pmsw_tests)
+    add_test(NAME guest_sce_v2_pmsw COMMAND guest_sce_v2_pmsw_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_pmsw PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -1108,6 +1139,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_math_exact COMMAND guest_math_exact_tests)
     if(WIN32)
         set_tests_properties(guest_math_exact PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_multiprecision_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Multiprecision.cpp)
+    target_include_directories(guest_sce_v2_multiprecision_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_multiprecision_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_multiprecision_tests)
+    add_test(NAME guest_sce_v2_multiprecision COMMAND guest_sce_v2_multiprecision_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_multiprecision PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_dinkumware_float_bits_tests ${LIBS_INCLUDE_DIR}/tests/GuestDinkumwareFloatBits.cpp)
