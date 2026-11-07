@@ -177,6 +177,22 @@ if(ANYPS5_BUILD_FUZZERS)
         add_test(NAME relinker_conversion_fuzzer COMMAND relinker_conversion_fuzzer -runs=20000 -seed=1)
         set_tests_properties(relinker_conversion_fuzzer PROPERTIES TIMEOUT 120)
     endif()
+
+    add_test_executable(relinker_elf_parser_fuzzer ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/ElfParserFuzzer.cpp)
+    target_link_libraries(relinker_elf_parser_fuzzer PRIVATE relinker_core)
+    target_link_options(relinker_elf_parser_fuzzer PRIVATE -fsanitize=fuzzer)
+    if(BUILD_TESTING)
+        add_test(NAME relinker_elf_parser_fuzzer COMMAND relinker_elf_parser_fuzzer -runs=20000 -seed=1)
+        set_tests_properties(relinker_elf_parser_fuzzer PROPERTIES TIMEOUT 60)
+    endif()
+
+    add_test_executable(relinker_unwind_descriptor_fuzzer ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/UnwindDescriptorFuzzer.cpp)
+    target_link_libraries(relinker_unwind_descriptor_fuzzer PRIVATE relinker_core)
+    target_link_options(relinker_unwind_descriptor_fuzzer PRIVATE -fsanitize=fuzzer)
+    if(BUILD_TESTING)
+        add_test(NAME relinker_unwind_descriptor_fuzzer COMMAND relinker_unwind_descriptor_fuzzer -runs=20000 -seed=1)
+        set_tests_properties(relinker_unwind_descriptor_fuzzer PROPERTIES TIMEOUT 60)
+    endif()
 endif()
 
 if(ANYPS5_BUILD_WASM)
@@ -308,6 +324,16 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include)
     add_test(NAME elf_reader_bounds COMMAND elf_reader_bounds_tests)
     set_tests_properties(elf_reader_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(elf_parser_negative_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfParserNegativeBoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp)
+    target_include_directories(elf_parser_negative_bounds_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include)
+    add_test(NAME elf_parser_negative_bounds COMMAND elf_parser_negative_bounds_tests)
+    set_tests_properties(elf_parser_negative_bounds PROPERTIES TIMEOUT 20)
 
     add_test_executable(relr_relocations_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelrRelocationTests.cpp)
     target_link_libraries(relr_relocations_tests PRIVATE relinker_core)
@@ -1060,6 +1086,51 @@ if(BUILD_TESTING)
     )
     add_test(NAME unwind_record_bounds COMMAND unwind_record_bounds_tests)
     set_tests_properties(unwind_record_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(unwind_descriptor_negative_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/UnwindDescriptorNegativeBoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(unwind_descriptor_negative_bounds_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME unwind_descriptor_negative_bounds COMMAND unwind_descriptor_negative_bounds_tests)
+    set_tests_properties(unwind_descriptor_negative_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(elf_parser_fuzz_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfParserFuzzTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/ElfParserFuzzer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
+    )
+    target_include_directories(elf_parser_fuzz_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+    )
+    add_test(NAME elf_parser_fuzz COMMAND elf_parser_fuzz_tests)
+    set_tests_properties(elf_parser_fuzz PROPERTIES TIMEOUT 30)
+
+    add_test_executable(unwind_descriptor_fuzz_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/UnwindDescriptorFuzzTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/UnwindDescriptorFuzzer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(unwind_descriptor_fuzz_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME unwind_descriptor_fuzz COMMAND unwind_descriptor_fuzz_tests)
+    set_tests_properties(unwind_descriptor_fuzz PROPERTIES TIMEOUT 30)
 
     add_test_executable(windows_icon_resource_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsIconResourceTests.cpp
