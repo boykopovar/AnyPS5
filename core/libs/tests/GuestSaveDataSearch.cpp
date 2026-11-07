@@ -86,6 +86,8 @@ static void SortByKey() {
     Require(std::string(secondNames[0].data) == "SORT_A" && std::string(secondNames[1].data) == "SORT_C" && std::string(secondNames[2].data) == "SORT_B", "the second search must sort like the first");
     second.key = 6;
     Require(sceSaveDataDirNameSearch2(&second, &secondResult) == SaveDataErrorParameter, "the second search must reject an unknown sort key");
+    Require(sceSaveDataDirNameSearch2(nullptr, &secondResult) == SaveDataErrorParameter, "null condition must be rejected in search2");
+    Require(sceSaveDataDirNameSearch2(&second, nullptr) == SaveDataErrorParameter, "null result must be rejected in search2");
     SaveDataDirNameSearchCond cond{};
     cond.user_id = 1;
     cond.key = 6;
@@ -94,6 +96,11 @@ static void SortByKey() {
     cond.key = 0;
     cond.order = 2;
     Require(sceSaveDataDirNameSearch(&cond, &result) == SaveDataErrorParameter, "an unknown sort order must be rejected");
+    Require(sceSaveDataDirNameSearch(nullptr, &result) == SaveDataErrorParameter, "null condition must be rejected in search");
+    Require(sceSaveDataDirNameSearch(&cond, nullptr) == SaveDataErrorParameter, "null result must be rejected in search");
+    Require(sceSaveDataDirNameSearchPs4(nullptr, &result) == SaveDataErrorParameter, "null condition must be rejected in ps4 search");
+    Require(sceSaveDataDirNameSearchPs4(&cond, nullptr) == SaveDataErrorParameter, "null result must be rejected in ps4 search");
+    Require(sceSaveDataDirNameSearchPs4(&cond, &result) == 0 && result.hit_num == 0 && result.set_num == 0, "ps4 search succeeds with zero hits");
 }
 
 static std::vector<std::string> SearchPattern(const char* text) {
