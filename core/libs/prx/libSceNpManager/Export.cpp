@@ -52,6 +52,8 @@ bool g_asmInitialized = false;
 bool g_asmClientInitialized = false;
 const void* g_asmClient = nullptr;
 std::array<char, 16> g_asmTitleId = {};
+std::set<const void*> g_asmConnections;
+std::set<const void*> g_asmRequests;
 }
 
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
@@ -293,20 +295,32 @@ int APS5_VABI sceNpAsmClientTerminate(void* client) {
     g_asmTitleId.fill(0);
     return 0;
 }
-int APS5_VABI sceNpAsmCreateConnection(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmCreateConnection(std::int32_t connectionId, void* connection) {
+    (void)connectionId;
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmInitialized) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
+    if (!connection) return SCE_NP_ASM_ERROR_INVALID_ARGUMENT;
+    g_asmConnections.insert(connection);
     return 0;
 }
-int APS5_VABI sceNpAsmCreateRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmCreateRequest(void* connection, void* request, void* result) {
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmInitialized) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
+    if (!connection || !request || !result) return SCE_NP_ASM_ERROR_INVALID_ARGUMENT;
+    g_asmRequests.insert(request);
     return 0;
 }
-int APS5_VABI sceNpAsmDeleteConnection(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmDeleteConnection(void* connection) {
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmInitialized) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
+    if (!connection) return SCE_NP_ASM_ERROR_INVALID_ARGUMENT;
+    g_asmConnections.erase(connection);
     return 0;
 }
-int APS5_VABI sceNpAsmDeleteRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAsmDeleteRequest(void* request) {
+    std::lock_guard lock(g_asmMutex);
+    if (!g_asmInitialized) return SCE_NP_ASM_ERROR_NOT_INITIALIZED;
+    g_asmRequests.erase(request);
     return 0;
 }
 int APS5_VABI sceNpAsmGenerateNpTitleToken(void) {
