@@ -1,0 +1,27 @@
+destroy thrower
+destroy middle
+caught base 7
+run 0 -> 1
+destroy thrower
+destroy middle
+caught plain 11 13
+run 1 -> 2
+destroy thrower
+destroy middle
+caught other
+run 2 -> 3
+thrower returns
+destroy thrower
+middle returns
+destroy middle
+run 3 -> 0
+destroy thrower
+inner 7
+outer 7
+rethrow -> 7
+destroy even
+destroy odd
+destroy even
+destroy odd
+destroy even
+recursion 0 99

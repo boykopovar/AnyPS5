@@ -1,0 +1,17 @@
+module initialized
+module counter = 42
+module value(5) = 77
+through a module pointer = 63
+after writing its data = 107
+module table = 61000
+module absolute symbol = 74565
+module tls = 6
+module tls again = 7
+setjmp and longjmp a module exports = 33
+executable tls = 108
+iteration result = 0
+executable images = 1
+main in the executable = 1
+module_value in its module = 1
+module tls block = 1
+iteration stops with = 5

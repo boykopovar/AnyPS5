@@ -6,11 +6,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#if defined(__SSE2__)
 #include <emmintrin.h>
+#endif
 #include <limits>
 #include <stdexcept>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 
 namespace {
 
@@ -30,13 +33,15 @@ struct ExtendedBits {
     std::uint16_t signExponent;
 };
 
-ExtendedBits Bits(const long double& value) {
+ExtendedBits Bits(const void* bytes) {
     ExtendedBits bits;
-    unsigned char bytes[sizeof(long double)];
-    std::memcpy(bytes, &value, sizeof(bytes));
     std::memcpy(&bits.mantissa, bytes, sizeof(bits.mantissa));
-    std::memcpy(&bits.signExponent, bytes + 8, sizeof(bits.signExponent));
+    std::memcpy(&bits.signExponent, static_cast<const unsigned char*>(bytes) + 8, sizeof(bits.signExponent));
     return bits;
+}
+
+ExtendedBits Bits(const LibcDetail::GuestLongDouble& value) {
+    return Bits(LibcDetail::GuestLongDoubleImage(value).data());
 }
 
 constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
@@ -67,11 +72,12 @@ short TestFloat(TFloat value) {
 
 template <typename T>
 T Remainder(T x, T y) {
-    const bool domain = !std::isnan(x) && !std::isnan(y) && (std::isinf(x) || y == T(0));
+    const bool domain = !LibcDetail::IsNan(x) && !LibcDetail::IsNan(y) && (LibcDetail::IsInf(x) || y == T(0));
     T result;
     {
         ErrnoGuard guard;
-        result = std::remainder(x, y);
+        long long quotient = 0;
+        result = LibcDetail::Remainder(x, y, true, &quotient);
     }
     if (domain) errno = EDOM;
     return result;
@@ -81,8 +87,8 @@ int Exponent(std::int64_t exponent) {
     return static_cast<int>(std::clamp<std::int64_t>(exponent, INT_MIN, INT_MAX));
 }
 
-void StoreExtended(long double* value, const ExtendedBits& bits) {
-    unsigned char bytes[sizeof(long double)] = {};
+void StoreExtended(LibcDetail::GuestLongDouble* value, const ExtendedBits& bits) {
+    unsigned char bytes[sizeof(LibcDetail::GuestLongDouble)] = {};
     std::memcpy(bytes, value, sizeof(bytes));
     std::memcpy(bytes, &bits.mantissa, sizeof(bits.mantissa));
     std::memcpy(bytes + 8, &bits.signExponent, sizeof(bits.signExponent));
@@ -93,11 +99,13 @@ bool ExtendedNan(const ExtendedBits& bits) {
     return (bits.signExponent & 0x7fff) == 0x7fff && (bits.mantissa & 0x7fffffffffffffffull) != 0;
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 long double ExtendedValue(const ExtendedBits& bits) {
     const int exponent = bits.signExponent & 0x7fff;
     const long double magnitude = std::ldexp(static_cast<long double>(bits.mantissa), (exponent == 0 ? 1 : exponent) - 16383 - 63);
     return (bits.signExponent & 0x8000) != 0 ? -magnitude : magnitude;
 }
+#endif
 
 template<typename TBits, int FractionBits, int ExponentBits>
 short DropFraction(void* value, short scale) {
@@ -286,6 +294,24 @@ TFloat ExpProduct(TFloat y, TFloat ratio) {
     return product;
 }
 
+#if !defined(__SSE2__)
+std::int64_t ConvertToInteger(double x) {
+    if (!(x >= -0x1p63 && x < 0x1p63)) {
+        std::feraiseexcept(FE_INVALID);
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return static_cast<std::int64_t>(std::rint(x));
+}
+
+int TruncateToInteger(double x) {
+    if (!(x > -0x1p31 - 1 && x < 0x1p31)) {
+        std::feraiseexcept(FE_INVALID);
+        return std::numeric_limits<int>::min();
+    }
+    return static_cast<int>(x);
+}
+#endif
+
 template<typename TFloat, typename TScale>
 short VersionedExp(TFloat* value, TFloat y, short scale, TScale scaleBits) {
     constexpr bool single = sizeof(TFloat) == sizeof(float);
@@ -306,8 +332,12 @@ short VersionedExp(TFloat* value, TFloat y, short scale, TScale scaleBits) {
     const TFloat scaled = x * Constants::inverseLog;
     const TFloat rounded = scaled + (scaled < 0 ? -Constants::half : Constants::half);
     int whole;
+#if defined(__SSE2__)
     if constexpr (single) whole = _mm_cvtt_ss2si(_mm_set_ss(rounded));
     else whole = _mm_cvttsd_si32(_mm_set_sd(rounded));
+#else
+    whole = TruncateToInteger(rounded);
+#endif
     const TFloat count = static_cast<TFloat>(static_cast<short>(whole));
     x = std::fma(count, Constants::highLog, x);
     x = std::fma(count, Constants::lowLog, x);
@@ -359,98 +389,104 @@ TFloat FusedPolynomial(TFloat x, const TFloat* table, int degree) {
 
 extern "C" {
 
-long double APS5_VABI copysignl_nid_postfix(long double x, long double y) { return std::copysign(x, y); }
-long double APS5_VABI fdiml_nid_postfix(long double x, long double y) {
-    if (std::isnan(x)) return x;
-    if (std::isnan(y)) return y;
-    return x > y ? x - y : 0.0L;
+LibcDetail::GuestLongDouble APS5_VABI copysignl_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y) { return LibcDetail::CopySign(x, y); }
+LibcDetail::GuestLongDouble APS5_VABI fdiml_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y) {
+    if (LibcDetail::IsNan(x)) return x;
+    if (LibcDetail::IsNan(y)) return y;
+    return x > y ? x - y : LibcDetail::GuestLongDouble {};
 }
 
-long double APS5_VABI fmodl_nid_postfix(long double x, long double y) {
-    if (!std::isfinite(x) || y == 0.0L || std::isnan(y)) {
+LibcDetail::GuestLongDouble APS5_VABI fmodl_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y) {
+    if (!LibcDetail::IsFinite(x) || y == 0 || LibcDetail::IsNan(y)) {
         errno = EDOM;
         return (x * y) / (x * y);
     }
     ErrnoGuard guard;
-    return std::fmod(x, y);
+    long long quotient = 0;
+    return LibcDetail::Remainder(x, y, false, &quotient);
 }
 
-long double APS5_VABI remainderl_nid_postfix(long double x, long double y) {
+LibcDetail::GuestLongDouble APS5_VABI remainderl_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y) {
     return Remainder(x, y);
 }
 
-long double APS5_VABI remquol_nid_postfix(long double x, long double y, int* quotient) {
-    const bool domain = !std::isnan(x) && !std::isnan(y) && (std::isinf(x) || y == 0.0L);
-    int bits = 0;
-    long double result;
+LibcDetail::GuestLongDouble APS5_VABI remquol_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y, int* quotient) {
+    const bool domain = !LibcDetail::IsNan(x) && !LibcDetail::IsNan(y) && (LibcDetail::IsInf(x) || y == 0);
+    long long bits = 0;
+    LibcDetail::GuestLongDouble result;
     {
         ErrnoGuard guard;
-        result = std::remquo(x, y, &bits);
+        result = LibcDetail::Remainder(x, y, true, &bits);
     }
     if (domain) errno = EDOM;
-    if (!std::isnan(result)) *quotient = bits < 0 ? -(-bits & 7) : (bits & 7);
+    if (!LibcDetail::IsNan(result)) *quotient = static_cast<int>(bits < 0 ? -(-bits & 7) : (bits & 7));
     return result;
 }
 
-long double APS5_VABI logbl_nid_postfix(long double x) {
+LibcDetail::GuestLongDouble APS5_VABI logbl_nid_postfix(LibcDetail::GuestLongDouble x) {
     ErrnoGuard guard;
-    return std::logb(x);
+    return LibcDetail::Logb(x);
 }
 
-int APS5_VABI ilogbl_nid_postfix(long double x) {
+int APS5_VABI ilogbl_nid_postfix(LibcDetail::GuestLongDouble x) {
     if ((Bits(x).signExponent & 0x7fff) == 0x7fff) return INT_MAX;
     ErrnoGuard guard;
-    return std::ilogb(x);
+    return LibcDetail::Ilogb(x);
 }
 
-long double APS5_VABI rintl_nid_postfix(long double x) { return std::rint(x); }
-long double APS5_VABI roundl_nid_postfix(long double x) { return std::isfinite(x) ? std::round(x) : x; }
+LibcDetail::GuestLongDouble APS5_VABI rintl_nid_postfix(LibcDetail::GuestLongDouble x) { return LibcDetail::Rint(x); }
+LibcDetail::GuestLongDouble APS5_VABI roundl_nid_postfix(LibcDetail::GuestLongDouble x) {
+    return LibcDetail::IsFinite(x) ? LibcDetail::RoundIntegral(x, LibcDetail::IntegralRounding::HalfAwayFromZero) : x;
+}
 
-std::int64_t APS5_VABI lroundl_nid_postfix(long double x) {
+std::int64_t APS5_VABI lroundl_nid_postfix(LibcDetail::GuestLongDouble x) {
     ErrnoGuard guard;
-    return std::llround(x);
+    return LibcDetail::LlRound(x);
 }
 
-std::int64_t APS5_VABI lrintl_nid_postfix(long double x) {
+std::int64_t APS5_VABI lrintl_nid_postfix(LibcDetail::GuestLongDouble x) {
     ErrnoGuard guard;
-    return std::llrint(x);
+    return LibcDetail::LlRint(x);
 }
 
-long long APS5_VABI llrintl_nid_postfix(long double x) {
+long long APS5_VABI llrintl_nid_postfix(LibcDetail::GuestLongDouble x) {
     ErrnoGuard guard;
-    return std::llrint(x);
+    return LibcDetail::LlRint(x);
 }
 
-long double APS5_VABI sqrtl_nid_postfix(long double x) {
-    return std::sqrt(x);
+LibcDetail::GuestLongDouble APS5_VABI sqrtl_nid_postfix(LibcDetail::GuestLongDouble x) {
+    return LibcDetail::Sqrt(x);
 }
 
-long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
-    if (std::isnan(x)) {
-        *integral = x;
+LibcDetail::GuestLongDouble APS5_VABI modfl_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble* integral) {
+    if (LibcDetail::IsNan(x)) {
+        LibcDetail::GuestLongDoubleStore(integral, x);
         return x;
     }
-    return std::modf(x, integral);
+    LibcDetail::GuestLongDouble whole;
+    const LibcDetail::GuestLongDouble fraction = LibcDetail::Modf(x, &whole);
+    LibcDetail::GuestLongDoubleStore(integral, whole);
+    return fraction;
 }
-long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }
+LibcDetail::GuestLongDouble APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<LibcDetail::GuestLongDouble>::quiet_NaN(); }
 
-long double APS5_VABI scalblnl_nid_postfix(long double x, std::int64_t exponent) {
+LibcDetail::GuestLongDouble APS5_VABI scalblnl_nid_postfix(LibcDetail::GuestLongDouble x, std::int64_t exponent) {
     ErrnoGuard guard;
-    return std::scalbn(x, static_cast<int>(exponent));
+    return LibcDetail::Scalbn(x, static_cast<int>(exponent));
 }
 
-long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double z) {
-    if (x == 0.0L || y == 0.0L) return x * y + z;
-    if (z == 0.0L) return x * y;
-    if (!std::isfinite(x) || !std::isfinite(y)) return x * y + z;
-    if (!std::isfinite(z)) return z;
+LibcDetail::GuestLongDouble APS5_VABI fmal_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y, LibcDetail::GuestLongDouble z) {
+    if (x == 0 || y == 0) return x * y + z;
+    if (z == 0) return x * y;
+    if (!LibcDetail::IsFinite(x) || !LibcDetail::IsFinite(y)) return x * y + z;
+    if (!LibcDetail::IsFinite(z)) return z;
     int xExponent = 0, yExponent = 0, zExponent = 0;
-    std::frexp(x, &xExponent);
-    std::frexp(y, &yExponent);
-    std::frexp(z, &zExponent);
-    if (xExponent + yExponent - zExponent > 2 * std::numeric_limits<long double>::digits) return x * y;
+    LibcDetail::Frexp(x, &xExponent);
+    LibcDetail::Frexp(y, &yExponent);
+    LibcDetail::Frexp(z, &zExponent);
+    if (xExponent + yExponent - zExponent > 2 * std::numeric_limits<LibcDetail::GuestLongDouble>::digits) return x * y;
     ErrnoGuard guard;
-    return std::fma(x, y, z);
+    return LibcDetail::Fma(x, y, z);
 }
 
 double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }
@@ -460,6 +496,7 @@ float APS5_VABI rintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std:
 float APS5_VABI nearbyintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rintf(x); }
 double APS5_VABI nearbyint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 
+#if defined(__SSE2__)
 std::int64_t APS5_VABI lrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
 std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_set_ss(x)); }
@@ -467,6 +504,15 @@ std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_s
 long long APS5_VABI llrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
 long long APS5_VABI llrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_set_ss(x)); }
+#else
+std::int64_t APS5_VABI lrint_nid_postfix(double x) { return ConvertToInteger(x); }
+
+std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return ConvertToInteger(x); }
+
+long long APS5_VABI llrint_nid_postfix(double x) { return ConvertToInteger(x); }
+
+long long APS5_VABI llrintf_nid_postfix(float x) { return ConvertToInteger(x); }
+#endif
 
 double APS5_VABI drem_nid_postfix(double x, double y) {
     return Remainder(x, y);
@@ -509,30 +555,30 @@ float APS5_VABI scalbf_nid_postfix(float x, float exponent) {
 int APS5_VABI finite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
 int APS5_VABI finitef_nid_postfix(float x) { return std::isfinite(x) ? 1 : 0; }
 
-int APS5_VABI __fpclassifyl_nid_postfix(long double x) {
+int APS5_VABI __fpclassifyl_nid_postfix(LibcDetail::GuestLongDouble x) {
     const ExtendedBits bits = Bits(x);
     const int exponent = bits.signExponent & 0x7fff;
     if (exponent == 0) return bits.mantissa != 0 ? Denormal : Zero;
     return exponent != 0x7fff ? Finite : TestExtended(bits);
 }
-int APS5_VABI __isinfl_nid_postfix(long double x) { return TestExtended(Bits(x)) == Infinite ? 1 : 0; }
-int APS5_VABI __isnanl_nid_postfix(long double x) { return TestExtended(Bits(x)) == NotANumber ? 1 : 0; }
+int APS5_VABI __isinfl_nid_postfix(LibcDetail::GuestLongDouble x) { return TestExtended(Bits(x)) == Infinite ? 1 : 0; }
+int APS5_VABI __isnanl_nid_postfix(LibcDetail::GuestLongDouble x) { return TestExtended(Bits(x)) == NotANumber ? 1 : 0; }
 
-int APS5_VABI __isnormall_nid_postfix(long double x) {
+int APS5_VABI __isnormall_nid_postfix(LibcDetail::GuestLongDouble x) {
     const int exponent = Bits(x).signExponent & 0x7fff;
     return exponent != 0 && exponent != 0x7fff ? 1 : 0;
 }
 
-short APS5_VABI _LDtest_nid_postfix(const long double* value) { return TestExtended(Bits(*value)); }
+short APS5_VABI _LDtest_nid_postfix(const LibcDetail::GuestLongDouble* value) { return TestExtended(Bits(static_cast<const void*>(value))); }
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
-int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
-short APS5_VABI _LDsign_nid_postfix(long double x) { return static_cast<short>(Bits(x).signExponent & 0x8000); }
+int APS5_VABI _LDclass_nid_postfix(LibcDetail::GuestLongDouble x) { return TestExtended(Bits(x)); }
+short APS5_VABI _LDsign_nid_postfix(LibcDetail::GuestLongDouble x) { return static_cast<short>(Bits(x).signExponent & 0x8000); }
 
 short APS5_VABI _Dint_nid_postfix(double* value, short scale) { return DropFraction<std::uint64_t, 52, 11>(value, scale); }
 short APS5_VABI _FDint_nid_postfix(float* value, short scale) { return DropFraction<std::uint32_t, 23, 8>(value, scale); }
 
-short APS5_VABI _LDint_nid_postfix(long double* value, short scale) {
+short APS5_VABI _LDint_nid_postfix(LibcDetail::GuestLongDouble* value, short scale) {
     ExtendedBits bits = Bits(*value);
     const int field = bits.signExponent & 0x7fff;
     if (field == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
@@ -553,23 +599,31 @@ short APS5_VABI _LDint_nid_postfix(long double* value, short scale) {
 short APS5_VABI _Dscale_nid_postfix(double* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
 short APS5_VABI _FDscale_nid_postfix(float* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
 
-short APS5_VABI _LDscale_nid_postfix(long double* value, std::int64_t exponent) {
+short APS5_VABI _LDscale_nid_postfix(LibcDetail::GuestLongDouble* value, std::int64_t exponent) {
     const ExtendedBits bits = Bits(*value);
     if ((bits.signExponent & 0x7fff) == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
     if (bits.mantissa == 0) {
         StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
         return Zero;
     }
+#ifdef ANYPS5_GUEST_LIFTED
+    *value = LibcDetail::Scalbn(*value, static_cast<long>(std::clamp<std::int64_t>(exponent, -100000, 100000)));
+    if (LibcDetail::IsInf(*value)) return Infinite;
+    if (*value != 0) return Finite;
+    *value = LibcDetail::GuestLongDouble{};
+    return Zero;
+#else
     *value = ExtendedValue(bits);
     const short code = ScaleBinary(value, exponent);
     if (code == Zero) *value = 0.0L;
     return code;
+#endif
 }
 
 short APS5_VABI _Dunscale_nid_postfix(short* exponent, double* value) { return UnscaleBinary(exponent, value); }
 short APS5_VABI _FDunscale_nid_postfix(short* exponent, float* value) { return UnscaleBinary(exponent, value); }
 
-short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
+short APS5_VABI _LDunscale_nid_postfix(short* exponent, LibcDetail::GuestLongDouble* value) {
     const ExtendedBits bits = Bits(*value);
     if ((bits.signExponent & 0x7fff) == 0x7fff) {
         *exponent = 0;
@@ -579,8 +633,15 @@ short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
         *exponent = 0;
         return Zero;
     }
+#ifdef ANYPS5_GUEST_LIFTED
+    int unscaled = 0;
+    *value = LibcDetail::Frexp(*value, &unscaled);
+    *exponent = static_cast<short>(unscaled);
+    return Finite;
+#else
     *value = ExtendedValue(bits);
     return UnscaleBinary(exponent, value);
+#endif
 }
 
 short APS5_VABI _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(double* value, std::int64_t exponent) { return ScaleFieldBits<std::uint64_t, 52, 11>(value, exponent); }
@@ -623,13 +684,13 @@ short APS5_VABI _ZNSt8__sce_v27_FDnormEPNS_5_FvalE_nid_postfix(std::uint16_t* wo
 
 int APS5_VABI _Fpcomp_nid_postfix(double x, double y) { return std::isnan(x) || std::isnan(y) ? 0 : Compare(x, y); }
 int APS5_VABI _FFpcomp_nid_postfix(float x, float y) { return std::isnan(x) || std::isnan(y) ? 0 : Compare(x, y); }
-int APS5_VABI _LFpcomp_nid_postfix(long double x, long double y) { return ExtendedNan(Bits(x)) || ExtendedNan(Bits(y)) ? 0 : Compare(x, y); }
+int APS5_VABI _LFpcomp_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y) { return ExtendedNan(Bits(x)) || ExtendedNan(Bits(y)) ? 0 : Compare(x, y); }
 
 double APS5_VABI _Poly_nid_postfix(double x, const double* table, int degree) { return FusedPolynomial(x, table, degree); }
 float APS5_VABI _FPoly_nid_postfix(float x, const float* table, int degree) { return FusedPolynomial(x, table, degree); }
 
-long double APS5_VABI _LPoly_nid_postfix(long double x, const long double* table, int degree) {
-    long double result = table[0];
+LibcDetail::GuestLongDouble APS5_VABI _LPoly_nid_postfix(LibcDetail::GuestLongDouble x, const LibcDetail::GuestLongDouble* table, int degree) {
+    LibcDetail::GuestLongDouble result = table[0];
     for (int index = 1; index <= degree; ++index) {
         result *= x;
         result += table[index];

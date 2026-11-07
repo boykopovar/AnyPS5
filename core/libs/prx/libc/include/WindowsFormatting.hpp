@@ -3,10 +3,12 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestLongDouble.hpp"
+#include "prx/libc/include/GuestVaList.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cerrno>
+#include <cstdarg>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -34,17 +36,34 @@ class FormatArguments {
     VaList args;
     std::vector<std::array<unsigned char, 16>> numbered;
     size_t position = 1;
+#ifdef ANYPS5_GUEST_LIFTED
+    std::va_list host;
+    bool hosted = false;
+#endif
 
 public:
     explicit FormatArguments(const void* source) {
         std::memcpy(&args, source, sizeof(args));
+#ifdef ANYPS5_GUEST_LIFTED
+        hosted = args.gp_offset == HostVaListTag;
+        if (hosted) va_copy(host, *static_cast<std::va_list*>(args.reg_save_area));
+#endif
     }
+
+#ifdef ANYPS5_GUEST_LIFTED
+    ~FormatArguments() {
+        if (hosted) va_end(host);
+    }
+
+    FormatArguments(const FormatArguments&) = delete;
+    FormatArguments& operator=(const FormatArguments&) = delete;
+#endif
 
     void Number(const std::vector<ArgumentClass>& classes) {
         numbered.resize(classes.size());
         for (size_t index = 0; index < classes.size(); ++index) {
             const auto store = [&](auto value) { std::memcpy(numbered[index].data(), &value, sizeof(value)); };
-            if (classes[index] == ArgumentClass::LongDouble) store(Fetch<long double>());
+            if (classes[index] == ArgumentClass::LongDouble) store(Fetch<LibcDetail::GuestLongDouble>());
             else if (classes[index] == ArgumentClass::Double) store(Fetch<double>());
             else store(Fetch<unsigned long long>());
         }
@@ -64,7 +83,24 @@ public:
     }
 
 private:
+#ifdef ANYPS5_GUEST_LIFTED
+    template<class T> T FetchHost() {
+        if constexpr (std::is_same_v<T, LibcDetail::GuestLongDouble>) {
+            return LibcDetail::FromWide(static_cast<LibcDetail::HostWide>(va_arg(host, long double)));
+        } else if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<T>(va_arg(host, double));
+        } else if constexpr (std::is_integral_v<T> && sizeof(T) < sizeof(int)) {
+            return static_cast<T>(va_arg(host, int));
+        } else {
+            return va_arg(host, T);
+        }
+    }
+#endif
+
     template<class T> T Fetch() {
+#ifdef ANYPS5_GUEST_LIFTED
+        if (hosted) return FetchHost<T>();
+#endif
         const void* address;
         if constexpr (std::is_same_v<T, double>) {
             if (args.fp_offset < 176) {
@@ -74,7 +110,7 @@ private:
                 address = args.overflow_arg_area;
                 args.overflow_arg_area = static_cast<char*>(args.overflow_arg_area) + 8;
             }
-        } else if constexpr (std::is_same_v<T, long double>) {
+        } else if constexpr (std::is_same_v<T, LibcDetail::GuestLongDouble>) {
             const auto aligned = (reinterpret_cast<std::uintptr_t>(args.overflow_arg_area) + 15) & ~std::uintptr_t(15);
             address = reinterpret_cast<const void*>(aligned);
             args.overflow_arg_area = reinterpret_cast<void*>(aligned + 16);
@@ -88,8 +124,8 @@ private:
                 args.overflow_arg_area = static_cast<char*>(args.overflow_arg_area) + 8;
             }
         }
-        if constexpr (std::is_same_v<T, long double>) {
-            return GuestLongDoubleLoad(address);
+        if constexpr (std::is_same_v<T, LibcDetail::GuestLongDouble>) {
+            return LibcDetail::GuestLongDoubleLoad(address);
         } else {
             T value;
             std::memcpy(&value, address, sizeof(value));
@@ -279,11 +315,11 @@ inline std::string HexFloat(const std::string& spec, char conversion, double val
     return HexDigits(spec, conversion, (bits >> 63) != 0, lead, fraction, 13, exponent, maximumLength);
 }
 
-inline std::string HexFloat(const std::string& spec, char conversion, long double value, std::size_t maximumLength = INT_MAX) {
-    if (value == 0) return HexDigits(spec, conversion, std::signbit(value), 0, 0, 16, 0, maximumLength);
+inline std::string HexFloat(const std::string& spec, char conversion, LibcDetail::GuestLongDouble value, std::size_t maximumLength = INT_MAX) {
+    if (value == 0) return HexDigits(spec, conversion, LibcDetail::SignBit(value), 0, 0, 16, 0, maximumLength);
     int exponent = 0;
-    const auto mantissa = static_cast<std::uint64_t>(std::ldexp(std::frexp(std::fabs(value), &exponent), 64));
-    return HexDigits(spec, conversion, std::signbit(value), 1, mantissa << 1, 16, exponent - 1, maximumLength);
+    const auto mantissa = LibcDetail::NormalizedSignificand(value, &exponent);
+    return HexDigits(spec, conversion, LibcDetail::SignBit(value), 1, mantissa << 1, 16, exponent - 1, maximumLength);
 }
 
 struct DecimalDigits {
@@ -310,11 +346,11 @@ inline std::string DecimalChunks(std::vector<std::uint32_t> words) {
     return text;
 }
 
-inline DecimalDigits ConsoleDecimalDigits(long double value) {
+inline DecimalDigits ConsoleDecimalDigits(LibcDetail::GuestLongDouble value) {
     DecimalDigits result;
     if (value == 0) return result;
     int binary = 0;
-    const auto mantissa = static_cast<std::uint64_t>(std::ldexp(std::frexp(std::fabs(value), &binary), 64));
+    const auto mantissa = LibcDetail::NormalizedSignificand(value, &binary);
     const long long estimate = static_cast<long long>(binary) * 30103 / 100000;
     const long long last = (estimate >= 0 ? estimate / 4 : -((3 - estimate) / 4)) * 4 - 20;
     result.tiesDown = estimate >= 8;
@@ -411,7 +447,7 @@ inline char DigitAt(const DecimalDigits& value, long long position) {
     return value.digits[static_cast<std::size_t>(index)];
 }
 
-inline std::string DecimalFloat(const std::string& spec, char conversion, long double value, std::size_t maximumLength = INT_MAX) {
+inline std::string DecimalFloat(const std::string& spec, char conversion, LibcDetail::GuestLongDouble value, std::size_t maximumLength = INT_MAX) {
     const FloatSpec parsed = ParseFloatSpec(spec);
     const DecimalDigits exact = ConsoleDecimalDigits(value);
     const bool upper = conversion == 'E' || conversion == 'G';
@@ -434,7 +470,7 @@ inline std::string DecimalFloat(const std::string& spec, char conversion, long d
         while (needed > 0 && DigitAt(rounded, (exponential ? exponent : 0) - needed) == '0') --needed;
         precision = std::max(0LL, std::min(precision, needed));
     }
-    const std::string prefix = std::signbit(value) ? "-" : parsed.plus ? "+" : parsed.space ? " " : "";
+    const std::string prefix = LibcDetail::SignBit(value) ? "-" : parsed.plus ? "+" : parsed.space ? " " : "";
     const bool point = precision > 0 || parsed.alternate;
     const std::string magnitude = std::to_string(exponent < 0 ? -exponent : exponent);
     const long long whole = exponential || exponent < 0 ? 1 : exponent + 1;
@@ -658,15 +694,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
-                const long double value = args.Next<long double>();
-                if (std::isnan(value)) {
-                    output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
-                } else if (std::isfinite(value)) {
+                const LibcDetail::GuestLongDouble value = args.Next<LibcDetail::GuestLongDouble>();
+                if (LibcDetail::IsNan(value)) {
+                    output.Value(PaddedStringSpec(spec), NanText(spec, LibcDetail::SignBit(value), conversion < 'a').c_str());
+                } else if (LibcDetail::IsFinite(value)) {
                     const auto remaining = static_cast<std::size_t>(INT_MAX - output.Count());
                     const std::string text = conversion == 'a' || conversion == 'A' ? HexFloat(spec, conversion, value, remaining) : DecimalFloat(spec, conversion, value, remaining);
                     output.Append(text.data(), text.size());
                 } else {
-                    output.Value(spec + "L" + conversion, value);
+                    output.Value(spec + conversion, static_cast<double>(value));
                 }
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");

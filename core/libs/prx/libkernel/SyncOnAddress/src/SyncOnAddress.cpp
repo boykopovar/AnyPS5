@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <array>
 #include <atomic>
+#include <cstring>
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -187,7 +188,13 @@ template <class TValue>
 TValue LoadAddressValue(TValue* address) {
     if (reinterpret_cast<std::uintptr_t>(address) % alignof(TValue) == 0) return std::atomic_ref<TValue>(*address).load();
     TValue value;
+#ifdef ANYPS5_GUEST_LIFTED
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+    std::memcpy(&value, address, sizeof(value));
+    std::atomic_thread_fence(std::memory_order_acquire);
+#else
     asm volatile("mov %1, %0" : "=r"(value) : "m"(*reinterpret_cast<const unsigned char (*)[sizeof(TValue)]>(address)));
+#endif
     return value;
 }
 

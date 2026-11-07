@@ -1,0 +1,15 @@
+sorted checksum = 2828697591062
+comparator called = 1
+apply * 1000 = 13000
+callback on a native thread
+on thread = 123
+main thread value = 100
+eight arguments = 2244
+native calls through a record = 15794
+native thread keeps its floating-point environment = 1
+callback rounds up on a native thread = 1
+callback at native thread exit = 19
+exit callbacks = 2
+main thread stack guarded = 1
+native thread stack guarded = 1
+native thread takes a guest stack after walking the images = 107
