@@ -1,4 +1,5 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "NpCppWebApiFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -220,14 +221,13 @@ static void TestRequestFlow(const RequestFlow& flow) {
     alignas(16) unsigned char parameter[0x100];
     std::memset(transaction, 0x5a, sizeof(transaction));
     std::memset(parameter, 0x5a, sizeof(parameter));
-    std::uint64_t context = 0;
-    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(nullptr, &context) == 0);
+    NpCppWebApiTest::LibContext context;
 
     Require(flow.transactionConstruct(transaction) == 0);
     Require(flow.setOnFinishedCallback() == 0);
     Require(flow.setResponseInformationOption() == 0);
     Require(flow.parameterConstruct(parameter) == 0);
-    Require(flow.initialize(parameter, &context) == 0);
+    Require(flow.initialize(parameter, context.value()) == 0);
     Require(flow.call() == NotSignedIn);
     Require(flow.start() == NotSignedIn);
     Require(flow.getResponseHeaders() == NotSignedIn);
@@ -235,7 +235,6 @@ static void TestRequestFlow(const RequestFlow& flow) {
     Require(flow.terminate(parameter) == 0);
     Require(flow.parameterDestroy(parameter) == 0);
     Require(flow.transactionDestroy(transaction) == 0);
-    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
 }
 
 int main() {
