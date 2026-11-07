@@ -99,6 +99,7 @@ void TestSystemBeforeInitialize() {
     Require(set(1, nullptr, 8) == errorNotInitialized, "a loudness debug state without a param before AudioOut2 initialization is refused");
     Require(sceAudioOut2EnableChat() == errorNotInitialized, "enabling chat before AudioOut2 initialization is refused");
     Require(sceAudioOut2DisableChat() == errorNotInitialized, "disabling chat before AudioOut2 initialization is refused");
+    Require(sceAudioOut2Terminate() == errorNotInitialized, "termination before AudioOut2 initialization is refused");
 }
 
 void TestMasteringInit() {
@@ -258,6 +259,12 @@ void TestLowLatencyService() {
     Require(sceAudioOut2InitializeEx(0) == 0 && sceAudioOut2InitializeEx(1) == 0, "the extended initialization succeeds");
 }
 
+void TestAudioOut2Terminate() {
+    Require(sceAudioOut2Terminate() == 0, "stopping the audio service must be accepted");
+    Require(sceAudioOut2Terminate() == errorNotInitialized, "stopping a stopped audio service is refused");
+    Require(sceAudioOut2Initialize() == 0, "re-initializing the audio service succeeds");
+}
+
 }
 
 int main() {
@@ -280,5 +287,6 @@ int main() {
     TestSetSystemDebugState();
     TestEnableChat();
     TestLowLatencyService();
+    TestAudioOut2Terminate();
     return 0;
 }
