@@ -134,6 +134,8 @@ struct SpirvEmitterState {
     bool waveLdsMemoryBarriers = false;
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
+    bool float16WidenNans = false;
+    bool float16NarrowNans = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     std::uint32_t spirvVersion = 0x00010300u;
@@ -149,6 +151,13 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> memoryByteOffsets;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedBufferFunctions;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedGpuBufferFunctions;
+    struct FaultCheckEntry {
+        const IrBlock* block = nullptr;
+        std::uint32_t guard = 0;
+    };
+    std::map<std::vector<std::uint32_t>, std::vector<FaultCheckEntry>> faultChecks;
+    std::unordered_map<const IrBlock*, const IrBlock*> faultDominators;
+    bool faultCheckDedup = false;
     struct BufferLengthCacheEntry {
         std::array<const IrValue*, 4> descriptor{};
         std::uint32_t variable = 0;
@@ -211,6 +220,7 @@ struct SpirvEmitterState {
     std::uint32_t loopGuardPc = 0;
     std::uint32_t srgbTableVariable = 0;
     std::uint32_t gcnBufferFormatFunction = 0;
+    std::uint32_t gdsU64Variable = 0;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;

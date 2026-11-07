@@ -210,6 +210,8 @@ struct CtypeVtable {
     const void* caseMethods[4];
     char (APS5_VABI *widen)(const Facet* self, char character);
     const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
+    char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
+    const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
 
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
@@ -219,7 +221,10 @@ static_assert(sizeof(OutputIterator) == 0x10);
 static_assert(offsetof(TimePutVtable, put) == 0x20);
 static_assert(offsetof(NumPutVtable, putBool) == 0x20);
 static_assert(offsetof(NumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(CtypeVtable, widen) == 0x40);
 static_assert(offsetof(CtypeVtable, widenRange) == 0x48);
+static_assert(offsetof(CtypeVtable, narrow) == 0x50);
+static_assert(offsetof(CtypeVtable, narrowRange) == 0x58);
 static_assert(sizeof(Facet) == 0x10);
 static_assert(offsetof(Implementation, facets) == 0x10);
 static_assert(offsetof(Implementation, facetCount) == 0x18);
@@ -267,5 +272,14 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
+static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
+extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];
+inline constexpr std::size_t kTimePutCharVtableSlots = 7;
+static_assert(kTimePutCharVtableSlots * sizeof(std::uintptr_t) == 56);
+extern "C" std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots];
+inline constexpr std::size_t kMoneyGetCharVtableSlots = 8;
+static_assert(kMoneyGetCharVtableSlots * sizeof(std::uintptr_t) == 64);
+extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots];
 
 #endif
