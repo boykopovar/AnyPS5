@@ -145,20 +145,12 @@ std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* b
     return WmpErrSuccess;
 }
 
-int APS5_VABI EOSWS_File_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream) {
     if (!stream) APS5_INVALID_ARG_EX;
     return stream->state[MemorySize] <= stream->state[MemoryPosition];
 }
 
 int APS5_VABI FreeDescMetadata_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI GetPosWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -408,10 +400,6 @@ int APS5_VABI PKImageEncode_WriteSource_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ReadWS_File_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ReadWS_List_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -431,10 +419,6 @@ std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buff
 }
 
 int APS5_VABI ResetCodingContext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SetPosWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -461,10 +445,6 @@ std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory) {
         *memory = nullptr;
     }
     return WmpErrSuccess;
-}
-
-int APS5_VABI WriteWS_File_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WriteWS_List_nid_postfix() {
