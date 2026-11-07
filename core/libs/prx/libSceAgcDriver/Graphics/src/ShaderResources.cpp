@@ -5260,12 +5260,13 @@ namespace {
 // Calls `visit(binding, element, words)` for every sampled and storage image element of a compiled
 // shader's bindings, in plan order (the order addImageBinding and resolveImageBinding walk).
 template <typename Visit>
-void forEachImageElement(const ShaderRecompiler::RecompileResult& program, Visit&& visit) {
-    for (const auto& binding : program.bindings) {
+void forEachImageElement(const CompiledShader& shader, Visit&& visit) {
+    for (const auto& binding : shader.program->bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.count == 0) continue;
         if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage && binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
-        const auto elementWords = binding.guestDescriptor.size() / binding.count;
-        for (std::uint32_t element = 0; element < binding.count; ++element) visit(binding, element, std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords));
+        const auto& words = DrawGuestWords(shader, binding);
+        const auto elementWords = words.size() / binding.count;
+        for (std::uint32_t element = 0; element < binding.count; ++element) visit(binding, element, std::span<const std::uint32_t>(words).subspan(static_cast<std::size_t>(element) * elementWords, elementWords));
     }
 }
 
@@ -5731,7 +5732,7 @@ void noteVariantSurface(std::uint64_t address, std::size_t members, const GuestT
     std::fprintf(stderr, "[textures] surface 0x%llx has %zu dynamic-resolution variants in one image table; they share the %ux%u texture (chosen by %s)\n", static_cast<unsigned long long>(address), members, chosen.width, chosen.height, rule);
 }
 
-std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::uint64_t elementBase, std::uint64_t capacity) {
+std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderRecompiler::DescriptorBinding& binding, std::span<const std::uint32_t> imageWords, std::uint64_t elementBase, std::uint64_t capacity) {
     struct Member {
         std::uint32_t element;
         GuestTextureResource resource;
@@ -5740,7 +5741,7 @@ std::vector<std::uint32_t> variantRepresentatives(VkDevice device, const ShaderR
     std::map<FamilyKey, std::vector<Member>> families;
     for (std::uint32_t element = 0; element < binding.count && elementBase + element < capacity; ++element) {
         if (element < binding.imageWritten.size() && binding.imageWritten[element]) continue;
-        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+        const auto words = imageWords.subspan(static_cast<std::size_t>(element) * 8u, 8u);
         GuestTextureResource resource{};
         try {
             if (IsNullTextureResource(words)) continue;
@@ -5883,7 +5884,7 @@ void ShaderResources::resolveImageTables() {
         ReusedTable fresh;
         fresh.bound.assign(binding.count, {});
         bool reusable = state.epoch != 0;
-        const auto representatives = binding.count > 1 ? variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity) : std::vector<std::uint32_t>{};
+        const auto representatives = binding.count > 1 ? variantRepresentatives(context.device, binding, table.imageWords, table.elementBase, table.heap ? std::numeric_limits<std::uint64_t>::max() : context.imageTableCapacity) : std::vector<std::uint32_t>{};
         std::vector<bool> representativeNeeded(representatives.size(), false);
         for (const auto representative : representatives) {
             if (representative != NoRepresentative) representativeNeeded[representative] = true;
@@ -5997,7 +5998,7 @@ void ShaderResources::resolveImageTables() {
         }
         for (const auto element : substitutes) {
             const auto representative = representatives[element];
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(representative) * 8u, 8u);
+            const auto words = table.imageWords.subspan(static_cast<std::size_t>(representative) * 8u, 8u);
             const auto index = table.elementTextures[representative];
             const auto source = representativeSources.find(representative);
             if (index == std::numeric_limits<std::size_t>::max() || source == representativeSources.end()) {
@@ -6148,7 +6149,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     }
     // Stage A has not run (an address-based build, or the pass is off): decoded from the shader.
     if (deferredCompute.program == nullptr) return surfaces;
-    forEachImageElement(*deferredCompute.program, [&](const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t, std::span<const std::uint32_t> words) {
+    forEachImageElement(deferredCompute, [&](const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t, std::span<const std::uint32_t> words) {
         if (IsNullTextureResource(words)) return;
         const auto resource = DecodeTextureResource(words);
         const auto guestBytes = DescribeSurface(resource).guestBytes;
@@ -6157,9 +6158,10 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     });
     for (const auto& binding : deferredCompute.program->bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::ImageTable) continue;
-        for (std::size_t element = 0; element < binding.guestDescriptor.size() / 8u; ++element) {
+        const auto& words = DrawGuestWords(deferredCompute, binding);
+        for (std::size_t element = 0; element < words.size() / 8u; ++element) {
             try {
-                const auto resource = DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(element * 8u, 8u));
+                const auto resource = DecodeTextureResource(std::span<const std::uint32_t>(words).subspan(element * 8u, 8u));
                 const auto guestBytes = DescribeSurface(resource).guestBytes;
                 consider(resource.format, resource.baseAddress, guestBytes, true);
                 considerKeys(resource.dccAddress, guestBytes);
