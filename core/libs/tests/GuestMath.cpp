@@ -1320,7 +1320,6 @@ static void CheckAcoshDomainErrno() {
 
 static void CheckAcoshNaNInputs() {
     constexpr int sentinel = 1234;
-    // Results are msun's: a NaN comes back quieted with its payload and sign. A differential run against a title's libc.prx found errno EDOM for every NaN with the sign bit set and errno untouched for the others; exception flags are not pinned because they are not measured for the double acosh.
     constexpr struct {
         std::uint64_t input;
         std::uint64_t expected;
