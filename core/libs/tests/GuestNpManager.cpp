@@ -206,6 +206,18 @@ void CheckGamePresenceCallbacksA() {
     Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == NotRegistered, "double unregistering reused id");
 }
 
+void CheckToolkitStateCallback() {
+    int userdata = 0;
+    auto* callback = reinterpret_cast<void*>(&StateCallbackA<0>);
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister before any register");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), &userdata) == 0, "register with a dummy callback");
+    Require(sceNpRegisterStateCallbackForToolkit(reinterpret_cast<NpStateCallbackForToolkit>(callback), nullptr) == 0, "register again (overwrite)");
+    Require(sceNpUnregisterStateCallbackForToolkit() == 0, "unregister");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister again");
+    Require(sceNpRegisterStateCallbackForToolkit(nullptr, &userdata) == 0, "register with nullptr callback");
+    Require(sceNpUnregisterStateCallbackForToolkit() == NotRegistered, "unregister empty slot (callback is null)");
+}
+
 void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(0x7fffffff, 2, 0, 0, 0, 0) == RequestNotFound, "never created request");
     Require(sceNpSetTimeout(0x7fffffff, 0, 0, 0, 0, 0) == InvalidArgument, "arguments checked before the request");
@@ -735,6 +747,7 @@ int main() {
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckGamePresenceCallbacksA();
+    CheckToolkitStateCallback();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
     CheckWaitAsync();

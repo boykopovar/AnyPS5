@@ -720,10 +720,6 @@ int APS5_VABI sceNpPushUnregisterNotificationCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpRegisterStateCallbackForToolkit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpServiceClientInit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -737,10 +733,6 @@ int APS5_VABI sceNpSetAdditionalScope(void) {
     return 0;
 }
 int APS5_VABI sceNpSetNpTitleIdVsh(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

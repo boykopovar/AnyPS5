@@ -133,6 +133,9 @@ struct GamePresenceCallbackEntry {
 std::mutex gamePresenceMutex;
 std::array<GamePresenceCallbackEntry, NP_GAME_PRESENCE_CALLBACK_MAX> gamePresenceCallbacksA{};
 int nextGamePresenceHandle = 0;
+
+NpStateCallbackForToolkit toolkitCallback = nullptr;
+void* toolkitUserdata = nullptr;
 }
 
 extern "C" {
@@ -1100,6 +1103,21 @@ int APS5_VABI sceNpUnregisterStateCallback(void) {
     std::lock_guard lock(stateMutex);
     if (!stateCallback.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
     stateCallback = {};
+    return 0;
+}
+
+int APS5_VABI sceNpRegisterStateCallbackForToolkit(NpStateCallbackForToolkit callback, void* userdata) {
+    std::lock_guard lock(stateMutex);
+    toolkitCallback = callback;
+    toolkitUserdata = userdata;
+    return 0;
+}
+
+int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
+    std::lock_guard lock(stateMutex);
+    if (!toolkitCallback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    toolkitCallback = nullptr;
+    toolkitUserdata = nullptr;
     return 0;
 }
 

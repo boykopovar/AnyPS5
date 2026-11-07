@@ -6,6 +6,8 @@ using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npI
 
 using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
 
+using NpStateCallbackForToolkit = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
+
 extern "C" {
 
 int APS5_VABI sceNpAsmAbort(void);
@@ -398,7 +400,7 @@ int APS5_VABI sceNpPushStopNotificationA(void);
 int APS5_VABI sceNpPushTerm(void);
 int APS5_VABI sceNpPushUnregisterExtendedDataFilter(void);
 int APS5_VABI sceNpPushUnregisterNotificationCallback(void);
-int APS5_VABI sceNpRegisterStateCallbackForToolkit(void);
+int APS5_VABI sceNpRegisterStateCallbackForToolkit(NpStateCallbackForToolkit callback, void* userdata);
 int APS5_VABI sceNpServiceClientInit(void);
 int APS5_VABI sceNpServiceClientTerm(void);
 int APS5_VABI sceNpSetAdditionalScope(void);
