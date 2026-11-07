@@ -26,6 +26,7 @@ char g_title[128] = {};
 char g_titleId[12] = {};
 char g_contentVersion[16] = {};
 std::uint64_t g_downloadDataSizeMiB = 0;
+std::optional<std::uint32_t> g_applicationCategoryType;
 std::uint32_t g_attribute3 = 0;
 std::optional<std::uint32_t> g_paramSfoAttribute;
 std::int32_t g_userDefinedParams[4] = {};
@@ -55,6 +56,7 @@ void ensureTitleLoaded() {
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
     if (!parsed.contentVersion.empty() && parsed.contentVersion.size() < sizeof(g_contentVersion)) copyToFixedBuffer(g_contentVersion, sizeof(g_contentVersion), parsed.contentVersion);
     g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
+    g_applicationCategoryType = parsed.applicationCategoryType;
     g_attribute3 = parsed.attribute3;
     g_paramSfoAttribute = parsed.paramSfoAttribute;
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
@@ -192,6 +194,14 @@ AppContentVersion GetAppContentVersion_nid_no_patch() {
     AppContentVersion result{};
     std::memcpy(result.value, g_contentVersion, sizeof(result.value));
     return result;
+}
+
+bool GetAppCategoryType_nid_no_patch(std::uint32_t* categoryType) {
+    if (categoryType == nullptr) return false;
+    ensureTitleLoaded();
+    if (!g_applicationCategoryType) return false;
+    *categoryType = *g_applicationCategoryType;
+    return true;
 }
 
 bool HasAppIcon_nid_postfix() {
