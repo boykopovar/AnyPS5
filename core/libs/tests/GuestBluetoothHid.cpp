@@ -62,6 +62,14 @@ int main() {
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, &param) == invalidArgument, "thread reserved field validation");
     Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, nullptr) == 0, "optional parameters rejected");
     bool threw = false;
+    Require(sceBluetoothHidGetDeviceName(1, nullptr) == invalidArgument, "null device name output");
+    threw = false;
+    try {
+        sceBluetoothHidGetDeviceName(1, reinterpret_cast<BluetoothHidDeviceName*>(&threw));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "a device name request without a device did not throw");
     threw = false;
     try {
         sceBluetoothHidGetInputReport(0, 0);
