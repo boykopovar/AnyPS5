@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstddef>
 
 extern "C" {
 
@@ -9,8 +10,6 @@ int APS5_VABI curl_formadd();
 int APS5_VABI curl_multi_socket_action();
 int APS5_VABI curl_easy_recv();
 int APS5_VABI curl_mime_free();
-int APS5_VABI curl_escape();
-int APS5_VABI curl_easy_escape();
 int APS5_VABI curl_mvfprintf();
 int APS5_VABI curl_share_cleanup();
 int APS5_VABI curl_easy_perform();
@@ -19,10 +18,9 @@ int APS5_VABI curl_mvsprintf();
 int APS5_VABI curl_global_sslset();
 int APS5_VABI curl_multi_perform();
 int APS5_VABI curl_version();
-int APS5_VABI curl_free();
 int APS5_VABI curl_mvsnprintf();
 int APS5_VABI curl_multi_socket_all();
-int APS5_VABI curl_strequal();
+int APS5_VABI curl_strequal(const char* first, const char* second);
 int APS5_VABI curl_url_get();
 int APS5_VABI curl_multi_strerror();
 int APS5_VABI curl_easy_setopt();
@@ -38,12 +36,11 @@ int APS5_VABI curl_getenv();
 int APS5_VABI curl_formget();
 int APS5_VABI curl_mime_type();
 int APS5_VABI curl_mprintf();
-int APS5_VABI curl_slist_append();
 int APS5_VABI curl_easy_send();
 int APS5_VABI curl_easy_reset();
 int APS5_VABI curl_easy_strerror();
 int APS5_VABI curl_easy_init();
-int APS5_VABI curl_strnequal();
+int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max);
 int APS5_VABI curl_mime_data_cb();
 int APS5_VABI curl_mvaprintf();
 int APS5_VABI curl_url();
@@ -61,17 +58,14 @@ int APS5_VABI curl_easy_getinfo();
 int APS5_VABI curl_share_setopt();
 int APS5_VABI curl_multi_info_read();
 int APS5_VABI curl_easy_upkeep();
-int APS5_VABI curl_unescape();
 int APS5_VABI curl_multi_setopt();
 int APS5_VABI curl_mime_addpart();
 int APS5_VABI curl_easy_option_by_name();
 int APS5_VABI curl_maprintf();
-int APS5_VABI curl_slist_free_all();
 int APS5_VABI curl_url_cleanup();
 int APS5_VABI curl_getdate();
 int APS5_VABI curl_mime_filedata();
 int APS5_VABI curl_multi_timeout();
-int APS5_VABI curl_easy_unescape();
 int APS5_VABI curl_multi_add_handle();
 int APS5_VABI curl_mime_init();
 int APS5_VABI curl_easy_option_by_id();

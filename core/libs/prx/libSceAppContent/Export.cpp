@@ -1,4 +1,3 @@
-#include "prx/libSceAppContent/include/InventoryExports.hpp"
 #include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -22,6 +21,7 @@ static constexpr int SCE_APP_CONTENT_ERROR_BUSY = static_cast<int>(0x80D90003);
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_MOUNTED = static_cast<int>(0x80D90004);
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_FOUND = static_cast<int>(0x80D90005);
 static constexpr int SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT = static_cast<int>(0x80D90007);
+static constexpr int SCE_APP_CONTENT_ERROR_GET_STORE_COUNTRY = static_cast<int>(0x80D91000);
 static constexpr uint32_t APPPARAM_ID_SKU_FLAG = 0;
 static constexpr int32_t SKU_FLAG_FULL = 3;
 
@@ -90,7 +90,9 @@ int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentDownloadDataGetBlockSize() {
+int APS5_VABI sceAppContentDownloadDataGetBlockSize(const AppContentMountPoint* mountPoint, size_t* blockSize) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!mountPoint || !blockSize) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -308,9 +310,12 @@ int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedE
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAppParamGetString(void) {
+int APS5_VABI sceAppContentAppParamGetString(uint32_t paramId, char* value, size_t valueSize) {
+    (void)paramId;
+    (void)valueSize;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!value) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentDownload0Expand(void) {
@@ -343,7 +348,7 @@ int APS5_VABI sceAppContentDownload2Expand(size_t size) {
     if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
     const auto directory = ResolvePath_nid_no_patch("/download2");
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
-    size_t current = download2QuotaBytes.load();
+    std::uint64_t current = download2QuotaBytes.load();
     while (size > current && !download2QuotaBytes.compare_exchange_weak(current, size)) {}
     return 0;
 }
@@ -354,7 +359,9 @@ int APS5_VABI sceAppContentDownload2Shrink(void) {
 }
 
 APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
-int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(const void* mdid, bool* matches) {
+    (void)mdid;
+    (void)matches;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -373,9 +380,12 @@ int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppConten
     return 0;
 }
 
-int APS5_VABI sceAppContentGetDownloadedStoreCountry(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentGetDownloadedStoreCountry(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, void* storeCountry) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !storeCountry) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_GET_STORE_COUNTRY;
 }
 
 int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key) {
@@ -393,14 +403,16 @@ int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetRegion(void) {
+int APS5_VABI sceAppContentGetRegion(void* region) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!region) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceAppContentRequestPatchInstall(void) {
+int APS5_VABI sceAppContentRequestPatchInstall(const char* text) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!text || std::strlen(text) > 0xff) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint* mountPoint) {
