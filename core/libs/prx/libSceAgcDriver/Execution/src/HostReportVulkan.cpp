@@ -24,6 +24,15 @@ const char* deviceType(VkPhysicalDeviceType type) {
     }
 }
 
+HostDriverVersionScheme driverVersionScheme(VkDriverId driver) {
+    switch (driver) {
+        case VK_DRIVER_ID_NVIDIA_PROPRIETARY: return HostDriverVersionScheme::Nvidia;
+        case VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS: return HostDriverVersionScheme::IntelWindows;
+        case VK_DRIVER_ID_MOLTENVK: return HostDriverVersionScheme::Unknown;
+        default: return HostDriverVersionScheme::Vulkan;
+    }
+}
+
 const char* presentModeName(VkPresentModeKHR mode) {
     switch (mode) {
         case VK_PRESENT_MODE_IMMEDIATE_KHR: return "immediate";
@@ -67,6 +76,7 @@ HostGpuFacts CollectHostGpuFacts(const HostGpuQuery& query) {
     if (hasDriver) {
         gpu.driverName = driver.driverName;
         gpu.driverInfo = driver.driverInfo;
+        gpu.driverVersionScheme = driverVersionScheme(driver.driverID);
     }
     VkPhysicalDeviceMemoryProperties memory{};
     load<PFN_vkGetPhysicalDeviceMemoryProperties>(query, "vkGetPhysicalDeviceMemoryProperties")(query.physical, &memory);
