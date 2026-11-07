@@ -176,6 +176,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
+    require(left.stencilAttachmentExport == right.stencilAttachmentExport, prefix + "stencil attachment mode differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
     require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
@@ -292,6 +293,7 @@ RecompileResult sampleResult() {
     result.fragmentParameters = {{0, 1, true, false, true}, {2, 3, false, true}};
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
+    result.stencilAttachmentExport = true;
     result.bdaWrites = true;
     result.layerReplaySafe = true;
     result.stencilReferenceDword = 23u;
@@ -509,10 +511,10 @@ void verifyEntryRoundTrip() {
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
     auto priorStencilVersion = file;
-    priorStencilVersion[4] = std::byte{32};
+    priorStencilVersion[4] = std::byte{50};
     require(ShaderDiskCache::DecodeEntry(priorStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an artifact with the prior stencil format loads");
     auto upstreamVersion = file;
-    upstreamVersion[4] = std::byte{33};
+    upstreamVersion[4] = std::byte{56};
     require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
     auto incompatible = variant;
     incompatible.artifact.runtimeAbiVersion = RuntimeAbi::Version + 1u;

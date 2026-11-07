@@ -429,12 +429,14 @@ void DefineOutputs(SpirvEmitterState& state) {
         case StageOutputKind::SampleMask:
             binding.variableId = BuiltIn(state.sampleMaskVariable, SampleMaskArrayType(state), "gl_SampleMask", spv::BuiltInSampleMask);
             break;
-        case StageOutputKind::StencilRef:
-            if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
-                const auto values = StencilReferenceValues(state.program, PixelInfo(state).psStencilOperationValueExport ? 8u : 0u);
-                if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
-                if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
-                if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
+        case StageOutputKind::StencilRef: {
+            const auto& pixel = PixelInfo(state);
+            const auto mode = SelectStencilExportMode(state.program, std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != state.supportedCapabilities.end(), pixel.psStencilOperationValueExport, pixel.psEarlyZ, pixel.psOrderedPixelShader);
+            if (mode == StencilExportMode::Attachment) {
+                state.stencilAttachmentVariable = DefineInterfaceVariable(state, TypeU32(state), spv::StorageClassOutput, "out_stencilOperationValue");
+                state.module.AddAnnotation(spv::OpDecorate, state.stencilAttachmentVariable, spv::DecorationLocation, StencilAttachmentLocation);
+                binding.variableId = state.stencilAttachmentVariable;
+            } else if (mode == StencilExportMode::Replay) {
                 state.stencilReplay = true;
                 state.stencilRefVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.stencilRefVariable);
@@ -443,6 +445,7 @@ void DefineOutputs(SpirvEmitterState& state) {
                 binding.variableId = BuiltIn(state.stencilRefVariable, TypeI32(state), "gl_FragStencilRefARB", spv::BuiltInFragStencilRefEXT);
             }
             break;
+        }
         case StageOutputKind::Parameter:
         case StageOutputKind::Mrt: {
             const bool uintOutput = binding.kind == StageOutputKind::Mrt && state.program.Resources().stage == IrShaderStage::Pixel && binding.index < std::size(PixelInfo(state).targetOutputMode) && PixelInfo(state).targetOutputMode[binding.index] == 7u;
