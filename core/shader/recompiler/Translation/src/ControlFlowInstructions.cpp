@@ -1,4 +1,3 @@
-#include "Translation/ControlFlowInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <cstdint>
@@ -7,10 +6,6 @@
 #include <string>
 
 namespace ShaderRecompiler {
-
-void TranslateControlFlowInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg) {
-    throw std::runtime_error("TranslateControlFlowInstruction not implemented");
-}
 
 void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin) {
     if (program.WaveSize() != 64u) {
@@ -486,10 +481,6 @@ void TranslationContext::vPermlane16B32(const RdnaInstruction& inst, bool x16) {
     const PermlaneFlags flags{x16, inst.destination.opSel, inst.destination.opSelHi};
     const IrU32 result(ir.Emit(IrOpcode::Permlane16U32, IrType::U32, {&value.Value(), &selectLow.Value(), &selectHigh.Value(), &ir.GetExec(), &previous.Value()}, flags));
     writeRawU32(inst.destination, result);
-}
-
-void TranslateControlFlowInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateControlFlowInstruction not implemented");
 }
 
 }
