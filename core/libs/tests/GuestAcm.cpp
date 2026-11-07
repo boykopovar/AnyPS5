@@ -102,6 +102,7 @@ int main() {
     outputs[0] = sourceData;
     Require(sceAcm_Panner(&commandBatch, 1, sources, 2, 1, 1, sources, sources, nullptr, outputs) == 0);
     Require(commandBatch.offset == 32 && commandBatch.buffer_size == 128);
+    TestRingAdvance();
     std::uint64_t commandWords[4];
     std::memcpy(commandWords, commands, sizeof(commandWords));
     Require(commandWords[0] == ((std::uint64_t{1} << 34) | (std::uint64_t{1} << 36) | 0x01010300));
@@ -360,6 +361,5 @@ int main() {
     Require(sceAcmContextDestroy(context2) == 0);
     Require(sceAcmContextDestroy(context2) == BadContext);
 
-    TestRingAdvance();
     return 0;
 }
