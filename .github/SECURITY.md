@@ -12,7 +12,7 @@ Give the AnyPS5 commit or release, the host and its OS, what an attacker control
 
 ## Scope
 
-A converted title is an ordinary program that runs with your account's permissions and none of the console's sandbox, as [USAGE](../docs/user/USAGE.md) states. What a title does once it runs is not a vulnerability in AnyPS5.
+A converted title is an ordinary program that runs with your account's permissions and none of the console's sandbox, as [USAGE](../docs/user/USAGE.md#input-and-conversion) states. What a title does once it runs is not a vulnerability in AnyPS5.
 
 In scope:
 
@@ -23,6 +23,6 @@ In scope:
 Out of scope:
 
 - Anything a converted title can do with your account's permissions.
-- The fixed load addresses that USAGE describes.
+- The fixed load addresses of converted executables and their missing address space layout randomization: the default `0x400000` and `--windows-fixed-base`, `--linux-fixed-base` and `--macos-fixed-base`.
 - Crashes caused by guest code.
 - Bugs that need a modified AnyPS5 build.
