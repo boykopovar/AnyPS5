@@ -17,14 +17,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
 
-#ifdef _WIN32
-#define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
-#define APS5_VA_END() __builtin_sysv_va_end(args)
-#else
-#define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
-#define APS5_VA_END() va_end(args)
-#endif
-
 namespace {
 
 enum class Fit { Invalid, Prefix, Valid };

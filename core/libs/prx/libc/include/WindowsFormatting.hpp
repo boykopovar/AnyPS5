@@ -3,10 +3,12 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestLongDouble.hpp"
+#include "prx/libc/include/GuestVaList.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cerrno>
+#include <cstdarg>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -34,11 +36,28 @@ class FormatArguments {
     VaList args;
     std::vector<std::array<unsigned char, 16>> numbered;
     size_t position = 1;
+#ifdef ANYPS5_GUEST_LIFTED
+    std::va_list host;
+    bool hosted = false;
+#endif
 
 public:
     explicit FormatArguments(const void* source) {
         std::memcpy(&args, source, sizeof(args));
+#ifdef ANYPS5_GUEST_LIFTED
+        hosted = args.gp_offset == HostVaListTag;
+        if (hosted) va_copy(host, *static_cast<std::va_list*>(args.reg_save_area));
+#endif
     }
+
+#ifdef ANYPS5_GUEST_LIFTED
+    ~FormatArguments() {
+        if (hosted) va_end(host);
+    }
+
+    FormatArguments(const FormatArguments&) = delete;
+    FormatArguments& operator=(const FormatArguments&) = delete;
+#endif
 
     void Number(const std::vector<ArgumentClass>& classes) {
         numbered.resize(classes.size());
@@ -64,7 +83,24 @@ public:
     }
 
 private:
+#ifdef ANYPS5_GUEST_LIFTED
+    template<class T> T FetchHost() {
+        if constexpr (std::is_same_v<T, long double>) {
+            return va_arg(host, long double);
+        } else if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<T>(va_arg(host, double));
+        } else if constexpr (std::is_integral_v<T> && sizeof(T) < sizeof(int)) {
+            return static_cast<T>(va_arg(host, int));
+        } else {
+            return va_arg(host, T);
+        }
+    }
+#endif
+
     template<class T> T Fetch() {
+#ifdef ANYPS5_GUEST_LIFTED
+        if (hosted) return FetchHost<T>();
+#endif
         const void* address;
         if constexpr (std::is_same_v<T, double>) {
             if (args.fp_offset < 176) {

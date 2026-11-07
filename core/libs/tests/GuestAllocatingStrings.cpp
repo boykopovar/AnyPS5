@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -15,6 +16,7 @@
 #include <io.h>
 #else
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -62,36 +64,33 @@ void InitializeHeap() {
 }
 
 static int APS5_VABI CallVasprintf(char** destination, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vasprintf_nid_postfix(destination, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
+#ifndef _WIN32
+void CheckVaListAtPageEnd() {
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* pages = static_cast<std::byte*>(mapping);
+    Require(mprotect(pages + page, page, PROT_NONE) == 0);
+    auto* list = reinterpret_cast<VaList*>(pages + page - sizeof(VaList));
+    *list = VaList{48, 176, pages, pages};
+    char* allocated = nullptr;
+    Require(vasprintf_nid_postfix(&allocated, "plain", list) == 5);
+    Require(allocated != nullptr && std::strcmp(allocated, "plain") == 0);
+    free_nid_postfix(allocated);
+    Require(munmap(mapping, page * 2) == 0);
+}
+#endif
+
 static int APS5_VABI CallVdprintf(int descriptor, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
@@ -143,6 +142,10 @@ int main() {
     Require(allocated != nullptr);
     Require(std::strcmp(allocated, "value=42 ok") == 0);
     free_nid_postfix(allocated);
+
+#ifndef _WIN32
+    CheckVaListAtPageEnd();
+#endif
 
     *__error_nid_postfix() = 0;
     Require(dprintf_nid_postfix(-1, "test") == -1);
