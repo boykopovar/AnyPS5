@@ -376,10 +376,6 @@ std::int64_t APS5_VABI ReadWS_Memory_nid_postfix(Jxr::Stream* stream, void* buff
     return WmpErrSuccess;
 }
 
-int APS5_VABI ResetCodingContext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SetPosWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -429,14 +425,6 @@ std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const voi
     return WmpErrSuccess;
 }
 
-int APS5_VABI advanceMRPtr_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI advanceOneMBRow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI allocateBitIOInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -454,10 +442,6 @@ int APS5_VABI allocateTileInfo_nid_postfix() {
 }
 
 int APS5_VABI attach_SB_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI checkImageBuffer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -497,14 +481,6 @@ int APS5_VABI getByteRead_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI getTilePos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI initMRPtr_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int32_t APS5_VABI initPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2], std::size_t mbWidth, std::size_t numChannels) {
     if (numChannels != 0 && postProcInfo == nullptr) APS5_INVALID_ARG_EX;
 
@@ -534,23 +510,7 @@ std::int32_t APS5_VABI initPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProc
     return 0;
 }
 
-int APS5_VABI postProcBlock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI postProcMB_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI setBitIOPointers_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI slideOneMBRow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI swapMRPtr_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -564,10 +524,6 @@ void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2]
             }
         }
     }
-}
-
-int APS5_VABI updatePostProcInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 }
