@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <streambuf>
 
 extern "C" {
 
@@ -49,10 +50,10 @@ int APS5_VABI libSceLibcInternalInventory_042_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_043_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_045_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_046_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_047_nid_no_patch();
+std::streamsize APS5_VABI libSceLibcInternalInventory_047_nid_no_patch(std::basic_streambuf<char>*);
 int APS5_VABI libSceLibcInternalInventory_048_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_049_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_050_nid_no_patch();
+std::streamsize APS5_VABI libSceLibcInternalInventory_050_nid_no_patch(std::basic_streambuf<wchar_t>*);
 int APS5_VABI libSceLibcInternalInventory_052_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_053_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_054_nid_no_patch();
@@ -60,8 +61,6 @@ int APS5_VABI libSceLibcInternalInventory_055_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_056_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_057_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_058_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_059_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_060_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_061_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_062_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_063_nid_no_patch();
@@ -257,17 +256,13 @@ int APS5_VABI libSceLibcInternalInventory_256_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_257_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_258_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_259_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_260_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_261_nid_no_patch();
 int APS5_VABI libSceLibcInternalUnknown_hsn2TaF3poY_nid_no_patch();
 int APS5_VABI libSceLibcInternalUnknown_oCH4efUlxZ0_nid_no_patch();
 int APS5_VABI libSceLibcInternalUnknown_GdwuPYbVpP4_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_262_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_263_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_264_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_265_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_266_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_267_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_268_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_269_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_270_nid_no_patch();

@@ -46,6 +46,38 @@ void CheckAvSettingCallbackFuncs() {
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc_, 0x10);
 }
 
+void CheckAvSettingModeHelpers() {
+    constexpr std::uint8_t Fill = 0xaa;
+    const auto check = [Fill](void (APS5_VABI* helper)(void*, std::int32_t), std::uint8_t fill) {
+        std::array<std::uint8_t, 8> buffer{};
+        buffer.fill(Fill);
+        helper(buffer.data(), 8);
+        Require(buffer[0] == 8 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0);
+        for (std::size_t i = 4; i < buffer.size(); ++i) Require(buffer[i] == fill);
+        buffer.fill(Fill);
+        helper(buffer.data(), 4);
+        Require(buffer[0] == 4 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0);
+        for (std::size_t i = 4; i < buffer.size(); ++i) Require(buffer[i] == Fill);
+        buffer.fill(Fill);
+        helper(buffer.data(), 0);
+        for (std::size_t i = 0; i < 4; ++i) Require(buffer[i] == 0);
+        for (std::size_t i = 4; i < buffer.size(); ++i) Require(buffer[i] == Fill);
+        buffer.fill(Fill);
+        helper(nullptr, 8);
+        for (const auto value : buffer) Require(value == Fill);
+    };
+    check(sceAvSettingSetAudioOutModeAny_, 0xff);
+    check(sceAvSettingSetAudioOutModeInvalid_, 0x00);
+    check(sceAvSettingSetVideoOutModeAny_, 0xff);
+    check(sceAvSettingSetVideoOutModeInvalid_, 0x00);
+    std::int32_t source = 0x12345678;
+    sceAvSettingSetVideoOutSource(&source, 7);
+    Require(source == 7);
+    source = 0x12345678;
+    sceAvSettingSetVideoOutSource(nullptr, 7);
+    Require(source == 0x12345678);
+}
+
 void CheckComposite() {
     constexpr int Unsupported = static_cast<int>(0x80d40006);
     Require(sceCompositorCreateIndirectRenderTarget() == Unsupported);
@@ -205,6 +237,7 @@ void CheckDebugSyscore() {
 int main() {
     CheckAvSetting();
     CheckAvSettingCallbackFuncs();
+    CheckAvSettingModeHelpers();
     CheckComposite();
     CheckFsInternal();
     CheckHttpCacheAndPlayReady();

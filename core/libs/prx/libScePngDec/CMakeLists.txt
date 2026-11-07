@@ -12,6 +12,16 @@ if(BUILD_TESTING)
     target_link_libraries(guest_png_dec_tests PRIVATE libScePngDec decoder_png libc)
     configure_windows_unwind(guest_png_dec_tests)
     add_test(NAME guest_png_dec COMMAND guest_png_dec_tests)
+
+    add_test_executable(guest_png_dec_input_control_tests ${LIBS_INCLUDE_DIR}/tests/GuestPngDecInputControl.cpp)
+    target_include_directories(guest_png_dec_input_control_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_png_dec_input_control_tests PRIVATE libScePngDec decoder_png libc)
+    configure_windows_unwind(guest_png_dec_input_control_tests)
+    add_test(NAME guest_png_dec_input_control COMMAND guest_png_dec_input_control_tests)
+    if(WIN32)
+        set_tests_properties(guest_png_dec_input_control PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngDec>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_png_dec PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngDec>")

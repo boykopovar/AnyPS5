@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -57,6 +58,11 @@ std::uint32_t ZeroBitRead(Jxr::BitIo* io) {
     return 0;
 }
 
+std::uint32_t LoadBigEndian(const std::uint8_t* bytes) {
+    return (std::uint32_t{bytes[0]} << 24) | (std::uint32_t{bytes[1]} << 16) |
+        (std::uint32_t{bytes[2]} << 8) | bytes[3];
+}
+
 void PutMasked(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
     if (bits == 0 && io->bitsUsed == 0) return;
     JxrPutBit16z_nid_no_patch(io, value & (0xffffu >> (16 - bits)), bits);
@@ -65,6 +71,44 @@ void PutMasked(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
 } // namespace
 
 extern "C" {
+
+std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream, void* codec) {
+    static_cast<void>(codec);
+    Require(io != nullptr, __func__, "null bit state");
+    Require(stream != nullptr, __func__, "null stream");
+    Require(stream->getPosition != nullptr, __func__, "null get-position callback");
+    stream->getPosition(stream, &io->referenceOffset);
+    const auto ioAddress = reinterpret_cast<std::uintptr_t>(io);
+    Require(ioAddress >= 8192, __func__, "bit state address underflows the packet buffer");
+    auto* const start = reinterpret_cast<std::uint8_t*>(ioAddress - 8192);
+    io->start = start;
+    io->current = start;
+    Require(stream->setPosition != nullptr, __func__, "null set-position callback");
+    stream->setPosition(stream, io->referenceOffset);
+    Require(stream->read != nullptr, __func__, "null read callback");
+    stream->read(stream, io->start, 8192);
+    io->referenceOffset += 8192;
+    io->accumulator = LoadBigEndian(io->start);
+    io->bitsUsed = 0;
+    io->mask = ~static_cast<std::int32_t>(8192) & ~std::int32_t{1};
+    io->stream = stream;
+    return 0;
+}
+
+std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream) {
+    State(io, __func__);
+    Require(stream && stream->getPosition, __func__, "missing stream position callback");
+    stream->getPosition(stream, &io->referenceOffset);
+    const auto address = reinterpret_cast<std::uintptr_t>(io);
+    if (address < 8192) NotImplemented_nid_no_patch(__func__);
+    io->start = reinterpret_cast<std::uint8_t*>(address - 8192);
+    io->current = io->start;
+    io->accumulator = 0;
+    io->bitsUsed = 0;
+    io->mask = ~8192;
+    io->stream = stream;
+    return 0;
+}
 
 std::uint32_t APS5_VABI peekBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
     Read(io, bits, 16, __func__);

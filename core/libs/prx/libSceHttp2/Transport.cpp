@@ -303,13 +303,13 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
 
 struct Request::State {
     const int id;
+    Url url;
     const int version;
     int sslContext;
     const std::shared_ptr<Capacity> capacity;
     bool acquired = false;
     Settings settings;
     std::string method;
-    Url url;
     std::mutex mutex;
     std::atomic<bool> cancelled{false};
     bool started = false;
@@ -320,6 +320,10 @@ struct Request::State {
     int status = 0;
     std::string contentEncoding;
     bool inflatedGzip = false;
+    std::vector<std::pair<std::string, std::string>> blockHeaders;
+    std::string allHeaders;
+    std::string trailerHeaders;
+    bool trailerBlock = false;
     int blockStatus = 0;
     bool hasAuthChallenge = false;
     bool hasProxyAuthChallenge = false;
@@ -352,10 +356,10 @@ struct Request::State {
     Clock::time_point totalDeadline;
 
     State(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
-        : id(id), version(version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), url(Parse(target)) {
+        : id(id), url(Parse(target)), version(version == 3 && !url.secure ? 2 : version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)) {
         Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()),
             "sceHttp2CreateRequestWithURL: invalid method");
-        Require(version >= 1 && version <= 3 && (version != 3 || url.secure), "sceHttp2: unsupported version or cleartext HTTP/2");
+        Require(version >= 1 && version <= 3, "sceHttp2: unsupported version");
         Require(method != "CONNECT", "sceHttp2: CONNECT is not implemented");
         Require(nghttp2_check_header_value_rfc9113(reinterpret_cast<const std::uint8_t*>(settings.userAgent.data()), settings.userAgent.size()),
             "sceHttp2: invalid user agent");
@@ -810,8 +814,13 @@ struct Request::State {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
             if (frame->hd.stream_id == state.stream) {
-                Require(!state.ready, "sceHttp2: response trailers are not implemented");
+                if (state.ready) {
+                    state.trailerBlock = true;
+                    state.blockHeaders.clear();
+                    return;
+                }
                 state.blockStatus = 0;
+                state.blockHeaders.clear();
                 state.hasAuthChallenge = state.hasProxyAuthChallenge = false;
                 state.hasLength = false;
                 state.contentLength = 0;
@@ -831,6 +840,10 @@ struct Request::State {
             state.headerBytes += nameSize + valueSize;
             const std::string_view key(reinterpret_cast<const char*>(name), nameSize);
             const std::string_view text(reinterpret_cast<const char*>(value), valueSize);
+            if (state.trailerBlock) {
+                state.blockHeaders.emplace_back(std::string(key), std::string(text));
+                return;
+            }
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
             if (key == "www-authenticate") state.hasAuthChallenge = true;
             if (key == "proxy-authenticate") state.hasProxyAuthChallenge = true;
@@ -845,6 +858,7 @@ struct Request::State {
             }
             if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
+            if (key != ":status") state.blockHeaders.emplace_back(std::string(key), std::string(text));
         });
     }
 
@@ -855,11 +869,19 @@ struct Request::State {
                 Require(frame->goaway.error_code == NGHTTP2_NO_ERROR && frame->goaway.last_stream_id >= state.stream,
                     "sceHttp2: GOAWAY rejected request");
             if (frame->hd.stream_id != state.stream) return;
-            if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
+            if (frame->hd.type == NGHTTP2_HEADERS && state.trailerBlock) {
+                state.trailerHeaders.clear();
+                for (const auto& [key, value] : state.blockHeaders) state.trailerHeaders += key + ": " + value + "\r\n";
+                state.trailerHeaders += "\r\n";
+                state.trailerBlock = false;
+            } else if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
                 const bool authenticationChallenge = (state.status == 401 && state.hasAuthChallenge) || (state.status == 407 && state.hasProxyAuthChallenge);
                 Require(!state.settings.auth || !authenticationChallenge, "sceHttp2: authentication is not implemented");
                 state.ready = true;
+                state.allHeaders = "HTTP/2.0 " + std::to_string(state.status) + " HTTP2 NO PHRASE\r\n";
+                for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";
+                state.allHeaders += "\r\n";
             }
             if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
                 (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
@@ -1143,9 +1165,23 @@ int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
-    Require(state->version < 3, "sceHttp2GetAllResponseHeaders: HTTP2 header representation is unimplemented");
-    *header = state->rawHeaders.data();
-    *size = state->rawHeaders.size();
+    if (state->version < 3) {
+        *header = state->rawHeaders.data();
+        *size = state->rawHeaders.size();
+    } else {
+        *header = state->allHeaders.data();
+        *size = state->allHeaders.size();
+    }
+    return 0;
+}
+
+int Request::TrailingHeaders(char** header, std::size_t* size) {
+    auto lock = state->Lock();
+    if (state->networkResult) return state->networkResult;
+    Require(header && size && state->ready && state->ended, "sceHttp2GetAllTrailingHeaders: null output or response unavailable");
+    Require(!state->trailerHeaders.empty(), "sceHttp2GetAllTrailingHeaders: response has no trailers");
+    *header = state->trailerHeaders.data();
+    *size = state->trailerHeaders.size();
     return 0;
 }
 
