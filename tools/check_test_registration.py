@@ -320,7 +320,9 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs, or a library source that defines exports is never compiled")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
-    parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="emit registration audit results as JSON")
+    output.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
     args = parser.parse_args(argv)
     if args.scripts:
@@ -328,6 +330,10 @@ def main(argv=None):
             scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             parser.error(f"--scripts reads the source tree from git, so run it in a git checkout: {error}")
+        if args.json:
+            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun,
+                              "registered": sorted(set(scripts) - set(unrun))}, sort_keys=True))
+            return int(bool(unrun))
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
         if unrun:
@@ -346,15 +352,21 @@ def main(argv=None):
             print(f"{'run' if name in run else 'NOT RUN'}  {name}")
         return 0
     unrun = sorted(set(every) - run)
+    stale = sorted(KNOWN_UNRUN & run)
+    fresh = sorted(set(unrun) - KNOWN_UNRUN)
+    if args.json:
+        print(json.dumps({"mode": "executables", "tests": every, "registered": sorted(set(every) & run),
+                          "unregistered": unrun, "known_unrun": sorted(set(unrun) & KNOWN_UNRUN),
+                          "stale_exceptions": stale, "new_unregistered": fresh,
+                          "unbuilt_exports": None if unbuilt is None else [path.as_posix() for path in unbuilt]}, sort_keys=True))
+        return int(not every or bool(stale or fresh or unbuilt))
     if not every:
         print(f"no test executables found under {args.build}; is it configured with -DBUILD_TESTING=ON?")
         return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
-    stale = sorted(KNOWN_UNRUN & run)
     for name in stale:
         print(f"error: {name} is run by ctest now; remove it from KNOWN_UNRUN")
-    fresh = sorted(set(unrun) - KNOWN_UNRUN)
     for name in fresh:
         print(f"error: {name} is built but no ctest test runs it")
     if fresh:
