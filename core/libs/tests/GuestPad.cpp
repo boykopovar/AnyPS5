@@ -9,6 +9,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -1173,6 +1174,275 @@ static void CheckPortZeroWithdrawn() {
     if (!wasOpen) Require(scePadClose_nid_postfix(handle) == PAD_OK);
 }
 
+static void CheckAudioFunctionSupport() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+        Require(scePadIsValidHandle(handles[p], PAD_PORT_TYPE_STANDARD));
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadIsSupportedAudioFunction(handles[p]) == 1);
+        PadSetPortConnected_nid_postfix(p, false);
+        Require(scePadIsSupportedAudioFunction(handles[p]) == static_cast<int>(0x80920007));
+        PadSetPortConnected_nid_postfix(p, true);
+        Require(scePadIsSupportedAudioFunction(handles[p]) == 1);
+    }
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadIsSupportedAudioFunction(invHandle) == PAD_ERROR_INVALID_HANDLE);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
+static void CheckAudioOutPathRouting() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        for (int path : {0, 1, 2, 3, 4}) {
+            const int otherPort = (p + 1) % PAD_MAX_CONTROLLERS;
+            const int otherBefore = OutputOf(otherPort).audioOutPath;
+            Require(scePadSetAudioOutPath(handles[p], path) == PAD_OK);
+            Require(OutputOf(p).audioOutPath == path);
+            Require(OutputOf(otherPort).audioOutPath == otherBefore);
+        }
+        for (int invalidPath : {-999, -1, 5, 6, 10, 100, 0x7fffffff}) {
+            Require(scePadSetAudioOutPath(handles[p], invalidPath) == PAD_ERROR_INVALID_ARG);
+        }
+    }
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadSetAudioOutPath(invHandle, 1) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetAudioOutPath(invHandle, 5) == PAD_ERROR_INVALID_ARG);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
+static void CheckAudioHapticsPortMapping() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    const std::array<std::pair<std::uint8_t, std::uint8_t>, PAD_MAX_CONTROLLERS> distinctHaptics{
+        std::make_pair(std::uint8_t{15}, std::uint8_t{25}),
+        std::make_pair(std::uint8_t{75}, std::uint8_t{85}),
+        std::make_pair(std::uint8_t{150}, std::uint8_t{160}),
+        std::make_pair(std::uint8_t{230}, std::uint8_t{240})
+    };
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSubmitAudioHapticsForPort_nid_postfix(p, distinctHaptics[p].first, distinctHaptics[p].second);
+        const PadOutputState out = OutputOf(p);
+        Require(out.audioVibrationLarge == distinctHaptics[p].first);
+        Require(out.audioVibrationSmall == distinctHaptics[p].second);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const PadOutputState out = OutputOf(p);
+        Require(out.audioVibrationLarge == distinctHaptics[p].first);
+        Require(out.audioVibrationSmall == distinctHaptics[p].second);
+    }
+    PadSubmitAudioHapticsForPort_nid_postfix(1, 245, 250);
+    Require(OutputOf(0).audioVibrationLarge == distinctHaptics[0].first && OutputOf(0).audioVibrationSmall == distinctHaptics[0].second);
+    Require(OutputOf(1).audioVibrationLarge == 245 && OutputOf(1).audioVibrationSmall == 250);
+    Require(OutputOf(2).audioVibrationLarge == distinctHaptics[2].first && OutputOf(2).audioVibrationSmall == distinctHaptics[2].second);
+    Require(OutputOf(3).audioVibrationLarge == distinctHaptics[3].first && OutputOf(3).audioVibrationSmall == distinctHaptics[3].second);
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        for (const auto& [large, small] : {
+                std::pair<std::uint8_t, std::uint8_t>{251, 251},
+                std::pair<std::uint8_t, std::uint8_t>{253, 252},
+                std::pair<std::uint8_t, std::uint8_t>{254, 254},
+                std::pair<std::uint8_t, std::uint8_t>{255, 255}}) {
+            PadSubmitAudioHapticsForPort_nid_postfix(p, large, small);
+            const PadOutputState out = OutputOf(p);
+            Require(out.audioVibrationLarge == large && out.audioVibrationSmall == small);
+        }
+    }
+    for (int invalidPort : {-9999, -100, -2, -1, 4, 5, 10, 100, 9999}) {
+        PadSubmitAudioHapticsForPort_nid_postfix(invalidPort, 200, 200);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const PadOutputState out = OutputOf(p);
+        Require(out.audioVibrationLarge == 255 && out.audioVibrationSmall == 255);
+    }
+    PadSubmitAudioHaptics_nid_postfix(255, 255);
+    Require(OutputOf(0).audioVibrationLarge == 255 && OutputOf(0).audioVibrationSmall == 255);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(OutputOf(p).audioVibrationLarge == 255 && OutputOf(p).audioVibrationSmall == 255);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
+static void CheckVolumeGainBounds() {
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, true);
+    }
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const int otherPort = (p + 1) % PAD_MAX_CONTROLLERS;
+        const PadOutputState otherBefore = OutputOf(otherPort);
+        const PadVolumeGain gain{static_cast<std::uint8_t>(20 + p * 10), static_cast<std::uint8_t>(30 + p * 10), 0, static_cast<std::uint8_t>(40 + p * 10)};
+        Require(scePadSetVolumeGain(handles[p], &gain) == PAD_OK);
+        const PadOutputState out = OutputOf(p);
+        Require(out.volumeGainValid);
+        Require(out.speakerVolume == 20 + p * 10);
+        Require(out.headsetVolume == 30 + p * 10);
+        Require(out.micGain == 40 + p * 10);
+        Require(OutputOf(otherPort).speakerVolume == otherBefore.speakerVolume);
+        Require(OutputOf(otherPort).headsetVolume == otherBefore.headsetVolume);
+        Require(OutputOf(otherPort).micGain == otherBefore.micGain);
+        Require(scePadSetVolumeGain(handles[p], nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    const PadVolumeGain dummyGain{10, 20, 0, 30};
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadSetVolumeGain(invHandle, &dummyGain) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetVolumeGain(invHandle, nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+    PadSetPortConnected_nid_postfix(0, true);
+    for (int p = 1; p < PAD_MAX_CONTROLLERS; ++p) {
+        PadSetPortConnected_nid_postfix(p, false);
+    }
+}
+
+static void CheckLightBarColorFadeInterpolation() {
+    std::array<int, PAD_MAX_CONTROLLERS> handles{};
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        handles[p] = scePadOpen_nid_postfix(0x10000000 + p, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+        Require(handles[p] == PAD_HANDLE_BASE + p);
+    }
+    const auto lerpChannel = [](std::uint8_t a, std::uint8_t b, float t) -> std::uint8_t {
+        const float clamped = std::clamp(t, 0.0f, 1.0f);
+        const float val = static_cast<float>(a) + clamped * static_cast<float>(static_cast<int>(b) - static_cast<int>(a));
+        return static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::round(val)), 0, 255));
+    };
+    const auto lerpColor = [&](const PadLightBarParam& from, const PadLightBarParam& to, float t) -> PadLightBarParam {
+        return PadLightBarParam{
+            lerpChannel(from.r, to.r, t),
+            lerpChannel(from.g, to.g, t),
+            lerpChannel(from.b, to.b, t)
+        };
+    };
+    const PadLightBarParam black{0, 0, 0};
+    const PadLightBarParam white{255, 255, 255};
+    Require(lerpColor(black, white, -1.0f).r == 0);
+    Require(lerpColor(black, white, 0.0f).r == 0);
+    Require(lerpColor(black, white, 0.25f).r == 64);
+    Require(lerpColor(black, white, 0.5f).r == 128);
+    Require(lerpColor(black, white, 0.75f).r == 191);
+    Require(lerpColor(black, white, 1.0f).r == 255);
+    Require(lerpColor(black, white, 2.0f).r == 255);
+
+    const std::array<PadLightBarParam, PAD_MAX_CONTROLLERS> startColors{
+        PadLightBarParam{255, 0, 0},
+        PadLightBarParam{0, 255, 0},
+        PadLightBarParam{0, 0, 255},
+        PadLightBarParam{255, 255, 255}
+    };
+    const std::array<PadLightBarParam, PAD_MAX_CONTROLLERS> targetColors{
+        PadLightBarParam{0, 255, 0},
+        PadLightBarParam{0, 0, 255},
+        PadLightBarParam{255, 128, 0},
+        PadLightBarParam{0, 0, 0}
+    };
+    for (float step : {-0.25f, 0.0f, 0.2f, 0.4f, 0.5f, 0.6f, 0.8f, 1.0f, 1.25f}) {
+        std::array<PadLightBarParam, PAD_MAX_CONTROLLERS> expected{};
+        for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+            expected[p] = lerpColor(startColors[p], targetColors[p], step);
+            Require(scePadSetLightBar(handles[p], &expected[p]) == PAD_OK);
+        }
+        for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+            Require(LightBarIs(p, true, expected[p].r, expected[p].g, expected[p].b));
+        }
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        const PadLightBarParam c0{0, 0, 0};
+        const PadLightBarParam c1{1, 1, 1};
+        const auto mid01 = lerpColor(c0, c1, 0.5f);
+        Require(scePadSetLightBar(handles[p], &mid01) == PAD_OK && LightBarIs(p, true, mid01.r, mid01.g, mid01.b));
+
+        const PadLightBarParam c127{127, 127, 127};
+        const PadLightBarParam c128{128, 128, 128};
+        const auto mid127 = lerpColor(c127, c128, 0.5f);
+        Require(scePadSetLightBar(handles[p], &mid127) == PAD_OK && LightBarIs(p, true, mid127.r, mid127.g, mid127.b));
+
+        const PadLightBarParam c254{254, 254, 254};
+        const PadLightBarParam c255{255, 255, 255};
+        const auto mid254 = lerpColor(c254, c255, 0.5f);
+        Require(scePadSetLightBar(handles[p], &mid254) == PAD_OK && LightBarIs(p, true, mid254.r, mid254.g, mid254.b));
+    }
+    const auto midP0 = lerpColor(startColors[0], targetColors[0], 0.5f);
+    const auto midP1 = lerpColor(startColors[1], targetColors[1], 0.5f);
+    const auto midP2 = lerpColor(startColors[2], targetColors[2], 0.5f);
+    const auto midP3 = lerpColor(startColors[3], targetColors[3], 0.5f);
+    Require(scePadSetLightBar(handles[0], &midP0) == PAD_OK);
+    Require(scePadSetLightBar(handles[1], &midP1) == PAD_OK);
+    Require(scePadSetLightBar(handles[2], &midP2) == PAD_OK);
+    Require(scePadSetLightBar(handles[3], &midP3) == PAD_OK);
+    Require(LightBarIs(0, true, midP0.r, midP0.g, midP0.b));
+    Require(LightBarIs(1, true, midP1.r, midP1.g, midP1.b));
+    Require(LightBarIs(2, true, midP2.r, midP2.g, midP2.b));
+    Require(LightBarIs(3, true, midP3.r, midP3.g, midP3.b));
+
+    Require(scePadResetLightBar(handles[1]) == PAD_OK);
+    Require(LightBarIs(1, false, 0, 0, 0));
+    Require(LightBarIs(0, true, midP0.r, midP0.g, midP0.b));
+    Require(LightBarIs(2, true, midP2.r, midP2.g, midP2.b));
+    Require(LightBarIs(3, true, midP3.r, midP3.g, midP3.b));
+
+    Require(scePadSetLightBar(handles[1], &midP1) == PAD_OK);
+    Require(LightBarIs(1, true, midP1.r, midP1.g, midP1.b));
+
+    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK);
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(LightBarIs(p, false, 0, 0, 0));
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadSetLightBar(handles[p], nullptr) == PAD_ERROR_INVALID_ARG);
+    }
+    for (const int invHandle : {-9999, -1, 0, handles[3] + 1, 9999}) {
+        Require(scePadSetLightBar(invHandle, &white) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetLightBar(invHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadResetLightBar(invHandle) == PAD_ERROR_INVALID_HANDLE);
+    }
+    for (int p = 0; p < PAD_MAX_CONTROLLERS; ++p) {
+        Require(scePadClose_nid_postfix(handles[p]) == PAD_OK);
+    }
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1488,5 +1758,10 @@ int main() {
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    CheckAudioFunctionSupport();
+    CheckAudioOutPathRouting();
+    CheckAudioHapticsPortMapping();
+    CheckVolumeGainBounds();
+    CheckLightBarColorFadeInterpolation();
     CheckPortZeroWithdrawn();
 }
