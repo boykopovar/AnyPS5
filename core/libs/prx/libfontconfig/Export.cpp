@@ -1,7 +1,7 @@
 #include "prx/libfontconfig/include/Configuration.hpp"
 #include "prx/libfontconfig/include/InventoryExports.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
-#include "prx/libfontconfig/include/Sets.hpp"
+#include "prx/libfontconfig/include/Config.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <array>
@@ -54,10 +54,6 @@ int APS5_VABI FcFontMatch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcConfigCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcPatternGetFTFace() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -100,10 +96,6 @@ void APS5_VABI FcCharSetDestroy(FcCharSet* set) {
     if (set && set->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete set;
 }
 
-int APS5_VABI FcConfigDestroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 FcCharSet* APS5_VABI FcCharSetCreate() {
     return new (std::nothrow) FcCharSet;
 }
@@ -136,10 +128,6 @@ void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const F
 }
 
 int APS5_VABI FcDefaultSubstitute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcConfigReference() {
     NotImplemented_nid_no_patch(__func__);
 }
 
