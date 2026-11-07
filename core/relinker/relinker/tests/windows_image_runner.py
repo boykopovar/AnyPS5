@@ -8,6 +8,7 @@ SYS_ARCH_PRCTL = 158
 ARCH_SET_GS = 0x1001
 THREAD_LOCAL_STORAGE_POINTER = 0x58
 DLL_PROCESS_ATTACH = 1
+IMAGE_REL_BASED_DIR64 = 10
 
 
 def run(path, entry):
@@ -27,6 +28,18 @@ def run(path, entry):
         virtual_size, rva, raw_size, raw = struct.unpack_from("<IIII", pe, sections + index * 40 + 8)
         size = min(raw_size, virtual_size)
         image[rva:rva + size] = pe[raw:raw + size]
+    relocations, relocations_size = struct.unpack_from("<II", pe, optional + 112 + 5 * 8)
+    if relocations_size:
+        delta = base - image_base
+        offset = relocations
+        while offset < relocations + relocations_size:
+            page, block_size = struct.unpack_from("<II", image, offset)
+            for relocation in struct.unpack_from(f"<{(block_size - 8) // 2}H", image, offset + 8):
+                if relocation >> 12 == IMAGE_REL_BASED_DIR64:
+                    address = page + (relocation & 0xfff)
+                    struct.pack_into("<Q", image, address, (struct.unpack_from("<Q", image, address)[0] + delta) & 0xffffffffffffffff)
+            offset += block_size
+        image_base = base
     start, end, index_address, callbacks, zero_fill = struct.unpack_from("<QQQQI", image, tls_directory)
     struct.pack_into("<I", image, index_address - image_base, 0)
     block = ctypes.create_string_buffer(image[start - image_base:end - image_base] + bytes(zero_fill), end - start + zero_fill)
