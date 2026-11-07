@@ -1,6 +1,7 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd/include/Api.hpp"
+#include "prx/libSceHmd/include/InventoryExports.hpp"
 
 #include <array>
 #include <cstddef>
@@ -48,6 +49,13 @@ void CheckDisconnected() {
     Require(!sceHmdInternalIsMiniAppVr2d(), "mini app reported in VR2D without a headset");
     Require(!sceHmdInternalIsCommonDlgVr2d(), "common dialog reported in VR2D without a headset");
     Require(!sceHmdInternalIsCommonDlgMiniAppVr2d(), "common dialog mini app reported in VR2D without a headset");
+}
+
+void CheckUnnamedConstants() {
+    Require(libSceHmdUnknown_miduc55U7q8_nid_no_patch() == 0, "miduc55U7q8 result");
+    Require(libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch() == 0, "nlAZlOKJy+c result");
+    Require(libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch() == 0, "rczCXLh2-b4 result");
+    Require(libSceHmdUnknown_smQw6nT8PcA_nid_no_patch() == Hmd::ParameterInvalid, "smQw6nT8PcA result");
 }
 
 void CheckBufferQueries() {
@@ -163,6 +171,41 @@ void CheckAssyError(std::int32_t expected) {
     for (const auto byte : data) Require(byte == 0x5a, "a refused assembly error query wrote its output");
 }
 
+void CheckInternalQueries() {
+    std::uint32_t puVersion = 0;
+    std::uint8_t depth = 0;
+    std::uint8_t debugTextMode = 0;
+    char serialNumber[32]{};
+    std::uint8_t socialScreenMode = 0;
+    std::uint64_t dfuStatus = 0;
+    HmdEyeDistances distances{};
+    std::uint32_t crashReportSize = 0;
+
+    Require(sceHmdInternalGetPUVersion(nullptr) == Hmd::ParameterNull, "null puVersion");
+    Require(sceHmdInternalGetPUVersion(&puVersion) == Hmd::NotInitialized, "puVersion before initialize");
+
+    Require(sceHmdInternalGetVirtualDisplayDepth(nullptr) == Hmd::ParameterNull, "null depth");
+    Require(sceHmdInternalGetVirtualDisplayDepth(&depth) == Hmd::NotInitialized, "depth before initialize");
+
+    Require(sceHmdInternalGetDebugTextMode(nullptr) == Hmd::ParameterNull, "null debugTextMode");
+    Require(sceHmdInternalGetDebugTextMode(&debugTextMode) == Hmd::NotInitialized, "debugTextMode before initialize");
+
+    Require(sceHmdInternalGetPUSerialNumber(nullptr) == Hmd::ParameterNull, "null serialNumber");
+    Require(sceHmdInternalGetPUSerialNumber(serialNumber) == Hmd::NotInitialized, "serialNumber before initialize");
+
+    Require(sceHmdInternalGetDebugSocialScreenMode(nullptr) == Hmd::ParameterNull, "null socialScreenMode");
+    Require(sceHmdInternalGetDebugSocialScreenMode(&socialScreenMode) == Hmd::NotInitialized, "socialScreenMode before initialize");
+
+    Require(sceHmdInternalDfuGetStatus(nullptr) == Hmd::ParameterNull, "null dfuStatus");
+    Require(sceHmdInternalDfuGetStatus(&dfuStatus) == Hmd::NotInitialized, "dfuStatus before initialize");
+
+    Require(sceHmdInternalGetIPD(nullptr) == Hmd::ParameterNull, "null distances");
+    Require(sceHmdInternalGetIPD(&distances) == Hmd::NotInitialized, "distances before initialize");
+
+    Require(sceHmdInternalCrashReportReadDataSize(nullptr) == Hmd::ParameterNull, "null crashReportSize");
+    Require(sceHmdInternalCrashReportReadDataSize(&crashReportSize) == Hmd::NotInitialized, "crashReportSize before initialize");
+}
+
 }
 
 int main() {
@@ -174,6 +217,8 @@ int main() {
     InstallProcessParameters();
     CheckDisconnected();
     CheckBufferQueries();
+    CheckUnnamedConstants();
+    CheckInternalQueries();
     Require(sceHmdTerminate() == Hmd::NotInitialized, "terminate before initialize");
     Require(sceHmdOpen(1, 0, 0, nullptr) == Hmd::NotInitialized, "open before initialize");
     Require(sceHmdClose(0) == Hmd::NotInitialized, "close before initialize");

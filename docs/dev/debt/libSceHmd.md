@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [Internal HMD parameter and status queries](../../../core/libs/prx/libSceHmd/Export.cpp) (libSceHmd) - `sceHmdInternalGetPUVersion`, `sceHmdInternalGetVirtualDisplayDepth`, `sceHmdInternalGetDebugTextMode`, `sceHmdInternalGetPUSerialNumber`, `sceHmdInternalGetDebugSocialScreenMode`, `sceHmdInternalDfuGetStatus`, `sceHmdInternalGetIPD` and `sceHmdInternalCrashReportReadDataSize` return `ParameterNull` (`0x81110008`) for a null output pointer and `NotInitialized` (`0x81110002`) before `sceHmdInitialize`. Later device responses are not modelled and call `NotImplemented_nid_no_patch`.
+
 - [libSceHmd internal and capture exports](../../../core/libs/prx/libSceHmd/Export.cpp) - input/output directions and argument registers are recovered for shared VR2D data, device binding, optical and serial queries, screen status and capture operations. VR2D records are 128 bytes, optical output 16, serial output 16, PU position output 20, crash-dump output 68, audio/video status 32, and reprojection debug outputs 216 or 1136. Payload field meanings and capture callback contracts remain incomplete; these structures use forward declarations.
 
 - [libSceHmd queries without a headset](../../../core/libs/prx/libSceHmd/Export.cpp) (libSceHmd) - the signatures, the distortion work memory (`0x20000`, aligned to `0x400`) and reprojection buffer sizes (garlic `0x100000`, onion `0x810`, both aligned to `0x100`), and the results of `sceHmdGetFieldOfView`, `sceHmdGet2DEyeOffset`, `sceHmdGetInertialSensorData` (`HANDLE_INVALID` once initialized; field of view checks its output for null first) and `sceHmdGetAssyError` (null output, then `DEVICE_DISCONNECTED` once initialized) follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/hmd/hmd.cpp) (PS4) with no headset, not a PS5 measurement. The third argument of `sceHmdGetInertialSensorData` is unnamed there and taken as a count
@@ -26,9 +28,11 @@
 
 The ELF export table aliases the [Distortion correction/2D command and work-memory queries](../../../core/libs/prx/libSceHmd/Export.cpp) to their corresponding HMD queries, confirming identical signatures. Distortion initialization consumes only a work-memory pointer. No shader code or calibration constants are copied; each aliased command query answers as its twin, and distortion initialization keeps its protected body.
 
+- [Unknown NIDs `miduc55U7q8`, `nlAZlOKJy+c`, `rczCXLh2-b4` and `smQw6nT8PcA`](../../../core/libs/prx/libSceHmd/Export.cpp) (libSceHmd) - names, parameters and the meaning of the results are unknown; the no-parameter `int` declarations claim only the 32-bit return. In firmware 13.42's `libSceHmd.sprx` (SHA-256 `f32e942b69a8c7184049c2f5a62bdd475c89d867078b4ee09909bc2cd0d7e7fe`), read from disassembly and not run on a console, the first three (`0x13a50`, `0x2470`, `0x13a60`) are `xor %eax,%eax; ret` and `smQw6nT8PcA` (`0x6160`) is `mov $0x81110009,%eax; ret`; none reads an argument or writes memory.
+
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceHmd/Export.cpp) - 19 entries observed in a 3.20-labelled image and a later 13.60-labelled image are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceHmd/Export.cpp) - 15 entries observed in a 3.20-labelled image and a later 13.60-labelled image are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 [Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/3fbb1a4a6f95a936b4cd58e9c3d8c50c/5e3af709224ed8235af11337309af0725e5685cb) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled image. The extract SHA-256 is `02ab27f12bcd0cc9fa03fa33f55fc201110f0d54a86bbbaa093d55d0a8cf262d`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. This is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior.
 
@@ -43,13 +47,9 @@ The ELF export table aliases the [Distortion correction/2D command and work-memo
 | `Unknown` | `aTg7K0466r8` |
 | `Unknown` | `eRVgwy9PbWg` |
 | `Unknown` | `mVIneDkja6c` |
-| `Unknown` | `miduc55U7q8` |
-| `Unknown` | `nlAZlOKJy+c` |
 | `Unknown` | `ox9NqLO9LhI` |
 | `Unknown` | `oxoDINgOrZk` |
 | `Unknown` | `qS18I6w2SZM` |
-| `Unknown` | `rczCXLh2-b4` |
 | `Unknown` | `sWZSZB-mnw4` |
-| `Unknown` | `smQw6nT8PcA` |
 | `Unknown` | `thTykLZ-tZs` |
 | `Unknown` | `uab6BzXsfkk` |
