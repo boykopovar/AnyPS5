@@ -74,7 +74,15 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: sectionless ELF needs little-endian ELF64 program headers")
     take(data, program_offset, program_count * program_size, path, "program header table")
     segments = [unpack("<IIQQQQQQ", data, program_offset + index * program_size, path, f"program header {index}") for index in range(program_count)]
-    loads = [segment for segment in segments if segment[0] == 1]
+    loads = []
+    for segment in segments:
+        if segment[0] == 1:
+            _, _, offset, _, _, file_size, mem_size, _ = segment
+            if file_size > mem_size:
+                raise AuditError(f"{path}: load segment file size {file_size} exceeds memory size {mem_size}")
+            if file_size:
+                take(data, offset, file_size, path, "load segment")
+            loads.append(segment)
 
     def file_offset(address, size, what):
         for segment in loads:

@@ -34,10 +34,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_22PDPuDQG_minus_M_nid_no_patch(
 }
 APS5_EXPORT("22PDPuDQG-M", customMusicPlayReady4LegacyUnknown_22PDPuDQG_minus_M_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_2G9_minus_Dn_minus_tsSA_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyBufferMalloc() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("2G9-Dn-tsSA", customMusicPlayReady4LegacyUnknown_2G9_minus_Dn_minus_tsSA_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_3NXC30GzkpE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -54,10 +53,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_3f1p8hnCT_minus_E_nid_no_patch(
 }
 APS5_EXPORT("3f1p8hnCT-E", customMusicPlayReady4LegacyUnknown_3f1p8hnCT_minus_E_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_4ti9Z3f6i5k_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyStoreCleanup() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("4ti9Z3f6i5k", customMusicPlayReady4LegacyUnknown_4ti9Z3f6i5k_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_6rmPEBymtCw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -69,10 +67,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_8Bm7S9Vdc1c_nid_no_patch() {
 }
 APS5_EXPORT("8Bm7S9Vdc1c", customMusicPlayReady4LegacyUnknown_8Bm7S9Vdc1c_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_8PkaYafg_plus_JY_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyReaderBind() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("8PkaYafg+JY", customMusicPlayReady4LegacyUnknown_8PkaYafg_plus_JY_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_8bpWr65Gw3M_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -94,10 +91,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_9T5tJy16kV8_nid_no_patch() {
 }
 APS5_EXPORT("9T5tJy16kV8", customMusicPlayReady4LegacyUnknown_9T5tJy16kV8_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_B67MDDZLP3w_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyFinalize() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("B67MDDZLP3w", customMusicPlayReady4LegacyUnknown_B67MDDZLP3w_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_EGrgP9DR2FI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -114,10 +110,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_H1Cm6TaA_minus_c4_nid_no_patch(
 }
 APS5_EXPORT("H1Cm6TaA-c4", customMusicPlayReady4LegacyUnknown_H1Cm6TaA_minus_c4_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_HCgz5p5pO1M_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyMemFree() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("HCgz5p5pO1M", customMusicPlayReady4LegacyUnknown_HCgz5p5pO1M_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_He1EUNsSDT0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -129,45 +124,40 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_IoKOXedG_plus_Ok_nid_no_patch()
 }
 APS5_EXPORT("IoKOXedG+Ok", customMusicPlayReady4LegacyUnknown_IoKOXedG_plus_Ok_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_LRQY2jsxnJI_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyBufferFree() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("LRQY2jsxnJI", customMusicPlayReady4LegacyUnknown_LRQY2jsxnJI_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_MBROhxkvkjs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("MBROhxkvkjs", customMusicPlayReady4LegacyUnknown_MBROhxkvkjs_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_Ot1T0TKkYZg_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyMemRealloc() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Ot1T0TKkYZg", customMusicPlayReady4LegacyUnknown_Ot1T0TKkYZg_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_OtOGIehVSt4_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyBufferRealloc() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("OtOGIehVSt4", customMusicPlayReady4LegacyUnknown_OtOGIehVSt4_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_P7k_plus_0QIqke0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("P7k+0QIqke0", customMusicPlayReady4LegacyUnknown_P7k_plus_0QIqke0_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_Puass3BLcIk_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyCdmiLoad() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Puass3BLcIk", customMusicPlayReady4LegacyUnknown_Puass3BLcIk_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_QD_plus_E9EybrSc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("QD+E9EybrSc", customMusicPlayReady4LegacyUnknown_QD_plus_E9EybrSc_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_QsbHVhJ3xEA_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyCdmiUpdate() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("QsbHVhJ3xEA", customMusicPlayReady4LegacyUnknown_QsbHVhJ3xEA_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_R_plus_lU8Vokisk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -179,30 +169,26 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_R3woi4ILIsQ_nid_no_patch() {
 }
 APS5_EXPORT("R3woi4ILIsQ", customMusicPlayReady4LegacyUnknown_R3woi4ILIsQ_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_RfHY_minus_Ba2ap4_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyCdmiRemove() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("RfHY-Ba2ap4", customMusicPlayReady4LegacyUnknown_RfHY_minus_Ba2ap4_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_Te5nrRJAxOw_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyLicenseDelete() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Te5nrRJAxOw", customMusicPlayReady4LegacyUnknown_Te5nrRJAxOw_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_Ubo6V3NmKYc_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyUnlink() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Ubo6V3NmKYc", customMusicPlayReady4LegacyUnknown_Ubo6V3NmKYc_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_UquDHokokVk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("UquDHokokVk", customMusicPlayReady4LegacyUnknown_UquDHokokVk_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_VY_minus_v3HGTTMA_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyInitialize() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("VY-v3HGTTMA", customMusicPlayReady4LegacyUnknown_VY_minus_v3HGTTMA_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_VxM1jP5AsbA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -239,20 +225,18 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_ZF9yYeEaQgo_nid_no_patch() {
 }
 APS5_EXPORT("ZF9yYeEaQgo", customMusicPlayReady4LegacyUnknown_ZF9yYeEaQgo_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_ZcWzMk9_plus_xCE_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyApiStart() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ZcWzMk9+xCE", customMusicPlayReady4LegacyUnknown_ZcWzMk9_plus_xCE_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_a_minus_t8J_minus__minus_PwCU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("a-t8J--PwCU", customMusicPlayReady4LegacyUnknown_a_minus_t8J_minus__minus_PwCU_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_ai5JotXAbQI_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyCdmiClose() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ai5JotXAbQI", customMusicPlayReady4LegacyUnknown_ai5JotXAbQI_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_b8EPlts2i3Q_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -269,10 +253,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_dIGY_minus_SEf1J0_nid_no_patch(
 }
 APS5_EXPORT("dIGY-SEf1J0", customMusicPlayReady4LegacyUnknown_dIGY_minus_SEf1J0_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_dOj2LWDnVGI_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyBufferInit() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("dOj2LWDnVGI", customMusicPlayReady4LegacyUnknown_dOj2LWDnVGI_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_dSrDh1gljnU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -309,10 +292,9 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_g3r22JvImAM_nid_no_patch() {
 }
 APS5_EXPORT("g3r22JvImAM", customMusicPlayReady4LegacyUnknown_g3r22JvImAM_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_g9EIY6p97OQ_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyMemAlloc() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("g9EIY6p97OQ", customMusicPlayReady4LegacyUnknown_g9EIY6p97OQ_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_jVTkCgb0nDk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -324,20 +306,18 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_o3cColUYySI_nid_no_patch() {
 }
 APS5_EXPORT("o3cColUYySI", customMusicPlayReady4LegacyUnknown_o3cColUYySI_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_odzl7DZarOI_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyReaderDecrypt() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("odzl7DZarOI", customMusicPlayReady4LegacyUnknown_odzl7DZarOI_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_oidw_plus_viysuk_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("oidw+viysuk", customMusicPlayReady4LegacyUnknown_oidw_plus_viysuk_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_pirbKf6n6mo_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyApiStop() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("pirbKf6n6mo", customMusicPlayReady4LegacyUnknown_pirbKf6n6mo_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_pwX56Tpmq8Q_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -354,20 +334,18 @@ int APS5_VABI customMusicPlayReady4LegacyUnknown_qXdAcP7SjLw_nid_no_patch() {
 }
 APS5_EXPORT("qXdAcP7SjLw", customMusicPlayReady4LegacyUnknown_qXdAcP7SjLw_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_rRIQK67BCB8_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyReaderCommit() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("rRIQK67BCB8", customMusicPlayReady4LegacyUnknown_rRIQK67BCB8_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_rzZ9pwS94rs_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("rzZ9pwS94rs", customMusicPlayReady4LegacyUnknown_rzZ9pwS94rs_nid_no_patch);
 
-int APS5_VABI customMusicPlayReady4LegacyUnknown_sH7aon3o7j8_nid_no_patch() {
+int APS5_VABI sceCustomMusicPlayReadyReaderClose() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("sH7aon3o7j8", customMusicPlayReady4LegacyUnknown_sH7aon3o7j8_nid_no_patch);
 
 int APS5_VABI customMusicPlayReady4LegacyUnknown_tFvu6lioQ0I_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

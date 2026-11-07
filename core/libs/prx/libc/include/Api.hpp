@@ -1591,6 +1591,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix();
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject* error);
+[[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt8bad_cast_nid_postfix(const LibcException::ExceptionObject* error);
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message);
@@ -1665,6 +1666,9 @@ void APS5_VABI _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(std::uint64_t* w, std::ui
 void APS5_VABI _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(std::uint64_t* u, std::uint64_t value);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix(const LibcException::ExceptionObject*);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12bad_weak_ptrE_nid_postfix(const LibcException::ExceptionObject*);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12bad_any_castE_nid_postfix(const LibcException::ExceptionObject*);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12format_errorE_nid_postfix(const LibcException::ExceptionObject* error);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12future_errorE_nid_postfix(const LibcException::SystemErrorObject* error);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_18bad_variant_accessE_nid_postfix(const LibcException::ExceptionObject*);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix(const LibcException::ExceptionObject* error);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix(const LibcException::SystemErrorObject* error);
