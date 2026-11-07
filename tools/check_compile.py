@@ -20,7 +20,7 @@ DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
                  "-C", "-CC", "-dM", "-dD", "-dI")
-DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "-###", "-fdriver-only",
+DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "--autocomplete", "-###", "-fdriver-only",
                   "-dumpversion", "-dumpfullversion", "-dumpmachine", "-dumpspecs", "-ccc-print-phases", "-ccc-print-bindings",
                   "-print-file-name", "-print-prog-name", "-print-search-dirs", "-print-libgcc-file-name", "-print-multiarch",
                   "-print-multi-directory", "-print-multi-lib", "-print-multi-os-directory", "-print-sysroot",
