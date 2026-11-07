@@ -20,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 
+static constexpr int SCE_KERNEL_ERROR_EFAULT = 0x8002000E;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
 static constexpr int SCE_KERNEL_ERROR_ESRCH = 0x80020003;
@@ -387,8 +388,8 @@ int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject* buffe
     if (!buffer || !gatherState || !scatterState) return SCE_KERNEL_ERROR_EINVAL;
     ReleaseExpandedCommandBuffer(buffer);
     buffer->type = Apr::BufferType::Apr;
-    *gatherState = 0;
-    *scatterState = 0;
+    const std::uint64_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(gatherState, &zero, sizeof(zero)) || !GuestCopyOut_nid_no_patch(scatterState, &zero, sizeof(zero))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -496,7 +497,8 @@ int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer,
 int APS5_VABI sceAmprCommandBufferConstructor(Apr::CommandBufferObject* buffer) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     ReleaseExpandedCommandBuffer(buffer);
-    *buffer = {Apr::BufferType::Generic, 0, 0, 0, 0, nullptr};
+    const Apr::CommandBufferObject fresh{Apr::BufferType::Generic, 0, 0, 0, 0, nullptr};
+    if (!GuestCopyOut_nid_no_patch(buffer, &fresh, sizeof(fresh))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -911,7 +913,14 @@ int APS5_VABI sceAmprAmmGiveDirectMemory(std::int64_t searchStart, std::int64_t 
 
 int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t* start, std::uint64_t* end, std::uint64_t* multimapStart, std::uint64_t* multimapEnd) {
     if (!start || !end || !multimapStart || !multimapEnd) throw std::invalid_argument("sceAmprAmmGetVirtualAddressRanges: null output");
-    AmmVirtualAddressRanges_nid_no_patch(start, end, multimapStart, multimapEnd);
+    std::uint64_t localStart = 0;
+    std::uint64_t localEnd = 0;
+    std::uint64_t localMultimapStart = 0;
+    std::uint64_t localMultimapEnd = 0;
+    AmmVirtualAddressRanges_nid_no_patch(&localStart, &localEnd, &localMultimapStart, &localMultimapEnd);
+    if (!GuestCopyOut_nid_no_patch(start, &localStart, sizeof(localStart)) || !GuestCopyOut_nid_no_patch(end, &localEnd, sizeof(localEnd)) ||
+        !GuestCopyOut_nid_no_patch(multimapStart, &localMultimapStart, sizeof(localMultimapStart)) || !GuestCopyOut_nid_no_patch(multimapEnd, &localMultimapEnd, sizeof(localMultimapEnd)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -931,8 +940,11 @@ int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void* base, std::uint32_t offset, s
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
     const auto submitted = AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
-    if (result) *result = {0, 0};
-    if (id) *id = submitted;
+    if (result) {
+        const AmmSubmitResult value{0, 0};
+        if (!GuestCopyOut_nid_no_patch(result, &value, sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -940,7 +952,7 @@ int APS5_VABI sceAmprAmmSubmitCommandBuffer3(void* base, std::uint32_t offset, s
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
     const auto submitted = AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
-    if (id) *id = submitted;
+    if (id && !GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
