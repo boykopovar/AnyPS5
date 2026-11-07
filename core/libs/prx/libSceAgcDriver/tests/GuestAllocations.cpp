@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #if defined(__linux__)
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -384,6 +385,52 @@ void RunUnmappedGapTests() {
     GuestArena::GuestArenaReset_nid_postfix(spare, page);
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
     GuestArena::GuestArenaRelease_nid_postfix(spare, page);
+#endif
+}
+
+void RunPassedMappingTests() {
+#if defined(__linux__)
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || HostMapping::QueryFd() >= 0) return;
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* guest = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(5 * page, page));
+    const auto address = reinterpret_cast<std::uintptr_t>(guest);
+    Require(mmap(guest, 5 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == guest, "cannot map the passed mapping test pages");
+    Require(mprotect(guest + page, page, PROT_READ) == 0, "cannot make the passed mapping test's read-only page");
+    Require(mprotect(guest + 2 * page, page, PROT_NONE) == 0, "cannot make the passed mapping test's inaccessible page");
+    Require(munmap(guest + 3 * page, page) == 0, "cannot unmap the passed mapping test's gap page");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(guest, 3 * page, true, true, true);
+        mutation.Add(guest + 4 * page, page, true, true, true);
+    }
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 5 * page);
+    Require(GuestMemory::Accessible(guest + 4 * page, page, true), "the page after the passed mappings is not writable");
+    Require(mprotect(guest, 2 * page, PROT_NONE) == 0, "cannot revoke the passed mappings behind the registry");
+    Require(GuestMemory::Accessible(guest, page, true), "a writable mapping the maps scan passed was queried again instead of read from the page table");
+    Require(GuestMemory::Accessible(guest + page, page) && !GuestMemory::Accessible(guest + page, page, true), "a read-only mapping the maps scan passed was queried again or recorded as writable");
+    Require(mprotect(guest + 2 * page, page, PROT_READ | PROT_WRITE) == 0, "cannot open the inaccessible mapping behind the registry");
+    Require(GuestMemory::Accessible(guest + 2 * page, page, true), "an inaccessible mapping the maps scan passed was recorded");
+    Require(!GuestMemory::Accessible(guest + 3 * page, page), "an unmapped gap the maps scan passed is accessible");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
+    Require(!GuestMemory::Accessible(guest, page) && !GuestMemory::Accessible(guest + page, page), "invalidated passed mappings kept their recorded access");
+    Require(mprotect(guest, 2 * page, PROT_READ | PROT_WRITE) == 0, "cannot restore the passed mappings behind the registry");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address + 4 * page, page);
+    Require(GuestMemory::Accessible(guest + 4 * page, page, true), "the page after the restored passed mappings is not writable");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(guest, page, true, false, true, [&] { Require(mprotect(guest, page, PROT_READ) == 0, "cannot protect the first passed mapping"); });
+    }
+    Require(GuestMemory::Accessible(guest, page) && !GuestMemory::Accessible(guest, page, true), "a passed mapping protected through the registry kept its old access");
+    Require(GuestMemory::Accessible(guest + page, 2 * page, true), "the passed mappings after a protected one lost their access");
+    {
+        GuestAllocations::Mutation mutation;
+        const auto release = [](const void* pointer, std::size_t bytes, const void*, bool) { Require(munmap(const_cast<void*>(pointer), bytes) == 0, "cannot unmap a passed mapping test page"); };
+        mutation.Unmap(guest, 3 * page, release);
+        mutation.Unmap(guest + 4 * page, page, release);
+    }
+    GuestArena::GuestArenaRelease_nid_postfix(guest, 5 * page);
 #endif
 }
 
