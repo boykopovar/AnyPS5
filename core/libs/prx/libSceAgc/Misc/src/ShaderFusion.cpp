@@ -412,4 +412,14 @@ int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front,
     return 0;
 }
 
+int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back) {
+    if (front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
+    if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
+    if (dst == nullptr) APS5_INVALID_ARG_EX;
+    dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
+    const std::uint32_t align = 4;
+    std::memcpy(&dst->m_align, &align, sizeof(align));
+    return 0;
+}
+
 }

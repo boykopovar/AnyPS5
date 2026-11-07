@@ -61,7 +61,7 @@ jobs:
       full: ${{ steps.gate.outputs.full }}
       relinker-hosts: ${{ steps.gate.outputs.relinker-hosts }}
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         id: gate
         env:
           PR_NUMBER: ${{ inputs.pr }}
@@ -469,6 +469,9 @@ jobs:
       MESA_SHADER_CACHE_DIR: /var/cache/anyps5/mesa
       MESA_SHADER_CACHE_MAX_SIZE: 4G
     steps:
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
