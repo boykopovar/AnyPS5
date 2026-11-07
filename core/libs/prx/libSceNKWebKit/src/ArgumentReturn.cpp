@@ -47,15 +47,6 @@ void* APS5_VABI _ZN9Inspector32DatabaseBackendDispatcherHandleraSERKS0_(void* se
 }
 
 
-void* APS5_VABI _ZNK7WebCore14CredentialBase4userEv(void* self) {
-    return self;
-}
-
-void* APS5_VABI _ZNK7WebCore15HTTPHeaderField4nameEv(void* self) {
-    return self;
-}
-
-
 void* APS5_VABI _ZNK9Inspector15ScriptCallFrame12functionNameEv(void* self) {
     return self;
 }
