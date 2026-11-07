@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +41,77 @@ template<typename TAction> static void RequireThrows(TAction action, const char*
 template<std::size_t TSize, typename TValue> static void Store(std::array<std::byte, TSize>& object, std::size_t offset, TValue value) {
     Require(offset + sizeof(value) <= TSize, "store stays inside the object");
     std::memcpy(object.data() + offset, &value, sizeof(value));
+}
+
+static void RequireVerifyMissing(LibreSslOcspBasicResponse& response, LibreSslStack* certificates, std::uint64_t flags,
+    std::uint64_t expectedPreviousError, bool seedError) {
+    if (seedError) LibreSslPutError_nid_no_patch(7, 8, 9);
+    const auto basicSnapshot = response;
+    const auto dataSnapshot = *response.tbsResponseData;
+    const auto responderSnapshot = *response.tbsResponseData->responderId;
+    const auto responseStackSnapshot = response.certs ? *response.certs : LibreSslStack{};
+    const auto inputStackSnapshot = certificates ? *certificates : LibreSslStack{};
+    Require(OCSP_basic_verify_nid_postfix(&response, certificates, nullptr, flags) == 0, "missing signer returns zero");
+    Require(std::memcmp(&response, &basicSnapshot, sizeof(response)) == 0, "verification leaves the basic response unchanged");
+    Require(std::memcmp(response.tbsResponseData, &dataSnapshot, sizeof(dataSnapshot)) == 0, "verification leaves response data unchanged");
+    const auto* const responder = response.tbsResponseData->responderId;
+    const bool sameResponderValue = responderSnapshot.type == 0
+        ? responder->value.byName == responderSnapshot.value.byName
+        : responder->value.byKey == responderSnapshot.value.byKey;
+    Require(responder->type == responderSnapshot.type && sameResponderValue, "verification leaves the responder id unchanged");
+    if (response.certs) Require(std::memcmp(response.certs, &responseStackSnapshot, sizeof(responseStackSnapshot)) == 0,
+        "verification leaves the internal certificate stack unchanged");
+    if (certificates) Require(std::memcmp(certificates, &inputStackSnapshot, sizeof(inputStackSnapshot)) == 0,
+        "verification leaves the external certificate stack unchanged");
+    if (seedError) Require(ERR_get_error_nid_postfix() == expectedPreviousError, "pre-existing error remains first in the queue");
+    Require(ERR_get_error_nid_postfix() == ((std::uint64_t{39} << 24) | (std::uint64_t{0xfff} << 12) | 118),
+        "missing signer appends the pinned OCSP error code");
+    Require(ERR_get_error_nid_postfix() == 0, "missing signer adds exactly one error");
+}
+
+static void VerifyMissingSigner() {
+    constexpr std::uint64_t noIntern = 0x2;
+    LibreSslOcspResponderId responderId{0, {nullptr}};
+    LibreSslOcspResponseData data{nullptr, &responderId, nullptr, nullptr, nullptr};
+    LibreSslStack internalStack{};
+    LibreSslOcspBasicResponse response{&data, nullptr, nullptr, &internalStack};
+    LibreSslStack externalStack{};
+    ERR_clear_error_nid_postfix();
+    RequireVerifyMissing(response, &externalStack, 0, 0, false);
+
+    responderId.type = 1;
+    Asn1String invalidHash{19, 4, nullptr, 0};
+    responderId.value.byKey = &invalidHash;
+    externalStack.num = 1;
+    externalStack.data = nullptr;
+    internalStack.num = 1;
+    internalStack.data = nullptr;
+    ERR_clear_error_nid_postfix();
+    constexpr std::uint64_t previousError = (std::uint64_t{7} << 24) | (std::uint64_t{8} << 12) | 9;
+    RequireVerifyMissing(response, &externalStack, 0, previousError, true);
+
+    Asn1String validLengthHash{20, 4, nullptr, 0};
+    responderId.value.byKey = &validLengthHash;
+    ERR_clear_error_nid_postfix();
+    RequireVerifyMissing(response, nullptr, noIntern, 0, false);
+
+    ERR_clear_error_nid_postfix();
+    LibreSslStack nonemptyExternal{1, nullptr, 0, 1, nullptr};
+    RequireThrows([&] { OCSP_basic_verify_nid_postfix(&response, &nonemptyExternal, nullptr, noIntern); },
+        "a nonempty external stack reaches unsupported signer matching");
+    Require(ERR_peek_error_nid_postfix() == 0, "unsupported signer matching adds no fabricated error");
+
+    LibreSslX509 candidate{};
+    char* internalEntries[]{reinterpret_cast<char*>(&candidate)};
+    internalStack = {1, internalEntries, 1, 1, nullptr};
+    externalStack = {};
+    RequireThrows([&] { OCSP_basic_verify_nid_postfix(&response, &externalStack, nullptr, 0); },
+        "the internal stack is searched after the external stack misses");
+    Require(ERR_peek_error_nid_postfix() == 0, "unsupported internal signer matching adds no fabricated error");
+
+    data.responderId = nullptr;
+    RequireThrows([&] { OCSP_basic_verify_nid_postfix(&response, nullptr, nullptr, noIntern); }, "a missing responder id throws");
+    ERR_clear_error_nid_postfix();
 }
 
 static void Build(Guest& guest, std::int32_t count) {
@@ -119,5 +191,6 @@ int main() {
     RequireThrows([&] { Count(guest); }, "a null response data pointer throws in the count");
     for (const auto index : Indices)
         RequireThrows([&] { Get(guest, index); }, "a null response data pointer throws for every index");
+    VerifyMissingSigner();
     return 0;
 }
