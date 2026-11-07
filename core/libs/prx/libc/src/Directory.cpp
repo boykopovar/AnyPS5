@@ -17,6 +17,7 @@
 #include <string>
 #ifdef _WIN32
 #include "prx/libc/include/WindowsDescriptor.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include <cstddef>
 #include <string_view>
 #endif
@@ -63,12 +64,15 @@ int NativeOpenError(DWORD error) {
     return WindowsOpenError_nid_no_patch(error);
 }
 NativeDirectory* OpenNative(const std::filesystem::path& path) {
-    const DWORD attributes = GetFileAttributesW(path.c_str());
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error, WindowsMaxDirectoryPathLength);
+    const auto& openPath = error ? path : verbatim;
+    const DWORD attributes = GetFileAttributesW(openPath.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) { errno = NativeOpenError(GetLastError()); return nullptr; }
     if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
         errno = ENOTDIR;
         if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
-            const HANDLE followed = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            const HANDLE followed = CreateFileW(openPath.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
             if (followed != INVALID_HANDLE_VALUE) CloseHandle(followed);
             else if (GetLastError() == ERROR_CANT_RESOLVE_FILENAME) errno = ELOOP;
@@ -76,7 +80,7 @@ NativeDirectory* OpenNative(const std::filesystem::path& path) {
         return nullptr;
     }
     auto native = std::make_unique_for_overwrite<NativeDirectory>();
-    native->handle = CreateFileW(path.c_str(), FILE_LIST_DIRECTORY | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    native->handle = CreateFileW(openPath.c_str(), FILE_LIST_DIRECTORY | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (native->handle == INVALID_HANDLE_VALUE) { errno = NativeOpenError(GetLastError()); return nullptr; }
     BY_HANDLE_FILE_INFORMATION identity{};

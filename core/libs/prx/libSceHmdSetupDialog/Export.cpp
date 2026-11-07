@@ -1,5 +1,6 @@
 #include "prx/libSceHmdSetupDialog/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -32,11 +33,12 @@ int APS5_VABI sceHmdSetupDialogInitialize(void) {
 }
 
 int APS5_VABI sceHmdSetupDialogOpen(const void* param) {
-    const int status = g_status.load();
-    if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
-    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    int status = g_status.load();
+    do {
+        if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+        if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
+        if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
     return 0;
 }
 
@@ -54,13 +56,18 @@ int APS5_VABI sceHmdSetupDialogGetResult(void* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
     const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
-    std::memcpy(result, &canceled, sizeof(canceled));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
 int APS5_VABI sceHmdSetupDialogClose(void) {
-    if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
-    g_status = COMMON_DIALOG_STATUS_FINISHED;
+    int status = g_status.load();
+    do {
+        if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
+    } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
     return 0;
 }
 

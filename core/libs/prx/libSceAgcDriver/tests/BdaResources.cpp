@@ -7,6 +7,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -24,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -626,6 +628,59 @@ void importJoinTests(const Context& context) {
     change(guest, large, false);
     change(guest + 2 * large, large, false);
     Require(HostImportFor(importing, first, 16) == nullptr && HostImportFor(importing, third, 16) == nullptr, "the host imports outlived their ranges");
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
+void importWindowKeepsJoinTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 4 * piece;
+    void* block = ::operator new(2 * window, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    std::memset(guest, 0x22, 2 * window);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto viewBegin = base + 3 * piece;
+    const auto viewBytes = piece + 32;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const std::array<std::pair<std::size_t, std::size_t>, 8> ranges{{{0, piece}, {piece, piece}, {2 * piece, piece}, {3 * piece, piece}, {4 * piece, piece}, {5 * piece, piece}, {6 * piece, piece}, {7 * piece, piece}}};
+    const auto change = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& [offset, bytes] : ranges) {
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + offset, bytes, true, false, true);
+            else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + offset);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        const auto* kept = ExistingHostImportFor(importing, viewBegin, viewBytes);
+        const auto buffer = kept != nullptr ? kept->buffer : VK_NULL_HANDLE;
+        leased.AddReadable(viewBegin, viewBytes);
+        leased.Upload(true);
+        leased.WriteBack();
+        return buffer;
+    };
+    const auto bind = [&](std::uintptr_t address) {
+        GuestBufferMemory plain(importing);
+        plain.AddReadable(address, viewBytes);
+        plain.Upload(false);
+        plain.WriteBack();
+    };
+    change(true);
+    static_cast<void>(build());
+    bind(viewBegin);
+    const auto* joined = ExistingHostImportFor(importing, viewBegin, viewBytes);
+    Require(joined != nullptr && joined->joined && joined->base == base + 3 * piece && joined->bytes == 2 * piece, "a view across a window edge was not imported as one joined block");
+    const auto joinedBuffer = joined->buffer;
+    for (int pass = 0; pass < 2; ++pass) {
+        Require(build() == joinedBuffer, "an address-based build imported a window over a joined import and retired it");
+    }
+    const auto* low = ExistingHostImportFor(importing, base, 2 * piece);
+    Require(low != nullptr && low->base + low->bytes <= base + 3 * piece, "the range below a joined import was not imported beside it");
+    change(false);
     SetHostImportWindow(0);
     ::operator delete(block, std::align_val_t{window});
 }
@@ -2031,6 +2086,48 @@ void importAllocationErrorTests(const Context& context, VkResult failure, bool n
     ::operator delete(block, std::align_val_t{piece});
 }
 
+void importMixedAllocationErrorTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 16;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    ImportAllocationProbe probe(importing);
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    SetHostImportBudget(64 * piece);
+    std::size_t next = 0;
+    const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
+    const auto counted = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Access)]; };
+    Require(lookup(), "the mixed allocation error test's first import was not made");
+    const auto before = counted();
+    for (const auto failure : {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_UNKNOWN, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        probe.failure = failure;
+        Require(!lookup(), "an import with an injected mixed allocation failure was made");
+    }
+    const auto after = counted();
+    Require(after.failed - before.failed == 6 && after.refused == before.refused, "interrupted OOM failures lowered the import ceiling");
+    probe.failure = VK_SUCCESS;
+    Require(lookup(), "nonconsecutive OOM failures prevented a later successful import");
+    for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        probe.failure = failure;
+        Require(!lookup(), "an import with an injected consecutive OOM was made");
+    }
+    probe.failure = VK_SUCCESS;
+    Require(!lookup(), "three consecutive OOM failures did not lower the import ceiling");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void importCeilingTests(const Context& context, const BdaTestAccess& access, bool nearBudget) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t count = 24;
@@ -2421,6 +2518,111 @@ void spaceReadOverWritableImportTableTests(const Context& context) {
 
 ShaderRecompiler::DescriptorBinding binding(Role role, std::uint32_t slot) {
     return {ShaderRecompiler::DescriptorKind::StorageBuffer, role, 0, slot, 1, {}, false};
+}
+
+namespace {
+
+std::span<std::byte> slotBytes(const BdaTestAccess& access, const VkDescriptorBufferInfo& descriptor) {
+    return access.bytes(descriptor.buffer).subspan(static_cast<std::size_t>(descriptor.offset), static_cast<std::size_t>(descriptor.range));
+}
+
+std::span<std::byte> descriptorBytes(const BdaTestAccess& access, std::uint32_t slot) {
+    return slotBytes(access, access.descriptor(slot));
+}
+
+void writeUnmappedFault(std::span<std::byte> bytes, std::uint64_t address) {
+    const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::Unmapped, address, 4, 0, 0x40, 0};
+    std::memcpy(bytes.data(), &report, sizeof(report));
+}
+
+bool sameFaultMemory(const VkDescriptorBufferInfo& left, const VkDescriptorBufferInfo& right) {
+    return left.buffer == right.buffer && left.offset < right.offset + right.range && right.offset < left.offset + left.range;
+}
+
+void faultSlotTests(const Context& shared, const BdaTestAccess& access) {
+    const Context context = shared;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    constexpr std::size_t cached = 256;
+    std::uint64_t serial = 1000;
+    std::vector<std::unique_ptr<BdaResources>> idle;
+    for (std::size_t index = 0; index < cached; ++index) {
+        idle.push_back(std::make_unique<BdaResources>(context));
+        idle.back()->NoteUse(++serial);
+        BdaResources::NoteFinished(context.device, serial);
+    }
+    const auto counts = BdaResources::FaultSlots(context.device);
+    char message[256];
+    std::snprintf(message, sizeof(message), "%zu idle cached BdaResources hold %llu fault slots in %llu chunks (%llu KiB of host-visible memory)", cached, static_cast<unsigned long long>(counts.held), static_cast<unsigned long long>(counts.chunks), static_cast<unsigned long long>(counts.slots * ShaderRecompiler::BdaAbi::FaultBufferBytes / 1024));
+    Require(counts.held < cached / 4 && counts.slots < cached / 4 && counts.reclaimed != 0, message);
+    auto& first = *idle[0];
+    auto& second = *idle[1];
+    Require(!first.HoldsFaultSlot() && !second.HoldsFaultSlot(), "the oldest idle BdaResources kept their fault slots");
+    first.NoteUse(serial + 1);
+    second.NoteUse(serial + 1);
+    Require(first.TakeFaultSlot(context) && second.TakeFaultSlot(context), "a reused BdaResources did not take a fault slot again");
+    for (std::size_t index = 0; index < 64; ++index) idle.push_back(std::make_unique<BdaResources>(context));
+    Require(first.HoldsFaultSlot() && second.HoldsFaultSlot(), "a BdaResources whose batch is in flight lost its fault slot");
+    const auto firstSlot = first.Fault();
+    const auto secondSlot = second.Fault();
+    Require(!sameFaultMemory(firstSlot, secondSlot), "two BdaResources in one batch share fault memory");
+    writeUnmappedFault(slotBytes(access, firstSlot), 0x7fff11110000ULL);
+    writeUnmappedFault(slotBytes(access, secondSlot), 0x7fff22220000ULL);
+    reject([&] { first.CheckFault(); }, "address=0x7fff11110000");
+    reject([&] { second.CheckFault(); }, "address=0x7fff22220000");
+    idle.clear();
+    ShaderRecompiler::RecompileResult control;
+    control.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+    control.bindings = {binding(Role::FaultBuffer, 5)};
+    const std::array<CompiledShader, 1> stages{{{ShaderRecompiler::ShaderStage::TessellationControl, &control, 0}}};
+    auto disabled = context;
+    disabled.bufferDeviceAddress = false;
+    ShaderResources resources(disabled, stages, ColorTarget{}, 0, 0, 0, {});
+    const auto built = access.descriptor(5);
+    Require(built.range == ShaderRecompiler::BdaAbi::FaultBufferBytes, "a build whose program could not be read was bound less than a full fault buffer");
+    BdaResources::NoteFinished(context.device, 1);
+    std::vector<std::unique_ptr<BdaResources>> pressure;
+    const auto reclaimedBefore = BdaResources::FaultSlots(context.device).reclaimed;
+    while (BdaResources::FaultSlots(context.device).reclaimed == reclaimedBefore && pressure.size() < cached) pressure.push_back(std::make_unique<BdaResources>(context));
+    Require(BdaResources::FaultSlots(context.device).reclaimed != reclaimedBefore, "an idle fault-only build kept its fault slot under pressure");
+    Require(sameFaultMemory(pressure.back()->Fault(), built), "the reclaimed fault slot did not serve the build that needed one");
+    resources.Bind(VK_NULL_HANDLE, VK_PIPELINE_BIND_POINT_GRAPHICS, VK_NULL_HANDLE);
+    const auto rebound = access.descriptor(5);
+    Require(!sameFaultMemory(rebound, built), "a reused build was bound to the fault slot it gave back");
+    writeUnmappedFault(slotBytes(access, built), 0x7fff33330000ULL);
+    writeUnmappedFault(slotBytes(access, rebound), 0x7fff44440000ULL);
+    reject([&] { resources.CheckFaults(); }, "address=0x7fff44440000");
+    reject([&] { pressure.back()->CheckFault(); }, "address=0x7fff33330000");
+    std::vector<std::unique_ptr<BdaResources>> reports;
+    std::set<VkBuffer> reportChunks;
+    for (std::size_t index = 0; index < 64; ++index) {
+        reports.push_back(std::make_unique<BdaResources>(context, true));
+        reportChunks.insert(reports.back()->Fault().buffer);
+    }
+    std::snprintf(message, sizeof(message), "64 report-only BdaResources hold %zu fault chunks with %llu-byte slots", reportChunks.size(), static_cast<unsigned long long>(reports.front()->Fault().range));
+    Require(reportChunks.size() == 1 && reports.front()->Fault().range == sizeof(ShaderRecompiler::BdaAbi::Fault), message);
+    Require(!sameFaultMemory(reports[0]->Fault(), reports[1]->Fault()), "two report-only BdaResources share fault memory");
+    writeUnmappedFault(slotBytes(access, reports[0]->Fault()), 0x7fff55550000ULL);
+    writeUnmappedFault(slotBytes(access, reports[1]->Fault()), 0x7fff66660000ULL);
+    reject([&] { reports[0]->CheckFault(); }, "address=0x7fff55550000");
+    reject([&] { reports[1]->CheckFault(); }, "address=0x7fff66660000");
+    ShaderRecompiler::RecompileResult vertex;
+    ShaderRecompiler::RecompileResult fragment;
+    const std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityTessellation};
+    ShaderRecompiler::SpirvTarget target{};
+    target.vulkanVersion = VK_API_VERSION_1_1;
+    target.spirvVersion = 0x00010300u;
+    target.supportedCapabilities = capabilities;
+    target.tessellation = ShaderRecompiler::TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
+    const auto rectList = ShaderRecompiler::BuildRectListShaders(vertex, fragment, target);
+    const std::array<CompiledShader, 1> rectStages{{{ShaderRecompiler::ShaderStage::TessellationControl, &rectList.control, 0}}};
+    ShaderResources rectResources(disabled, rectStages, ColorTarget{}, 0, 0, 0, {});
+    const auto rectSlot = access.descriptor(rectList.control.bindings.front().binding);
+    std::snprintf(message, sizeof(message), "the rect-list check, which writes only the fault report, was bound %llu bytes of fault buffer", static_cast<unsigned long long>(rectSlot.range));
+    Require(rectSlot.range == sizeof(ShaderRecompiler::BdaAbi::Fault), message);
+    writeUnmappedFault(slotBytes(access, rectSlot), 0x7fff77770000ULL);
+    reject([&] { rectResources.CheckFaults(); }, "address=0x7fff77770000");
+}
+
 }
 
 void partialHeapImportBudgetCase(const Context& context, const BdaTestAccess& access, std::size_t bytes, std::size_t budgetBytes, std::size_t prefixBytes) {
@@ -2921,6 +3123,10 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     guest[65536 + 7] = 0x44;
     Require(build(0, {}) == first && MirrorCounters().blocksCopied == one.blocksCopied + 2, "two written heap blocks were not read again");
     Require(access.addressBytes(first)[5] == std::byte{0x33} && access.addressBytes(first)[65536 + 7] == std::byte{0x44}, "the heap mirror missed the CPU writes");
+    const auto stamped = MirrorCounters();
+    AgcDriver::GuestMemory::MarkWritten(address + 65536 + 16, 16);
+    Require(build(0, {}) == first && MirrorCounters().heapRefills == stamped.heapRefills + 1 && MirrorCounters().blocksCopied == stamped.blocksCopied, "a block stamped without a byte change was copied into its mirror again");
+    Require(build(0, {}) == first && MirrorCounters().heapRefills == stamped.heapRefills + 1 && MirrorCounters().blocksCopied == stamped.blocksCopied, "a stamped block whose bytes matched its mirror was found changed again");
     const auto quiet = MirrorCounters();
     Require(build(0, {}) == first && MirrorCounters().heapChecks == quiet.heapChecks && MirrorCounters().sweeps == quiet.sweeps && MirrorCounters().blocksCopied == quiet.blocksCopied, "an unchanged heap range was compared block by block or the mirrors were swept again");
     guest[65536 + 9] = 0x66;
@@ -4436,6 +4642,7 @@ void sparseHeapMirrorTests(const Context& context, const BdaTestAccess& access) 
 }
 
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
+    faultSlotTests(context, access);
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;
     const auto address = reinterpret_cast<std::uintptr_t>(guest.data());
@@ -4486,7 +4693,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         Require(!ShaderResources::NeverReusable(stages), "a fault-buffer build is refused the resource cache");
         Require(!resources.Reusable(), "a fault-buffer build with copied writes is reusable");
         Require(resources.NeedsCompletion() && !resources.UsesAddressTable(), "a fault-buffer build reaches guest memory through the BDA table");
-        const auto fault = access.bytes(access.descriptor(5).buffer);
+        const auto fault = descriptorBytes(access, 5);
         for (const auto byte : fault) Require(byte == std::byte{}, "rect-list fault buffer was not initialized");
         const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, 0, 0, 0, 0, 0};
         std::memcpy(fault.data(), &report, sizeof(report));
@@ -4505,7 +4712,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         ShaderResources resources(disabled, stages, ColorTarget{}, 0, 0, 0, {});
         Require(!ShaderResources::NeverReusable(stages) && resources.Reusable() && resources.ChecksFaults(), "a fault-only build is not reusable");
         resources.CheckFaults();
-        const auto fault = access.bytes(access.descriptor(5).buffer);
+        const auto fault = descriptorBytes(access, 5);
         const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, 0, 0, 0, 0, 0};
         std::memcpy(fault.data(), &report, sizeof(report));
         reject([&] { resources.CheckFaults(); }, "rect-list requires");
@@ -4525,7 +4732,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         Require(header.version == ShaderRecompiler::BdaAbi::Version && header.count == 1 && header.entryBytes == sizeof(range), "BDA header layout mismatch");
         std::memcpy(&range, table.data() + sizeof(header), sizeof(range));
         Require(range.begin == snapshots[0].address && range.end == range.begin + source.size(), "64-bit guest address was truncated");
-        const auto fault = access.bytes(access.descriptor(5).buffer);
+        const auto fault = descriptorBytes(access, 5);
         for (const auto byte : fault) Require(byte == std::byte{}, "fault buffer was not initialized");
         const ShaderRecompiler::BdaAbi::Fault denied{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::Permission, snapshots[0].address + 4, 4, 0, 0x88, 0};
         std::memcpy(fault.data(), &denied, sizeof(denied));
@@ -4541,11 +4748,11 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         changed = 999;
         std::memcpy(access.bytes(access.descriptor(6).buffer).data(), &changed, sizeof(changed));
         const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::Unmapped, 0x7fff99880000ULL, 4, 0, 0x44, 0};
-        std::memcpy(access.bytes(access.descriptor(5).buffer).data(), &report, sizeof(report));
+        std::memcpy(descriptorBytes(access, 5).data(), &report, sizeof(report));
         reject([&] { resources.WriteBack(); }, "BDA access failed");
         auto invalidRectangle = report;
         invalidRectangle.reason = ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle;
-        std::memcpy(access.bytes(access.descriptor(5).buffer).data(), &invalidRectangle, sizeof(invalidRectangle));
+        std::memcpy(descriptorBytes(access, 5).data(), &invalidRectangle, sizeof(invalidRectangle));
         reject([&] { resources.WriteBack(); }, "rect-list requires");
         Require(guest[0] == 123, "failed GPU command published writes");
     }
@@ -4554,7 +4761,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
             ShaderResources resources(context, compiled);
             std::memcpy(access.bytes(access.descriptor(6).buffer).data() + word * sizeof(std::uint32_t), &value, sizeof(value));
             const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, reason, 0x7fff99880002ULL, 4, 0, 0x5c8, otherFaults};
-            std::memcpy(access.bytes(access.descriptor(5).buffer).data(), &report, sizeof(report));
+            std::memcpy(descriptorBytes(access, 5).data(), &report, sizeof(report));
             try {
                 resources.WriteBack();
             } catch (const BdaUnalignedAccess& error) {
@@ -4672,6 +4879,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceWriteMergedPastImportTests(context, access);
     spaceReadOverWritableImportTableTests(context);
     importJoinTests(context);
+    importWindowKeepsJoinTests(context);
     importCoverageHintBudgetTests(context, access);
     failedImportJoinProbeBudgetTests(context, access);
     failedJoinWrittenViewTests(context, access);
@@ -4706,6 +4914,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     evictingRefusalJoinTests(context);
     evictingRefusalStepDownTests(context);
     importDeviceBudgetTests();
+    importMixedAllocationErrorTests(context);
     importCeilingTests(context, access, false);
     importCeilingTests(context, access, true);
     for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_UNKNOWN}) {
