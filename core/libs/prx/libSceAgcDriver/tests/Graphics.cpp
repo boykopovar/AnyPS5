@@ -5595,6 +5595,9 @@ struct MockVulkan {
     std::optional<VkDeviceSize> memoryLimit;
     std::uint64_t allocationAttempts = 0;
     std::optional<VkDeviceSize> importLimit;
+    std::optional<VkDeviceSize> importTotalLimit;
+    std::map<VkDeviceMemory, VkDeviceSize> importSizes;
+    VkDeviceSize importedBytes = 0;
     std::uint32_t bufferMemoryTypeBits = 1;
     std::vector<std::uint32_t> allocationTypes;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
@@ -5668,10 +5671,16 @@ VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAlloca
     mock.allocationTypes.push_back(info->memoryTypeIndex);
     if (mock.memoryLimit.has_value() && mock.allocatedBytes + info->allocationSize > *mock.memoryLimit) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (mock.importLimit.has_value() && info->allocationSize > *mock.importLimit && info->pNext != nullptr && static_cast<const VkMemoryAllocateFlagsInfo*>(info->pNext)->pNext != nullptr) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    const bool imported = info->pNext != nullptr && static_cast<const VkMemoryAllocateFlagsInfo*>(info->pNext)->pNext != nullptr;
+    if (imported && mock.importTotalLimit.has_value() && mock.importedBytes + info->allocationSize > *mock.importTotalLimit) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     *memory = makeHandle<VkDeviceMemory>();
     mock.memories[*memory] = std::vector<std::byte>(info->allocationSize);
     mock.allocationSizes[*memory] = info->allocationSize;
     mock.allocatedBytes += info->allocationSize;
+    if (imported) {
+        mock.importSizes[*memory] = info->allocationSize;
+        mock.importedBytes += info->allocationSize;
+    }
     if (info->pNext != nullptr) {
         const auto* flags = static_cast<const VkMemoryAllocateFlagsInfo*>(info->pNext);
         mock.allocationFlags[*memory] = flags->flags;
@@ -5709,6 +5718,10 @@ VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const
     if (const auto found = mock.allocationSizes.find(memory); found != mock.allocationSizes.end()) {
         mock.allocatedBytes -= found->second;
         mock.allocationSizes.erase(found);
+    }
+    if (const auto found = mock.importSizes.find(memory); found != mock.importSizes.end()) {
+        mock.importedBytes -= found->second;
+        mock.importSizes.erase(found);
     }
     --mock.live;
 }
@@ -13728,7 +13741,8 @@ int main(int argc, char** argv) {
                 {},
                 {},
                 [] { return mock.allocationAttempts; },
-                [](std::optional<VkDeviceSize> limit) { mock.importLimit = limit; }
+                [](std::optional<VkDeviceSize> limit) { mock.importLimit = limit; },
+                [](std::optional<VkDeviceSize> limit) { mock.importTotalLimit = limit; }
             });
             Require(mock.live == 0, "the host import validity test leaked Vulkan objects");
             return 0;

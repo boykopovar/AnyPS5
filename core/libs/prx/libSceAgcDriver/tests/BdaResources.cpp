@@ -1908,6 +1908,32 @@ void importValidityReplacementTests(const Context& context, const BdaTestAccess&
     access.limitImports(std::nullopt);
 }
 
+void importValidityReplacementPeakTests(const Context& context, const BdaTestAccess& access) {
+    ImportBudgetRanges ranges(context);
+    const auto a = ranges.Address(0);
+    const auto b = ranges.Address(1);
+    const auto c = ranges.Address(3);
+    const auto* first = HostImportFor(ranges.importing, a, 16);
+    Require(first != nullptr && first->base == a && first->bytes == ranges.bytes, "the replacement peak fixture did not import its first range");
+    const auto firstSerial = HostImportSerial(ranges.importing, a, 16, false);
+    const auto* unrelated = HostImportFor(ranges.importing, c, 16);
+    Require(unrelated != nullptr && unrelated->base == c && unrelated->bytes == ranges.bytes && HostImportLiveBytes() == 2 * ranges.bytes, "the replacement peak fixture did not import its unrelated range");
+    NoteHostImportFrame();
+    NoteHostImportFrame();
+    access.limitImportTotal(3 * ranges.bytes);
+    {
+        GuestBufferMemory memory(ranges.importing);
+        memory.AddReadable(b - 16, 32);
+        memory.Upload(false);
+        const auto* joined = ExistingHostImportFor(ranges.importing, b - 16, 32);
+        Require(joined != nullptr && joined->base == a && joined->bytes == 2 * ranges.bytes && HostImportSerial(ranges.importing, a, 16, false) != firstSerial, "a join that evicts an unrelated import was created while that import was still pinned");
+        Require(HostImportSerial(ranges.importing, c, 16, false) == 0 && HostImportLiveBytes() == 2 * ranges.bytes, "the unrelated import was not retired for the join, or the pinned bytes passed the budget");
+        memory.WriteBack();
+    }
+    access.limitImportTotal(std::nullopt);
+    ranges.CheckUnchanged();
+}
+
 void importValidityCeilingTests(const Context& context, const BdaTestAccess& access) {
     PieceWindow window(context);
     constexpr std::size_t MiB = std::size_t{1} << 20u;
@@ -5202,6 +5228,7 @@ void RunHostImportValidityTests(const Context& context, const BdaTestAccess& acc
     importValidityFailureTests(context, access);
     importValidityBackingTests(context);
     importValidityReplacementTests(context, access);
+    importValidityReplacementPeakTests(context, access);
     importValidityCeilingTests(context, access);
     importValidityTakenTests(context);
     importValidityGrownHeldTests(context);

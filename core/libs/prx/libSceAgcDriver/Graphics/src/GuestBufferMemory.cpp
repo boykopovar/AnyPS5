@@ -1912,12 +1912,13 @@ void rewatchRetired(const HostImports& state, std::vector<std::pair<std::uint64_
     if (!spans.empty()) GuestMemory::Rewatch(spans);
 }
 
-std::uint64_t retireLeastRecent(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t wanted) {
+std::uint64_t retireLeastRecent(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t wanted, std::uint64_t begin, std::uint64_t end) {
     std::uint64_t freed = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
     while (freed < wanted) {
         auto oldest = state.imports.end();
         for (auto it = state.imports.begin(); it != state.imports.end(); ++it) {
+            if (it->second.base + it->second.bytes > begin && it->second.base < end) continue;
             if (evictable(state, it->second) && (oldest == state.imports.end() || effectiveUse(state, it->second) < effectiveUse(state, oldest->second))) oldest = it;
         }
         if (oldest == state.imports.end()) break;
@@ -2402,6 +2403,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         ++state.budgetRefusals;
         return nullptr;
     }
+    if (live + bytes > budget) retireLeastRecent(context, state, lease, live + bytes - budget, base, base + bytes);
     ImportConstruction owner(context, base, bytes);
     auto& entry = owner.entry;
     entry.range = run.ranges.front();
@@ -2551,7 +2553,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    if (pinnedTotal(state) + bytes > budget) retireLeastRecent(context, state, lease, pinnedTotal(state) + bytes - budget);
+    if (pinnedTotal(state) + bytes > budget) retireLeastRecent(context, state, lease, pinnedTotal(state) + bytes - budget, base, base + bytes);
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
