@@ -12,6 +12,24 @@ namespace {
 using LibreSsl::Bio;
 using LibreSsl::BioMethod;
 
+constexpr int BioClose = 0x01;
+constexpr int BioFileRead = 0x02;
+constexpr int BioFileWrite = 0x04;
+constexpr int BioFileAppend = 0x08;
+constexpr int BioControlSetFilename = 108;
+
+int FileFree(Bio* bio) {
+    if (bio->shutdown) {
+        if (bio->initialized && bio->data != nullptr) {
+            fclose_nid_postfix(static_cast<FileStream*>(bio->data));
+            bio->data = nullptr;
+            bio->flags = 0;
+        }
+        bio->initialized = 0;
+    }
+    return 1;
+}
+
 int APS5_VABI FileWrite(Bio* bio, const char* data, int size) {
     if (!bio->data || size < 0 || (size && !data)) return -1;
     return static_cast<int>(fwrite_nid_postfix(data, 1, static_cast<std::size_t>(size), static_cast<FileStream*>(bio->data)));
@@ -68,6 +86,36 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
         return stream && fflush_nid_postfix(stream) == 0;
     case 12:
         return 1;
+    case BioControlSetFilename: {
+        FileFree(bio);
+        bio->shutdown = static_cast<int>(argument) & BioClose;
+
+        const char* mode = nullptr;
+        if ((argument & BioFileAppend) != 0) {
+            mode = (argument & BioFileRead) != 0 ? "a+" : "a";
+        } else if ((argument & (BioFileRead | BioFileWrite)) == (BioFileRead | BioFileWrite)) {
+            mode = "r+";
+        } else if ((argument & BioFileWrite) != 0) {
+            mode = "w";
+        } else if ((argument & BioFileRead) != 0) {
+            mode = "r";
+        }
+
+        if (mode == nullptr) {
+            LibreSslPutError_nid_no_patch(32, 0xfff, 101, __FILE__, __LINE__);
+            return 0;
+        }
+        auto* opened = fopen_nid_postfix(static_cast<const char*>(pointer), mode);
+        if (opened == nullptr) {
+            const int openError = errno;
+            LibreSslPutError_nid_no_patch(2, 0xfff, openError, __FILE__, __LINE__);
+            LibreSslPutError_nid_no_patch(32, 0xfff, 2, __FILE__, __LINE__);
+            return 0;
+        }
+        bio->data = opened;
+        bio->initialized = 1;
+        return 1;
+    }
     case 107:
         if (pointer) *static_cast<FileStream**>(pointer) = stream;
         return 1;
