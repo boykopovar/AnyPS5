@@ -51,7 +51,7 @@ std::string MachODependency(const std::string& name, const std::string& origin) 
     return "@rpath/" + name;
 }
 
-MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message, const bool traceImports) : fixedBase(fixedBase), message(std::move(message)), traceImports(traceImports) {
+MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message, const bool traceImports, const bool functionSymbolRoots) : fixedBase(fixedBase), message(std::move(message)), traceImports(traceImports), functionSymbolRoots(functionSymbolRoots) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed macOS guest image base");
 }
@@ -72,6 +72,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
 
     MacOsImageInput input;
     input.Executable = true;
+    input.FunctionSymbolRoots = functionSymbolRoots;
     input.Source = &sourceElf;
     input.Headers = &originalHeaders;
     input.Image = &image;
@@ -94,7 +95,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
         } else if (section == SHN_ABS) input.Exports.push_back({name, value, flags | ExportKindAbsolute});
         else {
             if (section >= SHN_LORESERVE) throw Domain::RelinkerException("Unsupported macOS executable export section: " + name);
-            input.Exports.push_back({name, image.GetRva(value, std::max<std::uint64_t>(Io::ReadU64(symbols, offset + 16), 1)), flags});
+            input.Exports.push_back({name, image.GetRva(value, functionSymbolRoots && (info & 15) == STT_FUNC ? 1 : std::max<std::uint64_t>(Io::ReadU64(symbols, offset + 16), 1)), flags});
         }
     }
     input.Rebases = relocations.BaseRelocations;
