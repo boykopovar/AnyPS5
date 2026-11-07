@@ -56,7 +56,7 @@ int APS5_VABI sceAgcDriverSetSubmitValidationMode(uint32_t mode);
 int APS5_VABI sceAgcDriverGetSubmitValidationConfig(void* config);
 int APS5_VABI sceAgcDriverGetSubmitValidationMode(uint32_t* mode);
 int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void* config);
-int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* first, uint16_t* second);
+int APS5_VABI sceAgcDriverGetHsOffchipParam(uint16_t* granularity, uint16_t* buffering);
 int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes);
 int APS5_VABI sceAgcDriverSetValidationDisabled();
 int APS5_VABI sceAgcDriverGetCaptureConfig();
