@@ -237,7 +237,14 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetEta(handle, &chunk, 0, &eta) == badSize);
     Require(scePlayGoGetEta(handle, &chunk, 1, &eta) == 0 && eta == 0);
     Require(scePlayGoPrefetchOptionalChunk(handle + 1, 0, nullptr) == badHandle);
-    Require(scePlayGoPrefetchOptionalChunk(handle, 0, nullptr) == 0);
+    Require(scePlayGoPrefetchOptionalChunk(handle, 0, nullptr) == badPointer);
+    Require(scePlayGoPrefetchOptionalChunk(handle, 3, &request) == badOptionalType);
+    Require(scePlayGoPrefetchOptionalChunk(handle, 0, &request) == 0);
+    Require(scePlayGoPrefetchOptionalChunk(handle, 1, &request) == 0);
+    request.scenarios = 0x20;
+    Require(scePlayGoPrefetchOptionalChunk(handle, 1, &request) == badScenarioConfiguration);
+    request.scenarios = 0x1F;
+    Require(scePlayGoPrefetchOptionalChunk(handle, 1, &request) == 0);
     Require(scePlayGoClose(handle + 1) == badHandle);
     Require(scePlayGoClose(handle) == 0);
     Require(scePlayGoTerminate() == 0);
