@@ -4,6 +4,7 @@
 
 - [Font format support](../../../core/libs/prx/libSceFontFt/Export.cpp): format queries now take the font library, validate its magic and lock it while checking its actual FreeType modules. The host registers its default modules at creation rather than enabling formats individually, so format-selection state and guest allocator failures during format registration are not reproduced. Unsupported foreign drivers throw.
 - [TrueType GX support](../../../core/libs/prx/libSceFontFt/Export.cpp): the GX query checks the bundled FreeType TrueType module, whose configuration enables GX variation support. The console's response for a FreeType build without GX variation support has not been measured.
+- [System font format support](../../../core/libs/prx/libSceFontFt/Export.cpp): `sceFontFtSupportSystemFonts` queries the bundled FreeType CFF and TrueType modules for OpenType font support, matching `sceFontFtSupportOpenType`. Console behavior without OpenType support has not been measured.
 
 ### Unknown function info
 

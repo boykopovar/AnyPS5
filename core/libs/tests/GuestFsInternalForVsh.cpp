@@ -34,5 +34,10 @@ int main() {
     CheckWorkspaceOptInit(sceFsInitCreateWorkspaceOpt);
     CheckWorkspaceOptInit(sceFsInitDeleteWorkspaceOpt);
     CheckWorkspaceOptInit(sceFsInitUmountWorkspaceOpt);
+    for (int call = 0; call < 2; ++call) {
+        Require(libSceFsInternalForVshUnknown_0XlyVxRNeIw_nid_no_patch() == 0);
+        Require(libSceFsInternalForVshUnknown_W8CmA_plus_wZ9_plus_w_nid_no_patch() == 0);
+        Require(libSceFsInternalForVshUnknown_lxyJjALNmp4_nid_no_patch() == 0);
+    }
     return 0;
 }

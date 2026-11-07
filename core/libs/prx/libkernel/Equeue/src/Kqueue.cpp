@@ -51,7 +51,9 @@ constexpr int KQ_STACK_EVENTS = 64;
 constexpr int KQ_MAX_SCAN = 1024;
 constexpr std::int16_t EVFILT_AIO = -3;
 constexpr std::int16_t EVFILT_PROC = -5;
+constexpr std::int16_t EVFILT_SIGNAL = -6;
 constexpr std::int16_t EVFILT_PROCDESC = -8;
+constexpr std::int16_t EVFILT_FS = -9;
 constexpr std::int16_t EVFILT_LIO = -10;
 constexpr std::int16_t EVFILT_SENDFILE = -12;
 constexpr std::uint32_t NOTE_EXIT = 0x80000000;
@@ -237,7 +239,7 @@ void ResetEdge(KernelEqueueEvent* e) {
 
 void WatchEdges(KernelEqueueEvent& event, bool socket) {
     const int descriptor = static_cast<int>(event.event.ident);
-    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, event.event.filter == EVFILT_WRITE);
+    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, descriptor, event.event.filter == EVFILT_WRITE);
     event.filter.data = watch.get();
     event.filter.waitDescriptor = watch->Descriptor();
     event.filter.owner = std::move(watch);
@@ -388,6 +390,17 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     return GuestErrno(queue->AddEvent(event));
 }
 
+int AddFsKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
+    event.event.fflags = 0;
+    event.event.data = 0;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
 bool DefinedProcessChange(const KernelEqueueRef& queue, const KernelEvent& change) {
     if (queue->HasEvent(change.ident, change.filter)) {
         return (change.flags & EV_DELETE) != 0 || (change.fflags & ~NOTE_EXIT) == 0;
@@ -399,6 +412,17 @@ bool DefinedProcessChange(const KernelEqueueRef& queue, const KernelEvent& chang
 }
 
 int AddProcessKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
+    event.event.fflags = 0;
+    event.event.data = 0;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
+int AddSignalKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     KernelEqueueEvent event{};
     event.event = change;
     event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
@@ -556,7 +580,7 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
         if (!DefinedProcessChange(queue, change)) {
             NotImplemented_nid_no_patch("kevent: EVFILT_PROC on another process or with notes other than NOTE_EXIT");
         }
-    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
+    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER && change.filter != EVFILT_FS && change.filter != EVFILT_SIGNAL) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
@@ -574,6 +598,10 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
             error = AddTimerKnote(queue, change, flags);
         } else if (change.filter == EVFILT_USER) {
             error = AddUserKnote(queue, change, flags);
+        } else if (change.filter == EVFILT_FS) {
+            error = AddFsKnote(queue, change, flags);
+        } else if (change.filter == EVFILT_SIGNAL) {
+            error = AddSignalKnote(queue, change, flags);
         } else if (change.filter == EVFILT_PROC) {
             error = AddProcessKnote(queue, change, flags);
         } else if (change.filter == EVFILT_VNODE) {
@@ -637,6 +665,22 @@ void KqueueDescriptorClosed(int descriptor) {
     }
     for (const auto& queue : queues) {
         queue->RemoveDescriptorEvents(static_cast<std::uintptr_t>(descriptor));
+    }
+}
+
+void KqueueSignalSent(int guest) {
+    std::vector<KernelEqueueRef> queues;
+    {
+        std::lock_guard lock(g_kqueueMutex);
+        for (const auto& [kqueueDescriptor, queue] : g_kqueues) {
+            queues.push_back(queue);
+        }
+    }
+    for (const auto& queue : queues) {
+        queue->EditEvent(static_cast<std::uintptr_t>(guest), EVFILT_SIGNAL, [](KernelEqueueEvent& event) {
+            ++event.event.data;
+            event.triggered = true;
+        });
     }
 }
 
