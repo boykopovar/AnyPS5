@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
@@ -13,6 +14,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/StagingCopyBack_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
@@ -22,6 +25,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/DispatchArguments_spv.h"
 #include <algorithm>
@@ -141,10 +145,10 @@ AgcDriver::Mutex threadSyncsMutex;
 
 // This thread's fence and timeline waits in total (Recorder::ThreadWaitedMs): a caller times a span
 // of its own work and reads the difference to learn how much of it was waiting for the GPU.
-thread_local double threadWaitedMs = 0;
+struct ThreadWaitedSlot {};
 
 void CountThreadSync(int source, double ms) {
-    threadWaitedMs += ms;
+    HostThreadSlot<double, ThreadWaitedSlot>::Set(HostThreadSlot<double, ThreadWaitedSlot>::Get() + ms);
     const auto tag = GuestMemory::GpuLockThreadTag();
     std::lock_guard lock(threadSyncsMutex);
     auto it = std::find_if(threadSyncs.begin(), threadSyncs.end(), [&](const ThreadSyncs& thread) { return thread.tag == tag; });
@@ -246,7 +250,11 @@ bool RecorderAlive(std::uint64_t id) {
 
 // Completion actions in progress on this thread (finish()): a pending-write sync the flush hook
 // makes from inside one (a copied buffer's write-back store) is skipped, see SyncThrough.
-thread_local int completionDepth = 0;
+struct CompletionDepthSlot {};
+
+int completionDepth() {
+    return HostThreadSlot<int, CompletionDepthSlot>::Get();
+}
 // This thread's hook syncs that waited for an unsignaled target (Recorder::ThreadHookWaits).
 thread_local std::uint64_t hookRealWaits = 0;
 
@@ -257,7 +265,7 @@ bool Recorder::Alive(std::uint64_t id) {
 }
 
 bool Recorder::InCompletion() {
-    return completionDepth != 0;
+    return completionDepth() != 0;
 }
 
 namespace {
@@ -1038,7 +1046,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     // rest of this one's, and this queue's queued label follows every batch of its own in flight
     // anyway, so the write-back landing first is the order the hardware gives.
     if (!QueuedLabelRanges().empty() && QueuedLabelOverlaps(address, bytes)) {
-        if (completionDepth != 0 && HookCompletionGuard()) {
+        if (completionDepth() != 0 && HookCompletionGuard()) {
             queuedLabelHookInCompletion.fetch_add(1, std::memory_order_relaxed);
         } else if (auto* record = queuedLabelRecorder.load(std::memory_order_acquire); record != nullptr) {
             queuedLabelHookRecords.fetch_add(1, std::memory_order_relaxed);
@@ -1059,7 +1067,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     }
     const auto site = GuestMemory::CurrentReadSite();
     const auto scope = site != GuestMemory::ReadSite::Store ? PublishScope::Whole : PublishScope::PartialUnits;
-    const bool waited = completionDepth != 0;
+    const bool waited = completionDepth() != 0;
     bool published = false;
     // The classification is made before the store (the store changes what it measures); profile only.
     StorageTexture::AccessClassification classification{};
@@ -1079,7 +1087,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     } else {
         stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
     }
-    if (stored || published || (completionDepth == 0 && SnapshotOverlaps(address, bytes))) {
+    if (stored || published || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
         // Stores into imported memory were only recorded; the CPU is about to read them. The wait
         // targets the batch holding them (the open one: SyncThrough submits it) and runs with the
         // mutex released when this acquisition is the outermost; a nested hook waits locked through
@@ -1091,7 +1099,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr) {
             const RecordedStoreSyncScope attribution(*recorder, address, bytes, classification, stored, HookSyncProfiled() ? RecordedStoreKey() : HookSyncKey{});
             Recorder::CountSync(2);
-            if (HookFullSync() || completionDepth != 0) recorder->Sync();
+            if (HookFullSync() || completionDepth() != 0) recorder->Sync();
             else recorder->SyncThrough(address, bytes, true);
         }
     }
@@ -1099,11 +1107,193 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
 
 }
 
+static bool CheckpointMarkersEnabled() {
+    static const bool enabled = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    return enabled;
+}
+
+struct CheckpointMarkerDevice {
+    VkDevice device = VK_NULL_HANDLE;
+    PFN_vkCmdWriteBufferMarkerAMD write = nullptr;
+    PFN_vkDestroyBuffer destroyBuffer = nullptr;
+    PFN_vkFreeMemory freeMemory = nullptr;
+    PFN_vkUnmapMemory unmapMemory = nullptr;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    const void* mapping = nullptr;
+};
+
+static CheckpointMarkerDevice& CheckpointMarkerState() {
+    static CheckpointMarkerDevice state;
+    return state;
+}
+
+static bool PrepareCheckpointMarker(const Context& context) {
+    if (!CheckpointMarkersEnabled()) return false;
+    auto& state = CheckpointMarkerState();
+    if (state.device == context.device && state.buffer != VK_NULL_HANDLE) return state.write != nullptr;
+    if (state.device != VK_NULL_HANDLE && state.device != context.device) return false;
+    if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return false;
+    auto write = reinterpret_cast<PFN_vkCmdWriteBufferMarkerAMD>(context.deviceProc(context.device, "vkCmdWriteBufferMarkerAMD"));
+    if (write == nullptr) return false;
+    auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+    auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
+    auto unmapMemory = reinterpret_cast<PFN_vkUnmapMemory>(context.deviceProc(context.device, "vkUnmapMemory"));
+    if (destroyBuffer == nullptr || freeMemory == nullptr || unmapMemory == nullptr) return false;
+    if (state.buffer == VK_NULL_HANDLE) {
+        auto createBuffer = reinterpret_cast<PFN_vkCreateBuffer>(context.deviceProc(context.device, "vkCreateBuffer"));
+        auto getRequirements = reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(context.deviceProc(context.device, "vkGetBufferMemoryRequirements"));
+        auto allocateMemory = reinterpret_cast<PFN_vkAllocateMemory>(context.deviceProc(context.device, "vkAllocateMemory"));
+        auto bindMemory = reinterpret_cast<PFN_vkBindBufferMemory>(context.deviceProc(context.device, "vkBindBufferMemory"));
+        auto mapMemory = reinterpret_cast<PFN_vkMapMemory>(context.deviceProc(context.device, "vkMapMemory"));
+        if (createBuffer == nullptr || getRequirements == nullptr || allocateMemory == nullptr || bindMemory == nullptr || mapMemory == nullptr) return false;
+        VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bufferInfo.size = 2 * sizeof(std::uint32_t);
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (createBuffer(context.device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS || buffer == VK_NULL_HANDLE) return false;
+        VkMemoryRequirements requirements{};
+        getRequirements(context.device, buffer, &requirements);
+        std::uint32_t memoryType = context.memory.memoryTypeCount;
+        const VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (std::uint32_t i = 0; i < context.memory.memoryTypeCount; ++i) {
+            if ((requirements.memoryTypeBits & (1u << i)) != 0 && (context.memory.memoryTypes[i].propertyFlags & flags) == flags) {
+                memoryType = i;
+                break;
+            }
+        }
+        if (memoryType >= context.memory.memoryTypeCount) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            return false;
+        }
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (allocateMemory(context.device, &allocation, nullptr, &memory) != VK_SUCCESS || memory == VK_NULL_HANDLE) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            return false;
+        }
+        if (bindMemory(context.device, buffer, memory, 0) != VK_SUCCESS) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            if (freeMemory != nullptr) freeMemory(context.device, memory, nullptr);
+            return false;
+        }
+        void* mapping = nullptr;
+        if (mapMemory(context.device, memory, 0, bufferInfo.size, 0, &mapping) != VK_SUCCESS || mapping == nullptr) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            if (freeMemory != nullptr) freeMemory(context.device, memory, nullptr);
+            return false;
+        }
+        std::memset(mapping, 0, bufferInfo.size);
+        state.buffer = buffer;
+        state.memory = memory;
+        state.mapping = mapping;
+    }
+    state.device = context.device;
+    state.write = write;
+    state.destroyBuffer = destroyBuffer;
+    state.freeMemory = freeMemory;
+    state.unmapMemory = unmapMemory;
+    return state.write != nullptr && state.buffer != VK_NULL_HANDLE;
+}
+
+constexpr VkDeviceSize CheckpointMarkerSerialOffset = 0;
+constexpr VkDeviceSize CheckpointMarkerTokenOffset = sizeof(std::uint32_t);
+
+void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || token == 0) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, static_cast<std::uint32_t>(token));
+    } catch (...) {
+    }
+}
+
+void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || token == 0) return;
+    try {
+        if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return;
+        auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(context.deviceProc(context.device, "vkCmdSetCheckpointNV"));
+        if (setCheckpoint == nullptr) return;
+        EmitNvCheckpointToken(commands, static_cast<AgcDriver::FaultToken>(token), setCheckpoint);
+    } catch (...) {
+    }
+}
+
+void WriteCheckpointSerial(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || serial == 0) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerSerialOffset, static_cast<std::uint32_t>(serial));
+    } catch (...) {
+    }
+}
+
+std::uint32_t LastCheckpointMarkerSerial() noexcept {
+    const void* mapping = CheckpointMarkerState().mapping;
+    if (mapping == nullptr) return 0;
+    std::uint32_t serial = 0;
+    std::memcpy(&serial, static_cast<const char*>(mapping) + CheckpointMarkerSerialOffset, sizeof(serial));
+    return serial;
+}
+
+std::uint32_t LastCheckpointMarkerToken() noexcept {
+    const void* mapping = CheckpointMarkerState().mapping;
+    if (mapping == nullptr) return 0;
+    std::uint32_t token = 0;
+    std::memcpy(&token, static_cast<const char*>(mapping) + CheckpointMarkerTokenOffset, sizeof(token));
+    return token;
+}
+
+void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (commands == VK_NULL_HANDLE) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerSerialOffset, 0);
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, 0);
+    } catch (...) {
+    }
+}
+
+void ResetCheckpointSnapshots() noexcept {
+    AgcDriver::SubmissionSnapshots::DeviceSnapshots().Reset();
+}
+
+void TeardownCheckpointMarkers() noexcept {
+    ResetCheckpointSnapshots();
+    auto& state = CheckpointMarkerState();
+    if (state.device == VK_NULL_HANDLE) return;
+    try {
+        if (state.mapping != nullptr && state.unmapMemory != nullptr) state.unmapMemory(state.device, state.memory);
+        if (state.buffer != VK_NULL_HANDLE && state.destroyBuffer != nullptr) state.destroyBuffer(state.device, state.buffer, nullptr);
+        if (state.memory != VK_NULL_HANDLE && state.freeMemory != nullptr) state.freeMemory(state.device, state.memory, nullptr);
+    } catch (...) {
+    }
+    state = CheckpointMarkerDevice{};
+}
+
 struct Recorder::ProgressWatcher {
-    std::mutex mutex;
-    std::condition_variable wake;
-    std::uint64_t submitted = 0;
-    bool stop = false;
+    std::atomic<std::uint64_t> submitted{0};
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint32_t> wakes{0};
     std::thread thread;
 
     ProgressWatcher(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, PFN_vkGetSemaphoreCounterValueKHR counterValue) {
@@ -1111,10 +1301,11 @@ struct Recorder::ProgressWatcher {
             CpuTopology::PinHelperThread("GPU progress watcher");
             std::uint64_t seen = 0;
             for (;;) {
-                {
-                    std::unique_lock lock(mutex);
-                    wake.wait(lock, [&] { return stop || submitted > seen; });
-                    if (stop) return;
+                const auto token = wakes.load(std::memory_order_acquire);
+                if (stop.load(std::memory_order_acquire)) return;
+                if (submitted.load(std::memory_order_acquire) <= seen) {
+                    wakes.wait(token, std::memory_order_acquire);
+                    continue;
                 }
                 const std::uint64_t target = seen + 1;
                 VkSemaphoreWaitInfoKHR info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
@@ -1136,19 +1327,15 @@ struct Recorder::ProgressWatcher {
     }
 
     void Submitted(std::uint64_t serial) {
-        {
-            std::lock_guard lock(mutex);
-            submitted = serial;
-        }
-        wake.notify_one();
+        submitted.store(serial, std::memory_order_release);
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
     }
 
     ~ProgressWatcher() {
-        {
-            std::lock_guard lock(mutex);
-            stop = true;
-        }
-        wake.notify_one();
+        stop.store(true, std::memory_order_release);
+        wakes.fetch_add(1, std::memory_order_release);
+        wakes.notify_one();
         thread.join();
     }
 };
@@ -1293,6 +1480,12 @@ std::uint64_t Recorder::PendingWriteBackCompletions() {
 
 std::uint64_t Recorder::RecordedWorkSinceSubmit() {
     return workSinceSubmit.load(std::memory_order_relaxed);
+}
+
+bool Recorder::NoteGuestWork(VkCommandBuffer commands) {
+    if (open == nullptr || open->commands != commands) return false;
+    open->guestWork = true;
+    return true;
 }
 
 void Recorder::CountRecordedWork() {
@@ -1615,7 +1808,7 @@ void Recorder::AnnounceSyncSite(const void* site) {
 }
 
 double Recorder::ThreadWaitedMs() {
-    return threadWaitedMs;
+    return HostThreadSlot<double, ThreadWaitedSlot>::Get();
 }
 
 std::uint64_t Recorder::ReapsWithWork() {
@@ -1793,6 +1986,12 @@ void Recorder::ensureOpen() {
         dropStaleHoldKept();
         batch->kept.insert(batch->kept.end(), holdKept.begin(), holdKept.end());
         open = std::move(batch);
+        open->predictedSerial = submissions + 1;
+        try {
+            if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
+            else WriteCheckpointSentinel(context, open->commands);
+        } catch (...) {
+        }
         if (PerformanceTrace::Recording()) {
             static std::atomic<std::uint64_t> traceIds{0};
             open->traceId = traceIds.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2372,6 +2571,12 @@ void Recorder::NoteDrawTraceToken(std::uint64_t token) noexcept {
     } catch (...) {
         AgcDriver::CaptureTrace::Log("draw-token-note-failed token=%llu", static_cast<unsigned long long>(token));
     }
+}
+
+void Recorder::NoteFaultToken(AgcDriver::FaultToken token) noexcept {
+    if (token == 0 || open == nullptr) return;
+    if (open->firstToken == 0) open->firstToken = token;
+    open->lastToken = token;
 }
 
 bool Recorder::gpuSampleCounter() {
@@ -3108,7 +3313,8 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
     }
     if (offset != nullptr) *offset = 0;
     const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-    if (!sameRegistry || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+    const auto guestBytes = use == SnapshotUse::PaddedVertex ? static_cast<std::size_t>(found->second.derived) : bytes;
+    if (!sameRegistry || !GuestMemory::UnchangedSince(address, guestBytes, found->second.generation)) {
         if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
             eraseDrawSnapshot(found);
             return {};
@@ -3964,6 +4170,13 @@ void Recorder::Submit() {
     submission.pCommandBuffers = &batch->commands;
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
+    if (CheckpointMarkersEnabled() && batch->queue == 0 && batch->predictedSerial != 0) {
+        Require(batch->predictedSerial == serial, "Recorder::Submit submit serial mismatch");
+        try {
+            if (const auto snapshot = GuestBufferMemory::TrySnapshotAddressSpace(); snapshot.has_value()) AgcDriver::SubmissionSnapshots::DeviceSnapshots().NoteSubmit(serial, snapshot->first, snapshot->second, AgcDriver::SubmitBracket{serial, CompletedThrough(), batch->firstToken, batch->lastToken});
+        } catch (...) {
+        }
+    }
     std::string tokensStr = "[";
     for (std::size_t i = 0; i < batch->drawTraceTokens.size(); ++i) {
         if (i > 0) tokensStr += ",";
@@ -3998,6 +4211,7 @@ void Recorder::Submit() {
         if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::terminate();
     }
     Check(result, "vkQueueSubmit recorder");
+    if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
     batch->submittedAt = std::chrono::steady_clock::now();
@@ -4142,7 +4356,7 @@ void Recorder::FlushDeferredReleases() {
 void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked) {
     if (bytes == 0) return;
     const auto end = address + bytes;
-    if (completionDepth != 0 && !CompletionStoreSyncs()) {
+    if (completionDepth() != 0 && !CompletionStoreSyncs()) {
         // A store made by a completion action (a copied buffer's write-back, GuestBufferMemory::
         // WriteBack) reached the flush hook, and a batch still in flight notes the range. Every
         // batch in flight now was recorded after the completing one (finish runs front to back),
@@ -4158,8 +4372,8 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         ++holdCounters.completionSyncsSkipped;
         return;
     }
-    if (completionDepth != 0) ++holdCounters.completionSyncsWaited;
-    const auto completionWaitStart = completionDepth != 0 && DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    if (completionDepth() != 0) ++holdCounters.completionSyncsWaited;
+    const auto completionWaitStart = completionDepth() != 0 && DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     struct CompletionWait {
         std::chrono::steady_clock::time_point start;
         ~CompletionWait() {
@@ -4172,7 +4386,7 @@ void Recorder::SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUn
         const void* site = announcedSite != nullptr ? announcedSite : __builtin_return_address(0);
         if (syncThroughUnlocked(address, end, source, site)) return;
         // A completion-store wait (kill switch above) is already counted as 'waited'.
-        if (completionDepth == 0) ++holdCounters.hookLockedWaits;
+        if (completionDepth() == 0) ++holdCounters.hookLockedWaits;
     }
     if (!SyncThroughEnabled() || (open != nullptr && overlaps(*open, address, end))) {
         // The announced site (or this call's caller) names the sync, not this function.
@@ -4518,8 +4732,8 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
     const auto completionStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     {
         struct InCompletion {
-            InCompletion() { ++completionDepth; }
-            ~InCompletion() { --completionDepth; }
+            InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() + 1); }
+            ~InCompletion() { HostThreadSlot<int, CompletionDepthSlot>::Set(completionDepth() - 1); }
         } inCompletion;
         for (auto& action : batch->completions) {
             try {
