@@ -1,8 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include <cstdlib>
 #include <cerrno>
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -15,108 +19,181 @@
 namespace {
 struct EnvironmentEntry {
     std::unique_ptr<char[]> owned;
-    char* borrowed = nullptr;
-    std::size_t valueSize = 0;
-    bool active = true;
-    char* Data() const { return borrowed ? borrowed : owned.get(); }
-    bool Matches(std::string_view name) const {
-        const char* data = Data();
-        const char* separator = std::strchr(data, '=');
-        return separator && std::string_view(data, separator - data) == name;
-    }
+    std::size_t capacity = 0;
+    bool borrowed = false;
 };
-constexpr std::size_t missingEntry = static_cast<std::size_t>(-1);
-std::mutex environmentMutex;
-std::vector<EnvironmentEntry>& Environment() {
-    static std::vector<EnvironmentEntry> entries;
+struct GuestEnvironment {
+    std::mutex mutex;
+    char* empty[1]{};
+    char** fallback = empty;
+    char*** storage = &fallback;
+    std::vector<EnvironmentEntry> owned;
+    std::unique_ptr<char*[]> published;
+};
+
+GuestEnvironment& Environment() {
+    static GuestEnvironment state;
+    return state;
+}
+
+bool Matches(const char* entry, std::string_view name) {
+    const char* separator = std::strchr(entry, '=');
+    return separator && std::string_view(entry, separator - entry) == name;
+}
+
+char* Find(GuestEnvironment& environment, std::string_view name) {
+    auto* entries = *environment.storage;
+    if (entries == nullptr) return nullptr;
+    for (; *entries != nullptr; ++entries)
+        if (Matches(*entries, name)) return *entries;
+    return nullptr;
+}
+
+std::vector<char*> Entries(GuestEnvironment& environment) {
+    std::vector<char*> entries;
+    if (auto* current = *environment.storage)
+        for (; *current != nullptr; ++current) entries.push_back(*current);
     return entries;
 }
+
+std::unique_ptr<char*[]> Table(const std::vector<char*>& entries) {
+    auto table = std::make_unique<char*[]>(entries.size() + 1);
+    std::copy(entries.begin(), entries.end(), table.get());
+    return table;
+}
+
+void Publish(GuestEnvironment& environment, std::unique_ptr<char*[]> table) {
+    environment.published.swap(table);
+    *environment.storage = environment.published.get();
+}
+
+bool Contains(const EnvironmentEntry& entry, const char* pointer) {
+    const auto start = reinterpret_cast<std::uintptr_t>(entry.owned.get());
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    return address >= start && address - start < entry.capacity;
+}
+
+EnvironmentEntry* Reusable(GuestEnvironment& environment, std::string_view name, const char* current) {
+    for (auto entry = environment.owned.rbegin(); entry != environment.owned.rend(); ++entry) {
+        if (current ? entry->owned.get() != current : !Matches(entry->owned.get(), name)) continue;
+        if (entry->borrowed) return nullptr;
+        if (auto* entries = *environment.storage)
+            for (; *entries != nullptr; ++entries)
+                if (*entries != entry->owned.get() && Contains(*entry, *entries)) return nullptr;
+        return &*entry;
+    }
+    return nullptr;
+}
+
+void Replace(std::vector<char*>& entries, std::string_view name, char* replacement) {
+    auto found = std::find_if(entries.begin(), entries.end(), [name](const char* entry) { return Matches(entry, name); });
+    if (found == entries.end()) {
+        entries.push_back(replacement);
+        return;
+    }
+    *found = replacement;
+    entries.erase(std::remove_if(std::next(found), entries.end(), [name](const char* entry) { return Matches(entry, name); }), entries.end());
+}
+
 bool ValidEnvironmentName(const char* name) {
     return name && *name && !std::strchr(name, '=');
 }
 int EnvironmentError(int error) { errno = error; return -1; }
-std::size_t LatestEntry(std::string_view name, bool onlyActive) {
-    const auto& entries = Environment();
-    for (std::size_t index = entries.size(); index-- > 0;)
-        if ((entries[index].active || !onlyActive) && entries[index].Matches(name)) return index;
-    return missingEntry;
-}
-char* ActiveValue(const char* name) {
-    const std::size_t found = LatestEntry(name, true);
-    return found == missingEntry ? nullptr : Environment()[found].Data() + std::strlen(name) + 1;
-}
 }
 
 extern "C" {
+void BindGuestEnvironment_nid_no_patch(char*** storage) {
+    auto& environment = Environment();
+    std::lock_guard lock(environment.mutex);
+    if (storage == environment.storage) return;
+    if (storage == nullptr) {
+        environment.fallback = *environment.storage;
+        environment.storage = &environment.fallback;
+    } else {
+        *storage = *environment.storage;
+        environment.storage = storage;
+    }
+}
+
 bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value) {
     if (!ValidEnvironmentName(name)) return false;
-    std::lock_guard lock(environmentMutex);
-    const char* found = ActiveValue(name);
-    if (!found) return false;
-    value = found;
-    return true;
+    auto& environment = Environment();
+    std::lock_guard lock(environment.mutex);
+    if (const char* found = Find(environment, name)) {
+        value = found + std::strlen(name) + 1;
+        return true;
+    }
+    return false;
 }
 
 char* APS5_VABI getenv_nid_postfix(const char* name) {
     if (!ValidEnvironmentName(name)) { errno = 22; return nullptr; }
-    std::lock_guard lock(environmentMutex);
-    return ActiveValue(name);
+    auto& environment = Environment();
+    std::lock_guard lock(environment.mutex);
+    char* const found = Find(environment, name);
+    return found ? found + std::strlen(name) + 1 : nullptr;
 }
 
 int APS5_VABI setenv_nid_postfix(const char* name, const char* value, int overwrite) {
     if (!ValidEnvironmentName(name) || !value) return EnvironmentError(22);
     try {
-        std::lock_guard lock(environmentMutex);
-        auto& entries = Environment();
-        const std::size_t nameLength = std::strlen(name);
+        auto& environment = Environment();
+        std::lock_guard lock(environment.mutex);
+        const std::string_view key(name);
+        char* const current = Find(environment, key);
+        if (current && !overwrite) return 0;
         const std::size_t valueLength = std::strlen(value);
-        const std::size_t found = LatestEntry(name, false);
-        if (found != missingEntry) {
-            auto& entry = entries[found];
-            if (entry.active && !overwrite) return 0;
-            if (!entry.borrowed && entry.valueSize >= valueLength) {
-                std::memmove(entry.owned.get() + nameLength + 1, value, valueLength + 1);
-                entry.active = true;
-                return 0;
-            }
+        if (key.size() > std::numeric_limits<std::size_t>::max() - 2 || valueLength > std::numeric_limits<std::size_t>::max() - key.size() - 2)
+            return EnvironmentError(12);
+        const std::size_t bytes = key.size() + valueLength + 2;
+        auto* reused = Reusable(environment, key, current);
+        if (reused && reused->capacity < bytes) reused = nullptr;
+        EnvironmentEntry created;
+        if (!reused) {
+            created.owned = std::make_unique<char[]>(bytes);
+            created.capacity = bytes;
+            std::memcpy(created.owned.get(), name, key.size());
+            created.owned[key.size()] = '=';
+            std::memcpy(created.owned.get() + key.size() + 1, value, valueLength + 1);
         }
-        EnvironmentEntry created{std::make_unique<char[]>(nameLength + valueLength + 2), nullptr, valueLength};
-        std::memcpy(created.owned.get(), name, nameLength);
-        created.owned[nameLength] = '=';
-        std::memcpy(created.owned.get() + nameLength + 1, value, valueLength + 1);
-        entries.push_back(std::move(created));
-        if (found != missingEntry) {
-            if (entries[found].borrowed) entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(found));
-            else entries[found].active = false;
-        }
+        char* const replacement = reused ? reused->owned.get() : created.owned.get();
+        auto entries = Entries(environment);
+        Replace(entries, key, replacement);
+        auto table = Table(entries);
+        if (reused) std::memmove(replacement + key.size() + 1, value, valueLength + 1);
+        else environment.owned.push_back(std::move(created));
+        Publish(environment, std::move(table));
         return 0;
     } catch (const std::bad_alloc&) { return EnvironmentError(12); }
 }
 
 int APS5_VABI unsetenv_nid_postfix(const char* name) {
     if (!ValidEnvironmentName(name)) return EnvironmentError(22);
-    std::lock_guard lock(environmentMutex);
-    auto& entries = Environment();
-    const std::string_view key(name);
-    std::erase_if(entries, [key](const EnvironmentEntry& entry) { return entry.borrowed && entry.Matches(key); });
-    for (auto& entry : entries)
-        if (entry.Matches(key)) entry.active = false;
-    return 0;
+    try {
+        auto& environment = Environment();
+        std::lock_guard lock(environment.mutex);
+        const std::string_view key(name);
+        if (Find(environment, key) == nullptr) return 0;
+        auto entries = Entries(environment);
+        std::erase_if(entries, [key](const char* entry) { return Matches(entry, key); });
+        Publish(environment, Table(entries));
+        return 0;
+    } catch (const std::bad_alloc&) { return EnvironmentError(12); }
 }
 
 int APS5_VABI putenv_nid_postfix(char* text) {
     const char* separator = text ? std::strchr(text, '=') : nullptr;
     if (!separator || separator == text) return EnvironmentError(22);
     try {
-        std::lock_guard lock(environmentMutex);
-        auto& entries = Environment();
-        const std::size_t found = LatestEntry(std::string_view(text, separator - text), true);
-        if (found != missingEntry && entries[found].borrowed) {
-            entries[found].borrowed = text;
-            return 0;
-        }
-        entries.push_back({nullptr, text});
-        if (found != missingEntry) entries[found].active = false;
+        auto& environment = Environment();
+        std::lock_guard lock(environment.mutex);
+        const std::string_view key(text, separator - text);
+        auto entries = Entries(environment);
+        Replace(entries, key, text);
+        auto table = Table(entries);
+        for (auto& entry : environment.owned)
+            if (Contains(entry, text)) entry.borrowed = true;
+        Publish(environment, std::move(table));
         return 0;
     } catch (const std::bad_alloc&) { return EnvironmentError(12); }
 }
