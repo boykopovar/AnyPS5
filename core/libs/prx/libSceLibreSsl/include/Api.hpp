@@ -618,7 +618,7 @@ LibreSsl::Bio* APS5_VABI BIO_new_nid_postfix(const LibreSsl::BioMethod* method);
 LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* stream, int closeFlag);
 LibreSsl::Bio* APS5_VABI BIO_new_mem_buf_nid_postfix(const void* source, int size);
 LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag);
-int APS5_VABI BIO_printf_nid_postfix(void);
+int APS5_VABI BIO_printf_nid_postfix(LibreSsl::Bio* bio, const char* format, ...);
 int APS5_VABI BIO_puts_nid_postfix(LibreSsl::Bio* bio, const char* source);
 const LibreSsl::BioMethod* APS5_VABI BIO_s_file_nid_postfix();
 const LibreSsl::BioMethod* APS5_VABI BIO_s_mem_nid_postfix();
