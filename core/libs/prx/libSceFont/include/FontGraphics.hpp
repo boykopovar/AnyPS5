@@ -8,6 +8,7 @@
 namespace Font {
 
 void SetGraphicsErrorCallback(GraphicsErrorCallback callback);
+int ReportGraphicsError(int error);
 int GraphicsRegionInit(FontGraphicsRegion* region, float x, float y, float width, float height);
 int GraphicsRegionInitCircular(FontGraphicsRegion* region, float centerX, float centerY, float outerRadius, float innerRadius);
 int GraphicsRegionInitRoundish(FontGraphicsRegion* region, float x, float y, float width, float height, float outerRadius, float innerRadius, std::uint32_t flags);
