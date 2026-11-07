@@ -31,6 +31,7 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             if (target > std::numeric_limits<std::uint64_t>::max() - 8)
                 throw Domain::RelinkerException("Relocation target address overflow", target);
             const auto rva = image.GetRva(target, 8);
+            image.RecordRelocation(target);
             const auto applied = entries.find(target);
             if (applied != entries.end() && applied->second == std::pair{info, addend}) continue;
             const auto next = ranges.lower_bound(target);
