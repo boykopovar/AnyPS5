@@ -20,16 +20,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
-#include <ctime>
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <iomanip>
-#include <locale>
 #include <map>
 #include <set>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -68,17 +64,18 @@ std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
         if (text[index] < '0' || text[index] > '9') return {};
     static constexpr std::array<std::string_view, 7> weekdays{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     static constexpr std::array<std::string_view, 12> months{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    if (std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, 3)) == weekdays.end() ||
-        std::find(months.begin(), months.end(), std::string_view(text).substr(8, 3)) == months.end()) return {};
-    std::tm time{};
-    std::istringstream input(text);
-    input.imbue(std::locale::classic());
-    input >> std::get_time(&time, "%a, %d %b %Y %H:%M:%S GMT");
-    if (input.fail() || input.peek() != std::char_traits<char>::eof()) return {};
-    const std::chrono::year_month_day day{std::chrono::year{time.tm_year + 1900}, std::chrono::month{static_cast<unsigned>(time.tm_mon + 1)}, std::chrono::day{static_cast<unsigned>(time.tm_mday)}};
-    if (!day.ok() || time.tm_year < 0 || time.tm_year > 8099 || time.tm_hour > 23 || time.tm_min > 59 || time.tm_sec > 60 ||
-        std::chrono::weekday{std::chrono::sys_days{day}}.c_encoding() != static_cast<unsigned>(time.tm_wday)) return {};
-    return std::chrono::sys_days{day} + std::chrono::hours{time.tm_hour} + std::chrono::minutes{time.tm_min} + std::chrono::seconds{time.tm_sec};
+    const auto weekday = std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, 3));
+    const auto month = std::find(months.begin(), months.end(), std::string_view(text).substr(8, 3));
+    if (weekday == weekdays.end() || month == months.end()) return {};
+    const auto year = static_cast<int>(Number(std::string_view(text).substr(12, 4)));
+    const auto date = static_cast<unsigned>(Number(std::string_view(text).substr(5, 2)));
+    const auto hour = static_cast<int>(Number(std::string_view(text).substr(17, 2)));
+    const auto minute = static_cast<int>(Number(std::string_view(text).substr(20, 2)));
+    const auto second = static_cast<int>(Number(std::string_view(text).substr(23, 2)));
+    const std::chrono::year_month_day day{std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month - months.begin() + 1)}, std::chrono::day{date}};
+    if (year < 1900 || !day.ok() || hour > 23 || minute > 59 || second > 60 ||
+        std::chrono::weekday{std::chrono::sys_days{day}}.c_encoding() != static_cast<unsigned>(weekday - weekdays.begin())) return {};
+    return std::chrono::sys_days{day} + std::chrono::hours{hour} + std::chrono::minutes{minute} + std::chrono::seconds{second};
 }
 
 bool StrongEtag(std::string_view text) {
