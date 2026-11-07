@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <exception>
@@ -96,7 +97,7 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
   || (alignment != 0 && !PageAligned(alignment))) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- const int ret = DirectMemoryAlloc(search_start, search_end, len, alignment, -1, phys_addr_out);
+ const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, phys_addr_out);
  if (ret == 0) {
   PoolState& pool = Pool();
   std::lock_guard<std::mutex> lock(pool.mutex);

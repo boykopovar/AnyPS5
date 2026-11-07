@@ -1,4 +1,5 @@
 #include "prx/libSceCompanionHttpd/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -37,7 +38,11 @@ extern "C" {
 
 int APS5_VABI sceCompanionHttpdOptParamInitialize(CompanionHttpdOptParam* param) {
     if (param == nullptr) return CompanionHttpdErrorInvalidParam;
-    std::memset(param, 0, sizeof(*param));
+    CompanionHttpdOptParam zero{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(param, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return CompanionHttpdErrorInvalidParam;
     return 0;
 }
 
@@ -121,32 +126,26 @@ int APS5_VABI sceCompanionHttpdSetBody(const char* body, std::uint64_t size, voi
 }
 
 int APS5_VABI sceCompanionHttpdGet2ndScreenStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdGetUserId(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdInitialize2(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdRegisterRequestBodyReceptionCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdRegisterRequestCallback2(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdUnregisterRequestBodyReceptionCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

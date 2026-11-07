@@ -48,6 +48,8 @@ struct PthreadMutexPrivate {
     int _count;
     std::atomic<int> _spinloops = 0;
     std::atomic<int> _yieldloops = 0;
+    int _protocol = 0;
+    std::atomic<int> _ceiling{0};
     std::string _name;
     bool _named = false;
 
