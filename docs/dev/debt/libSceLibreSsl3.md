@@ -1,6 +1,7 @@
 # libSceLibreSsl3 technical debt
 
 - [OBJ_cmp](../../../core/libs/prx/libSceLibreSsl3/src/ObjCmp.cpp) (libSceLibreSsl3) - PS5 behavior and the library's LibreSSL version are not verified. The 40-byte LP64 `ASN1_OBJECT` layout and the comparison (length difference first, then the first differing byte as a difference of unsigned values) follow the public [LibreSSL source](https://github.com/libressl/openbsd/blob/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto/objects/obj_lib.c); the magnitude of a byte mismatch is the byte difference rather than whatever the console's `memcmp` returns. Null objects, null data with a nonzero length and negative lengths throw. LibreSSL subtracts unequal lengths before reading data, so unequal negative lengths do not necessarily fault; only equal negative lengths reach its byte comparison.
+- [PKCS5_PBKDF2_HMAC, HMAC_CTX_new, HMAC_CTX_free and EVP_MD_block_size](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) (libSceLibreSsl3) - no console measurement. Results follow LibreSSL 2.5.4 [p5_crpt2.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/p5_crpt2.c), [hmac.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/hmac/hmac.c) and [evp_lib.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp_lib.c). PBKDF2 returns 0 for SHA-1 and SHA-224, which are this library's own objects, and for negative lengths or a null output with a positive key length.
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
@@ -16,7 +17,7 @@
 
 - [EVP_PKEY_new, EVP_PKEY_free, EVP_PKEY_set1_RSA, EVP_PKEY_copy_parameters](../../../core/libs/prx/libSceLibreSsl3/src/PkeyLifecycle.cpp) - not checked on a console. Native allocation and release follow the 32-byte [LibreSSL 4.0.0 layout and p_lib.c](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp). Allocation failure returns null without its allocation error. Final release of a nonnull method or payload throws and restores the reference instead of calling the method; no native payload destruction is implemented. Empty objects are cleared before release. set1_RSA and copy_parameters throw locally instead of forwarding to the incompatible 56-byte legacy layout. The native RSA producers and get1_RSA remain local throwing stubs. Objects from the two modules must not be mixed.
 - [Native PKEY forwarding gaps](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) - `X509_get_pubkey` and `PEM_read_bio_PrivateKey` still forward to legacy throwing stubs. `SSL_get_privatekey` forwards to the parent library and returns its legacy PKEY. The consumers `EVP_PKEY_get1_EC_KEY`, `EVP_DigestVerifyInit`, `SSL_CTX_use_PrivateKey`, `SSL_CTX_use_PrivateKey_ASN1`, `SSL_CTX_use_PrivateKey_file` and `SSL_use_PrivateKey_ASN1` do too. Each needs a native wrapper before its legacy implementation can run, to prevent mixing the incompatible PKEY layouts.
-- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 45 named callable exports, excluding `ASN1_OBJECT_free`, `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref`, `RSA_up_ref`, `SSL_CTX_up_ref`, `SSL_up_ref`, `SSL_SESSION_up_ref`, `SSL_CTX_set_min_proto_version`, `SSL_CTX_set_max_proto_version`, `SSL_get_client_random`, `X509_up_ref`, `X509_get_version`, `EVP_PKEY_get0_RSA`, `EVP_PKEY_get0_DSA`, `EVP_PKEY_get0_DH`, `EVP_MD_CTX_new`, `EVP_MD_CTX_free`, `EVP_DigestInit`, `EVP_sha1`, `EVP_sha224`, `ERR_load_crypto_strings`, `ERR_peek_last_error`, `OpenSSL_version`, `X509_PUBKEY_get0_param`, `OBJ_cmp`, `ASN1_STRING_get0_data`, `ASN1_INTEGER_free`, `X509_get0_extensions`, `X509_get_ext_count`, `X509_get_ext`, `EVP_PKEY_size`, `X509_getm_notBefore`, `X509_getm_notAfter`, `X509_get0_notBefore`, `X509_get0_notAfter`, `X509_get0_signature`, `RSA_get0_key`, `DH_get0_pqg`, `DH_get0_key`, `DSA_get0_pqg`, `DSA_get0_key` and `BIO_up_ref`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 45 named callable exports, excluding `ASN1_INTEGER_free`, `ASN1_OBJECT_free`, `ASN1_STRING_get0_data`, `BIO_up_ref`, `CRYPTO_memcmp`, `DH_get0_key`, `DH_get0_pqg`, `DSA_get0_key`, `DSA_get0_pqg`, `EC_KEY_up_ref`, `ERR_load_crypto_strings`, `ERR_peek_last_error`, `EVP_DigestInit`, `EVP_MD_CTX_free`, `EVP_MD_CTX_new`, `EVP_PKEY_get0_DH`, `EVP_PKEY_get0_DSA`, `EVP_PKEY_get0_RSA`, `EVP_PKEY_size`, `EVP_PKEY_up_ref`, `EVP_sha1`, `EVP_sha224`, `MD5`, `OBJ_cmp`, `OpenSSL_version`, `RSA_get0_key`, `RSA_up_ref`, `SHA1`, `SSL_CTX_set_max_proto_version`, `SSL_CTX_set_min_proto_version`, `SSL_CTX_up_ref`, `SSL_SESSION_up_ref`, `SSL_get_client_random`, `SSL_up_ref`, `X509_PUBKEY_get0_param`, `X509_get0_extensions`, `X509_get0_notAfter`, `X509_get0_notBefore`, `X509_get0_signature`, `X509_get_ext`, `X509_get_ext_count`, `X509_get_version`, `X509_getm_notAfter`, `X509_getm_notBefore`, `X509_up_ref` and `d2i_ASN1_INTEGER`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
@@ -121,7 +122,6 @@
 | `AES_unwrap_key` | `JvoQz7GYOMo` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
-| `HMAC_CTX_new` | `LcxutSyn11o` |
 | `X509_CRL_get0_by_cert` | `LdGe2IfIlpI` |
 | `ERR_load_PEM_strings` | `M7ze0mz2jQM` |
 | `OpenSSL_add_all_digests` | `O9Thca3enw8` |
@@ -146,7 +146,6 @@
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
 | `ERR_func_error_string` | `VXuysR7ySzw` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
-| `HMAC_CTX_free` | `YAxGqtnKQFY` |
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
@@ -198,7 +197,6 @@
 | `EVP_aes_128_ccm` | `uM9UnC8KFjY` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
-| `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `ASN1_TYPE_free` | `whL1IRBxFZA` |
@@ -208,7 +206,6 @@
 | `X509_get0_pubkey` | `xj7cFYOV4+Y` |
 | `SSL_is_quic` | `xpB+BNkO2Z0` |
 | `X509_get_X509_PUBKEY` | `yLm956jsJpc` |
-| `EVP_MD_block_size` | `zCa75KLWWn4` |
 
 - The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
 
