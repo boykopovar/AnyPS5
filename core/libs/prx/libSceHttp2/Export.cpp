@@ -24,7 +24,7 @@ static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
-static constexpr int ERROR_NETWORK = static_cast<int>(0x80436063);
+static constexpr int ERROR_NETWORK = static_cast<int>(0x80431063);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
 static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
@@ -280,6 +280,10 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
 }
 
 int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size) {
+    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
+        std::lock_guard lock(g_handlesMutex);
+        return FindHandle(req_id, Http2Kind::Request) != nullptr ? ERROR_NETWORK : ERROR_INVALID_ID;
+    }
     const auto request = Transport(req_id, true);
     return request ? request->Send(post_data, size) : ERROR_INVALID_ID;
 }

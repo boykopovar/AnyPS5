@@ -257,7 +257,7 @@ int main() {
                 Http2AsyncResult result_wait{};
                 std::uint32_t timeout_wait = 500;
                 if (sceHttp2WaitAsync(request, &result_wait, &timeout_wait, nullptr) == 0) {
-                    if (result_wait.req_id == request && result_wait.result == static_cast<int>(0x80436063)) {
+                    if (result_wait.req_id == request && result_wait.result == static_cast<int>(0x80431063)) {
                         waiter_consumed = true;
                     }
                 }
@@ -268,9 +268,11 @@ int main() {
         Require(sceHttp2SendRequestAsync(request, nullptr, 0, &option, nullptr) == 0);
         waiter.join();
         Require(waiter_consumed);
-        Http2AsyncResult leftover{};
-        std::uint32_t timeout_dc = 500;
-        Require(Throws([&] { sceHttp2WaitAsync(request, &leftover, &timeout_dc, nullptr); }));
+        KernelEvent extra{};
+        int extra_count = 123;
+        Require(sceKernelWaitEqueue(eq, &extra, 1, &extra_count, &poll) != 0);
+        Require(sceHttp2SendRequest(request, nullptr, 0) == static_cast<int>(0x80431063));
+        Require(sceHttp2SendRequest(request + 1000, nullptr, 0) == InvalidId);
 #ifdef _WIN32
         _putenv("APS5_NET_DISCONNECTED=");
 #else
