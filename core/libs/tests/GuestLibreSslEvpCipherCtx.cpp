@@ -1139,6 +1139,23 @@ static void TestChaCha20Rfc8439() {
 }
 
 
+static void TestChaCha20CounterCarry() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_chacha20_nid_postfix());
+    const auto key = Hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    const auto iv = Hex("ffffffff000000000000004a00000000");
+    const Bytes zeros(128, 0);
+    const auto keystream = Hex("6d29da5bd16a472910e8c0bdb47edfc8499c3222cc168d3721747fc2b21266d9f15c8339f10f354d16cc9b8e118eb182bf858ce5718fa4e76389ea4eb50a9475ebc17a3b93d30a5802739e841950e3bfddb3f6f44eda6d6082d558fc6cb863a0d58325d200a316e2c0620d2321c9ee4ff1b236c7de304fa135a1f1fe195136e1");
+    unsigned char context[ContextBytes] {};
+    unsigned char out[128] {};
+    int written = -1;
+    Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, key.data(), iv.data()) == 1);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, zeros.data(), 100) == 1 && written == 100);
+    Require(EVP_EncryptUpdate_nid_postfix(Context(context), out + 100, &written, zeros.data() + 100, 28) == 1 && written == 28);
+    Require(Bytes(out, out + 128) == keystream);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1159,6 +1176,7 @@ int main() {
     TestAesCfb8();
     TestAesCtr();
     TestChaCha20Rfc8439();
+    TestChaCha20CounterCarry();
     TestAesGcmVectors();
     TestAesGcmControl();
     TestAesGcmTls();
