@@ -36,6 +36,7 @@ RULES = {
     "pr-template": ("error", ".github/pull_request_template.md", "Fill in the pull request template"),
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
+    "debt-labels": ("warning", "docs/dev/TechnicalDebt.md", "Unknown label in a technical debt entry's Labels: trailer, which ends the entry; the labels are console, firmware, gpu, title, code, no-test, tested, windows, macos and linux"),
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
@@ -49,6 +50,12 @@ DEBT = "docs/dev/TechnicalDebt.md"
 DEBT_DIR = "docs/dev/debt/"
 DEBT_TARGET = re.compile(r"\]\((?:\.\./)+(core/[^)#\s]+)")
 DEBT_ENTRY_LIMIT = 1000
+DEBT_LABELS = {
+    "closer": ("console", "firmware", "gpu", "title", "code"),
+    "test": ("no-test", "tested"),
+    "platform": ("windows", "macos", "linux"),
+}
+DEBT_LABEL_TRAILER = re.compile(r"\bLabels:[ \t]*([^\n]*?)\.?[ \t]*$", re.M)
 
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
@@ -218,7 +225,7 @@ class Check:
             source = self.show(path)
             comments = python_comments(source) if path.endswith(".py") else cmake_comments(source)
             for number, text in lines:
-                shebang = text.startswith("#!") or (number == 1 and text.startswith("\ufeff#!"))
+                shebang = number == 1 and text.removeprefix("\ufeff").startswith("#!")
                 comment = number in comments if comments is not None else "#" in STRINGS.sub('""', text)
                 if comment and not shebang:
                     self.report("comment", path, number)
@@ -333,12 +340,31 @@ class Check:
                 for target, resolved in links(path, text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
+        deleted = {path for path, status in self.status.items() if status == "D"}
+        if deleted:
+            for path in sorted(self.tree):
+                if path.startswith("3rdparty/") or PurePosixPath(path).suffix != ".md" or path in deleted:
+                    continue
+                checked = {number for number, _ in files.get(path, [])}
+                source = self.show(path)
+                fenced = fenced_lines(source)
+                for number, text in enumerate(source.split("\n"), 1):
+                    if number in checked or number in fenced:
+                        continue
+                    for target, resolved in links(path, text):
+                        if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
+                            self.report("doc-link", path, number, target)
 
     def debt_entries(self):
+        known = {label for labels in DEBT_LABELS.values() for label in labels}
         for path, lines in self.files(lambda p: is_debt(p.as_posix())):
+            entry_lines = {start + offset for start, entry in debt_entries(self.show(path)).items() for offset in range(len(entry.split("\n")))}
             for number, text in lines:
                 if long_debt_entry(text):
                     self.report("debt-length", path, number, f"{len(text)} characters")
+                for label in debt_labels(text) if number in entry_lines else []:
+                    if label not in known:
+                        self.report("debt-labels", path, number, label)
 
     def workflows(self):
         for path in sorted(self.status):
@@ -457,6 +483,11 @@ def is_debt(path):
 
 def long_debt_entry(text):
     return text.startswith("- ") and len(text) > DEBT_ENTRY_LIMIT
+
+
+def debt_labels(text):
+    match = DEBT_LABEL_TRAILER.search(text)
+    return [label.strip() for label in match.group(1).split(",") if label.strip()] if match else []
 
 
 def debt_entries(text):
