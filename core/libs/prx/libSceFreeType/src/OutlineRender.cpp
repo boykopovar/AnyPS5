@@ -38,7 +38,7 @@ FT_Pos HostCoordinate(std::int64_t value) {
 
 namespace FreeType {
 
-RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target) {
+extern "C" RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target) {
     if (!target.buffer) return {};
     const std::int64_t pitch = target.pitch;
     const auto stride = static_cast<std::size_t>(pitch < 0 ? -pitch : pitch);

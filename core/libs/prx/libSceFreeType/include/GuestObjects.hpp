@@ -31,7 +31,7 @@ struct RasterTargetSpan {
     std::size_t bytes = 0;
 };
 
-RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
+extern "C" RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
 
 struct GuestFace {
     GuestFaceRec rec{};
