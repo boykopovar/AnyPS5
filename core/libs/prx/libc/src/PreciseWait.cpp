@@ -24,7 +24,12 @@ bool PreciseKernelTimerSleep_nid_no_patch(std::uint64_t wakeNanos) {
         change.fflags = NOTE_NSECONDS | NOTE_CRITICAL | NOTE_LEEWAY;
         change.data = static_cast<std::int64_t>(wakeNanos - nowNanos);
         struct kevent64_s event{};
-        if (::kevent64(queue.descriptor, &change, 1, &event, 1, 0, nullptr) >= 0) return true;
+        const int count = ::kevent64(queue.descriptor, &change, 1, &event, 1, 0, nullptr);
+        if (count > 0 && (event.flags & EV_ERROR) != 0) {
+            if (event.data == EINTR) continue;
+            return false;
+        }
+        if (count >= 0) return true;
         if (errno != EINTR) return false;
     }
 }
