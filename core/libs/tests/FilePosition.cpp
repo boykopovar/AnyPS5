@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <limits>
 #include <string>
+#include <thread>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -94,6 +96,27 @@ static void CheckRejectedBufferedSeeks() {
     Require(std::filesystem::remove(root));
 }
 
+static void CheckConcurrentRelativeSeeks() {
+    FileStream file(TemporaryFile::Open());
+    constexpr int Seeks = 20000;
+    std::atomic<int> ready{0};
+    std::atomic<bool> failed{false};
+    const auto seek = [&] {
+        ready.fetch_add(1);
+        while (ready.load() < 2) std::this_thread::yield();
+        for (int index = 0; index < Seeks; ++index) {
+            if (fseeko_nid_postfix(&file, 1, SEEK_CUR) != 0) failed.store(true);
+        }
+    };
+    std::thread first(seek);
+    std::thread second(seek);
+    first.join();
+    second.join();
+    Require(!failed.load());
+    Require(ftello_nid_postfix(&file) == 2 * Seeks);
+    file.Close();
+}
+
 static void CheckFailedSeekKeepsPosition() {
     FileStream file(TemporaryFile::Open());
     Require(fwrite_nid_postfix("01234567", 1, 8, &file) == 8);
@@ -131,6 +154,7 @@ static void CheckSeekFromEndAfterBufferedWrite() {
 
 int main() {
     CheckRejectedBufferedSeeks();
+    CheckConcurrentRelativeSeeks();
     CheckFseekBounds();
     CheckFailedSeekKeepsPosition();
     CheckSeekFromEndAfterBufferedWrite();

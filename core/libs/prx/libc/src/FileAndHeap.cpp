@@ -779,6 +779,20 @@ static std::optional<std::int64_t> RegularFileSize(std::FILE* native) {
     return status.st_size;
 }
 
+namespace {
+
+class SeekLock {
+    FileStream* stream;
+
+public:
+    explicit SeekLock(FileStream* value) : stream(value) { if (stream) flockfile_nid_postfix(stream); }
+    ~SeekLock() { if (stream) funlockfile_nid_postfix(stream); }
+    SeekLock(const SeekLock&) = delete;
+    SeekLock& operator=(const SeekLock&) = delete;
+};
+
+}
+
 static bool ResolveSeekTarget(FileStream* stream, std::int64_t& offset, int& origin) {
     std::int64_t base = 0;
     if (origin == SEEK_CUR) {
@@ -806,6 +820,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
     auto* native = GetNativeStream(stream);
     if (IsPipeStream(native)) { errno = 29; return -1; }
 #endif
+    const SeekLock lock(stream);
     if (!ResolveSeekTarget(stream, offset, origin)) return -1;
 #ifdef _WIN32
     const int result = _fseeki64(native, offset, origin);
