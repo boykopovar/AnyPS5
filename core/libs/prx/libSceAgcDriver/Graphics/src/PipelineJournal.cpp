@@ -551,8 +551,9 @@ bool expandModule(std::span<const std::byte> payload, std::vector<std::byte>& mo
     if (payload.size() < ModuleHeaderBytes) return false;
     std::uint32_t bytes = 0;
     std::memcpy(&bytes, payload.data() + 20, sizeof(bytes));
-    module.resize(bytes);
     const auto frame = payload.subspan(ModuleHeaderBytes);
+    if (ZSTD_getFrameContentSize(frame.data(), frame.size()) != bytes) return false;
+    module.resize(bytes);
     const auto expanded = ZSTD_decompress(module.data(), module.size(), frame.data(), frame.size());
     return !ZSTD_isError(expanded) && expanded == bytes;
 }
