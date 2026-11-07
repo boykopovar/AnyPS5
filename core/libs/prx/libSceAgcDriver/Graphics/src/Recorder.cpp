@@ -13,6 +13,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/StagingCopyBack_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
@@ -1100,6 +1102,189 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
 
 }
 
+static bool CheckpointMarkersEnabled() {
+    static const bool enabled = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    return enabled;
+}
+
+struct CheckpointMarkerDevice {
+    VkDevice device = VK_NULL_HANDLE;
+    PFN_vkCmdWriteBufferMarkerAMD write = nullptr;
+    PFN_vkDestroyBuffer destroyBuffer = nullptr;
+    PFN_vkFreeMemory freeMemory = nullptr;
+    PFN_vkUnmapMemory unmapMemory = nullptr;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    const void* mapping = nullptr;
+};
+
+static CheckpointMarkerDevice& CheckpointMarkerState() {
+    static CheckpointMarkerDevice state;
+    return state;
+}
+
+static bool PrepareCheckpointMarker(const Context& context) {
+    if (!CheckpointMarkersEnabled()) return false;
+    auto& state = CheckpointMarkerState();
+    if (state.device == context.device && state.buffer != VK_NULL_HANDLE) return state.write != nullptr;
+    if (state.device != VK_NULL_HANDLE && state.device != context.device) return false;
+    if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return false;
+    auto write = reinterpret_cast<PFN_vkCmdWriteBufferMarkerAMD>(context.deviceProc(context.device, "vkCmdWriteBufferMarkerAMD"));
+    if (write == nullptr) return false;
+    auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+    auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
+    auto unmapMemory = reinterpret_cast<PFN_vkUnmapMemory>(context.deviceProc(context.device, "vkUnmapMemory"));
+    if (destroyBuffer == nullptr || freeMemory == nullptr || unmapMemory == nullptr) return false;
+    if (state.buffer == VK_NULL_HANDLE) {
+        auto createBuffer = reinterpret_cast<PFN_vkCreateBuffer>(context.deviceProc(context.device, "vkCreateBuffer"));
+        auto getRequirements = reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(context.deviceProc(context.device, "vkGetBufferMemoryRequirements"));
+        auto allocateMemory = reinterpret_cast<PFN_vkAllocateMemory>(context.deviceProc(context.device, "vkAllocateMemory"));
+        auto bindMemory = reinterpret_cast<PFN_vkBindBufferMemory>(context.deviceProc(context.device, "vkBindBufferMemory"));
+        auto mapMemory = reinterpret_cast<PFN_vkMapMemory>(context.deviceProc(context.device, "vkMapMemory"));
+        if (createBuffer == nullptr || getRequirements == nullptr || allocateMemory == nullptr || bindMemory == nullptr || mapMemory == nullptr) return false;
+        VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bufferInfo.size = 2 * sizeof(std::uint32_t);
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (createBuffer(context.device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS || buffer == VK_NULL_HANDLE) return false;
+        VkMemoryRequirements requirements{};
+        getRequirements(context.device, buffer, &requirements);
+        std::uint32_t memoryType = context.memory.memoryTypeCount;
+        const VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (std::uint32_t i = 0; i < context.memory.memoryTypeCount; ++i) {
+            if ((requirements.memoryTypeBits & (1u << i)) != 0 && (context.memory.memoryTypes[i].propertyFlags & flags) == flags) {
+                memoryType = i;
+                break;
+            }
+        }
+        if (memoryType >= context.memory.memoryTypeCount) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            return false;
+        }
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        if (allocateMemory(context.device, &allocation, nullptr, &memory) != VK_SUCCESS || memory == VK_NULL_HANDLE) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            return false;
+        }
+        if (bindMemory(context.device, buffer, memory, 0) != VK_SUCCESS) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            if (freeMemory != nullptr) freeMemory(context.device, memory, nullptr);
+            return false;
+        }
+        void* mapping = nullptr;
+        if (mapMemory(context.device, memory, 0, bufferInfo.size, 0, &mapping) != VK_SUCCESS || mapping == nullptr) {
+            auto destroyBuffer = reinterpret_cast<PFN_vkDestroyBuffer>(context.deviceProc(context.device, "vkDestroyBuffer"));
+            auto freeMemory = reinterpret_cast<PFN_vkFreeMemory>(context.deviceProc(context.device, "vkFreeMemory"));
+            if (destroyBuffer != nullptr) destroyBuffer(context.device, buffer, nullptr);
+            if (freeMemory != nullptr) freeMemory(context.device, memory, nullptr);
+            return false;
+        }
+        std::memset(mapping, 0, bufferInfo.size);
+        state.buffer = buffer;
+        state.memory = memory;
+        state.mapping = mapping;
+    }
+    state.device = context.device;
+    state.write = write;
+    state.destroyBuffer = destroyBuffer;
+    state.freeMemory = freeMemory;
+    state.unmapMemory = unmapMemory;
+    return state.write != nullptr && state.buffer != VK_NULL_HANDLE;
+}
+
+constexpr VkDeviceSize CheckpointMarkerSerialOffset = 0;
+constexpr VkDeviceSize CheckpointMarkerTokenOffset = sizeof(std::uint32_t);
+
+void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || token == 0) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, static_cast<std::uint32_t>(token));
+    } catch (...) {
+    }
+}
+
+void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || token == 0) return;
+    try {
+        if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return;
+        auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(context.deviceProc(context.device, "vkCmdSetCheckpointNV"));
+        if (setCheckpoint == nullptr) return;
+        EmitNvCheckpointToken(commands, static_cast<AgcDriver::FaultToken>(token), setCheckpoint);
+    } catch (...) {
+    }
+}
+
+void WriteCheckpointSerial(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || serial == 0) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerSerialOffset, static_cast<std::uint32_t>(serial));
+    } catch (...) {
+    }
+}
+
+std::uint32_t LastCheckpointMarkerSerial() noexcept {
+    const void* mapping = CheckpointMarkerState().mapping;
+    if (mapping == nullptr) return 0;
+    std::uint32_t serial = 0;
+    std::memcpy(&serial, static_cast<const char*>(mapping) + CheckpointMarkerSerialOffset, sizeof(serial));
+    return serial;
+}
+
+std::uint32_t LastCheckpointMarkerToken() noexcept {
+    const void* mapping = CheckpointMarkerState().mapping;
+    if (mapping == nullptr) return 0;
+    std::uint32_t token = 0;
+    std::memcpy(&token, static_cast<const char*>(mapping) + CheckpointMarkerTokenOffset, sizeof(token));
+    return token;
+}
+
+void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (commands == VK_NULL_HANDLE) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerSerialOffset, 0);
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, 0);
+    } catch (...) {
+    }
+}
+
+void ResetCheckpointSnapshots() noexcept {
+    AgcDriver::SubmissionSnapshots::DeviceSnapshots().Reset();
+}
+
+void TeardownCheckpointMarkers() noexcept {
+    ResetCheckpointSnapshots();
+    auto& state = CheckpointMarkerState();
+    if (state.device == VK_NULL_HANDLE) return;
+    try {
+        if (state.mapping != nullptr && state.unmapMemory != nullptr) state.unmapMemory(state.device, state.memory);
+        if (state.buffer != VK_NULL_HANDLE && state.destroyBuffer != nullptr) state.destroyBuffer(state.device, state.buffer, nullptr);
+        if (state.memory != VK_NULL_HANDLE && state.freeMemory != nullptr) state.freeMemory(state.device, state.memory, nullptr);
+    } catch (...) {
+    }
+    state = CheckpointMarkerDevice{};
+}
+
 struct Recorder::ProgressWatcher {
     std::mutex mutex;
     std::condition_variable wake;
@@ -1800,6 +1985,12 @@ void Recorder::ensureOpen() {
         dropStaleHoldKept();
         batch->kept.insert(batch->kept.end(), holdKept.begin(), holdKept.end());
         open = std::move(batch);
+        open->predictedSerial = submissions + 1;
+        try {
+            if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
+            else WriteCheckpointSentinel(context, open->commands);
+        } catch (...) {
+        }
         if (PerformanceTrace::Recording()) {
             static std::atomic<std::uint64_t> traceIds{0};
             open->traceId = traceIds.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2379,6 +2570,12 @@ void Recorder::NoteDrawTraceToken(std::uint64_t token) noexcept {
     } catch (...) {
         AgcDriver::CaptureTrace::Log("draw-token-note-failed token=%llu", static_cast<unsigned long long>(token));
     }
+}
+
+void Recorder::NoteFaultToken(AgcDriver::FaultToken token) noexcept {
+    if (token == 0 || open == nullptr) return;
+    if (open->firstToken == 0) open->firstToken = token;
+    open->lastToken = token;
 }
 
 bool Recorder::gpuSampleCounter() {
@@ -3972,6 +4169,13 @@ void Recorder::Submit() {
     submission.pCommandBuffers = &batch->commands;
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
+    if (CheckpointMarkersEnabled() && batch->queue == 0 && batch->predictedSerial != 0) {
+        Require(batch->predictedSerial == serial, "Recorder::Submit submit serial mismatch");
+        try {
+            if (const auto snapshot = GuestBufferMemory::TrySnapshotAddressSpace(); snapshot.has_value()) AgcDriver::SubmissionSnapshots::DeviceSnapshots().NoteSubmit(serial, snapshot->first, snapshot->second, AgcDriver::SubmitBracket{serial, CompletedThrough(), batch->firstToken, batch->lastToken});
+        } catch (...) {
+        }
+    }
     std::string tokensStr = "[";
     for (std::size_t i = 0; i < batch->drawTraceTokens.size(); ++i) {
         if (i > 0) tokensStr += ",";

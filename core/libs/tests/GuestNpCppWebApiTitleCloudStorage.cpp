@@ -187,5 +187,10 @@ int main() {
     }
     TestInitializers();
     TestSetters();
+    alignas(8) IntrusivePtr emptyVector{};
+    CommonIterator iterator{};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE5beginEv(&iterator, &emptyVector) == &iterator);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE3endEv(&iterator, &emptyVector) == &iterator);
+    Require(iterator.element == nullptr);
     return 0;
 }
