@@ -285,8 +285,8 @@ void APS5_VABI _ZN3sce2np10NpOnlineIdC2ERK13SceNpOnlineId(NpOnlineIdObject* self
 void APS5_VABI _ZN3sce2np10NpOnlineIdC2ERKS1_(NpOnlineIdObject* self, const NpOnlineIdObject* other);
 void APS5_VABI _ZN3sce2np10NpOnlineIdC2Ev(NpOnlineIdObject* self);
 int APS5_VABI _ZN3sce2np10NpOnlineIdD0Ev(void);
-int APS5_VABI _ZN3sce2np10NpOnlineIdD1Ev(void);
-int APS5_VABI _ZN3sce2np10NpOnlineIdD2Ev(void);
+void APS5_VABI _ZN3sce2np10NpOnlineIdD1Ev(void* self);
+void APS5_VABI _ZN3sce2np10NpOnlineIdD2Ev(void* self);
 int APS5_VABI _ZN3sce2np11NpHttpTransC2EP16SceNpAllocatorEx(void);
 int APS5_VABI _ZN3sce2np11NpHttpTransD0Ev(void);
 int APS5_VABI _ZN3sce2np11NpHttpTransD1Ev(void);
@@ -303,8 +303,8 @@ void APS5_VABI _ZN3sce2np12NpTitleTokenC1Ev(NpTitleTokenObject* self);
 void APS5_VABI _ZN3sce2np12NpTitleTokenC2ERKS1_(NpTitleTokenObject* self, const NpTitleTokenObject* other);
 void APS5_VABI _ZN3sce2np12NpTitleTokenC2Ev(NpTitleTokenObject* self);
 int APS5_VABI _ZN3sce2np12NpTitleTokenD0Ev(void);
-int APS5_VABI _ZN3sce2np12NpTitleTokenD1Ev(void);
-int APS5_VABI _ZN3sce2np12NpTitleTokenD2Ev(void);
+void APS5_VABI _ZN3sce2np12NpTitleTokenD1Ev(void* self);
+void APS5_VABI _ZN3sce2np12NpTitleTokenD2Ev(void* self);
 void APS5_VABI _ZN3sce2np13NpAccessToken5ClearEv(NpAccessTokenObject* self);
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken(NpAccessTokenObject* self, const SceNpAccessToken* source);
 void APS5_VABI _ZN3sce2np13NpAccessTokenC1ERKS1_(NpAccessTokenObject* self, const NpAccessTokenObject* other);
@@ -313,8 +313,8 @@ void APS5_VABI _ZN3sce2np13NpAccessTokenC2ERK16SceNpAccessToken(NpAccessTokenObj
 void APS5_VABI _ZN3sce2np13NpAccessTokenC2ERKS1_(NpAccessTokenObject* self, const NpAccessTokenObject* other);
 void APS5_VABI _ZN3sce2np13NpAccessTokenC2Ev(NpAccessTokenObject* self);
 int APS5_VABI _ZN3sce2np13NpAccessTokenD0Ev(void);
-int APS5_VABI _ZN3sce2np13NpAccessTokenD1Ev(void);
-int APS5_VABI _ZN3sce2np13NpAccessTokenD2Ev(void);
+void APS5_VABI _ZN3sce2np13NpAccessTokenD1Ev(void* self);
+void APS5_VABI _ZN3sce2np13NpAccessTokenD2Ev(void* self);
 int APS5_VABI _ZN3sce2np3ipc14service_client10EndRequestEii(void);
 int APS5_VABI _ZN3sce2np3ipc14service_client11InitServiceEi(void);
 int APS5_VABI _ZN3sce2np3ipc14service_client11TermServiceEi(void);
@@ -334,8 +334,8 @@ void APS5_VABI _ZN3sce2np4NpIdC2ERK7SceNpId(NpIdObject* self, const SceNpId* sou
 void APS5_VABI _ZN3sce2np4NpIdC2ERKS1_(NpIdObject* self, const NpIdObject* other);
 void APS5_VABI _ZN3sce2np4NpIdC2Ev(NpIdObject* self);
 int APS5_VABI _ZN3sce2np4NpIdD0Ev(void);
-int APS5_VABI _ZN3sce2np4NpIdD1Ev(void);
-int APS5_VABI _ZN3sce2np4NpIdD2Ev(void);
+void APS5_VABI _ZN3sce2np4NpIdD1Ev(void* self);
+void APS5_VABI _ZN3sce2np4NpIdD2Ev(void* self);
 void APS5_VABI _ZN3sce2np4User5ClearEv(UserObject* self);
 int APS5_VABI _ZN3sce2np4User7GetUserEiPS1_(int userId, UserObject* out);
 void APS5_VABI _ZN3sce2np4UserC1ERKS1_(UserObject* self, const UserObject* other);
@@ -345,8 +345,8 @@ void APS5_VABI _ZN3sce2np4UserC2ERKS1_(UserObject* self, const UserObject* other
 void APS5_VABI _ZN3sce2np4UserC2Ei(UserObject* self, int userId);
 void APS5_VABI _ZN3sce2np4UserC2Ev(UserObject* self);
 int APS5_VABI _ZN3sce2np4UserD0Ev(void);
-int APS5_VABI _ZN3sce2np4UserD1Ev(void);
-int APS5_VABI _ZN3sce2np4UserD2Ev(void);
+void APS5_VABI _ZN3sce2np4UserD1Ev(void* self);
+void APS5_VABI _ZN3sce2np4UserD2Ev(void* self);
 int APS5_VABI _ZN3sce2np8NpTicket5ClearEv(void);
 int APS5_VABI _ZN3sce2np8NpTicketD0Ev(void);
 int APS5_VABI _ZN3sce2np8NpTicketD1Ev(void);
@@ -460,7 +460,8 @@ int APS5_VABI sceNpServiceClientInit(void);
 int APS5_VABI sceNpServiceClientTerm(void);
 int APS5_VABI sceNpSetAdditionalScope(void);
 int APS5_VABI sceNpSetNpTitleIdVsh(void);
-int APS5_VABI sceNpUnregisterGamePresenceCallbackA(void);
+int APS5_VABI sceNpRegisterGamePresenceCallbackA(void* callback, void* userdata);
+int APS5_VABI sceNpUnregisterGamePresenceCallbackA(int callbackId);
 int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void);
 
 }
