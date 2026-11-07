@@ -497,10 +497,6 @@ int APS5_VABI getByteRead_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI getDCACPredMode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI getTilePos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -550,10 +546,6 @@ int APS5_VABI setBitIOPointers_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI setUniformQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI slideOneMBRow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -575,18 +567,6 @@ void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2]
 }
 
 int APS5_VABI updatePostProcInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI updatePredInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI useDCQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI useLPQuantizer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
