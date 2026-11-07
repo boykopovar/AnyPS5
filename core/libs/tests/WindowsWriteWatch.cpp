@@ -854,6 +854,157 @@ void CheckCommitResetsEveryPageOfARunView() {
     mappings.ForgetSection(section);
     CloseHandle(section);
 }
+
+void CheckWriteWatchProtectionAndMappingBoundaries() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t PageSize = 16384;
+    constexpr std::size_t SubPageSize = 4096;
+    constexpr std::size_t PageCount = 4;
+    constexpr std::size_t TotalSpan = PageCount * PageSize;
+
+    auto* holder = static_cast<unsigned char*>(mappings.Reserve(nullptr, TotalSpan));
+    Require(holder != nullptr, "cannot reserve holder for MapZero and protection audit");
+    const auto holderAddress = reinterpret_cast<std::uintptr_t>(holder);
+    Require(holderAddress % PageSize == 0, "holder is not aligned to PS5 page size");
+
+    mappings.MapZero(holder, TotalSpan);
+    Require(holder[0] == 0 && holder[PageSize - 1] == 0, "MapZero first page is not zeroed");
+    Require(holder[PageSize] == 0 && holder[TotalSpan - 1] == 0, "MapZero subsequent pages are not zeroed");
+    MEMORY_BASIC_INFORMATION zeroInfo{};
+    Require(VirtualQuery(holder, &zeroInfo, sizeof(zeroInfo)) == sizeof(zeroInfo) && zeroInfo.Protect == PAGE_READONLY, "MapZero memory is not PAGE_READONLY");
+
+    mappings.Reset(holder, TotalSpan);
+    VirtualFree(holder, TotalSpan, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS);
+    VirtualFree(holder, 0, MEM_RELEASE);
+
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, TotalSpan, nullptr);
+    Require(section != nullptr, "cannot allocate section for protection transitions audit");
+
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, TotalSpan));
+    Require(memory != nullptr, "cannot reserve memory for protection transitions audit");
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    mappings.Map(memory, TotalSpan, section, 0, PAGE_READWRITE);
+    Require(mappings.HandleRead(address), "HandleRead failed on mapped page 0");
+    Require(mappings.HandleRead(address + PageSize), "HandleRead failed on mapped page 1");
+    Require(!mappings.HandleRead(address + TotalSpan), "HandleRead succeeded on unmapped address");
+
+    std::uint32_t currentProt = 0;
+    Require(mappings.Protection(address, &currentProt) && currentProt == PAGE_READWRITE, "initial page 0 protection mismatch");
+    Require(mappings.Protection(address + PageSize, &currentProt) && currentProt == PAGE_READWRITE, "initial page 1 protection mismatch");
+
+    mappings.SetProtection(address + PageSize, PageSize, PAGE_READONLY);
+    Require(mappings.Protection(address, &currentProt) && currentProt == PAGE_READWRITE, "page 0 protection altered by page 1 change");
+    Require(mappings.Protection(address + PageSize, &currentProt) && currentProt == PAGE_READONLY, "page 1 protection was not updated");
+    Require(!mappings.HandleWrite(address + PageSize), "HandleWrite succeeded on read-only page");
+
+    mappings.SetProtection(address + PageSize, PageSize, PAGE_READWRITE);
+    Require(mappings.Protection(address + PageSize, &currentProt) && currentProt == PAGE_READWRITE, "page 1 protection was not restored");
+
+    std::array<void*, 16> collectedPages{};
+    std::size_t count = collectedPages.size();
+    Require(mappings.Collect(address, TotalSpan, collectedPages.data(), &count, true, Collection::All), "all collection failed");
+
+    static_cast<volatile unsigned char*>(memory)[0] = 0xaa;
+    static_cast<volatile unsigned char*>(memory)[2 * PageSize] = 0xbb;
+    count = collectedPages.size();
+    Require(mappings.Collect(address, TotalSpan, collectedPages.data(), &count, true, Collection::Armed), "armed collection failed");
+    Require(count == 2, "expected exactly 2 written subpages");
+
+    const auto touched = Mappings::TouchedPages(address, PageCount, collectedPages.data(), count);
+    Require(touched.size() == PageCount, "TouchedPages size mismatch");
+    Require(touched[0] == true, "TouchedPages missed page 0");
+    Require(touched[1] == false, "TouchedPages falsely marked page 1");
+    Require(touched[2] == true, "TouchedPages missed page 2");
+    Require(touched[3] == false, "TouchedPages falsely marked page 3");
+
+    Require(mappings.BeginHostWrite(address, TotalSpan, false), "BeginHostWrite import mode failed");
+    mappings.EndHostWrite(address, TotalSpan, false);
+
+    mappings.Reset(memory, TotalSpan);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
+
+void CheckPageAlignmentAndWriteWatchBoundaries() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t PageSize = 16384;
+    constexpr std::size_t HostSubPage = 4096;
+    constexpr std::size_t SubPagesPerPage = PageSize / HostSubPage;
+    constexpr std::size_t PageCount = 4;
+    constexpr std::size_t TotalSpan = PageCount * PageSize;
+
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, TotalSpan, nullptr);
+    Require(section != nullptr, "cannot allocate section for page alignment audit");
+
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, TotalSpan));
+    Require(memory != nullptr, "cannot reserve memory for page alignment audit");
+    Require(reinterpret_cast<std::uintptr_t>(memory) % PageSize == 0, "reserved pointer violates PS5 16k page alignment");
+
+    mappings.Map(memory, TotalSpan, section, 0, PAGE_READWRITE);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+
+    std::array<void*, 64> pages{};
+    std::size_t available = pages.size();
+    Require(mappings.Collect(address, TotalSpan, pages.data(), &available, true, Collection::All), "all collection failed");
+    Require(available == PageCount * SubPagesPerPage, "initial collection did not report all subpages");
+
+    static_cast<volatile unsigned char*>(memory)[0] = 0x11;
+    static_cast<volatile unsigned char*>(memory)[PageSize - 1] = 0x22;
+    static_cast<volatile unsigned char*>(memory)[PageSize] = 0x33;
+    static_cast<volatile unsigned char*>(memory)[2 * PageSize - 1] = 0x44;
+
+    available = pages.size();
+    Require(mappings.Collect(address, TotalSpan, pages.data(), &available, true, Collection::Armed), "armed collection across page boundaries failed");
+    Require(available == 4, "boundary writes did not produce exactly four dirty subpages");
+    Require(reinterpret_cast<std::uintptr_t>(pages[0]) == address, "write at start of page 0 was missed");
+    Require(reinterpret_cast<std::uintptr_t>(pages[1]) == address + PageSize - HostSubPage, "write at end of page 0 was missed");
+    Require(reinterpret_cast<std::uintptr_t>(pages[2]) == address + PageSize, "write at start of page 1 was missed");
+    Require(reinterpret_cast<std::uintptr_t>(pages[3]) == address + 2 * PageSize - HostSubPage, "write at end of page 1 was missed");
+
+    available = pages.size();
+    Require(mappings.Collect(address, TotalSpan, pages.data(), &available, true, Collection::Armed) && available == 0, "armed pages were not cleared");
+
+    bool unalignedAddressRejected = false;
+    try {
+        mappings.MapAlias(address + HostSubPage, PageSize);
+    } catch (const std::runtime_error&) {
+        unalignedAddressRejected = true;
+    }
+    Require(unalignedAddressRejected, "MapAlias allowed unaligned address");
+
+    bool unalignedSizeRejected = false;
+    try {
+        mappings.MapAlias(address, HostSubPage);
+    } catch (const std::runtime_error&) {
+        unalignedSizeRejected = true;
+    }
+    Require(unalignedSizeRejected, "MapAlias allowed unaligned size");
+
+    bool zeroSizeRejected = false;
+    try {
+        mappings.MapAlias(address, 0);
+    } catch (const std::runtime_error&) {
+        zeroSizeRejected = true;
+    }
+    Require(zeroSizeRejected, "MapAlias allowed zero size");
+
+    Require(mappings.BeginHostWrite(address + PageSize, PageSize), "BeginHostWrite on page boundary failed");
+    static_cast<volatile unsigned char*>(memory)[PageSize + 7] = 0x77;
+    mappings.EndHostWrite(address + PageSize, PageSize);
+    available = pages.size();
+    Require(mappings.Collect(address, TotalSpan, pages.data(), &available, true, Collection::Armed), "armed collection after host write failed");
+    Require(available == SubPagesPerPage, "host write did not report all subpages of target page");
+
+    std::uintptr_t spanStart = 0;
+    std::uintptr_t spanEnd = 0;
+    Require(!mappings.ResidentSpan(address, TotalSpan, &spanStart, &spanEnd), "shared non-resident mapping reported resident span");
+
+    mappings.Reset(memory, TotalSpan);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
 }
 
 int main(int argc, char** argv) {
@@ -890,6 +1041,8 @@ int main(int argc, char** argv) {
         CheckPrivateCommitEdgeLayouts();
         CheckPrivateCommitTails();
         CheckCommitResetsEveryPageOfARunView();
+        CheckPageAlignmentAndWriteWatchBoundaries();
+        CheckWriteWatchProtectionAndMappingBoundaries();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

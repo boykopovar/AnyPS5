@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 
 #include <limits>
@@ -234,10 +235,10 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     if (request.ExtraBlockOffset > buf.size() || request.ExtraBlockSize > buf.size() - request.ExtraBlockOffset)
         throw Domain::RelinkerException("Extra block exceeds the output file");
     std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
-    if (request.MovedLoadAlignment > headerBlockAlign && (request.MovedLoadAlignment & (request.MovedLoadAlignment - 1)) == 0)
+    if (request.MovedLoadAlignment > headerBlockAlign && std::has_single_bit(request.MovedLoadAlignment))
         headerBlockAlign = request.MovedLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
-        if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
+        if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && std::has_single_bit(ph.Alignment))
             headerBlockAlign = ph.Alignment;
     }
 
