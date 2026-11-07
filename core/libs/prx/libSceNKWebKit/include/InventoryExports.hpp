@@ -671,8 +671,6 @@ int APS5_VABI WKRunLoopStopMain();
 int APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting();
 int APS5_VABI WKSerializedScriptValueCreate();
 int APS5_VABI WKSerializedScriptValueDeserialize();
-int APS5_VABI WKSessionStateCopyData();
-int APS5_VABI WKSessionStateCreateFromData();
 int APS5_VABI WKTextCheckerSetTestingMode();
 int APS5_VABI WKUserContentExtensionStoreCompile();
 int APS5_VABI WKUserContentExtensionStoreCreate();
