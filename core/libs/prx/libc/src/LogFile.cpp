@@ -163,6 +163,12 @@ void Tee::Note(const char* text, std::size_t length) {
     if (locked) unlock();
 }
 
+void Tee::SignalWrite(int standard, const char* text, std::size_t length) {
+    const auto terminal = streamOf(standard).terminal;
+    if (terminal != NoHandle) WriteAll(terminal, text, length);
+    if (_file != NoHandle) WriteAll(_file, text, length);
+}
+
 bool Tee::FileFailed() const {
     return _fileFailed.load(std::memory_order_relaxed);
 }
@@ -269,6 +275,14 @@ void Release() {
 void CrashWrite(int standard, const char* text, std::size_t length) {
     if (auto* const session = g_session.load(std::memory_order_acquire)) {
         session->Output().CrashWrite(standard, text, length);
+        return;
+    }
+    WriteStandardDirect(standard, text, length);
+}
+
+void SignalWrite_nid_no_patch(int standard, const char* text, std::size_t length) {
+    if (auto* const session = g_session.load(std::memory_order_acquire)) {
+        session->Output().SignalWrite(standard, text, length);
         return;
     }
     WriteStandardDirect(standard, text, length);
