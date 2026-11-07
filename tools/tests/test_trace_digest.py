@@ -1035,6 +1035,16 @@ class TraceDigestTests(unittest.TestCase):
                                      {"draw": 60.0, "wait": 20.0, "dispatch": 20.0})
                 json.dumps(result, allow_nan=False)
 
+    def test_small_stack_percentages_do_not_underflow_before_scaling(self):
+        samples = 10**325
+        self.stacks.write_text(f"root;draw {samples - 1}\n[truncated];dispatch 1\n", encoding="utf-8")
+        stacks = self.json_output(self.trace, "--stacks", str(self.stacks))["stacks"]
+        expected = 1e-323
+        self.assertGreater(expected, 0.0)
+        self.assertEqual(stacks["truncated_pct"], expected)
+        for field in ("self", "total"):
+            self.assertEqual(next(entry["pct"] for entry in stacks[field] if entry["frame"] == "dispatch"), expected)
+
     def test_largest_gpu_batches_with_their_recording(self):
         def tagged(tid, name, ts, dur, batch):
             return dict(complete(tid, name, ts, dur), args={"batch": batch})
