@@ -623,6 +623,25 @@ void TestFileAndSocket() {
 }
 #endif
 
+#ifndef ANYPS5_BIO_DYNAMIC
+void TestPrintf() {
+    Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "new memory BIO for BIO_printf");
+    Require(BIO_printf_nid_postfix(bio, "%s-%d", "ab", 42) == 5, "BIO_printf returns the formatted length");
+    RequireData(bio, "ab-42");
+    Require(BIO_printf_nid_postfix(bio, "%0600d", 7) == 600, "BIO_printf output longer than the stack buffer");
+    RequireData(bio, "ab-42" + std::string(599, '0') + "7");
+    Require(BIO_printf_nid_postfix(bio, "") == 0, "BIO_printf empty format writes nothing");
+    Require(BIO_free_nid_postfix(bio) == 1, "free BIO_printf BIO");
+
+    Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly != nullptr, "read-only memory BIO for BIO_printf");
+    Require(BIO_printf_nid_postfix(readOnly, "y") == -1, "BIO_printf on a read-only BIO fails");
+    RequireError(0x20fff07e);
+    Require(BIO_free_nid_postfix(readOnly) == 1, "free read-only BIO_printf BIO");
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -644,6 +663,7 @@ int main(int argc, char** argv) {
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
     TestFileAndSocket();
+    TestPrintf();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
