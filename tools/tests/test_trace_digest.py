@@ -61,6 +61,16 @@ def excessive_trace_json(opening, closing):
 
 
 class TraceWaitAncestryTests(unittest.TestCase):
+    def test_digest_classifies_each_slice_once(self):
+        events = [complete(1, "Worker.wait" if index % 3 == 0 else "work",
+                           index * 2, 1) for index in range(128)]
+        trace = trace_digest.Trace(events)
+        expected = trace_digest.digest(trace)
+        with mock.patch.object(trace_digest, "is_wait", wraps=trace_digest.is_wait) as check:
+            actual = trace_digest.digest(trace)
+        self.assertEqual(actual, expected)
+        self.assertEqual(check.call_count, len(events))
+
     def test_wait_ancestry_survives_inner_pops_and_ends_with_parent(self):
         events = [
             complete(1, "wait.outer", 0, 100),
@@ -311,6 +321,16 @@ class TraceDigestTests(unittest.TestCase):
                 self.assertIn("symbolic link loop", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.stdout, "")
+
+    def test_folded_counters_follow_the_selected_frame_window(self):
+        events = [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}}
+                  for index, ts in enumerate((0, 10000))]
+        events += [{"name": "worker folded", "ph": "C", "ts": ts, "tid": 1, "args": {"ms": value}}
+                   for ts, value in ((-1, 7), (0, 1.5), (9999, 2), (10000, 11), (20000, 5))]
+        result = trace_digest.digest(trace_digest.Trace(events))
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+        result = trace_digest.digest(trace_digest.Trace(events[:1] + events[2:]), {"window": {"ms": 10}})
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
 
     def test_summary_jsonl_excessive_nesting_reports_line_without_traceback(self):
         path = Path(self.directory.name) / "deep.jsonl"
