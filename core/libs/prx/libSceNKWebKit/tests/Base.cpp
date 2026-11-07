@@ -1769,7 +1769,6 @@ static void TestEmptyFrameLoaderClient() {
 
 int main() {
     TestTypeIDs();
-    TestSecurityOrigin();
     TestRetainRelease();
     TestStrings();
     TestURL();
@@ -1794,6 +1793,7 @@ int main() {
     TestPermissionRequests();
     TestCertificateInfo();
     TestEmptyFrameLoaderClient();
+    TestSecurityOrigin();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }

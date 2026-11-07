@@ -422,14 +422,18 @@ const char* MimeTypeForExtension(std::string_view ext) {
 namespace NKWebKit {
 
 bool IsURLSchemeRegisteredAsNoAccess(std::u16string_view scheme) {
-    std::string lowered;
-    lowered.reserve(scheme.size());
-    for (const char16_t c : scheme) {
-        if (c > 0x7F) return false;
-        lowered.push_back(static_cast<char>((c >= u'A' && c <= u'Z') ? c - u'A' + u'a' : c));
-    }
     std::lock_guard lock(g_schemeMutex);
-    return std::find(g_noAccessSchemes.begin(), g_noAccessSchemes.end(), lowered) != g_noAccessSchemes.end();
+    for (const auto& entry : g_noAccessSchemes) {
+        if (entry.size() != scheme.size()) continue;
+        bool equal = true;
+        for (std::size_t i = 0; i < entry.size() && equal; ++i) {
+            char16_t c = scheme[i];
+            if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c - u'A' + u'a');
+            equal = c == static_cast<unsigned char>(entry[i]);
+        }
+        if (equal) return true;
+    }
+    return false;
 }
 
 }  // namespace NKWebKit
