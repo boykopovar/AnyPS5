@@ -1,4 +1,5 @@
 #include "prx/libSceGameUpdate/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -28,6 +29,9 @@ static void TestRequestArguments(int notInitialized, int invalidArgument, int in
 
     for (int id : {0, -1}) {
         Require(sceGameUpdateCheck(id, nullptr, nullptr) == notFound);
+    errno = 71;
+    Require(sceGameUpdateCheck(id, &param, reinterpret_cast<GameUpdateCheckResult*>(0x10)) == invalidArgument);
+    Require(errno == 71);
         Require(sceGameUpdateAbortRequest(id) == notFound);
         Require(sceGameUpdateDeleteRequest(id) == notFound);
     }
