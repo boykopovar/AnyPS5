@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
+#include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
@@ -8,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 namespace {
 
@@ -98,6 +100,8 @@ void APS5_VABI makecontext_nid_postfix(UserUcontext* context, void (APS5_VABI* s
     machine.rbx = reinterpret_cast<std::uint64_t>(stack);
     machine.rsp = reinterpret_cast<std::uint64_t>(stack);
     machine.rip = reinterpret_cast<std::uint64_t>(&Aps5MakecontextStart_nid_no_patch);
+    const auto identity = JumpBuffer::GuestContextCreate_nid_no_patch(machine.rsp);
+    std::memcpy(machine.spare, &identity, sizeof(identity));
     GuestStacks::GuestStackRegister_nid_no_patch(context->stackPointer, context->stackSize);
 }
 

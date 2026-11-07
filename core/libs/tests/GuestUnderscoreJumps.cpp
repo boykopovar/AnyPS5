@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -102,6 +103,7 @@ static std::uint32_t BufferWord(const std::uint64_t* buffer, std::size_t offset)
 static int JumpBack(int value, std::uint32_t maskAtSet, std::uint32_t maskAtJump) {
     std::uint64_t buffer[12];
     for (auto& word : buffer) word = 0xa5a5a5a5a5a5a5a5ull;
+    const auto context = JumpBuffer::GuestContextCurrent_nid_no_patch();
     volatile int jumped = 0;
     SetBlockedMask(maskAtSet);
     const int result = _setjmp_nid_postfix(buffer);
@@ -109,11 +111,16 @@ static int JumpBack(int value, std::uint32_t maskAtSet, std::uint32_t maskAtJump
         Require(result == 0);
         for (std::size_t offset = 72; offset < 88; offset += 4) Require(BufferWord(buffer, offset) == Filler);
         Require(BufferWord(buffer, 88) == 0);
-        Require(BufferWord(buffer, 92) == Filler);
+        Require(BufferWord(buffer, 92) == context);
         jumped = 1;
         SetBlockedMask(maskAtJump);
-        _longjmp_nid_postfix(buffer, value);
+        alignas(16) std::uint64_t copied[12];
+        std::memcpy(copied, buffer, sizeof(copied));
+        const auto other = JumpBuffer::GuestContextCreate_nid_no_patch(0);
+        JumpBuffer::GuestContextSet_nid_no_patch(other.identity);
+        _longjmp_nid_postfix(copied, value);
     }
+    Require(JumpBuffer::GuestContextCurrent_nid_no_patch() == context);
     return result;
 }
 
