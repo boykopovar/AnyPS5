@@ -57,6 +57,11 @@ int main() {
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(-1, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(0, 0, 0); });
     ExpectFailure([] { sceVideoOutSetGlobalBlendSpace(1, 0, 0); });
+    ExpectFailure([] { sceVideoOutSetColorimetry(-1, 0); });
+    ExpectFailure([] { sceVideoOutSetColorimetry(0, 0); });
+    ExpectFailure([] { sceVideoOutSetColorimetry(1, 0); });
+    ExpectFailure([] { sceVideoOutSetColorimetry(0, 2); });
+    ExpectFailure([] { sceVideoOutSetColorimetry(-1, 2); });
 
     int handle = 0;
     try {
@@ -71,11 +76,15 @@ int main() {
     Require(sceVideoOutAdjustColorSpaceConversion(handle, &settings) == 0);
     Require(sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)) == 0);
     Require(sceVideoOutSetGlobalBlendSpace(handle, 0, 0) == 0);
+    Require(sceVideoOutSetColorimetry(handle, 0) == 0);
+    Require(sceVideoOutSetColorimetry(handle, 1) == 0);
+    ExpectFailure([&] { sceVideoOutSetColorimetry(handle, 2); });
 
     Require(sceVideoOutClose(handle) == 0);
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(handle, &settings); });
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)); });
     ExpectFailure([&] { sceVideoOutSetGlobalBlendSpace(handle, 0, 0); });
+    ExpectFailure([&] { sceVideoOutSetColorimetry(handle, 0); });
 
     LibcRunShutdown_nid_postfix();
     return 0;
