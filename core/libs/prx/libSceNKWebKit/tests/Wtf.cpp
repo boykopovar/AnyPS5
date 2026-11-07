@@ -1,5 +1,16 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceIcu/Version.hpp"
+
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libc/include/General.hpp"
+#include <chrono>
+#include <filesystem>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 #include <cmath>
 #include <cstddef>
@@ -269,6 +280,13 @@ static void TestSystem() {
 
     _ZN3WTF6Config17permanentlyFreezeEv();
 
+    std::uint8_t icuVersion[4] = {0};
+    u_getVersion_nid_postfix(icuVersion);
+    Require(_ZN3WTF3ICU12majorVersionEv() == icuVersion[0]);
+    Require(_ZN3WTF3ICU12minorVersionEv() == icuVersion[1]);
+    Require(_ZN3WTF3ICU12majorVersionEv() == 78);
+    Require(_ZN3WTF3ICU12minorVersionEv() == 1);
+
     char b1[16] = {0};
     char b2[16] = {0};
     Require(_ZN3WTF18constantTimeMemcmpEPKvS1_m(b1, b2, 16) == 0);
@@ -375,6 +393,174 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+static void TestMappedFiles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto construct = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb;
+    const auto readOnly = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb;
+    const auto fromPath = &_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto fromPathBase = &_ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto destroy = &_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev;
+    const auto destroyBase = &_ZN3WTF14FileSystemImpl14MappedFileDataD2Ev;
+    const auto map = &_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE;
+    WTF::MappedFileData mapped{};
+    bool success = true;
+    readOnly(&mapped, -1, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    destroy(&mapped);
+    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
+    fromPath(&mapped, path, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    int handle = open(path, 2, true, true);
+    Require(handle >= 0);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && !mapped.data && !mapped.size);
+    destroyBase(&mapped);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "abcdef", 6) == 0);
+    VirtualQueryInfo info{};
+    void* address = mapped.data;
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+    close(handle);
+    Require(std::memcmp(mapped.data, "abcdef", 6) == 0);
+    destroy(&mapped);
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0);
+    handle = open(path, 2, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'S';
+    char contents[6]{};
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroy(&mapped);
+    construct(&mapped, handle, 2, 1, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'P';
+    Require(sceKernelLseek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroyBase(&mapped);
+    construct(&mapped, handle, 1, 0, success);
+    Require(success);
+    static_cast<char*>(mapped.data)[1] = 'W';
+    destroy(&mapped);
+    close(handle);
+    fromPathBase(&mapped, path, 1, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroyBase(&mapped);
+    handle = open(path, 0, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    Require(map(&mapped, handle, 0, 1));
+    Require(mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroy(&mapped);
+    close(handle);
+#ifndef _WIN32
+    std::filesystem::resize_file(root / "file.bin", std::uint64_t{1} << 32);
+    handle = open(path, 0, true, false);
+    readOnly(&mapped, handle, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    close(handle);
+#endif
+    RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
+    std::filesystem::remove_all(root);
+}
+
+static void TestFileHandles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto seek = &_ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE;
+    const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
+    const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
+    const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
+    const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(guestPath));
+    Require(open(path, 0, true, false) == -1);
+    Require(openAndLock(path, 0, 1) == -1);
+    NKWebKit::WtfAbi::String nullPath;
+    Require(open(nullPath, 0, true, false) == -1);
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    int handle = open(path, 1, false, false);
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(handle >= 0);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    Require(seek(handle, 2, 0) == 2);
+    Require(seek(handle, 1, 1) == 3);
+    Require(seek(handle, -1, 2) == 5);
+    Require(truncate(handle, 4));
+    Require(seek(handle, 0, 2) == 4);
+    Require(!truncate(handle, -1));
+    close(handle);
+    Require(handle == -1);
+    close(handle);
+    Require(handle == -1);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / std::filesystem::path(u8"é.bin")).permissions() & std::filesystem::perms::mask) == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+    handle = open(path, 0, true, false);
+    Require(handle >= 0);
+    char bytes[8]{};
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 4);
+    Require(std::memcmp(bytes, "abcd", 4) == 0);
+    Require(!truncate(handle, 1));
+    close(handle);
+    for (int mode = 0; mode != 3; ++mode) Require(open(path, mode, true, true) == -1);
+    Require(std::filesystem::file_size(root / std::filesystem::path(u8"é.bin")) == 4);
+    handle = open(path, 2, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 4);
+    Require(sceKernelWrite(handle, "ef", 2) == 2);
+    Require(seek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 6);
+    Require(std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    handle = open(path, 1, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 0);
+    Require(sceKernelClose(handle) == 0);
+    handle = sceKernelOpen(guestPath, SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    close(handle);
+    Require(handle == -1);
+    handle = openAndLock(path, 2, 2);
+    Require(handle >= 0 && sceKernelWrite(handle, "x", 1) == 1);
+    unlockAndClose(handle);
+    Require(seek(handle, 0, 0) == -1);
+    Require(!truncate(-1, 0));
+    Require(seek(-1, 0, 0) == -1);
+    handle = -2;
+    close(handle);
+    Require(handle == -1);
+    auto allPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/all.bin"));
+#ifndef _WIN32
+    const auto allMask = ::umask(0);
+#endif
+    handle = open(allPath, 2, true, true);
+#ifndef _WIN32
+    ::umask(allMask);
+#endif
+    Require(handle >= 0);
+    close(handle);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "all.bin").permissions() & std::filesystem::perms::mask) == static_cast<std::filesystem::perms>(0666));
+#endif
+    auto readPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/read.bin"));
+    handle = open(readPath, 0, false, true);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
+    close(handle);
+    RemovePathAlias_nid_no_patch("/nkwebkit-handles");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     TestAdditionalWtf();
     TestMemoryAllocations();
@@ -384,6 +570,8 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestMappedFiles();
+    TestFileHandles();
     return 0;
 }
 
@@ -767,6 +955,127 @@ void TestIntegersAndConstructors() {
     { CString value; _ZN3WTF7CStringC2EPKcm(&value, nullptr, 0); Check(!value.buffer); }
 }
 
+std::u16string Units(const String& value) {
+    std::u16string result;
+    if (!value.impl) return result;
+    for (unsigned i = 0; i < value.impl->length; ++i) {
+        if (value.impl->hashAndFlags & 4) result.push_back(static_cast<const unsigned char*>(value.impl->data)[i]);
+        else result.push_back(static_cast<const char16_t*>(value.impl->data)[i]);
+    }
+    return result;
+}
+
+void TestFoldQuoteMarks() {
+    const auto fold = &_ZN7WebCore14foldQuoteMarksERKN3WTF6StringE;
+    struct Mark { char16_t code; char16_t folded; };
+    const Mark marks[] = {
+        {0x00AB, u'"'}, {0x00BB, u'"'}, {0x05F4, u'"'}, {0x201C, u'"'}, {0x201D, u'"'}, {0x201E, u'"'},
+        {0x201F, u'"'}, {0x2E42, u'"'}, {0x301D, u'"'}, {0x301E, u'"'}, {0x301F, u'"'}, {0xFF02, u'"'},
+        {0x05F3, u'\''}, {0x2018, u'\''}, {0x2019, u'\''}, {0x201A, u'\''}, {0x201B, u'\''}, {0x2039, u'\''},
+        {0x203A, u'\''}, {0x300C, u'\''}, {0x300D, u'\''}, {0x300E, u'\''}, {0x300F, u'\''}, {0xFE41, u'\''},
+        {0xFE42, u'\''}, {0xFE43, u'\''}, {0xFE44, u'\''}, {0xFF07, u'\''}, {0xFF62, u'\''}, {0xFF63, u'\''},
+    };
+    Check(sizeof(marks) / sizeof(marks[0]) == 30);
+    for (const auto& mark : marks) {
+        const char16_t input[] = {u'a', mark.code, u'b'};
+        auto wide = Create16(input, 3);
+        auto folded = fold(&wide);
+        Check(folded.impl != wide.impl);
+        Check(!(folded.impl->hashAndFlags & 4));
+        Check(Units(folded) == std::u16string({u'a', mark.folded, u'b'}));
+        Check(Units(wide) == std::u16string(input, 3));
+        const char16_t single[] = {mark.code};
+        auto lone = Create16(single, 1);
+        Check(Units(fold(&lone)) == std::u16string(1, mark.folded));
+    }
+    const char16_t unchanged[] = {u'"', u'\'', u'a', 0x2017, 0x2020, 0x2038, 0x203B, 0x300B, 0x3010, 0xFE40, 0xFE45, 0xFF01, 0xFF08, 0xFF61, 0xFF64, 0x05F2, 0x05F5, 0x00AA, 0x00BC, 0x4E2D};
+    auto plain = Create16(unchanged, sizeof(unchanged) / sizeof(unchanged[0]));
+    auto plainResult = fold(&plain);
+    Check(plainResult.impl == plain.impl);
+    Check(plain.impl->refCount == 4);
+    const char16_t mixed[] = {0x201C, u'h', u'i', 0x201D, u' ', 0x2018, u'x', 0x2019, 0x4E2D, 0x300C, 0x300D, 0xFF07, 0xFF02};
+    auto mixedString = Create16(mixed, 13);
+    Check(Units(fold(&mixedString)) == std::u16string({u'"', u'h', u'i', u'"', u' ', u'\'', u'x', u'\'', 0x4E2D, u'\'', u'\'', u'\'', u'"'}));
+    const char16_t asciiAfter[] = {0x201C, u'a', 0x201D};
+    auto wideAscii = Create16(asciiAfter, 3);
+    auto wideAsciiResult = fold(&wideAscii);
+    Check(Units(wideAsciiResult) == u"\"a\"");
+    Check(!(wideAsciiResult.impl->hashAndFlags & 4));
+
+    const unsigned char latin[] = {0xAB, 'a', 0xBB, 0xE9, 0xA0};
+    auto narrow = Create8(latin, 5);
+    Check(narrow.impl->hashAndFlags & 4);
+    auto narrowResult = fold(&narrow);
+    Check(narrowResult.impl != narrow.impl);
+    Check(narrowResult.impl->hashAndFlags & 4);
+    Check(Units(narrowResult) == std::u16string({u'"', u'a', u'"', 0xE9, 0xA0}));
+    Check(Units(narrow) == std::u16string({0xAB, u'a', 0xBB, 0xE9, 0xA0}));
+    auto narrowPlain = Create8(U8("it's"), 4);
+    auto narrowPlainResult = fold(&narrowPlain);
+    Check(narrowPlainResult.impl == narrowPlain.impl);
+    Check(narrowPlain.impl->refCount == 4);
+
+    auto empty = Create16(u"", 0);
+    auto emptyResult = fold(&empty);
+    Check(emptyResult.impl == empty.impl);
+    Check(!emptyResult.impl->length);
+    String absent;
+    Check(!fold(&absent).impl);
+    Throws([&] { fold(nullptr); });
+}
+
+void TestDefaultMIMEType() {
+    const auto defaultType = &_ZN7WebCore15defaultMIMETypeEv;
+    const String& first = defaultType();
+    const String& second = defaultType();
+    Check(&first == &second);
+    Check(first.impl);
+    Check(first.impl->length == 24);
+    Check(first.impl->hashAndFlags & 4);
+    Check(!(first.impl->hashAndFlags & 48));
+    Check(Units(first) == u"application/octet-stream");
+    Check(first.impl->refCount & 1);
+    const unsigned refCount = first.impl->refCount;
+    {
+        String copy(first);
+        Check(copy.impl == first.impl);
+        Check(first.impl->refCount == refCount + 2);
+    }
+    Check(first.impl->refCount == refCount);
+    Check(ConcurrentHash(first.impl) == (first.impl->hashAndFlags >> 8));
+    auto fresh = Create8(U8("application/octet-stream"), 24);
+    Check(Equal(first.impl, fresh.impl));
+    Check(EqualZ(first.impl, U8("application/octet-stream")));
+}
+
+void TestRedirectChainAllowsReuse() {
+    const auto allows = &_ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE;
+    using Status = WebCore::RedirectChainCacheStatus::Status;
+    const double now = _ZN3WTF8WallTime3nowEv().m_value;
+    const double infinity = std::numeric_limits<double>::infinity();
+    for (int reuse = 0; reuse < 2; ++reuse) {
+        Check(allows({WallTime{infinity}, Status::NoRedirection}, reuse));
+        Check(allows({WallTime{0.0}, Status::NoRedirection}, reuse));
+        Check(allows({WallTime{std::nan("")}, Status::NoRedirection}, reuse));
+        Check(!allows({WallTime{infinity}, Status::NotCachedRedirection}, reuse));
+        Check(!allows({WallTime{0.0}, Status::NotCachedRedirection}, reuse));
+    }
+    Check(allows({WallTime{infinity}, Status::CachedRedirection}, 0));
+    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{0.0}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{-infinity}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{std::nan("")}, Status::CachedRedirection}, 0));
+    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{0.0}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{-infinity}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{std::nan("")}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 2));
+    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 1));
+    Check(!allows({WallTime{infinity}, static_cast<Status>(3)}, 0));
+    Check(!allows({WallTime{infinity}, static_cast<Status>(255)}, 1));
+}
+
 void TestSharedStringHash() {
     const auto hash16 = &_ZN7WebCore23computeSharedStringHashEPKDsj;
     const auto hashString = &_ZN7WebCore23computeSharedStringHashERKN3WTF6StringE;
@@ -814,6 +1123,9 @@ void Run() {
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
+    TestFoldQuoteMarks();
+    TestDefaultMIMEType();
+    TestRedirectChainAllowsReuse();
     TestSharedStringHash();
 }
 
