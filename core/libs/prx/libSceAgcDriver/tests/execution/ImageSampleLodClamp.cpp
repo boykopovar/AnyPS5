@@ -224,7 +224,7 @@ void Check(const Case& item, std::size_t results, bool implicitOnly = false) {
         const auto none = -std::numeric_limits<float>::infinity();
         const auto levelOf = [&](std::size_t index) {
             switch (index) {
-                case 1: return explicitLevel(0.0f, static_cast<float>(sample.clamp));
+                case 1: return Level(-static_cast<float>(item.baseLevel) + static_cast<float>(item.bias) / 256.0f, floor, maxLod, last, item.baseLevel);
                 case 4: return explicitLevel(static_cast<float>(sample.lod), none);
                 case 5: return explicitLevel(0.0f, none);
                 default: return sampled;
