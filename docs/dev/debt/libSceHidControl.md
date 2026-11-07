@@ -2,107 +2,17 @@
 
 ### Functional
 
-- All 82 [libSceHidControl exports](../../../core/libs/prx/libSceHidControl/Export.cpp) remain fail-fast declarations that call `NotImplemented_nid_no_patch`. No fabricated success, unsupported pre-initialization status returns, or HID command dispatch is introduced by this PR. The current emulator has no verified HID transport, device initialization/lifecycle, command handling, or guest-memory output writes for this library.
-- The [libSceHidControl typed argument lists](../../../core/libs/prx/libSceHidControl/include/Api.hpp) are **provisional static-analysis hypotheses**, not independently verified ABI signatures. The command identifiers and layouts explored in [the earlier revision of PR #14194](https://github.com/xdCloudy/AnyPS5/blob/498cd1434cdb1b4da55b9d1bbca54e0701213346/core/libs/prx/libSceHidControl/Export.cpp) are retained only as review history; the command bodies have been removed until real transport and error behavior can be established.
-- Remaining [libSceHidControl work](../../../core/libs/prx/libSceHidControl/Export.cpp): verify parameters and return ABI against authoritative console evidence, establish HID device transport and lifecycle, validate command codes/payloads, implement output-buffer and guest-memory writes, propagate device errors correctly, and test on hardware.
+- [libSceHidControl](../../../core/libs/prx/libSceHidControl/Export.cpp) has no `/dev/hid` device behind it: AnyPS5's kernel models no HID control device, so `sceHidControlInit` gets the failed `open` and returns its -1, and every other export then returns `0x803B3002`. A request that does reach `ioctl`, for example on a regular file named `dev/hid` under the working directory, ends in the kernel's unsupported-request failure. What the group `'H'` (0x48) commands do and what their replies hold is not known. The library side follows firmware 13.42 `libSceHidControl.sprx` (sha256 `9640d14551bc2b4c360bfb1e633b2bca9b7fcf6efd51c2c4dab814de1156c25f`), read from disassembly to every return, not measured on a console. Closes when: a `/dev/hid` model exists and is measured against a console.
+- [Request padding and unread replies](../../../core/libs/prx/libSceHidControl/Export.cpp) - bytes the 13.42 library leaves unset in a request, such as the first four bytes of the `sceHidControlGetAuthInformation` request, are zero here. `sceHidControlPswUpdateIsReady`, `sceHidControlPswUpdateGetStatus` and `sceHidControlPswUpdateGetReconnectStatus` translate their reply even when `ioctl` fails; on the console that reads a stack slot nothing wrote, here it reads 0.
+- [Argument meanings](../../../core/libs/prx/libSceHidControl/include/Api.hpp) - argument registers, widths and the checks on them come from the 13.42 disassembly; what each value means (device, port, handle, preset numbering) is not established, so the parameter names are neutral.
 
 ### Unknown function info
 
-- [sceHidControlConnectHandle, sceHidControlConnectPort, sceHidControlDisconnectDevice, sceHidControlDisconnectHandle, sceHidControlDisconnectPort](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); candidate signatures come from static analysis and are not console-verified; the exports continue to throw through `NotImplemented_nid_no_patch`.
-
-- [sceHidControlGetAuthInformation, sceHidControlGetBatteryState, sceHidControlGetDeviceId, sceHidControlGetDeviceInfo, sceHidControlGetDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); candidate signatures come from static analysis and are not console-verified; the exports continue to throw through `NotImplemented_nid_no_patch`.
-
-- [sceHidControlGetJediExtensionUnitInfo, sceHidControlGetJediState, sceHidControlGetSparkState, sceHidControlGetVersionInfo, sceHidControlInit](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); candidate signatures come from static analysis and are not console-verified; the exports continue to throw through `NotImplemented_nid_no_patch`.
-
-- [sceHidControlSetApplicationFocus, sceHidControlSetHandleState, sceHidControlSetJediAudioOutPath, sceHidControlSetJediVolumeGain, sceHidControlSetProcessFocus](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); candidate signatures come from static analysis and are not console-verified; the exports continue to throw through `NotImplemented_nid_no_patch`.
-
-- [sceHidControlSetRevokeList, sceHidControlSetRevokeList2, sceHidControlSetUserColor](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); candidate signatures come from static analysis and are not console-verified; the exports continue to throw through `NotImplemented_nid_no_patch`.
-
-- [sceHidControlSetRevokeList](../../../core/libs/prx/libSceHidControl/Export.cpp) - not exported by any firmware 13.42 module, so on 13.42 an import of these NIDs resolves to nothing in the firmware; the 3.20 declarations remain for titles built against older firmware. Not measured here.
-
-- [sceHidControlEnableMicBeamForming](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetAllVibrationMute](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetVibrationTriggerEffectWeakForce](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlIsForceUpdateNeeded](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetRemoteMergeProcess](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetCollaboInputSettingOverrideProcess](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetForceAdvancedVibrationMode](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateIsUpdateNeeded](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateIsUpdateNeededForMultiDevice](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateIsReady](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateStart](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateGetStatus](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateSendData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateSendAppendixData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateGetReconnectStatus](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswState](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswBatteryState](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswConsoleMute](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswSpeakerVolume](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswSidetoneLevel](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswSidetoneLevel](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswEqPresetSelection](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswEqPresetSelection](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswEqPresetName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswEqPresetName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswAllEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswResetSettings](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswNetworkLocale](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswNetworkLocale](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswDeviceNameForNearby](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlConnectPswDeviceForNearby](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswDeviceInfo](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlSetPswCommand](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswCommand](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
-
-- [sceHidControlGetPswDeviceIdFromIdxAdd](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - provisional signature from static analysis; unverified
+- [sceHidControlSetRevokeList](../../../core/libs/prx/libSceHidControl/Export.cpp) - not exported by firmware 13.42's `libSceHidControl.sprx`, so its 3.20 declaration still throws through `NotImplemented_nid_no_patch`.
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceHidControl/Export.cpp) - import-resolution declarations of named candidates and unresolved NIDs. All entries call `NotImplemented_nid_no_patch`. The declarations do not establish console-verified parameter or return ABI; no runtime implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceHidControl/Export.cpp) - 14 of these 19 NIDs have no name. The five named ones carry public candidate names that recompute to their NIDs; that settles the spelling, not that the console uses the names.
 
 #### Membership and identity evidence
 
