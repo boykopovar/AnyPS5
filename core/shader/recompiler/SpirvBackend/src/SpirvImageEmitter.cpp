@@ -653,10 +653,26 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     return result;
 }
 
+std::uint32_t ScaledUnormFactor(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t component) {
+    const auto one = Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, access.mem.resource, component), ConstantU32(state, 1u));
+    return Select(state, TypeF32(state), one, ConstantF32Value(state, 1.0f), ConstantF32Value(state, static_cast<float>((1u << access.image.scaledUnormBits) - 1u)));
+}
+
+std::uint32_t ScaleUnormTexel(SpirvEmitterState& state, const ImageEmitAccess& access, std::uint32_t texel) {
+    std::uint32_t factors[4] = {};
+    for (std::uint32_t component = 0; component < 4u; component++) factors[component] = ScaledUnormFactor(state, access, component);
+    const auto factor = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4), factor, factors[0], factors[1], factors[2], factors[3]);
+    return Binary(state, spv::OpFMul, TypeF32Vector(state, 4), texel, factor);
+}
+
 std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
     auto& state = ctx.state;
     if (access.image.srgbDecode) {
         return DecodeSrgbTexel(state, texel);
+    }
+    if (access.image.scaledUnormBits != 0u) {
+        return ScaleUnormTexel(state, access, texel);
     }
     if (access.image.conversionFormat == FmaskExpansion) {
         return ExpandFmaskTexel(state, access, texel);
@@ -765,6 +781,9 @@ std::uint32_t PackedImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
 
 std::uint32_t UnpackImageGather(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t gathered) {
     auto& state = ctx.state;
+    if (access.image.scaledUnormBits != 0u) {
+        return Binary(state, spv::OpVectorTimesScalar, TypeF32Vector(state, 4), gathered, ScaledUnormFactor(state, access, ImageGatherComponent(EffectiveDmask(access.mem))));
+    }
     const auto info = ImageConversionFormat(access.image);
     if (info.format == IrBufferFormat::Invalid) {
         return gathered;
@@ -2355,7 +2374,7 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
 
 bool SameImageModeForInstruction(const IrValue& inst, const MemoryInfo& memory, const ImageResource& a, const ImageResource& b) {
     if (a.resourceClass != b.resourceClass || a.dimension != b.dimension || a.numericClass != b.numericClass ||
-        a.depthCompare != b.depthCompare || a.atomic != b.atomic || a.atomic64 != b.atomic64 || a.table != b.table || a.depthBits != b.depthBits) {
+        a.depthCompare != b.depthCompare || a.atomic != b.atomic || a.atomic64 != b.atomic64 || a.table != b.table || a.depthBits != b.depthBits || a.scaledUnormBits != b.scaledUnormBits) {
         return false;
     }
     const auto opcode = inst.Opcode();
