@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -3188,7 +3189,27 @@ void DepthBoundsBiasTests() {
     expectFailure([&] { polygonMode(0x8u); }, "a point polygon mode whose size limits exclude one pixel");
     queue.context[0x281] = 0xffff0000u;
     queue.context[0x282] = 0x10u;
-    expectFailure([&] { polygonMode(0x128u); }, "a line polygon mode wider or narrower than one pixel");
+    queue.context[0x205] = 0x128u;
+    Require(AgcDriver::Graphics::DecodeState(queue).lineWidth == 2.0f, "a PA_SU_LINE_CNTL width of 16 eighths did not draw two-pixel lines");
+    AgcDriver::Graphics::Context lineContext{};
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 1.0f);
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f); }, "needs the wideLines feature");
+    lineContext.wideLines = true;
+    lineContext.limits.lineWidthRange[0] = 1.0f;
+    lineContext.limits.lineWidthRange[1] = 8.0f;
+    lineContext.limits.lineWidthGranularity = 0.125f;
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f);
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 8.0f);
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 8.125f); }, "is outside the range");
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 0.5f); }, "is outside the range");
+    lineContext.limits.lineWidthGranularity = 0.75f;
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.5f);
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f); }, "is not a whole number of granularity steps");
+    lineContext.limits.lineWidthRange[1] = 1.0f;
+    lineContext.limits.lineWidthGranularity = 0.0f;
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f); }, "is outside the range");
+    queue.context[0x282] = 0u;
+    expectFailure([&] { polygonMode(0x128u); }, "a line polygon mode with a zero line width");
     queue.context[0x282] = 8u;
     queue.userConfig[0x242] = 2;
     Require(polygonMode(0x8u) == VK_POLYGON_MODE_FILL, "a line list took the point polygon mode of its triangles");
@@ -7963,6 +7984,15 @@ void sampledTextureBudgetTests() {
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
+}
+
+void publishReasonTests() {
+    using AgcDriver::Graphics::PublishReason;
+    using AgcDriver::Graphics::PublishReasonFor;
+    Require(PublishReasonFor("memory access") == PublishReason::Hook, "a CPU memory access is not counted as a hook publish");
+    Require(PublishReasonFor("storage refresh") == PublishReason::Upload, "a storage refresh is not counted as an upload publish");
+    Require(PublishReasonFor("cache eviction") == PublishReason::Other, "an unlisted flush reason is not counted under other");
+    Require(PublishReasonFor(nullptr) == PublishReason::Other, "a flush without a reason is not counted under other");
 }
 
 void unitShadowBudgetTests() {
@@ -13800,6 +13830,7 @@ int main(int argc, char** argv) {
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
+        publishReasonTests();
         unitShadowBudgetTests();
         sampledBudgetReportTests();
         meshArgumentTests();
