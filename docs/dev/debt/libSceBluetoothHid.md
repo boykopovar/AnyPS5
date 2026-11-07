@@ -3,6 +3,7 @@
 ### Silent stubs
 
 - [libSceBluetoothHid](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): the host still has no device backend or event worker. Registration retains only lifecycle state and never delivers the recovered 104-byte callback events. Custom worker scheduling throws; device ioctl failures and resource exhaustion are not modeled.
+- [sceBluetoothHidGetDeviceName, sceBluetoothHidGetInputReport, sceBluetoothHidSetOutputReport, sceBluetoothHidDisconnectDevice, sceBluetoothHidGetDeviceInfo, sceBluetoothHidGetFeatureReport, sceBluetoothHidGetReportDescriptor, sceBluetoothHidInterruptOutput and sceBluetoothHidSetFeatureReport](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): their pre-initialization return of NotInitialized (0x81540004) is unmeasured and follows the sourced lifecycle exports by analogy; after initialization, calls continue throwing through NotImplemented_nid_no_patch.
 
 ### Unknown function info
 
