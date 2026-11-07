@@ -405,8 +405,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKGeolocationManagerProviderDidFailToDeterminePosition` | `0jIcJu0tb+o` |
 | `WKGeolocationManagerProviderDidFailToDeterminePositionWithErrorMessage` | `NTLwhm+Wfk8` |
 | `WKGeolocationManagerSetProvider` | `55QR+rnq6FI` |
-| `WKGeolocationPermissionRequestAllow` | `d1IXlZ0caEU` |
-| `WKGeolocationPermissionRequestDeny` | `GB8w2Gfd0Ag` |
 | `WKHTTPCookieStoreDeleteAllCookies` | `mVoWS3zTfxs` |
 | `WKHTTPCookieStoreSetCookieForHostname` | `bXKJvpaEKpk` |
 | `WKHTTPCookieStoreSetHTTPCookieAcceptPolicy` | `AP4g3QKWeFg` |
@@ -453,7 +451,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKNotificationManagerProviderDidRemoveNotificationPolicies` | `gjIRPiBLogA` |
 | `WKNotificationManagerProviderDidShowNotification` | `7mQ26kdVI1U` |
 | `WKNotificationManagerSetProvider` | `7LaChig9ovU` |
-| `WKNotificationPermissionRequestDeny` | `b9wqZKzgejI` |
 | `WKOpenPanelParametersCopyAcceptedFileExtensions` | `13zq0KIVJJg` |
 | `WKOpenPanelParametersCopyAcceptedMIMETypes` | `FajrozYzGvw` |
 | `WKOpenPanelParametersCopyAllowedMIMETypes` | `YacE5rS1b3k` |

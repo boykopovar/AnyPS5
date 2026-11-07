@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -185,6 +186,62 @@ class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResul
 public:
     bool cancelled = false;
     std::vector<Retained<String>> chosenFiles;
+};
+
+class GeolocationPermissionRequest final : public ObjectOf<ObjectType::GeolocationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    GeolocationPermissionRequest() = default;
+    explicit GeolocationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class NotificationPermissionRequest final : public ObjectOf<ObjectType::NotificationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    NotificationPermissionRequest() = default;
+    explicit NotificationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
 };
 
 }  // namespace NKWebKit
