@@ -8,6 +8,9 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
+constexpr int kErrNotInit = static_cast<int>(0x80f30001);
+constexpr int kErrAlreadyInit = static_cast<int>(0x80f30002);
+
 std::array<std::uint8_t, 0x28> Initialized(std::uint8_t fill) {
     std::array<std::uint8_t, 0x28> bytes{};
     bytes.fill(fill);
@@ -15,9 +18,25 @@ std::array<std::uint8_t, 0x28> Initialized(std::uint8_t fill) {
     return bytes;
 }
 
+void CheckLifecycle() {
+    Require(sceEditMp4Terminate() == kErrNotInit);
+    Require(sceEditMp4Abort() == kErrNotInit);
+    Require(sceEditMp4Edit() == kErrNotInit);
+    Require(sceEditMp4GetStatus() == kErrNotInit);
+    Require(sceEditMp4SetFinishCallback() == kErrNotInit);
+    Require(sceEditMp4Unite() == kErrNotInit);
+
+    Require(sceEditMp4Initialize() == 0);
+    Require(sceEditMp4Initialize() == kErrAlreadyInit);
+
+    Require(sceEditMp4Terminate() == 0);
+    Require(sceEditMp4Terminate() == kErrNotInit);
+}
+
 }
 
 int main() {
+    CheckLifecycle();
     for (const std::uint8_t fill : {std::uint8_t{0x00}, std::uint8_t{0xaa}}) {
         const auto bytes = Initialized(fill);
         for (std::size_t index = 0; index < 0x10; ++index) Require(bytes[index] == 0);

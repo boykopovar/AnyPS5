@@ -4,28 +4,47 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+constexpr int SCE_EDIT_MP4_ERROR_NOT_INITIALIZED = static_cast<int>(0x80f30001);
+constexpr int SCE_EDIT_MP4_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80f30002);
+
+std::mutex g_mutex;
+bool g_initialized = false;
+
+}
 
 extern "C" {
 
 int APS5_VABI sceEditMp4Abort() {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_EDIT_MP4_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceEditMp4Edit() {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_EDIT_MP4_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceEditMp4GetStatus() {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_EDIT_MP4_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceEditMp4Initialize() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (g_initialized) return SCE_EDIT_MP4_ERROR_ALREADY_INITIALIZED;
+    g_initialized = true;
     return 0;
 }
 
@@ -46,16 +65,22 @@ std::uint64_t APS5_VABI sceEditMp4QueryMemSize() {
 }
 
 int APS5_VABI sceEditMp4SetFinishCallback() {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_EDIT_MP4_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceEditMp4Terminate() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_EDIT_MP4_ERROR_NOT_INITIALIZED;
+    g_initialized = false;
     return 0;
 }
 
 int APS5_VABI sceEditMp4Unite() {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_EDIT_MP4_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
