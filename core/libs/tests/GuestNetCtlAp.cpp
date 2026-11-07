@@ -28,13 +28,21 @@ void RequireUninitialized() {
     std::uint8_t block[184] = {};
     Require(sceNetCtlApCheckCallback() == kErrNotInitialized);
     Require(sceNetCtlApClearEvent(1) == kErrNotInitialized);
+    Require(sceNetCtlApClearEvent(0) == kErrNotInitialized);
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &value) == kErrNotInitialized && value == 0x5a5a);
+    Require(sceNetCtlApRegisterCallback(nullptr, nullptr, nullptr) == kErrNotInitialized);
     Require(sceNetCtlApUnregisterCallback(0) == kErrNotInitialized);
+    Require(sceNetCtlApUnregisterCallback(-1) == kErrNotInitialized);
     Require(sceNetCtlApGetResult(1, &value) == kErrNotInitialized && value == 0x5a5a);
+    Require(sceNetCtlApGetResult(1, nullptr) == kErrNotInitialized);
+    Require(sceNetCtlApGetResult(0, nullptr) == kErrNotInitialized);
     Require(sceNetCtlApGetInfo(block) == kErrNotInitialized);
+    Require(sceNetCtlApGetInfo(nullptr) == kErrNotInitialized);
     Require(sceNetCtlApGetState(&value) == kErrNotInitialized && value == 0x5a5a);
+    Require(sceNetCtlApGetState(nullptr) == kErrNotInitialized);
     Require(sceNetCtlApStop() == kErrNotInitialized);
     Require(sceNetCtlApGetConnectInfo(nullptr, block) == kErrNotInitialized);
+    Require(sceNetCtlApGetConnectInfo(nullptr, nullptr) == kErrNotInitialized);
 }
 
 }
