@@ -4,7 +4,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <vector>
+
+#ifndef _WIN32
+extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
+    throw std::runtime_error(name);
+}
+#endif
 
 namespace {
 
@@ -14,6 +22,7 @@ using FreeType::GuestStreamRec;
 
 constexpr std::int64_t Post = 0x504F5354;
 constexpr std::int64_t Sfnt = 0x73666E74;
+constexpr std::int64_t LongMax = std::numeric_limits<std::int64_t>::max();
 
 struct Recorder {
     GuestMemoryRec memory{};
@@ -39,6 +48,16 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "FreeType Ot raccess: %s\n", message);
     std::exit(1);
+}
+
+template<typename TFunction>
+void RequireThrows(TFunction function, const char* message) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    Require(false, message);
 }
 
 void Put16(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
@@ -134,6 +153,20 @@ void HeaderAndOffsets(std::size_t prefix, bool zeroCopy) {
     Require(count == -1 && !offsets && session.recorder.allocs == allocs, "a missing tag writes and allocates nothing");
 }
 
+void ThrowingOffsetsFreeAllocations() {
+    const Fork fork = MakeFork(0, false);
+    Session nullOffsets(fork.bytes);
+    std::int64_t count = 0;
+    RequireThrows([&] { FT_Raccess_Get_DataOffsets_nid_postfix(&nullOffsets.library, &nullOffsets.stream, 0x140 + 28, 0x100, Post, nullptr, &count); }, "a null offsets pointer throws");
+    Require(nullOffsets.recorder.allocs == nullOffsets.recorder.frees, "a null offsets pointer frees every block it allocates");
+
+    Session overflow(fork.bytes);
+    std::int64_t* offsets = nullptr;
+    count = 0;
+    RequireThrows([&] { FT_Raccess_Get_DataOffsets_nid_postfix(&overflow.library, &overflow.stream, 0x140 + 28, LongMax - 0x10, Post, &offsets, &count); }, "an overflowing resource offset throws");
+    Require(!offsets && overflow.recorder.allocs == overflow.recorder.frees, "an overflowing resource offset frees the reference and offset arrays");
+}
+
 void RejectedHeaders() {
     Fork fork = MakeFork(0, false);
     Put32(fork.bytes, 8, 0x41);
@@ -180,6 +213,7 @@ int main() {
     HeaderAndOffsets(0x80, true);
     RejectedHeaders();
     TruncatedReferences();
+    ThrowingOffsetsFreeAllocations();
     std::puts("Guest FreeType Ot raccess tests passed");
     return 0;
 }
