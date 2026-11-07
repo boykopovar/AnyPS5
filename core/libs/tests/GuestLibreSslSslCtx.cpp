@@ -1,4 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstddef>
@@ -9,7 +11,9 @@
 #include <stdexcept>
 
 struct TestCtxInternal {
-    unsigned char beforeQuietShutdown[292];
+    unsigned char beforeExData[248];
+    LibreSslStack* exData;
+    unsigned char beforeQuietShutdown[36];
     int quietShutdown;
     unsigned char rest[168];
 };
@@ -27,7 +31,7 @@ struct TestCtx {
     TestCtxInternal* internal;
 };
 
-static_assert(sizeof(TestCtxInternal) == 464 && offsetof(TestCtxInternal, quietShutdown) == 292);
+static_assert(sizeof(TestCtxInternal) == 464 && offsetof(TestCtxInternal, exData) == 248 && offsetof(TestCtxInternal, quietShutdown) == 292);
 static_assert(sizeof(TestCtx) == 120 && offsetof(TestCtx, verifyMode) == 48 && offsetof(TestCtx, defaultPasswdCallback) == 96);
 
 static LibreSslCtx* Context(TestCtx* ctx) {
@@ -103,11 +107,49 @@ static void TestSetPasswordUserdata() {
     Require(ctx.defaultPasswdCallbackUserdata == nullptr);
 }
 
+static void TestSetExData() {
+    TestCtxInternal internal {};
+    TestCtx ctx {};
+    int first = 1;
+    int second = 2;
+    RequireThrows([] { SSL_CTX_set_ex_data_nid_postfix(nullptr, 0, nullptr); });
+    RequireThrows([&] { SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 0, nullptr); });
+    ctx.internal = &internal;
+    Require(SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 6, &first) == 1);
+    Require(internal.exData && internal.exData->num == 7 && internal.exData->numAlloc == 8);
+    Require(internal.exData->data[0] == nullptr && internal.exData->data[5] == nullptr);
+    Require(internal.exData->data[6] == reinterpret_cast<char*>(&first));
+    Require(SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 6, &second) == 1);
+    Require(internal.exData->data[6] == reinterpret_cast<char*>(&second));
+    Require(SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), -1, nullptr) == 1);
+    Require(internal.exData->num == 7 && internal.exData->data[6] == reinterpret_cast<char*>(&second));
+    Require(internal.quietShutdown == 0);
+    for (unsigned char byte : internal.beforeExData) Require(byte == 0);
+    for (unsigned char byte : internal.beforeQuietShutdown) Require(byte == 0);
+    for (unsigned char byte : internal.rest) Require(byte == 0);
+    free_nid_postfix(internal.exData->data);
+    free_nid_postfix(internal.exData);
+
+    char* entries[4] {};
+    LibreSslStack stack {2, entries, 1, 4, nullptr};
+    entries[0] = reinterpret_cast<char*>(&first);
+    internal.exData = &stack;
+    Require(SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 1, &second) == 1);
+    Require(stack.num == 2 && entries[0] == reinterpret_cast<char*>(&first) && entries[1] == reinterpret_cast<char*>(&second));
+    Require(stack.sorted == 1);
+    Require(SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 2, nullptr) == 1);
+    Require(stack.num == 3 && stack.sorted == 0 && entries[2] == nullptr);
+    Require(internal.quietShutdown == 0);
+}
+
 int main() {
+    void* heap[10] {};
+    ApplicationHeapRegister_nid_no_patch(heap);
     TestGetVerifyMode();
     TestGetCertStore();
     TestSetQuietShutdown();
     TestSetPasswordCallback();
     TestSetPasswordUserdata();
+    TestSetExData();
     return 0;
 }
