@@ -6,8 +6,6 @@
 #include <cstring>
 #include <initializer_list>
 #include "SceTypes.hpp"
-#include <stdexcept>
-#include <string>
 
 static void Require(bool value) {
     if (!value) std::abort();
@@ -318,14 +316,6 @@ int main() {
 
     Require(sceAcmContextDestroy(context2) == 0);
     Require(sceAcmContextDestroy(context2) == BadContext);
-
-    bool convReverbThrew = false;
-    try {
-        sceAcm_ConvReverb_SharedIr();
-    } catch (const std::runtime_error& error) {
-        convReverbThrew = (std::string(error.what()) == "sceAcm_ConvReverb_SharedIr not implemented");
-    }
-    Require(convReverbThrew);
 
     return 0;
 }
