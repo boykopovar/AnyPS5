@@ -1179,6 +1179,15 @@ static void TestAesWrap192() {
         Hex("96778b25ae6ca435f92b5b97c050aed2468ab8a17ad84e5d"));
 }
 
+static void TestAesWrap256() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_aes_256_wrap_nid_postfix());
+    RequireWrapDescriptor(cipher, 790, 32);
+    const auto kek = Hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    RequireWrapVector(cipher, kek, Hex("00112233445566778899aabbccddeeff"), Hex("64e8c3f9ce0f5ba263e9777905818a2a93c8191e7d6e8ae7"));
+    RequireWrapVector(cipher, kek, Hex("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f"),
+        Hex("28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21"));
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1203,6 +1212,7 @@ int main() {
     TestAesGcmTls();
     TestAesWrap128();
     TestAesWrap192();
+    TestAesWrap256();
     TestEvpCleanup();
     return 0;
 }
