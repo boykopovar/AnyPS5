@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "execution/FixtureDeviceSelection.hpp"
+#include "PortabilitySubset.hpp"
 #include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
@@ -81,6 +82,10 @@ public:
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
+            std::vector<const char*> extensionsEnabled;
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);

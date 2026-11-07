@@ -1,3 +1,4 @@
+#include "../PortabilitySubset.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -143,12 +144,13 @@ public:
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
             address.pNext = &bytes;
-            const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
-            device.ppEnabledExtensionNames = extensionsEnabled.data();
+            AgcDriver::Tests::PortabilitySubset subset;
+            subset.Enable(context.physical, function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties"),
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), extensionsEnabled, device);
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             realDeviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
