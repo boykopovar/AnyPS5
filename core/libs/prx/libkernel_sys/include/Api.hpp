@@ -128,7 +128,7 @@ int APS5_VABI kmq_unlink_nid_postfix(void);
 int APS5_VABI ksem_close_nid_postfix(void);
 int APS5_VABI ksem_open_nid_postfix(void);
 int APS5_VABI ksem_unlink_nid_postfix(void);
-int APS5_VABI ktrace_nid_postfix(void);
+int APS5_VABI ktrace_nid_postfix(const char* filename, int ops, int facs, int pid);
 int APS5_VABI mdbg_call_nid_postfix(void);
 int APS5_VABI mdbg_service_nid_postfix(void);
 int APS5_VABI mount_nid_postfix(void);

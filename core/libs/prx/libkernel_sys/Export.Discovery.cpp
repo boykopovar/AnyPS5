@@ -187,9 +187,17 @@ int APS5_VABI ksem_unlink_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ktrace_nid_postfix(void) {
+int APS5_VABI ktrace_nid_postfix(const char*, int ops, int facs, int) {
+    constexpr int ktropMask = 3;
+    constexpr int ktropClearFile = 2;
+    constexpr unsigned int ktrfacRoot = 0x80000000u;
+    const int facsMasked = static_cast<int>(static_cast<unsigned int>(facs) & ~ktrfacRoot);
+    const int op = ops & ktropMask;
+    if (op != ktropClearFile && facsMasked == 0) {
+        *__error_nid_postfix() = 22;
+        return -1;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI mdbg_call_nid_postfix(void) {
