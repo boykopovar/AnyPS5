@@ -1,4 +1,5 @@
 #include "prx/libSceFiber/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -67,6 +68,9 @@ void APS5_VABI FirstEntry(std::uint64_t argOnInitialize, std::uint64_t argOnRun)
     Require(argOnInitialize == 11 && argOnRun == 100, "first fiber arguments");
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == 0 && self == g_first, "first fiber self");
+    errno = 71;
+    Require(sceFiberGetSelf(reinterpret_cast<FiberObject**>(0x10)) == FiberErrorNull, "unwritable self pointer");
+    Require(errno == 71, "errno preserved");
     CheckActiveContext(g_first, g_firstContext.size());
     std::uint64_t framePointer = 0;
     Require(sceFiberGetThreadFramePointerAddress(nullptr) == FiberErrorNull, "frame pointer null");
