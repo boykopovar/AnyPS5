@@ -28,6 +28,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <new>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -188,9 +189,28 @@ void _readFile(const Apr::ReadFileCommand& command) {
     if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
 }
 
+std::string _addressText(std::uint64_t address) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(address));
+    return text;
+}
+
+void _storeGuestAddress(std::uint64_t address, std::uint64_t value) {
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), &value, sizeof(value)))
+        throw std::runtime_error("APR: the write address " + _addressText(address) + " is not writable guest memory");
+    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(value, std::memory_order_release);
+}
+
+std::uint64_t _loadGuestAddress(std::uint64_t address) {
+    std::uint64_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address), sizeof(value)))
+        throw std::runtime_error("APR: the wait address " + _addressText(address) + " is not readable guest memory");
+    return value;
+}
+
 void _writeAddress(const Apr::WriteAddressCommand& command) {
     if (command.flags != 0) throw std::runtime_error("APR: WriteAddress flags " + std::to_string(command.flags) + " not implemented");
-    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(command.value, std::memory_order_release);
+    _storeGuestAddress(command.address, command.value);
 }
 
 std::array<std::atomic<std::uint32_t>, 256> g_counters{};
@@ -651,6 +671,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             const auto command = _read<Apr::WaitCommand>(buffer, cursor);
             const bool counter = header.opcode == Apr::Opcode::WaitOnCounter;
             const std::uint32_t unused = counter ? 64u - _counterField(command.access).bits : 0u;
+            if (!counter) static_cast<void>(_loadGuestAddress(command.address));
             const auto current = [&]() -> std::uint64_t {
                 if (counter) return _readCounter(command.counter, command.access);
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
@@ -668,7 +689,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {
             const auto command = _read<Apr::WriteAddressFromCounterCommand>(buffer, cursor);
-            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(sceKernelGetProcessTimeCounter(), std::memory_order_release);
+            _storeGuestAddress(command.address, sceKernelGetProcessTimeCounter());
             break;
         }
         case Apr::Opcode::WriteAddressFromCounter:
@@ -676,7 +697,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             const auto command = _read<Apr::WriteAddressFromCounterCommand>(buffer, cursor);
             std::uint64_t value = _counter(command.counter0);
             if (header.opcode == Apr::Opcode::WriteAddressFromCounterPair) value |= static_cast<std::uint64_t>(_counter(command.counter1)) << 32u;
-            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(value, std::memory_order_release);
+            _storeGuestAddress(command.address, value);
             break;
         }
         default:
@@ -901,16 +922,37 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     return 0;
 }
 
+std::optional<std::vector<std::uint8_t>> _guestCommands(const Apr::CommandBufferObject& object) {
+    if (object.offset > object.size) return std::nullopt;
+    std::vector<std::uint8_t> commands;
+    try {
+        commands.resize(object.offset);
+    } catch (const std::bad_alloc&) {
+        return std::nullopt;
+    }
+    if (object.offset != 0 && !GuestCopyIn_nid_no_patch(commands.data(), object.base, object.offset)) return std::nullopt;
+    return commands;
+}
+
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
     if (!buffer) return _fail(GUEST_EINVAL);
-    _submit(buffer->base, buffer->offset, false, priority);
+    Apr::CommandBufferObject object{};
+    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
+    const auto commands = _guestCommands(object);
+    if (!commands) return _fail(GUEST_EFAULT);
+    _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
     if (!buffer) return _fail(GUEST_EINVAL);
-    *id = _submit(buffer->base, buffer->offset, false, priority);
+    Apr::CommandBufferObject object{};
+    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
+    const auto commands = _guestCommands(object);
+    if (!commands) return _fail(GUEST_EFAULT);
+    const std::uint32_t submitted = _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
+    if (!GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
@@ -918,7 +960,8 @@ int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBuff
     if (!result) return _fail(GUEST_EINVAL);
     const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
     if (submitted != 0) return submitted;
-    *result = 0;
+    const std::uint32_t succeeded = 0;
+    if (!GuestCopyOut_nid_no_patch(result, &succeeded, sizeof(succeeded))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
