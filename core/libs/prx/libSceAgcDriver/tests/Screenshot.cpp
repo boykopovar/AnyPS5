@@ -30,6 +30,42 @@ void setScreenshotDirectory(const std::filesystem::path& directory) {
 #endif
 }
 
+void setScreenshotTrigger(const std::filesystem::path& trigger) {
+#ifdef _WIN32
+    require(_wputenv_s(L"APS5_SCREENSHOT_TRIGGER", trigger.wstring().c_str()) == 0, "set APS5_SCREENSHOT_TRIGGER");
+#else
+    require(::setenv("APS5_SCREENSHOT_TRIGGER", trigger.c_str(), 1) == 0, "set APS5_SCREENSHOT_TRIGGER");
+#endif
+}
+
+void triggerRequests(const std::filesystem::path& trigger) {
+    const auto create = [&] {
+        std::ofstream file(trigger);
+        require(file.good(), "create screenshot trigger");
+    };
+    require(!AgcDriver::Screenshot::Take(), "an absent trigger requests nothing");
+    create();
+    require(AgcDriver::Screenshot::Take(), "a trigger requests a screenshot");
+    require(!std::filesystem::exists(trigger), "the trigger is consumed");
+    require(!AgcDriver::Screenshot::Take(), "a consumed trigger is taken once");
+    create();
+    AgcDriver::Screenshot::Request();
+    require(AgcDriver::Screenshot::Take(), "a trigger and a hotkey request merge");
+    require(!std::filesystem::exists(trigger) && !AgcDriver::Screenshot::Take(), "merged requests do not leave another screenshot");
+    create();
+    require(AgcDriver::Screenshot::Take(), "recreating the trigger requests another screenshot");
+    std::filesystem::create_directory(trigger);
+    bool rejected = false;
+    try {
+        static_cast<void>(AgcDriver::Screenshot::Take());
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected && std::filesystem::is_directory(trigger), "a directory trigger is rejected without removal");
+    std::filesystem::remove(trigger);
+    require(!AgcDriver::Screenshot::Take(), "removing an invalid trigger restores normal requests");
+}
+
 std::vector<std::uint8_t> readFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     require(file.good(), "open the written screenshot");
@@ -98,15 +134,19 @@ void rejectsInvalidFrames() {
 
 }
 
-int main() try {
+int main(int argc, char** argv) try {
+    require(argc == 1 || (argc == 2 && std::string(argv[1]) == "trigger"), "usage: agc_screenshot_tests [trigger]");
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_screenshot-" + std::to_string(std::random_device{}()));
     const auto directory = root / std::filesystem::path(u8"nested-a\u00e7\u00e3o-\u65e5\u672c");
     std::filesystem::remove_all(root);
     setScreenshotDirectory(directory);
+    const auto trigger = root / std::filesystem::path(u8"capture-a\u00e7\u00e3o-\u65e5\u672c.request");
+    setScreenshotTrigger(argc == 2 ? trigger : std::filesystem::path{});
     requestsMerge();
     writesRgbPng(directory);
     concurrentWritesClaimUniquePaths();
     rejectsInvalidFrames();
+    if (argc == 2) triggerRequests(trigger);
     std::filesystem::remove_all(root);
     std::cout << "agc screenshot tests passed\n";
     return 0;
