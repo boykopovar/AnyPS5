@@ -157,6 +157,10 @@ std::int32_t LastCacheId = 0;
 bool UserServiceStarted = false;
 std::uint8_t CacheSharing = 1;
 
+bool CopySystemPath(const char* path, std::string& destination) {
+    return CopyGuestString_nid_no_patch(path, 0x401, destination) == 0 && destination.size() <= 0x400;
+}
+
 Cache* FindCache(std::int32_t cacheId) {
     const auto found = Caches.find(cacheId);
     return found == Caches.end() ? nullptr : &found->second;
@@ -942,12 +946,14 @@ int APS5_VABI sceHttpCacheSetResponseHeader(std::int32_t requestId, const HttpCa
 }
 
 int APS5_VABI sceHttpCacheSystemClearAll(const char* path) {
+    std::string copiedPath;
+    if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceHttpCacheSystemInit(const char* path) {
-    NotImplemented_nid_no_patch(__func__);
+    std::string copiedPath;
+    if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -956,7 +962,6 @@ int APS5_VABI sceHttpCacheSystemSendStatistics() {
 }
 
 int APS5_VABI sceHttpCacheSystemShutdown() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
