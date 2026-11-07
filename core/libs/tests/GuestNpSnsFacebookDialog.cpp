@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
@@ -99,6 +100,9 @@ int main() {
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusFinished);
 
     Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpSnsFacebookDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpSnsFacebookDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
@@ -121,6 +125,9 @@ int main() {
     result[0] = -1;
     Require(sceNpSnsFacebookDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
+    errno = 71;
+    Require(sceNpSnsFacebookDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
