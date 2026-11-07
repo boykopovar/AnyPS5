@@ -58,3 +58,16 @@ option(APS5_AGC_CREATE_LOG "Logging sceAgcCreateShader Ok status" ON)
 target_compile_definitions(libSceAgcVsh PRIVATE
         APS5_AGC_CREATE_LOG=$<BOOL:${APS5_AGC_CREATE_LOG}>
 )
+
+add_test_executable(agcvsh_packet_writer_tests EXCLUDE_FROM_ALL tests/UnknownPacketWriter.cpp)
+target_include_directories(agcvsh_packet_writer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agcvsh_packet_writer_tests PRIVATE libSceAgcVsh libc)
+configure_windows_unwind(agcvsh_packet_writer_tests)
+if(BUILD_TESTING)
+    set_target_properties(agcvsh_packet_writer_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agcvsh_packet_writer COMMAND agcvsh_packet_writer_tests)
+    if(WIN32)
+        set_tests_properties(agcvsh_packet_writer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
