@@ -324,13 +324,24 @@ void DrawPipeline::enqueue(Item item) {
     if (items.size() >= Depth()) {
         if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw pipeline full while the enqueuing thread holds the GPU lock");
         const auto start = std::chrono::steady_clock::now();
-        resumeAt = Depth() - 1;
-        ++idleWaiters;
-        idle.wait(lock, [&] { return items.size() <= resumeAt; });
-        --idleWaiters;
-        resumeAt = 0;
+        lock.unlock();
+        static_cast<void>(SpinUntil(HandoffSpinWindow(), [&] { return outstanding.load(std::memory_order_acquire) < Depth(); }));
+        lock.lock();
+        if (items.size() >= Depth() && !closing) {
+            resumeAt = Depth() / 2;
+            ++idleWaiters;
+            ++fullWaiters;
+            idle.wait(lock, [&] { return items.size() <= resumeAt || closing; });
+            --idleWaiters;
+            if (--fullWaiters == 0) resumeAt = 0;
+        }
         fullWaitNs += elapsedNs(start);
         rethrowFailure();
+        if (closing) {
+            lock.unlock();
+            item.commit();
+            return;
+        }
     }
     depthSum += items.size();
     ++enqueued;
@@ -447,6 +458,7 @@ void DrawPipeline::Stop() {
         committer = std::move(thread);
     }
     wake.notify_all();
+    idle.notify_all();
     if (!committer.joinable()) return;
     if (committer.get_id() == std::this_thread::get_id()) committer.detach();
     else committer.join();
