@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/GsPrimPayload.hpp"
 #include "SceShaders.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -8,8 +9,6 @@
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
-
-extern "C" int APS5_VABI sceAgcGetGsPrimPayload(std::uint32_t* payload, const Shader* gs);
 
 namespace {
 

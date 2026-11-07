@@ -1,30 +1,15 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI shutdown_nid_postfix(int, int);
-std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -53,31 +38,47 @@ static void StreamReceiveReportsNoSender() {
     for (const int descriptor : {client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
+static bool HeldByAnotherInet6Socket(const std::array<std::uint8_t, 28>& any6) {
+    const int probe = socket_nid_postfix(28, 1, 0);
+    Require(probe >= 0);
+    const bool held = bind_nid_postfix(probe, any6.data(), any6.size()) != 0 && *__error_nid_postfix() == 48;
+    Require(close_nid_postfix(probe) == 0);
+    return held;
+}
+
 static void ListenersShareAPortAcrossFamilies() {
-    const int inet = socket_nid_postfix(2, 1, 0);
-    Require(inet >= 0);
-    std::array<std::uint8_t, 16> any{16, 2};
-    Require(bind_nid_postfix(inet, any.data(), any.size()) == 0 && listen_nid_postfix(inet, 4) == 0);
-    std::uint32_t size = any.size();
-    Require(getsockname_nid_postfix(inet, any.data(), &size) == 0 && size == any.size());
-    const int inet6 = socket_nid_postfix(28, 1, 0);
-    if (inet6 < 0) {
-        Require(*__error_nid_postfix() == 47);
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        const int inet = socket_nid_postfix(2, 1, 0);
+        Require(inet >= 0);
+        std::array<std::uint8_t, 16> any{16, 2};
+        Require(bind_nid_postfix(inet, any.data(), any.size()) == 0 && listen_nid_postfix(inet, 4) == 0);
+        std::uint32_t size = any.size();
+        Require(getsockname_nid_postfix(inet, any.data(), &size) == 0 && size == any.size());
+        const int inet6 = socket_nid_postfix(28, 1, 0);
+        if (inet6 < 0) {
+            Require(*__error_nid_postfix() == 47);
+            Require(close_nid_postfix(inet) == 0);
+            return;
+        }
+        std::array<std::uint8_t, 28> any6{28, 28, any[2], any[3]};
+        if (bind_nid_postfix(inet6, any6.data(), any6.size()) == 0) {
+            Require(listen_nid_postfix(inet6, 4) == 0);
+            Require(close_nid_postfix(inet6) == 0);
+            Require(close_nid_postfix(inet) == 0);
+            return;
+        }
+        const int error = *__error_nid_postfix();
+        Require(close_nid_postfix(inet6) == 0);
         Require(close_nid_postfix(inet) == 0);
-        return;
-    }
-    std::array<std::uint8_t, 28> any6{28, 28, any[2], any[3]};
-    if (bind_nid_postfix(inet6, any6.data(), any6.size()) != 0) {
-        if (*__error_nid_postfix() != 49) {
+        if (error == 49) return;
+        if (error != 48 || !HeldByAnotherInet6Socket(any6)) {
             std::fprintf(stderr, "bind of [::]:%d failed with errno %d while an IPv4 listener holds 0.0.0.0:%d\n",
-                (any[2] << 8) | any[3], *__error_nid_postfix(), (any[2] << 8) | any[3]);
+                (any[2] << 8) | any[3], error, (any[2] << 8) | any[3]);
             std::abort();
         }
-    } else {
-        Require(listen_nid_postfix(inet6, 4) == 0);
     }
-    Require(close_nid_postfix(inet6) == 0);
-    Require(close_nid_postfix(inet) == 0);
+    std::fprintf(stderr, "another IPv6 socket held each of 64 ports an IPv4 listener took\n");
+    std::abort();
 }
 
 constexpr int GetFlags = 3;
@@ -179,7 +180,9 @@ static void WaitAllReceivesTheWholeRequest() {
 }
 
 static void ReceiveAnsweredWithoutTheHost() {
+    constexpr int Peek = 0x02;
     constexpr int DontWait = 0x80;
+    constexpr std::uint64_t ReadableBytes = 0x4004667f;
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
@@ -201,24 +204,139 @@ static void ReceiveAnsweredWithoutTheHost() {
     std::uint32_t senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, &byte, 0, 0, sender.data(), &senderSize) == 0 && senderSize == 0);
 
-#ifdef _WIN32
-    Require(shutdown_nid_postfix(accepted, 0) == 0);
-    Require(send_nid_postfix(client, "x", 1, 0) == 1);
     char received[4];
+    Require(send_nid_postfix(client, "x", 1, 0) == 1);
+    Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
+    Require(shutdown_nid_postfix(accepted, 0) == 0);
+    int queued = -1;
+    Require(ioctl_nid_postfix(accepted, ReadableBytes, &queued) == 0 && queued == 0);
+    Require(ioctl_nid_postfix(accepted, ReadableBytes, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    Require(_ioctl_nid_postfix(accepted, ReadableBytes, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    std::int64_t physical = 0;
+    void* page = nullptr;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, 0x4000, 0, 0, &physical) == 0);
+    Require(sceKernelMapDirectMemory(&page, 0x4000, 3, 0, physical, 0) == 0);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    Require(ioctl_nid_postfix(accepted, 0x4004667f, page) == -1 && *__error_nid_postfix() == 14);
+    Require(_ioctl_nid_postfix(accepted, 0x4004667f, page) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(page), 0x4000) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, 0x4000) == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), 0) == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), DontWait) == 0);
     senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, received, sizeof(received), 0, sender.data(), &senderSize) == 0 && senderSize == 0);
-#endif
+    KernelIovec vector{received, sizeof(received)};
+    GuestMsghdr message{sender.data(), static_cast<std::uint32_t>(sender.size()), &vector, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(accepted, &message, 0) == 0 && message.nameLength == 0 && message.flags == 0);
     for (const int descriptor : {unconnected, client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
+}
+
+static void SocketNameFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 3, 0) == 0 && memory != nullptr);
+    auto* readOnly = static_cast<std::uint8_t*>(memory);
+    Require(sceKernelMprotect(memory, page, 1) == 0);
+    const auto fails = [](int result) { return result == -1 && *__error_nid_postfix() == 14; };
+    const auto unreadable = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 4) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+    const int client = socket_nid_postfix(2, 1, 0);
+    Require(connect_nid_postfix(client, address.data(), address.size()) == 0);
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    const int unconnected = socket_nid_postfix(2, 1, 0);
+    for (const auto call : {getsockname_nid_postfix, getpeername_nid_postfix}) {
+        std::array<std::uint8_t, 16> out{};
+        size = out.size();
+        Require(fails(call(client, out.data(), static_cast<std::uint32_t*>(unreadable))));
+        Require(fails(call(client, out.data(), nullptr)));
+        Require(fails(call(-1, out.data(), static_cast<std::uint32_t*>(unreadable))));
+        Require(call(-1, out.data(), &size) == -1 && *__error_nid_postfix() == 9);
+        Require(fails(call(client, unreadable, &size)) && size == out.size());
+        Require(fails(call(client, nullptr, &size)) && size == out.size());
+        Require(fails(call(client, readOnly, &size)) && size == out.size());
+        std::uint32_t* readOnlySize = reinterpret_cast<std::uint32_t*>(readOnly + 64);
+        Require(sceKernelMprotect(memory, page, 3) == 0);
+        *readOnlySize = out.size();
+        Require(sceKernelMprotect(memory, page, 1) == 0);
+        Require(fails(call(client, out.data(), readOnlySize)) && out[0] == 16 && out[1] == 2);
+        size = 0;
+        Require(call(client, nullptr, &size) == 0 && size == 0);
+        Require(call(client, unreadable, &size) == 0 && size == 0);
+        size = out.size();
+        Require(call(client, out.data(), &size) == 0 && size == 16);
+    }
+    size = address.size();
+    Require(getpeername_nid_postfix(unconnected, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
+    Require(fails(getpeername_nid_postfix(unconnected, address.data(), static_cast<std::uint32_t*>(unreadable))));
+    for (const int descriptor : {unconnected, accepted, client, listener}) Require(close_nid_postfix(descriptor) == 0);
+}
+
+static void BlockedReceiveEndsAtShutRead() {
+    enum Call { Receive, ReceiveFrom, ReceiveMessage, Read, ThroughDuplicate, WithTimeout, Calls };
+    for (int call = Receive; call < Calls; ++call) {
+        const int listener = socket_nid_postfix(2, 1, 0);
+        Require(listener >= 0);
+        std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 4) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+        const int client = socket_nid_postfix(2, 1, 0);
+        Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
+        const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+        Require(accepted >= 0);
+        const int watched = call == ThroughDuplicate ? dup_nid_postfix(accepted) : accepted;
+        Require(watched >= 0);
+        if (call == WithTimeout) {
+            const KernelTimeval timeout{3, 0};
+            Require(setsockopt_nid_postfix(accepted, 0xffff, 0x1006, &timeout, sizeof(timeout)) == 0);
+        }
+        char buffer[8];
+        std::array<std::uint8_t, 16> sender{};
+        std::uint32_t senderSize = sender.size();
+        KernelIovec vector{buffer, sizeof(buffer)};
+        GuestMsghdr message{sender.data(), static_cast<std::uint32_t>(sender.size()), &vector, 1, nullptr, 0, -1};
+        std::atomic<bool> entered{false};
+        std::atomic<bool> returned{false};
+        std::int64_t received = -2;
+        std::chrono::steady_clock::duration waited{};
+        std::thread receiver([&] {
+            const auto start = std::chrono::steady_clock::now();
+            entered = true;
+            if (call == ReceiveFrom) received = recvfrom_nid_postfix(watched, buffer, sizeof(buffer), 0, sender.data(), &senderSize);
+            else if (call == ReceiveMessage) received = recvmsg_nid_postfix(watched, &message, 0);
+            else if (call == Read) received = read_nid_postfix(watched, buffer, sizeof(buffer));
+            else received = recv_nid_postfix(watched, buffer, sizeof(buffer), 0);
+            waited = std::chrono::steady_clock::now() - start;
+            returned = true;
+        });
+        while (!entered) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(!returned);
+        Require(shutdown_nid_postfix(accepted, 0) == 0);
+        for (int poll = 0; poll < 100 && !returned; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if (!returned) Require(shutdown_nid_postfix(client, 2) == 0);
+        receiver.join();
+        Require(received == 0 && waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(2));
+        if (call == ReceiveFrom) Require(senderSize == 0);
+        if (call == ReceiveMessage) Require(message.nameLength == 0 && message.flags == 0);
+        if (call == ThroughDuplicate) Require(close_nid_postfix(watched) == 0);
+        for (const int descriptor : {client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
+    }
 }
 
 int main() {
     StreamReceiveReportsNoSender();
+    SocketNameFaults();
     ListenersShareAPortAcrossFamilies();
     AcceptedSocketsFollowListenerBlocking();
     WaitAllReceivesTheWholeRequest();
     ReceiveAnsweredWithoutTheHost();
+    BlockedReceiveEndsAtShutRead();
     UnboundSocketNameIsZero();
     const int listener = socket_nid_postfix(2, 1, 6);
     Require(listener >= 0);
@@ -277,11 +395,9 @@ int main() {
     Require(send_nid_postfix(client, request, sizeof(request), 0x20000) == -1 && *__error_nid_postfix() == 32);
 
     Require(close_nid_postfix(accepted) == 0);
-#ifndef _WIN32
     std::int64_t sent = 0;
     for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(client, request, sizeof(request), 0x20000);
     Require(sent == -1 && *__error_nid_postfix() == 32);
-#endif
     Require(close_nid_postfix(client) == 0);
     Require(close_nid_postfix(listener) == 0);
     Require(close_nid_postfix(listener) == -1 && *__error_nid_postfix() == 9);

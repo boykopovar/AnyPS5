@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILER_SHADERCACHEDIRECTORY_HPP
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -37,7 +38,7 @@ std::filesystem::path ShaderCacheDirectory();
 inline std::filesystem::path NativeCachePath_nid_no_patch(const std::filesystem::path& path, std::error_code& error) {
     auto native = path;
     native.make_preferred();
-    if (native.native().starts_with(L"\\\\?\\") || native.native().starts_with(L"\\\\.\\")) return native;
+    if (native.native().starts_with(L"\\\\?\\")) return native;
     const auto capacity = GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
     if (capacity == 0) { error = std::error_code(GetLastError(), std::system_category()); return {}; }
     std::wstring absolute(capacity, L'\0');
@@ -47,8 +48,28 @@ inline std::filesystem::path NativeCachePath_nid_no_patch(const std::filesystem:
         return {};
     }
     absolute.resize(size);
+    if (absolute.starts_with(L"\\\\.\\")) {
+        if (absolute.size() >= 6 && absolute[5] == L':') return std::filesystem::path(L"\\\\?\\" + absolute.substr(4));
+        return std::filesystem::path(absolute);
+    }
     if (absolute.starts_with(L"\\\\")) return std::filesystem::path(L"\\\\?\\UNC\\" + absolute.substr(2));
     return std::filesystem::path(L"\\\\?\\" + absolute);
+}
+#endif
+
+#ifdef _WIN32
+inline DWORD PosixReplaceByHandle(HANDLE source, const std::filesystem::path& destination) {
+    struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
+    static_assert(sizeof(RenameInfo) == sizeof(FILE_RENAME_INFO) && offsetof(RenameInfo, name) == offsetof(FILE_RENAME_INFO, FileName));
+    const auto nameBytes = destination.native().size() * sizeof(wchar_t);
+    std::vector<std::byte> renameBuffer(sizeof(RenameInfo) + nameBytes);
+    auto* rename = reinterpret_cast<RenameInfo*>(renameBuffer.data());
+    constexpr DWORD replaceExisting = 0x00000001, posixSemantics = 0x00000002;
+    rename->flags = replaceExisting | posixSemantics;
+    rename->nameBytes = static_cast<DWORD>(nameBytes);
+    std::memcpy(rename->name, destination.c_str(), nameBytes);
+    constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
+    return SetFileInformationByHandle(source, renameInfoEx, rename, static_cast<DWORD>(renameBuffer.size())) ? ERROR_SUCCESS : GetLastError();
 }
 #endif
 
@@ -57,6 +78,7 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
 #ifdef _WIN32
     const auto destination = NativeCachePath_nid_no_patch(path, error);
     if (error) return false;
+    if (destination.native().size() > (MAXDWORD - sizeof(FILE_RENAME_INFO)) / sizeof(wchar_t)) return false;
 #else
     const auto& destination = path;
 #endif
@@ -65,18 +87,6 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
     const auto unique = std::hash<std::thread::id>{}(std::this_thread::get_id()) ^ static_cast<std::size_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     auto temporary = destination;
     temporary += ".tmp." + std::to_string(unique) + "." + std::to_string(serial.fetch_add(1, std::memory_order_relaxed));
-#ifdef _WIN32
-    struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
-    static_assert(sizeof(RenameInfo) == sizeof(FILE_RENAME_INFO) && offsetof(RenameInfo, name) == offsetof(FILE_RENAME_INFO, FileName));
-    if (destination.native().size() > (MAXDWORD - sizeof(RenameInfo)) / sizeof(wchar_t)) return false;
-    const auto nameBytes = destination.native().size() * sizeof(wchar_t);
-    std::vector<std::byte> renameBuffer(sizeof(RenameInfo) + nameBytes);
-    auto* rename = reinterpret_cast<RenameInfo*>(renameBuffer.data());
-    constexpr DWORD replaceExisting = 0x00000001, posixSemantics = 0x00000002;
-    rename->flags = replaceExisting | posixSemantics;
-    rename->nameBytes = static_cast<DWORD>(nameBytes);
-    std::memcpy(rename->name, destination.c_str(), nameBytes);
-#endif
     bool written = false;
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
@@ -104,8 +114,7 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
             return false;
         }
         struct Close { HANDLE handle; ~Close() { CloseHandle(handle); } } close{handle};
-        constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
-        if (!SetFileInformationByHandle(handle, renameInfoEx, rename, static_cast<DWORD>(renameBuffer.size()))) renameError = GetLastError();
+        renameError = PosixReplaceByHandle(handle, destination);
     }
     if (renameError == ERROR_SUCCESS) return true;
     if (renameError != ERROR_INVALID_PARAMETER && renameError != ERROR_INVALID_FUNCTION && renameError != ERROR_NOT_SUPPORTED) {
@@ -120,6 +129,29 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
     }
     return true;
 }
+
+#ifdef _WIN32
+inline bool PosixReplaceUnsupported(const std::filesystem::path& directory) {
+    std::error_code error;
+    const auto native = NativeCachePath_nid_no_patch(directory, error);
+    if (error) return false;
+    const auto source = native / L"posix-replace-probe.source";
+    const auto target = native / L"posix-replace-probe.target";
+    for (const auto& path : {source, target}) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.put('\0');
+    }
+    DWORD result = ERROR_SUCCESS;
+    const auto handle = CreateFileW(source.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle != INVALID_HANDLE_VALUE) {
+        result = PosixReplaceByHandle(handle, target);
+        CloseHandle(handle);
+    }
+    std::filesystem::remove(source, error);
+    std::filesystem::remove(target, error);
+    return result == ERROR_INVALID_PARAMETER;
+}
+#endif
 
 inline bool ReadWholeFile(const std::filesystem::path& path, std::vector<std::byte>& bytes) {
     bytes.clear();
@@ -173,14 +205,17 @@ inline bool ReadWholeFile(const std::filesystem::path& path, std::vector<std::by
     }
 }
 
-inline std::uint64_t HashBytes(std::span<const std::byte> bytes, std::uint64_t seed = 0) {
+template<std::size_t Count>
+inline std::array<std::uint64_t, Count> HashBytes(std::span<const std::byte> bytes, std::array<std::uint64_t, Count> hashes) {
     constexpr std::uint64_t multiplier = 0x9e3779b97f4a7c15ull;
-    std::uint64_t hash = seed ^ (static_cast<std::uint64_t>(bytes.size()) * multiplier);
+    for (auto& hash : hashes) hash ^= static_cast<std::uint64_t>(bytes.size()) * multiplier;
     const auto mix = [&](std::uint64_t chunk) {
         chunk *= 0xff51afd7ed558ccdull;
         chunk ^= chunk >> 32u;
-        hash = (hash ^ chunk) * multiplier;
-        hash = (hash << 27u) | (hash >> 37u);
+        for (auto& hash : hashes) {
+            hash = (hash ^ chunk) * multiplier;
+            hash = (hash << 27u) | (hash >> 37u);
+        }
     };
     std::size_t index = 0;
     for (; index + 8 <= bytes.size(); index += 8) {
@@ -193,12 +228,18 @@ inline std::uint64_t HashBytes(std::span<const std::byte> bytes, std::uint64_t s
         std::memcpy(&chunk, bytes.data() + index, bytes.size() - index);
         mix(chunk ^ 0x8000000000000000ull);
     }
-    hash ^= hash >> 33u;
-    hash *= 0xff51afd7ed558ccdull;
-    hash ^= hash >> 33u;
-    hash *= 0xc4ceb9fe1a85ec53ull;
-    hash ^= hash >> 33u;
-    return hash;
+    for (auto& hash : hashes) {
+        hash ^= hash >> 33u;
+        hash *= 0xff51afd7ed558ccdull;
+        hash ^= hash >> 33u;
+        hash *= 0xc4ceb9fe1a85ec53ull;
+        hash ^= hash >> 33u;
+    }
+    return hashes;
+}
+
+inline std::uint64_t HashBytes(std::span<const std::byte> bytes, std::uint64_t seed = 0) {
+    return HashBytes(bytes, std::array{seed})[0];
 }
 
 }

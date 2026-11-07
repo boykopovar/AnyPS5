@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <map>
@@ -32,6 +33,7 @@ class TraceThread;
 
 extern "C" bool AgcDriverTraceRecording_nid_postfix();
 extern "C" AgcDriver::TraceThread* AgcDriverTraceThread_nid_postfix();
+extern "C" void AgcDriverTraceCount_nid_postfix(const char* scope);
 
 namespace AgcDriver {
 
@@ -42,7 +44,32 @@ public:
     using Clock = std::chrono::steady_clock;
     enum class Edge { None, Open, Close };
 
-    static std::optional<TraceWindow> Parse(const char* frames, const char* seconds) {
+    static bool TriggerConfigured() {
+#ifdef _WIN32
+        return _wgetenv(L"APS5_TRACE_TRIGGER_FILE") != nullptr;
+#else
+        return std::getenv("APS5_TRACE_TRIGGER_FILE") != nullptr;
+#endif
+    }
+
+    static std::optional<TraceWindow> FromEnvironment() {
+        auto window = Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
+#ifdef _WIN32
+        const auto* trigger = _wgetenv(L"APS5_TRACE_TRIGGER_FILE");
+#else
+        const auto* trigger = std::getenv("APS5_TRACE_TRIGGER_FILE");
+#endif
+        if (trigger != nullptr) {
+            if (trigger[0] == 0 || !window)
+                throw std::invalid_argument("APS5_TRACE_TRIGGER_FILE requires a nonempty path and APS5_TRACE_FRAMES or APS5_TRACE_SECONDS");
+            window->trigger = std::filesystem::path(trigger);
+        }
+        return window;
+    }
+
+    static std::optional<TraceWindow> Parse(const char* frames, const char* seconds, const char* trigger = nullptr) {
+        if (trigger != nullptr && (trigger[0] == '\0' || (frames == nullptr && seconds == nullptr)))
+            throw std::invalid_argument("APS5_TRACE_TRIGGER_FILE requires a nonempty path and APS5_TRACE_FRAMES or APS5_TRACE_SECONDS");
         if (frames == nullptr && seconds == nullptr) return std::nullopt;
         if (frames != nullptr && seconds != nullptr) throw std::invalid_argument("APS5_TRACE_FRAMES and APS5_TRACE_SECONDS cannot be set together");
         const std::string_view name = frames != nullptr ? "APS5_TRACE_FRAMES" : "APS5_TRACE_SECONDS";
@@ -52,13 +79,24 @@ public:
         std::uint64_t length = 0;
         if (colon == std::string_view::npos || !number(text.substr(0, colon), start) || !number(text.substr(colon + 1), length) || length == 0)
             throw std::invalid_argument(std::string(name) + "=" + std::string(text) + " is not <start>:<length> with a length above 0");
-        return TraceWindow(frames != nullptr, start, length);
+        return TraceWindow(frames != nullptr, start, length, trigger);
     }
 
     Edge Present(std::uint64_t present, Clock::duration elapsed) {
         if (state == State::Closed) return Edge::None;
         if (state == State::Waiting) {
             if (frames ? present < start : wholeSeconds(elapsed) < start) return Edge::None;
+            if (trigger) {
+                if (elapsed < nextTriggerCheck) return Edge::None;
+                nextTriggerCheck = elapsed + std::chrono::milliseconds(250);
+                std::error_code error;
+                const auto status = std::filesystem::status(*trigger, error);
+                if (error && error != std::errc::no_such_file_or_directory)
+                    throw std::filesystem::filesystem_error("APS5_TRACE_TRIGGER_FILE", *trigger, error);
+                if (!std::filesystem::exists(status)) return Edge::None;
+                if (!std::filesystem::is_regular_file(status))
+                    throw std::invalid_argument("APS5_TRACE_TRIGGER_FILE is not a regular file");
+            }
             state = State::Open;
             openedPresent = present;
             openedAt = elapsed;
@@ -76,7 +114,9 @@ public:
 private:
     enum class State { Waiting, Open, Closed };
 
-    TraceWindow(bool frames, std::uint64_t start, std::uint64_t length) : frames(frames), start(start), length(length) {}
+    TraceWindow(bool frames, std::uint64_t start, std::uint64_t length, const char* trigger) : frames(frames), start(start), length(length) {
+        if (trigger != nullptr) this->trigger = std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(trigger)));
+    }
 
     static bool number(std::string_view text, std::uint64_t& value) {
         const auto end = text.data() + text.size();
@@ -94,6 +134,8 @@ private:
     State state = State::Waiting;
     std::uint64_t openedPresent = 0;
     Clock::duration openedAt{};
+    std::optional<std::filesystem::path> trigger;
+    Clock::duration nextTriggerCheck{};
 };
 
 class TraceInterval {
@@ -441,6 +483,41 @@ struct TraceClockSample {
     std::chrono::steady_clock::time_point cpu{};
 };
 
+class TraceCapture {
+public:
+    TraceCapture() = default;
+    TraceCapture(const TraceCapture&) = delete;
+    TraceCapture& operator=(const TraceCapture&) = delete;
+
+    void Add(TraceThread::Snapshot snapshot) {
+        slices.emplace_back(snapshot.slices.begin(), snapshot.slices.end());
+        for (auto& slice : slices.back()) {
+            slice.scope = own(slice.scope);
+            slice.stage = own(slice.stage);
+        }
+        for (auto& total : snapshot.totals) {
+            total.scope = own(total.scope);
+            total.stage = own(total.stage);
+        }
+        snapshot.slices = slices.back();
+        threads.push_back(std::move(snapshot));
+    }
+
+    TraceSummary summary;
+    std::vector<TraceThread::Clock::time_point> presents;
+    std::vector<TraceThread::Snapshot> threads;
+    std::uint64_t process = 0;
+    std::size_t presenter = 0;
+
+private:
+    const char* own(const char* text) {
+        return text != nullptr ? labels.try_emplace(text, text).first->second.c_str() : nullptr;
+    }
+
+    std::vector<std::vector<TraceThread::Slice>> slices;
+    std::map<const char*, std::string> labels;
+};
+
 class TraceFormat {
 public:
     using Clock = std::chrono::steady_clock;
@@ -451,18 +528,30 @@ public:
 
     static void AppendString(std::string& output, std::string_view text) {
         output += '"';
-        for (const char character : text) {
+        std::size_t index = 0;
+        while (index < text.size()) {
+            const char character = text[index];
             const auto byte = static_cast<unsigned char>(character);
             if (character == '"' || character == '\\') {
                 output += '\\';
                 output += character;
-            } else if (byte < 0x20 || byte >= 0x7f) {
+            } else if (byte >= 0x80) {
+                if (const auto length = utf8SequenceLength(text, index); length != 0) {
+                    output.append(text.substr(index, length));
+                    index += length;
+                    continue;
+                }
+                char escaped[8];
+                std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(byte));
+                output += escaped;
+            } else if (byte < 0x20 || byte == 0x7f) {
                 char escaped[8];
                 std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(byte));
                 output += escaped;
             } else {
                 output += character;
             }
+            ++index;
         }
         output += '"';
     }
@@ -697,6 +786,34 @@ public:
     }
 
 private:
+    static std::size_t utf8SequenceLength(std::string_view text, std::size_t index) {
+        const auto lead = static_cast<unsigned char>(text[index]);
+        std::size_t length = 0;
+        unsigned char low = 0x80;
+        unsigned char high = 0xbf;
+        if (lead >= 0xc2 && lead <= 0xdf) {
+            length = 2;
+        } else if (lead >= 0xe0 && lead <= 0xef) {
+            length = 3;
+            if (lead == 0xe0) low = 0xa0;
+            if (lead == 0xed) high = 0x9f;
+        } else if (lead >= 0xf0 && lead <= 0xf4) {
+            length = 4;
+            if (lead == 0xf0) low = 0x90;
+            if (lead == 0xf4) high = 0x8f;
+        } else {
+            return 0;
+        }
+        if (text.size() - index < length) return 0;
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const auto next = static_cast<unsigned char>(text[index + offset]);
+            if (next < low || next > high) return 0;
+            low = 0x80;
+            high = 0xbf;
+        }
+        return length;
+    }
+
     static void AppendMachine(std::string& output, const TraceSummary& summary) {
         if (summary.host) {
             output += ",\"cpu\":";
@@ -729,10 +846,17 @@ private:
     }
 };
 
+struct TraceThreadTotals {
+    std::string name;
+    std::vector<TraceThread::Total> totals;
+};
+
 class PerformanceTrace {
 public:
+    static constexpr const char* RenderPassScope = "Graphics.RenderPass";
+
     static bool Configured() {
-        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
+        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || TraceWindow::TriggerConfigured() || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
         return configured;
     }
 
@@ -757,11 +881,21 @@ public:
         return AgcDriverTraceThread_nid_postfix();
     }
 
+    static void Count(const char* scope) {
+        if (Recording()) AgcDriverTraceCount_nid_postfix(scope);
+    }
+
+    static void SetOverlayTotals(bool on);
+    static bool OverlayTotals();
+    static std::optional<std::vector<TraceThreadTotals>> ThreadTotals();
     static void StopOutput();
 
 private:
     friend bool ::AgcDriverTraceRecording_nid_postfix();
     friend TraceThread* ::AgcDriverTraceThread_nid_postfix();
+    friend void ::AgcDriverTraceCount_nid_postfix(const char* scope);
+
+    static TraceThread* bindNamed();
 
     static void OpenInterval(std::chrono::steady_clock::time_point now, std::uint64_t present);
     static void FlushInterval(std::chrono::steady_clock::time_point now, std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
@@ -770,6 +904,8 @@ private:
     inline static std::atomic<bool> buffering{false};
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;
+    static thread_local const char* localName;
+    static std::atomic<TraceThread* (*)()> binder;
     inline static std::mutex gpuMutex;
     inline static std::vector<TraceGpuRange> gpuRanges;
     inline static std::uint64_t gpuLost = 0;

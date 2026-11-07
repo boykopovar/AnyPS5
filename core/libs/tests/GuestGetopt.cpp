@@ -1,5 +1,8 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -7,19 +10,8 @@
 #include <string>
 #include <vector>
 
-struct GuestOption {
-    const char* name;
-    int hasArgument;
-    int* flag;
-    int value;
-};
-
 extern "C" {
-int APS5_VABI getopt_nid_postfix(int, char* const*, const char*);
-int APS5_VABI getopt_long_nid_postfix(int, char* const*, const char*, const GuestOption*, int*);
-int APS5_VABI getopt_long_only_nid_postfix(int, char* const*, const char*, const GuestOption*, int*);
-int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
-int APS5_VABI unsetenv_nid_postfix(const char*);
+
 extern int opterr_nid_postfix;
 extern int optind_nid_postfix;
 extern int optopt_nid_postfix;
@@ -65,7 +57,7 @@ class StderrCapture {
     FileStream stream;
 
 public:
-    StderrCapture() : previous(__stderrp_nid_postfix), stream(std::tmpfile()) { __stderrp_nid_postfix = &stream; }
+    StderrCapture() : previous(__stderrp_nid_postfix), stream(TemporaryFile::Open()) { __stderrp_nid_postfix = &stream; }
     ~StderrCapture() {
         __stderrp_nid_postfix = previous;
         stream.Close();

@@ -1,3 +1,6 @@
+#include "prx/libSceAgc/Patch/include/CondExec.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Sync.hpp"
+#include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
@@ -6,15 +9,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcDcbCondExec(CommandBuffer*, const volatile std::uint32_t*, std::uint32_t);
-std::uint32_t* APS5_VABI sceAgcAcbCondExec(CommandBuffer*, const volatile std::uint32_t*, std::uint32_t);
-int APS5_VABI sceAgcCondExecPatchSetCommandAddress(std::uint32_t*, const volatile std::uint32_t*);
-int APS5_VABI sceAgcCondExecPatchSetEnd(std::uint32_t*, const volatile std::uint32_t*);
-int APS5_VABI sceAgcAsyncCondExecPatchSetCommandAddress(std::uint32_t*, const volatile std::uint32_t*);
-int APS5_VABI sceAgcAsyncCondExecPatchSetEnd(std::uint32_t*, const volatile std::uint32_t*);
-}
 
 namespace {
 

@@ -20,16 +20,18 @@ Sha1Operands DecodeSha1(const std::uint8_t* data, const std::size_t length) {
             pos += 1;
             continue;
         }
+        if (b == PrefixLock) {
+            throw CodegenException("SHA-1 instruction with a LOCK prefix");
+        }
         if (b == PrefixOperandSize || b == PrefixRepne || b == PrefixRep) {
             throw CodegenException("Not a SHA-1 instruction");
         }
-        if (b != PrefixLock && b != PrefixAddressSize &&
+        if (b != PrefixAddressSize &&
             b != PrefixSegCs && b != PrefixSegSs && b != PrefixSegDs &&
             b != PrefixSegEs && b != PrefixSegFs && b != PrefixSegGs) {
             break;
         }
-        if (b != PrefixLock)
-            prefixes.push_back(b);
+        prefixes.push_back(b);
         rex = 0;
         pos += 1;
     }

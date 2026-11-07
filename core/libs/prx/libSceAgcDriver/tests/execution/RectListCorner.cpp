@@ -2,6 +2,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+#include "SpirvBackend/SpirvOptimizer.hpp"
+#endif
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <bit>
@@ -46,8 +49,11 @@ public:
         builder.EmitEntryPoint(spv::ExecutionModelVertex, main, "main", {vertexIndex, position, identity});
         result(spv::OpLabel);
         const auto index = result(spv::OpLoad, intType, vertexIndex);
-        const auto first = result(spv::OpIEqual, boolType, index, constant(intType, 0u));
-        const auto second = result(spv::OpIEqual, boolType, index, constant(intType, 1u));
+        const auto boolVectorType = type(spv::OpTypeVector, boolType, 4u);
+        const auto firstScalar = result(spv::OpIEqual, boolType, index, constant(intType, 0u));
+        const auto secondScalar = result(spv::OpIEqual, boolType, index, constant(intType, 1u));
+        const auto first = result(spv::OpCompositeConstruct, boolVectorType, firstScalar, firstScalar, firstScalar, firstScalar);
+        const auto second = result(spv::OpCompositeConstruct, boolVectorType, secondScalar, secondScalar, secondScalar, secondScalar);
         const auto positionValue = result(spv::OpSelect, vec4Type, first, vector(-1.0f, -1.0f, 0.0f, 1.0f), result(spv::OpSelect, vec4Type, second, vector(1.0f, -1.0f, 0.0f, 1.0f), vector(-1.0f, 1.0f, 0.0f, 1.0f)));
         const auto identityValue = result(spv::OpSelect, vec4Type, first, vector(0.0f, 0.0f, 0.0f, 1.0f), result(spv::OpSelect, vec4Type, second, vector(1.0f, 0.0f, 0.0f, 1.0f), vector(0.0f, 1.0f, 0.0f, 1.0f)));
         emit(spv::OpStore, position, positionValue);
@@ -128,19 +134,24 @@ std::uint32_t VertexOf(std::uint32_t x, std::uint32_t y) {
     return (red >= 128u ? 1u : 0u) + (green >= 128u ? 2u : 0u);
 }
 
-int Run(AgcDriver::VulkanDevice& device) {
+int Run(AgcDriver::VulkanDevice& device, std::uint32_t maximumVersion) {
     std::cout << "device: " << device.DeviceName() << "\n";
     auto target = device.Target();
     if (!target.tessellation.has_value() || !TargetHasCapability(target, spv::CapabilityTessellation)) {
         std::cout << "skipped, device has no tessellation\n";
         return VulkanTestSkipped;
     }
-    if (target.spirvVersion > 0x00010400u) target.spirvVersion = 0x00010400u;
+    if (target.spirvVersion > maximumVersion) target.spirvVersion = maximumVersion;
     Require(target.spirvVersion >= 0x00010300u, "rect-list corner draw needs SPIR-V 1.3");
+    std::cout << "SPIR-V " << (target.spirvVersion >> 16u) << "." << ((target.spirvVersion >> 8u) & 0xffu) << "\n";
     ShaderRecompiler::RecompileResult vertex;
     ShaderRecompiler::RecompileResult fragment;
     vertex.spirv = ShaderRecompiler::SharedSpirv(Emitter(target.spirvVersion).Vertex());
     fragment.spirv = ShaderRecompiler::SharedSpirv(Emitter(target.spirvVersion).Fragment());
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(vertex.spirv, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
+    static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(fragment.spirv, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, false));
+#endif
     vertex.parameterExports = {0u};
     fragment.fragmentParameters = {{0u, 0u, false, false}};
     const auto rectangle = ShaderRecompiler::BuildRectListShaders(vertex, fragment, target);
@@ -194,8 +205,12 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto result = Run(*device);
+        auto result = Run(*device, 0x00010300u);
         if (result != 0) return result;
+        if (device->Target().spirvVersion >= 0x00010400u) {
+            result = Run(*device, 0x00010400u);
+            if (result != 0) return result;
+        }
         std::cout << "rect-list corner tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -33,6 +33,7 @@ using AgcDriver::Graphics::Require;
 constexpr std::uint32_t Width = 192;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t DistanceVector = 0x00400000u;
+constexpr std::uint32_t CullDistanceEnables = 0x0000ff00u;
 constexpr std::uint32_t SetContextReg = 0x69u;
 constexpr std::uint32_t SetShReg = 0x76u;
 constexpr std::uint32_t SetUconfigReg = 0x79u;
@@ -212,14 +213,18 @@ int main(int argc, char** argv) {
         const bool noKey = argc > 1 && std::string(argv[1]) == "no-key";
         if (noKey) Require(std::getenv("APS5_NO_DRAW_KEY") != nullptr, "the no-key run must start with APS5_NO_DRAW_KEY set");
         PositionExportLayoutTests();
+        bool cullDistance = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            cullDistance = TargetHasCapability(device->Target(), spv::CapabilityCullDistance);
         }
+        if (!cullDistance) std::puts("cull distance steps skipped, the device has no shaderCullDistance");
         ColorMemory = AllocateWatched(2 * Block);
         Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(PixelShader, PixelCode.data(), sizeof(PixelCode), 1);
         for (const auto& step : Steps) {
+            if (!cullDistance && (step.control & CullDistanceEnables) != 0u) continue;
             std::array<Vertex, 3> vertices{};
             for (std::size_t i = 0; i < vertices.size(); ++i) {
                 vertices[i] = {{PositionX[i], PositionY[i], 0.5f, 1.0f}, {step.component0[i], step.component1[i], step.component2[i], 0.0f}};

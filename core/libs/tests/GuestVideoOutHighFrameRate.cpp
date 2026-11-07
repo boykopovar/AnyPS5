@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Output.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
@@ -7,17 +8,7 @@
 #include <fstream>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI sceVideoOutOpen(int, int, int, const void*);
-int APS5_VABI sceVideoOutClose(int);
-int APS5_VABI sceVideoOutIsOutputSupported(int, std::uint64_t, const VideoOutOutputOptions*, void*, std::uint64_t);
-int APS5_VABI sceVideoOutConfigureOutput(int, std::uint64_t, const VideoOutOutputOptions*, void*, std::uint64_t);
-int APS5_VABI sceVideoOutWaitVblank(int);
-int APS5_VABI sceVideoOutGetOutputStatus(int, VideoOutOutputStatus*);
-int APS5_VABI sceVideoOutGetResolutionStatus(int, VideoOutResolutionStatus*);
-}
-
-static constexpr int Unsupported = static_cast<int>(0x80290016u);
+static constexpr int Unavailable = static_cast<int>(0x80290019u);
 
 static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -47,8 +38,8 @@ int main(int argc, char** argv) {
         return 77;
     }
     const int supported = sceVideoOutIsOutputSupported(handle, 15, nullptr, nullptr, 0);
-    if (supported == Unsupported && !requireDisplay) {
-        Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unsupported, "unsupported display accepted high-frame-rate output");
+    if (supported == 0 && !requireDisplay) {
+        Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unavailable, "an output without 120 Hz accepted high-frame-rate output");
         Require(sceVideoOutClose(handle) == 0, "close failed");
         LibcRunShutdown_nid_postfix();
         std::puts("skipped, current display does not provide 120 Hz");

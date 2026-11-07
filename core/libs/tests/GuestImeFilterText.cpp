@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
 #include <cstdint>
@@ -6,11 +7,6 @@
 #include <initializer_list>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceImeFilterText(char16_t* dst, int32_t* out_length, uint32_t capacity,
-                               const ime_filter::FilterParam* param, const char16_t* src, uint32_t src_length);
-}
 
 namespace {
 
@@ -65,6 +61,7 @@ void CheckArguments() {
     Require(Run(0, 5, 16, {u'a'}).code == kInvalidParam, "type 5");
     Require(Run(0, 0xff, 16, {u'a'}).code == kInvalidParam, "type 0xff");
     Require(Run(0, 0x104, 16, {u'a'}).code == kInvalidParam, "type 0x104");
+    Require(Run(0, 0x200, 16, {u'a'}).code == kInvalidParam, "type 0x200");
 }
 
 void CheckSimpleTypes() {

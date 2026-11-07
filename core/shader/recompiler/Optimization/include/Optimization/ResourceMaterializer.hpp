@@ -19,7 +19,9 @@ struct ImageTableElement {
     RdnaImageDimension dimension = RdnaImageDimension::Unknown;
     bool depthCompare = false;
     DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
-    std::uint32_t samplers = 0;
+    std::uint64_t samplers = 0;
+    bool atomic = false;
+    bool atomic64 = false;
 };
 
 struct ImageTableSamplerElement {
@@ -64,9 +66,15 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+class LayerRowSamplesRequired : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class ResourceMaterializer {
 public:
     static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
+    static std::uint32_t VolumeGatherState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
     void ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets = true) const;
     static std::vector<ImageResource> RuntimeImageModes(const ImageResource& image);
     static RuntimeImageModeMatch TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);

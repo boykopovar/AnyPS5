@@ -1,13 +1,97 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
+#include "Optimization/ResourceProgram.hpp"
+#include <charconv>
+#include <atomic>
+#include <chrono>
+#include <sstream>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <cstdlib>
 #include <functional>
+#include <optional>
 #include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+std::string captureSession() {
+#ifdef _WIN32
+    const auto process = _getpid();
+#else
+    const auto process = getpid();
+#endif
+    return std::to_string(process) + "-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+}
+
+std::optional<std::set<std::uint64_t>> selectedPrograms() {
+    const char* value = std::getenv("APS5_DUMP_SHADERS");
+    if (value == nullptr || std::string_view(value) == "1") return std::nullopt;
+    std::set<std::uint64_t> programs;
+    std::string_view rest(value);
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        auto token = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+        if (token.starts_with("0x") || token.starts_with("0X")) token.remove_prefix(2);
+        std::uint64_t address = 0;
+        const auto [end, error] = std::from_chars(token.data(), token.data() + token.size(), address, 16);
+        if (token.empty() || error != std::errc{} || end != token.data() + token.size()) return std::nullopt;
+        programs.insert(address);
+    }
+    if (programs.empty()) return std::nullopt;
+    return programs;
+}
+
+}
+
+std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnostics(const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::ShaderPreparationContext* preparation) {
+    std::exception_ptr failure;
+    std::string dump;
+    static const bool dumpInputs = std::getenv("APS5_DUMP_PREPARE_INPUTS") != nullptr;
+    std::string inputDump;
+    if (dumpInputs) {
+        try {
+            static const auto session = captureSession();
+            static std::atomic<std::uint64_t> next{0};
+            const auto suffix = ".input-" + session + "-" + std::to_string(next.fetch_add(1)) + ".prepare";
+            inputDump = Driver::dumpRequest(request.shader.codeAddress, request, suffix);
+            if (!inputDump.empty()) {
+                std::fprintf(stderr, "[prepare-input] begin %s\n", inputDump.c_str());
+                std::fflush(stderr);
+            }
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[prepare-input] capture failed: %s\n", error.what());
+        }
+    }
+    try {
+        auto handle = ShaderRecompiler::PrepareShader(request, preparation);
+        if (!inputDump.empty()) std::fprintf(stderr, "[prepare-input] end %s\n", inputDump.c_str());
+        return handle;
+    } catch (...) {
+        failure = std::current_exception();
+        try {
+            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) dump = Driver::dumpRequest(request.shader.codeAddress, request, ".prepare");
+        } catch (...) {}
+    }
+    try {
+        std::rethrow_exception(failure);
+    } catch (const std::exception& error) {
+        std::ostringstream where;
+        where << "shader 0x" << std::hex << request.shader.codeAddress << " stage " << static_cast<unsigned>(request.shader.stage);
+        if (!dump.empty()) where << " (" << dump << ")";
+        where << ": ";
+        throw std::runtime_error(where.str() + error.what());
+    }
+}
+
 void Driver::reportSkip(const char* kind, const std::string& what) {
-    static std::mutex reportedMutex;
+    static AgcDriver::Mutex reportedMutex;
     static std::set<std::size_t> reported;
     static std::map<std::string, int> requestDumps;
 
@@ -20,7 +104,11 @@ void Driver::reportSkip(const char* kind, const std::string& what) {
     if (!announced) {
         announced = true;
         char text[160];
-        std::snprintf(text, sizeof(text), "[gpu] skip reports: one write each, RecompileRequest dumps capped at %d per reason (APS5_SKIP_REQUEST_DUMPS)\n", dumpLimit);
+        if (dumpLimit < 0) {
+            std::snprintf(text, sizeof(text), "[gpu] skip reports: one write each, RecompileRequest dumps uncapped (APS5_SKIP_REQUEST_DUMPS)\n");
+        } else {
+            std::snprintf(text, sizeof(text), "[gpu] skip reports: one write each, RecompileRequest dumps capped at %d per reason (APS5_SKIP_REQUEST_DUMPS)\n", dumpLimit);
+        }
         line = text;
     }
     const std::string prefix = "[gpu] skipped " + std::string(kind);
@@ -50,21 +138,33 @@ void Driver::reportSkip(const char* kind, const std::string& what) {
 }
 
 std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix) {
-    static std::mutex dumpMutex;
+    static AgcDriver::Mutex dumpMutex;
     static std::set<std::string> dumped;
     char hex[32];
     std::snprintf(hex, sizeof(hex), "%llx", static_cast<unsigned long long>(address));
     const std::string name = "shader_" + std::string(hex) + std::string(suffix) + ".req";
+    if (const auto selected = selectedPrograms(); selected.has_value() && !selected->contains(address)) return {};
     std::lock_guard lock(dumpMutex);
     if (!dumped.insert(name).second) return name;
     try {
         const auto text = ShaderRecompiler::RequestSerializer{}.Serialize(request);
         if (std::FILE* file = std::fopen(name.c_str(), "wb")) {
-            std::fwrite(text.data(), 1, text.size(), file);
-            std::fclose(file);
+            const auto written = std::fwrite(text.data(), 1, text.size(), file);
+            const auto closed = std::fclose(file);
+            if (written != text.size() || closed != 0) {
+                dumped.erase(name);
+                std::fprintf(stderr, "[gpu] incomplete write to dump file %s (%zu of %zu bytes, close status %d)\n", name.c_str(), written, text.size(), closed);
+                return {};
+            }
+        } else {
+            dumped.erase(name);
+            std::fprintf(stderr, "[gpu] could not open dump file %s for writing\n", name.c_str());
+            return {};
         }
     } catch (const std::exception& error) {
+        dumped.erase(name);
         std::fprintf(stderr, "[gpu] could not serialize request for 0x%llx: %s\n", static_cast<unsigned long long>(address), error.what());
+        return {};
     }
     return name;
 }

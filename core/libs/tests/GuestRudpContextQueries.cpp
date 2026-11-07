@@ -1,17 +1,11 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <array>
 #include <cstdlib>
 
 extern "C" {
-using GuestRudpEventHandler = void(APS5_VABI*)(int, int, int, void*);
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler, void*, int*);
-int APS5_VABI sceRudpTerminate(int);
-int APS5_VABI sceRudpEnd();
-int APS5_VABI sceRudpGetNumberOfPacketsToRead(int);
-int APS5_VABI sceRudpGetSizeWritable(int);
-int APS5_VABI sceRudpGetSizeReadable(int);
+
 }
 
 static void Require(bool value) {

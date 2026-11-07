@@ -10,7 +10,6 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <vector>
 #include <spirv/unified1/spirv.hpp>
@@ -382,8 +381,10 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
+bool FusedExactArithmetic = false;
+
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("f32 denormal flush: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Require(actual == expected, std::string("f32 denormal flush: ") + (FusedExactArithmetic ? "fused " : "") + "lane " + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 bool IsNan(std::uint32_t value) {
@@ -434,6 +435,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
     request.useCache = false;
     request.context.floatMode = floatMode;
     request.target.float32FlushToZero = HardwareFlush;
+    request.target.fusedExactArithmetic = FusedExactArithmetic;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -451,7 +453,7 @@ void Check(const char* mode) {
             if (hostSplits && tid == TinyProductLane && (i == 4u || i == 5u)) continue;
             const bool floatResult = i < 12u || i >= 15u;
             if (floatResult && IsNan(Expected[tid][i])) {
-                Require(IsNan(out[i]), std::string("f32 denormal flush: lane ") + std::to_string(tid) + " " + mode + " " + Names[i] + " is " + Hex(out[i]) + ", expected a NaN");
+                Require(IsNan(out[i]), std::string("f32 denormal flush: ") + (FusedExactArithmetic ? "fused " : "") + "lane " + std::to_string(tid) + " " + mode + " " + Names[i] + " is " + Hex(out[i]) + ", expected a NaN");
                 continue;
             }
             Expect(tid, out[i], Expected[tid][i], (std::string(mode) + " " + Names[i]).c_str());
@@ -516,9 +518,12 @@ int main() {
             Require(!softwareDeclares && hardwareDeclares == declared, declared ? "f32 denormal flush: only the hardware-flush module declares DenormFlushToZero 32" : "f32 denormal flush: a module flushed natively declares DenormFlushToZero 32 without the device capability");
             Require(hardwareWords < software, "f32 denormal flush: the hardware-flush module is " + std::to_string(hardwareWords) + " words, the emulated one " + std::to_string(software));
         }
-        for (const bool flush : {false, true}) {
+        for (const std::uint32_t variant : {0u, 1u, 2u, 3u}) {
+            const bool flush = (variant & 1u) != 0u;
             if (flush && !hardware) continue;
+            if ((variant & 2u) == 0u && device->Target().fusedExactArithmetic) continue;
             HardwareFlush = flush;
+            FusedExactArithmetic = (variant & 2u) != 0u;
             Run(*device, std::nullopt);
             Check("no float mode");
             Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
@@ -548,15 +553,6 @@ int main() {
                 Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, TinyCode, TinyRows);
                 CheckTinyLegacy("round mode " + std::to_string(round));
                 CheckTinyDirected(round);
-            }
-            for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
-                bool refused = false;
-                try {
-                    Run(*device, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
-                } catch (const std::runtime_error& error) {
-                    refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
-                }
-                Require(refused, "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was not refused");
             }
         }
         std::puts("f32 denormal flush tests passed");

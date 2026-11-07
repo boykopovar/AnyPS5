@@ -1,11 +1,14 @@
+#include "prx/libSceShellUIUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-struct ShellUIUtilLaunchParameter;
-
 extern "C" {
+
+int APS5_VABI sceShellUIUtilAbortTask() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 int APS5_VABI sceShellUIUtilCreateTaskToken() {
     NotImplemented_nid_no_patch(__func__);

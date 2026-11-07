@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
@@ -17,16 +20,6 @@ extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handle
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI truncate_nid_postfix(const char*, std::int64_t);
-int APS5_VABI sceKernelTruncate_nid_postfix(const char*, std::int64_t);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-int APS5_VABI sceKernelFtruncate(int, std::int64_t);
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

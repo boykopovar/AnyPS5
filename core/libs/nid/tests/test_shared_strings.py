@@ -3,9 +3,10 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, symbols, patch, SHOFF, DYNSYM_OFFSET, read_dynsym, sections, DEFINITIONS
+from test_symbol_versions import build_image, symbols, patch, SHOFF, DYNSYM_OFFSET, read_dynsym, sections, DEFINITIONS, PATCHER
 
 
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
 class SharedStringTests(unittest.TestCase):
     def test_dynamic_names_keep_original_string_when_export_shares_offset(self):
         for tag in (1, 14, 15, 29):
@@ -54,5 +55,4 @@ class SharedStringTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()

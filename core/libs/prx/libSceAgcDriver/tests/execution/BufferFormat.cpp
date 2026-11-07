@@ -171,6 +171,96 @@ void Check() {
     }
 }
 
+constexpr std::array<std::uint32_t, 5> SubwordWord3{0x31005facu, 0x31006facu, 0x3100bfacu, 0x3100cfacu, 0x31012facu};
+
+constexpr const char* SubwordNames[16] = {
+    "buffer_load_format_x 8_UINT +1",
+    "buffer_load_format_x 8_UINT +2",
+    "buffer_load_format_x 8_UINT +3",
+    "buffer_load_format_x 8_SINT +1",
+    "buffer_load_format_x 8_SINT +2",
+    "buffer_load_format_x 8_SINT +3",
+    "buffer_load_format_x 16_UINT +1",
+    "buffer_load_format_x 16_UINT +2",
+    "buffer_load_format_x 16_UINT +3",
+    "buffer_load_format_x 16_SINT +1",
+    "buffer_load_format_x 16_SINT +2",
+    "buffer_load_format_x 16_SINT +3",
+    "buffer_load_format_xy 8_8_UINT +1 x",
+    "buffer_load_format_xy 8_8_UINT +1 y",
+    "buffer_load_format_xy 8_8_UINT +2 x",
+    "buffer_load_format_xy 8_8_UINT +2 y",
+};
+
+std::vector<std::uint32_t> SubwordCode() {
+    std::vector<std::uint32_t> code{0x34060087u, 0x34500085u};
+    std::uint32_t vdata = 10u;
+    const auto emitLoad = [&](std::uint32_t op, std::uint32_t srsrc, std::uint32_t offset, std::uint32_t words) {
+        code.push_back(0xe0001000u | (op << 18u) | offset);
+        code.push_back(0x80000028u | (srsrc << 16u) | (vdata << 8u));
+        vdata += words;
+    };
+    for (std::uint32_t offset = 1u; offset <= 3u; ++offset) emitLoad(0u, 2u, offset, 1u);
+    for (std::uint32_t offset = 1u; offset <= 3u; ++offset) emitLoad(0u, 3u, offset, 1u);
+    for (std::uint32_t offset = 1u; offset <= 3u; ++offset) emitLoad(0u, 4u, offset, 1u);
+    for (std::uint32_t offset = 1u; offset <= 3u; ++offset) emitLoad(0u, 5u, offset, 1u);
+    for (std::uint32_t offset = 1u; offset <= 2u; ++offset) emitLoad(1u, 6u, offset, 2u);
+    code.push_back(0xbf8c3f70u);
+    for (std::uint32_t index = 0u; index < 16u; ++index) {
+        code.push_back(0xe0701000u | (index * 4u));
+        code.push_back(0x80010003u | ((10u + index) << 8u));
+    }
+    code.push_back(0xbf810000u);
+    return code;
+}
+
+void RunSubwordOffsets(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8u + 4u * SubwordWord3.size(), 0u);
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u), 0x31016facu);
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    for (std::size_t index = 0; index < SubwordWord3.size(); ++index) {
+        const auto descriptor = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u), SubwordWord3[index]);
+        std::copy(descriptor.begin(), descriptor.end(), userData.begin() + 8 + 4 * index);
+    }
+    static const auto program = SubwordCode();
+    const std::span<const std::uint32_t> code(program);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+void CheckSubwordOffsets() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t word = Rows[tid][0];
+        const auto u8 = [&](std::uint32_t offset) { return (word >> (offset * 8u)) & 0xffu; };
+        const auto s8 = [&](std::uint32_t offset) { return static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(u8(offset)))); };
+        const auto u16 = [&](std::uint32_t offset) { return (word >> (offset * 8u)) & 0xffffu; };
+        const auto s16 = [&](std::uint32_t offset) { return static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(u16(offset)))); };
+        const std::array<std::uint32_t, 16> expected{
+            u8(1u), u8(2u), u8(3u),
+            s8(1u), s8(2u), s8(3u),
+            u16(1u), u16(2u), u16(3u),
+            s16(1u), s16(2u), s16(3u),
+            u8(1u), u8(2u),
+            u8(2u), u8(3u),
+        };
+        for (std::uint32_t index = 0; index < expected.size(); ++index) {
+            Expect(tid, Output[tid * Results + index], expected[index], SubwordNames[index]);
+        }
+    }
+}
+
 }
 
 int main() {
@@ -179,6 +269,8 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         Check();
+        RunSubwordOffsets(*device);
+        CheckSubwordOffsets();
         std::puts("buffer format tests passed");
         return 0;
     } catch (const std::exception& error) {
@@ -186,3 +278,4 @@ int main() {
         return 1;
     }
 }
+

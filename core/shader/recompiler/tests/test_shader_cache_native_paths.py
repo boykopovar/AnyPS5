@@ -51,6 +51,24 @@ class ShaderCachePathTests(unittest.TestCase):
     def test_cjk(self):
         self.check_source_change('\u6e2c\u8a66 path')
 
+    def test_line_endings_keep_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'line endings'
+            source, listing, output = self.fixture(root)
+            text = '#include <cstdint>\nconst char* mode = "APS5_TEST_PATH";\nint value = 1;\n'
+            source.write_bytes(text.encode('utf-8'))
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            unix = output.read_bytes()
+            source.write_bytes(text.replace('\n', '\r\n').encode('utf-8'))
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(unix, output.read_bytes())
+            source.write_bytes(text.replace('= 1;', '= 2;').replace('\n', '\r\n').encode('utf-8'))
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotEqual(unix, output.read_bytes())
+
     def test_unicode_guard_rejects_unhashed_include(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / '\u0441\u0431\u043e\u0440\u043a\u0430'
@@ -69,6 +87,35 @@ class ShaderCachePathTests(unittest.TestCase):
             name = '\u0437\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a.hpp'
             (root / name).write_text('int example();\n', encoding='utf-8')
             source.write_text(f'#include "../{name}"\n', encoding='utf-8')
+            result = self.run_script(root, listing, output)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('does not hash', result.stdout + result.stderr)
+            self.assertFalse(output.exists())
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows path separator semantics require Windows host')
+    def test_windows_path_separators(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'windows separators'
+            source, listing, output = self.fixture(root)
+            windows_path = str(source).replace('/', '\\')
+            listing.write_text(f'sources {windows_path}\n', encoding='utf-8')
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            windows_version = output.read_bytes()
+            listing.write_text(f'sources {source.as_posix()}\n', encoding='utf-8')
+            result = self.run_script(root, listing, output)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(windows_version, output.read_bytes())
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows path separator semantics require Windows host')
+    def test_windows_path_separators_reject_unhashed_include(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'windows separators'
+            source, listing, output = self.fixture(root)
+            windows_path = str(source).replace('/', '\\')
+            listing.write_text(f'sources {windows_path}\n', encoding='utf-8')
+            (root / 'shared.hpp').write_text('int example();\n', encoding='utf-8')
+            source.write_text('#include "../shared.hpp"\n', encoding='utf-8')
             result = self.run_script(root, listing, output)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('does not hash', result.stdout + result.stderr)

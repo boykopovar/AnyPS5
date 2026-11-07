@@ -1,3 +1,4 @@
+#include "prx/libScePlayReady2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -83,6 +84,11 @@ int APS5_VABI scePlayReadyReaderRetrieveOpaqueContent() {
 int APS5_VABI scePlayReadyReinitialize() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+
+int APS5_VABI scePlayReadyApiSetInitParamFlags() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

@@ -1,16 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <link.h>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info);
-void* APS5_VABI dlopen_nid_postfix(const char* path, int flags);
-void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name);
-int APS5_VABI dlclose_nid_postfix(void* handle);
-}
 
 static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);

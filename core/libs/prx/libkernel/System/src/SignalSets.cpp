@@ -1,20 +1,17 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
-#include <string>
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
 static_assert(sizeof(GuestSignalSet) == 16);
 
 namespace {
 constexpr int MaximumSignal = 128;
 constexpr int InvalidArgument = 22;
+constexpr int BadAddress = 14;
 
 bool ValidSignal(int signal) { return signal > 0 && signal <= MaximumSignal; }
 std::size_t WordIndex(int signal) { return static_cast<std::size_t>(signal - 1) >> 5; }
@@ -23,42 +20,49 @@ int RejectSignal() {
     *__error_nid_postfix() = InvalidArgument;
     return -1;
 }
-void RequireSet(const GuestSignalSet* set, const char* function) {
-    if (set == nullptr) throw std::invalid_argument(std::string(function) + ": set is null");
+int Fault() {
+    *__error_nid_postfix() = BadAddress;
+    return -1;
+}
+int Fill(GuestSignalSet* set, std::uint32_t word) {
+    const GuestSignalSet value{{word, word, word, word}};
+    if (!GuestCopyOut_nid_no_patch(set, &value, sizeof(value))) return Fault();
+    return 0;
 }
 }
 
 extern "C" {
 int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet* set) {
-    RequireSet(set, "sigemptyset");
-    for (auto& word : set->bits) word = 0;
-    return 0;
+    return Fill(set, 0);
 }
 
 int APS5_VABI sigfillset_nid_postfix(GuestSignalSet* set) {
-    RequireSet(set, "sigfillset");
-    for (auto& word : set->bits) word = ~0u;
-    return 0;
+    return Fill(set, ~0u);
 }
 
 int APS5_VABI sigaddset_nid_postfix(GuestSignalSet* set, int signal) {
-    RequireSet(set, "sigaddset");
     if (!ValidSignal(signal)) return RejectSignal();
-    set->bits[WordIndex(signal)] |= Bit(signal);
+    GuestSignalSet value;
+    if (!GuestCopyIn_nid_no_patch(&value, set, sizeof(value))) return Fault();
+    value.bits[WordIndex(signal)] |= Bit(signal);
+    if (!GuestCopyOut_nid_no_patch(set, &value, sizeof(value))) return Fault();
     return 0;
 }
 
 int APS5_VABI sigdelset_nid_postfix(GuestSignalSet* set, int signal) {
-    RequireSet(set, "sigdelset");
     if (!ValidSignal(signal)) return RejectSignal();
-    set->bits[WordIndex(signal)] &= ~Bit(signal);
+    GuestSignalSet value;
+    if (!GuestCopyIn_nid_no_patch(&value, set, sizeof(value))) return Fault();
+    value.bits[WordIndex(signal)] &= ~Bit(signal);
+    if (!GuestCopyOut_nid_no_patch(set, &value, sizeof(value))) return Fault();
     return 0;
 }
 
 int APS5_VABI sigismember_nid_postfix(const GuestSignalSet* set, int signal) {
-    RequireSet(set, "sigismember");
     if (!ValidSignal(signal)) return RejectSignal();
-    return (set->bits[WordIndex(signal)] & Bit(signal)) != 0 ? 1 : 0;
+    GuestSignalSet value;
+    if (!GuestCopyIn_nid_no_patch(&value, set, sizeof(value))) return Fault();
+    return (value.bits[WordIndex(signal)] & Bit(signal)) != 0 ? 1 : 0;
 }
 }
 #define APS5_SIGNAL_ASM_FUNCTION(name) APS5_ASM_FUNCTION(name)

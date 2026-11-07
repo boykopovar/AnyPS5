@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -75,15 +76,28 @@ void AppendLabel(std::vector<std::uint32_t>& words, std::uint32_t* target, std::
 }
 
 struct Blocker {
-    std::atomic<bool> release{false};
+    struct State {
+        std::atomic<bool> release{false};
+        std::atomic<bool> done{false};
+    };
+    std::shared_ptr<State> state = std::make_shared<State>();
     std::uint32_t* target = nullptr;
-    ~Blocker() { release = true; }
+    ~Blocker() { Release(); }
+    void Release() { state->release = true; }
     void Enqueue(std::vector<DrawPipeline::Range> writes = {}) {
-        DrawPipeline::Queue0().Enqueue([this] {
-            while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        DrawPipeline::Queue0().Enqueue([state = state, target = target] {
+            while (!state->release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             if (target != nullptr) std::atomic_ref<std::uint32_t>(*target).store(1);
-            std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+            { std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex()); }
+            state->done = true;
         }, std::move(writes));
+    }
+    void Join() const {
+        const auto start = std::chrono::steady_clock::now();
+        while (!state->done.load()) {
+            Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(20), "the blocker never ran");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
 };
 
@@ -107,7 +121,7 @@ void ReleaseWhen(Blocker& blocker, std::size_t reached, std::size_t passed) {
         Require(now - start < std::chrono::seconds(20), "the queue worker never reached the fill");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    blocker.release = true;
+    blocker.Release();
 }
 
 void Finish() {
@@ -118,6 +132,11 @@ void Finish() {
         std::_Exit(1);
     }
     idle.get();
+    const auto start = std::chrono::steady_clock::now();
+    while (DrawPipeline::Queue0().Outstanding() != 0) {
+        Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(20), "the draw pipeline kept an item after the queue went idle");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Scratch.data()), sizeof(Scratch));
 }
@@ -135,6 +154,7 @@ void InputsAfterQueuedLabels() {
     SubmitBehind(blocker, words);
     ReleaseWhen(blocker, 4, 5);
     Finish();
+    blocker.Join();
     for (std::size_t i = 0; i < Output.size(); ++i) {
         const auto expected = i < 128 ? 0xababababu : 0xcafebabeu;
         Require(Output[i] == expected, "a fill read its control or pattern before the queued labels that write them, at " + std::to_string(i));
@@ -156,6 +176,7 @@ void FillIntoFullPipeline() {
     SubmitBehind(blocker, words);
     ReleaseWhen(blocker, depth, depth + 1);
     Finish();
+    blocker.Join();
     for (std::size_t i = 0; i + 2 < depth; ++i) Require(Labels[i] == i + 1, "a queued label was not stored");
     for (std::size_t i = 0; i < Output.size(); ++i) Require(Output[i] == (i < 256 ? 0x5a5a5a5au : 0xcafebabeu), "a fill behind a full draw pipeline did not land at " + std::to_string(i));
 }
@@ -180,8 +201,9 @@ void SatisfiedWaitKeepsUnrelatedQueuedWork() {
     while (DrawPipeline::Queue0().Outstanding() < 2 && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     const bool keptQueued = DrawPipeline::Queue0().Outstanding() >= 2;
-    blocker.release = true;
+    blocker.Release();
     Finish();
+    blocker.Join();
     Require(keptQueued, "a satisfied WAIT_REG_MEM drained unrelated queued work");
     Require(marker == 1, "a label after a satisfied WAIT_REG_MEM did not execute");
 }
@@ -211,11 +233,12 @@ void SatisfiedWaitDrainsOverlappingQueuedWork() {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     const bool drained = DrawPipeline::DrainRequestsByOpcode(0x3c) > drainsBefore;
     const bool labelQueuedEarly = DrawPipeline::Queue0().Outstanding() >= 2;
-    blocker.release = true;
+    blocker.Release();
     Require(submitted.wait_for(std::chrono::seconds(20)) == std::future_status::ready,
             "WAIT_REG_MEM submission did not finish after the overlapping write");
     submitted.get();
     Finish();
+    blocker.Join();
     Require(drained && !labelQueuedEarly, "a satisfied WAIT_REG_MEM skipped an overlapping queued write");
     Require(marker == 1, "a label after an overlapping WAIT_REG_MEM did not execute");
 }

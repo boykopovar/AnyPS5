@@ -98,7 +98,7 @@ void MatchTests() {
 
 alignas(8) std::uint32_t Finished = 0;
 std::uint32_t Submitted = 0;
-constexpr std::uint32_t MaxResubmits = 16;
+constexpr std::uint32_t MaxResubmits = 512;
 
 void Submit(const std::vector<std::uint32_t>& data, std::uint32_t groups) {
     std::vector<std::uint32_t> words;

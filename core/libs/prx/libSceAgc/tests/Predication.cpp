@@ -1,20 +1,12 @@
+#include "prx/libSceAgc/Predication/include/Predication.hpp"
+#include "prx/libSceAgc/DcbState/include/Predication.hpp"
+#include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcDcbSetPredication(CommandBuffer*, std::uint8_t, std::uint8_t, std::uint8_t, const volatile void*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbSetZPassPredicationEnableGetSize();
-std::uint32_t APS5_VABI sceAgcDcbSetPredicationDisableGetSize();
-std::uint32_t APS5_VABI sceAgcDcbSetBoolPredicationEnableGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer*, std::uint32_t);
-std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer*, std::uint64_t);
-int APS5_VABI sceAgcSetPacketPredication(std::uint32_t*, std::uint32_t);
-int APS5_VABI sceAgcSetRangePredication(std::uint32_t*, const volatile std::uint32_t*, std::uint32_t);
-}
 
 namespace {
 

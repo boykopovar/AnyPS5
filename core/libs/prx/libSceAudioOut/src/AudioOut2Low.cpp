@@ -1,25 +1,19 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "AudioOut2Internal.hpp"
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2Initialize(void);
-int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx);
-int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num);
-int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t blocking);
-int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint32_t* queue_level, uint32_t* available_queue);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num);
-int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortState* state);
-
 int APS5_VABI sceAudioOut2LoInit(void) {
-    return sceAudioOut2Initialize();
+    AudioOut2MarkInitialized_nid_no_patch();
+    return 0;
+}
+
+int APS5_VABI sceAudioOut2LoTerminate(void) {
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2LoContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) {

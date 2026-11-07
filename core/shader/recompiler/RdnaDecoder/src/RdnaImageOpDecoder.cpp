@@ -86,6 +86,8 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x4fu, RdnaOpcode::ImageGather4CLz, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero, false, true, false},
     {0x57u, RdnaOpcode::ImageGather4LzO, nullptr, RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x58u, RdnaOpcode::ImageGather4CO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset, false, true, false},
+    {0xc8u, RdnaOpcode::ImageGather4C, "image_gather4_c_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, false, true, false},
+    {0xd8u, RdnaOpcode::ImageGather4CO, "image_gather4_c_o_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, false, true, false},
     {0x5fu, RdnaOpcode::ImageGather4CLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x61u, RdnaOpcode::ImageGather4h, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
     {0x62u, RdnaOpcode::ImageGather4hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
@@ -165,7 +167,7 @@ const ImageOpcodeInfo& lookupOpcode(std::uint32_t opcode) {
     }
     char message[48];
     std::snprintf(message, sizeof(message), "unsupported MIMG opcode 0x%02x", opcode);
-    throw UnsupportedInstructionError(message);
+    throw UnsupportedInstructionError(message, "MIMG", opcode, __FILE__, __LINE__);
 }
 
 void validateFlags(std::uint32_t flags) {

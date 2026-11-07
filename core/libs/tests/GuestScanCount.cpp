@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -7,9 +8,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-
-extern "C" int APS5_VABI sscanf_s_nid_postfix(const char*, const char*, ...);
-extern "C" int APS5_VABI vsscanf_s_nid_postfix(const char*, const char*, VaList*);
 
 static int APS5_VABI ScanList(const char* input, const char* format, ...) {
 #ifdef _WIN32

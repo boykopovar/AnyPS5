@@ -1,14 +1,8 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-struct LibcUtimbuf {
-    std::int64_t actime;
-    std::int64_t modtime;
-};
-
-extern "C" int APS5_VABI utime_nid_postfix(const char*, const LibcUtimbuf*);
 
 namespace {
 int guestError;

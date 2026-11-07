@@ -21,6 +21,10 @@ private:
 
 RdnaInstructionFamily GetRdnaInstructionFamily(std::uint32_t word);
 RdnaInstruction DecodeRdnaInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex);
+RdnaInstruction DecodeRdnaEncodedInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex);
+RdnaInstruction DecodeGcnInstruction(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex);
+void SetGcnGuestShaders(bool enabled);
+bool GcnGuestShaders();
 RdnaProgram DecodeRdnaFrontProgram(std::span<const std::uint32_t> front);
 void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program);
 RdnaOperand DecodeRdnaScalarSource(std::uint32_t code, std::uint32_t programCounter);

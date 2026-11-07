@@ -1,4 +1,4 @@
-add_library(libSceSysmodule SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceSysmodule SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceSysmodule PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceSysmodule)
 
@@ -27,6 +27,15 @@ if(BUILD_TESTING)
     endif()
     if(WIN32)
         set_tests_properties(guest_sysmodule PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysmodule>")
+    endif()
+    add_test_executable(guest_sysmodule_invalid_ids_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/InvalidIds.cpp)
+    target_include_directories(guest_sysmodule_invalid_ids_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sysmodule_invalid_ids_tests PRIVATE libSceSysmodule libkernel libc)
+    configure_windows_unwind(guest_sysmodule_invalid_ids_tests)
+    add_test(NAME guest_sysmodule-invalid-ids COMMAND guest_sysmodule_invalid_ids_tests)
+    if(WIN32)
+        set_tests_properties(guest_sysmodule-invalid-ids PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysmodule>")
     endif()
 endif()

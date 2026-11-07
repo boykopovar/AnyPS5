@@ -1,13 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "Common.hpp"
 #include <atomic>
 #include <new>
 #include <stdexcept>
 #include <thread>
-
-struct PthreadSpinlockPrivate {
-    std::atomic<std::thread::id> owner{};
-};
 
 namespace {
 

@@ -1,43 +1,43 @@
+#include "prx/libScePs2EmuMenuDialog/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+
+namespace {
+
+constexpr int PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE = static_cast<int>(0x80B8000Fu);
+constexpr int COMMON_DIALOG_STATUS_NONE = 0;
+
+}
 
 extern "C" {
 
 int APS5_VABI scePs2EmuMenuDialogClose() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI scePs2EmuMenuDialogGetResult() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI scePs2EmuMenuDialogGetStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return COMMON_DIALOG_STATUS_NONE;
 }
 
 int APS5_VABI scePs2EmuMenuDialogInitialize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI scePs2EmuMenuDialogOpen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI scePs2EmuMenuDialogTerminate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PS2_EMU_MENU_DIALOG_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI scePs2EmuMenuDialogUpdateStatus() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return COMMON_DIALOG_STATUS_NONE;
 }
 
 }

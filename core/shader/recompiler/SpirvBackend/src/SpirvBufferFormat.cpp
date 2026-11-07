@@ -55,6 +55,9 @@ SpirvFormatComponentType GetFormatComponentType(IrBufferFormat format) {
         case IrBufferFormat::Format10_10_10_2UNorm:
         case IrBufferFormat::Format8_8_8_8UNorm:
         case IrBufferFormat::Format16_16_16_16UNorm:
+        case IrBufferFormat::Format5_6_5UNorm:
+        case IrBufferFormat::Format5_5_5_1UNorm:
+        case IrBufferFormat::Format4_4_4_4UNorm:
             return SpirvFormatComponentType::Unorm;
         case IrBufferFormat::Format8SNorm:
         case IrBufferFormat::Format16SNorm:
@@ -110,6 +113,12 @@ SpirvBufferFormatInfo GetFormatInfo(IrBufferFormat format) {
     }
     const auto type = GetFormatComponentType(format);
     switch (format) {
+        case IrBufferFormat::Format5_6_5UNorm:
+            return {format, type, 3u, 2u, {5u, 6u, 5u, 0u}, {0u, 5u, 11u, 0u}, true};
+        case IrBufferFormat::Format5_5_5_1UNorm:
+            return {format, type, 4u, 2u, {5u, 5u, 5u, 1u}, {0u, 5u, 10u, 15u}, true};
+        case IrBufferFormat::Format4_4_4_4UNorm:
+            return {format, type, 4u, 2u, {4u, 4u, 4u, 4u}, {0u, 4u, 8u, 12u}, true};
         case IrBufferFormat::Format8UNorm:
         case IrBufferFormat::Format8SNorm:
         case IrBufferFormat::Format8UScaled:

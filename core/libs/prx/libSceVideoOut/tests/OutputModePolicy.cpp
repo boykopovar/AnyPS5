@@ -1,6 +1,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 
 static void Require(bool value, const char* reason) {
@@ -25,6 +26,12 @@ int main() {
         Require(ValidateVideoOutOutputMode_nid_no_patch(mode, &options, 240) == unsupported, "unimplemented output mode was accepted on a fast display");
     }
     Require(ValidateVideoOutOutputMode_nid_no_patch(0xd000000a, &options, 240) == unknownMode, "unknown output mode was accepted");
+    for (int refresh : {59, 60, 119, 120, 144}) {
+        Require(VideoOutOutputSupport_nid_no_patch(15, &options, refresh) == (refresh < 120 ? 0 : 1), "mode 15 support did not answer 0 or 1 for the display");
+        Require(VideoOutOutputSupport_nid_no_patch(1, &options, refresh) == 1, "default mode was not supported");
+        Require(VideoOutOutputSupport_nid_no_patch(4, &options, refresh) == unsupported, "mode 4 did not stay unsupported");
+        Require(VideoOutOutputSupport_nid_no_patch(0xd000000a, &options, refresh) == unknownMode, "unknown mode did not stay unknown");
+    }
     VideoOutOutputOptions changed = options;
     changed.internalData[0] = 0;
     Require(ValidateVideoOutOutputMode_nid_no_patch(15, &changed, 120) == invalidValue, "mode 15 accepted invalid output options");

@@ -1,10 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" int APS5_VABI getargc_nid_postfix(void);
-extern "C" const char** APS5_VABI getargv_nid_postfix(void);
 
 static void Require(bool condition, const char* message) {
     if (!condition) {

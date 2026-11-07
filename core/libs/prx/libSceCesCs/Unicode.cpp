@@ -1,3 +1,4 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include <bit>
 #include <cstdint>
 #include <cstring>

@@ -58,11 +58,19 @@ std::string_view Trim(std::string_view text) {
     return text.substr(first, text.find_last_not_of(whitespace) - first + 1);
 }
 
-std::string_view StripComment(const std::string_view line) {
+bool IsControlCharacter(const char character) {
+    return (static_cast<unsigned char>(character) < 0x20 && character != '\t') || character == 0x7f;
+}
+
+std::string_view StripComment(const std::string_view line, const std::size_t lineNumber) {
     bool inString = false;
     for (std::size_t index = 0; index < line.size(); ++index) {
         if (line[index] == '"') inString = !inString;
-        else if (line[index] == '#' && !inString) return line.substr(0, index);
+        else if (line[index] == '#' && !inString) {
+            for (const char character : line.substr(index + 1))
+                if (IsControlCharacter(character)) FailLine(lineNumber, "control characters are not supported in comments", line);
+            return line.substr(0, index);
+        }
     }
     return line;
 }
@@ -123,7 +131,7 @@ RawValue ParseValue(const std::string_view text, const std::size_t line, const s
         const auto content = text.substr(1, end - 1);
         if (content.find('\\') != std::string_view::npos) FailLine(line, "escapes are not supported in strings", whole);
         for (const char character : content)
-            if (static_cast<unsigned char>(character) < 0x20 && character != '\t') FailLine(line, "control characters are not supported in strings", whole);
+            if (IsControlCharacter(character)) FailLine(line, "control characters are not supported in strings", whole);
         value.IsString = true;
         value.Text = std::string(content);
         return value;
@@ -240,6 +248,15 @@ PatchEntry BuildEntry(const Table& table, const std::size_t headerLine, std::set
     return entry;
 }
 
+std::string Describe(const PatchEntry& entry) {
+    return "patch " + entry.Target + " va=" + HexValue(entry.VirtualAddress) + " (line " + std::to_string(entry.Line) + ")";
+}
+
+void ValidateWidth(const PatchEntry& entry) {
+    if (entry.Expected.empty() || entry.Expected.size() != entry.Value.size())
+        throw Domain::RelinkerException(Describe(entry) + ": expected and value must have the same nonzero width");
+}
+
 struct EntryRange {
     std::optional<PatchedRange> Range;
     std::string Reason;
@@ -275,12 +292,11 @@ std::vector<EntryRange> ResolveEach(const ElfReader& reader, const std::vector<P
     const auto segments = reader.ReadProgramHeaders();
     const auto header = reader.ReadHeader();
     std::vector<EntryRange> resolved;
-    for (const auto& entry : entries) resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
+    for (const auto& entry : entries) {
+        ValidateWidth(entry);
+        resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
+    }
     return resolved;
-}
-
-std::string Describe(const PatchEntry& entry) {
-    return "patch " + entry.Target + " va=" + HexValue(entry.VirtualAddress) + " (line " + std::to_string(entry.Line) + ")";
 }
 
 bool Overlaps(const std::uint64_t firstOffset, const std::uint64_t firstLength, const std::uint64_t secondOffset, const std::uint64_t secondLength) {
@@ -374,10 +390,11 @@ PatchFile ParsePatchFile(const std::string_view text) {
     while (position <= text.size()) {
         auto end = text.find('\n', position);
         if (end == std::string_view::npos) end = text.size();
-        const auto whole = text.substr(position, end - position);
+        auto whole = text.substr(position, end - position);
+        if (end < text.size() && whole.ends_with('\r')) whole.remove_suffix(1);
         position = end + 1;
         ++lineNumber;
-        const auto line = Trim(StripComment(whole));
+        const auto line = Trim(StripComment(whole, lineNumber));
         if (line.empty()) continue;
         if (line.front() == '[') {
             if (line != "[[patch]]") FailLine(lineNumber, "unsupported table header", Trim(whole));
@@ -431,7 +448,10 @@ std::vector<PatchedRange> ResolveRanges(const ElfReader& reader, const std::vect
 std::vector<AppliedPatch> ApplyPatches(std::vector<std::uint8_t>& bytes, const std::string& target, const std::vector<PatchEntry>& entries, const std::vector<PatchedRange>& ranges) {
     if (entries.size() != ranges.size()) throw Domain::RelinkerException("Patch ranges do not match patch entries");
     for (std::size_t index = 0; index < entries.size(); ++index) {
+        ValidateWidth(entries[index]);
         const auto& range = ranges[index];
+        if (range.Length != entries[index].Expected.size())
+            throw Domain::RelinkerException(Describe(entries[index]) + ": range length does not match the patch width", range.Offset);
         if (range.Offset > bytes.size() || range.Length > bytes.size() - range.Offset) throw Domain::RelinkerException(Describe(entries[index]) + ": range exceeds the image", range.Offset);
         const auto first = bytes.begin() + static_cast<std::ptrdiff_t>(range.Offset);
         if (!std::equal(entries[index].Expected.begin(), entries[index].Expected.end(), first))
@@ -470,6 +490,8 @@ void CheckOverlaps(const std::string& target, const std::vector<PatchedRange>& p
     for (const auto& site : writers.Trampolines) sites.push_back({site.Offset, site.Length, "Intel trampoline site"});
     for (const auto& patch : writers.RelinkPatches) sites.push_back({patch.Offset, patch.Bytes.size(), "relinker patch"});
     sites.insert(sites.end(), writers.Traps.begin(), writers.Traps.end());
+    for (const auto& site : writers.RedZoneSites) sites.push_back({site.Offset, site.Length, "red-zone frame site"});
+    for (const auto& moved : writers.RedZoneDisplacements) sites.push_back({moved.Offset, moved.Bytes.size(), "red-zone moved displacement"});
     const auto relaViolation = [&](const std::span<const std::uint8_t> table, const char* name, const PatchedRange& range) {
         for (std::size_t position = 0; position + 24 <= table.size(); position += 24) {
             std::uint64_t relocation = 0;
@@ -512,7 +534,7 @@ std::vector<AppliedPatch> AggregateManifest(const std::vector<std::vector<Applie
 std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath, const std::optional<std::uint64_t> linuxBase) {
     const auto holdable = [](const std::string& text) {
         return std::none_of(text.begin(), text.end(), [](const char character) {
-            return character == '"' || character == '\\' || (static_cast<unsigned char>(character) < 0x20 && character != '\t') || character == 0x7f;
+            return character == '"' || character == '\\' || IsControlCharacter(character);
         });
     };
     const auto quoted = [&](const std::string& text, const char* field) {

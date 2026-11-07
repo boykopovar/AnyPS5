@@ -1,5 +1,6 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -145,8 +146,8 @@ RdnaOperand TranslationContext::plainOperand(const RdnaOperand& operand) {
     return result;
 }
 
-IrU32 TranslationContext::flushF32Denormal(IrU32 bits) {
-    if ((f32DenormalFlush & 1u) == 0u) return bits;
+IrU32 TranslationContext::flushF32Denormal(IrU32 bits, std::uint32_t flushBit) {
+    if ((f32DenormalFlush & flushBit) == 0u) return bits;
     if (bits.Value().HasImmediate()) {
         const std::uint32_t value = bits.Value().ImmediateU32();
         return (value & 0x7f800000u) == 0u ? IrU32(ir.Constant(value & 0x80000000u)) : bits;
@@ -156,7 +157,7 @@ IrU32 TranslationContext::flushF32Denormal(IrU32 bits) {
 }
 
 IrF32 TranslationContext::flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend, bool afterRounding) {
-    if ((f32DenormalFlush & 2u) == 0u || keepsProductOutOfTinyRange(*lhs) || keepsProductOutOfTinyRange(*rhs)) return IrF32(*product);
+    if ((f32DenormalFlush & 2u) == 0u || ((f32DenormalFlush & 1u) != 0u && (keepsProductOutOfTinyRange(*lhs) || keepsProductOutOfTinyRange(*rhs)))) return IrF32(*product);
     IrValue& lhsBits = ir.BitCastU32(*lhs);
     IrValue& rhsBits = ir.BitCastU32(*rhs);
     const std::uint32_t roundMode = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
@@ -249,7 +250,7 @@ void TranslationContext::writeOperand(const RdnaOperand& operand, IrValue* value
     }
     IrType type = value->Type();
     if (type == IrType::F32) {
-        if ((f32DenormalFlush & 2u) != 0u) value = &ir.BitCastF32(flushF32Denormal(IrU32(ir.BitCastU32(*value))).Value());
+        if ((f32DenormalFlush & 2u) != 0u) value = &ir.BitCastF32(flushF32Denormal(IrU32(ir.BitCastU32(*value)), 2u).Value());
         value = &applyF32ResultModifiers(operand, IrF32(*value)).Value();
         type = IrType::F32;
     }
@@ -341,10 +342,17 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x00400000u))) : bits;
 }
 
-IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct) {
+IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct, bool multiplication) {
+    if (!ExactF32Arithmetic()) return result;
     const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
     IrValue* bits = &ir.BitCastU32(*result);
-    bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
+    const bool normalFactor = multiplication && std::any_of(sources.begin(), sources.end(), [](const IrValue* source) {
+        const IrValue* constant = constantF32Bits(*source);
+        if (constant == nullptr) return false;
+        const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
+        return exponent != 0u && exponent != 0xffu;
+    });
+    if (!normalFactor) bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
     for (auto source = sources.end(); source != sources.begin();) {
         --source;
         IrValue& sourceBits = ir.BitCastU32(**source);

@@ -4,12 +4,10 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 
-struct Packet;
-
 extern "C" {
 
-int APS5_VABI sceAgcDriverSubmitCommandBuffer(void* queue_context, const Packet* packet);
-int APS5_VABI sceAgcDriverSubmitMultiCommandBuffers(void* queue_context, uint32_t* const* command_buffers, const uint32_t* sizes_in_dwords, uint32_t count);
+int APS5_VABI sceAgcDriverSubmitCommandBuffer(void* queueContext, const Packet* packet);
+int APS5_VABI sceAgcDriverSubmitMultiCommandBuffers(void* queueContext, uint32_t* const* commandBuffers, const uint32_t* sizesInDwords, uint32_t count);
 
 }
 

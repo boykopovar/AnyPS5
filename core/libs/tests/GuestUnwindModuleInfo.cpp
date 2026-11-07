@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/GuestUnwindModuleInfoFixture.hpp"
 #include <cstdint>
@@ -9,17 +10,13 @@
 #include <windows.h>
 #include <psapi.h>
 
-extern "C" int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info);
-extern "C" void* APS5_VABI dlopen_nid_postfix(const char*, int);
-extern "C" void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-extern "C" int APS5_VABI dlclose_nid_postfix(void*);
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Throws(std::uint64_t address) {
     ModuleInfoForUnwind info{};
     try {
         sceKernelGetModuleInfoForUnwind(address, 0, &info);
+
     } catch (const std::runtime_error&) {
         return true;
     }

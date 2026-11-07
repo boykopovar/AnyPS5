@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "nid/Sha1.hpp"
 #include <cstdio>
@@ -9,9 +11,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static void Require(bool value, const char* message) {
     if (!value) {

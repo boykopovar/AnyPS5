@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/GsPrimPayload.hpp"
 #include <cstdint>
 #include <stdexcept>
 #include <string>

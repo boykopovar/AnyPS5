@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, symbols, patch, HASH_OFFSET, SHOFF, read_dynsym, gnu_hash, sections
+from test_symbol_versions import build_image, symbols, patch, HASH_OFFSET, SHOFF, VERSYM_OFFSET, read_dynsym, gnu_hash, sections, PATCHER
 
 
 def sysv_hash(name):
@@ -31,6 +31,7 @@ def sysv_lookup(image, name):
     return None
 
 
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
 class GnuHashTests(unittest.TestCase):
     def image(self, buckets=4, bloom=1, shift=6, symoffset=3):
         image = build_image(symbols(False), False)
@@ -94,7 +95,27 @@ class GnuHashTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(struct.unpack_from("<I", after, HASH_OFFSET)[0], 0)
 
+    def test_version_symbols_follow_reordered_symbols(self):
+        image = self.image()
+        count = len(symbols(False))
+        versions = [1, 1, 1] + [2 + index for index in range(count - 3)]
+        for index, version in enumerate(versions):
+            struct.pack_into("<H", image, VERSYM_OFFSET + index * 2, version)
+        struct.pack_into("<IIQQQQIIQQ", image, SHOFF + 4 * 64, 0, 0x6FFFFFFF, 2, 0, VERSYM_OFFSET, count * 2, 1, 0, 2, 2)
+        struct.pack_into("<H", image, 0x3C, 5)
+        before = read_dynsym(image)
+        result, after = patch(PATCHER, image, "versym.so")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        renamed = read_dynsym(after)
+        self.assertNotEqual([entry[2] for entry in renamed], [entry[2] for entry in before], "the symbols were not reordered")
+        version_of = {entry[2]: versions[index] for index, entry in enumerate(before) if entry[1] == 9}
+        after_versions = [struct.unpack_from("<H", after, VERSYM_OFFSET + index * 2)[0] for index in range(count)]
+        for index, (name, shndx, value) in enumerate(renamed):
+            if shndx == 9:
+                self.assertEqual(after_versions[index], version_of[value], (index, name))
 
+
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
 class SysvHashTests(unittest.TestCase):
     def image(self, both, buckets):
         entries = symbols(False)
@@ -153,5 +174,4 @@ class SysvHashTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()

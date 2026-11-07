@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
@@ -7,8 +8,6 @@
 #include <system_error>
 #include <stdexcept>
 #include <windows.h>
-
-extern "C" int APS5_VABI sceSystemServiceLoadExec(const char*, const char* const*);
 
 namespace {
 

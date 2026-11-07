@@ -1,3 +1,4 @@
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -6,7 +7,7 @@
 #include <thread>
 
 extern "C" {
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
+
 void KernelWakeSleepers_nid_no_patch();
 void KernelNoteGpuSubmit_nid_no_patch();
 }

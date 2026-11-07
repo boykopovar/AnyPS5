@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -10,19 +12,14 @@
 #include <limits>
 #include <thread>
 
-struct GuestItimerval {
-    KernelTimeval interval;
-    KernelTimeval value;
-};
-
 static_assert(sizeof(GuestItimerval) == 32 && offsetof(GuestItimerval, value) == 16);
 
 extern "C" {
-int APS5_VABI getitimer_nid_postfix(int, GuestItimerval*);
+
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
-int* APS5_VABI __error_nid_postfix();
+
 using Handler = void (APS5_VABI *)(int);
-Handler APS5_VABI signal_nid_postfix(int, Handler);
+
 }
 
 static void Require(bool value, const char* message) {
