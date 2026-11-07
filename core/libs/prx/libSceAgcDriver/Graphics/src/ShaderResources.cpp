@@ -6446,6 +6446,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
     guestMemory.MarkDirectWrites();
+    guestMemory.NoteCarriedShadows(recorder);
     if (!BuildProfiled()) return;
     auto& counters = BufferWrites();
     // Recorded uses only (dispatches and recorded draws): a synchronous draw writes back in

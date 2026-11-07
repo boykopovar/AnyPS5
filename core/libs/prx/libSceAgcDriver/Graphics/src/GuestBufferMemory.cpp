@@ -6471,6 +6471,74 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     }
 }
 
+namespace {
+
+bool carriedShadowsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_CARRIED_SHADOWS") == nullptr;
+    return enabled;
+}
+
+struct CarriedShadow {
+    std::shared_ptr<Buffer> buffer;
+    const Recorder* recorder = nullptr;
+    std::uint64_t note = 0;
+    std::uint64_t generation = 0;
+};
+
+struct CarriedShadows {
+    static constexpr std::size_t MaxEntries = 256;
+    static constexpr std::uint64_t MaxBytes = std::uint64_t{512} << 20u;
+    AgcDriver::Mutex mutex;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, CarriedShadow> entries;
+    std::uint64_t bytes = 0;
+};
+
+CarriedShadows& Carried() {
+    static CarriedShadows shadows;
+    return shadows;
+}
+
+std::shared_ptr<Buffer> takeCarriedShadow(const Recorder& recorder, std::uint64_t begin, std::uint64_t end) {
+    if (!carriedShadowsEnabled()) return nullptr;
+    auto& shadows = Carried();
+    CarriedShadow shadow;
+    {
+        std::lock_guard lock(shadows.mutex);
+        const auto found = shadows.entries.find({begin, end});
+        if (found == shadows.entries.end()) return nullptr;
+        shadow = std::move(found->second);
+        shadows.bytes -= end - begin;
+        shadows.entries.erase(found);
+    }
+    const auto bytes = static_cast<std::size_t>(end - begin);
+    if (shadow.recorder != &recorder || shadow.note == 0 || recorder.NewestWriteNote(begin, bytes) != shadow.note) return nullptr;
+    static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
+    if (!GuestMemory::UnchangedSince(begin, bytes, shadow.generation)) return nullptr;
+    return shadow.buffer;
+}
+
+}
+
+void GuestBufferMemory::NoteCarriedShadows(const Recorder& recorder) const {
+    if (!carriedShadowsEnabled()) return;
+    auto& shadows = Carried();
+    std::uint64_t generation = 0;
+    for (const auto& region : regions) {
+        if (!region.gpuCopy || !region.deviceLocal || !region.copiedBack || region.buffer == nullptr || region.sparse || region.mirror != nullptr || region.bufferEnd != 0) continue;
+        const auto bytes = region.end - region.begin;
+        if (generation == 0) generation = GuestMemory::TrackerGeneration();
+        const auto note = recorder.NewestWriteNote(region.begin, static_cast<std::size_t>(bytes));
+        std::lock_guard lock(shadows.mutex);
+        auto [entry, inserted] = shadows.entries.try_emplace({region.begin, region.end});
+        if (inserted) shadows.bytes += bytes;
+        entry->second = {region.buffer, &recorder, note, generation};
+        if (shadows.entries.size() > CarriedShadows::MaxEntries || shadows.bytes > CarriedShadows::MaxBytes) {
+            shadows.entries.clear();
+            shadows.bytes = 0;
+        }
+    }
+}
+
 void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool capture = std::getenv("APS5_CAPTURE_GPU_COPIES") != nullptr;
@@ -6539,7 +6607,16 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
                 expected.assign(snapshotBytes.begin(), snapshotBytes.end());
             }
         }
-        CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        std::shared_ptr<Buffer> carried;
+        if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(*recorder, region->begin, region->end);
+        if (carried != nullptr) {
+            if (carried->Handle() != region->buffer->Handle()) {
+                CopyBuffer(context, commands, carried->Handle(), 0, region->buffer->Handle(), 0, bytes);
+                recorder->Keep(carried);
+            }
+        } else {
+            CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
+        }
         if (!expected.empty()) {
             auto readback = std::make_shared<Buffer>(context, expected.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
