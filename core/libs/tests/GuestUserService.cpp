@@ -154,11 +154,9 @@ int main() {
     };
     const Setting settings[] = {
         {sceUserServiceGetAccessibilityChatTranscription, 0},
-        {sceUserServiceGetAccessibilityKeyremapEnable, 0},
         {sceUserServiceGetAccessibilityPressAndHoldDelay, 0},
         {sceUserServiceGetAccessibilityTriggerEffect, 1},
         {sceUserServiceGetAccessibilityVibration, 1},
-        {sceUserServiceGetAccessibilityZoom, 0},
         {sceUserServiceGetAccessibilityZoomEnabled, 0},
         {sceUserServiceGetAccessibilityZoomFollowFocus, 1},
     };
@@ -185,6 +183,28 @@ int main() {
         Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
+
+    using UnmeasuredSetting = int (APS5_VABI *)(std::int32_t, std::int32_t*);
+    const UnmeasuredSetting unmeasuredSettings[] = {
+        sceUserServiceGetAccessibilityKeyremapEnable,
+        sceUserServiceGetAccessibilityZoom,
+    };
+    for (const UnmeasuredSetting& get : unmeasuredSettings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(get(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        for (int user_id : absent_users) {
+            Require(get(user_id, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(value == 0x5a5a5a5a);
+            Require(get(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        }
+        bool threw = false;
+        try {
+            get(USER_SERVICE_INITIAL_USER_ID, &value);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+    }
 
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
