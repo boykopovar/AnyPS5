@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #ifdef _WIN32
@@ -43,6 +44,8 @@ struct State {
     PthreadKey key = -1;
     std::string api, scenario;
     bool metadata = false;
+    bool gap = false;
+    bool caught = false;
     unsigned preflight = 0;
     std::atomic<unsigned> calls{0}, cleanups{0}, destructors{0}, signals{0};
     std::atomic<bool> entered{false}, finished{false}, returned{false};
@@ -71,6 +74,11 @@ static int Flush(int file) {
 #else
     const bool completed = ::read(state->input, &token, 1) == 1;
 #endif
+    if (state->gap) {
+        Require(completed == (state->scenario == "complete"), "unknown failure must follow the expected native completion or interruption");
+        Require(ThreadCancel::IoActive() && ThreadCancel::IoInterrupted() == (state->scenario == "signal"), "unknown failure interruption state");
+        throw std::runtime_error("synthetic unknown metadata or flush gap");
+    }
     if (!completed) return static_cast<int>(0x80020004u);
     if (state->metadata || state->preflight != 0) return 0;
 #ifdef _WIN32
@@ -123,11 +131,16 @@ static void* APS5_VABI Writer(void* opaque) {
     Require(scePthreadSetspecific(state->key, state) == 0, "set flush TSD");
     CleanupHandler cleanup{};
     __pthread_cleanup_push_imp_nid_postfix(Cleanup, state, &cleanup);
-    state->result = Write(2);
-    state->error = *__error_nid_postfix();
-    if (state->scenario == "signal" && state->preflight == 0 && state->result == -1 && state->error == 4) {
+    try {
         state->result = Write(2);
         state->error = *__error_nid_postfix();
+        if (!state->gap && state->scenario == "signal" && state->preflight == 0 && state->result == -1 && state->error == 4) {
+            state->result = Write(2);
+            state->error = *__error_nid_postfix();
+        }
+    } catch (const std::runtime_error& error) {
+        Require(state->gap && std::string(error.what()) == "synthetic unknown metadata or flush gap", "unexpected write exception");
+        state->caught = true;
     }
     state->returned.store(true);
     if (state->scenario == "cancel") scePthreadTestcancel();
@@ -152,6 +165,10 @@ int main(int argc, char** argv) {
     if (state->scenario.starts_with("metadata_")) {
         state->metadata = true;
         state->scenario.erase(0, 9);
+    }
+    if (state->scenario.starts_with("gap_")) {
+        state->gap = true;
+        state->scenario.erase(0, 4);
     }
     const auto path = "anyps5-sync-cancel-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     state->file = open_nid_postfix(path.c_str(), 2 | 0x200, 0600);
@@ -219,7 +236,12 @@ int main(int argc, char** argv) {
         Require(joined == (canceled ? GUEST_CANCELED : reinterpret_cast<void*>(std::uintptr_t{7})), "unexpected flush join result");
         Require(state->cleanups.load() == 1 && state->destructors.load() == 1 && state->calls.load() == (state->preflight != 0 ? (waiting ? 2u : state->preflight) : 1u), "flush repeated or cleanup lost");
         Require(std::filesystem::file_size(path) == (state->preflight != 0 && !waiting ? 0u : 2u), "flush interruption changed write progress");
-        if (canceled) Require(state->returned.load() == (waiting || state->preflight == 0), "canceled flush completion state");
+        if (state->gap) {
+            Require(state->caught && state->result == -2 && state->returned.load(), "unknown write failure was laundered into a result");
+            char bytes[2]{};
+            Require(pread_nid_postfix(state->file, bytes, sizeof(bytes), 0) == 2 && bytes[0] == 'a' && bytes[1] == 'b', "unknown failure lost or repeated already written bytes");
+        }
+        else if (canceled) Require(state->returned.load() == (waiting || state->preflight == 0), "canceled flush completion state");
         else if (state->scenario == "complete" || state->preflight == 0) Require(state->result == 2, "completed flush lost positive result");
         else Require(state->result == -1 && state->error == 4, "interrupted flush did not return EINTR");
         if (state->scenario == "signal") Require(state->signals.load() == 1, "restartable signal lost or write repeated");

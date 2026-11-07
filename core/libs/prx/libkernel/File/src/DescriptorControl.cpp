@@ -117,6 +117,10 @@ constexpr std::size_t OldGuestLockSize = 24;
 
 enum class Kind { File, Directory, Pipe, Socket, Device, RandomDevice, ArchivedFile };
 
+struct InterruptedFstat : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
@@ -303,8 +307,11 @@ std::optional<Kind> Classify(int fd, const char* function) {
     if (fd < 0) return std::nullopt;
     struct stat status{};
     if (::fstat(fd, &status) != 0) {
-        if (errno == EBADF) return std::nullopt;
-        throw std::runtime_error(std::string(function) + ": fstat failed, fd=" + std::to_string(fd) + ", errno=" + std::to_string(errno));
+        const int error = errno;
+        if (error == EBADF) return std::nullopt;
+        const auto message = std::string(function) + ": fstat failed, fd=" + std::to_string(fd) + ", errno=" + std::to_string(error);
+        if (error == EINTR) throw InterruptedFstat(message);
+        throw std::runtime_error(message);
     }
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
     if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
@@ -683,12 +690,18 @@ bool SyncWrites(int fd) {
     int result;
     try {
         result = ThreadCancel::Native([&] {
-            if (metadataHook && metadataHook(fd) != 0) throw std::runtime_error("write: synchronous metadata query failed");
+            if (metadataHook) {
+                const int metadata = metadataHook(fd);
+                if (metadata != 0) {
+                    if (ThreadCancel::IoActive() && ThreadCancel::IoInterrupted() && (static_cast<unsigned>(metadata) & 0xffff) == EINTR) return metadata;
+                    throw std::runtime_error("write: synchronous metadata query failed");
+                }
+            }
             if (Classify(fd, "write") != Kind::File) return 0;
             synchronized = true;
             return hook ? hook(fd) : sceKernelFsync(fd);
         });
-    } catch (const std::runtime_error&) {
+    } catch (const InterruptedFstat&) {
         if (!ThreadCancel::IoActive() || !ThreadCancel::IoInterrupted()) throw;
         result = -1;
     }
