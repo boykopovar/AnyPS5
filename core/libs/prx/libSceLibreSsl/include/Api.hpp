@@ -594,6 +594,7 @@ Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const B
 int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, BignumContext*);
 Bignum* APS5_VABI BN_new_nid_postfix(void);
 int APS5_VABI BN_num_bits_nid_postfix(const Bignum* a);
+extern "C" int LibreSslBnDiv_nid_no_patch(Bignum* quotient, Bignum* remainder, const Bignum* dividend, const Bignum* divisor);
 int APS5_VABI BN_print_nid_postfix(void);
 int APS5_VABI BN_set_word_nid_postfix(Bignum* a, std::uint64_t w);
 int APS5_VABI BN_sub_word_nid_postfix(Bignum* a, std::uint64_t w);

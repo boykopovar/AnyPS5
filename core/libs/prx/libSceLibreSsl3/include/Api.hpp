@@ -345,7 +345,7 @@ int APS5_VABI X509_ALGOR_get0_nid_postfix();
 void APS5_VABI BIO_set_shutdown_nid_postfix(LibreSsl3Bio* bio, int shutdown);
 int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, int length);
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix();
-int APS5_VABI BN_div_nid_postfix();
+int APS5_VABI BN_div_nid_postfix(LibreSsl3Bignum* quotient, LibreSsl3Bignum* remainder, const LibreSsl3Bignum* dividend, const LibreSsl3Bignum* divisor, BignumContext* context);
 int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix();
 int APS5_VABI X509_digest_nid_postfix();
 int APS5_VABI X509V3_set_ctx_nid_postfix();

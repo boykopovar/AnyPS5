@@ -376,4 +376,16 @@ Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const B
     }
     return target;
 }
+
+int LibreSslBnDiv_nid_no_patch(Bignum* quotient, Bignum* remainder, const Bignum* dividend, const Bignum* divisor) {
+    const Int numerator = Load(Checked(dividend, __func__));
+    const Int denominator = Load(Checked(divisor, __func__));
+    if (denominator.mag.empty()) return 0;
+    Mag q;
+    Mag r;
+    DivMod(numerator.mag, denominator.mag, q, r);
+    if (quotient && !Store(quotient, q, numerator.neg != denominator.neg)) return 0;
+    if (remainder && !Store(remainder, r, numerator.neg)) return 0;
+    return 1;
+}
 }
