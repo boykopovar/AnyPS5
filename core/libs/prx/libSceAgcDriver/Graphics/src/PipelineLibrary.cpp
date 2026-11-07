@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <array>
@@ -84,7 +85,7 @@ void runJobs(LibraryStore& store) {
 void enqueue(LibraryStore& store, VkDevice device, std::function<void()> job) {
     if (store.stopping) return;
     if (!store.worker.joinable()) {
-        store.worker = std::thread(runJobs, std::ref(store));
+        store.worker = Libc::StartHostThread(runJobs, std::ref(store));
         runningWorkers.fetch_add(1, std::memory_order_acq_rel);
     }
     auto& pending = store.pending[device];

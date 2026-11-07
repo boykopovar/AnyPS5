@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
@@ -338,7 +339,7 @@ void DrawPipeline::enqueue(Item item) {
     items.push_back(std::move(item));
     outstanding.fetch_add(1, std::memory_order_release);
     if (!thread.joinable()) {
-        thread = std::thread([this] {
+        thread = Libc::StartHostThread([this] {
             GuestMemory::MarkProofThread();
             run();
         });
