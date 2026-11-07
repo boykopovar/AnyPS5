@@ -20,6 +20,9 @@ int main() {
 
     Require(sceKernelAddResource() == 0);
     Require(sceKernelEventLogInit() == 0);
+    Require(sceKernelIsCloudDevkit() == 0);
+    Require(sceKernelIsCloudkit() == 0);
+    Require(sceKernelIsCronos() == 0);
     Require(sceKernelIsGenuineKratosCex() == 0);
     Require(sceKernelReleaseTraceDirectMemory() == 0);
 
