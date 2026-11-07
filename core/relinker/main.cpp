@@ -81,6 +81,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.LinuxFixedBase = args.linuxFixedBase;
     options.MacosFixedBase = args.macosFixedBase;
     options.ExcludedModules = args.excludedSceModules;
+    options.ExecutableModules = args.executableModules;
     options.Patches = patches;
     options.TargetName = targetName;
     progress.IncludeFile(Io::Utf8Path(input.InputPath));

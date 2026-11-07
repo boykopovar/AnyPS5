@@ -42,6 +42,7 @@ struct Args {
     bool verifyOutput = false;
     std::string runPath = "$ORIGIN/libs";
     std::set<std::string> excludedSceModules;
+    std::set<std::string> executableModules;
     std::vector<std::string> moduleDirectories;
     std::vector<std::string> executables;
 };

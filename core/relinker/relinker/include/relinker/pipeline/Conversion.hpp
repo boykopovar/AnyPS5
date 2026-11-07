@@ -29,6 +29,7 @@ struct ConversionOptions {
     std::optional<std::uint64_t> MacosFixedBase;
     std::string RunPath = "$ORIGIN/libs";
     std::set<std::string> ExcludedModules;
+    std::set<std::string> ExecutableModules;
     std::vector<GamePatch::PatchEntry> Patches;
     std::string TargetName;
 };
