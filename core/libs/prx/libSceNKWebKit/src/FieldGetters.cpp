@@ -53,14 +53,6 @@ void* APS5_VABI _ZNK7WebCore11HistoryItem9urlStringEv(const void* self) {
     return const_cast<char*>(static_cast<const char*>(self)) + 0x8;
 }
 
-void* APS5_VABI _ZNK7WebCore14CredentialBase8passwordEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x8;
-}
-
-void* APS5_VABI _ZNK7WebCore15HTTPHeaderField5valueEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x8;
-}
-
 void* APS5_VABI _ZNK7WebCore18TextureMapperLayer8childrenEv(const void* self) {
     return const_cast<char*>(static_cast<const char*>(self)) + 0x10;
 }
@@ -438,10 +430,6 @@ std::uint32_t APS5_VABI _ZNK7WebCore12GridPosition12spanPositionEv(const void* s
 
 std::uint32_t APS5_VABI _ZNK7WebCore12GridPosition15integerPositionEv(const void* self) {
     return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x4);
-}
-
-std::uint32_t APS5_VABI _ZNK7WebCore14CredentialBase11persistenceEv(const void* self) {
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const char*>(self) + 0x10);
 }
 
 std::uint32_t APS5_VABI _ZNK7WebCore14StaticNodeList6lengthEv(const void* self) {
