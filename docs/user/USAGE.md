@@ -538,7 +538,7 @@ Every run of a converted game writes `anyps5-report.json` when it ends through `
 
 The report is on by default. `--aps5-report=off` on the launch command line or `APS5_REPORT=0` in the environment turns it off, and `--aps5-report=on` or `APS5_REPORT=1` turns it on for a process that is not a converted game; the flag wins over the variable. The game sees the flag in its own arguments. With the report off nothing is collected and nothing is written.
 
-The report is written next to the game's executable. When that folder cannot be written it goes to `reports/<run id>/anyps5-report.json` in the data folder (`$XDG_DATA_HOME/AnyPS5` or `~/.local/share/AnyPS5` on Linux, `%LOCALAPPDATA%\AnyPS5` on Windows, `~/Library/Application Support/AnyPS5` on macOS). On Windows only the guest's `exit` and `_exit` write a report; a return from the entry writes none. A run that is killed, crashes or aborts writes no report.
+The report is written next to the game's executable. When that folder cannot be written it goes to `reports/<run id>/anyps5-report.json` in the data folder (`$XDG_DATA_HOME/AnyPS5` or `~/.local/share/AnyPS5` on Linux, `%LOCALAPPDATA%\AnyPS5` on Windows, `~/Library/Application Support/AnyPS5` on macOS). On Windows only the guest's `exit` and `_exit` write a report; a return from the entry writes none. A run that stops on an exception nothing catches (`std::terminate`), such as a call to a function that is not implemented, writes the report with exit `abort` before the terminate handler runs, or after it when the game installed its own handler. A run that is killed or crashes writes no report.
 
 Which milestones a run records depends on the system:
 
