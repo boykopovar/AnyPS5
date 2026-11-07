@@ -24,6 +24,5 @@ void APS5_VABI hb_buffer_set_unicode_funcs_nid_postfix(hb_buffer_t* buffer, hb_u
 int APS5_VABI hb_ft_face_create_cached_nid_postfix();
 std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode);
 std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag);
-int APS5_VABI hb_shape_nid_postfix();
 
 }
