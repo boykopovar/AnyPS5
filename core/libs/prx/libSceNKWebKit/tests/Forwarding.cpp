@@ -42,10 +42,6 @@ static void ExpectStub(StubForward forward, int line) {
 int main() {
     RequireStub(&JSRemoteInspectorDisableAutoStart);
     RequireStub(&WKAccessibilityEnableEnhancedAccessibility);
-    RequireStub(&WKContextGetApplicationCacheManager);
-    RequireStub(&WKContextGetKeyValueStorageManager);
-    RequireStub(&WKContextGetResourceCacheManager);
-    RequireStub(&WKContextGetWebsiteDataStore);
     RequireStub(&_ZN3JSC11createErrorEPNS_14JSGlobalObjectENS_9ErrorTypeERKN3WTF6StringE);
     RequireStub(&_ZN3JSC17DeferredWorkTimerD1Ev);
     RequireStub(&_ZN3JSC18GCActivityCallbackD2Ev);
@@ -140,6 +136,10 @@ int main() {
     Require(reinterpret_cast<Value>(&WKUserMediaPermissionRequestAudioDeviceUIDs)() != nullptr);
     Require(reinterpret_cast<Value>(&WKUserMediaPermissionRequestVideoDeviceUIDs)() != nullptr);
     Require(WKMutableArrayCreate() != nullptr);
+    Require(reinterpret_cast<Value>(&WKContextGetApplicationCacheManager)() != nullptr);
+    Require(reinterpret_cast<Value>(&WKContextGetKeyValueStorageManager)() != nullptr);
+    Require(reinterpret_cast<Value>(&WKContextGetResourceCacheManager)() != nullptr);
+    Require(reinterpret_cast<Value>(&WKContextGetWebsiteDataStore)() != nullptr);
 
     return 0;
 }
