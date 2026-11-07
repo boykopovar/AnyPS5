@@ -84,14 +84,6 @@ int APS5_VABI SSL_CTX_set_timeout_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI SSL_SESSION_get_timeout_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_SESSION_set_time_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_do_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -169,10 +161,6 @@ int APS5_VABI BIO_set_init_nid_postfix() {
 }
 
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_SESSION_get_protocol_version_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

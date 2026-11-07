@@ -51,6 +51,9 @@
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
 
+- [SSL_SESSION_get_timeout, SSL_SESSION_set_time and SSL_SESSION_get_protocol_version](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - forwarded session lifecycle interoperability, independent console execution, resumption, serialization and expiry remain unverified. The fields follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl). [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h) instead puts timeout/time at 144/152; these accessors must not receive that older layout. Tests use caller-owned storage. A null protocol-version input throws instead of dereferencing it.
+- [Session metadata fields](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - other firmware revisions are unverified. [BunnyFl reports disassembly only](https://github.com/boykopovar/AnyPS5/pull/15119#pullrequestreview-5742135511) of firmware 13.42 `system/common/lib/libSceLibreSsl3.sprx` (SHA256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`): getter `0xf2130` reads 64-bit timeout at 168 with null returning zero; setter `0xf2150` writes 64-bit creation time at 176 and returns it, with null returning zero; getter `0xf2170` reads 32-bit version at 0 without a null check. The module and listing have not been independently acquired or executed here.
+
 - [tls_config_parse_protocols](../../../core/libs/prx/libSceLibreSsl3/src/TlsProtocols.cpp) has no independent console execution or TLS configuration interoperability verification. Parsing follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls). A null output pointer throws instead of an upstream fault. Tests use caller-owned text/output and guest-heap allocation failure; other TLS configuration and handshake exports are only partly implemented. Closes when: console grammar and TLS configuration interoperability are measured.
 
 - [Reported firmware 13.42 parser masks](../../../core/libs/prx/libSceLibreSsl3/src/TlsProtocols.cpp) come from a [contributor's disassembly](https://github.com/boykopovar/AnyPS5/pull/15045#pullrequestreview-5736573950) of `libSceLibreSsl3.sprx` (SHA-256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`), not independent execution here. The report identifies default/aggregate/negation-base mask `0x18` and explicit TLS 1.0/1.1/1.2/1.3 bits `2`/`4`/`8`/`16`, matching this implementation. Other firmware revisions, complete grammar and real TLS configuration use remain unverified.
@@ -59,7 +62,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 149 still-unimplemented callable exports: 139 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 146 still-unimplemented callable exports: 136 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -67,9 +70,7 @@
 | `BIO_set_init` | `+STC2BUY9vY` |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `tls_config_set_cert_mem` | `+bQfpiUHRVk` |
-| `SSL_SESSION_get_protocol_version` | `0BW+8jTsY54` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
-| `SSL_SESSION_get_timeout` | `0JcHkrKJ9iw` |
 | `BIO_meth_free` | `13BHMSblVyY` |
 | `tls_handshake` | `27Fuliv3Om8` |
 | `AUTHORITY_KEYID_free` | `2bIZM-OfE8Y` |
@@ -143,7 +144,6 @@
 | `ASN1_TIME_new` | `UmAPG5bxYYk` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
 | `ERR_func_error_string` | `VXuysR7ySzw` |
-| `SSL_SESSION_set_time` | `XG3hIzt9VXY` |
 | `X509_set_issuer_name` | `XK3FmaTS6pg` |
 | `HMAC_CTX_free` | `YAxGqtnKQFY` |
 | `X509_add_ext` | `YJ7bfxMHniE` |
@@ -213,7 +213,7 @@
 | `ECDSA_SIG_get0` | `z8fsXF8JuL0` |
 | `EVP_MD_block_size` | `zCa75KLWWn4` |
 
-- 106 of the 126 exports the 13.60 table lists only by NID carry, in the table above and in [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp), the LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior; each keeps the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
+- 103 of the 126 exports the 13.60 table lists only by NID carry, in the table above and in [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp), the LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior; each keeps the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
 
 ### Functional
 
