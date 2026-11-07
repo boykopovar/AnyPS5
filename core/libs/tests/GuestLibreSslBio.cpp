@@ -1,15 +1,19 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -621,6 +625,214 @@ void TestFileAndSocket() {
     Require(BIO_ctrl_nid_postfix(socket, 8, 0, nullptr) == 0, "socket BIO no-close flag");
     Require(BIO_free_nid_postfix(socket) == 1, "free unowned guest socket BIO");
 }
+
+std::uint64_t PrivateKeyErrorCode(int library, int reason) {
+    return (static_cast<std::uint64_t>(library) << 24) | (static_cast<std::uint64_t>(0xfff) << 12) |
+           static_cast<std::uint64_t>(reason);
+}
+
+void RequirePrivateKeyErrors(const std::vector<std::uint64_t>& expected) {
+    for (const auto code : expected) Require(ERR_get_error_nid_postfix() == code, "private-key file error order/code");
+    Require(ERR_get_error_nid_postfix() == 0, "unexpected private-key file error");
+}
+
+std::string ReadPrivateKeyTestFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+void TestPrivateKeyFilenameControl(const std::filesystem::path& path, const std::string& guestFilename,
+                                   const std::string& guestMissingFilename) {
+    constexpr int BioControlSetFilename = 108;
+    constexpr int BioClose = 0x01;
+    constexpr int BioFileRead = 0x02;
+    constexpr int BioFileWrite = 0x04;
+    constexpr int BioFileAppend = 0x08;
+    const auto open = [&](int flags) {
+        Bio* bio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+        Require(bio != nullptr, "allocate file BIO for filename mode");
+        Require(BIO_ctrl_nid_postfix(bio, BioControlSetFilename, flags | BioClose,
+                                     const_cast<char*>(guestFilename.c_str())) == 1,
+                "open file BIO in requested filename-control mode");
+        return bio;
+    };
+
+    {
+        Bio* bio = open(BioFileRead);
+        char bytes[4]{};
+        Require(bio->method->read(bio, bytes, 3) == 3 && std::memcmp(bytes, "abc", 3) == 0, "filename read mode uses r");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename read mode");
+    }
+    {
+        Bio* bio = open(BioFileRead | BioFileWrite);
+        Require(BIO_write_nid_postfix(bio, "X", 1) == 1, "filename read/write mode uses r+");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename read/write mode");
+        Require(ReadPrivateKeyTestFile(path) == "Xbc", "read/write mode preserves the remainder");
+    }
+    {
+        Bio* bio = open(BioFileWrite);
+        Require(BIO_write_nid_postfix(bio, "W", 1) == 1, "filename write mode uses w");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename write mode");
+        Require(ReadPrivateKeyTestFile(path) == "W", "write mode truncates existing file");
+    }
+    {
+        Bio* bio = open(BioFileAppend);
+        Require(BIO_write_nid_postfix(bio, "A", 1) == 1, "filename append mode uses a");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename append mode");
+        Require(ReadPrivateKeyTestFile(path) == "WA", "append mode writes at end");
+    }
+    {
+        Bio* bio = open(BioFileAppend | BioFileRead);
+        Require(BIO_write_nid_postfix(bio, "B", 1) == 1, "filename append/read mode uses a+");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename append/read mode");
+        Require(ReadPrivateKeyTestFile(path) == "WAB", "append/read mode writes at end");
+    }
+    {
+        Bio* bio = open(BioFileAppend | BioFileWrite);
+        Require(BIO_write_nid_postfix(bio, "C", 1) == 1, "append takes precedence over write mode");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename append/write mode");
+        Require(ReadPrivateKeyTestFile(path) == "WABC", "append/write mode uses a");
+    }
+    {
+        Bio* bio = open(BioFileAppend | BioFileRead | BioFileWrite);
+        Require(BIO_write_nid_postfix(bio, "D", 1) == 1, "append takes precedence over read/write mode");
+        Require(BIO_free_nid_postfix(bio) == 1, "close filename append/read/write mode");
+        Require(ReadPrivateKeyTestFile(path) == "WABCD", "append/read/write mode uses a+");
+    }
+
+    {
+        FileStream* oldStream = fopen_nid_postfix(guestFilename.c_str(), "rb");
+        Require(oldStream != nullptr, "open owned old stream for replacement");
+        Bio* bio = BIO_new_fp_nid_postfix(oldStream, 1);
+        Require(bio != nullptr, "create owned file BIO for replacement");
+        Require(BIO_ctrl_nid_postfix(bio, BioControlSetFilename, BioClose | BioFileRead,
+                                     const_cast<char*>(guestFilename.c_str())) == 1,
+                "replace owned old stream before opening its new filename");
+        FileStream* current = nullptr;
+        Require(BIO_ctrl_nid_postfix(bio, 107, 0, &current) == 1 && current != nullptr,
+                "replacement leaves an initialized current stream");
+        Require(BIO_free_nid_postfix(bio) == 1, "close replacement stream");
+    }
+    {
+        FileStream* oldStream = fopen_nid_postfix(guestFilename.c_str(), "rb");
+        Require(oldStream != nullptr, "open owned old stream for failed replacement");
+        Bio* bio = BIO_new_fp_nid_postfix(oldStream, 1);
+        Require(bio != nullptr, "create owned file BIO for failed replacement");
+        ERR_clear_error_nid_postfix();
+        Require(BIO_ctrl_nid_postfix(bio, BioControlSetFilename, BioClose | BioFileRead,
+                                     const_cast<char*>(guestMissingFilename.c_str())) == 0,
+                "failed replacement returns zero");
+        const int openError = errno;
+        Require(bio->data == nullptr && bio->initialized == 0 && bio->shutdown == 1,
+                "failed replacement preserves source partial state after closing old stream");
+        RequirePrivateKeyErrors({PrivateKeyErrorCode(2, openError), PrivateKeyErrorCode(32, 2)});
+        Require(BIO_free_nid_postfix(bio) == 1, "free BIO after failed replacement");
+    }
+    {
+        FileStream* oldStream = fopen_nid_postfix(guestFilename.c_str(), "rb");
+        Require(oldStream != nullptr, "open owned old stream for bad-mode replacement");
+        Bio* bio = BIO_new_fp_nid_postfix(oldStream, 1);
+        Require(bio != nullptr, "create owned BIO for bad-mode replacement");
+        ERR_clear_error_nid_postfix();
+        Require(BIO_ctrl_nid_postfix(bio, BioControlSetFilename, BioClose,
+                                     const_cast<char*>(guestFilename.c_str())) == 0,
+                "owned replacement with no mode returns zero");
+        Require(bio->data == nullptr && bio->initialized == 0 && bio->flags == 0 && bio->shutdown == 1,
+                "owned bad-mode replacement closes and clears the old file first");
+        RequirePrivateKeyErrors({PrivateKeyErrorCode(32, 101)});
+        Require(BIO_free_nid_postfix(bio) == 1, "free owned BIO after bad-mode replacement");
+    }
+    {
+        std::FILE* native = std::fopen(path.string().c_str(), "rb");
+        Require(native != nullptr, "open borrowed old stream for bad-mode replacement");
+        FileStream borrowed(native);
+        Bio* bio = BIO_new_fp_nid_postfix(&borrowed, 0);
+        Require(bio != nullptr, "create borrowed BIO for bad-mode replacement");
+        ERR_clear_error_nid_postfix();
+        Require(BIO_ctrl_nid_postfix(bio, BioControlSetFilename, 0,
+                                     const_cast<char*>(guestFilename.c_str())) == 0,
+                "borrowed replacement with no mode returns zero");
+        Require(bio->data == &borrowed && bio->initialized == 1 && bio->shutdown == 0,
+                "borrowed bad-mode replacement preserves old file state");
+        RequirePrivateKeyErrors({PrivateKeyErrorCode(32, 101)});
+        Require(BIO_free_nid_postfix(bio) == 1, "free borrowed BIO after bad-mode replacement");
+        Require(borrowed.IsOpen() && fclose_nid_postfix(&borrowed) == 0, "borrowed old file remains caller-owned");
+    }
+}
+
+void TestPrivateKeyFileErrorPaths() {
+    constexpr int SslFileTypePem = 1;
+    constexpr int SslFileTypeAsn1 = 2;
+    const auto path = std::filesystem::temp_directory_path() / "anyps5-libressl-private-key-test.pem";
+    const auto missingPath = std::filesystem::temp_directory_path() / "anyps5-libressl-private-key-missing.pem";
+    constexpr const char* AliasPrefix = "/anyps5-privatekey-test";
+    const std::string guestFilename = std::string(AliasPrefix) + "/" + path.filename().string();
+    const std::string guestMissingFilename = std::string(AliasPrefix) + "/" + missingPath.filename().string();
+    AddPathAlias_nid_no_patch(AliasPrefix, path.parent_path().string().c_str());
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    std::filesystem::remove(missingPath, ignored);
+
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_PrivateKey_file_nid_postfix(nullptr, guestFilename.c_str(), SslFileTypePem) == 0,
+            "missing private-key file returns failure without reading ctx");
+    const int guestOpenError = errno;
+    RequirePrivateKeyErrors({PrivateKeyErrorCode(2, guestOpenError), PrivateKeyErrorCode(32, 2),
+                             PrivateKeyErrorCode(20, 2)});
+
+    ERR_clear_error_nid_postfix();
+    allocationsUntilFailure = 0;
+    Require(SSL_CTX_use_PrivateKey_file_nid_postfix(nullptr, guestFilename.c_str(), SslFileTypePem) == 0,
+            "BIO allocation failure returns failure without reading ctx");
+    allocationsUntilFailure = -1;
+    RequirePrivateKeyErrors({PrivateKeyErrorCode(32, 65), PrivateKeyErrorCode(20, 7)});
+    Require(allocations == 0, "failed BIO allocation leaked storage");
+
+    {
+        std::ofstream output(path, std::ios::binary);
+        Require(output.is_open(), "create empty invalid-type private-key file");
+    }
+    ERR_clear_error_nid_postfix();
+    Require(SSL_CTX_use_PrivateKey_file_nid_postfix(nullptr, guestFilename.c_str(), 0) == 0,
+            "invalid private-key file type returns failure without reading ctx");
+    RequirePrivateKeyErrors({PrivateKeyErrorCode(20, 124)});
+    Require(std::filesystem::remove(path), "invalid-type BIO closed private-key file");
+
+    LibreSslCtx context{};
+    for (const int type : {SslFileTypePem, SslFileTypeAsn1}) {
+        {
+            std::ofstream output(path, std::ios::binary);
+            Require(output.is_open(), "create accepted-type private-key input");
+            output << "private-key input";
+        }
+        bool threw = false;
+        try {
+            static_cast<void>(SSL_CTX_use_PrivateKey_file_nid_postfix(&context, guestFilename.c_str(), type));
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw, "accepted private-key encoding must not report fake success");
+        Require(std::filesystem::remove(path), "unsupported private-key decoder path closed its file");
+        Require(ERR_get_error_nid_postfix() == 0, "unsupported private-key decoder did not invent an error");
+    }
+
+    {
+        std::ofstream output(path, std::ios::binary);
+        Require(output.is_open(), "create initial file for BIO filename modes");
+        output << "abc";
+    }
+    TestPrivateKeyFilenameControl(path, guestFilename, guestMissingFilename);
+    Require(std::filesystem::remove(path), "remove filename-control test file");
+
+    Bio* bio = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(bio != nullptr, "allocate BIO for bad filename-control mode");
+    ERR_clear_error_nid_postfix();
+    Require(BIO_ctrl_nid_postfix(bio, 108, 0x01, const_cast<char*>(guestFilename.c_str())) == 0,
+            "filename control rejects missing read/write/append mode");
+    RequirePrivateKeyErrors({PrivateKeyErrorCode(32, 101)});
+    Require(BIO_free_nid_postfix(bio) == 1, "free BIO after bad filename-control mode");
+    RemovePathAlias_nid_no_patch(AliasPrefix);
+}
 #endif
 
 }  // namespace
@@ -644,6 +856,7 @@ int main(int argc, char** argv) {
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
     TestFileAndSocket();
+    TestPrivateKeyFileErrorPaths();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
