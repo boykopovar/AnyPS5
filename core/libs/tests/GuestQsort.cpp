@@ -186,10 +186,12 @@ bool ExpectOrderS(const char* name, const std::vector<int>& keys, const std::vec
 int constraintCalls = 0;
 int constraintError = 0;
 const char* constraintMessage = nullptr;
+void* constraintPointer = nullptr;
 
-void APS5_VABI CountConstraint(const char* message, void*, int error) {
+void APS5_VABI CountConstraint(const char* message, void* pointer, int error) {
     ++constraintCalls;
     constraintMessage = message;
+    constraintPointer = pointer;
     constraintError = error;
 }
 
@@ -197,7 +199,7 @@ bool ExpectConstraint(const char* name, void* base, std::size_t count, std::size
     int direction = 1;
     const int calls = constraintCalls;
     const int result = qsort_s_nid_postfix(base, count, size, comparator ? CompareKeysWithDirection : nullptr, &direction);
-    if (result != 22 || constraintCalls != calls + 1 || constraintError != 22 || !constraintMessage || std::strcmp(constraintMessage, name) != 0) {
+    if (result != 22 || constraintCalls != calls + 1 || constraintError != 22 || constraintPointer || !constraintMessage || std::strcmp(constraintMessage, name) != 0) {
         std::fprintf(stderr, "qsort_s did not report \"%s\" through the installed handler (result %d, calls %d)\n", name, result, constraintCalls - calls);
         return false;
     }
@@ -208,10 +210,22 @@ bool ExpectQsortSConstraints() {
     void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(CountConstraint));
     Element element{};
     constexpr std::size_t huge = (static_cast<std::size_t>(-1) >> 1) + 1;
-    bool correct = ExpectConstraint("qsort_s : n > RSIZE_MAX", &element, huge, sizeof(Element), true);
-    correct &= ExpectConstraint("qsort_s : es > RSIZE_MAX", &element, 1, huge, true);
-    correct &= ExpectConstraint("qsort_s : a == NULL", nullptr, 2, sizeof(Element), true);
-    correct &= ExpectConstraint("qsort_s : cmp == NULL", &element, 2, sizeof(Element), false);
+    constexpr std::size_t aboveLimit = std::size_t{1} << 61;
+    bool correct = ExpectConstraint("qsort_s: bad argument", &element, huge, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 1, huge, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, aboveLimit, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 1, aboveLimit, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 0, aboveLimit, true);
+    correct &= ExpectConstraint("qsort_s: bad argument", nullptr, 2, sizeof(Element), true);
+    correct &= ExpectConstraint("qsort_s: bad argument", &element, 2, sizeof(Element), false);
+    int direction = 1;
+    const int calls = constraintCalls;
+    qsort_s_nid_postfix(&element, aboveLimit - 1, 0, CompareKeysWithDirection, &direction);
+    correct &= qsort_s_nid_postfix(&element, 1, aboveLimit - 1, CompareKeysWithDirection, &direction) == 0;
+    if (constraintCalls != calls) {
+        std::fprintf(stderr, "qsort_s reported a count or size of SIZE_MAX >> 3\n");
+        correct = false;
+    }
     if (set_constraint_handler_s_nid_postfix(previous) != reinterpret_cast<void*>(CountConstraint)) {
         std::fprintf(stderr, "set_constraint_handler_s did not return the installed handler\n");
         correct = false;

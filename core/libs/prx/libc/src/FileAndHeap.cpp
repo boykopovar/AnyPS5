@@ -1139,20 +1139,15 @@ void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS
 }
 
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context) {
-    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 1;
-    const char* const violation = count > RsizeMax ? "qsort_s : n > RSIZE_MAX"
-        : size > RsizeMax ? "qsort_s : es > RSIZE_MAX"
-        : count != 0 && !base ? "qsort_s : a == NULL"
-        : count != 0 && !compare ? "qsort_s : cmp == NULL"
-        : nullptr;
-    if (violation) {
-        SonyInvokeConstraintHandler(violation, nullptr, 22);
+    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 3;
+    if (count > RsizeMax || size > RsizeMax || (count != 0 && (!base || !compare))) {
+        SonyInvokeConstraintHandler("qsort_s: bad argument", nullptr, 22);
         return 22;
     }
-    if (count == 0) return 0;
-    if (size == 0 && count >= 33) throw std::invalid_argument("qsort_s: zero element size");
-    auto withContext = [compare, context](const void* left, const void* right) { return compare(left, right, context); };
-    SortElements(static_cast<unsigned char*>(base), count, count, size, withContext);
+    if (count > 1 && size != 0) {
+        auto withContext = [compare, context](const void* left, const void* right) { return compare(left, right, context); };
+        SortElements(static_cast<unsigned char*>(base), count, count, size, withContext);
+    }
     return 0;
 }
 
