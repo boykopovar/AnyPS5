@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -234,6 +235,14 @@ int main(int argc, char** argv) {
     }
     Require(prompt, "shutdown needed unrelated peer activity or cancellation");
     GuestSocketReadWaitObserverForTest_nid_no_patch(nullptr);
+    if (scenario == "accept") {
+        const int accepted = accept_nid_postfix(endpoints[0], nullptr, nullptr);
+        const int error = *__error_nid_postfix();
+        if (accepted != -1 || error != 22) {
+            std::fprintf(stderr, "accept on connected shut socket: result=%d, errno=%d\n", accepted, error);
+            Require(false, "accept must preserve the non-listening socket error after shutdown");
+        }
+    }
     if (reuse) {
         char byte = 0;
         Require(write_nid_postfix(replacementPeer, "n", 1) == 1 && read_nid_postfix(state.input, &byte, 1) == 1 && byte == 'n', "shutdown acted on the reused descriptor's socket");

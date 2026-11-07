@@ -188,14 +188,17 @@ void ObserveReadWait(std::size_t progress = 0) noexcept {
     if (const auto observer = readWaitObserverForTest.load()) observer(progress);
 }
 
+enum class TransferKind { Data, Accept };
+
 #ifdef _WIN32
 bool ReceiveShut(Socket& socket);
-int WaitTransferReady(Socket& socket, bool send, int milliseconds, int progress);
+int WaitTransferReady(Socket& socket, bool send, int milliseconds, int progress, TransferKind kind);
 #endif
 
 template<typename TOperation>
-int Transfer(Socket& socket, bool send, int flags, int length, TOperation operation, bool timed = true) {
+int Transfer(Socket& socket, bool send, int flags, int length, TOperation operation, bool timed = true, TransferKind kind = TransferKind::Data) {
 #ifdef _WIN32
+    const bool receive = !send && kind == TransferKind::Data;
     bool nonblocking;
     std::int64_t timeout;
     {
@@ -221,7 +224,7 @@ int Transfer(Socket& socket, bool send, int flags, int length, TOperation operat
             WSASetLastError(WSAEINTR);
             return transferred == 0 ? -1 : transferred;
         }
-        if (!send && ReceiveShut(socket)) return transferred;
+        if (receive && ReceiveShut(socket)) return transferred;
         const int result = operation(transferred);
         if (result >= 0) {
             transferred += result;
@@ -230,7 +233,7 @@ int Transfer(Socket& socket, bool send, int flags, int length, TOperation operat
             continue;
         }
         const int error = WSAGetLastError();
-        if (!send && error == WSAESHUTDOWN && ReceiveShut(socket)) return transferred;
+        if (receive && error == WSAESHUTDOWN && ReceiveShut(socket)) return transferred;
         if (error != WSAEWOULDBLOCK || nonblocking) {
             WSASetLastError(error);
             return transferred == 0 ? -1 : transferred;
@@ -245,7 +248,7 @@ int Transfer(Socket& socket, bool send, int flags, int length, TOperation operat
             milliseconds = static_cast<int>(std::min<std::int64_t>(
                 std::chrono::ceil<std::chrono::milliseconds>(remaining).count(), INT_MAX));
         }
-        if (WaitTransferReady(socket, send, milliseconds, transferred) < 0) return transferred == 0 ? -1 : transferred;
+        if (WaitTransferReady(socket, send, milliseconds, transferred, kind) < 0) return transferred == 0 ? -1 : transferred;
     }
 #else
     static_cast<void>(socket);
@@ -253,6 +256,7 @@ int Transfer(Socket& socket, bool send, int flags, int length, TOperation operat
     static_cast<void>(flags);
     static_cast<void>(length);
     static_cast<void>(timed);
+    static_cast<void>(kind);
     return ThreadCancel::Native([&] { return operation(0); });
 #endif
 }
@@ -350,7 +354,8 @@ std::mutex socketsMutex;
 std::map<int, std::shared_ptr<Socket>> sockets;
 std::set<int> closeOnExecDescriptors;
 #ifdef _WIN32
-int WaitTransferReady(Socket& socket, bool send, int milliseconds, int progress) {
+int WaitTransferReady(Socket& socket, bool send, int milliseconds, int progress, TransferKind kind) {
+    const bool receive = !send && kind == TransferKind::Data;
     int error = 0;
     struct ErrorRestore {
         int& error;
@@ -362,7 +367,7 @@ int WaitTransferReady(Socket& socket, bool send, int milliseconds, int progress)
     FD_ZERO(&interrupted);
     FD_SET(socket.value, &ready);
     timeval timeout{milliseconds < 0 ? 0 : milliseconds / 1000, milliseconds < 0 ? 0 : milliseconds % 1000 * 1000};
-    if (send && !ThreadCancel::IoActive()) {
+    if (!receive && !ThreadCancel::IoActive()) {
         const int result = ::select(0, send ? nullptr : &ready, send ? &ready : nullptr, nullptr, milliseconds < 0 ? nullptr : &timeout);
         error = result < 0 ? WSAGetLastError() : 0;
         return result;
@@ -377,14 +382,14 @@ int WaitTransferReady(Socket& socket, bool send, int milliseconds, int progress)
         ::send(waker.value, &byte, 1, 0);
     };
     std::optional<SocketReadWait> readWait;
-    if (!send) readWait.emplace(socket, wake, &waker);
+    if (receive) readWait.emplace(socket, wake, &waker);
     std::optional<ThreadCancel::IoWait> operation;
     if (ThreadCancel::IoActive()) operation.emplace(wake, &waker);
     FD_SET(waker.value, &interrupted);
     if (!send) FD_SET(socket.value, &interrupted);
     if (ThreadCancel::IoInterrupted()) { error = WSAEINTR; return -1; }
-    if (!send && ReceiveShut(socket)) return 1;
-    if (!send) ObserveReadWait(static_cast<std::size_t>(progress));
+    if (receive && ReceiveShut(socket)) return 1;
+    if (receive) ObserveReadWait(static_cast<std::size_t>(progress));
     const int result = ::select(0, &interrupted, send ? &ready : nullptr, nullptr, milliseconds < 0 ? nullptr : &timeout);
     error = result < 0 ? WSAGetLastError() : 0;
     if (ThreadCancel::IoInterrupted()) { error = WSAEINTR; return -1; }
@@ -1913,7 +1918,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         size = sizeof(peer);
         native = ::accept(listener->value, address ? reinterpret_cast<sockaddr*>(&peer) : nullptr, address ? &size : nullptr);
         return native == Invalid ? -1 : 0;
-    }, false);
+    }, false, TransferKind::Accept);
     if (result < 0) return Fail(NativeError());
     Socket guard(native, listener->family, listener->type);
     try {
