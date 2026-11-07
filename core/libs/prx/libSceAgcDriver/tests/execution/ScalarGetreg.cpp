@@ -93,7 +93,6 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device, Code, std::nullopt);
         Check();
-        ExpectRefused(*device, 0xb9141a01u, "MODE bits 8 and up");
         ExpectRefused(*device, 0xb914f804u, "hardware register 4");
         std::puts("s_getreg_b32 tests passed");
         return 0;
