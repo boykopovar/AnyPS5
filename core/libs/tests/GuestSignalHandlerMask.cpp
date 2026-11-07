@@ -133,36 +133,27 @@ static void CheckResethand() {
     Require((current.flags & SaResethand) != 0);
 }
 
-static void CheckOtherThreadKept() {
+static void CheckOtherThreadIsolated() {
     calls = 0;
     Install(SigUsr1, BlockFromOtherThread, SaRestart, 0);
     Require(raise_nid_postfix(SigUsr1) == 0);
     Require(calls == 1);
-    Require(CurrentMask() == Bit(SigTerm));
-    const GuestSignalSet set{{Bit(SigTerm), 0, 0, 0}};
-    Require(sigprocmask_nid_postfix(SigUnblock, &set, nullptr) == 0);
     Require(CurrentMask() == 0);
 }
 
-static void CheckOtherThreadKeptSameSignal() {
+static void CheckOtherThreadIsolatedSameSignal() {
     calls = 0;
     Install(SigUsr1, BlockFromOtherThread, SaRestart, Bit(SigTerm));
     Require(raise_nid_postfix(SigUsr1) == 0);
     Require(calls == 1);
-    Require(CurrentMask() == Bit(SigTerm));
-    const GuestSignalSet set{{Bit(SigTerm), 0, 0, 0}};
-    Require(sigprocmask_nid_postfix(SigUnblock, &set, nullptr) == 0);
     Require(CurrentMask() == 0);
 }
 
-static void CheckOtherThreadSetMaskKept() {
+static void CheckOtherThreadSetMaskIsolated() {
     calls = 0;
     Install(SigUsr1, SetMaskFromOtherThread, SaRestart, 0);
     Require(raise_nid_postfix(SigUsr1) == 0);
     Require(calls == 1);
-    Require(CurrentMask() == Bit(SigTerm));
-    const GuestSignalSet none{};
-    Require(sigprocmask_nid_postfix(SigSetmask, &none, nullptr) == 0);
     Require(CurrentMask() == 0);
 }
 
@@ -216,9 +207,9 @@ int main() {
     CheckDeferred(SigTerm);
     CheckNodefer();
     CheckResethand();
-    CheckOtherThreadKept();
-    CheckOtherThreadKeptSameSignal();
-    CheckOtherThreadSetMaskKept();
+    CheckOtherThreadIsolated();
+    CheckOtherThreadIsolatedSameSignal();
+    CheckOtherThreadSetMaskIsolated();
     CheckMaskRestoredInsideHandler(SigUsr2, SaveAndRestoreMask);
     CheckMaskRestoredInsideHandler(SigTerm, SaveAndRestoreMask);
     CheckMaskRestoredInsideHandler(SigUsr2, ReplaceAndRestoreMask);
