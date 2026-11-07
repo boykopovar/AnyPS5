@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -55,12 +56,17 @@ int APS5_VABI HKDF_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI HMAC_CTX_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI HMAC_CTX_free_nid_postfix(HmacContext* context) {
+    if (!context) return;
+    HMAC_CTX_cleanup_nid_postfix(context);
+    free_nid_postfix(context);
 }
 
-int APS5_VABI HMAC_CTX_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+HmacContext* APS5_VABI HMAC_CTX_new_nid_postfix() {
+    auto* context = static_cast<HmacContext*>(calloc_nid_postfix(1, sizeof(HmacContext)));
+    if (!context) return nullptr;
+    HMAC_CTX_init_nid_postfix(context);
+    return context;
 }
 
 int APS5_VABI OPENSSL_init_ssl_nid_postfix() {
