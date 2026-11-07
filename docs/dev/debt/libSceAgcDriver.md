@@ -413,6 +413,8 @@
 
 - [DB_RENDER_CONTROL without a depth plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a depth copy, resummarize or decompress draw with no depth or stencil plane bound changes no modeled state on the hardware and draws nothing; here it is still rejected unless the pass-through resummarize check already skips it. Reserved DB_RENDER_CONTROL bits 14 to 31 are ignored as the hardware does.
 
+- [Stale depth planes over reused guest memory](../../../core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp) (libSceAgcDriver): a depth surface outlives the guest memory it mirrors, so a flush over a later allocation stores pending results into it; a pending fast clear used to skip the guest-write check and write zero there. A flush now drops a unit whose recorded allocation (`backingSerial`) changed, and a storing sync drops the units the guest wrote and forgets the clear. Not covered: reuse inside one unchanged registration with no write since the last sync, and the stencil plane, which compares bytes with its last mark. Closes when: surfaces are retired on allocation changes (an unmap hook that keeps the `surfacesMutex`/`GuestAllocations` lock order) instead of at flush time. PPSA27616 reached this through a cubemap of 128x128 depth faces whose memory its heap had taken back.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
