@@ -1069,7 +1069,7 @@ int NonuniformInitialLifetime(AgcDriver::VulkanDevice& device) {
         {
             auto recorded = context;
             recorded.bufferPool = std::make_shared<BufferPool>(context);
-            Recorder recorder(recorded);
+            Recorder recorder(recorded, true);
             std::shared_ptr<void> owner;
             VkImageView view = VK_NULL_HANDLE;
             std::size_t initialBytes = 0;
