@@ -1206,6 +1206,22 @@ mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     return &state;
 }
 
+CtypeVector APS5_VABI _Getctype_nid_postfix() {
+    return {_Getpctype_nid_postfix(), 0};
+}
+
+int APS5_VABI _Getdateorder_nid_postfix() {
+    return 2;
+}
+
+ConversionVector* APS5_VABI _Getcvt_nid_postfix(ConversionVector* destination) {
+    if (!destination) throw std::invalid_argument("_Getcvt: null conversion vector");
+    destination->page = 1;
+    destination->maxLength = 1;
+    std::memset(destination->state, 0, sizeof(destination->state));
+    return destination;
+}
+
 GuestLocale::TimeInfo* APS5_VABI _Getptimes_nid_postfix() {
     static_assert(sizeof(GuestLocale::TimeInfo) == 0xa8);
     static constexpr char days[] = ":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday:Thu:Thursday:Fri:Friday:Sat:Saturday";
