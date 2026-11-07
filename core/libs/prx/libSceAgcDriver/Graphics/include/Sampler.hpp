@@ -26,6 +26,7 @@ public:
     bool ReadsOpaqueBlackBorder() const;
     bool RequiresNonSeamlessCube() const;
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
+    static bool ShaderAppliesLodBias(const GuestSamplerResource& descriptor);
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
 
 private:

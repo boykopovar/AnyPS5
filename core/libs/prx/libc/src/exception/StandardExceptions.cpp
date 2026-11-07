@@ -297,7 +297,7 @@ const void* const SystemCategoryVtable[] {
     reinterpret_cast<const void*>(CategoryEquivalentCode_nid_no_patch)
 };
 const CategoryObject SystemCategory {SystemCategoryVtable + 2};
-[[noreturn]] void ThrowCppError(int code, const ExceptionVtable& table) {
+[[noreturn]] void ThrowCppError(int code, const ExceptionVtable& table, bool valueFirst) {
     static constexpr CppError errors[] {
         {16, "device or resource busy"},
         {22, "invalid argument"},
@@ -314,7 +314,7 @@ const CategoryObject SystemCategory {SystemCategoryVtable + 2};
     std::snprintf(message, sizeof(message), "%s: %s", error.message, GenericErrorMessage(error.value));
     auto* object = static_cast<SystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(SystemErrorObject)));
     Construct(&object->base, table, message);
-    object->code = {0, error.value, &GenericCategory};
+    object->code = valueFirst ? ErrorCode {error.value, 0, &GenericCategory} : ErrorCode {0, error.value, &GenericCategory};
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyGuestMessage_nid_no_patch));
 }
@@ -571,7 +571,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
         reinterpret_cast<decltype(LibcException::Header::destructor)>(LibcException::DestroyGuestMessage_nid_no_patch));
 }
 [[noreturn]] void ThrowCppError_nid_no_patch(int code) {
-    LibcException::ThrowCppError(code, _ZTVSt12system_error_nid_postfix);
+    LibcException::ThrowCppError(code, _ZTVSt12system_error_nid_postfix, false);
 }
 }
 
@@ -659,7 +659,7 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix(const LibcException::ExceptionObject* error) { LibcException::SceV2::ThrowCopy(error, LibcException::SceV2::RangeError); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix(const LibcException::SystemErrorObject* error) { LibcException::SceV2::ThrowSystemCopy(error, LibcException::SceV2::SystemError); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure) { LibcException::SceV2::ThrowSystemCopy(failure, LibcException::SceV2::IosFailure); }
-[[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code) { LibcException::ThrowCppError(code, LibcException::SceV2::SystemError); }
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code) { LibcException::ThrowCppError(code, LibcException::SceV2::SystemError, true); }
 
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix() { return _Xtime_get_ticks_nid_postfix(); }
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value) {
