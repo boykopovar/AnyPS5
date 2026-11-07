@@ -1732,7 +1732,6 @@ int APS5_VABI _ZN7Nicosia6BufferD1Ev();
 int APS5_VABI _ZN7Nicosia6BufferD2Ev();
 int APS5_VABI _ZN7Nicosia9AnimationC1ERKS0_();
 int APS5_VABI _ZN7Nicosia9AnimationC2ERKS0_();
-int APS5_VABI _ZN7WebCore10CookieUtil17defaultPathForURLERKN3WTF3URLE();
 int APS5_VABI _ZN7WebCore10FileHandle4openERKN3WTF6StringENS1_14FileSystemImpl12FileOpenModeE();
 int APS5_VABI _ZN7WebCore10FileHandle4openEv();
 int APS5_VABI _ZN7WebCore10FileHandle4readEPvi();
