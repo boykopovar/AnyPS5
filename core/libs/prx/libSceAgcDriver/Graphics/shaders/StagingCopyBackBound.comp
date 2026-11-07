@@ -1,0 +1,35 @@
+#version 450
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Result { uint words[]; } result;
+layout(set = 0, binding = 1, std430) readonly buffer Snapshot { uint words[]; } snapshot;
+layout(set = 0, binding = 2, std430) buffer Target { uint words[]; } target;
+layout(set = 0, binding = 3, std430) buffer Counter { uint words[]; } counter;
+layout(push_constant) uniform Parameters {
+    uint resultBase;
+    uint snapshotBase;
+    uint targetBase;
+    uint count;
+    uint always;
+    uint counting;
+} parameters;
+
+uint differingBytes(uint difference) {
+    uint folded = difference | (difference >> 1u);
+    folded |= folded >> 2u;
+    folded |= folded >> 4u;
+    return (folded & 0x01010101u) * 0xffu;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= parameters.count) return;
+    uint value = result.words[parameters.resultBase + index];
+    uint before = snapshot.words[parameters.snapshotBase + index];
+    uint held = target.words[parameters.targetBase + index];
+    uint changed = differingBytes(value ^ before);
+    uint kept = differingBytes(held ^ before);
+    uint stored = parameters.always != 0u ? 0xffffffffu : changed & ~kept;
+    if (stored != 0u) target.words[parameters.targetBase + index] = (held & ~stored) | (value & stored);
+    if (parameters.counting != 0u && (changed & kept) != 0u) atomicAdd(counter.words[0], 1u);
+}
