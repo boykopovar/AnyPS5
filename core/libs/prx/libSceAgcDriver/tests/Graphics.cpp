@@ -5596,6 +5596,7 @@ struct MockVulkan {
     std::uint64_t allocationAttempts = 0;
     std::optional<VkDeviceSize> importLimit;
     std::uint32_t bufferMemoryTypeBits = 1;
+    std::uint32_t hostPointerTypeBits = 1;
     std::vector<std::uint32_t> allocationTypes;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
     VkDescriptorSetLayoutCreateFlags layoutFlags = 0;
@@ -5840,7 +5841,7 @@ VKAPI_ATTR void VKAPI_CALL mockCmdBindDescriptorSets(VkCommandBuffer, VkPipeline
 
 VKAPI_ATTR VkResult VKAPI_CALL mockGetMemoryHostPointerProperties(VkDevice, VkExternalMemoryHandleTypeFlagBits type, const void* pointer, VkMemoryHostPointerPropertiesEXT* properties) {
     Require(type == VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT && pointer != nullptr, "invalid host pointer import query");
-    properties->memoryTypeBits = 1;
+    properties->memoryTypeBits = mock.hostPointerTypeBits;
     return VK_SUCCESS;
 }
 
@@ -9582,6 +9583,75 @@ void copiedWriterIndirectOverlapTests() {
     }
     ::operator delete(directBlock, std::align_val_t{half});
     ::operator delete(copiedBlock, std::align_val_t{half});
+}
+
+/// The guest range behind a host import is the guest's own memory, which the CPU reads, and an
+/// imported range cannot be invalidated: the import must take a memory type that guarantees host
+/// coherency, a cached one when the device offers it, and a device whose candidates are all
+/// non-coherent must not import the range at all (issue #6512: a store the GPU made through such
+/// an import stayed invisible to the CPU). The range is then copied instead of read stale.
+void hostImportMemoryTypeTests() {
+    using namespace AgcDriver::Graphics;
+
+    constexpr std::size_t half = 65536;
+    void* block = ::operator new(half, std::align_val_t{half});
+    void* other = ::operator new(half, std::align_val_t{half});
+    std::memset(block, 0xaa, half);
+    std::memset(other, 0xbb, half);
+    const auto add = [&](void* pointer) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, pointer, half, true, true, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto remove = [&](void* pointer) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, pointer);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto allocated = [](std::uint32_t type) { return std::count(mock.allocationTypes.begin(), mock.allocationTypes.end(), type) != 0; };
+
+    add(block);
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.hostImportAlignment = half;
+        context.dmaBufImport = false;
+        context.memory.memoryTypeCount = 2;
+        context.memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+        context.memory.memoryTypes[1] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+        mock.bufferMemoryTypeBits = 0b11u;
+        mock.hostPointerTypeBits = 0b11u;
+
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        Require(HostImportCovers(context, reinterpret_cast<std::uintptr_t>(block), half), "the registered range is not imported");
+        Require(allocated(1), "the import did not take the coherent memory type");
+        Require(!allocated(0), "the import took a memory type that is not host-coherent");
+        memory.Upload(false);
+        memory.WriteBack();
+    }
+    remove(block);
+
+    add(other);
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.hostImportAlignment = half;
+        context.dmaBufImport = false;
+        context.memory.memoryTypeCount = 2;
+        context.memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+        context.memory.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1};
+        mock.bufferMemoryTypeBits = 0b11u;
+        mock.hostPointerTypeBits = 0b11u;
+
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        Require(!HostImportCovers(context, reinterpret_cast<std::uintptr_t>(other), half), "a device with no host-coherent candidate imported the range anyway");
+    }
+    remove(other);
+
+    ::operator delete(block, std::align_val_t{half});
+    ::operator delete(other, std::align_val_t{half});
 }
 
 void registeredReadableCoverTests() {
@@ -13980,6 +14050,7 @@ int main(int argc, char** argv) {
         floatControlsModeTests();
         barycentricEmulationTests();
         copiedWriterIndirectOverlapTests();
+        hostImportMemoryTypeTests();
         registeredReadableCoverTests();
         mock = MockVulkan{};
         auto bdaContext = mockContext();

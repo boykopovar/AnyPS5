@@ -641,7 +641,24 @@ VkResult createImportBuffer(const Context& context, VkExternalMemoryHandleTypeFl
     return context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, buffer);
 }
 
-const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure) {
+/// The memory type an imported range takes from the candidates `types` (the buffer's requirements
+/// and the import's own bits, intersected): one that guarantees host coherency, and among those a
+/// cached one when the device offers it, like [`Context::BufferMemoryType`] prefers. `nullopt`
+/// when no candidate guarantees it, which refuses the import (the range is copied instead).
+std::optional<std::uint32_t> coherentImportType(const Context& context, std::uint32_t types) {
+    constexpr VkMemoryPropertyFlags coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    std::optional<std::uint32_t> plain;
+    for (std::uint32_t i = 0; i < context.memory.memoryTypeCount; ++i) {
+        if ((types & (1u << i)) == 0) continue;
+        const auto flags = context.memory.memoryTypes[i].propertyFlags;
+        if ((flags & coherent) != coherent) continue;
+        if ((flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0) return i;
+        if (!plain.has_value()) plain = i;
+    }
+    return plain;
+}
+
+const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure, bool hostCoherent = false) {
     const auto failed = [&](const char* step, VkResult result) -> const char* {
         if (entry.buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
         if (allocated && entry.memory) MemoryAccounting::Free(context, entry.memory);
@@ -668,10 +685,20 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
     const auto types = requirements.memoryTypeBits & importTypes;
     if (types == 0) return failed("memory type selection", VK_ERROR_FORMAT_NOT_SUPPORTED);
+    std::uint32_t type = static_cast<std::uint32_t>(std::countr_zero(types));
+    if (hostCoherent && context.memory.memoryTypeCount != 0) {
+        // The imported range is the guest's own memory, which the CPU reads: an imported range
+        // cannot be invalidated, so a candidate the device reports as not guaranteeing coherency
+        // cannot back it (the HostImport entry in docs/dev/debt/libSceAgcDriver.md). A context
+        // whose memory properties are not known keeps the first candidate.
+        const auto coherent = coherentImportType(context, types);
+        if (!coherent.has_value()) return failed("memory type selection without host coherency", VK_ERROR_FORMAT_NOT_SUPPORTED);
+        type = *coherent;
+    }
     const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, import, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     allocation.allocationSize = entry.bytes;
-    allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
+    allocation.memoryTypeIndex = type;
     if (const auto result = MemoryAccounting::Allocate(context, allocation, "guest memory import", &entry.memory); result != VK_SUCCESS) return failed("vkAllocateMemory", result);
     allocated = true;
     entry.memoryType = allocation.memoryTypeIndex;
@@ -691,7 +718,7 @@ const char* createHostPointerImport(const Context& context, HostImport& entry, V
     }
     const VkImportMemoryHostPointerInfoEXT import{VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT, nullptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host};
     bool allocated = false;
-    return bindImport(context, entry, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, &import, pointer.memoryTypeBits, allocated, failure);
+    return bindImport(context, entry, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, &import, pointer.memoryTypeBits, allocated, failure, true);
 }
 
 #ifndef _WIN32
