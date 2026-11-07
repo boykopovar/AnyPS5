@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "prx/libSceAutoMounterClient/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -17,13 +18,18 @@ static_assert(offsetof(AutoMounterUsbDeviceInfo, productLength) == 672);
 static_assert(offsetof(AutoMounterUsbDeviceInfo, serialNumber) == 680);
 static_assert(offsetof(AutoMounterUsbDeviceInfo, serialNumberLength) == 936);
 
+constexpr int AUTOMOUNTER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80F40002u);
+
 extern "C" {
 
 int APS5_VABI sceAutoMounterClientGetUsbDeviceInfo(const char* deviceName, AutoMounterUsbDeviceInfo* info) {
+    char buf[128];
+    if (deviceName != nullptr && sscanf(deviceName, "/dev%127s", buf) == 0) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceAutoMounterClientGetUsbDeviceList(char (*deviceNames)[64], std::int32_t* count) {
+    if (deviceNames == nullptr || count == nullptr) return AUTOMOUNTER_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
