@@ -562,7 +562,8 @@ int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t 
 }
 
 KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
-    return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
+    (void)flags;
+    return sceKernelLoadStartModule(moduleFileName, args, argp, 0, opt, res);
 }
 
 int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
