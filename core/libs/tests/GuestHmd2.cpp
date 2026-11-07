@@ -46,6 +46,7 @@ void TestCallsWithoutReprojectionSession() {
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
         Require(sceHmd2ReprojectionSetRenderConfig(flag, 1, 1) == Hmd2::ReprojectionNotInitialized, "render config with nonzero reserved arguments without a reprojection session");
     }
+    Require(sceHmd2ReprojectionDisableVrMode() == Hmd2::ReprojectionNotInitialized, "disabling VR mode without a reprojection session");
 }
 
 void InstallProcessParameters() {
@@ -374,6 +375,8 @@ void TestReprojection() {
     Require(sceHmd2ReprojectionEnableVrMode(0x2000F) == Hmd2::VideoOutNoDevice, "enabling the second VR mode did not report no device");
     Require(sceHmd2ReprojectionEnableVrMode(0) == Hmd2::VideoOutInvalidValue, "an unknown output mode did not report invalid value");
     Require(state->outputMode == 0, "the output mode changed without a VR runtime");
+    Require(sceHmd2ReprojectionDisableVrMode() == 0, "disabling VR mode did not succeed");
+    Require(state->outputMode == 0, "the output mode was not cleared after disabling VR mode");
     Require(sceHmd2ReprojectionSetAllowPositionalReprojection(6) == Hmd2::ParameterInvalid,
             "a positional setting above the range did not report invalid parameter");
     Require(sceHmd2ReprojectionSetAllowPositionalReprojection(0xFF) == Hmd2::ParameterInvalid,
@@ -411,6 +414,8 @@ void TestReprojection() {
             "setting the timing after terminate");
     Require(sceHmd2ReprojectionEnableVrMode(Hmd2::OutputMode89_91Hz) == Hmd2::ReprojectionNotInitialized,
             "enabling VR mode after terminate");
+    Require(sceHmd2ReprojectionDisableVrMode() == Hmd2::ReprojectionNotInitialized,
+            "disabling VR mode after terminate");
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == 0, "re-initialization after terminate");
     Require(state->outputMode == 0 && state->timingUs == Hmd2::ReprojectionTimingDefault,
             "the re-initialized state carries the default timing");
