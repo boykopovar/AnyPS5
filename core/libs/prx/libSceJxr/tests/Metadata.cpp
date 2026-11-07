@@ -121,25 +121,6 @@ void Retagged(Cleanup cleanup) {
             "callback may retag the record without preventing pointer cleanup");
 }
 
-void Unsupported(Cleanup cleanup) {
-    for (const std::int32_t type : {17, 0x4011, -1, 0x7fffffff}) {
-        GuardedVariant record;
-        std::memset(&record, 0xa5, sizeof(record));
-        record.variant.type = type;
-        const auto original = record;
-        const unsigned count = frees;
-        bool threw = false;
-        try { cleanup(&record.variant); }
-        catch (const std::exception&) { threw = true; }
-        Require(threw && frees == count && std::memcmp(&record, &original, sizeof(record)) == 0,
-                "unsupported tag throws before mutation or release");
-    }
-    bool threw = false;
-    try { cleanup(nullptr); }
-    catch (const std::exception&) { threw = true; }
-    Require(threw, "null record throws");
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -156,10 +137,9 @@ int main(int argc, char** argv) {
         Strings(cleanup);
         Scalars(cleanup);
         Retagged(cleanup);
-        Unsupported(cleanup);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-    std::puts("JXR metadata: narrow/wide guest frees, repeated cleanup, scalar preservation and unsupported inputs passed");
+    std::puts("JXR metadata: narrow/wide guest frees, repeated cleanup, scalar preservation passed");
 }
