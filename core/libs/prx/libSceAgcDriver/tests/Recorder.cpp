@@ -616,6 +616,14 @@ public:
                 robustness.pNext = address.pNext;
                 address.pNext = &robustness;
             }
+            VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+            if (hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                extensionsEnabled.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+                portabilityFeatures.pNext = address.pNext;
+                address.pNext = &portabilityFeatures;
+            }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
@@ -5601,6 +5609,52 @@ void drawSnapshotEvictionTests(const Device& device) {
     Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
 }
 
+void paddedVertexSnapshotTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
+    constexpr std::size_t bytes = 4 * 65536;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: padded vertex snapshots not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    Recorder cache(device.GetContext());
+    auto context = device.GetContext();
+    context.recorder = &cache;
+    auto* guest = static_cast<std::byte*>(block);
+    std::memset(guest, 0x11, 4096);
+    constexpr std::size_t padded = 2 * 65536;
+    constexpr std::size_t valid = 64;
+    const auto contentIs = [&](const DrawInputCopy& copy, std::size_t readable) {
+        const auto held = copy.buffer->Bytes();
+        if (held.size() != padded) return false;
+        for (std::size_t i = 0; i < padded; ++i) {
+            if (held[i] != (i < readable ? guest[i] : std::byte{0})) return false;
+        }
+        return true;
+    };
+    const auto first = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(!first.reused && contentIs(first, valid), "the first padded vertex copy is wrong");
+    const auto again = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(again.reused && again.buffer == first.buffer, "an unchanged padded vertex input was copied again");
+    guest[65536 + 8] = std::byte{0x22};
+    const auto padding = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(padding.reused && padding.buffer == first.buffer && contentIs(padding, valid), "a store past the valid bytes discarded the padded copy");
+    guest[8] = std::byte{0x33};
+    const auto stored = CopyZeroPaddedDrawInput(context, address, padded, valid, 16);
+    Require(!stored.reused && stored.buffer != first.buffer && contentIs(stored, valid), "a padded vertex copy outlived a store to its valid bytes");
+    const auto shorter = CopyZeroPaddedDrawInput(context, address, padded, valid / 2, 16);
+    Require(!shorter.reused && contentIs(shorter, valid / 2), "a padded copy was reused for fewer valid bytes");
+    const auto longer = CopyZeroPaddedDrawInput(context, address, padded * 2, valid / 2, 16);
+    Require(!longer.reused && longer.buffer->Bytes().size() == padded * 2, "a padded copy was reused for a longer fetch");
+    Require(cache.ReusableDrawSnapshot(address, padded, Recorder::SnapshotUse::Vertex) == nullptr, "a padded copy served an unpadded vertex input");
+}
+
 void containingSnapshotTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 131072;
@@ -6128,6 +6182,96 @@ bool unitShadowTests(const Device& device, Recorder& recorder) {
     Require(words[5 * unit] == 0x88 && words[5 * unit + unit - 1] == 0x88, "the retire did not publish a unit covered by the old registration");
     Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire did not publish the second slab's units covered by the old registration");
     return true;
+}
+
+bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
+#ifndef __linux__
+    static_cast<void>(device);
+    static_cast<void>(recorder);
+    std::cout << "skipped, dma-buf imports require Linux\n";
+    return false;
+#else
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    if (!UnitShadowEnabled() || !context.dmaBufImport) {
+        std::cout << "skipped, unit shadows or host imports are unavailable (no dma-buf import)\n";
+        return false;
+    }
+    const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+        return false;
+    }
+    close(fd);
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 8 * unit;
+    struct Backing {
+        const Context& context;
+        Recorder& recorder;
+        void* block = nullptr;
+        std::int64_t physical = -1;
+        ~Backing() {
+            try {
+                recorder.Sync();
+                ClearHostImports(context.device);
+            } catch (const std::exception& error) {
+                std::cerr << "dma-buf idle publish cleanup did not finish: " << error.what() << '\n';
+                return;
+            }
+            if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), bytes);
+            if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
+        }
+    } backing{context, recorder};
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, unit, 0, &backing.physical) == 0, "allocate the idle publish dma-buf backing");
+    Require(sceKernelMapDirectMemory(&backing.block, bytes, 0x33, 0, backing.physical, unit) == 0, "map the idle publish dma-buf backing");
+    auto* words = static_cast<std::uint8_t*>(backing.block);
+    std::memset(words, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(words);
+    const auto* import = HostImportFor(context, address, bytes);
+    Require(import != nullptr && import->dmaBuf, "the direct memory did not use a dma-buf import");
+    Require(!import->unwatched && Watched(address, bytes), "the dma-buf import did not stay watched");
+    recorder.Sync();
+    CollectWritesUncached(address, bytes);
+    const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    const auto retile = [&](std::uint64_t begin, std::uint8_t value) {
+        auto destination = ShadowDestinationFor(context, *import, begin, begin + unit);
+        Require(destination.has_value() && destination->seedUnits.empty(), "the dma-buf retile has no whole-unit shadow destination");
+        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(pattern->Bytes().data(), value, pattern->Bytes().size());
+        const auto commands = recorder.Commands();
+        recorder.Keep(pattern);
+        recorder.Keep(destination->slab);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy piece{0, destination->offset, unit};
+        copyBuffer(commands, pattern->Handle(), destination->buffer, 1, &piece);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{begin, begin + unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+        Require(AnyShadowedOverlaps(begin, unit), "the dma-buf retile is not shadowed");
+    };
+    retile(address + 2 * unit, 0x22);
+    retile(address + 3 * unit, 0x33);
+    StorageTexture::FlushAllPending("idle");
+    Require(!AnyShadowedOverlaps(address + 2 * unit, 2 * unit), "the idle flush did not publish the dma-buf shadows");
+    Require(!recorder.PendingWriteOverlaps(address + 2 * unit, 2 * unit), "the idle flush returned before its dma-buf publish completed");
+    words[2 * unit] = 0x44;
+    words[4 * unit - 1] = 0x45;
+    recorder.Sync();
+    for (std::size_t offset = 0; offset < bytes; ++offset) {
+        const auto expected = offset == 2 * unit ? 0x44 : offset == 4 * unit - 1 ? 0x45 : offset >= 2 * unit && offset < 3 * unit ? 0x22 : offset >= 3 * unit && offset < 4 * unit ? 0x33 : 0x11;
+        Require(words[offset] == expected, "the idle dma-buf publish overwrote a later CPU store or changed another byte");
+    }
+    CollectWritesUncached(address, bytes);
+    retile(address + 5 * unit, 0x55);
+    StorageTexture::FlushAllPending("label");
+    const bool pending = recorder.PendingWriteOverlaps(address + 5 * unit, unit);
+    recorder.Sync();
+    Require(pending, "the non-idle dma-buf publish was waited");
+    Require(std::all_of(words + 5 * unit, words + 6 * unit, [](std::uint8_t value) { return value == 0x55; }), "the non-idle dma-buf publish did not land");
+    std::cout << "dma-buf idle publish wait and later CPU stores verified\n";
+    return true;
+#endif
 }
 
 void idlePublishWaitTests(const Device& device, Recorder& recorder) {
@@ -15124,6 +15268,9 @@ int main(int argc, char** argv) {
             windowImportUnmapTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-dmabuf-wait-only") {
+            return idlePublishDmaBufWaitTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-wait-only") {
             if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, unit shadows or host imports are unavailable\n";
@@ -15338,6 +15485,7 @@ int main(int argc, char** argv) {
         imageTableFirstLayerRevalidateTests(device, recorder);
         drawSnapshotCapTests(device, recorder);
         drawSnapshotEvictionTests(device);
+        paddedVertexSnapshotTests(device);
         containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
