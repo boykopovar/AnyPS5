@@ -174,6 +174,14 @@ static void CheckNearbyint() {
     }
     asm volatile("fldcw %0" :: "m"(savedControl));
     _mm_setcsr(savedMxcsr);
+    for (const auto& [input, expected] : {std::pair{0xff800001u, 0xffc00001u}, std::pair{0x7f800001u, 0x7fc00001u}}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(std::bit_cast<float>(input))) == expected);
+        Require(std::fetestexcept(FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(std::bit_cast<float>(0x7fc00000u))) == 0x7fc00000u);
+    Require(std::fetestexcept(FE_INVALID) == 0);
 }
 
 static std::uint16_t X87ControlWord() {
