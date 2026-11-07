@@ -173,6 +173,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StreamPurge.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedStreamInit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MemoryResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
@@ -985,6 +986,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_random_device_seed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_stream_init_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2StreamInit.cpp)
+    target_include_directories(guest_sce_v2_stream_init_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_stream_init_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_stream_init_tests)
+    add_test(NAME guest_sce_v2_stream_init COMMAND guest_sce_v2_stream_init_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_stream_init PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_memcpy_protected_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemcpyProtected.cpp)
     target_include_directories(guest_memcpy_protected_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_memcpy_protected_tests PRIVATE libc)
@@ -993,6 +1003,15 @@ if(BUILD_TESTING)
     set_tests_properties(guest_memcpy_protected PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_memcpy_protected PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_float_constants_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FloatConstants.cpp)
+    target_include_directories(guest_sce_v2_float_constants_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_float_constants_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_float_constants_tests)
+    add_test(NAME guest_sce_v2_float_constants COMMAND guest_sce_v2_float_constants_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_float_constants PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_count_ones_tests ${LIBS_INCLUDE_DIR}/tests/GuestCountOnes.cpp)
