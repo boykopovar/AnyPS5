@@ -110,7 +110,9 @@ static void CheckExecDoesNotInherit() {
     auto first = MakeHostInstanceLockBackend();
     Require(first->TryLock(file), "the lock must be taken");
     int ready[2];
-    Require(pipe2(ready, O_CLOEXEC) == 0, "pipe2 failed");
+    Require(pipe(ready) == 0, "pipe failed");
+    Require(fcntl(ready[0], F_SETFD, FD_CLOEXEC) == 0, "fcntl failed");
+    Require(fcntl(ready[1], F_SETFD, FD_CLOEXEC) == 0, "fcntl failed");
     const pid_t child = fork();
     Require(child >= 0, "fork failed");
     if (child == 0) {
