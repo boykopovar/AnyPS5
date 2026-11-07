@@ -545,6 +545,7 @@ constexpr LibreSslEvpCipher Aes128Gcm = AesGcm(895, 16);
 constexpr LibreSslEvpCipher Aes192Gcm = AesGcm(898, 24);
 constexpr LibreSslEvpCipher Aes256Gcm = AesGcm(901, 32);
 constexpr LibreSslEvpCipher Aes128Wrap = AesWrap(788, 16);
+constexpr LibreSslEvpCipher Aes192Wrap = AesWrap(789, 24);
 
 }
 
@@ -587,6 +588,9 @@ const LibreSslEvpCipher* APS5_VABI EVP_aes_256_gcm_nid_postfix(void) {
 }
 const LibreSslEvpCipher* APS5_VABI EVP_aes_128_wrap_nid_postfix(void) {
     return &Aes128Wrap;
+}
+const LibreSslEvpCipher* APS5_VABI EVP_aes_192_wrap_nid_postfix(void) {
+    return &Aes192Wrap;
 }
 
 }
