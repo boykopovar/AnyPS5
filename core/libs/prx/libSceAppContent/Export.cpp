@@ -1,4 +1,3 @@
-#include "prx/libSceAppContent/include/InventoryExports.hpp"
 #include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -91,7 +90,9 @@ int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentDownloadDataGetBlockSize() {
+int APS5_VABI sceAppContentDownloadDataGetBlockSize(const AppContentMountPoint* mountPoint, size_t* blockSize) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!mountPoint || !blockSize) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -309,9 +310,12 @@ int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedE
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAppParamGetString(void) {
+int APS5_VABI sceAppContentAppParamGetString(uint32_t paramId, char* value, size_t valueSize) {
+    (void)paramId;
+    (void)valueSize;
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!value) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentDownload0Expand(void) {
@@ -399,14 +403,16 @@ int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetRegion(void) {
+int APS5_VABI sceAppContentGetRegion(void* region) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!region) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceAppContentRequestPatchInstall(void) {
+int APS5_VABI sceAppContentRequestPatchInstall(const char* text) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!text || std::strlen(text) > 0xff) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint* mountPoint) {

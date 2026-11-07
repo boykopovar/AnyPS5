@@ -72,6 +72,7 @@
 // Derived from Source/WTF/wtf/DateMath.cpp (WebKit c55364d53f97)
 
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/Api.hpp"
 
 #include <cmath>
@@ -396,6 +397,18 @@ extern "C" {
 double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool* isLocalTime) {
     RequireArguments(dateString, isLocalTime, __func__);
     return ParseDate(dateString, *isLocalTime);
+}
+
+double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc(const char* dateString) {
+    if (dateString == nullptr) {
+        throw std::invalid_argument(std::string(__func__) + ": null date string faults in WebKit");
+    }
+    bool isLocalTime = false;
+    double value = ParseDate(dateString, isLocalTime);
+    if (!std::isnan(value) && isLocalTime) {
+        value -= _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(value, WTF::TimeType::LocalTime).offset;
+    }
+    return value;
 }
 
 }
