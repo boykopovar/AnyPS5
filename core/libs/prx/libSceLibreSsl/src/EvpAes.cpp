@@ -470,6 +470,257 @@ constexpr LibreSslEvpCipher Aes128Gcm = AesGcm(895, 16);
 constexpr LibreSslEvpCipher Aes192Gcm = AesGcm(898, 24);
 constexpr LibreSslEvpCipher Aes256Gcm = AesGcm(901, 32);
 
+constexpr std::uint64_t CcmFlags = CipherModeCcm | CipherFlagFips | CipherFlagCustomIv | CipherFlagAlwaysCallInit | CipherFlagCtrlInit | CipherFlagCustomCipher;
+constexpr int ControlCcmSetL = 0x14;
+constexpr int ControlCcmSetTag = 0x11;
+constexpr int ControlCcmGetTag = 0x10;
+constexpr int ControlCcmSetIvLength = 0x9;
+constexpr std::size_t CcmContextBytes = 512;
+constexpr int CcmMinL = 2;
+constexpr int CcmMaxL = 8;
+
+struct CcmState {
+    AesKey key;
+    int keySet;
+    int ivSet;
+    int tagSet;
+    int lenSet;
+    int aadSet;
+    int macStarted;
+    int padded;
+    int lengthField;
+    int tagLength;
+    unsigned char mac[AesBlockBytes];
+    unsigned char pending[AesBlockBytes];
+    unsigned pendingLength;
+    unsigned char stream[AesBlockBytes];
+    unsigned streamUsed;
+    std::uint64_t counter;
+    std::uint64_t remaining;
+    std::uint64_t messageLength;
+};
+
+static_assert(sizeof(CcmState) <= CcmContextBytes);
+
+CcmState& CcmStateOf(LibreSslEvpCipherCtx* ctx, const char* function) {
+    if (!ctx) throw std::invalid_argument(std::string(function) + ": null context");
+    if (!ctx->cipherData) throw std::invalid_argument(std::string(function) + ": context without cipher data");
+    return *static_cast<CcmState*>(ctx->cipherData);
+}
+
+void CcmCounterBlock(const LibreSslEvpCipherCtx* ctx, const CcmState& state, std::uint64_t index, unsigned char (&block)[AesBlockBytes]) {
+    const auto nonceLength = static_cast<std::size_t>(15 - state.lengthField);
+    std::memset(block, 0, sizeof(block));
+    block[0] = static_cast<unsigned char>(state.lengthField - 1);
+    std::memcpy(block + 1, ctx->iv, nonceLength);
+    for (int position = 15; position > static_cast<int>(nonceLength); --position, index >>= 8) block[position] = static_cast<unsigned char>(index);
+}
+
+void CcmMacBlock(CcmState& state, const unsigned char (&block)[AesBlockBytes]) {
+    for (std::size_t index = 0; index < AesBlockBytes; ++index) state.mac[index] ^= block[index];
+    AES_encrypt_nid_postfix(state.mac, state.mac, &state.key);
+}
+
+void CcmMacByte(CcmState& state, unsigned char value) {
+    state.pending[state.pendingLength++] = value;
+    if (state.pendingLength == AesBlockBytes) {
+        CcmMacBlock(state, state.pending);
+        state.pendingLength = 0;
+    }
+}
+
+void CcmMacPad(CcmState& state) {
+    if (!state.pendingLength) return;
+    std::memset(state.pending + state.pendingLength, 0, AesBlockBytes - state.pendingLength);
+    CcmMacBlock(state, state.pending);
+    state.pendingLength = 0;
+}
+
+void CcmStartMac(LibreSslEvpCipherCtx* ctx, CcmState& state, bool adata) {
+    unsigned char block[AesBlockBytes] {};
+    const auto nonceLength = static_cast<std::size_t>(15 - state.lengthField);
+    block[0] = static_cast<unsigned char>((adata ? 0x40 : 0) | ((state.tagLength - 2) / 2) << 3 | (state.lengthField - 1));
+    std::memcpy(block + 1, ctx->iv, nonceLength);
+    std::uint64_t length = state.messageLength;
+    for (int position = 15; position > static_cast<int>(nonceLength); --position, length >>= 8) block[position] = static_cast<unsigned char>(length);
+    std::memset(state.mac, 0, sizeof(state.mac));
+    state.pendingLength = 0;
+    state.padded = 0;
+    state.macStarted = 1;
+    CcmMacBlock(state, block);
+}
+
+int CcmSetIv(CcmState& state, std::uint64_t length) {
+    const std::uint64_t limit = state.lengthField >= 8 ? UINT64_MAX : std::uint64_t {1} << (8 * state.lengthField);
+    if (length >= limit) return -1;
+    state.messageLength = length;
+    state.remaining = length;
+    state.counter = 0;
+    state.streamUsed = AesBlockBytes;
+    state.macStarted = 0;
+    state.padded = 0;
+    state.pendingLength = 0;
+    state.aadSet = 0;
+    state.lenSet = 1;
+    return static_cast<int>(length);
+}
+
+int CcmAad(LibreSslEvpCipherCtx* ctx, CcmState& state, const unsigned char* aad, std::size_t length) {
+    if (!state.lenSet || state.aadSet || state.remaining != state.messageLength) return -1;
+    if (length && !aad) throw std::invalid_argument("aes_ccm_cipher: null AAD");
+    if (!length) return 0;
+    if (!state.macStarted) CcmStartMac(ctx, state, true);
+    if (length < 0xFF00) {
+        CcmMacByte(state, static_cast<unsigned char>(length >> 8));
+        CcmMacByte(state, static_cast<unsigned char>(length));
+    } else {
+        CcmMacByte(state, 0xFF);
+        CcmMacByte(state, 0xFE);
+        for (int shift = 24; shift >= 0; shift -= 8) CcmMacByte(state, static_cast<unsigned char>(length >> shift));
+    }
+    for (std::size_t index = 0; index < length; ++index) CcmMacByte(state, aad[index]);
+    CcmMacPad(state);
+    state.aadSet = 1;
+    return static_cast<int>(length);
+}
+
+void CcmTag(LibreSslEvpCipherCtx* ctx, CcmState& state, unsigned char* tag, std::size_t length) {
+    if (!state.macStarted) CcmStartMac(ctx, state, state.aadSet != 0);
+    if (!state.padded) {
+        CcmMacPad(state);
+        state.padded = 1;
+    }
+    unsigned char zero[AesBlockBytes];
+    CcmCounterBlock(ctx, state, 0, zero);
+    unsigned char keystream[AesBlockBytes];
+    AES_encrypt_nid_postfix(zero, keystream, &state.key);
+    for (std::size_t index = 0; index < length; ++index) tag[index] = state.mac[index] ^ keystream[index];
+}
+
+int CcmProcess(LibreSslEvpCipherCtx* ctx, CcmState& state, unsigned char* out, const unsigned char* in, std::size_t length) {
+    if (!state.lenSet) {
+        if (CcmSetIv(state, length) < 0) return -1;
+    }
+    if (length > state.remaining) return -1;
+    if (!state.macStarted) CcmStartMac(ctx, state, state.aadSet != 0);
+    const bool encrypt = ctx->encrypt != 0;
+    for (std::size_t index = 0; index < length; ++index) {
+        if (state.streamUsed == AesBlockBytes) {
+            unsigned char block[AesBlockBytes];
+            CcmCounterBlock(ctx, state, ++state.counter, block);
+            AES_encrypt_nid_postfix(block, state.stream, &state.key);
+            state.streamUsed = 0;
+        }
+        const unsigned char input = in[index];
+        const unsigned char output = input ^ state.stream[state.streamUsed++];
+        out[index] = output;
+        CcmMacByte(state, encrypt ? input : output);
+    }
+    state.remaining -= length;
+    if (state.remaining) return static_cast<int>(length);
+    CcmMacPad(state);
+    state.padded = 1;
+    if (encrypt) {
+        state.tagSet = 1;
+        return static_cast<int>(length);
+    }
+    unsigned char tag[AesBlockBytes];
+    const auto tagLength = static_cast<std::size_t>(state.tagLength);
+    CcmTag(ctx, state, tag, tagLength);
+    int result = static_cast<int>(length);
+    if (TimingSafeCompare(tag, ctx->buf, tagLength)) {
+        Wipe(out, length);
+        result = -1;
+    }
+    state.ivSet = 0;
+    state.tagSet = 0;
+    state.lenSet = 0;
+    return result;
+}
+
+int APS5_VABI AesCcmInitKey(LibreSslEvpCipherCtx* ctx, const unsigned char* key, const unsigned char* iv, int) {
+    if (!iv && !key) return 1;
+    auto& state = CcmStateOf(ctx, "aes_ccm_init_key");
+    if (key) {
+        if (AES_set_encrypt_key_nid_postfix(key, ctx->keyLen * 8, &state.key) < 0) return 0;
+        state.keySet = 1;
+    }
+    if (iv) {
+        std::memcpy(ctx->iv, iv, static_cast<std::size_t>(15 - state.lengthField));
+        state.ivSet = 1;
+    }
+    return 1;
+}
+
+int APS5_VABI AesCcmCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char* in, std::size_t length) {
+    auto& state = CcmStateOf(ctx, "aes_ccm_cipher");
+    if (!state.ivSet && !state.keySet) return -1;
+    if (out && !in) return 0;
+    if (!ctx->encrypt && !state.tagSet) return -1;
+    if (!out) {
+        if (!in) return CcmSetIv(state, length);
+        return CcmAad(ctx, state, in, length);
+    }
+    return CcmProcess(ctx, state, out, in, length);
+}
+
+int APS5_VABI AesCcmControl(LibreSslEvpCipherCtx* ctx, int type, int arg, void* pointer) {
+    auto& state = CcmStateOf(ctx, "aes_ccm_ctrl");
+    auto* bytes = static_cast<unsigned char*>(pointer);
+    switch (type) {
+    case CipherControlInit:
+        state.keySet = 0;
+        state.ivSet = 0;
+        state.tagSet = 0;
+        state.lenSet = 0;
+        state.lengthField = CcmMaxL;
+        state.tagLength = 12;
+        return 1;
+    case ControlCcmSetIvLength:
+        arg = 15 - arg;
+        [[fallthrough]];
+    case ControlCcmSetL:
+        if (arg < CcmMinL || arg > CcmMaxL) return 0;
+        state.lengthField = arg;
+        return 1;
+    case ControlCcmSetTag:
+        if ((arg & 1) || arg < 4 || arg > 16) return 0;
+        if ((ctx->encrypt && bytes) || (!ctx->encrypt && !bytes)) return 0;
+        if (bytes) {
+            state.tagSet = 1;
+            std::memcpy(ctx->buf, bytes, static_cast<std::size_t>(arg));
+        }
+        state.tagLength = arg;
+        return 1;
+    case ControlCcmGetTag: {
+        if (!ctx->encrypt || !state.tagSet || !bytes || arg < 1 || arg > state.tagLength) return 0;
+        unsigned char tag[AesBlockBytes];
+        CcmTag(ctx, state, tag, static_cast<std::size_t>(state.tagLength));
+        std::memcpy(bytes, tag, static_cast<std::size_t>(arg));
+        state.tagSet = 0;
+        state.ivSet = 0;
+        state.lenSet = 0;
+        return 1;
+    }
+    default:
+        return -1;
+    }
+}
+
+constexpr LibreSslEvpCipher AesCcm128 = [] {
+    LibreSslEvpCipher cipher {};
+    cipher.nid = 896;
+    cipher.blockSize = 1;
+    cipher.keyLength = 16;
+    cipher.ivLength = 12;
+    cipher.flags = CcmFlags;
+    cipher.init = AesCcmInitKey;
+    cipher.doCipher = AesCcmCipher;
+    cipher.contextSize = CcmContextBytes;
+    cipher.control = AesCcmControl;
+    return cipher;
+}();
+
 }
 
 extern "C" {
@@ -508,6 +759,9 @@ const LibreSslEvpCipher* APS5_VABI EVP_aes_192_gcm_nid_postfix(void) {
 
 const LibreSslEvpCipher* APS5_VABI EVP_aes_256_gcm_nid_postfix(void) {
     return &Aes256Gcm;
+}
+const LibreSslEvpCipher* APS5_VABI EVP_aes_128_ccm_nid_postfix(void) {
+    return &AesCcm128;
 }
 
 }
