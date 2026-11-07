@@ -32,12 +32,19 @@ DWORD StandardId(int standard) {
 }
 
 std::string Describe(unsigned long code) {
-    char text[256];
-    const DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0, text, sizeof(text), nullptr);
-    std::string message(text, length);
-    while (!message.empty() && (message.back() == '\n' || message.back() == '\r' || message.back() == ' ' || message.back() == '.')) message.pop_back();
-    if (message.empty()) message = "unknown error";
-    return message + " (Windows error " + std::to_string(code) + ")";
+    wchar_t text[256];
+    const DWORD length = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0, text, 256, nullptr);
+    std::wstring message(text, length);
+    while (!message.empty() && (message.back() == L'\n' || message.back() == L'\r' || message.back() == L' ' || message.back() == L'.')) message.pop_back();
+    std::string narrow;
+    if (message.empty()) {
+        narrow = "unknown error";
+    } else {
+        const int bytes = WideCharToMultiByte(CP_UTF8, 0, message.data(), static_cast<int>(message.size()), nullptr, 0, nullptr, nullptr);
+        narrow.assign(static_cast<std::size_t>(bytes), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, message.data(), static_cast<int>(message.size()), narrow.data(), bytes, nullptr, nullptr);
+    }
+    return narrow + " (Windows error " + std::to_string(code) + ")";
 }
 
 bool Valid(HANDLE handle) {
