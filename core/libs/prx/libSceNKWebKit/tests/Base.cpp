@@ -1522,6 +1522,11 @@ static void TestCertificateInfo() {
 
 static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+    _ZN7WebCore22EmptyFrameLoaderClient14didChangeTitleEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient15finishedLoadingEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient15willChangeTitleEPNS_14DocumentLoaderE();
+    _ZN7WebCore22EmptyFrameLoaderClient20setMainDocumentErrorEPNS_14DocumentLoaderERKNS_13ResourceErrorE();
+    _ZN7WebCore22EmptyFrameLoaderClient24revertToProvisionalStateEPNS_14DocumentLoaderE();
 }
 
 int main() {
