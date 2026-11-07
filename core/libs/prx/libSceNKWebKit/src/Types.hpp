@@ -101,6 +101,17 @@ public:
     bool valid = false;
 };
 
+class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
+public:
+    URLRequest() = default;
+    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {}
+
+    Retained<URL> url;
+    Retained<URL> firstPartyForCookies;
+    std::string httpMethod = "GET";
+    Retained<Data> httpBody;
+};
+
 class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
 public:
     URLResponse() = default;
@@ -126,6 +137,32 @@ public:
     std::u16string lookupText;
     RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
     bool isContentEditable = false;
+};
+
+class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
+public:
+    Retained<String> name;
+    static BundleScriptWorld* NormalWorld() {
+        static auto world = Make<BundleScriptWorld>();
+        return world.Get();
+    }
+};
+
+class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
+public:
+    Retained<URL> absoluteImageURL;
+    Retained<URL> absoluteLinkURL;
+    Retained<URL> absoluteMediaURL;
+    Retained<URL> absolutePDFURL;
+    Retained<String> linkLabel;
+    Retained<String> linkTitle;
+};
+
+class Download final : public ObjectOf<ObjectType::Download> {
+public:
+    Retained<Object> request;
+    Retained<Object> originatingPage;
+    bool wasUserInitiated = false;
 };
 
 class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
