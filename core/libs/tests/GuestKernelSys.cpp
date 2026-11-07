@@ -1102,7 +1102,9 @@ static void CheckProcessQueries() {
         Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
     }
     Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
-    Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
+    Require(sceKernelGetProcessType(-1) == 0);
+    Require(sceKernelGetProcessType(0) == static_cast<int>(0x80020002));
+    Require(sceKernelGetProcessType(1) == static_cast<int>(0x80020002));
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
 }
 
