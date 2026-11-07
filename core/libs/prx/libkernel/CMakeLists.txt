@@ -69,6 +69,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sanitizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Rtld.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Process.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Cpuset.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sandbox.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostCpu.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
@@ -2019,6 +2020,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_tcp PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_tcp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_socket_send_before_connect_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketSendBeforeConnect.cpp)
+    target_include_directories(guest_socket_send_before_connect_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_socket_send_before_connect_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_socket_send_before_connect_tests)
+    add_test(NAME guest_socket_send_before_connect COMMAND guest_socket_send_before_connect_tests)
+    set_tests_properties(guest_socket_send_before_connect PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_socket_send_before_connect PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_socket_port_zero_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketPortZero.cpp)

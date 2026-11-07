@@ -990,7 +990,8 @@ int APS5_VABI scePadSetProfileIndicatorAnimation(std::int32_t handle, std::uint8
 }
 
 int APS5_VABI scePadIsCoPilot(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    (void)handle;
     return 0;
 }
 
@@ -1121,7 +1122,8 @@ int APS5_VABI scePadGetBluetoothAddress(std::int32_t handle, std::uint64_t* addr
 }
 
 int APS5_VABI scePadIsMoveReproductionModel(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    (void)handle;
     return 0;
 }
 
