@@ -33,8 +33,10 @@ bool In(char16_t character, const char* set) {
 
 class WideEncodingError : public std::invalid_argument {
 public:
-    explicit WideEncodingError(std::u16string written) : std::invalid_argument("Invalid multibyte string argument"), partial(std::move(written)) {}
+    explicit WideEncodingError(std::u16string written, bool sequence = true)
+        : std::invalid_argument("Invalid multibyte string argument"), partial(std::move(written)), invalidSequence(sequence) {}
     std::u16string partial;
+    bool invalidSequence;
 };
 
 bool AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
@@ -120,7 +122,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
     const char16_t* const start = format;
     std::string ascii;
     for (const char16_t* unit = format; *unit != 0; ++unit) ascii.push_back(*unit < 0x80 ? static_cast<char>(*unit) : '?');
-    args.Number(LibcDetail::NumberedArgumentClasses(ascii.c_str()));
+    args.Number(LibcDetail::NumberedArgumentClasses(ascii.c_str(), true));
     const auto position = [&] {
         const char* cursor = ascii.c_str() + (format - start);
         const std::size_t found = LibcDetail::ArgumentPosition(cursor);
@@ -141,9 +143,9 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         bool left = false;
         int width = 0;
         int precision = -1;
-        while (In(*format, "-+ #0'")) {
+        while (In(*format, "-+ #0")) {
             if (*format == u'-') left = true;
-            if (*format != u'\'') spec += static_cast<char>(*format);
+            spec += static_cast<char>(*format);
             ++format;
         }
         if (*format == u'*') {
@@ -225,19 +227,24 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                     AppendNumber(out, spec + narrow, value);
                 }
             }
-        } else if (conversion == u'p' && length.empty()) {
+        } else if (conversion == u'p' && (length.empty() || length == "l")) {
             const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());
             out.append(text.begin(), text.end());
-        } else if (conversion == u'c' || conversion == u'C') {
+        } else if (conversion == u'c') {
             const int value = args.Next<int>();
             std::u16string text;
-            if (conversion == u'C' || length == "l") text.push_back(static_cast<char16_t>(value));
-            else text.push_back(static_cast<char16_t>(static_cast<unsigned char>(value)));
+            if (length == "l") {
+                text.push_back(static_cast<char16_t>(value));
+            } else {
+                const auto byte = static_cast<unsigned char>(value);
+                if (byte >= 0x80) throw WideEncodingError(out, value != -1 && (byte < 0xc0 || byte >= 0xf0));
+                text.push_back(static_cast<char16_t>(byte));
+            }
             AppendPadded(out, text, left, width);
-        } else if (conversion == u's' || conversion == u'S') {
+        } else if (conversion == u's') {
             std::u16string text;
             const std::size_t limit = precision < 0 ? SIZE_MAX : static_cast<std::size_t>(precision);
-            if (conversion == u'S' || length == "l") {
+            if (length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
                 if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
                 if (value == nullptr) value = u"(null)";
@@ -257,6 +264,10 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion)))) {
+            std::u16string text = u"%";
+            if (conversion != u'%') text.push_back(conversion);
+            AppendPadded(out, text, left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }
@@ -281,7 +292,7 @@ int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const ch
         const std::size_t copied = error.partial.size() < size - 1 ? error.partial.size() : size - 1;
         std::memcpy(buffer, error.partial.data(), copied * sizeof(char16_t));
         buffer[copied] = 0;
-        errno = 86;
+        if (error.invalidSequence) errno = 86;
         return -1;
     } catch (const std::exception&) {
         buffer[0] = 0;
@@ -377,6 +388,7 @@ int APS5_VABI vsnwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const
 
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
     if (!__stdoutp_nid_postfix->IsOpen()) { errno = 9; return -1; }
+    _Stdout_nid_postfix.Orientation(1);
     if (!__stdoutp_nid_postfix->SwitchToWriting()) return -1;
     APS5_VA_BEGIN(format);
     int result = -1;
@@ -384,8 +396,8 @@ int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
         const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args));
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(__stdoutp_nid_postfix)) == bytes.size()) result = static_cast<int>(text.size());
-    } catch (const WideEncodingError&) {
-        errno = 86;
+    } catch (const WideEncodingError& error) {
+        if (error.invalidSequence) errno = 86;
     } catch (const std::exception&) {
         errno = 22;
     }
@@ -396,14 +408,15 @@ int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
 int APS5_VABI vfwprintf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     if (!stream->SwitchToWriting()) return -1;
     int result = -1;
     try {
         const std::u16string text = FormatWide(format, args);
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
-    } catch (const WideEncodingError&) {
-        errno = 86;
+    } catch (const WideEncodingError& error) {
+        if (error.invalidSequence) errno = 86;
     } catch (const std::exception&) {
         errno = 22;
     }
@@ -425,6 +438,7 @@ int APS5_VABI vwprintf_nid_postfix(const char16_t* format, VaList* args) {
 int APS5_VABI vfwprintf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr || args == nullptr) return -1;
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     if (!stream->SwitchToWriting()) return -1;
     int result = -1;
     try {
@@ -459,6 +473,7 @@ int APS5_VABI wprintf_s_nid_postfix(const char16_t* format, ...) {
 int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
     if (stream == nullptr) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     try {
         const std::string bytes = ToUtf8(std::u16string(1, value));
         auto* native = GetNativeStream(stream);
@@ -475,6 +490,7 @@ int APS5_VABI fputwc_nid_postfix(char16_t value, FileStream* stream) {
 int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream) {
     if (str == nullptr || stream == nullptr) { errno = 22; return -1; }
     if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     try {
         const std::u16string text(str);
         const std::string bytes = ToUtf8(text);
@@ -498,6 +514,7 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
+    if (stream != nullptr) stream->Orientation(1);
     if (size < 2) return nullptr;
     if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();

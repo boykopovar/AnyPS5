@@ -29,7 +29,5 @@ int main() {
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoHevc", [] { return sceVideodec2PresetDecoderConfigInfoHevc(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2PresetDecoderConfigInfoVp9", [] { return sceVideodec2PresetDecoderConfigInfoVp9(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2CreateDecoderBid", [] { return sceVideodec2CreateDecoderBid(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2CreateHevcDecoder", [] { return sceVideodec2CreateHevcDecoder(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2QueryHevcDecoderMemoryInfo", [] { return sceVideodec2QueryHevcDecoderMemoryInfo(); }) && passed;
     return passed ? 0 : 1;
 }

@@ -64,6 +64,8 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VMullitF32:
         flush = 3u;
         break;
+    case RdnaOpcode::VDivFmasF32:
+        return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 2u) != 0u ? 0u : 2u;
     case RdnaOpcode::VMinF32:
     case RdnaOpcode::VMaxF32:
     case RdnaOpcode::VMin3F32:

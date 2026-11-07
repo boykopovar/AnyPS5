@@ -159,6 +159,11 @@ static void CheckReceiveMessageFaults() {
     message = {readOnly + 128, 0, readOnlyVector, 1, nullptr, 0, -1};
     Require(Queue(pair[0], pair[1], "gh") && recvmsg_nid_postfix(pair[1], &message, 0) == 2);
     Require(std::memcmp(data, "gh", 2) == 0 && message.nameLength == 0);
+    message = {nullptr, 0, &good, 1, nullptr, 0, -1};
+    for (const int flag : {1, 4, 0x100, 0x40000, -1, Peek | 1, 0x80 | 4}) {
+        *__error_nid_postfix() = 0;
+        Require(recvmsg_nid_postfix(pair[1], &message, flag) == -1 && *__error_nid_postfix() == 45);
+    }
 
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
@@ -209,6 +214,12 @@ int main(int argc, char** argv) {
     Require(sent == -1 && *__error_nid_postfix() == 32);
     Require(close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(pair[1]) == -1 && *__error_nid_postfix() == 9);
+
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+    *__error_nid_postfix() = 0;
+    Require(send_nid_postfix(pair[0], "late", 4, NoSignal) == -1 && *__error_nid_postfix() == 32);
+    Require(close_nid_postfix(pair[0]) == 0);
 
     Require(socketpair_nid_postfix(Unix, Stream | NonBlocking | CloseOnExec, 0, pair) == 0);
     Require(fcntl_nid_postfix(pair[0], 3) == 6 && fcntl_nid_postfix(pair[1], 3) == 6);
@@ -263,6 +274,24 @@ int main(int argc, char** argv) {
     Require(Unnamed(pair[1], getpeername_nid_postfix) && Exchange(pair[1], copy, "copy"));
     Require(close_nid_postfix(copy) == 0 && NotConnected(pair[1]));
     Require(close_nid_postfix(pair[1]) == 0);
+
+#ifdef _WIN32
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "q", 1, 0) == 1);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 1 && datagram[0] == 'q');
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "", 0, 0) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 0);
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(close_nid_postfix(pair[1]) == 0);
+#endif
 
     Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
     Require(send_nid_postfix(pair[0], "c", 1, 0) == 1 && Readable(pair[1]));

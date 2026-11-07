@@ -50,7 +50,43 @@ static void RequireTimesOut(TLock lock) {
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
 }
 
+struct ReaderHold {
+    PthreadRwlock* lock;
+    std::atomic<bool> held{false};
+    std::atomic<bool> release{false};
+};
+
+static void* APS5_VABI HoldRead(void* argument) {
+    auto& hold = *static_cast<ReaderHold*>(argument);
+    Require(scePthreadRwlockRdlock(hold.lock) == SCE_OK);
+    hold.held.store(true);
+    while (!hold.release.load()) std::this_thread::yield();
+    Require(scePthreadRwlockUnlock(hold.lock) == SCE_OK);
+    return nullptr;
+}
+
+static void CheckTimedRwlockWithReader() {
+    PthreadRwlock rwlock = nullptr;
+    Require(scePthreadRwlockInit(&rwlock, nullptr, nullptr) == SCE_OK);
+    ReaderHold hold{&rwlock};
+    Pthread reader = nullptr;
+    Require(scePthreadCreate(&reader, nullptr, HoldRead, &hold, "reader-hold") == SCE_OK);
+    while (!hold.held.load()) std::this_thread::yield();
+    Require(scePthreadRwlockTimedrdlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedwrlock(&rwlock, usec); });
+    Require(scePthreadRwlockTrywrlock(&rwlock) == SCE_KERNEL_ERROR_EBUSY);
+    hold.release.store(true);
+    Require(scePthreadJoin(reader, nullptr) == SCE_OK);
+    Require(scePthreadRwlockTimedwrlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTimedrdlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&rwlock) == SCE_OK);
+}
+
 int main() {
+    CheckTimedRwlockWithReader();
     constexpr int maximum = std::numeric_limits<int>::max();
     KernelSema semaphore = nullptr;
     Require(sceKernelCreateSema(&semaphore, "overflow", 1, maximum - 1, maximum, nullptr) == SCE_OK);
@@ -84,6 +120,7 @@ int main() {
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadMutexattr attr = nullptr;
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);

@@ -1036,12 +1036,22 @@ static bool NativeF16Rte(const SpirvEmitterState& state);
 static std::uint32_t EmitF32ToF16BitsTowardZero(SpirvEmitterState& state, std::uint32_t value) {
     if (!NativeF16Rte(state)) return EmitF32ToF16RtzBits(state, value);
     const auto u32 = TypeU32(state);
-    const auto f16 = state.module.Type(spv::OpTypeFloat, 16u);
     const auto nearest = EmitF32ToF16BitsRte(state, value);
-    const auto half = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, f16, half, Unary(state, spv::OpBitcast, state.module.Type(spv::OpTypeVector, f16, 2u), nearest), 0u);
-    const auto widened = Unary(state, spv::OpFConvert, TypeF32(state), half);
-    const auto away = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), EmitFAbsValue(state, widened), EmitFAbsValue(state, value));
+    if (!state.float16NarrowNans) {
+        const auto f16 = state.module.Type(spv::OpTypeFloat, 16u);
+        const auto half = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, f16, half, Unary(state, spv::OpBitcast, state.module.Type(spv::OpTypeVector, f16, 2u), nearest), 0u);
+        const auto widenedHalf = Unary(state, spv::OpFConvert, TypeF32(state), half);
+        const auto awayHalf = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), EmitFAbsValue(state, widenedHalf), EmitFAbsValue(state, value));
+        return Select(state, u32, awayHalf, Binary(state, spv::OpISub, u32, nearest, ConstantU32(state, 1u)), nearest);
+    }
+    const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, nearest, ConstantU32(state, 0x7fffu));
+    const auto normal = Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpIAdd, u32, magnitude, ConstantU32(state, 0x1c000u)), ConstantU32(state, 13u));
+    const auto denormal = Unary(state, spv::OpBitcast, u32, Exact(state, Binary(state, spv::OpFMul, TypeF32(state), Unary(state, spv::OpConvertUToF, TypeF32(state), magnitude), ConstantF32(state, 0x33800000u))));
+    const auto finite = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), magnitude, ConstantU32(state, 0x7c00u)), ConstantU32(state, 0x7f800000u), normal);
+    const auto widened = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), magnitude, ConstantU32(state, 0x400u)), denormal, finite);
+    const auto source = Binary(state, spv::OpBitwiseAnd, u32, Unary(state, spv::OpBitcast, u32, value), ConstantU32(state, 0x7fffffffu));
+    const auto away = Binary(state, spv::OpUGreaterThan, TypeBool(state), widened, source);
     return Select(state, u32, away, Binary(state, spv::OpISub, u32, nearest, ConstantU32(state, 1u)), nearest);
 }
 
@@ -1283,8 +1293,8 @@ std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0) {
         const auto series = Log2SeriesNearOne(state, difference);
         const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
         const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
-        const auto distance = EmitExt(state, TypeU32(state), GLSLstd450UMin, {Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), Binary(state, spv::OpISub, TypeU32(state), seriesBits, valueBits)});
-        const auto far = Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u));
+        const auto biasedDifference = Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), ConstantU32(state, 4u));
+        const auto far = Binary(state, spv::OpUGreaterThan, TypeBool(state), biasedDifference, ConstantU32(state, 8u));
         return Select(state, TypeF32(state), far, series, value);
     });
 }
@@ -1310,8 +1320,8 @@ std::uint32_t CosTurnSeries(SpirvEmitterState& state, std::uint32_t turns) {
 std::uint32_t SeriesWhenFar(SpirvEmitterState& state, std::uint32_t value, std::uint32_t series) {
     const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
     const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
-    const auto distance = EmitExt(state, TypeU32(state), GLSLstd450UMin, {Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), Binary(state, spv::OpISub, TypeU32(state), seriesBits, valueBits)});
-    return Select(state, TypeF32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u)), series, value);
+    const auto biasedDifference = Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), ConstantU32(state, 4u));
+    return Select(state, TypeF32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), biasedDifference, ConstantU32(state, 8u)), series, value);
 }
 
 std::uint32_t TrigLinearNearZero(SpirvEmitterState& state, std::uint32_t value, std::uint32_t distance, std::uint32_t linearConstant, std::uint32_t limit) {
@@ -1847,7 +1857,7 @@ static void EmitNativeF16Modes(SpirvEmitterState& state) {
     }
 }
 
-static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {
+static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value, bool nanPayloadUnused = false) {
     EmitNativeF16Modes(state);
     const auto u32 = TypeU32(state);
     const auto f16 = state.module.Type(spv::OpTypeFloat, 16u);
@@ -1855,8 +1865,10 @@ static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::ui
     const auto pair = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, state.module.Type(spv::OpTypeVector, f16, 2u), pair, half, state.module.Constant(spv::OpConstant, f16, 0u));
     const auto bits = Unary(state, spv::OpBitcast, u32, pair);
+    if (state.float16NarrowNans) return bits;
     const auto source = Unary(state, spv::OpBitcast, u32, value);
     const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, source, ConstantU32(state, 0x7fffffffu));
+    if (nanPayloadUnused) return Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), ConstantU32(state, 0x7e00u), bits);
     const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
     const auto payload = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, magnitude, ConstantU32(state, 0x7fffffu)), ConstantU32(state, 13u));
     const auto nan = Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, 0x7e00u), payload);
@@ -1880,6 +1892,16 @@ std::uint32_t EmitFPMul16x2(SpirvEmitterState& state, std::uint32_t arg0, std::u
     const auto f16x2 = TypeF16x2(state);
     const auto product = Binary(state, spv::OpFMul, f16x2, Unary(state, spv::OpBitcast, f16x2, arg0), Unary(state, spv::OpBitcast, f16x2, arg1));
     return Unary(state, spv::OpBitcast, TypeU32(state), Exact(state, product));
+}
+
+std::uint32_t EmitFPFma16x2(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2) {
+    const auto f16x2 = TypeF16x2(state);
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFMAKHR)) == state.supportedCapabilities.end()) FailEmit("packed f16 fma needs FMAKHR");
+    state.module.EmitCapability(spv::CapabilityFMAKHR);
+    state.module.EmitExtension("SPV_KHR_fma");
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFmaKHR, f16x2, result, Unary(state, spv::OpBitcast, f16x2, arg0), Unary(state, spv::OpBitcast, f16x2, arg1), Unary(state, spv::OpBitcast, f16x2, arg2));
+    return Unary(state, spv::OpBitcast, TypeU32(state), Exact(state, result));
 }
 
 std::uint32_t EmitF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {
@@ -1913,14 +1935,22 @@ std::uint32_t EmitF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value)
     return op(spv::OpBitwiseOr, sign, result);
 }
 
-std::uint32_t EmitPackHalf2x16(SpirvEmitterState& state, std::uint32_t arg0) {
+static std::uint32_t PackHalf2x16(SpirvEmitterState& state, std::uint32_t arg0, bool nanPayloadUnused) {
     const auto component = [&](std::uint32_t index) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), value, arg0, index);
-        return EmitF32ToF16BitsRte(state, value);
+        return nanPayloadUnused && NativeF16Rte(state) ? EmitNativeF32ToF16BitsRte(state, value, true) : EmitF32ToF16BitsRte(state, value);
     };
     const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), component(1u), ConstantU32(state, 16u));
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), component(0u), high);
+}
+
+std::uint32_t EmitPackHalf2x16(SpirvEmitterState& state, std::uint32_t arg0) {
+    return PackHalf2x16(state, arg0, false);
+}
+
+std::uint32_t EmitPackHalf2x16Value(SpirvEmitterState& state, const IrValue& inst, std::uint32_t arg0) {
+    return PackHalf2x16(state, arg0, inst.Flags<FloatConvertFlags>().nanPayloadUnused);
 }
 
 std::uint32_t EmitFPFma32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2) {
@@ -2010,7 +2040,7 @@ static bool OnlyCompared(const IrValue& value) {
 
 std::uint32_t EmitConvertF32F16(SpirvEmitterState& state, const IrValue& inst, std::uint32_t bits) {
     if (NarrowF16Field(*inst.Argument(0))) return EmitF16BitsToF32Decoded(state, bits);
-    return OnlyCompared(inst) ? EmitF16BitsToF32AnyNan(state, bits) : EmitF16BitsToF32(state, bits);
+    return inst.Flags<FloatConvertFlags>().nanPayloadUnused || OnlyCompared(inst) ? EmitF16BitsToF32AnyNan(state, bits) : EmitF16BitsToF32(state, bits);
 }
 
 std::uint32_t EmitCompositeExtractU32x2(SpirvEmitterState& state, std::uint32_t arg0, const IrValue* arg1) {
