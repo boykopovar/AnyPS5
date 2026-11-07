@@ -90,7 +90,7 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     const bool owned = mutex->_owner.load(std::memory_order_acquire) == thread;
     if (owned && mutex->_type != MutexType::Recursive) {
         if (tryOnly)
-            return sceBusy;
+            return mutex->_type == MutexType::Adaptive ? SCE_KERNEL_ERROR_EINVAL : sceBusy;
         if (mutex->_type == MutexType::ErrorCheck || mutex->_type == MutexType::Adaptive)
             return sceDeadlock;
         throw std::runtime_error("Mutex is already owned by the current thread");
