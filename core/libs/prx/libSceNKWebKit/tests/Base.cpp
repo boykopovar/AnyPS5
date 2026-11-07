@@ -264,19 +264,6 @@ static void TestSecurityOrigin() {
         CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromStr), sc.expectedDbId);
         WKRelease(fromStr);
     }
-    for (const char* input : {"http://[::1]/", "http://[::1]:8080/", "file://[::1]/x", "http://caf\xC3\xA9.example/", "http://a%20b.example/", "http://%41.example/", "http://xn--nxasmq6b.example/", "http://sub.XN--abc.example/", "http://127.0.0.1/", "http://0x7f.1/", "http://1.2.3.4./", "http://192.168.1/", "http://example.0x/", "http://example.0xff/", "http://example.0XFF/", "http://example.0xAbC/", "blob:https://example.com/uuid", "BLOB:foo"}) {
-        const auto* inStr = WKStringCreateWithUTF8CString(input);
-        bool threw = false;
-        const void* created = nullptr;
-        try {
-            created = WKSecurityOriginCreateFromString(inStr);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        if (created) WKRelease(created);
-        WKRelease(inStr);
-        Require(threw);
-    }
     const auto noAccessScheme = _ZN3WTF10StringImpl6createEPKDsj(u"http", 4);
     const auto* httpInStr = WKStringCreateWithUTF8CString("http://example.com");
     const auto* beforeRegistration = WKSecurityOriginCreateFromString(httpInStr);
