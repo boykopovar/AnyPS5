@@ -995,9 +995,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
         throw std::runtime_error("DS lane operation is available only for LDS");
     }
     if (info.opcode == RdnaOpcode::DsWrxchg2RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB32 || info.opcode == RdnaOpcode::DsWrxchg2RtnB64 || info.opcode == RdnaOpcode::DsWrxchg2st64RtnB64) {
-        if (offset0 == offset1) {
-            throw std::runtime_error("DS write exchange of one location through both offsets is not supported");
-        }
         if (vdst + info.dataDwords > 256u) {
             throw std::runtime_error("DS write exchange destination register range overflow");
         }
