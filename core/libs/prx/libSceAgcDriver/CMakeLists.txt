@@ -413,6 +413,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
@@ -561,6 +562,12 @@ set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceAgcDriver)
 if(WIN32)
     target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-symbols=_Znwy:_Znay:_ZnwyRKSt9nothrow_t:_ZnayRKSt9nothrow_t:_ZdlPv:_ZdaPv:_ZdlPvy:_ZdaPvy:_ZdlPvRKSt9nothrow_t:_ZdaPvRKSt9nothrow_t)
+endif()
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(agcStdExportScript "${CMAKE_CURRENT_BINARY_DIR}/libSceAgcDriverStdExports.ver")
+    file(CONFIGURE OUTPUT "${agcStdExportScript}" CONTENT "{\n  local:\n    _ZSt*;\n    _ZNSt*;\n    _ZNKSt*;\n    _ZNRSt*;\n    _ZNKRSt*;\n    _ZNOSt*;\n    _ZNKOSt*;\n    _ZNSa*;\n    _ZNKSa*;\n};\n")
+    target_link_options(libSceAgcDriver PRIVATE "LINKER:--version-script=${agcStdExportScript}")
+    set_property(TARGET libSceAgcDriver APPEND PROPERTY LINK_DEPENDS "${agcStdExportScript}")
 endif()
 
 if(WIN32)
