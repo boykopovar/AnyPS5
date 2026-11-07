@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -713,8 +714,9 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
         cached.read = now;
         sampled = SampledTextureMemory();
         storage = storageCacheBytes();
-        cached.budget = StorageTextureBudget(context.memory, &*reported, sampled, storage);
-        cached.ceiling = StorageTextureCeiling(context.memory, &*reported);
+        const auto owned = UsageWithoutHostImports(context.memory, *reported, HostImportLiveBytes());
+        cached.budget = StorageTextureBudget(context.memory, &owned, sampled, storage);
+        cached.ceiling = StorageTextureCeiling(context.memory, &owned);
         cached.calculatedAt = std::chrono::steady_clock::now();
     };
     if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
@@ -746,7 +748,8 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     context.memoryProperties2(context.physical, &properties);
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
-    const auto budget = SampledTextureBudget(context.memory, &reported, sampled + storage, storage);
+    const auto owned = UsageWithoutHostImports(context.memory, reported, HostImportLiveBytes());
+    const auto budget = SampledTextureBudget(context.memory, &owned, sampled + storage, storage);
     const bool fresh = cache.budgetDevice != context.physical;
     std::optional<std::chrono::steady_clock::time_point> storageCalculatedAt;
     const auto storageLimit = storageBudget(context, 0, &storageCalculatedAt);
