@@ -936,7 +936,7 @@ public:
     }
 
     void NoteHostWrite() {
-        if (samplingActive && target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && context.detiler != nullptr && !hostWritten->load(std::memory_order_acquire)) {
+        if (samplingActive && (target.format == VK_FORMAT_D32_SFLOAT || target.format == VK_FORMAT_D32_SFLOAT_S8_UINT) && context.detiler != nullptr && !hostWritten->load(std::memory_order_acquire)) {
             try {
                 const auto lease = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
                 CheckCurrent();
@@ -2365,6 +2365,7 @@ std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImage
 }
 
 void DepthSurface::PublishToGuest() {
+    const bool stencil = target.format == VK_FORMAT_D32_SFLOAT_S8_UINT;
     Require(!Recorder::InCompletion(), "native multisample depth publication inside a GPU completion is not implemented");
     Require(!publicationInProgress, "recursive native multisample depth publication is not implemented");
     Require(!publicationFailed, "a previous native multisample depth publication store did not complete");
@@ -2374,9 +2375,16 @@ void DepthSurface::PublishToGuest() {
     } scope{publicationInProgress};
     publicationInProgress = true;
     if (publicationFailure) std::rethrow_exception(publicationFailure);
-    Require(target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && hostFormat == target.format && publication.size() == 3u, "sample-preserving guest publication of native multisample depth is not implemented for this owner");
+    if (!stencil) {
+        Require(target.format != VK_FORMAT_D16_UNORM, "guest publication of a written native multisample D16 depth is not implemented");
+        Require(target.format == VK_FORMAT_D32_SFLOAT && hostFormat == target.format, "sample-preserving guest publication of a written native multisample depth that the device stores in another format is not implemented");
+        Require(sampleable, "guest publication of a written native multisample depth the device cannot sample is not implemented");
+        Require(context.detiler != nullptr, "guest publication of a written native multisample depth needs the texture detiler");
+        ApplyFastClear();
+    }
+    Require(hostFormat == target.format && publication.size() == (stencil ? 3u : 2u), "sample-preserving guest publication of native multisample depth is not implemented for this owner");
     Require(sampling.refusal.empty(), sampling.refusal);
-    RequireStencilProven();
+    if (stencil) RequireStencilProven();
     Require(!clearPending && clearGeneration == 0u && stencilClearGeneration == 0u && pendingClear == 0u, "native multisample depth publication with an unapplied clear is not implemented");
     Require(sampleable && context.detiler != nullptr, "sample-preserving guest publication of native multisample depth requires sampled readback support");
     const auto lease = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
@@ -2405,11 +2413,12 @@ void DepthSurface::PublishToGuest() {
     Require(active->load(std::memory_order_acquire), "the native multisample depth owner was released during publication");
     if (useSampleShadow) {
         if (sampleShadow == nullptr) createSampleShadow();
-        refreshSampleShadow(true, true);
+        refreshSampleShadow(true, stencil);
         if (auto* recorder = RecorderFor(context)) recorder->Sync();
     }
     std::array<std::vector<std::byte>, 3> result;
     for (std::size_t index : {0u, 2u}) {
+        if (index >= publication.size()) continue;
         const auto elementBytes = index == 0u ? 4u : 1u;
         const auto aspect = index == 0u ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_STENCIL_BIT;
         const auto format = index == 0u ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_R8_UINT;
@@ -2445,7 +2454,7 @@ void DepthSurface::PublishToGuest() {
     for (std::size_t offset = 0u; offset < result[1].size(); offset += 4u) {
         std::uint32_t word;
         std::memcpy(&word, result[1].data() + offset, 4u);
-        word = expandedHtileWord(word, !target.htileDepthOnly, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+        word = expandedHtileWord(word, !target.htileDepthOnly, VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u));
         std::memcpy(result[1].data() + offset, &word, 4u);
     }
     std::array<std::vector<std::byte>, 3> current;
@@ -2505,6 +2514,9 @@ void DepthSurface::PublishToGuest() {
     }
     hostWritten->store(false, std::memory_order_release);
     publication.clear();
+    if (!stencil) {
+        active->store(false, std::memory_order_release);
+    }
 }
 
 void publishWrittenDepth(std::span<const std::shared_ptr<std::atomic<bool>>> written) {
