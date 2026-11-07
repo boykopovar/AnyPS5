@@ -1169,8 +1169,8 @@ mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     return &state;
 }
 
-const short* APS5_VABI _Getctype_nid_postfix() {
-    return _Getpctype_nid_postfix();
+CtypeVector APS5_VABI _Getctype_nid_postfix() {
+    return {_Getpctype_nid_postfix(), 0};
 }
 
 int APS5_VABI _Getdateorder_nid_postfix() {

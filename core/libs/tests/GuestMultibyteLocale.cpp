@@ -85,7 +85,8 @@ static void CheckEncoding() {
 }
 
 static void CheckConsoleConversions() {
-    Require(_Getctype_nid_postfix() == _Getpctype_nid_postfix(), "_Getctype answers the table _Getpctype answers");
+    const CtypeVector ctype = _Getctype_nid_postfix();
+    Require(ctype.table == _Getpctype_nid_postfix() && ctype.zero == 0, "_Getctype answers the table _Getpctype answers and a zero word");
 
     ConversionVector vector {};
     std::memset(&vector, 0xcc, sizeof(vector));

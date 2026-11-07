@@ -620,6 +620,13 @@ struct ConversionVector {
     unsigned char state[32];
 };
 
+struct CtypeVector {
+    const short* table;
+    std::uint32_t zero;
+};
+
+static_assert(sizeof(CtypeVector) == 16);
+
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st);
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, mbstate_t* st);
 const short* APS5_VABI _Getpctype_nid_postfix();
@@ -627,7 +634,7 @@ const short* APS5_VABI _Getptolower_nid_postfix();
 const short* APS5_VABI _Getptoupper_nid_postfix();
 mbstate_t* APS5_VABI _Getpmbstate_nid_postfix();
 mbstate_t* APS5_VABI _Getpwcstate_nid_postfix();
-const short* APS5_VABI _Getctype_nid_postfix();
+CtypeVector APS5_VABI _Getctype_nid_postfix();
 int APS5_VABI _Getdateorder_nid_postfix();
 ConversionVector* APS5_VABI _Getcvt_nid_postfix(ConversionVector* destination);
 GuestLocale::TimeInfo* APS5_VABI _Getptimes_nid_postfix();
