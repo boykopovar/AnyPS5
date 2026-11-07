@@ -762,7 +762,8 @@ if(BUILD_TESTING)
             add_test(NAME windows_guest_gs_startup COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_gs_integration.py
                 $<TARGET_FILE:relinker> --runtime $<TARGET_FILE:libc> --state-runtime $<TARGET_FILE:guest_gs_state_only_runtime> --replay-runtime $<TARGET_FILE:guest_gs_replay_only_runtime> --dll-directory ${guestGsCompilerDirectory} --vector-runner $<TARGET_FILE:guest_gs_vector_runtime_runner>)
-            set_tests_properties(windows_guest_gs_startup PROPERTIES TIMEOUT 30)
+            set_tests_properties(windows_guest_gs_startup PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
         add_test(NAME windows_guest_gs_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_gs_integration.py $<TARGET_FILE:relinker>)
