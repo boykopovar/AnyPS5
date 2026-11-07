@@ -1903,6 +1903,17 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                     state.srcAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.srcAlphaBlendFactor);
                     state.dstAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.dstAlphaBlendFactor);
                 }
+                const auto constantAlpha = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_ALPHA || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA; };
+                const auto anyConstant = [&](VkBlendFactor factor) { return constantAlpha(factor) || factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
+                const auto factorsCount = [](VkBlendOp op) { return op != VK_BLEND_OP_MIN && op != VK_BLEND_OP_MAX; };
+                const bool colorReadsAlpha = (state.colorWriteMask & 7u) != 0 && factorsCount(state.colorBlendOp) && (constantAlpha(state.srcColorBlendFactor) || constantAlpha(state.dstColorBlendFactor));
+                const bool alphaReadsAlpha = (state.colorWriteMask & 8u) != 0 && factorsCount(state.alphaBlendOp) && (anyConstant(state.srcAlphaBlendFactor) || anyConstant(state.dstAlphaBlendFactor));
+                if (colorReadsAlpha || alphaReadsAlpha) {
+                    const auto value = result.blendConstants[3];
+                    Require((requiredBlendMask & 8u) == 0 || requiredBlendConstants[3] == value, "color targets require conflicting blend constants after component swap");
+                    requiredBlendConstants[3] = value;
+                    requiredBlendMask |= 8u;
+                }
             }
             const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
             if ((mapping == 0xe4u || mapping == 0xc6u) && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {

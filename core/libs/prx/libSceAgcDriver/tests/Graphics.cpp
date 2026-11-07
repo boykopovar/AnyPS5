@@ -2270,6 +2270,20 @@ void ReversedComponentOrderBlendTests() {
         twoTargets.context[0x1e0] = 0x65010504u;
         twoTargets.context[0x1e1] = 0x40000101u;
         expectFailure([&] { DecodeState(twoTargets); }, "reversed component order through a second source color needs that target to be the shader's only color export");
+        auto alphaReader = twoTargets;
+        alphaReader.context[0x31c + 0xfu] &= ~(3u << 11u);
+        alphaReader.context[0x1e0] = 0x40000e0du;
+        alphaReader.context[0x1e1] = 0x60130001u;
+        for (std::uint32_t i = 0; i < 4; ++i) alphaReader.context[0x105 + i] = std::bit_cast<std::uint32_t>(constants[i]);
+        expectFailure([&] { DecodeState(alphaReader); }, "conflicting blend constants");
+        alphaReader.context[0x1e1] = 0x40000013u;
+        expectFailure([&] { DecodeState(alphaReader); }, "conflicting blend constants");
+        alphaReader.context[0x1e1] = 0x40000001u;
+        Require(DecodeState(alphaReader).colors.size() == 2, "a standard target that reads no blend constant was refused beside a reversed target with constants");
+        alphaReader.context[0x1e1] = 0x60130001u;
+        alphaReader.context[0x108] = std::bit_cast<std::uint32_t>(constantOf(3));
+        const auto shared = DecodeState(alphaReader);
+        Require(shared.colors.size() == 2 && shared.blendConstants[3] == constantOf(3), "a standard target that reads the alpha constant was refused although the reversed target keeps its value");
     }
 }
 
