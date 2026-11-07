@@ -392,6 +392,33 @@ def main(argv=None):
         parser.error(str(error))
 
 
+def check_module_output(parser, directories, output, capture):
+    referenced_modules = {name.lower() for name, _ in capture.self_counts}
+    referenced_modules.update(name.lower() for name, _ in capture.inclusive)
+    for frames in capture.stacks:
+        for frame in frames.split(";"):
+            name, separator, _ = frame.partition("+0x")
+            if separator:
+                referenced_modules.add(name.lower())
+    module_output_alias = False
+    for directory in directories:
+        for source in Path(directory).iterdir():
+            if not source.is_file() or not (os.path.realpath(source) == os.path.realpath(output) or
+                                            (source.exists() and output.exists() and source.samefile(output))):
+                continue
+            if source.name.lower() in referenced_modules or source.suffix.lower() in (".prx", ".dll", ".exe"):
+                module_output_alias = True
+                continue
+            try:
+                with source.open("rb") as module:
+                    if module.read(2) == b"MZ":
+                        module_output_alias = True
+            except OSError:
+                module_output_alias = True
+    if module_output_alias:
+        parser.error("symbolized output must be separate from module inputs")
+
+
 def symbolize(parser, args):
     if args.out:
         output = Path(args.out)
@@ -400,42 +427,20 @@ def symbolize(parser, args):
                 source = Path(source)
                 if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
-    samples = load(args.samples, args.thread)
-    if args.out and not samples.stacks:
+    capture = load(args.samples, args.thread)
+    if args.out and not capture.stacks:
         parser.error("--out needs a collapsed-stack file")
+    samples = capture
     if args.since:
         samples = window(samples, load(args.since, args.thread))
     if args.out and samples.stacks:
-        referenced_modules = {name.lower() for name, _ in samples.self_counts}
-        referenced_modules.update(name.lower() for name, _ in samples.inclusive)
-        for frames in samples.stacks:
-            for frame in frames.split(";"):
-                name, separator, _ = frame.partition("+0x")
-                if separator:
-                    referenced_modules.add(name.lower())
-        module_output_alias = False
-        for directory in args.libs:
-            for source in Path(directory).iterdir():
-                if not source.is_file() or not (os.path.realpath(source) == os.path.realpath(output) or
-                                                (source.exists() and output.exists() and source.samefile(output))):
-                    continue
-                if source.name.lower() in referenced_modules or source.suffix.lower() in (".prx", ".dll", ".exe"):
-                    module_output_alias = True
-                    continue
-                try:
-                    with source.open("rb") as module:
-                        if module.read(2) == b"MZ":
-                            module_output_alias = True
-                except OSError:
-                    module_output_alias = True
-        if module_output_alias:
-            parser.error("symbolized output must be separate from module inputs")
+        check_module_output(parser, args.libs, output, capture)
     symbolizer = Symbolizer(args.libs, samples.headers, args.demangle, warn=lambda text: print("warning: " + text, file=sys.stderr), unverified=args.unverified)
     for line in summarize(symbolizer, samples, args.top):
         print(line)
     if args.out:
         if not samples.stacks:
-            parser.error("--out needs a collapsed-stack file")
+            check_module_output(parser, args.libs, output, capture)
         with open(args.out, "w", encoding="utf-8") as output:
             for frames, count in samples.stacks.items():
                 output.write(";".join(symbolizer.frame(frame) for frame in frames.split(";")) + f" {count}\n")
