@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -182,6 +183,22 @@ int main(int argc, char** argv) {
             RequireUnit(plane, 0, 0.5f, UnitTexels, "the untouched unit retains its GPU depth results");
             Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "storing an untouched depth unit changed the CPU descriptors");
             std::puts(partialWatch ? "depth plane CPU descriptors with partial write watch tests passed" : "depth plane CPU descriptors after memoized collect tests passed");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-store-after-idle-flush") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before the idle flush did not cover the plane");
+            const auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                AgcDriver::Graphics::StorageTexture::FlushAllPending("idle");
+            }
+            Require(Since(before).units != 0, "the idle flush stored no depth unit");
+            Fill(plane, 0.25f);
+            device->WaitIdle();
+            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.25f, UnitTexels, "a CPU store made after the idle flush returned was overwritten by its depth plane store");
+            std::puts("depth plane CPU store after idle flush test passed");
             return 0;
         }
 
