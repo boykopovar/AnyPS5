@@ -65,8 +65,12 @@ ISA = [
 
 def table_source(encoding):
     key = KEYS.get(encoding, encoding.capitalize())
-    cases = "".join(f"        case 0x{number:02x}: return RdnaOpcode::{name};\n"
-                    for number, name in ENTRIES.get(encoding, {0: "Placeholder" + key}).items())
+    cases = ""
+    for number, name in ENTRIES.get(encoding, {0: "Placeholder" + key}).items():
+        numbers = number if isinstance(number, tuple) else (number,)
+        for member in numbers[:-1]:
+            cases += f"        case 0x{member:02x}:\n"
+        cases += f"        case 0x{numbers[-1]:02x}: return RdnaOpcode::{name};\n"
     return f"RdnaOpcode lookup{key}Opcode(uint32_t op)\n{{\n    switch (op)\n    {{\n{cases}    }}\n}}\n\n"
 
 
@@ -173,6 +177,18 @@ class ScanTests(unittest.TestCase):
                                    ("VOP2", "dpp16"): (1, 1, 0), ("VOP2", "dpp8"): (1, 0, 0),
                                    ("VOP1", "base"): (1, 1, 1), ("VOP1", "vop3"): (2, 2, 1), ("VOP1", "dpp16"): (1, 0, 0),
                                    ("VOPC", "vop3"): (2, 1, 1), ("EXP", "base"): (1, 1, 1)})
+
+    def test_case_fallthrough_maps_every_label_to_the_result(self):
+        isa = ISA + [("S_CB_SYS", "SOPP", "base", 0x17), ("S_CB_USER", "SOPP", "base", 0x18),
+                     ("S_CB_OR", "SOPP", "base", 0x19), ("S_CB_AND", "SOPP", "base", 0x1A),
+                     ("S_END_SAVED", "SOPP", "base", 0x1B), ("S_END_ORDERED", "SOPP", "base", 0x1E)]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(ENTRIES, {"SOPP": {(0x17, 0x18, 0x19, 0x1A): "SCbranchCdbg", (0x1B, 0x1E): "SEndpgm"}}):
+                write_tree(directory)
+            result = shader_scan.measure(directory, isa)
+        sopp = next(f for f in result["forms"] if f["encoding"] == "SOPP")
+        self.assertEqual((sopp["total"], sopp["decoded"], sopp["missing"]),
+                         (6, 6, []))
 
     def test_unsupported_throws_skip_comments_rethrows_other_messages_and_tests(self):
         with tempfile.TemporaryDirectory() as directory:

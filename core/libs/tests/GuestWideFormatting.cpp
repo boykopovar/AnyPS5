@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include <climits>
+#include <cerrno>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -113,7 +114,12 @@ static void CheckPointer() {
         buffer == std::u16string(u"[      1234][1234      ][00001234][0000001a]"), "vswprintf %p width and precision");
     Require(Format(buffer, 64, u"[%.0p][%p]", address(0), address(0)) == 5 &&
         buffer == std::u16string(u"[][0]"), "vswprintf %p with a zero precision prints nothing");
-    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp ignores the l");
+    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp prints the pointer as %p does");
+    Require(Format(buffer, 64, u"[%lp]", address(0)) == 3 && buffer == std::u16string(u"[0]"), "vswprintf %lp of a null pointer");
+    Require(Format(buffer, 64, u"[%5.0p][%05.3p][%.0p]", address(0), address(0x1f), address(0x1f)) == 18 &&
+        buffer == std::u16string(u"[     ][  01f][1f]"), "vswprintf %p width beside a zero precision, 0 beside a precision, and %.0p of a pointer");
+    Require(snwprintf_s_nid_postfix(buffer, 16, u"[%lp]", address(0x1f)) == 4 && buffer == std::u16string(u"[1f]"), "snwprintf_s %lp prints the pointer as %p does");
+    Require(snwprintf_s_nid_postfix(buffer, 16, u"[%lp]", address(0)) == 3 && buffer == std::u16string(u"[0]"), "snwprintf_s %lp of a null pointer");
 }
 
 static void CheckCount() {
@@ -121,7 +127,7 @@ static void CheckCount() {
     int count = -7;
     Require(Format(buffer, 16, u"ab%ncd", &count) == 4 && buffer == std::u16string(u"abcd") && count == 2, "vswprintf %n");
     count = -7;
-    Require(Format(buffer, 16, u"%s%n!", "\xf0\x9f\x98\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
+    Require(Format(buffer, 16, u"%s%n!", "\xed\xa0\xbd\xed\xb8\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
     count = -7;
     Require(Format(buffer, 16, u"%n", &count) == 0 && buffer[0] == 0 && count == 0, "vswprintf %n at start");
     unsigned char bytes[2] = {0xaa, 0xaa};
@@ -150,10 +156,11 @@ static void CheckUnsignedSignFlags() {
 
 static void CheckGroupingFlag() {
     char16_t buffer[48];
-    Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g", 1234567, 42u, 1234.5, 12, 1e6) == 34 &&
-        buffer == std::u16string(u"1234567|42    |1234.50|+0012|1e+06"), "swprintf ' flag");
-    Require(snwprintf_s_nid_postfix(buffer, 48, u"%'lld %ls", 9876543210ll, u"x") == 12 && buffer == std::u16string(u"9876543210 x"),
-        "snwprintf_s ' flag");
+    Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g") == 26 &&
+        buffer == std::u16string(u"%'d|%'-6u|%'.2f|%'+05d|%'g"), "swprintf prints ' as an unknown conversion");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%'lld %ls", u"x") == 7 && buffer == std::u16string(u"%'lld x"),
+        "snwprintf_s prints ' as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"[%5k][%-4y][%+k]") == 17 && buffer == std::u16string(u"[   %k][%y  ][%k]"), "swprintf pads unknown conversions");
 }
 
 static void CheckSecureWideBoundary() {
@@ -208,8 +215,34 @@ static void CheckSwprintf() {
     Require(buffer == std::u16string(u"42-ab") && buffer[6] == u'x', "swprintf output");
     Require(swprintf_nid_postfix(buffer, 8, u"中%ls%s", u"文", "\xc3\xa9") == 3, "swprintf non-ASCII length");
     Require(buffer == std::u16string(u"中文é"), "swprintf non-ASCII output");
-    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xf0\x9f\x98\x80") == 2, "swprintf surrogate pair length");
-    Require(buffer == std::u16string(u"\U0001f600"), "swprintf surrogate pair output");
+    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xed\xa0\xbd\xed\xb8\x80") == 2 && buffer == std::u16string(u"\U0001f600"),
+        "swprintf decodes each 3-byte surrogate");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s]", "\xf0\x9f\x98\x80") == -1 && errno == 86 && buffer == std::u16string(u"["),
+        "swprintf rejects a 4-byte sequence and keeps the output before it");
+    for (const char* invalid : {"\x80", "\xc3", "\xc3x", "\xe2\x82", "\xff", "\xf8\x88\x80\x80\x80", "\xc3\xa9\xc3"}) {
+        errno = 0;
+        Require(swprintf_nid_postfix(buffer, 8, u"x%sy", invalid) == -1 && errno == 86 && buffer == std::u16string(u"x"), "swprintf rejects invalid UTF-8");
+    }
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s]", "\xc0\x80" "A") == 2 && buffer == std::u16string(u"[]"), "an overlong NUL ends the string");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s|%s]", "\xc1\x81", "\xe0\x81\x81") == 5 && buffer == std::u16string(u"[A|A]"), "overlong forms decode");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.1s]", "A\x80") == 3 && buffer == std::u16string(u"[A]"), "the precision stops before an invalid byte");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.2s]", "A\x80") == -1 && errno == 86, "the precision reaches an invalid byte");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "AB") == 2 && buffer == std::u16string(u"[]"), "precision zero writes nothing");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3s|%-3.0s]", "", "AB") == 3 && buffer == std::u16string(u"[|]"), "an empty narrow field is not padded");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3s]", "A\xc0\x80") == 5 && buffer == std::u16string(u"[  A]"), "a field with characters is padded");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "\x80") == -1 && errno == 86, "precision zero still decodes the first character");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"x%cy", 0x80) == -1 && errno == 86 && buffer == std::u16string(u"x"), "%c of a continuation byte fails with EILSEQ");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3c]", 0xe9) == -1 && errno == 0 && buffer == std::u16string(u"["), "%c of a lead byte fails without errno");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"%lc|%c", 0x20ac, 0xff) == -1 && errno == 86 && buffer == std::u16string(u"\u20ac|"), "%c keeps the output before it");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%c]", 0x141) == 3 && buffer == std::u16string(u"[A]"), "%c converts the low byte");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%c]", -1) == -1 && errno == 0, "%c of EOF fails without errno");
     Require(swprintf_nid_postfix(buffer, 8, u"") == 0 && buffer[0] == 0, "swprintf empty format");
     for (auto& unit : buffer) unit = u'x';
     Require(swprintf_nid_postfix(buffer, 3, u"%ls", u"abcd") < 0, "swprintf truncation result");
@@ -222,7 +255,10 @@ static void CheckSwprintf() {
     char16_t wide[16];
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
-    Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    Require(swprintf_nid_postfix(wide, 16, u"[%q][%5q]") == 11 && wide == std::u16string(u"[%q][   %q]"), "swprintf prints an unknown conversion");
+    char16_t letters[32];
+    Require(swprintf_nid_postfix(letters, 32, u"%C|%5C|%hC|%S|%-3S|%lS%d", 7) == 22 && letters == std::u16string(u"%C|   %C|%C|%S|%S |%S7"), "swprintf prints %C and %S as unknown conversions");
+    Require(swprintf_nid_postfix(letters, 32, u"%2$d %S %f", 1, 2, 3.5) == 13 && letters == std::u16string(u"2 %S 3.500000"), "positional %S takes no argument");
     for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
         wide[0] = u'x';
         Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
@@ -453,9 +489,9 @@ int main() {
     Check(u"%.2s", "abcd", u"ab");
     Check(u"%4.2s", "\xc3\xa9\xc3\xa8", u"  \u00e9\u00e8");
     Check(u"%-4.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8  ");
-    Check(u"%.2s", "\xf0\x9f\x98\x80x", u"\U0001f600");
-    Check(u"%.1s", "\xf0\x9f\x98\x80x", u"");
-    Check(u"%.3s", "\xf0\x9f\x98\x80x", u"\U0001f600x");
+    Check(u"%.2s", "\xed\xa0\xbd\xed\xb8\x80x", u"\U0001f600");
+    Check(u"%.1s", "\xed\xa0\xbd\xed\xb8\x80x", u"\xd83d");
+    Check(u"%.3s", "\xed\xa0\xbd\xed\xb8\x80x", u"\U0001f600x");
     CheckGroupingFlag();
     CheckUnsignedSignFlags();
 }

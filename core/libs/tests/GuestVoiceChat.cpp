@@ -68,6 +68,9 @@ int main() {
     Require(sceVoiceChatRequestJoinVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "join voice chat group did not return signed out");
     Require(sceVoiceChatRequestLeaveVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "leave voice chat group did not return signed out");
     Require(sceVoiceChatRequestDeleteVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "delete voice chat group did not return signed out");
+    Require(sceVoiceChatRequest0(1, nullptr, nullptr) == kSignedOut, "request 0 did not return signed out");
+    Require(sceVoiceChatRequest1(1, nullptr, nullptr) == kSignedOut, "request 1 did not return signed out");
+    Require(sceVoiceChatRequestAction(1, nullptr, nullptr) == kSignedOut, "request action did not return signed out");
     Require(sceVoiceChatRequestUpdateGameSessionVoiceChatChannelName(1, nullptr, nullptr) == kSignedOut, "update game session name did not return signed out");
     Require(sceVoiceChatRequestUpdatePlayerSessionVoiceChatChannelName(1, nullptr, nullptr) == kSignedOut, "update player session name did not return signed out");
     Require(sceVoiceChatRequestSetMemberVolume(1, nullptr, nullptr) == kSignedOut, "set member volume did not return signed out");

@@ -50,6 +50,18 @@ alignas(256) constexpr std::array<std::uint32_t, 30> VertexCode{
     0xbf810000,
 };
 
+alignas(256) constexpr auto RuntimeFetchCode = [] {
+    std::array<std::uint32_t, 36> code{};
+    std::copy_n(VertexCode.begin(), 23, code.begin());
+    const std::array<std::uint32_t, 8> stores{
+        0xe0c01000, 0x80020c04, 0xe0c01004, 0x80020d04,
+        0xe0c01008, 0x80020e04, 0xe0c0100c, 0x80020f04
+    };
+    std::copy(stores.begin(), stores.end(), code.begin() + 23);
+    std::copy(VertexCode.begin() + 25, VertexCode.end(), code.begin() + 31);
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 30> PostAddCode{
     0x7e020280, 0x7e040280,
     0xd70f7d05, 0x00020a10,
@@ -281,7 +293,7 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 32;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, 4 * Slots> Output{};
-alignas(256) std::array<std::uint32_t, 2048> VertexSlots{};
+alignas(256) std::array<std::uint32_t, 65538> VertexSlots{};
 alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
 alignas(256) std::array<std::uint32_t, 8> BufferTable{};
 alignas(256) constexpr std::array<std::uint16_t, 4> Indices{2, 0, 1, 0};
@@ -327,7 +339,7 @@ public:
         return userData;
     }
 
-    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) const {
+    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool runtimeFetch = false) const {
         ShaderRecompiler::ShaderVertexStageInfo info{};
         info.resourcesNum = 2;
         info.resources[0].fields = {BufferTable[0], BufferTable[1], BufferTable[2], BufferTable[3]};
@@ -336,7 +348,7 @@ public:
         info.resourcesDst[1] = {11, 1, 1, 1};
         info.fetchAttribReg = 6;
         info.fetchBufferReg = 4;
-        info.fetchEmbedded = true;
+        info.fetchEmbedded = !runtimeFetch;
         const std::array<ShaderRecompiler::MemoryRegion, 2> memory{{
             {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
             {reinterpret_cast<std::uintptr_t>(BufferTable.data()), std::as_bytes(std::span(BufferTable))}
@@ -349,7 +361,7 @@ public:
         };
         request.useCache = false;
         auto result = ShaderRecompiler::Recompile(request);
-        Require(result.vertexOffsetSgpr == static_cast<std::int32_t>(BaseVertexSgpr) && result.instanceOffsetSgpr == static_cast<std::int32_t>(StartInstanceSgpr), "the fetch adds of s16 and s17 were not folded into the draw (vertex " + std::to_string(result.vertexOffsetSgpr) + ", instance " + std::to_string(result.instanceOffsetSgpr) + ")");
+        if (!runtimeFetch) Require(result.vertexOffsetSgpr == static_cast<std::int32_t>(BaseVertexSgpr) && result.instanceOffsetSgpr == static_cast<std::int32_t>(StartInstanceSgpr), "the fetch adds of s16 and s17 were not folded into the draw (vertex " + std::to_string(result.vertexOffsetSgpr) + ", instance " + std::to_string(result.instanceOffsetSgpr) + ")");
         return result;
     }
 
@@ -371,7 +383,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw) {
+    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool compactRestart = false) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -382,7 +394,15 @@ public:
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
         const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
-        device->Draw(State(), draw, shaders);
+        if (compactRestart) {
+            auto context = device->graphicsContext();
+            context.primitiveListRestart = false;
+            auto state = State();
+            state.primitiveRestart = true;
+            AgcDriver::Graphics::Draw(context, state, draw, shaders);
+        } else {
+            device->Draw(State(), draw, shaders);
+        }
         device->WaitIdle();
     }
 
@@ -478,6 +498,25 @@ std::string Analysis(Fixture& fixture) {
         if (result.vertexOffsetShared != entry.vertex || result.instanceOffsetShared != entry.instance) failures += line;
     }
     return failures;
+}
+
+std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRestart) {
+    const auto userData = fixture.UserData(0, 0);
+    const auto vertex = fixture.Vertex(RuntimeFetchCode, userData, true);
+    Require(vertex.vertexAttributes.empty(), "runtime fetch must not become fixed vertex attributes");
+    VertexSlots.fill(0);
+    InstanceSlots.fill(0);
+    alignas(256) static std::array<std::uint32_t, 5> indices{};
+    indices = {0xffffffffu, index, index, index, 0xffffffffu};
+    const auto first = compactRestart ? 0u : 1u;
+    const auto count = compactRestart ? 5u : 3u;
+    const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(indices.data() + first), count, 4, 1, 0, true, 0, 0};
+    fixture.Draw(vertex, draw, compactRestart);
+    std::cout << "runtime fetch, index " << index << ", compact restart " << compactRestart
+              << ", attributes " << vertex.vertexAttributes.size() << ": atomic readback "
+              << Output[0] << ' ' << Output[1] << ' ' << Output[2] << ' ' << Output[3] << '\n';
+    const std::array<std::uint32_t, 4> expected{index, 0, index, 0};
+    return std::equal(expected.begin(), expected.end(), Output.begin()) ? "" : "runtime-fetched VertexIndex was changed\n";
 }
 
 std::string Run(Fixture& fixture) {
@@ -587,12 +626,22 @@ std::string Run(Fixture& fixture) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Fixture fixture(device);
-        const auto failures = Run(fixture);
+        std::string failures;
+        if (argc == 1) failures = Run(fixture);
+        else {
+            Require(argc == 3 || argc == 4, "expected runtime-fetch INDEX [compact-restart]");
+            Require(std::string(argv[1]) == "runtime-fetch", "unknown case");
+            const auto index = std::stoul(argv[2]);
+            Require(index < VertexSlots.size(), "index exceeds the runtime input buffer");
+            const bool compactRestart = argc == 4;
+            if (compactRestart) Require(std::string(argv[3]) == "compact-restart", "unknown index path");
+            failures = RuntimeFetch(fixture, static_cast<std::uint32_t>(index), compactRestart);
+        }
         if (!failures.empty()) {
             std::cerr << "vertex and instance indices differ from the guest's:\n" << failures;
             return 1;

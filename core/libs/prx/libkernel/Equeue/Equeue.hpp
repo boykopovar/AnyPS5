@@ -68,6 +68,7 @@ struct KernelEqueueEvent {
     uint64_t deadlineNs = 0;
     uint64_t intervalNs = 0;
     std::int64_t lowWater = 0;
+    bool lowWaterAlwaysMet = false;
     KernelEvent event;
     KernelFilter filter;
     std::deque<KernelEvent> pendingEvents;
@@ -75,6 +76,8 @@ struct KernelEqueueEvent {
 
 class KernelEqueuePrivate {
 public:
+    static constexpr std::size_t kMaxPendingEvents = 64;
+
     explicit KernelEqueuePrivate(KernelEqueue handle, bool reportOncePerWait = false);
     ~KernelEqueuePrivate();
 
@@ -137,6 +140,7 @@ void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
 void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
+void KqueueSignalSent(int guest);
 extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
 extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
 std::optional<bool> KqueueReadable(int descriptor);
