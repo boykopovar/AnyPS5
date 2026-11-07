@@ -1,4 +1,5 @@
 #include "prx/libScePsml_debug/include/Api.hpp"
+#include "prx/libScePsml_debug/include/LaterExports.hpp"
 #include "prx/libkernel/libkernel.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -22,6 +23,7 @@ constexpr std::int32_t SCE_PSML_ERROR_UNSUPPORTED_TYPE = static_cast<std::int32_
 constexpr std::int32_t SCE_PSML_ERROR_UNSUPPORTED_CONSOLE = static_cast<std::int32_t>(0x8A810012);
 constexpr std::int32_t SCE_PSML_ERROR_UNSUPPORTED_RESOLUTION = static_cast<std::int32_t>(0x8A810013);
 constexpr std::int32_t SCE_PSML_ERROR_SHARED_RESOURCES_BUSY = static_cast<std::int32_t>(0x8A810015);
+constexpr std::int32_t SCE_PSML_ERROR_SYNC_SUBMIT = static_cast<std::int32_t>(0x8A810016);
 constexpr std::int32_t Mfsr2ErrorNotInitialized = static_cast<std::int32_t>(0x8A8A0001);
 constexpr std::int32_t Mfsr2ErrorUnsupportedConsole = static_cast<std::int32_t>(0x8A8A0012);
 constexpr std::uint64_t MfsrBlockBytes = 0x200000;
@@ -72,6 +74,8 @@ struct MfsrObject {
 };
 
 std::atomic<bool> g_mfsrInitialized{false};
+std::atomic<bool> g_mfsrLowLatencySubmit{false};
+std::atomic<bool> g_mfsrSyncSubmit{false};
 std::atomic<std::uint8_t> g_mfsrSpecularAA{0};
 std::atomic<std::uint32_t> g_mfsrFeatureFlags{0};
 std::mutex g_mfsrMutex;
@@ -281,11 +285,14 @@ std::int32_t APS5_VABI scePsmlMfsrIsCaptureInProgress(void* context) {
 }
 
 std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket1000(void* context, void* commandBuffer, const void* param) {
- (void)context;
- (void)commandBuffer;
  (void)param;
- if (g_mfsrInitialized) NotImplemented_nid_no_patch(__func__);
- return SCE_PSML_ERROR_NOT_INITIALIZED;
+ if (!g_mfsrInitialized) return SCE_PSML_ERROR_NOT_INITIALIZED;
+ MfsrObject object;
+ if (!FindMfsrObject(context, &object)) return SCE_PSML_ERROR_INVALID_ARGUMENT;
+ if (commandBuffer == nullptr) return SCE_PSML_ERROR_NULL_OUTPUT;
+ if (!g_mfsrLowLatencySubmit.load() && g_mfsrSyncSubmit.load()) return SCE_PSML_ERROR_SYNC_SUBMIT;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 std::int32_t APS5_VABI scePsmlMfsrGetDispatchMfsrPacket900(void* context, void* commandBuffer, const void* param) {
@@ -362,6 +369,42 @@ int APS5_VABI scePsmlMfsrEnableQuality8K(std::uint32_t) {
 int APS5_VABI scePsmlMfsrEnableLightWeight(std::uint32_t) {
  g_mfsrFeatureFlags |= 2u;
  return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI scePsmlMfsrCreateContext() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrCreateContext800M3() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrCreateContextFrom2023July() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetContextBufferRequirement() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetContextBufferRequirementFrom2023July() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetDispatchMfsrPacket() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetDispatchMfsrPacketFrom2023July() {
+ NotImplemented_nid_no_patch(__func__);
 }
 
 }
