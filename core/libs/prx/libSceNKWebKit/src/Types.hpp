@@ -101,6 +101,17 @@ public:
     bool valid = false;
 };
 
+class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
+public:
+    URLRequest() = default;
+    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {}
+
+    Retained<URL> url;
+    Retained<URL> firstPartyForCookies;
+    std::string httpMethod = "GET";
+    Retained<Data> httpBody;
+};
+
 class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
 public:
     URLResponse() = default;

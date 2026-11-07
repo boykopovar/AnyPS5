@@ -630,6 +630,47 @@ static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
 
+    Require(WKURLRequestCreateWithWKURL(nullptr) == nullptr);
+
+    auto* url = WKURLCreateWithUTF8CString("https://playstation.com/en-us/");
+    auto* request = WKURLRequestCreateWithWKURL(url);
+    Require(request != nullptr);
+    Require(WKGetTypeID(request) == WKURLRequestGetTypeID());
+
+    auto* reqUrl = WKURLRequestCopyURL(request);
+    Require(reqUrl != nullptr);
+    auto* reqUrlStr = WKURLCopyString(reqUrl);
+    Require(WKStringIsEqualToUTF8CString(reqUrlStr, "https://playstation.com/en-us/"));
+    WKRelease(reqUrlStr);
+    WKRelease(reqUrl);
+
+    auto* partyUrl = WKURLRequestCopyFirstPartyForCookies(request);
+    Require(partyUrl == nullptr);
+
+    auto* method = WKURLRequestCopyHTTPMethod(request);
+    Require(method != nullptr);
+    Require(WKStringIsEqualToUTF8CString(method, "GET"));
+    WKRelease(method);
+
+    const unsigned char postData[] = "test=123";
+    auto* bodyData = WKDataCreate(postData, sizeof(postData) - 1);
+    auto* modifiedRequest = WKURLRequestCopySettingHTTPBody(request, bodyData);
+    Require(modifiedRequest != nullptr);
+    Require(modifiedRequest != request);
+
+    auto* modMethod = WKURLRequestCopyHTTPMethod(modifiedRequest);
+    Require(WKStringIsEqualToUTF8CString(modMethod, "GET"));
+    WKRelease(modMethod);
+
+    auto* clearedRequest = WKURLRequestCopySettingHTTPBody(modifiedRequest, nullptr);
+    Require(clearedRequest != nullptr);
+    WKRelease(clearedRequest);
+
+    WKRelease(modifiedRequest);
+    WKRelease(bodyData);
+    WKRelease(request);
+    WKRelease(url);
+
     auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
         NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
         NKWebKit::String::FromUtf8("image/png"),
@@ -640,11 +681,11 @@ static void TestURLRequestResponse() {
     );
     const void* responseRef = NKWebKit::ToRef(responseObj);
 
-    auto* url = WKURLResponseCopyURL(responseRef);
-    auto* urlString = WKURLCopyString(url);
+    auto* responseUrl = WKURLResponseCopyURL(responseRef);
+    auto* urlString = WKURLCopyString(responseUrl);
     Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/test.png"));
     WKRelease(urlString);
-    WKRelease(url);
+    WKRelease(responseUrl);
 
     auto* mime = WKURLResponseCopyMIMEType(responseRef);
     Require(WKStringIsEqualToUTF8CString(mime, "image/png"));
