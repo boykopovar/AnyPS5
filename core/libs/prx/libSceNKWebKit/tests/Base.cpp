@@ -874,6 +874,7 @@ static void TestSerializedScriptValue() {
 
     WKRelease(serStr);
     JSGlobalContextRelease(ctx);
+}
 
 template<typename Function>
 static bool ThrowsNavigationData(Function function, const void* ref) {
