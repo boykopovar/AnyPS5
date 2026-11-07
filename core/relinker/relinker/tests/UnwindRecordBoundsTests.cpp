@@ -52,8 +52,8 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 13; ++kind) {
-            auto bytes = Fixture(); auto segment = load;
+        for (int kind = 0; kind < 14; ++kind) {
+            auto bytes = Fixture(); auto segment = load; auto ehSeg = eh;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
                 case 1: Io::WriteU32(bytes, 96, 0x1000); break;
@@ -73,7 +73,7 @@ int main() {
                 case 9: bytes[3] = 0x1C; Io::WriteU64(bytes, 16, 0x8000000000000000ULL); break;
                 case 10: {
                     segment.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
-                    eh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
+                    ehSeg.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
                     Io::WriteU64(bytes, 4, 0xFFFFFFFFFFFF0040ULL);
                     bytes[3] = 0x13;
                     Io::WriteU32(bytes, 16, 0x107F0);
@@ -95,16 +95,17 @@ int main() {
                     bytes[99] = 0x80;
                     break;
                 }
+                case 13: bytes[3] = 0x05; break;
             }
             bool rejected = false;
-            std::vector<Domain::ProgramHeader> headers = {segment, eh};
+            std::vector<Domain::ProgramHeader> headers = {segment, ehSeg};
             if (kind == 8) {
                 Domain::ProgramHeader high{}; high.Type = 1; high.MappedAddress = 0xFFFFFFFFFFFFF000ULL; high.FileSize = 0x100;
                 headers.push_back(high);
             }
             if (kind == 10) {
                 Domain::ProgramHeader funcSeg{}; funcSeg.Type = 1; funcSeg.MappedAddress = 0x800; funcSeg.FileSize = 0x20;
-                headers = {segment, eh, funcSeg};
+                headers = {segment, ehSeg, funcSeg};
             }
             try { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }
             catch (const std::exception&) { rejected = true; }
@@ -403,6 +404,52 @@ int main() {
             fdeOverflowRejected = std::string(error.what()).find("unwind range is not file-backed") != std::string::npos;
         }
         Require(fdeOverflowRejected);
-        std::cout << "35 unwind record cases passed\n";
+        std::vector<std::uint8_t> landingPadBytes(0x400, 0);
+        Io::WriteU32(landingPadBytes, 0x200, 25);
+        landingPadBytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), landingPadBytes.begin() + 0x209);
+        landingPadBytes[0x212] = 0;
+        Io::WriteU64(landingPadBytes, 0x213, 0x1000);
+        landingPadBytes[0x21B] = 0;
+        landingPadBytes[0x21C] = 0;
+        Io::WriteU32(landingPadBytes, 0x220, 29);
+        Io::WriteU32(landingPadBytes, 0x224, 0x24);
+        Io::WriteU64(landingPadBytes, 0x228, 0x1000);
+        Io::WriteU64(landingPadBytes, 0x230, 0x20);
+        landingPadBytes[0x238] = 8;
+        Io::WriteU64(landingPadBytes, 0x239, 0x280);
+        landingPadBytes[0x280] = 0;
+        Io::WriteU64(landingPadBytes, 0x281, 0x1000);
+        landingPadBytes[0x289] = 0xFF;
+        landingPadBytes[0x28A] = 11;
+        landingPadBytes[0x28B] = 13;
+        Io::WriteU32(landingPadBytes, 0x28C, 0);
+        Io::WriteU32(landingPadBytes, 0x290, 1);
+        Io::WriteU32(landingPadBytes, 0x294, static_cast<std::uint32_t>(-0x1001));
+        landingPadBytes[0x298] = 0;
+        landingPadBytes[0x300] = 1;
+        landingPadBytes[0x302] = 3;
+        Io::WriteU64(landingPadBytes, 0x304, 0x200);
+        Io::WriteU32(landingPadBytes, 0x30C, 1);
+        Io::WriteU64(landingPadBytes, 0x310, 0x1000);
+        Io::WriteU64(landingPadBytes, 0x318, 0x220);
+        Domain::ProgramHeader landingPadLoad{}; landingPadLoad.Type = 1; landingPadLoad.Flags = 4; landingPadLoad.FileSize = landingPadBytes.size(); landingPadLoad.MemorySize = landingPadBytes.size(); landingPadLoad.Alignment = 8;
+        Domain::ProgramHeader landingPadEh = landingPadLoad; landingPadEh.Type = 0x6474E550; landingPadEh.Offset = 0x300; landingPadEh.MappedAddress = 0x300; landingPadEh.FileSize = 32; landingPadEh.MemorySize = 32; landingPadEh.Alignment = 4;
+        bool landingPadUnderflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(landingPadBytes, {landingPadLoad, landingPadEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            landingPadUnderflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
+        }
+        Require(landingPadUnderflowRejected);
+        auto landingPadPosBytes = landingPadBytes;
+        Io::WriteU64(landingPadPosBytes, 0x281, std::numeric_limits<std::uint64_t>::max() - 16);
+        Io::WriteU32(landingPadPosBytes, 0x294, 17);
+        bool landingPadOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(landingPadPosBytes, {landingPadLoad, landingPadEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            landingPadOverflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
+        }
+        Require(landingPadOverflowRejected);
+        std::cout << "37 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
