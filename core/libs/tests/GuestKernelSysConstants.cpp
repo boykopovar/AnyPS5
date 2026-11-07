@@ -20,6 +20,7 @@ int main() {
 
     Require(sceKernelAddResource() == 0);
     Require(sceKernelEventLogInit() == 0);
+    Require(sceKernelIsAuthenticTrinity() == 0);
     Require(sceKernelIsGenuineKratosCex() == 0);
     Require(sceKernelReleaseTraceDirectMemory() == 0);
 
