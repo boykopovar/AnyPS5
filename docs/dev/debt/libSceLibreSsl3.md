@@ -53,6 +53,7 @@
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
 - [BIO_get_data, BIO_set_data, BIO_set_init, BIO_get_shutdown, BIO_set_shutdown, BIO_set_flags and BIO_clear_flags](../../../core/libs/prx/libSceLibreSsl3/src/BioFields.cpp) (libSceLibreSsl3) - nothing is checked on the console. They read or write `ptr`, `init`, `shutdown` and `flags` as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_lib.c#L205-L266) `bio_lib.c` does. This port's BIOs come from libSceLibreSsl's forwarded `BIO_new`, so the fields are at their 2.5.4 offsets in the 104-byte `LibreSsl::Bio`; 4.0.0 adds `callback_ex` before them, which moves them 8 bytes, but its `BIO` is opaque to titles. A null BIO, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [OPENSSL_init_ssl](../../../core/libs/prx/libSceLibreSsl3/src/InitSsl.cpp) (libSceLibreSsl3) - `OPENSSL_INIT_LOAD_CONFIG` before the configuration is settled, which loads the console's configuration file, throws `NotImplemented_nid_no_patch`; nothing is checked on the console. Otherwise it returns 1, as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl/ssl_init.c#L29-L58) `ssl_init.c` does: its once-only step runs only `SSL_load_error_strings`, empty in the [firmware 13.42 module](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914), and `SSL_library_init` calls it, not the reverse. As in `crypto_init.c` and `conf_sap.c`, `OPENSSL_INIT_NO_LOAD_CONFIG` settles the configuration and a later `OPENSSL_INIT_LOAD_CONFIG` is a no-op. `OPENSSL_cpuid_setup` is not modelled. Closes when: compared with the console.
 
 - [SSL_SESSION_get_timeout, SSL_SESSION_set_time and SSL_SESSION_get_protocol_version](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - forwarded session lifecycle interoperability, independent console execution, resumption, serialization and expiry remain unverified. The fields follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl). [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h) instead puts timeout/time at 144/152; these accessors must not receive that older layout. Tests use caller-owned storage. A null protocol-version input throws instead of dereferencing it.
 - [Session metadata fields](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - other firmware revisions are unverified. [BunnyFl reports disassembly only](https://github.com/boykopovar/AnyPS5/pull/15119#pullrequestreview-5742135511) of firmware 13.42 `system/common/lib/libSceLibreSsl3.sprx` (SHA256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`): getter `0xf2130` reads 64-bit timeout at 168 with null returning zero; setter `0xf2150` writes 64-bit creation time at 176 and returns it, with null returning zero; getter `0xf2170` reads 32-bit version at 0 without a null check. The module and listing have not been independently acquired or executed here.
@@ -66,8 +67,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 140 still-unimplemented callable exports: 130 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 168 remaining callable exports: 158 155 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 132 still-unimplemented callable exports: 122 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -158,14 +158,12 @@
 | `SSL_get_version` | `dL2V0os4TZ4` |
 | `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
 | `i2d_X509` | `e2ReciVG21w` |
-
 | `SSL_CTX_set_keylog_callback` | `fR2Wat3ssHs` |
 | `d2i_X509_CRL` | `fVos2kAqfMI` |
 | `tls_write` | `fZJr2OF+KGw` |
 | `X509_ALGOR_get0` | `fdvZNUHm-dE` |
 | `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
 | `EVP_PKEY_assign` | `gp5dGS14-pI` |
-| `OPENSSL_init_ssl` | `hGiyDq-l4AE` |
 | `i2d_PKCS8_PRIV_KEY_INFO` | `iFlkTGEbE9k` |
 | `BN_div` | `iHetf873n+4` |
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
