@@ -42,6 +42,7 @@
 
 namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
+constexpr std::int64_t WmpErrAbstractMethod = -3;
 constexpr std::int64_t WmpErrOutOfMemory = -101;
 constexpr std::int64_t WmpErrUnsupportedFormat = -106;
 constexpr std::int64_t WmpErrBufferOverflow = -103;
@@ -281,8 +282,8 @@ int APS5_VABI PKFormatConverter_Release_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageDecode_Copy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageDecode_Copy_nid_postfix(void*, const void*, std::uint8_t*, std::uint32_t) {
+    return WmpErrAbstractMethod;
 }
 
 int APS5_VABI PKImageDecode_Create_WMP_nid_postfix() {
