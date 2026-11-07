@@ -116,3 +116,23 @@ static_assert(offsetof(LibreSsl3Rsa, dmq1) == 72);
 static_assert(offsetof(LibreSsl3Rsa, iqmp) == 80);
 static_assert(sizeof(LibreSsl3Bio) == 112);
 static_assert(offsetof(LibreSsl3Bio, references) == 80);
+
+struct LibreSsl3BioMethod {
+    std::int32_t type;
+    const char* name;
+    void* write;
+    void* read;
+    void* puts;
+    void* gets;
+    void* ctrl;
+    void* create;
+    void* destroy;
+    void* callbackCtrl;
+};
+
+static_assert(sizeof(LibreSsl3BioMethod) == 80);
+static_assert(offsetof(LibreSsl3BioMethod, name) == 8);
+static_assert(offsetof(LibreSsl3BioMethod, write) == 16);
+static_assert(offsetof(LibreSsl3BioMethod, read) == 24);
+static_assert(offsetof(LibreSsl3BioMethod, ctrl) == 48);
+static_assert(offsetof(LibreSsl3BioMethod, destroy) == 64);

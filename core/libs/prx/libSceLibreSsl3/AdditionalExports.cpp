@@ -1,5 +1,8 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <stdexcept>
+#include <vector>
 
 extern "C" {
 
@@ -7,16 +10,25 @@ int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_clear_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_clear_flags_nid_postfix(LibreSsl3Bio* bio, int flags) {
+    if (!bio) throw std::invalid_argument("BIO_clear_flags requires a BIO");
+    bio->flags &= ~flags;
 }
 
-int APS5_VABI BIO_set_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_flags_nid_postfix(LibreSsl3Bio* bio, int flags) {
+    if (!bio) throw std::invalid_argument("BIO_set_flags requires a BIO");
+    bio->flags |= flags;
 }
 
-int APS5_VABI BN_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+LibreSsl3Bignum* APS5_VABI BN_dup_nid_postfix(const LibreSsl3Bignum* source) {
+    if (!source) return nullptr;
+    const auto* value = reinterpret_cast<const Bignum*>(source);
+    std::vector<unsigned char> bytes((BN_num_bits_nid_postfix(value) + 7) / 8);
+    BN_bn2bin_nid_postfix(value, bytes.data());
+    auto* copy = BN_bin2bn_nid_postfix(bytes.data(), static_cast<int>(bytes.size()), nullptr);
+    if (!copy) return nullptr;
+    if (copy->top > 0) copy->neg = source->negative;
+    return reinterpret_cast<LibreSsl3Bignum*>(copy);
 }
 
 int APS5_VABI ERR_func_error_string_nid_postfix() {
@@ -156,8 +168,9 @@ int APS5_VABI EC_KEY_set_asn1_flag_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_init_nid_postfix(LibreSsl3Bio* bio, int init) {
+    if (!bio) throw std::invalid_argument("BIO_set_init requires a BIO");
+    bio->initialized = init;
 }
 
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
@@ -168,8 +181,8 @@ int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl3BioMethod* method) {
+    if (method) free_nid_postfix(method);
 }
 
 int APS5_VABI tls_handshake_nid_postfix() {
@@ -201,8 +214,9 @@ int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_get_shutdown_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_get_shutdown_nid_postfix(const LibreSsl3Bio* bio) {
+    if (!bio) throw std::invalid_argument("BIO_get_shutdown requires a BIO");
+    return bio->shutdown;
 }
 
 int APS5_VABI tls_accept_socket_nid_postfix() {
@@ -214,20 +228,26 @@ int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch() {
 }
 APS5_EXPORT("4pEl-5DmrrM", Unknown_4pEl_minus_5DmrrM_nid_no_patch);
 
-int APS5_VABI BIO_meth_set_write_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl3BioMethod* method, void* write) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_write requires a method");
+    method->write = write;
+    return 1;
 }
 
-int APS5_VABI BIO_meth_set_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_create_nid_postfix(LibreSsl3BioMethod* method, void* create) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_create requires a method");
+    method->create = create;
+    return 1;
 }
 
 int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_read_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl3BioMethod* method, void* read) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_read requires a method");
+    method->read = read;
+    return 1;
 }
 
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
@@ -276,8 +296,10 @@ int APS5_VABI ERR_lib_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_ctrl_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_ctrl_nid_postfix(LibreSsl3BioMethod* method, void* ctrl) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_ctrl requires a method");
+    method->ctrl = ctrl;
+    return 1;
 }
 
 int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch() {
@@ -375,8 +397,9 @@ int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_get_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void* APS5_VABI BIO_get_data_nid_postfix(const LibreSsl3Bio* bio) {
+    if (!bio) throw std::invalid_argument("BIO_get_data requires a BIO");
+    return bio->data;
 }
 
 int APS5_VABI EVP_PKEY2PKCS8_nid_postfix() {
@@ -436,8 +459,9 @@ int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_data_nid_postfix(LibreSsl3Bio* bio, void* data) {
+    if (!bio) throw std::invalid_argument("BIO_set_data requires a BIO");
+    bio->data = data;
 }
 
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
@@ -448,16 +472,17 @@ int APS5_VABI X509_ALGOR_get0_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_shutdown_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_set_shutdown_nid_postfix(LibreSsl3Bio* bio, int shutdown) {
+    if (!bio) throw std::invalid_argument("BIO_set_shutdown requires a BIO");
+    bio->shutdown = shutdown;
 }
 
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BN_div_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BN_div_nid_postfix(LibreSsl3Bignum* quotient, LibreSsl3Bignum* remainder, const LibreSsl3Bignum* dividend, const LibreSsl3Bignum* divisor, BignumContext*) {
+    return LibreSslBnDiv_nid_no_patch(reinterpret_cast<Bignum*>(quotient), reinterpret_cast<Bignum*>(remainder), reinterpret_cast<const Bignum*>(dividend), reinterpret_cast<const Bignum*>(divisor));
 }
 
 int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix() {
@@ -472,8 +497,10 @@ int APS5_VABI X509V3_set_ctx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_destroy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_destroy_nid_postfix(LibreSsl3BioMethod* method, void* destroy) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_destroy requires a method");
+    method->destroy = destroy;
+    return 1;
 }
 
 int APS5_VABI tls_config_set_ciphers_nid_postfix() {
@@ -492,8 +519,12 @@ int APS5_VABI SSL_provide_quic_data_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+LibreSsl3BioMethod* APS5_VABI BIO_meth_new_nid_postfix(int type, const char* name) {
+    auto* method = static_cast<LibreSsl3BioMethod*>(calloc_nid_postfix(1, sizeof(LibreSsl3BioMethod)));
+    if (!method) return nullptr;
+    method->type = type;
+    method->name = name;
+    return method;
 }
 
 int APS5_VABI d2i_PUBKEY_nid_postfix() {

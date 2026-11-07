@@ -623,6 +623,57 @@ void TestFileAndSocket() {
 }
 #endif
 
+#ifndef ANYPS5_BIO_DYNAMIC
+void RequireBignumPrint(const char* hex, const std::string& expected) {
+    Bignum* value = nullptr;
+    Require(BN_hex2bn_nid_postfix(&value, hex) > 0 && value != nullptr, "parse BIGNUM for BN_print");
+    Bio* output = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(output != nullptr, "new memory BIO for BN_print");
+    Require(BN_print_nid_postfix(output, value) == 1, "BN_print returns 1");
+    RequireData(output, expected);
+    Require(BIO_free_nid_postfix(output) == 1, "free BN_print BIO");
+    BN_free_nid_postfix(value);
+}
+
+void TestBignumPrint() {
+    RequireBignumPrint("0", "0");
+    RequireBignumPrint("0000", "0");
+    RequireBignumPrint("1F", "1F");
+    RequireBignumPrint("0000ABCDEF", "ABCDEF");
+    RequireBignumPrint("-1f", "-1F");
+    RequireBignumPrint("10000000000000000", "10000000000000000");
+    RequireBignumPrint("-FEDCBA9876543210FEDCBA", "-FEDCBA9876543210FEDCBA");
+
+    Bignum* value = nullptr;
+    Require(BN_hex2bn_nid_postfix(&value, "5") > 0 && value != nullptr, "parse BIGNUM for read-only BN_print");
+    Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly != nullptr, "read-only memory BIO for BN_print");
+    Require(BN_print_nid_postfix(readOnly, value) == 0, "BN_print on a read-only BIO returns 0");
+    RequireError(0x20fff07e);
+    Require(BIO_free_nid_postfix(readOnly) == 1, "free read-only BN_print BIO");
+    BN_free_nid_postfix(value);
+}
+#endif
+
+#ifndef ANYPS5_BIO_DYNAMIC
+void TestPrintf() {
+    Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "new memory BIO for BIO_printf");
+    Require(BIO_printf_nid_postfix(bio, "%s-%d", "ab", 42) == 5, "BIO_printf returns the formatted length");
+    RequireData(bio, "ab-42");
+    Require(BIO_printf_nid_postfix(bio, "%0600d", 7) == 600, "BIO_printf output longer than the stack buffer");
+    RequireData(bio, "ab-42" + std::string(599, '0') + "7");
+    Require(BIO_printf_nid_postfix(bio, "") == 0, "BIO_printf empty format writes nothing");
+    Require(BIO_free_nid_postfix(bio) == 1, "free BIO_printf BIO");
+
+    Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly != nullptr, "read-only memory BIO for BIO_printf");
+    Require(BIO_printf_nid_postfix(readOnly, "y") == -1, "BIO_printf on a read-only BIO fails");
+    RequireError(0x20fff07e);
+    Require(BIO_free_nid_postfix(readOnly) == 1, "free read-only BIO_printf BIO");
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -644,6 +695,8 @@ int main(int argc, char** argv) {
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
     TestFileAndSocket();
+    TestPrintf();
+    TestBignumPrint();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");

@@ -576,7 +576,7 @@ LibreSsl::Bio* APS5_VABI BIO_new_nid_postfix(const LibreSsl::BioMethod* method);
 LibreSsl::Bio* APS5_VABI BIO_new_fp_nid_postfix(void* stream, int closeFlag);
 LibreSsl::Bio* APS5_VABI BIO_new_mem_buf_nid_postfix(const void* source, int size);
 LibreSsl::Bio* APS5_VABI BIO_new_socket_nid_postfix(int socket, int closeFlag);
-int APS5_VABI BIO_printf_nid_postfix(void);
+int APS5_VABI BIO_printf_nid_postfix(LibreSsl::Bio* bio, const char* format, ...);
 int APS5_VABI BIO_puts_nid_postfix(LibreSsl::Bio* bio, const char* source);
 const LibreSsl::BioMethod* APS5_VABI BIO_s_file_nid_postfix();
 const LibreSsl::BioMethod* APS5_VABI BIO_s_mem_nid_postfix();
@@ -594,7 +594,8 @@ Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const B
 int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, BignumContext*);
 Bignum* APS5_VABI BN_new_nid_postfix(void);
 int APS5_VABI BN_num_bits_nid_postfix(const Bignum* a);
-int APS5_VABI BN_print_nid_postfix(void);
+extern "C" int LibreSslBnDiv_nid_no_patch(Bignum* quotient, Bignum* remainder, const Bignum* dividend, const Bignum* divisor);
+int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* value);
 int APS5_VABI BN_set_word_nid_postfix(Bignum* a, std::uint64_t w);
 int APS5_VABI BN_sub_word_nid_postfix(Bignum* a, std::uint64_t w);
 void APS5_VABI CMAC_CTX_free_nid_postfix(LibreSslCmac* context);

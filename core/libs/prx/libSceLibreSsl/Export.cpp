@@ -1,5 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <array>
 #include <atomic>
+#include <cstdarg>
 #include <cinttypes>
 #include <cstdio>
 #include <cstddef>
@@ -7,6 +9,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libc/include/General.hpp"
@@ -34,6 +37,10 @@ static_assert(offsetof(X509Extension, object) == 0);
 static_assert(offsetof(X509Extension, critical) == 8);
 static_assert(offsetof(X509Extension, value) == 16);
 
+int writeFormatted(LibreSsl::Bio* bio, const char* data, int length) {
+    return LibreSslBioWrite_nid_no_patch(bio, data, length) == length ? length : -1;
+}
+
 } // namespace
 
 extern "C" {
@@ -44,18 +51,48 @@ int APS5_VABI BIO_f_ssl_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI BIO_printf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI BIO_printf_nid_postfix(LibreSsl::Bio* bio, const char* format, ...) {
+    if (!format) throw std::invalid_argument("BIO_printf: null format");
+    std::va_list arguments;
+    va_start(arguments, format);
+    std::va_list again;
+    va_copy(again, arguments);
+    std::array<char, 512> small{};
+    const int length = std::vsnprintf(small.data(), small.size(), format, arguments);
+    va_end(arguments);
+    int result = -1;
+    if (length >= 0 && static_cast<std::size_t>(length) < small.size()) {
+        result = writeFormatted(bio, small.data(), length);
+    } else if (length >= 0) {
+        std::vector<char> large(static_cast<std::size_t>(length) + 1);
+        std::vsnprintf(large.data(), large.size(), format, again);
+        result = writeFormatted(bio, large.data(), length);
+    }
+    va_end(again);
+    return result;
 }
 
 int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int size) {
     return LibreSslBioWrite_nid_no_patch(bio, source, size);
 }
 
-int APS5_VABI BN_print_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* value) {
+    if (!value) throw std::invalid_argument("BN_print: null BIGNUM");
+    static constexpr char HexDigits[] = "0123456789ABCDEF";
+    std::string text;
+    if (value->neg) text += '-';
+    std::vector<unsigned char> bytes((BN_num_bits_nid_postfix(value) + 7) / 8);
+    BN_bn2bin_nid_postfix(value, bytes.data());
+    bool started = false;
+    for (const unsigned char byte : bytes) {
+        for (const unsigned nibble : {byte >> 4, byte & 0x0f}) {
+            if (!started && nibble == 0) continue;
+            started = true;
+            text += HexDigits[nibble];
+        }
+    }
+    if (!started) text += '0';
+    return LibreSslBioWrite_nid_no_patch(bio, text.data(), static_cast<int>(text.size())) == static_cast<int>(text.size()) ? 1 : 0;
 }
 
 void APS5_VABI CONF_modules_free_nid_postfix(void) {}
