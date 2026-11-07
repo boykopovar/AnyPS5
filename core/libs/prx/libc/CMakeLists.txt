@@ -155,6 +155,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedMultiprecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPrefix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
@@ -1119,6 +1120,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_math_exact COMMAND guest_math_exact_tests)
     if(WIN32)
         set_tests_properties(guest_math_exact PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_multiprecision_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Multiprecision.cpp)
+    target_include_directories(guest_sce_v2_multiprecision_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_multiprecision_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_multiprecision_tests)
+    add_test(NAME guest_sce_v2_multiprecision COMMAND guest_sce_v2_multiprecision_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_multiprecision PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_dinkumware_float_bits_tests ${LIBS_INCLUDE_DIR}/tests/GuestDinkumwareFloatBits.cpp)

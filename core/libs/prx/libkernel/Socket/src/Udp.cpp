@@ -130,6 +130,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool receiveShut = false;
     bool sendShut = false;
     bool localAddressCleared = false;
+    bool connectStarted = false;
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
@@ -944,6 +945,11 @@ int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
     socklen_t size = sizeof(peer);
     return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0 ? 0 : NativeError();
 }
+bool SendBeforeConnect(Socket& socket) {
+    if (socket.type != 1) return false;
+    std::lock_guard lock(socket.modeMutex);
+    return !socket.connectStarted;
+}
 int SocketSendFlags(Socket& socket, int flags) {
     std::lock_guard lock(socket.modeMutex);
     return NativeSendFlags(socket.options.noSignal ? flags | GuestNoSignal : flags);
@@ -1547,6 +1553,8 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         secondGuard.value = Invalid;
         first->peer = second;
         second->peer = first;
+        first->connectStarted = true;
+        second->connectStarted = true;
         if (nonblocking && (SetNonBlocking(*first) || SetNonBlocking(*second))) return -1;
         const int firstDescriptor = Install(std::move(first));
         if (firstDescriptor < 0) return -1;
@@ -1607,6 +1615,7 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (ZeroPortConnect(*socket, address, length)) return -1;
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
+    socket->connectStarted = true;
     if (socket->type != 2) lock.unlock();
     if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(ConnectError());
     if (socket->type == 2) socket->localAddressCleared = false;
@@ -1633,6 +1642,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
     try {
         auto accepted = std::make_shared<Socket>(native, listener->family, listener->type);
         guard.value = Invalid;
+        accepted->connectStarted = true;
         if (listener->family == 28) accepted->options.tcpMaximumSegment = 1220;
         bool inheritNonblocking;
         {
@@ -1667,6 +1677,7 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     if (!socket) return -1;
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
+    if (SendBeforeConnect(*socket)) return Fail(57);
     if (!buffer && length) return Fail(14);
 #ifdef _WIN32
     if (socket->type == 1 && PairPeerGone(*socket)) return Fail(32);
@@ -1889,6 +1900,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if (!socket) return -1;
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
+    if (!address && SendBeforeConnect(*socket)) return Fail(57);
     if (!buffer && length) return Fail(14);
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     int result;
@@ -2081,7 +2093,11 @@ std::shared_ptr<Socket> PassedSocket(int native) {
     const int family = GuestFromHostSocket(domain);
     const int guestType = GuestFromHostSocketType(type);
     if (family < 0 || guestType < 0) throw std::runtime_error("recvmsg: a received socket of host domain " + std::to_string(domain) + " and type " + std::to_string(type) + " is not supported");
-    return std::make_shared<Socket>(native, family, guestType);
+    auto socket = std::make_shared<Socket>(native, family, guestType);
+    sockaddr_storage peer{};
+    socklen_t peerLength = sizeof(peer);
+    socket->connectStarted = guestType != 1 || ::getpeername(native, reinterpret_cast<sockaddr*>(&peer), &peerLength) == 0;
+    return socket;
 }
 class ReceivedRights {
 public:
