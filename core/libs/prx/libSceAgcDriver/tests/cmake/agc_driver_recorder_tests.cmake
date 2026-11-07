@@ -16,6 +16,8 @@ target_include_directories(agc_driver_recorder_tests PRIVATE
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
 )
 
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/Recorder.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
+
 target_link_libraries(agc_driver_recorder_tests PRIVATE
         libSceAgc
         libkernel
@@ -306,6 +308,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_storage_write_back PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_storage_write_back_scratch COMMAND agc_driver_recorder_tests --storage-write-back-only)
+    set_tests_properties(agc_storage_write_back_scratch PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_NO_LINEAR_IMPORT_RETILE=1")
+    if(WIN32)
+        set_tests_properties(agc_storage_write_back_scratch PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_copied_direct_ordering COMMAND agc_driver_recorder_tests --copied-direct-only)
     set_tests_properties(agc_copied_direct_ordering PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
@@ -368,6 +376,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_changed_copy PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_unit_shadow COMMAND agc_driver_recorder_tests --unit-shadow-only)
     set_tests_properties(agc_unit_shadow PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=3000")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME agc_idle_publish_dmabuf_wait COMMAND agc_driver_recorder_tests --idle-publish-dmabuf-wait-only)
+        set_tests_properties(agc_idle_publish_dmabuf_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_WRITE_WATCH_IMPORTS=probe")
+    endif()
     add_test(NAME agc_idle_publish_wait COMMAND agc_driver_recorder_tests --idle-publish-wait-only)
     set_tests_properties(agc_idle_publish_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_WRITE_WATCH_IMPORTS=watch")
     add_test(NAME agc_driver_bda_reads_shadowed_results COMMAND agc_driver_recorder_tests --bda-shadowed-results-only)
@@ -397,6 +409,8 @@ if(BUILD_TESTING)
     set_tests_properties(agc_descriptor_pool_recycling PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_draw_snapshot_cap COMMAND agc_driver_recorder_tests --draw-snapshot-cap-only)
     set_tests_properties(agc_draw_snapshot_cap PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME agc_untracked_forget COMMAND agc_driver_recorder_tests --untracked-forget-only)
+    set_tests_properties(agc_untracked_forget PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_draw_snapshot_epoch COMMAND agc_driver_recorder_tests --draw-snapshot-epoch-only)
     set_tests_properties(agc_draw_snapshot_epoch PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_multisample_guest_access COMMAND agc_driver_recorder_tests --multisample-only)
@@ -423,7 +437,7 @@ if(BUILD_TESTING)
     add_test(NAME agc_metadata_pass COMMAND agc_driver_recorder_tests --metadata-pass-only)
     set_tests_properties(agc_metadata_pass PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_recorder_read_list agc_recorder_stored_bytes agc_host_import_unmap agc_parked_import_unmap agc_window_import_unmap agc_host_import_retirement agc_sparse_run_import agc_sparse_run_import_copied agc_unit_shadow agc_driver_recorder agc_idle_publish_wait agc_recorder_command_buffer_release agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_draw_snapshot_epoch agc_multisample_guest_access agc_repeat_storage_guard agc_draw_inputs_in_place agc_draw_inputs_copied agc_resident_present agc_slice_dirty agc_queued_write_groups agc_metadata_pass agc_tiled_resolve agc_changed_copy PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_recorder_read_list agc_recorder_stored_bytes agc_host_import_unmap agc_parked_import_unmap agc_window_import_unmap agc_host_import_retirement agc_sparse_run_import agc_sparse_run_import_copied agc_unit_shadow agc_driver_recorder agc_idle_publish_wait agc_recorder_command_buffer_release agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_untracked_forget agc_draw_snapshot_epoch agc_multisample_guest_access agc_repeat_storage_guard agc_draw_inputs_in_place agc_draw_inputs_copied agc_resident_present agc_slice_dirty agc_queued_write_groups agc_metadata_pass agc_tiled_resolve agc_changed_copy PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME agc_host_import_second_mapping COMMAND agc_driver_recorder_tests --host-import-second-mapping-only)
         set_tests_properties(agc_host_import_second_mapping PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION

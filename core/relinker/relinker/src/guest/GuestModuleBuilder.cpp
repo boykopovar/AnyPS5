@@ -90,7 +90,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress, const bool functionSymbolRoots) const {
     std::vector<std::filesystem::path> paths;
     std::map<std::filesystem::path, GuestImage> discovered;
     progress.Report({Domain::ProgressStage::Modules, {}, 0, modules.size()});
@@ -103,7 +103,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (excludedModules.contains(Io::Utf8Path(path.filename()))) throw Domain::RelinkerException("Excluded module supplied to converter: " + Io::Utf8Path(path));
         if (discovered.contains(path)) throw Domain::RelinkerException("Duplicate module path: " + Io::Utf8Path(path));
         paths.push_back(path);
-        auto image = GuestImageReader().Read(path, std::move(module.Bytes), windows);
+        auto image = GuestImageReader().Read(path, std::move(module.Bytes), windows, functionSymbolRoots);
         image.PatchedRanges = std::move(module.PatchedRanges);
         discovered.emplace(path, std::move(image));
     }
@@ -326,11 +326,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
-        if (windows) for (const auto dependency : dependencies[index]) require(dependency);
+        if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
     }
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
     };
+    std::vector<std::string> deferredSweep;
+    if (windows) {
+        std::set<std::size_t> dependedOn;
+        for (std::size_t index = 0; index < images.size(); ++index) for (const auto dependency : dependencies[index]) if (dependency != index && deferred(dependency)) dependedOn.insert(dependency);
+        for (const auto dependency : dependedOn) deferredSweep.push_back(images[dependency].OutputName);
+    }
     const auto appDirectory = [&](const GuestImage& image) {
         const auto directory = image.SourcePath.parent_path().lexically_relative(root).generic_string();
         return directory == "." ? std::string("app0") : "app0/" + directory;
@@ -485,6 +491,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runtime.Path = relativeDirectory + "/" + image.OutputName;
         runtime.Names = {Io::Utf8Path(image.SourcePath.filename()), image.Soname};
         runtime.DeferInitialization = deferred(index);
+        if (runtime.DeferInitialization) runtime.DeferredSweep = deferredSweep;
+        if (runtime.DeferInitialization) for (const auto dependency : dependencies[index]) if (deferred(dependency)) runtime.DeferredDependencies.push_back(images[dependency].OutputName);
         std::vector<std::uint8_t> output;
         const auto message = [&](std::string_view text) { progress.Message(text); };
         if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime, message);
@@ -535,11 +543,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
 }
 
 
-std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules) {
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules, const bool functionSymbolRoots) {
     std::map<std::size_t, std::string> sonames;
     const auto soname = [&](std::size_t index) -> const std::string& {
         const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true).Soname;
+        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true, functionSymbolRoots).Soname;
         return found->second;
     };
     std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;

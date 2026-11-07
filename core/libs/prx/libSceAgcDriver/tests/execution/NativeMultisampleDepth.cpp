@@ -2556,6 +2556,167 @@ void CheckStencilView(Context context, std::uint32_t fragments) {
     std::printf("Native D32S8 stencil view samples=%u: per-pixel, per-sample stencil and depth read in one dispatch through an R8_UINT and a D32 2D MSAA T#, twice after raster writes; other stencil descriptors refused\n", fragments);
 }
 
+enum class DepthAliasCase { Mismatched, Matching, Partial, UnprovenWord, OtherClearWord, OtherSamples, DrawnAfterImport, NewTargetAfterImport, Unchanged, DrawnBeforeImport, StencilWord, AliasedStencilPlane, SameFillAfterImport, OtherFillAfterImport, PartialFillAfterImport, DrawnThenSameFill, HtileWordThenSameFill, NegativeZeroFill, NanFill, FillShortOfAlias, PartialThenSameFill, OtherThenSameFill, DoubleSameFill, TripleSameFill, SameOtherSameFill, SamePartialSameFill, SameDrawSameFill, UnknownThenPartialFill };
+
+constexpr std::string_view depthAliasRefusal = "native multisample depth or HTILE aliases a multisampled colour target whose samples are only on the host";
+constexpr std::string_view unprovenHtileRefusal = "native multisample depth initial HTILE does not prove its clear value";
+constexpr std::string_view unprovenStencilHtileRefusal = "native multisample stencil initial HTILE does not prove its clear value";
+constexpr std::string_view guestDepthWriteRefusal = "guest writes over native multisample depth are not implemented";
+
+enum class HtileLayout { DepthOnly, Stencil, NoStencil };
+
+struct AliasedDepthHtile {
+    HtileLayout layout;
+    bool one;
+    std::uint32_t word;
+};
+
+constexpr std::array aliasedDepthHtiles{AliasedDepthHtile{HtileLayout::DepthOnly, false, 0u}, AliasedDepthHtile{HtileLayout::DepthOnly, true, 0xfffffff0u}, AliasedDepthHtile{HtileLayout::Stencil, false, 0xf0u}, AliasedDepthHtile{HtileLayout::Stencil, false, 0u}, AliasedDepthHtile{HtileLayout::Stencil, true, 0xfffc00f0u}, AliasedDepthHtile{HtileLayout::NoStencil, false, 0xf0u}, AliasedDepthHtile{HtileLayout::NoStencil, false, 0u}, AliasedDepthHtile{HtileLayout::NoStencil, true, 0xfffc00f0u}};
+
+void CheckAliasedDepth(Context context, std::uint32_t fragments, const AliasedDepthHtile& htile, DepthAliasCase which, std::uint32_t colorFragments = 0u) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    const bool one = htile.one;
+    const bool depthOnly = htile.layout == HtileLayout::DepthOnly;
+    const bool stencilFormat = htile.layout != HtileLayout::NoStencil;
+    const std::uint32_t proving = htile.word;
+    const auto storeWords = [](std::uint64_t address, std::size_t size, std::uint32_t word) { std::fill_n(reinterpret_cast<std::uint32_t*>(address), size / sizeof(std::uint32_t), word); };
+    std::memset(memory.Data(), 0x5c, bytes);
+    std::memset(stencil.Data(), 0, stencilBytes);
+    storeWords(metadata.Address(), metadataBytes, which == DepthAliasCase::OtherClearWord ? proving ^ (depthOnly ? 0xfffffff0u : 0xfffc0000u) : proving);
+    if (which == DepthAliasCase::UnprovenWord) storeWords(metadata.Address() + metadataBytes - sizeof(std::uint32_t), sizeof(std::uint32_t), proving | 15u);
+    if (which == DepthAliasCase::StencilWord) storeWords(metadata.Address() + metadataBytes - sizeof(std::uint32_t), sizeof(std::uint32_t), proving | 0x100u);
+    DepthTarget target{memory.Address(), stencilFormat ? stencil.Address() : 0u, extent, stencilFormat ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT, one ? 1.0f : 0.0f, 0u, metadata.Address(), htile.layout == HtileLayout::Stencil, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = depthOnly;
+    ColorTarget color{};
+    color.address = color.surfaceAddress = memory.Address();
+    color.extent = color.surfaceExtent = extent;
+    color.format = VK_FORMAT_R32_SFLOAT;
+    color.elementBytes = 4u;
+    color.tileMode = which == DepthAliasCase::Partial || which == DepthAliasCase::FillShortOfAlias ? ColorTileMode::Standard4KB : ColorTileMode::RenderTarget;
+    color.samples = which == DepthAliasCase::OtherSamples ? colorFragments : fragments;
+    color.bytes = static_cast<std::size_t>(extent.width) * extent.height * color.elementBytes;
+    const auto colorBytes = static_cast<std::size_t>(MultisampledColorBytes(color));
+    if (which == DepthAliasCase::FillShortOfAlias) color.bytes = colorBytes * 2u / color.samples;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto fill = [&](std::uint64_t address, std::size_t size, std::uint32_t word) {
+        NoteDepthMetadataFill(address, size, word);
+        NoteColorMetadataFill(address, size, word);
+        AgcDriver::GuestMemory::StoreOwnBytes(address, size, [&] { storeWords(address, size, word); });
+    };
+    const float aliasValue = which == DepthAliasCase::Matching ? target.clearDepth : which == DepthAliasCase::NegativeZeroFill ? 0.0f : 0.25f;
+    const auto aliasPattern = std::bit_cast<std::uint32_t>(aliasValue);
+    MaterializeMultisampleTargetClear(context, color);
+    Require(MultisampledColorFillAbsorbs(color.address, colorBytes, aliasPattern), "the colour target over the depth plane did not absorb its clear");
+    NoteDepthMetadataFill(color.address, colorBytes, aliasPattern);
+    NoteColorMetadataFill(color.address, colorBytes, aliasPattern);
+    MaterializeMultisampleTargetClear(context, color);
+    const auto alias = MultisampleColorTargetOver(memory.Address(), bytes);
+    Require(alias && alias->newest == MultisampleColorContent::Clear && alias->value && alias->value->float32[0] == aliasValue && alias->address == memory.Address() && alias->samples == color.samples && (which == DepthAliasCase::Partial ? alias->bytes < bytes : which == DepthAliasCase::FillShortOfAlias ? alias->bytes == colorBytes * 2u : alias->bytes == bytes), "the R32F colour target over the depth plane does not hold its clear over the range the case needs");
+    const auto noteAliasFill = [&](std::size_t size, std::uint32_t pattern, bool absorbed) {
+        Require(MultisampledColorFillAbsorbs(color.address, size, pattern) == absorbed, "the colour target over the depth plane absorbed a fill it cannot hold or refused one it can");
+        NoteDepthMetadataFill(color.address, size, pattern);
+        NoteColorMetadataFill(color.address, size, pattern);
+    };
+    if (which == DepthAliasCase::UnknownThenPartialFill) {
+        noteAliasFill(colorBytes / 2u, aliasPattern, false);
+        const auto unknown = MultisampleColorTargetOver(memory.Address(), bytes);
+        Require(unknown && unknown->newest == MultisampleColorContent::Unknown, "the colour target over the depth plane does not hold unknown contents after a fill of half its range");
+    }
+    if (which == DepthAliasCase::DrawnBeforeImport) MultisampleTargetView(context, color);
+    if (which == DepthAliasCase::AliasedStencilPlane) {
+        auto plane = color;
+        plane.address = plane.surfaceAddress = stencil.Address();
+        plane.format = VK_FORMAT_R8_UNORM;
+        plane.elementBytes = 1u;
+        plane.bytes = static_cast<std::size_t>(extent.width) * extent.height;
+        MultisampleTargetView(context, plane);
+    }
+    DepthSurfaceView(context, target);
+    fill(target.htileAddress, metadataBytes, proving);
+    if (depthOnly) fill(target.stencilAddress, stencilBytes, 0u);
+    const auto words = DepthSampleWords(target);
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "native depth over a depth plane aliased by a colour target was not imported");
+    recorder.Sync();
+    const auto count = extent.width * extent.height * fragments;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, fragments, false, true));
+    const auto read = [&] {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            Require(result == std::array<float, 4>{target.clearDepth, 0.0f, 0.0f, 1.0f}, "native depth over an aliased depth plane did not read DB_DEPTH_CLEAR in every sample");
+        }
+    };
+    read();
+    if (which == DepthAliasCase::Unchanged) {
+        Require(CachedSampledTexture(context, words) == texture, "a second sample of native depth over an unchanged aliased depth plane replaced its view");
+        recorder.Sync();
+        read();
+    }
+    if (which == DepthAliasCase::DrawnAfterImport || which == DepthAliasCase::DrawnThenSameFill) MultisampleTargetView(context, color);
+    if (which == DepthAliasCase::HtileWordThenSameFill) reinterpret_cast<std::uint32_t*>(metadata.Data())[0] = proving | 15u;
+    const bool sameFirst = which == DepthAliasCase::DoubleSameFill || which == DepthAliasCase::TripleSameFill || which == DepthAliasCase::SameOtherSameFill || which == DepthAliasCase::SamePartialSameFill || which == DepthAliasCase::SameDrawSameFill;
+    const bool partialRefill = which == DepthAliasCase::PartialFillAfterImport || which == DepthAliasCase::UnknownThenPartialFill;
+    const bool refilled = sameFirst || partialRefill || which == DepthAliasCase::SameFillAfterImport || which == DepthAliasCase::OtherFillAfterImport || which == DepthAliasCase::DrawnThenSameFill || which == DepthAliasCase::HtileWordThenSameFill || which == DepthAliasCase::NegativeZeroFill || which == DepthAliasCase::NanFill || which == DepthAliasCase::FillShortOfAlias || which == DepthAliasCase::PartialThenSameFill || which == DepthAliasCase::OtherThenSameFill;
+    const bool kept = which == DepthAliasCase::SameFillAfterImport || which == DepthAliasCase::DoubleSameFill || which == DepthAliasCase::TripleSameFill;
+    const auto otherPattern = std::bit_cast<std::uint32_t>(aliasValue + 0.5f);
+    if (which == DepthAliasCase::PartialThenSameFill) noteAliasFill(colorBytes / 2u, aliasPattern, false);
+    if (which == DepthAliasCase::OtherThenSameFill) noteAliasFill(colorBytes, otherPattern, true);
+    if (sameFirst) noteAliasFill(colorBytes, aliasPattern, true);
+    if (which == DepthAliasCase::TripleSameFill) noteAliasFill(colorBytes, aliasPattern, true);
+    if (which == DepthAliasCase::SameOtherSameFill) noteAliasFill(colorBytes, otherPattern, true);
+    if (which == DepthAliasCase::SamePartialSameFill) noteAliasFill(colorBytes / 2u, aliasPattern, false);
+    if (which == DepthAliasCase::SameDrawSameFill) MultisampleTargetView(context, color);
+    if (refilled) {
+        const auto refillBytes = partialRefill ? colorBytes / 2u : colorBytes;
+        const auto refill = which == DepthAliasCase::OtherFillAfterImport ? otherPattern : which == DepthAliasCase::NegativeZeroFill ? 0x80000000u : which == DepthAliasCase::NanFill ? 0x7fc00000u : aliasPattern;
+        const bool absorbed = !partialRefill && which != DepthAliasCase::NanFill;
+        noteAliasFill(refillBytes, refill, absorbed);
+        const auto filled = MultisampleColorTargetOver(memory.Address(), bytes);
+        Require(filled && filled->newest == (absorbed ? MultisampleColorContent::Fill : MultisampleColorContent::Unknown), "the colour target over the depth plane does not hold the fill the case needs as its newest content");
+    }
+    if (kept) {
+        Require(CachedSampledTexture(context, words) == texture, "a sample of native depth after a fill rewrote its colour alias's clear value replaced its view");
+        recorder.Sync();
+        read();
+    }
+    if (refilled && !kept) TargetRefuses([&] { CachedSampledTexture(context, words); }, which == DepthAliasCase::HtileWordThenSameFill ? guestDepthWriteRefusal : depthAliasRefusal);
+    if (which == DepthAliasCase::NewTargetAfterImport) {
+        auto other = color;
+        other.format = VK_FORMAT_R16G16_SFLOAT;
+        TargetRefuses([&] { PrepareMultisampleTargetForDraw_nid_no_patch(context, other); }, "initial multisample color contents overlap resident native depth");
+        Require(DepthSurfaceAt(target.address) && CachedSampledTexture(context, words) == texture, "refused color initialization released the resident depth owner");
+        recorder.Sync();
+        read();
+        MultisampleTargetView(context, other);
+    }
+    if (which == DepthAliasCase::DrawnAfterImport || which == DepthAliasCase::NewTargetAfterImport) TargetRefuses([&] { CachedSampledTexture(context, words); }, depthAliasRefusal);
+    Require(std::all_of(memory.Data(), memory.Data() + bytes, [](auto value) { return value == std::byte{0x5c}; }), "native depth over an aliased depth plane read or wrote the guest depth plane");
+    Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0}; }), "native depth over an aliased depth plane changed the guest stencil plane");
+    texture.reset();
+    const char* after = which == DepthAliasCase::Unchanged ? ", sampled again unchanged" : which == DepthAliasCase::DrawnAfterImport ? ", refused once the colour target drew" : which == DepthAliasCase::NewTargetAfterImport ? ", refused once a second colour target covered the plane" : which == DepthAliasCase::SameFillAfterImport ? ", sampled again after a whole fill of the colour target's clear value" : which == DepthAliasCase::OtherFillAfterImport ? ", refused once the colour target took a whole fill of another value" : which == DepthAliasCase::PartialFillAfterImport ? ", refused once half the colour target took a fill of its clear value" : which == DepthAliasCase::DrawnThenSameFill ? ", refused once the colour target drew and took a whole fill of its clear value" : which == DepthAliasCase::HtileWordThenSameFill ? ", refused once a guest write changed an HTILE word before a whole fill of the colour target's clear value" : which == DepthAliasCase::NegativeZeroFill ? ", refused once the colour target cleared to 0.0 took a whole fill of -0.0" : which == DepthAliasCase::NanFill ? ", refused once the colour target took a whole fill of a NaN" : which == DepthAliasCase::FillShortOfAlias ? ", refused once the colour target took a fill of its clear value over its footprint but not its whole guarded range" : which == DepthAliasCase::PartialThenSameFill ? ", refused once the colour target took a fill of half its range and then a whole fill of its clear value" : which == DepthAliasCase::OtherThenSameFill ? ", refused once the colour target took a whole fill of another value and then one of its clear value" : which == DepthAliasCase::DoubleSameFill ? ", sampled again after two whole fills of the colour target's clear value" : which == DepthAliasCase::TripleSameFill ? ", sampled again after three whole fills of the colour target's clear value" : which == DepthAliasCase::SameOtherSameFill ? ", refused once whole fills of its clear value, another value and its clear value followed" : which == DepthAliasCase::SamePartialSameFill ? ", refused once a whole fill of its clear value, a fill of half its range and a whole fill of its clear value followed" : which == DepthAliasCase::SameDrawSameFill ? ", refused once a whole fill of its clear value, a draw and a whole fill of its clear value followed" : which == DepthAliasCase::UnknownThenPartialFill ? ", imported while a fill of half the colour target left it unknown, refused once it took a second such fill" : "";
+    std::printf("Native depth over a depth plane aliased by an R32F colour target holding %g samples=%u clear=%u htile=%u word=0x%08x case=%u: imported with every HTILE word proving the clear, read DB_DEPTH_CLEAR in every sample%s\n", aliasValue, fragments, one, static_cast<std::uint32_t>(htile.layout), proving, static_cast<std::uint32_t>(which), after);
+}
+
 void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
@@ -2584,6 +2745,11 @@ void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane
     bareWords[7] = 0u;
     const auto refused = [&] { TargetRefuses([&] { CachedSampledTexture(context, bareWords); }, "native multisample depth sampled metadata or XOR mismatch"); };
     const std::uint32_t expand = stencilPlane ? 0x60u : 0x40u;
+    Require(DepthRenderControlDrains({target.address, target.samples, 1u}), "a depth clear over the native multisample target does not drain");
+    Require(DepthRenderControlDrains({target.address + 65536u, target.samples, expand}), "an expand without a registered surface does not drain");
+    Require(!DepthRenderControlDrains({target.address, 1u, 1u}), "a single-sample depth clear at the native target's address drains");
+    Require(!DepthRenderControlDrains({target.address, 1u, 0x60u}), "a single-sample expand drains");
+    Require(!DepthRenderControlDrains({target.address + 65536u, target.samples, 1u}), "a depth clear at another address drains");
     refused();
     if (stencilPlane) {
         NoteRenderControl(target, 0x40u);
@@ -3191,6 +3357,100 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), stencil(stencilBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    std::memset(stencil.Data(), 0, stencilBytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto clear = [&] {
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+        ClearDepthSurfaces(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() { action(); }
+    } cleanup{clear};
+    const auto words = DepthSampleWords(target);
+    const auto store = [&](std::uint32_t word, std::size_t bytes) {
+        AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, bytes, [&] {
+            for (std::size_t offset = 0u; offset + 4u <= bytes; offset += 4u) std::memcpy(metadata.Data() + offset, &word, 4u);
+        });
+    };
+    const auto sample = [&](float expected) {
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a native HTILE depth target with a repeated fill has no attachment view");
+        auto texture = CachedSampledTexture(context, words);
+        Require(texture != nullptr, "a native HTILE depth target with a repeated fill was not imported");
+        recorder.Sync();
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> sampled{};
+            std::memcpy(sampled.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            Require(sampled == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "a repeated native HTILE fill lost the depth clear");
+        }
+        texture.reset();
+    };
+    const auto reset = [&](float expected) {
+        clear();
+        std::memset(metadata.Data(), 0, metadataBytes);
+        target.clearDepth = expected;
+        sample(expected);
+    };
+    sample(0.0f);
+    const std::uint32_t one = 0xfffffff0u;
+    target.clearDepth = 1.0f;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one, metadataBytes);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    sample(1.0f);
+
+    reset(0.0f);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one, 4u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    {
+        const auto view = DepthSurfaceView(context, target);
+        Require(view != VK_NULL_HANDLE, "the repeated fill fixture after a draw has no attachment view");
+        DepthRaster raster(context, target, view);
+        CommandBatch batch(context);
+        raster.Run(batch.Handle(), 0.0f);
+        batch.SubmitAndWait();
+        recorder.Sync();
+    }
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one, metadataBytes);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    sample(1.0f);
+    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused and a stored refill after a draw was accepted\n", samples);
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -3268,6 +3528,18 @@ int main(int argc, char** argv) {
                 std::printf("Native depth queued fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--stored-repeat-fill") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the stored repeated HTILE fill regression requires sampled D32S8 with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { ++unavailable; continue; }
+                CheckStoredRepeatFill(context, samples);
+                ++checked;
+            }
+            std::printf("Native depth stored repeated HTILE fill cases checked=%u unavailable=%u\n", checked, unavailable);
+            return checked != 0u ? 0 : VulkanTestSkipped;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uniform-planes") {
             std::uint32_t checked = 0u, unavailable = 0u;
@@ -3424,6 +3696,43 @@ int main(int argc, char** argv) {
                 ++checked;
             }
             std::printf("Native D32S8 stencil view cases checked=%u unavailable=%u\n", checked, unavailable);
+            return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--aliased-depth") {
+            const std::string_view layoutName(argv[2]);
+            Require(layoutName == "depth-only" || layoutName == "stencil" || layoutName == "no-stencil", "--aliased-depth takes depth-only, stencil or no-stencil");
+            const auto wanted = layoutName == "depth-only" ? HtileLayout::DepthOnly : layoutName == "stencil" ? HtileLayout::Stencil : HtileLayout::NoStencil;
+            const auto supported = [&](std::uint32_t samples, HtileLayout layout) { return DepthSupported(context, layout == HtileLayout::NoStencil ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (layout == HtileLayout::NoStencil || (context.limits.framebufferStencilSampleCounts & samples) != 0u) && (context.limits.framebufferColorSampleCounts & samples) != 0u; };
+            Require(supported(4u, HtileLayout::DepthOnly), "the aliased depth plane regression requires sampled D32S8 and multisampled colour with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                for (const auto& htile : aliasedDepthHtiles) {
+                    if (htile.layout != wanted) continue;
+                    const bool stencilInHtile = htile.layout == HtileLayout::Stencil;
+                    if (!supported(samples, htile.layout)) { unavailable += stencilInHtile ? 29u : 27u; continue; }
+                    for (const auto which : {DepthAliasCase::Mismatched, DepthAliasCase::Matching, DepthAliasCase::Partial, DepthAliasCase::Unchanged, DepthAliasCase::DrawnBeforeImport, DepthAliasCase::DrawnAfterImport, DepthAliasCase::NewTargetAfterImport, DepthAliasCase::SameFillAfterImport, DepthAliasCase::OtherFillAfterImport, DepthAliasCase::PartialFillAfterImport, DepthAliasCase::DrawnThenSameFill, DepthAliasCase::HtileWordThenSameFill, DepthAliasCase::NegativeZeroFill, DepthAliasCase::NanFill, DepthAliasCase::FillShortOfAlias, DepthAliasCase::PartialThenSameFill, DepthAliasCase::OtherThenSameFill, DepthAliasCase::DoubleSameFill, DepthAliasCase::TripleSameFill, DepthAliasCase::SameOtherSameFill, DepthAliasCase::SamePartialSameFill, DepthAliasCase::SameDrawSameFill, DepthAliasCase::UnknownThenPartialFill}) { CheckAliasedDepth(context, samples, htile, which); ++checked; }
+                    for (const auto which : {DepthAliasCase::UnprovenWord, DepthAliasCase::OtherClearWord}) {
+                        TargetRefuses([&] { CheckAliasedDepth(context, samples, htile, which); }, unprovenHtileRefusal);
+                        std::printf("Native depth with an aliased depth plane samples=%u clear=%u htile=%u word=0x%08x case=%u refused: %s\n", samples, htile.one, static_cast<std::uint32_t>(htile.layout), htile.word, static_cast<std::uint32_t>(which), unprovenHtileRefusal.data());
+                        ++checked;
+                    }
+                    if (stencilInHtile) {
+                        for (const auto& [which, refusal] : {std::pair{DepthAliasCase::StencilWord, unprovenStencilHtileRefusal}, std::pair{DepthAliasCase::AliasedStencilPlane, stencilAliasRefusal}}) {
+                            TargetRefuses([&] { CheckAliasedDepth(context, samples, htile, which); }, refusal);
+                            std::printf("Native depth with an aliased depth plane samples=%u clear=%u htile=%u word=0x%08x case=%u refused: %s\n", samples, htile.one, static_cast<std::uint32_t>(htile.layout), htile.word, static_cast<std::uint32_t>(which), refusal.data());
+                            ++checked;
+                        }
+                    }
+                    for (const auto colorSamples : {2u, 4u, 8u}) {
+                        if (colorSamples == samples) continue;
+                        if ((context.limits.framebufferColorSampleCounts & colorSamples) == 0u) { ++unavailable; continue; }
+                        TargetRefuses([&] { CheckAliasedDepth(context, samples, htile, DepthAliasCase::OtherSamples, colorSamples); }, depthAliasRefusal);
+                        std::printf("Native depth with an aliased depth plane samples=%u colour samples=%u clear=%u htile=%u word=0x%08x refused: %s\n", samples, colorSamples, htile.one, static_cast<std::uint32_t>(htile.layout), htile.word, depthAliasRefusal.data());
+                        ++checked;
+                    }
+                }
+            }
+            std::printf("Native depth with an aliased depth plane, %s HTILE, cases checked=%u unavailable=%u\n", argv[2], checked, unavailable);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--expand-gate") {
