@@ -552,7 +552,7 @@ int APS5_VABI sceUltConditionVariableWait(void* condition) {
 }
 
 std::uint64_t APS5_VABI sceUltWaitingQueueResourcePoolGetWorkAreaSize(std::uint32_t numThreads, std::uint32_t numSyncObjects) {
-    return 32ull * (numSyncObjects + 2u * numThreads + 2u);
+    return 32ull * (std::uint64_t{numSyncObjects} + 2ull * numThreads + 2ull);
 }
 
 int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name, std::uint32_t numThreads, std::uint32_t numSyncObjects, void* workArea, const void* optParam, std::uint32_t buildVersion) {
@@ -612,7 +612,7 @@ int APS5_VABI sceUltWaitingQueueResourcePoolDestroy(void* pool) {
 }
 
 std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject) {
-    const auto nodeArea = 32ull * (numQueueObject + 2u * numData + 3u);
+    const auto nodeArea = 32ull * (std::uint64_t{numQueueObject} + 2ull * numData + 3ull);
     if (dataSize != 0 && numData > (UINT64_MAX - nodeArea) / dataSize) {
         throw std::out_of_range("ULT queue work area size overflow");
     }
