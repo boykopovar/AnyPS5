@@ -137,13 +137,6 @@ class SanitizerReportTests(unittest.TestCase):
 
     def test_summary_symlink_loop_resolution_failure_exits_with_2(self):
         junit = self.write(suite(case("passes")), "report.xml")
-        summary = Path(self.directory.name) / "summary_mock.md"
-        with unittest.mock.patch.object(Path, "resolve", side_effect=RuntimeError("Symlink loop from 'summary_mock.md'")):
-            code, stdout, stderr = self.run_main(junit, "--summary", summary)
-            self.assertEqual(code, 2)
-            self.assertEqual(stdout, "")
-            self.assertTrue(stderr.startswith("sanitizer_report: "))
-
         loop_a = Path(self.directory.name) / "loop_a.md"
         loop_b = Path(self.directory.name) / "loop_b.md"
         try:
@@ -321,6 +314,25 @@ class SummaryInputAliasTests(unittest.TestCase):
 
     def test_symlink_input_aliases_are_rejected(self):
         self.check_aliases("symlink")
+
+    def test_symlink_loop_summary_reports_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.xml"
+            known = root / "known.txt"
+            source.write_text(suite(case("unit")), encoding="utf-8")
+            known.write_text("unit address a known failure\n", encoding="utf-8")
+            original = {path: path.read_bytes() for path in (source, known)}
+            loop = root / "summary"
+            loop.symlink_to("summary")
+            completed = subprocess.run([sys.executable, str(Path(sanitizer_report.__file__)), str(source),
+                                      "--known", str(known), "--sanitizer", "address", "--summary", str(loop)],
+                                     capture_output=True)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(completed.stdout, b"")
+            self.assertNotIn(b"Traceback", completed.stderr)
+            self.assertIn(b"sanitizer_report:", completed.stderr)
+            self.assertEqual({path: path.read_bytes() for path in original}, original)
 
     def test_separate_summary_still_appends(self):
         with tempfile.TemporaryDirectory() as directory:
