@@ -1,0 +1,7 @@
+add_test_executable(agc_draw_stage_timing_keys_tests EXCLUDE_FROM_ALL tests/DrawStageTimingKeys.cpp)
+target_include_directories(agc_draw_stage_timing_keys_tests PRIVATE ${LIBS_INCLUDE_DIR})
+configure_host_test_executable(agc_draw_stage_timing_keys_tests)
+
+if(BUILD_TESTING)
+    add_test(NAME agc_draw_stage_timing_keys COMMAND agc_draw_stage_timing_keys_tests)
+endif()
