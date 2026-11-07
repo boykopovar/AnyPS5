@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -122,7 +123,7 @@ public:
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
-    enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart };
+    enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart, PaddedVertex };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawSnapshotEntries = 1024;
     static constexpr std::size_t UnwrittenSnapshotEntries = 4096;
@@ -249,6 +250,7 @@ public:
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
     void NoteDrawTraceToken(std::uint64_t token) noexcept;
+    void NoteFaultToken(AgcDriver::FaultToken token) noexcept;
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
@@ -450,6 +452,7 @@ public:
     // so a batch is submitted after a bounded amount of work (APS5_BATCH_CAP).
     static std::uint64_t RecordedWorkSinceSubmit();
     static void CountRecordedWork();
+    bool NoteGuestWork(VkCommandBuffer commands);
 
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
@@ -628,8 +631,12 @@ private:
         std::vector<ReadListNote> readLists;
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
+        std::uint64_t predictedSerial = 0;
+        AgcDriver::FaultToken firstToken = 0;
+        AgcDriver::FaultToken lastToken = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
+        bool guestWork = false;
         std::atomic<bool> submitStarted{false};
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted
         // (the [syncwait] line reports what a wait's target and the batches ahead of it were).
@@ -962,6 +969,14 @@ private:
     mutable std::weak_ptr<const WriteRanges> publishedWriteRanges;
     mutable bool publishedWriteRangesValid = false;
 };
+
+inline void EmitNvCheckpointToken(VkCommandBuffer commands, AgcDriver::FaultToken token, PFN_vkCmdSetCheckpointNV setCheckpoint) noexcept {
+    try {
+        if (commands == VK_NULL_HANDLE || setCheckpoint == nullptr || token == 0) return;
+        setCheckpoint(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(token)));
+    } catch (...) {
+    }
+}
 
 }
 
