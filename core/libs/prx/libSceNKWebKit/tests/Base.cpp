@@ -129,22 +129,23 @@ static void TestSecurityOrigin() {
         const char* host;
         unsigned port;
         const char* dbId;
+        const char* text;
     };
     for (const DbCase& db : {
-        DbCase{"http_h_80abc", "h", 0, "http_h_0"},
-        DbCase{"http_h_8080abc", "h", 8080, "http_h_8080"},
-        DbCase{"http_h_8080_9", "h_8080", 9, "http_h_8080_9"},
-        DbCase{"http_h_ 8080", "h", 8080, "http_h_8080"},
-        DbCase{"http_h_\t+8080", "h", 8080, "http_h_8080"},
-        DbCase{"http_h_0", "h", 0, "http_h_0"},
-        DbCase{"http_h_", "h", 0, "http_h_0"},
-        DbCase{"http__0", "", 0, "http__0"},
-        DbCase{"https_h_443", "h", 0, "https_h_0"},
-        DbCase{"http_a%20b_80", "a%20b", 0, "http_a%2520b_0"},
-        DbCase{"http_A b_5", "A b", 5, "http_A%20b_5"},
-        DbCase{"http_h_65535", "h", 65535, "http_h_65535"},
-        DbCase{"http_[::1]_8080", "[::1]", 8080, "http_[%3A%3A1]_8080"},
-        DbCase{"FILE_h_9", "h", 9, "file__0"}
+        DbCase{"http_h_80abc", "h", 0, "http_h_0", "http://h"},
+        DbCase{"http_h_8080abc", "h", 8080, "http_h_8080", "http://h:8080"},
+        DbCase{"http_h_8080_9", "h_8080", 9, "http_h_8080_9", "http://h_8080:9"},
+        DbCase{"http_h_ 8080", "h", 8080, "http_h_8080", "http://h:8080"},
+        DbCase{"http_h_\t+8080", "h", 8080, "http_h_8080", "http://h:8080"},
+        DbCase{"http_h_0", "h", 0, "http_h_0", "http://h"},
+        DbCase{"http_h_", "h", 0, "http_h_0", "http://h"},
+        DbCase{"http__0", "", 0, "http__0", "http://"},
+        DbCase{"https_h_443", "h", 0, "https_h_0", "https://h"},
+        DbCase{"http_a%20b_80", "a%20b", 0, "http_a%2520b_0", "http://a%20b"},
+        DbCase{"http_A b_5", "A b", 5, "http_A%20b_5", "http://A b:5"},
+        DbCase{"http_h_65535", "h", 65535, "http_h_65535", "http://h:65535"},
+        DbCase{"http_[::1]_8080", "[::1]", 8080, "http_[%3A%3A1]_8080", "http://[::1]:8080"},
+        DbCase{"FILE_h_9", "h", 9, "file__0", "FILE://h:9"}
     }) {
         const auto* idStr = WKStringCreateWithUTF8CString(db.input);
         const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
@@ -152,6 +153,7 @@ static void TestSecurityOrigin() {
         Require(fromDb != nullptr);
         Require(WKSecurityOriginGetPort(fromDb) == db.port);
         CheckOriginString(WKSecurityOriginCopyHost(fromDb), db.host);
+        CheckOriginString(WKSecurityOriginCopyToString(fromDb), db.text);
         CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromDb), db.dbId);
         WKRelease(fromDb);
     }
@@ -189,6 +191,9 @@ static void TestSecurityOrigin() {
         StringCase{"HTTP://EXAMPLE.com:80", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
         StringCase{"http://example.com:0/", "http", "example.com", 0, "http://example.com:0", "http_example.com_0"},
         StringCase{"http://example.com:/p", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com?x=1", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com#frag", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:81?x=1", "http", "example.com", 81, "http://example.com:81", "http_example.com_81"},
         StringCase{"http://example.com./p", "http", "example.com.", 0, "http://example.com.", "http_example.com._0"},
         StringCase{"http://example.1a/", "http", "example.1a", 0, "http://example.1a", "http_example.1a_0"},
         StringCase{"http://example.0xfg/", "http", "example.0xfg", 0, "http://example.0xfg", "http_example.0xfg_0"},

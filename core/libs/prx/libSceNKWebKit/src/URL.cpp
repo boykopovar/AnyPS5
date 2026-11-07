@@ -512,7 +512,6 @@ const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* h
 
 const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     const auto* str = NKWebKit::Cast<NKWebKit::String>(string, __func__);
-    if (str->null) return CreateOpaqueOrigin();
     const auto text = CleanOriginInput(str->characters);
     const auto schemeEnd = text.find(u':');
     if (schemeEnd == std::u16string::npos) return CreateOpaqueOrigin();
