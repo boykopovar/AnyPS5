@@ -290,7 +290,8 @@ class Main(unittest.TestCase):
                 return run_result()
             return real_run(cmd, **{**kwargs, "capture_output": True})
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
-            build_changed_guest_tests.run(build, ["python_target"], {Path(sys.executable).stem: "python_target"})
+            target = {"name": "python_target", "artifacts": [{"path": python}]}
+            build_changed_guest_tests.run(build, ["python_target"], build_changed_guest_tests.target_artifact_names(target))
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
 
@@ -370,6 +371,21 @@ class Main(unittest.TestCase):
             self.assertEqual(build_changed_guest_tests.main([str(loop)]), 1)
         self.assertIn("no CMake File API index", errors.getvalue())
         self.assertNotIn("Traceback", errors.getvalue())
+
+
+class ArtifactOwnerNames(unittest.TestCase):
+    def test_dotted_artifact_names_keep_non_executable_suffixes(self):
+        target = {"name": "guest_target", "artifacts": [{"path": "tests/guest.check"}]}
+        aliases = build_changed_guest_tests.target_artifact_names(target)
+        self.assertEqual(build_changed_guest_tests.test_owner(["/build/tests/guest.check"], aliases), "guest_target")
+        self.assertIsNone(build_changed_guest_tests.test_owner(["/build/tests/guest.other"], aliases))
+        self.assertIsNone(build_changed_guest_tests.test_owner(["/build/tests/guest.check"], {"guest": "unrelated"}))
+
+    def test_dotted_windows_artifact_names_remove_only_exe(self):
+        target = {"name": "guest_target", "artifacts": [{"path": "tests/guest.check.EXE"}]}
+        aliases = build_changed_guest_tests.target_artifact_names(target)
+        self.assertEqual(build_changed_guest_tests.test_owner(["C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+        self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
 
 
 if __name__ == "__main__":
