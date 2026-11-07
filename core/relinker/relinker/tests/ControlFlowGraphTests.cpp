@@ -843,6 +843,34 @@ void CheckLargeZeroGaps() {
     Require(elapsed < std::chrono::seconds(10), "Large gap analysis took too long");
 }
 
+void CheckRelativeJumpTableDisplacementBounds() {
+    const Bytes underflowBranch{0x75, 0x80};
+    const auto underflowStart = std::chrono::steady_clock::now();
+    const auto underflowTables = Relinker::FindRelativeJumpTables(underflowBranch, 0, {{0, 2}});
+    Require(underflowTables.empty(), "Underflow branch displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - underflowStart < std::chrono::seconds(2), "Underflow branch scan timed out");
+
+    constexpr auto highAddress = std::numeric_limits<VirtualAddress>::max() - 10;
+    const Bytes overflowBranch{0x75, 0x7f, 0xc3};
+    const auto overflowStart = std::chrono::steady_clock::now();
+    const auto overflowTables = Relinker::FindRelativeJumpTables(overflowBranch, highAddress, {{highAddress, highAddress + 2}});
+    Require(overflowTables.empty(), "Overflow branch displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - overflowStart < std::chrono::seconds(2), "Overflow branch scan timed out");
+
+    const Bytes underflowLea{0x48, 0x8d, 0x05, 0x80, 0xff, 0xff, 0xff, 0xcc, 0xc3};
+    const auto leaStart = std::chrono::steady_clock::now();
+    const auto leaTables = Relinker::FindRelativeJumpTables(underflowLea, 0, {{0, 7}, {8, 9}});
+    Require(leaTables.empty(), "Underflow LEA displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - leaStart < std::chrono::seconds(2), "Underflow LEA scan timed out");
+
+    constexpr auto highLeaAddress = std::numeric_limits<VirtualAddress>::max() - 20;
+    const Bytes overflowLea{0x48, 0x8d, 0x05, 0x7f, 0x00, 0x00, 0x00, 0xcc, 0xc3};
+    const auto overflowLeaStart = std::chrono::steady_clock::now();
+    const auto overflowLeaTables = Relinker::FindRelativeJumpTables(overflowLea, highLeaAddress, {{highLeaAddress, highLeaAddress + 7}, {highLeaAddress + 8, highLeaAddress + 9}});
+    Require(overflowLeaTables.empty(), "Overflow LEA displacement produced unexpected tables");
+    Require(std::chrono::steady_clock::now() - overflowLeaStart < std::chrono::seconds(2), "Overflow LEA scan timed out");
+}
+
 }
 
 int main() {
@@ -871,6 +899,7 @@ int main() {
         CheckTableWithPaddingAndReturnBytes();
         CheckLargeZeroGaps();
         CheckGapWalkBranchTargets();
+        CheckRelativeJumpTableDisplacementBounds();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {

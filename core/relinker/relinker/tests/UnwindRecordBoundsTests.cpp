@@ -49,6 +49,28 @@ int main() {
         Io::WriteU64(belowPcrelUdata8, 24, 0x1060 - 0x1018);
         Io::WriteU64(belowPcrelUdata8, 104, 0x800);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(belowPcrelUdata8, {funcSeg, load, eh}, {}, {}).size() == 1);
+        auto belowPcrelSdata4 = Fixture();
+        belowPcrelSdata4[3] = 0x1B;
+        Io::WriteU32(belowPcrelSdata4, 16, static_cast<std::uint32_t>(static_cast<std::int32_t>(0x800 - 0x1010)));
+        Io::WriteU32(belowPcrelSdata4, 20, 0x1060 - 0x1014);
+        Io::WriteU64(belowPcrelSdata4, 104, 0x800);
+        Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(belowPcrelSdata4, {funcSeg, load, eh}, {}, {}).size() == 1);
+        auto belowDatarelSdata4 = Fixture();
+        belowDatarelSdata4[3] = 0x3B;
+        Io::WriteU32(belowDatarelSdata4, 16, static_cast<std::uint32_t>(static_cast<std::int32_t>(0x800 - 0x1000)));
+        Io::WriteU32(belowDatarelSdata4, 20, 0x1060 - 0x1000);
+        Io::WriteU64(belowDatarelSdata4, 104, 0x800);
+        Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(belowDatarelSdata4, {funcSeg, load, eh}, {}, {}).size() == 1);
+        auto pcrelUnderflow = Fixture();
+        pcrelUnderflow[3] = 0x1B;
+        Io::WriteU32(pcrelUnderflow, 16, 0xFFFE0000);
+        Io::WriteU32(pcrelUnderflow, 20, 0x1060 - 0x1014);
+        bool pcrelUnderflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(pcrelUnderflow, {funcSeg, load, eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            pcrelUnderflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(pcrelUnderflowRejected);
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
@@ -450,6 +472,6 @@ int main() {
             landingPadOverflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
         }
         Require(landingPadOverflowRejected);
-        std::cout << "37 unwind record cases passed\n";
+        std::cout << "40 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
