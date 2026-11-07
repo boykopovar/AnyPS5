@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestGs.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -74,9 +75,13 @@ struct ThreadArgs {
     PthreadEntry entry;
     void* arg;
     PthreadPrivate* self;
+#ifdef _WIN32
+    std::uint64_t gsBase = 0;
+#endif
 #ifndef _WIN32
     sigset_t signalMask;
 #endif
+    GuestSignalSet guestSignalMask{};
 };
 
 #ifdef __APPLE__
@@ -896,8 +901,12 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     CurrentGuestState().current = self;
     asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
     RegisterStack(self);
+    sigprocmask_nid_postfix(3, &args->guestSignalMask, nullptr);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
+#endif
+#ifdef _WIN32
+    GuestGsSet_nid_no_patch(args->gsBase);
 #endif
     args.reset();
     self->suspended.wait(true, std::memory_order_acquire);
@@ -1140,7 +1149,9 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     p->pendingException.store(0, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
+    sigprocmask_nid_postfix(1, nullptr, &args->guestSignalMask);
 #ifdef _WIN32
+    args->gsBase = GuestGsGet_nid_no_patch();
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
     if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<unsigned>::max() - HOST_STACK_MARGIN - system.dwPageSize)
