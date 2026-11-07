@@ -550,6 +550,68 @@ template<typename T> String IntegerString(T value) {
     return String(CopyImpl({buffer, static_cast<unsigned>(result.ptr - buffer), true}));
 }
 
+char16_t FoldQuoteMark(char16_t value) {
+    switch (value) {
+    case 0x00AB:
+    case 0x00BB:
+    case 0x05F4:
+    case 0x201C:
+    case 0x201D:
+    case 0x201E:
+    case 0x201F:
+    case 0x2E42:
+    case 0x301D:
+    case 0x301E:
+    case 0x301F:
+    case 0xFF02:
+        return u'"';
+    case 0x05F3:
+    case 0x2018:
+    case 0x2019:
+    case 0x201A:
+    case 0x201B:
+    case 0x2039:
+    case 0x203A:
+    case 0x300C:
+    case 0x300D:
+    case 0x300E:
+    case 0x300F:
+    case 0xFE41:
+    case 0xFE42:
+    case 0xFE43:
+    case 0xFE44:
+    case 0xFF07:
+    case 0xFF62:
+    case 0xFF63:
+        return u'\'';
+    default:
+        return value;
+    }
+}
+
+String FoldQuoteMarks(const StringImpl* impl) {
+    auto view = View(impl);
+    unsigned first = 0;
+    while (first < view.length && FoldQuoteMark(Unit(view, first)) == Unit(view, first)) ++first;
+    if (first == view.length) return String(Retain(const_cast<StringImpl*>(impl)));
+    void* data;
+    auto* result = NewImpl(view.length, view.is8Bit, data);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = FoldQuoteMark(Unit(view, i));
+        if (view.is8Bit) static_cast<unsigned char*>(data)[i] = static_cast<unsigned char>(value);
+        else static_cast<char16_t*>(data)[i] = value;
+    }
+    return String(result);
+}
+
+const String* DefaultMIMEType() {
+    static const unsigned char characters[] = "application/octet-stream";
+    constexpr unsigned length = sizeof(characters) - 1;
+    static StringImpl impl{1, length, characters, (Hash({characters, length, true}) << 8) | 12};
+    static const String* value = new String(&impl);
+    return value;
+}
+
 }  // namespace
 
 namespace NKWebKit::WtfAbi {
@@ -970,6 +1032,14 @@ bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const CString& a, co
     if (b.buffer == deleted) return false;
     if (!a.buffer || !b.buffer) return !a.buffer && !b.buffer;
     return a.buffer->length == b.buffer->length && !std::memcmp(Bytes(a), Bytes(b), a.buffer->length);
+}
+
+String APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE(const String* string) {
+    return FoldQuoteMarks(Checked(string).impl);
+}
+
+const String& APS5_VABI _ZN7WebCore15defaultMIMETypeEv() {
+    return *DefaultMIMEType();
 }
 
 }

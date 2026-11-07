@@ -82,3 +82,6 @@
 [submodule "3rdparty/sqlite"]
 	path = 3rdparty/sqlite
 	url = https://github.com/sqlite/sqlite.git
+[submodule "3rdparty/fontconfig"]
+	path = 3rdparty/fontconfig
+	url = https://github.com/fontconfig/fontconfig.git

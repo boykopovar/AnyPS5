@@ -3,6 +3,17 @@ target_include_directories(libcurl PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libcurl)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_curl_tests ${LIBS_INCLUDE_DIR}/tests/GuestCurl.cpp)
+    target_include_directories(guest_curl_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_curl_tests PRIVATE libcurl libc)
+    configure_windows_unwind(guest_curl_tests)
+    add_test(NAME guest_curl COMMAND guest_curl_tests)
+    set_tests_properties(guest_curl PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_curl PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
+    endif()
+
     add_test_executable(guest_curl_strings_tests ${LIBS_INCLUDE_DIR}/tests/GuestCurlStrings.cpp)
     target_include_directories(guest_curl_strings_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_curl_strings_tests PRIVATE libcurl libc)

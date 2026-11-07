@@ -96,6 +96,16 @@ int main() {
     Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, &deviceId) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardConnectPort(0, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardDebugGetDeviceId(0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardDeviceOpen(0, 0, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardDisconnectDevice(0) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardDisconnectPort(0, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardGetDeviceInfo(0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardGetHandle(0, 0, 0) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardMbusInit() == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardSetProcessFocus(nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
+    Require(sceKeyboardSetProcessPrivilege(0) == KEYBOARD_ERROR_NOT_INITIALIZED);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     Require(sceKeyboardInit() == KEYBOARD_OK);
     CheckInvalidKeys(false);
