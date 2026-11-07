@@ -115,13 +115,28 @@ void Require(bool condition, const char* message) {
     }
 }
 
+void RequireData(Bio* bio, const std::string& expected);
+void RequireError(std::uint64_t expected);
+
 int allocationsUntilFailure = -1;
 std::atomic<int> allocations{0};
 void* wipePointer = nullptr;
 std::size_t wipeSize = 0;
 
-void* APS5_VABI Allocate(std::size_t) { throw std::logic_error("unexpected nonzeroed BIO allocation"); }
-void* APS5_VABI Reallocate(void*, std::size_t) { throw std::logic_error("unexpected BIO reallocation"); }
+void* APS5_VABI Allocate(std::size_t size) {
+    if (allocationsUntilFailure == 0) return nullptr;
+    if (allocationsUntilFailure > 0) --allocationsUntilFailure;
+    void* result = std::malloc(size);
+    if (result) ++allocations;
+    return result;
+}
+void* APS5_VABI Reallocate(void* pointer, std::size_t size) {
+    if (allocationsUntilFailure == 0) return nullptr;
+    if (allocationsUntilFailure > 0) --allocationsUntilFailure;
+    void* result = std::realloc(pointer, size);
+    if (result && pointer == nullptr) ++allocations;
+    return result;
+}
 void* APS5_VABI Align(std::size_t, std::size_t) { throw std::logic_error("unexpected BIO aligned allocation"); }
 void* APS5_VABI Realign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected BIO realignment"); }
 int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected BIO aligned allocation"); }
@@ -142,6 +157,118 @@ void APS5_VABI Free(void* pointer) {
     if (pointer) --allocations;
     std::free(pointer);
 }
+
+#ifndef ANYPS5_BIO_DYNAMIC
+struct PemWriteTrace {
+    int writeCount = 0;
+    int failAt = 0;
+    std::vector<int> operations;
+    std::vector<std::string> writes;
+};
+
+std::int64_t APS5_VABI TracePemWrite(Bio* bio, int operation, const char* source, int size, std::int64_t, std::int64_t result) {
+    auto& trace = *reinterpret_cast<PemWriteTrace*>(bio->callbackArgument);
+    trace.operations.push_back(operation);
+    if (operation == 3) {
+        ++trace.writeCount;
+        trace.writes.emplace_back(source, static_cast<std::size_t>(size));
+        if (trace.writeCount == trace.failAt) return -9;
+    }
+    return result;
+}
+
+void PreparePemBio(Bio*& bio) {
+    bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "allocate PEM test BIO");
+    std::array<char, 64> padding{};
+    Require(BIO_write_nid_postfix(bio, padding.data(), static_cast<int>(padding.size())) == static_cast<int>(padding.size()), "reserve PEM BIO capacity");
+    Require(BIO_ctrl_nid_postfix(bio, 1, 0, nullptr) == 1, "reset PEM BIO");
+    RequireData(bio, "");
+}
+
+void TestPemWriteNullCertificate() {
+    static const std::array<std::string, 6> writes{
+        "-----BEGIN ", "CERTIFICATE", "-----\n", "-----END ", "CERTIFICATE", "-----\n"};
+    static const std::string emptyPem = "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n";
+    for (int failAt = 0; failAt <= 6; ++failAt) {
+        Bio* bio;
+        PreparePemBio(bio);
+        PemWriteTrace trace;
+        trace.failAt = failAt;
+        bio->callback = TracePemWrite;
+        bio->callbackArgument = reinterpret_cast<char*>(&trace);
+        const auto before = bio->bytesWritten;
+        Require(PEM_write_bio_X509_nid_postfix(bio, nullptr) == 0, "empty X509 PEM returns zero");
+        if (failAt == 0) {
+            RequireError(0);
+            Require(trace.writes == std::vector<std::string>(writes.begin(), writes.end()), "empty PEM write order");
+            Require(trace.operations.size() == 12, "empty PEM pre/post callback count");
+            for (std::size_t index = 0; index < trace.operations.size(); ++index)
+                Require(trace.operations[index] == (index % 2 == 0 ? 3 : 0x83), "empty PEM callback order");
+            RequireData(bio, emptyPem);
+            Require(bio->bytesWritten == before + emptyPem.size(), "empty PEM BIO mutation");
+        } else {
+            const std::string prefix = [&] {
+                std::string result;
+                for (int index = 0; index < failAt - 1; ++index) result += writes[static_cast<std::size_t>(index)];
+                return result;
+            }();
+            RequireError(0x09fff007);
+            Require(trace.writes.size() == static_cast<std::size_t>(failAt), "failed PEM write stops at first error");
+            Require(trace.operations.size() == static_cast<std::size_t>(failAt * 2 - 1), "failed PEM callback count");
+            for (std::size_t index = 0; index < trace.operations.size(); ++index)
+                Require(trace.operations[index] == (index % 2 == 0 ? 3 : 0x83), "failed PEM callback order");
+            RequireData(bio, prefix);
+            Require(bio->bytesWritten == before + prefix.size(), "failed PEM write preserves partial BIO output");
+        }
+        Require(BIO_free_nid_postfix(bio) == 1, "free PEM test BIO");
+        Require(allocations == 0, "PEM write leaks no guest allocations");
+    }
+
+    Bio* bio;
+    PreparePemBio(bio);
+    const auto before = allocations.load();
+    allocationsUntilFailure = 0;
+    Require(PEM_write_bio_X509_nid_postfix(bio, nullptr) == 0, "initial PEM allocation failure result");
+    allocationsUntilFailure = -1;
+    RequireError(0x09fff041);
+    RequireData(bio, "");
+    Require(allocations == before, "initial PEM allocation failure has no BIO effect or leak");
+
+    allocationsUntilFailure = 1;
+    Require(PEM_write_bio_X509_nid_postfix(bio, nullptr) == 0, "base64 PEM allocation failure result");
+    allocationsUntilFailure = -1;
+    RequireError(0x09fff041);
+    RequireData(bio, "-----BEGIN CERTIFICATE-----\n");
+    Require(allocations == before, "base64 allocation failure releases DER scratch");
+    Require(BIO_free_nid_postfix(bio) == 1, "free PEM allocation test BIO");
+    Require(allocations == 0, "PEM allocation tests leak no guest allocations");
+
+    Require(PEM_write_bio_X509_nid_postfix(nullptr, nullptr) == 0, "null BIO write result");
+    RequireError(0x09fff007);
+    Require(allocations == 0, "null BIO releases DER scratch");
+
+    PreparePemBio(bio);
+    PemWriteTrace trace;
+    bio->callback = TracePemWrite;
+    bio->callbackArgument = reinterpret_cast<char*>(&trace);
+    const auto beforeBytes = bio->bytesWritten;
+    const auto beforeAllocations = allocations.load();
+    bool threw = false;
+    try {
+        PEM_write_bio_X509_nid_postfix(bio, reinterpret_cast<LibreSslX509*>(1));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && trace.operations.empty(), "non-null certificate stays on unknown encoder path before BIO effects");
+    Require(allocations == beforeAllocations, "unknown encoder path allocates no PEM scratch");
+    RequireData(bio, "");
+    Require(bio->bytesWritten == beforeBytes, "unknown encoder path leaves BIO unchanged");
+    RequireError(0);
+    Require(BIO_free_nid_postfix(bio) == 1, "free unknown encoder BIO");
+    Require(allocations == 0, "unknown encoder test leaks no allocations");
+}
+#endif
 
 void InitializeHeap() {
     const std::array<void*, 10> api{
@@ -643,6 +770,7 @@ int main(int argc, char** argv) {
     TestDispatchAndReferences();
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
+    TestPemWriteNullCertificate();
     TestFileAndSocket();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
