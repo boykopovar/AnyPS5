@@ -356,11 +356,6 @@ int APS5_VABI revoke_nid_postfix(const char* path) {
     NotImplemented_nid_no_patch("revoke of a character device");
 }
 
-int APS5_VABI rfork_thread_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI rtld_printf_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1506,11 +1501,6 @@ int APS5_VABI sceKernelQueryTraceMemory(void) {
 }
 
 int APS5_VABI sceKernelRandomizedPath(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelRdup(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
