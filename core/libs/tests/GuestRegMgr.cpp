@@ -85,5 +85,6 @@ int main() {
     std::memset(strBuf, 0, sizeof(strBuf));
     Require(sceRegMgrGetStr(3229646849, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hi") == 0);
 
+    Require(ReportsNotImplemented("sceRegMgrCheckError", [&] { sceRegMgrCheckError(); }));
     return 0;
 }
