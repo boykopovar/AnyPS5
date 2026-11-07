@@ -2,22 +2,11 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libharfbuzz/Export.cpp) - 35 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libharfbuzz.c) and the [selected export metadata](https://gist.github.com/kyon-eth/510aa3fcaf09cbe8b52048b44e4e67c0/b909f17c99ecd6323c085f70064548789062d57e) from an older `libharfbuzz` image and a later `libSceVshHarfBuzz` image (SHA-256 `25af97e02c1fa8d318ff3697eb8a79057ee9b8c5e5e4ec321f25114aceb05628`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libharfbuzz/Export.cpp) - The remaining 24 throwing callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libharfbuzz.c) and the [selected export metadata](https://gist.github.com/kyon-eth/510aa3fcaf09cbe8b52048b44e4e67c0/b909f17c99ecd6323c085f70064548789062d57e) from an older `libharfbuzz` image and a later `libSceVshHarfBuzz` image (SHA-256 `25af97e02c1fa8d318ff3697eb8a79057ee9b8c5e5e4ec321f25114aceb05628`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. Their prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
 | `hb_blob_create` | `hj1KIIN5D54` |
-| `hb_buffer_add_utf16` | `P+hgu937lFs` |
-| `hb_buffer_create` | `7f13XmbjTZo` |
-| `hb_buffer_destroy` | `K-y1p7Z9THQ` |
-| `hb_buffer_get_direction` | `0UafewjjWpM` |
-| `hb_buffer_get_glyph_infos` | `ENsHmJCNG4Q` |
-| `hb_buffer_get_glyph_positions` | `43mnfTQPCbw` |
-| `hb_buffer_get_length` | `leHmVbjHyGw` |
-| `hb_buffer_guess_segment_properties` | `DcrJr531A4w` |
-| `hb_buffer_reset` | `PEggcTbDlfE` |
-| `hb_buffer_set_direction` | `845S2XQdxhw` |
-| `hb_buffer_set_script` | `eGbbvD8o7go` |
 | `hb_face_create_for_tables` | `l7GEYs5PMVU` |
 | `hb_face_destroy` | `ULNHQXciJ3s` |
 | `hb_font_create` | `FVhYusaWqA4` |
@@ -41,3 +30,7 @@
 | `hb_ot_layout_table_get_script_tags` | `wf6CfVJj9PQ` |
 | `hb_ot_tag_to_script` | `uKjh3hI1npw` |
 | `hb_shape` | `dM3hP4y99rM` |
+
+### Functional
+
+- [The eleven buffer exports](../../../core/libs/prx/libharfbuzz/Buffer.cpp) have no console or title verification. Their signatures, 20-byte glyph records, Unicode properties, UTF-16 decoding and buffer behavior follow the pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/tree/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc) public API and backend; the console revision and its Unicode data are unknown. Buffers are opaque host allocations, not console object layouts. Returned arrays belong to that backend and remain valid only until the buffer contents change. Segment-property guessing uses the host process's default language, not a console language setting. Handles from another HarfBuzz instance cannot be mixed with these buffers. Null buffer handles throw except for destruction, which accepts null as the public API does; console null-handle behavior is unverified. Shaping, fonts, faces and guest callbacks remain throwing exports.
