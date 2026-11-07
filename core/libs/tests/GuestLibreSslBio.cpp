@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
@@ -14,6 +15,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #ifdef ANYPS5_BIO_DYNAMIC
 #ifdef _WIN32
@@ -501,6 +509,10 @@ void TestUnsupported() {
     Require(BIO_write_nid_postfix(bio, "a", 1) == -2, "reject uninitialized write");
     RequireError(0x20fff078);
     bio->initialized = 1;
+    bio->extraData = bio;
+    RequireUnsupported([&] { BIO_free_nid_postfix(bio); });
+    Require(bio->references == 1, "unsupported ex-data preserves reference");
+    bio->extraData = nullptr;
     const BioMethod* method = bio->method;
     bio->method = nullptr;
     Require(BIO_ctrl_nid_postfix(bio, 1, 0, nullptr) == -2, "reject control without a method");
@@ -540,6 +552,77 @@ void TestUnsupported() {
     Require(BIO_free_nid_postfix(bio) == 1, "free after method errors");
 }
 
+#ifndef ANYPS5_BIO_DYNAMIC
+void TestFileAndSocket() {
+    const BioMethod* fileMethod = BIO_s_file_nid_postfix();
+    Require(fileMethod && fileMethod->type == 0x402, "file BIO method descriptor");
+    Require(BIO_new_fp_nid_postfix(nullptr, 0) == nullptr, "reject null file BIO");
+    std::FILE* native = std::tmpfile();
+    Require(native != nullptr, "open temporary file for BIO");
+    FileStream stream(native);
+    Bio* file = BIO_new_fp_nid_postfix(&stream, 0);
+    Require(file && file->method == fileMethod && file->data == &stream, "file BIO guest stream");
+    Require(file->initialized && BIO_ctrl_nid_postfix(file, 8, 0, nullptr) == 0, "file BIO no-close flag");
+    Require(BIO_write_nid_postfix(file, "abc", 3) == 3, "write guest file through BIO");
+    Require(BIO_ctrl_nid_postfix(file, 11, 0, nullptr) == 1, "flush guest file through BIO");
+    Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "rewind guest file through BIO");
+    char buffer[8]{};
+    Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read guest file through BIO");
+    Require(file->method->read(file, buffer, 1) == 0, "clean guest file EOF returns zero");
+    Require(feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0, "clean EOF does not set stream error");
+    Require(ERR_get_error_nid_postfix() == 0, "clean EOF does not queue LibreSSL errors");
+    Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "file reset returns fseek success status");
+    Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read after file BIO reset");
+    FileStream* queried = nullptr;
+    Require(BIO_ctrl_nid_postfix(file, 107, 0, &queried) == 1 && queried == &stream, "get guest file pointer");
+    Require(BIO_free_nid_postfix(file) == 1, "free BIO without closing file");
+    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "borrowed guest stream remains open");
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed guest stream");
+
+    std::FILE* ownedNative = std::tmpfile();
+    Require(ownedNative != nullptr, "open owned temporary BIO file");
+    FileStream owned(ownedNative);
+    Bio* ownedBio = BIO_new_fp_nid_postfix(&owned, 1);
+    Require(ownedBio && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1, "owned guest file BIO");
+    Require(BIO_free_nid_postfix(ownedBio) == 1 && !owned.IsOpen(), "owned BIO closes guest file");
+
+    int descriptors[2]{-1, -1};
+#ifdef _WIN32
+    Require(_pipe(descriptors, 4096, _O_BINARY) == 0, "create non-seekable guest file pipe");
+    std::FILE* writeOnly = _fdopen(descriptors[1], "wb");
+#else
+    Require(::pipe(descriptors) == 0, "create non-seekable guest file pipe");
+    std::FILE* writeOnly = ::fdopen(descriptors[1], "wb");
+#endif
+    Require(writeOnly != nullptr, "wrap pipe writer in host stream");
+    FileStream pipeStream(writeOnly);
+    Bio* pipeBio = BIO_new_fp_nid_postfix(&pipeStream, 0);
+    Require(pipeBio != nullptr, "construct guest file BIO around pipe writer");
+    Require(pipeBio->method->read(pipeBio, buffer, 1) == -1, "guest file read error must not report clean EOF");
+    Require(ferror_nid_postfix(&pipeStream) != 0 && feof_nid_postfix(&pipeStream) == 0, "pipe read failure sets error, not EOF");
+    const auto systemError = ERR_get_error_nid_postfix();
+    const auto bioError = ERR_get_error_nid_postfix();
+    Require((systemError >> 24) == 2 && (bioError >> 24) == 32 && (bioError & 0xfff) == 2,
+            "failed file BIO read queues system and BIO errors");
+    Require(ERR_get_error_nid_postfix() == 0, "file read queues exactly two errors");
+    Require(BIO_ctrl_nid_postfix(pipeBio, 1, 0, nullptr) == -1, "file reset preserves non-seekable stream failure");
+    Require(BIO_free_nid_postfix(pipeBio) == 1, "free borrowed pipe BIO");
+    Require(fclose_nid_postfix(&pipeStream) == 0, "close borrowed pipe writer");
+#ifdef _WIN32
+    Require(_close(descriptors[0]) == 0, "close pipe reader");
+#else
+    Require(::close(descriptors[0]) == 0, "close pipe reader");
+#endif
+
+    Require(BIO_new_socket_nid_postfix(-1, 0) == nullptr, "reject negative guest socket");
+    Bio* socket = BIO_new_socket_nid_postfix(42, 0);
+    Require(socket && socket->initialized && socket->number == 42, "guest socket BIO descriptor");
+    Require(socket->method && socket->method->type == 0x405, "socket BIO method descriptor");
+    Require(BIO_ctrl_nid_postfix(socket, 8, 0, nullptr) == 0, "socket BIO no-close flag");
+    Require(BIO_free_nid_postfix(socket) == 1, "free unowned guest socket BIO");
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -559,6 +642,9 @@ int main(int argc, char** argv) {
     TestWriteBoundaries();
     TestDispatchAndReferences();
     TestUnsupported();
+#ifndef ANYPS5_BIO_DYNAMIC
+    TestFileAndSocket();
+#endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
 }
