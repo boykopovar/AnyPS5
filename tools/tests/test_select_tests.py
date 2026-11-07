@@ -99,7 +99,7 @@ class SelectTests(SelectFixture):
 
     def test_fixture_setup_runs_with_its_test(self):
         self.assertEqual(self.select("beta/main.c")[1], {"beta", "beta_setup", "script"})
-        self.assertEqual(self.select("beta/setup.c")[1], {"beta_setup", "script"})
+        self.assertEqual(self.select("beta/setup.c")[1], {"beta", "beta_setup", "script"})
 
     def test_cmake_file_selects_the_tests_it_registers(self):
         self.assertEqual(self.select("beta/CMakeLists.txt")[1], {"beta", "beta_setup", "script"})
@@ -115,6 +115,35 @@ class SelectTests(SelectFixture):
                 output, selected = self.select("alpha/alpha.h", changed)
                 self.assertIsNone(selected)
                 self.assertIn(changed, output)
+
+class FixtureSelectionTests(unittest.TestCase):
+    def test_changed_setup_selects_all_consumers_and_their_other_setups(self):
+        def test(target, sets=(), requires=()):
+            return {"target": target, "registered": [], "arguments": [], "sets": list(sets),
+                    "requires": list(requires), "depends": []}
+
+        tests = {"setup": test("setup", sets=("first",)),
+                 "bridge": test("bridge", sets=("second",), requires=("first", "other")),
+                 "other_setup": test("other_setup", sets=("other",)),
+                 "consumer": test("consumer", requires=("second",)),
+                 "sibling": test("sibling", requires=("first",)),
+                 "unrelated": test("unrelated", sets=("unrelated",))}
+        graph = {"tests": tests, "closures": {name: ["src/" + name + ".c"] for name in tests}}
+        reasons = {}
+        selected, full = select_tests.select(graph, ["src/setup.c"], reasons)
+        self.assertEqual(selected, set(tests) - {"unrelated"})
+        self.assertEqual(full, [])
+        self.assertIn("fixture consumer of: setup", reasons["bridge"])
+        self.assertIn("fixture consumer of: bridge", reasons["consumer"])
+        self.assertIn("fixture setup for: bridge", reasons["other_setup"])
+
+    def test_fixture_cycles_terminate_without_selecting_unrelated_tests(self):
+        tests = {name: {"target": name, "registered": [], "arguments": [], "depends": [],
+                        "sets": [name], "requires": [requires]}
+                 for name, requires in (("first", "second"), ("second", "first"), ("other", "other"))}
+        graph = {"tests": tests, "closures": {name: ["src/" + name + ".c"] for name in tests}}
+        self.assertEqual(select_tests.select(graph, ["src/first.c"]), ({"first", "second"}, []))
+
 
 class SelectGraphStateTests(SelectFixture):
     def test_changed_list_with_a_byte_order_mark_and_crlf_keeps_its_first_path(self):
@@ -375,6 +404,13 @@ class FixtureBuildTests(unittest.TestCase):
     def test_cleanup_executable_is_built_when_ctest_adds_it(self):
         output = self.run_selected("beta/main.c", self.graph)
         self.assertIn("beta_cleanup", output)
+        self.assertNotIn("alpha", output)
+        self.assertFalse(any(path.is_file() for path in (self.build / "alpha").glob("alpha_tests*")))
+
+    def test_changed_setup_builds_and_runs_its_consumer(self):
+        output = self.run_selected("beta/setup.c", self.graph)
+        for name in ("beta", "beta_setup", "beta_cleanup"):
+            self.assertIn(name, output)
         self.assertNotIn("alpha", output)
         self.assertFalse(any(path.is_file() for path in (self.build / "alpha").glob("alpha_tests*")))
 
