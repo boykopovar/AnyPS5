@@ -319,10 +319,6 @@ int APS5_VABI sceVideoOutSetVrrMaster() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSubmitChangeBufferAttribute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceVideoOutSysAddSetModeEvent2() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -847,6 +843,70 @@ int APS5_VABI sceVideoOutSetConfigurationMode() {
 
 extern "C" {
 
+int APS5_VABI libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-7inAKRfvfE", libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("24GHCH4jyzU", libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9jqDAT2tPAg", libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DFNafp+tWs8", libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("G0FPxnpizUc", libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JpVPYbAVxRQ", libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KEOpdUvfQHQ", libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("koLWa3yaO-8", libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch);
+
+int APS5_VABI sceVideoOutLatencyMeasureSetStartPointAuto() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSetDrrMonitorCapability() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysAddFlipEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysDeleteFlipEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysSetBusTransfer() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
 int APS5_VABI sceVideoOutDebugLatencyMeasureGetLatestLatency() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -896,6 +956,48 @@ int APS5_VABI sceVideoOutSysSetDrrPegRefreshRate() {
 }
 
 int APS5_VABI sceVideoOutSysSetVrrSetting() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVideoOutUnknown__plus_ZuoGRI_plus_U_minus_g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+ZuoGRI+U-g", libSceVideoOutUnknown__plus_ZuoGRI_plus_U_minus_g_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_96hq3WwT3DE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("96hq3WwT3DE", libSceVideoOutUnknown_96hq3WwT3DE_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_B8siTU85n8M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("B8siTU85n8M", libSceVideoOutUnknown_B8siTU85n8M_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_IkyDS23qu4g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IkyDS23qu4g", libSceVideoOutUnknown_IkyDS23qu4g_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_gQwfLPPIZQ8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gQwfLPPIZQ8", libSceVideoOutUnknown_gQwfLPPIZQ8_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_rJmjlPlreu4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rJmjlPlreu4", libSceVideoOutUnknown_rJmjlPlreu4_nid_no_patch);
+
+int APS5_VABI sceVideoOutGetFlipStatusNative() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysLatencyMeasureGetLatestLatency() {
     NotImplemented_nid_no_patch(__func__);
 }
 
