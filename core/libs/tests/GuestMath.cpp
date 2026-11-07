@@ -2416,8 +2416,8 @@ static void CheckAsinhfMsunBoundaries() {
     Require(std::isinf(asinhf_nid_postfix(INFINITY)) && asinhf_nid_postfix(INFINITY) > 0.0f);
     Require(std::isinf(asinhf_nid_postfix(-INFINITY)) && asinhf_nid_postfix(-INFINITY) < 0.0f);
     Require(std::isnan(asinhf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
-    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(0x1.ab8ef4p+1f)) == 0x3febbbfeu);
-    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(-0x1.4f2858p+6f)) == 0xc1a3e33eu);
+    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(0x1.ab8ef4p+1f)) == 0x3ff5dff0u);
+    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(-0x1.4f2858p+6f)) == 0xc0a3e33eu);
 }
 
 static void CheckAcoshfDomainEnvironment() {
