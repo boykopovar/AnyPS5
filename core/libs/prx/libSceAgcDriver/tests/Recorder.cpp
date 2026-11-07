@@ -5880,12 +5880,12 @@ bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
     if (!UnitShadowEnabled() || !context.dmaBufImport) {
-        std::cout << "skipped, unit shadows or dma-buf imports are unavailable\n";
+        std::cout << "skipped, unit shadows or host imports are unavailable (no dma-buf import)\n";
         return false;
     }
     const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
     if (fd < 0) {
-        std::cout << "skipped, /dev/udmabuf is unavailable\n";
+        std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
         return false;
     }
     close(fd);
