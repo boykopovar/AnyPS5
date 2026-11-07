@@ -45,6 +45,10 @@ void Driver::bumpWaitEpoch(std::uint64_t address, std::size_t bytes) {
     };
     static thread_local std::unordered_map<std::uint64_t, Ordered> ordered;
     static const bool memo = std::getenv("APS5_NO_ORDERED_WAITS") == nullptr;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
+        bumpEpoch(&EpochBumps::waits);
+        return;
+    }
     const auto generation = memo ? GuestMemory::CollectWritesUncached(address, bytes) : 0;
     const std::uint64_t value = bytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(address) : *reinterpret_cast<const volatile std::uint32_t*>(address);
     if (generation != 0) {
