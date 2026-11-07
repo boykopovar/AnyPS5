@@ -131,10 +131,10 @@ int main() {
     RequireThrows([&] { ENGINE_ctrl_nid_postfix(&notAnEngine, 1, 0, nullptr, nullptr); }, "ENGINE_ctrl of a pointer that is no engine");
     RequireThrows([&] { ENGINE_ctrl_cmd_nid_postfix(&notAnEngine, "SO_PATH", 0, nullptr, nullptr, 1); }, "ENGINE_ctrl_cmd of a pointer that is no engine");
     RequireThrows([&] { ENGINE_load_private_key_nid_postfix(&notAnEngine, "key", nullptr, nullptr); }, "ENGINE_load_private_key of a pointer that is no engine");
-    Require(ENGINE_set_default_nid_postfix(nullptr, 0) == 1, "ENGINE_set_default without flags fails");
-    Require(ENGINE_set_default_nid_postfix(nullptr, 0x0100) == 1, "ENGINE_set_default with only the STORE flag fails");
-    Require(ENGINE_set_default_nid_postfix(nullptr, 0xf900) == 1, "ENGINE_set_default with only flags it does not handle fails");
-    Require(ENGINE_set_default_nid_postfix(&notAnEngine, 0) == 1, "ENGINE_set_default without flags reads the engine");
+    Require(ENGINE_set_default_nid_postfix(nullptr, 0) == 1, "ENGINE_set_default without flags succeeds");
+    Require(ENGINE_set_default_nid_postfix(nullptr, 0x0100) == 1, "ENGINE_set_default with only the STORE flag succeeds");
+    Require(ENGINE_set_default_nid_postfix(nullptr, 0xf900) == 1, "ENGINE_set_default with only flags it does not handle succeeds");
+    Require(ENGINE_set_default_nid_postfix(&notAnEngine, 0) == 1, "ENGINE_set_default without flags does not read the engine");
     Require(ERR_peek_error_nid_postfix() == 0, "ENGINE_set_default without method flags pushes an error");
     for (const unsigned int flag : {0x0001u, 0x0002u, 0x0004u, 0x0008u, 0x0010u, 0x0020u, 0x0040u, 0x0080u, 0x0200u, 0x0400u}) {
         bool threw = false;
