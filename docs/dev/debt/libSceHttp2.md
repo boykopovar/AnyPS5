@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceHttp2RedirectCacheFlush](../../../core/libs/prx/libSceHttp2/Export.cpp) - returns 0 for any argument without checking it, as the 13.42 module does ([#10536](https://github.com/boykopovar/AnyPS5/pull/10536)); automatic redirects throw, so there is no redirect cache to flush
+- [sceHttp2RedirectCacheFlush](../../../core/libs/prx/libSceHttp2/Export.cpp) - returns 0 for any argument without checking it, as the 13.42 module does ([#10536](https://github.com/boykopovar/AnyPS5/pull/10536)); redirects are followed without a cache, so there is nothing to flush
 
 - [libSceHttp2 WebSocket ping settings](../../../core/libs/prx/libSceHttp2/Export.cpp) - `sceHttp2WebSocketSetPingInterval` and `sceHttp2WebSocketSetPingTimeout` check their values as a PS5 does and drop them, since a WebSocket request never connects
 
