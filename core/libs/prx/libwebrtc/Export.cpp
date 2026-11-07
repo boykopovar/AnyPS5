@@ -461,9 +461,8 @@ int APS5_VABI _ZNK6webrtc19I420BufferInterface12ChromaHeightEv_nid_postfix(void)
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI _ZNK6webrtc16VideoFrameBuffer7GetI420Ev_nid_postfix(const void*) {
+    return nullptr;
 }
 
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder5buildEv_nid_postfix(void) {
@@ -971,10 +970,7 @@ int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void*) {}
 
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1060,14 +1056,10 @@ int APS5_VABI libwebrtcUnknown36(void) {
 
 APS5_EXPORT("Vf6lJz4-bEU", libwebrtcUnknown37);
 int APS5_VABI libwebrtcUnknown37(void) {
-    NotImplemented_nid_no_patch("Vf6lJz4-bEU");
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void*, float) {}
 
 int APS5_VABI _ZN6webrtc12AudioEncoder28OnReceivedTargetAudioBitrateEi_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1147,10 +1139,7 @@ int APS5_VABI _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void*) {}
 
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
