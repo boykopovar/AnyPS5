@@ -12,10 +12,13 @@
 #include "Version.hpp"
 #include "RecoveredInventory.hpp"
 #include "ConverterCallbacks.hpp"
+#include "Converter.hpp"
 #include "CString.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
 #include "Space.hpp"
 #include "Unescape.hpp"
+#include "Properties.hpp"
+#include "CaseMapping.hpp"
 #include "Identified.hpp"
 
 #include "prx/libSceIcu/include/Api.hpp"
