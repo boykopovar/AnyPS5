@@ -142,7 +142,7 @@ for (const extra of [
   [...sidecars, ["other/resource", false, new Uint8Array([1])]]
 ]) {
   const archive = new Archive(await zipped([...app, ...extra]));
-  try { await assert.rejects(archive.inspect(() => {}), /exactly one executable ELF/); }
+  try { await assert.rejects(archive.inspect(() => {}), /This doesn't look like a PS5 app\./); }
   finally { await archive.close(); }
 }
 
@@ -266,8 +266,22 @@ try { assert.equal((await folder.inspect(() => {})).root, "outer/inner/title/");
 finally { await folder.close(); }
 
 const siblings = new Archive(await zipped([["outer/", true], ["outer/main.elf", false], ["other/resource", false]]));
-try { await assert.rejects(siblings.inspect(() => {}), /exactly one executable ELF/); }
+try { await assert.rejects(siblings.inspect(() => {}), /This doesn't look like a PS5 app\./); }
 finally { await siblings.close(); }
+
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+const noSceSys = new Archive(await zipped([["screenshot.png", false, png]]));
+try { await assert.rejects(noSceSys.inspect(() => {}), /This doesn't look like a PS5 app\./); }
+finally { await noSceSys.close(); }
+
+const noExecutable = new Archive(await zipped([["sce_sys/param.json", false, png], ["readme.txt", false, png]]));
+try { await assert.rejects(noExecutable.inspect(() => {}), /No game executable \(eboot\.bin\) was found next to sce_sys\./); }
+finally { await noExecutable.close(); }
+
+const tooManyExecutables = new Archive(await zipped([["main.elf", false], ["second.elf", false]]));
+try { await assert.rejects(tooManyExecutables.inspect(() => {}), /Found 2 executables in the app root \(main\.elf, second\.elf\)\./); }
+finally { await tooManyExecutables.close(); }
 
 for (const cleanupRejects of [false, true]) {
   const failure = new Error("input read failed");
