@@ -138,21 +138,33 @@ int APS5_VABI sceNpAppLauncherTerminate() {
 }
 
 int APS5_VABI sceNpGameIntentGetUdsNpComId() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchApp() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchApp2() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -6,6 +6,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/LegacySignals.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 
@@ -32,6 +33,7 @@ int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+int APS5_VABI __fflush_nid_postfix(FileStream* stream);
 int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
@@ -47,6 +49,10 @@ const char* APS5_VABI _getprogname_nid_postfix();
 void APS5_VABI setprogname_nid_postfix(const char* name);
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
+void* APS5_VABI sceLibcInternalPmrNewDeleteResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrGetDefaultResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrNullMemoryResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrSetDefaultResource_nid_no_patch(void* resource) noexcept;
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
 void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
 int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle);
@@ -108,15 +114,32 @@ int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* p
 int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
 std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
 int APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(const char* path, std::int64_t* seconds, std::int64_t* nanoseconds);
+int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsE_nid_postfix(const char* path, int* perms);
+int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsE_nid_postfix(const char* path, int* perms);
+std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKc_nid_postfix(const char* path);
+std::int64_t APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKc_nid_postfix(const char* path);
+bool APS5_VABI _ZNSt10filesystem20_Set_last_write_timeEPKcl_nid_postfix(const char* path, std::int64_t microseconds);
+int APS5_VABI _ZNSt10filesystem7_RenameEPKcS1__nid_postfix(const char* from, const char* to);
+int APS5_VABI _ZNSt10filesystem7_ResizeEPKcm_nid_postfix(const char* path, std::uint64_t size);
+int APS5_VABI _ZNSt10filesystem10_Copy_fileEPKcS1__nid_postfix(const char* from, const char* to);
+int APS5_VABI _ZNSt10filesystem8_StatvfsEPKcRNS_10space_infoE_nid_postfix(const char* path, std::uint64_t* space);
+int APS5_VABI _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
 void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self);
+int APS5_VABI sceLibcInternalCollateDoCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2);
+GuestLocale::String* APS5_VABI sceLibcInternalCollateDoTransform_nid_no_patch(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last);
+std::int64_t APS5_VABI sceLibcInternalCollateDoHash_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first, const char* last);
+int APS5_VABI sceLibcInternalCollateCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2);
+std::int64_t APS5_VABI sceLibcInternalCollateHash_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first, const char* last);
 int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
 bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);
 char* APS5_VABI _ZNSt10filesystem9_Read_dirERA260_cPvRNS_9file_typeE_nid_postfix(char* target, void* handle, int* type);
 void* APS5_VABI _ZNSt10filesystem9_Open_dirERA260_cPKcRiRNS_9file_typeE_nid_postfix(char* target, const char* path, int* error, int* type);
 int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle);
+void APS5_VABI sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalIosBaseDeletingDestructor_nid_no_patch(void* self);
 int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
