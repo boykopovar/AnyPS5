@@ -108,8 +108,10 @@ void CheckContexts() {
     Require(sceNpScoreCreateNpTitleCtx(1, selfNpId) == TooManyObjects, "sceNpScoreCreateNpTitleCtx", "a 33rd context did not return TOO_MANY_OBJECTS");
     const int kept = sceNpScoreCreateRequest(extra[0]);
     Require(kept == 1, "sceNpScoreCreateRequest", "the first request is not id 1");
+    const int survivor = sceNpScoreCreateRequest(context);
     for (const int entry : extra) Require(sceNpScoreDeleteNpTitleCtx(entry) == 0, "sceNpScoreDeleteNpTitleCtx", "deleting a context failed");
     Require(sceNpScoreDeleteRequest(kept) == InvalidId, "sceNpScoreDeleteNpTitleCtx", "a request of a deleted context was kept");
+    Require(sceNpScoreDeleteRequest(survivor) == 0, "sceNpScoreDeleteNpTitleCtx", "deleting other contexts dropped a request of a context that was kept");
     Require(sceNpScoreDeleteNpTitleCtx(extra[0]) == InvalidId, "sceNpScoreDeleteNpTitleCtx", "a deleted context was found");
     int requests[32];
     for (int& entry : requests) entry = NewRequest();
@@ -148,6 +150,7 @@ void CheckRecord() {
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, &info) == InvalidArgument, "sceNpScoreRecordScore", "an option was taken");
     Require(sceNpScoreRecordScore(req, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "190 bytes of game info were taken");
     Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScoreAsync", "190 bytes of game info were taken");
+    Require(sceNpScoreRecordScore(req + 100, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidArgument, "sceNpScoreRecordScore", "the request was looked up before the game info size was checked");
     info.infoSize = 189;
     Require(sceNpScoreRecordScore(req + 100, 1, 5, nullptr, &info, &tmpRank, nullptr, nullptr) == InvalidId, "sceNpScoreRecordScore", "an unknown request was taken");
     Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreRecordScore", "a refused call finished the request");
@@ -180,6 +183,7 @@ void CheckNpId() {
     const int req = NewRequest();
     Require(sceNpScoreGetRankingByNpId(req, 1, npIds, 36, ranks, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, board) == InvalidArgument, "sceNpScoreGetRankingByNpId", "an option was taken");
     Require(sceNpScoreGetRankingByNpId(req, 1, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 102, nullptr, nullptr, nullptr) == TooManyNpId, "sceNpScoreGetRankingByNpId", "102 NpIds were not refused before the null arrays");
+    Require(sceNpScoreGetRankingByNpId(req, 1, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 102, nullptr, nullptr, board) == InvalidArgument, "sceNpScoreGetRankingByNpId", "102 NpIds were refused before the option");
     Require(sceNpScoreGetRankingByNpId(req, 1, nullptr, 36, ranks, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InsufficientArgument, "sceNpScoreGetRankingByNpId", "a null NpId array was taken");
     Require(sceNpScoreGetRankingByNpId(req, 1, npIds, 36, nullptr, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InsufficientArgument, "sceNpScoreGetRankingByNpId", "a null rank array was taken");
     Require(sceNpScoreGetRankingByNpId(req, 1, npIds, 24, ranks, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InvalidAlignment, "sceNpScoreGetRankingByNpId", "an NpId array size other than 36 per NpId was taken");
@@ -250,6 +254,7 @@ void CheckAccountIds() {
     int req = NewRequest();
     Require(byAccountId(req, 1, accountIds, 16, ranksA, 0x130, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, board) == InvalidArgument, "sceNpScoreGetRankingByAccountId", "an option was taken");
     Require(byAccountId(req, 1, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 102, nullptr, nullptr, nullptr) == TooManyNpId, "sceNpScoreGetRankingByAccountId", "102 account ids were not refused before the null arrays");
+    Require(byAccountId(req, 1, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 102, nullptr, nullptr, board) == InvalidArgument, "sceNpScoreGetRankingByAccountId", "102 account ids were refused before the option");
     Require(byAccountId(req, 1, accountIds, 0, ranksA, 0, nullptr, 0, nullptr, 0, 0, nullptr, nullptr, nullptr) == InsufficientArgument, "sceNpScoreGetRankingByAccountId", "zero account ids were taken");
     Require(byAccountId(req, 1, nullptr, 16, ranksA, 0x130, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, nullptr) == InsufficientArgument, "sceNpScoreGetRankingByAccountId", "a null account id array was taken");
     Require(byAccountId(req, 1, accountIds, 8, ranksA, 0x130, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, nullptr) == InvalidAlignment, "sceNpScoreGetRankingByAccountId", "an account id array size other than 8 per id was taken");
@@ -329,12 +334,18 @@ void CheckContextsAndWaiting() {
     Require(setPcId(context, 3) == 0, "sceNpScoreSetPlayerCharacterId", "a title context was not found");
     Require(setPcId(req, 3) == 0, "sceNpScoreSetPlayerCharacterId", "a request was not found");
     Require(setPcId(999, 3) == InvalidId, "sceNpScoreSetPlayerCharacterId", "an unknown id was taken");
+    Require(setPcId(999, -1) == InvalidArgument, "sceNpScoreSetPlayerCharacterId", "the id was looked up before the character id was checked");
     int result = 0;
     Require(waitAsync(req + 100, &result) == InvalidId, "sceNpScoreWaitAsync", "an unknown request was taken");
     Require(sceNpScoreRecordScoreAsync(req, 1, 5, nullptr, nullptr, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreRecordScoreAsync", "valid arguments did not return SIGNED_OUT");
     Require(waitAsync(req, &result) == 0 && result == SignedOut, "sceNpScoreWaitAsync", "a finished request did not report SIGNED_OUT");
     Require(waitAsync(req, nullptr) == 0, "sceNpScoreWaitAsync", "a null result was not accepted");
     sceNpScoreDeleteRequest(req);
+    const int aborted = NewRequest();
+    Require(sceNpScoreAbortRequest(aborted) == 0, "sceNpScoreAbortRequest", "aborting a request before waiting failed");
+    result = 0;
+    Require(waitAsync(aborted, &result) == 0 && result == Aborted, "sceNpScoreWaitAsync", "an aborted request did not report ABORTED");
+    sceNpScoreDeleteRequest(aborted);
 }
 
 void CheckCrossSave() {
