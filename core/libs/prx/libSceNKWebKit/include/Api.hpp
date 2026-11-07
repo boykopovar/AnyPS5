@@ -2,6 +2,10 @@
 
 #include "SceTypes.hpp"
 
+namespace WebCore {
+class DOMWrapperWorld;
+}
+
 extern "C" {
 
 int APS5_VABI WKErrorCopyLocalizedDescription();
@@ -74,7 +78,7 @@ int APS5_VABI _ZN3WTF9URLParser23maybeCanonicalizeSchemeERKNS_6StringE();
 int APS5_VABI _ZN3WTF21MemoryPressureHandler15setProcessStateENS_18WebsamProcessStateE();
 int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent6enableERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore27TranslateTransformOperationC1ERKNS_6LengthES3_S3_NS_18TransformOperation13OperationTypeE();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE(WebCore::DOMWrapperWorld&);
 int APS5_VABI WKDownloadCancel();
 int APS5_VABI _ZNK7WebCore14SecurityOrigin20isSameSchemeHostPortERKS0_();
 int APS5_VABI _ZNK7WebCore11MessagePort5derefEv();
@@ -114,7 +118,7 @@ int APS5_VABI _ZThn16_N9Inspector21InspectorRuntimeAgent8evaluateERN3WTF6StringE
 int APS5_VABI _ZNK7WebCore27TranslateTransformOperationeqERKNS_18TransformOperationE();
 int APS5_VABI _ZN7WebCore9FrameView24forceLayoutForPaginationERKNS_9FloatSizeES3_fNS_19AdjustViewSizeOrNotE();
 int APS5_VABI _ZN7WebCore11DisplayList11ClearShadowD1Ev();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 int APS5_VABI _ZNK7WebCore6Widget25convertFromContainingViewERKNS_8IntPointE();
 int APS5_VABI _ZNK7WebCore13HTTPHeaderMap12isolatedCopyEv();
 int APS5_VABI _ZN7WebCore22DefaultFilterOperationD0Ev();
