@@ -88,8 +88,12 @@ ImageType rawImageType(const DescriptorValue& descriptor) {
     return static_cast<ImageType>((descriptor.dwords[3] >> 28u) & 0xfu);
 }
 
+bool unboundTableSlot(const ImageResource& image, const DescriptorValue& descriptor) {
+    return image.table != NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && descriptor.dwordCount == 8u && (descriptor.availableDwordMask & 0xffu) == 0xffu && std::all_of(descriptor.dwords.begin(), descriptor.dwords.begin() + 8, [](std::uint32_t word) { return word == 0xffffffffu; });
+}
+
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
-    if (nullImageDescriptor(descriptor)) return true;
+    if (nullImageDescriptor(descriptor) || unboundTableSlot(image, descriptor)) return true;
     const auto type = rawImageType(descriptor);
     if (image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && type >= ImageType::Color1D && type <= ImageType::Color2DMsaa && imageFormatUnset(descriptor)) return true;
     return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
