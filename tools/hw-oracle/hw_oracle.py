@@ -113,7 +113,7 @@ def detected_target(binary, visible_devices):
         environment.pop("ROCR_VISIBLE_DEVICES", None)
     else:
         environment["ROCR_VISIBLE_DEVICES"] = visible_devices
-    return subprocess.run([binary, "--target"], capture_output=True, text=True, check=True,
+    return subprocess.run([binary, "--target"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
                           env=environment).stdout.strip()
 
 
