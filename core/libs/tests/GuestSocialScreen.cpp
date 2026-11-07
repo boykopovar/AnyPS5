@@ -8,11 +8,31 @@ namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
 
+constexpr int kErrNotInit = static_cast<int>(0x81440001);
+constexpr int kErrAlreadyInit = static_cast<int>(0x81440002);
 constexpr int kErrInvalidArg = static_cast<int>(0x81440003);
+
+void CheckLifecycle() {
+    Require(sceSocialScreenTerminate() == kErrNotInit);
+    Require(sceSocialScreenCloseSeparateMode() == kErrNotInit);
+    Require(sceSocialScreenConfigureSeparateMode() == kErrNotInit);
+    Require(sceSocialScreenGetIgnoreSeparateMode() == kErrNotInit);
+    Require(sceSocialScreenOpenSeparateMode() == kErrNotInit);
+    Require(sceSocialScreenReserveHighFrameRateVideoCaptureRequest() == kErrNotInit);
+    Require(sceSocialScreenSetIgnoreSeparateMode() == kErrNotInit);
+    Require(sceSocialScreenSetMode() == kErrNotInit);
+
+    Require(sceSocialScreenInitialize() == 0);
+    Require(sceSocialScreenInitialize() == kErrAlreadyInit);
+
+    Require(sceSocialScreenTerminate() == 0);
+    Require(sceSocialScreenTerminate() == kErrNotInit);
+}
 
 }
 
 int main() {
+    CheckLifecycle();
     Require(sceSocialScreenInitializeSeparateModeParameter(nullptr) == kErrInvalidArg);
     Require(sceSocialScreenInitializeSeparateModeParameter(reinterpret_cast<void*>(0x10)) == kErrInvalidArg);
     std::array<std::uint8_t, 0x40> parameter{};
