@@ -3,6 +3,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -379,6 +380,9 @@ int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* 
 }
 
 int APS5_VABI sceUserServiceGetInitialUser(int* user_id) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -405,6 +409,9 @@ int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_
 }
 
 int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (name == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
@@ -416,7 +423,10 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
   std::memset(name, 0, size);
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_USER_NAMES[index], size);
+ const char* defaultName = USER_SERVICE_USER_NAMES[index];
+ const std::size_t copyLength = std::min(std::strlen(defaultName), USER_SERVICE_MAX_USER_NAME_LENGTH);
+ std::memset(name, 0, size);
+ std::memcpy(name, defaultName, copyLength);
  return USER_SERVICE_OK;
 }
 
