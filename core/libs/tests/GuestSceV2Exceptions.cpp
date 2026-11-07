@@ -154,6 +154,18 @@ static void CheckCopies() {
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&error.base);
 }
 
+static void CheckCppErrorCode() {
+    const TypeRecord systemError = Named("NSt8__sce_v212system_errorE");
+    inspectBytes = sizeof(LibcException::SystemErrorObject);
+    SceV2CatchType = &systemError;
+    SceV2OtherType = &_ZTISt12system_error_nid_postfix;
+    SceV2Catch(AsThrower(_ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix), reinterpret_cast<const void*>(1));
+    Require(inspectedSystem.code.reserved == 22, "_Throw_Cpp_error stores the value in the first code word");
+    Require(inspectedSystem.code.value == 0, "_Throw_Cpp_error leaves the second code word clear");
+    Require(inspectedSystem.code.category == _ZSt16generic_categoryv_nid_postfix(), "_Throw_Cpp_error uses the generic category");
+    inspectBytes = sizeof(LibcException::ExceptionObject);
+}
+
 static void CheckErrorException() {
     LibcException::ExceptionObject empty {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC1EPKc_nid_postfix(&empty, nullptr);
@@ -227,6 +239,7 @@ int main() {
     CheckErrorException();
     CheckThrowers();
     CheckCopies();
+    CheckCppErrorCode();
     CheckSyserrorMap();
     CheckLocinfo();
     CheckTicks();
