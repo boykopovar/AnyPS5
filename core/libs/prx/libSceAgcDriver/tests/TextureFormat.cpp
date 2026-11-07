@@ -173,7 +173,7 @@ void convertedDccClearTests() {
         resource.format = format;
         return TextureClearKeys(resource, keys.size() * 256u);
     };
-    for (const std::uint32_t format : {30u, 34u}) {
+    for (const std::uint32_t format : {30u, 34u, 37u, 41u, 44u, 48u}) {
         reject([&] { read(format, 0x40); }, "DCC clear code 0001 of converted texture format " + std::to_string(format));
         reject([&] { read(format, 0x80); }, "DCC clear code 1110 of converted texture format " + std::to_string(format));
         Require(read(format, 0x00) == DccKeys::Clear0000 && read(format, 0xc0) == DccKeys::Clear1111, "converted texture format " + std::to_string(format) + " must keep its 0000 and 1111 DCC clear codes");

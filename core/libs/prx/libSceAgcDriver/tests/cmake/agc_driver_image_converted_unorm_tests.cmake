@@ -1,6 +1,15 @@
 target_include_directories(agc_driver_image_converted_unorm_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 if(BUILD_TESTING)
+    foreach(unsignedPackedFormat IN ITEMS 37 41 44 48)
+        set(unsignedPackedTest agc_driver_image_unsigned_packed32_${unsignedPackedFormat})
+        add_test(NAME ${unsignedPackedTest} COMMAND agc_driver_image_converted_unorm_tests --unsigned-packed32 ${unsignedPackedFormat})
+        set_tests_properties(${unsignedPackedTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(${unsignedPackedTest} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
     foreach(packedStorageFormat IN ITEMS 133 134 136)
         set(packedStorageTest agc_driver_image_packed16_storage_${packedStorageFormat})
         add_test(NAME ${packedStorageTest} COMMAND agc_driver_image_converted_unorm_tests --packed16 ${packedStorageFormat})
