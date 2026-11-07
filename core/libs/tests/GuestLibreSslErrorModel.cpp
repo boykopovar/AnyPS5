@@ -47,6 +47,21 @@ static void Exercise(unsigned seed) {
 }
 
 int main() {
+    const std::array<unsigned char, 16> sessionBytes {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    auto sessionCopy = sessionBytes;
+    ERR_clear_error_nid_postfix();
+    LibreSslPutError_nid_no_patch(3, 1, 41);
+    SSL_SESSION_free_nid_postfix(nullptr);
+    Require(ERR_peek_error_nid_postfix() == ((3ull << 24) | (1ull << 12) | 41));
+    try {
+        SSL_SESSION_free_nid_postfix(sessionCopy.data());
+        Require(false);
+    } catch (const std::exception&) {
+    }
+    Require(sessionCopy == sessionBytes);
+    Require(ERR_peek_error_nid_postfix() == ((3ull << 24) | (1ull << 12) | 41));
+    ERR_clear_error_nid_postfix();
+
     std::barrier boundary(3);
     const auto worker = [&](unsigned marker) {
         ERR_clear_error_nid_postfix();
