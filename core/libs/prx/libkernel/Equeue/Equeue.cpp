@@ -719,31 +719,40 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq) {
 }
 
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo) {
+    const auto fail = [out](int error) {
+        if (out != nullptr) *out = 0;
+        return error;
+    };
+    if (num < 1) {
+        return fail(SCE_KERNEL_ERROR_EINVAL);
+    }
     auto owner = EqueuePin_nid_postfix(eq);
     if (!owner) {
-        return SCE_KERNEL_ERROR_EBADF;
+        return fail(SCE_KERNEL_ERROR_EBADF);
     }
     if (ev == nullptr) {
-        return SCE_KERNEL_ERROR_EFAULT;
+        return fail(SCE_KERNEL_ERROR_EFAULT);
     }
-    if (num < 1 || out == nullptr) {
+    if (out == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
     const auto waitStart = std::chrono::steady_clock::now();
+    int result = 0;
     if (timo == nullptr) {
-        *out = owner->WaitForEvents(ev, num, 0);
+        result = owner->WaitForEvents(ev, num, 0);
     } else if (*timo == 0) {
-        *out = owner->GetTriggeredEvents(ev, num);
+        result = owner->GetTriggeredEvents(ev, num);
     } else {
-        *out = owner->WaitForEvents(ev, num, *timo);
+        result = owner->WaitForEvents(ev, num, *timo);
     }
     if (timo == nullptr || *timo != 0) {
-        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), *out == 0);
+        KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), result == 0);
     }
-    if (*out == SCE_KERNEL_ERROR_EBADF) {
-        return SCE_KERNEL_ERROR_EBADF;
+    if (result == SCE_KERNEL_ERROR_EBADF) {
+        return fail(SCE_KERNEL_ERROR_EBADF);
     }
-    if (*out == 0) {
+    *out = result;
+    if (result == 0) {
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
     return EQUEUE_OK;
