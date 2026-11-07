@@ -1,6 +1,12 @@
 #include "prx/libSceLibcInternal/include/AtomicWaitDeadline.hpp"
 
-#include <chrono>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 namespace {
 
@@ -9,8 +15,13 @@ constexpr std::uint64_t NoTimeout = 0xFFFFFFFFULL;
 constexpr std::uint64_t MaximumTimeout = 864000000ULL;
 
 std::uint64_t Now() {
-    const auto elapsed = std::chrono::steady_clock::now().time_since_epoch();
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+#ifdef _WIN32
+    return ::GetTickCount64();
+#else
+    struct timespec now{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &now) != 0) throw std::runtime_error("atomic wait deadline: reading CLOCK_MONOTONIC failed");
+    return static_cast<std::uint64_t>(now.tv_sec) * 1000ULL + static_cast<std::uint64_t>(now.tv_nsec) / 1000000ULL;
+#endif
 }
 
 } // namespace
