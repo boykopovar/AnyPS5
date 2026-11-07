@@ -148,6 +148,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-unused-filter-indirect-") as directory:
         failures = [name for name, expected, image in cases()
                     if run(relinker, Path(directory), name, image) != expected]
+        for segment in (b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                for base in (0, 8):
+                    prefix = segment + address_prefix + b"\x48\x8b\x05"
+                    load = prefix + rel(CODE + len(prefix) + 4, SLOT - base) + b"\xc3"
+                    for level in (1, 2):
+                        name = f"segment-{segment.hex()}-address-{address_prefix.hex()}-base-{base}-filter-{level}"
+                        if not run(relinker, Path(directory), name, build(at_offset([(0, load)])), level):
+                            failures.append(name)
         for sections in (False, True):
             for kind, binding, defined in (("global", 1, True), ("weak", 2, True),
                                            ("local", 0, True), ("undefined", 1, False)):
