@@ -175,10 +175,29 @@ static void TestParentTraversal() {
     checkInvalid("/" + root.generic_string() + "/missing/..", 2);
     checkInvalid(root.generic_string() + "/missing/../../" + root.generic_string(), 2);
     AddPathAlias_nid_no_patch("parent-test-mount", std::filesystem::absolute(root).string().c_str());
-    const char* missingCreateAlias = "/parent-test-mount/missing-create/";
-    Require(sceKernelOpen(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == SCE_KERNEL_ERROR_ENOENT);
-    Require(open_nid_postfix(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == -1 && *__error_nid_postfix() == 2);
+    const auto missingCreate = root.generic_string() + "/missing-create/";
+    const int creates[] = {SCE_KERNEL_O_CREAT, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC};
+    for (const char* name : {"/parent-test-mount/missing-create/", missingCreate.c_str()}) {
+        for (const int create : creates) {
+            Require(sceKernelOpen(name, SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOENT);
+            Require(open_nid_postfix(name, SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 2);
+        }
+    }
     Require(!std::filesystem::exists(root / "missing-create"));
+#ifdef _WIN32
+    const auto nativeRoot = std::filesystem::absolute(root).generic_string();
+    const auto nativeMissing = nativeRoot + "/missing-create/";
+    const auto nativePresent = nativeRoot + "/present.txt/";
+    const auto nativeBelowFile = nativeRoot + "/present.txt/child/";
+    for (const int create : creates) {
+        Require(sceKernelOpen(nativeMissing.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOENT);
+        Require(open_nid_postfix(nativeMissing.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 2);
+        Require(sceKernelOpen(nativePresent.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOTDIR);
+        Require(open_nid_postfix(nativePresent.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == -1 && *__error_nid_postfix() == 20);
+        Require(sceKernelOpen(nativeBelowFile.c_str(), SCE_KERNEL_O_WRONLY | create, 0600) == SCE_KERNEL_ERROR_ENOTDIR);
+    }
+    Require(!std::filesystem::exists(root / "missing-create") && std::filesystem::file_size(root / "present.txt") == 9);
+#endif
     checkInvalid("/PARENT-TEST-MOUNT/missing/..", 2);
     checkInvalid("/parent-test-mount/present.txt/..", 20);
     FileStat status{};
