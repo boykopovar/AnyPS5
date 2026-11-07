@@ -15,6 +15,7 @@
 *.so.*
 *.dylib
 *.dll
+!/core/libs/prx/mscorlib.dll/
 
 *.mod
 *.smod
