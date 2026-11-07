@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstdint>
+#include <stdexcept>
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -9,6 +10,7 @@ constexpr int EngineLibrary = 38;
 constexpr int UnnamedFunction = 0xfff;
 constexpr int PassedNullParameter = 67;
 constexpr int NoSuchEngine = 116;
+constexpr unsigned int DefaultableMethods = 0x06ff;
 
 void PutEngineError(int reason) {
     LibreSslPutError_nid_no_patch(EngineLibrary, UnnamedFunction, reason);
@@ -67,6 +69,13 @@ void APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void) {
 void* APS5_VABI ENGINE_load_private_key_nid_postfix(void* engine, const char*, void*, void*) {
     RequireNoEngine(engine, "ENGINE_load_private_key of an ENGINE, which this library cannot create");
     return nullptr;
+}
+
+int APS5_VABI ENGINE_set_default_nid_postfix(void* engine, unsigned int flags) {
+    if ((flags & DefaultableMethods) == 0) return 1;
+    if (engine == nullptr) throw std::invalid_argument("ENGINE_set_default: null engine with a method flag");
+    NotImplemented_nid_no_patch("ENGINE_set_default of an ENGINE, which this library cannot create");
+    return 0;
 }
 
 }
