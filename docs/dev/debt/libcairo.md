@@ -12,9 +12,13 @@
 
 - [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
 
+### Functional FreeType font-face integration
+
+- [FontFace.cpp](../../../core/libs/prx/libcairo/FontFace.cpp) implements six Cairo font-face lifetime, user-data and FreeType option-substitution exports. Font faces retain guest `FT_Face` objects with `FT_Reference_Face_nid_postfix` and release them on final destruction; user-data keys use pointer identity and invoke guest `APS5_VABI` destroy callbacks. Font options map to Fontconfig antialias, RGBA, hint-style and hinting pattern values. The FreeType bridge uses pinned `3rdparty/freetype` commit `37515cf56ba3349656049edbed89ffc6f6466f2d`. The caller must keep the owning `FT_Library` alive until its Cairo font faces are destroyed. Scaled fonts and glyph rasterization remain unimplemented.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 124 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 118 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -22,7 +26,6 @@
 | `cairo_paint` | `+PEo5Z7DOlY` |
 | `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_device_to_user_distance` | `-v5CZVGkN3k` |
-| `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_new_sub_path` | `36Wm5aIJUFY` |
@@ -63,7 +66,6 @@
 | `cairo_region_get_rectangle` | `I5wa74016LQ` |
 | `cairo_set_miter_limit` | `IKnEk6g6ZV0` |
 | `cairo_translate` | `IdKE2DrNBck` |
-| `cairo_font_face_destroy` | `IgBFcd4cF28` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_has_current_point` | `JwQxC4dA5DY` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
@@ -99,14 +101,12 @@
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_get_line_join` | `azNGOQLubLc` |
 | `cairo_set_source` | `bU0QXekwNes` |
-| `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
 | `cairo_path_destroy` | `cOkxYTuZQyU` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
 | `cairo_set_operator` | `dc4bb-f5YEE` |
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
 | `cairo_fill_extents` | `dkoQNd4kBlQ` |
-| `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
 | `cairo_get_dash_count` | `eSwGXlKHIas` |
 | `cairo_pattern_destroy` | `eZpt6dzI9oo` |
 | `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
@@ -115,14 +115,12 @@
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_new_path` | `hhuvB3JXuMM` |
 | `cairo_push_group` | `hlh15JjNtWg` |
-| `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
 | `cairo_device_to_user` | `jyf32aEUoMs` |
 | `cairo_glyph_free` | `lAEbTbSUTTo` |
 | `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_line_to` | `mSda1B-vfkM` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_set_matrix` | `niIR3TU71Bg` |
-| `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_set_line_cap` | `oFltTuV0f7Y` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
