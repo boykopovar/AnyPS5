@@ -46,9 +46,15 @@ std::atomic<std::uint32_t> handlerMasks[MaxSignal + 1][4]{};
 std::atomic<int> handlerFlags[MaxSignal + 1]{};
 std::atomic<bool> handlerReset[MaxSignal + 1]{};
 static_assert(std::atomic<GuestHandler>::is_always_lock_free);
-std::atomic<std::uint32_t> blockedMask{0};
-std::atomic<std::uint32_t> blockedMaskExtra[3]{};
-std::atomic<std::uint64_t> handlerHolds[MaxSignal + 1]{};
+struct ThreadSignals {
+    std::atomic<std::uint32_t> blocked[4]{};
+    std::atomic<std::uint64_t> holds[MaxSignal + 1]{};
+};
+ThreadSignals& CurrentSignals() {
+    thread_local ThreadSignals* signals = nullptr;
+    if (signals == nullptr) signals = new ThreadSignals();
+    return *signals;
+}
 constexpr std::uint64_t HoldCount = 0xffffffffu;
 thread_local std::uint32_t holdReleases[MaxSignal + 1]{};
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
@@ -86,30 +92,29 @@ std::uint32_t SignalBit(int guest) { return 1u << ((guest - 1) % 32); }
 std::uint32_t SignalWord(int guest) { return static_cast<std::uint32_t>((guest - 1) / 32); }
 bool SignalInSet(const GuestSignalSet& set, int guest) { return (set.bits[SignalWord(guest)] & SignalBit(guest)) != 0; }
 bool SetHasSignal(const GuestSignalSet& set) { return (set.bits[0] | set.bits[1] | set.bits[2] | set.bits[3]) != 0; }
-bool HeldByHandler(int guest) { return (handlerHolds[guest].load() & HoldCount) != 0; }
-void ReleaseHold(int guest, std::uint32_t epoch) {
-    auto value = handlerHolds[guest].load();
-    while ((value >> 32) == epoch && (value & HoldCount) != 0 && !handlerHolds[guest].compare_exchange_weak(value, value - 1)) {}
+bool HeldByHandler(ThreadSignals& self, int guest) { return (self.holds[guest].load() & HoldCount) != 0; }
+void ReleaseHold(ThreadSignals& self, int guest, std::uint32_t epoch) {
+    auto value = self.holds[guest].load();
+    while ((value >> 32) == epoch && (value & HoldCount) != 0 && !self.holds[guest].compare_exchange_weak(value, value - 1)) {}
 }
-void ClearHold(int guest) {
-    auto value = handlerHolds[guest].load();
-    while ((value & HoldCount) != 0 && !handlerHolds[guest].compare_exchange_weak(value, ((value >> 32) + 1) << 32)) {}
+void ClearHold(ThreadSignals& self, int guest) {
+    auto value = self.holds[guest].load();
+    while ((value & HoldCount) != 0 && !self.holds[guest].compare_exchange_weak(value, ((value >> 32) + 1) << 32)) {}
 }
-std::uint32_t HeldWord(int word) {
+std::uint32_t HeldWord(ThreadSignals& self, int word) {
     std::uint32_t held = 0;
     for (int bit = 0; bit < 32; ++bit)
-        if (HeldByHandler(word * 32 + bit + 1)) held |= 1u << bit;
+        if (HeldByHandler(self, word * 32 + bit + 1)) held |= 1u << bit;
     return held;
 }
-std::uint32_t BlockedWord(int word) {
-    return (word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load()) | HeldWord(word);
+std::uint32_t BlockedWord(ThreadSignals& self, int word) {
+    return self.blocked[word].load() | HeldWord(self, word);
 }
-bool SignalBlocked(int guest) {
+bool SignalBlocked(ThreadSignals& self, int guest) {
     if (guest < 1 || guest > MaxSignal) return false;
-    const auto word = SignalWord(guest);
-    const auto mask = word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load();
-    return (mask & SignalBit(guest)) != 0 || HeldByHandler(guest);
+    return (self.blocked[SignalWord(guest)].load() & SignalBit(guest)) != 0 || HeldByHandler(self, guest);
 }
+bool SignalBlocked(int guest) { return SignalBlocked(CurrentSignals(), guest); }
 
 struct PendingSignals {
     std::mutex lock;
@@ -182,6 +187,7 @@ void ResetToDefault(int guest) {
     if (const int native = NativeSignal(guest)) std::signal(native, SIG_DFL);
 }
 void RunHandler(int guest, GuestHandler handler) {
+    auto& self = CurrentSignals();
     const int flags = handlerFlags[guest].load();
     std::uint32_t mask[4];
     for (int word = 0; word < 4; ++word) mask[word] = handlerMasks[guest][word].load();
@@ -189,24 +195,24 @@ void RunHandler(int guest, GuestHandler handler) {
     mask[0] &= ~UnblockableSignals;
     if ((flags & SaResethand) != 0) ResetToDefault(guest);
     std::uint32_t before[4];
-    for (int word = 0; word < 4; ++word) before[word] = (word == 0 ? blockedMask.load() : blockedMaskExtra[word - 1].load()) & mask[word];
+    for (int word = 0; word < 4; ++word) before[word] = self.blocked[word].load() & mask[word];
     std::uint32_t epochs[MaxSignal + 1]{};
     std::uint32_t releases[MaxSignal + 1]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;
         releases[held] = holdReleases[held];
-        epochs[held] = static_cast<std::uint32_t>(handlerHolds[held].fetch_add(1) >> 32);
+        epochs[held] = static_cast<std::uint32_t>(self.holds[held].fetch_add(1) >> 32);
     }
     handler(guest);
     std::uint32_t replaced[4]{};
     for (int held = 1; held <= MaxSignal; ++held) {
         if ((mask[SignalWord(held)] & SignalBit(held)) == 0) continue;
         if (holdReleases[held] != releases[held]) replaced[SignalWord(held)] |= SignalBit(held);
-        ReleaseHold(held, epochs[held]);
+        ReleaseHold(self, held, epochs[held]);
     }
     for (int word = 0; word < 4; ++word) {
         if (replaced[word] == 0) continue;
-        auto& target = word == 0 ? blockedMask : blockedMaskExtra[word - 1];
+        auto& target = self.blocked[word];
         target.fetch_and(~(replaced[word] & ~before[word]));
         target.fetch_or(replaced[word] & before[word]);
     }
@@ -369,6 +375,7 @@ struct AlarmState {
     std::optional<std::chrono::steady_clock::time_point> deadline;
     std::chrono::microseconds interval{0};
     bool threadStarted = false;
+    ThreadSignals* armer = nullptr;
 };
 
 AlarmState& Alarms() {
@@ -383,17 +390,17 @@ std::string DescribeInterval(std::chrono::microseconds interval) {
     return text;
 }
 
-void ExpireAlarm(std::chrono::microseconds interval) {
+void ExpireAlarm(std::chrono::microseconds interval, ThreadSignals& armer) {
     std::uintptr_t handler = 0;
     {
         std::lock_guard lock(registration);
         handler = dispositions[GuestSigalrm].handler;
     }
     if (handler == 1) return;
-    if (SignalBlocked(GuestSigalrm)) {
+    if (SignalBlocked(armer, GuestSigalrm)) {
         MarkPending(GuestSigalrm);
         std::atomic_thread_fence(std::memory_order_seq_cst);
-        if (SignalBlocked(GuestSigalrm) || !TakePending(GuestSigalrm)) return;
+        if (SignalBlocked(armer, GuestSigalrm) || !TakePending(GuestSigalrm)) return;
         handler = Disposition(GuestSigalrm).handler;
         if (handler == 1) return;
     }
@@ -424,10 +431,11 @@ void RunAlarms() {
             continue;
         }
         const auto interval = alarms.interval;
+        ThreadSignals& armer = *alarms.armer;
         if (interval.count() == 0) alarms.deadline.reset();
         else alarms.deadline = deadline + ((now - deadline) / interval + 1) * interval;
         lock.unlock();
-        ExpireAlarm(interval);
+        ExpireAlarm(interval, armer);
         lock.lock();
     }
 }
@@ -458,7 +466,10 @@ extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds) 
     const auto remaining = static_cast<unsigned int>((micros + 999999) / 1000000);
     alarms.interval = std::chrono::microseconds(0);
     if (seconds == 0) alarms.deadline.reset();
-    else alarms.deadline = now + std::chrono::seconds(seconds);
+    else {
+        alarms.deadline = now + std::chrono::seconds(seconds);
+        alarms.armer = &CurrentSignals();
+    }
     NotifyAlarms(alarms);
     return remaining;
 }
@@ -558,8 +569,10 @@ extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* 
         old.value = ItimerTimeval(RemainingAlarm(alarms, now));
         if (value != nullptr) {
             alarms.interval = ItimerDuration(requested.interval);
-            if (ItimerSet(requested.value)) alarms.deadline = now + ItimerDuration(requested.value);
-            else alarms.deadline.reset();
+            if (ItimerSet(requested.value)) {
+                alarms.deadline = now + ItimerDuration(requested.value);
+                alarms.armer = &CurrentSignals();
+            } else alarms.deadline.reset();
             NotifyAlarms(alarms);
         }
     }
@@ -578,32 +591,32 @@ namespace {
 
 int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds, bool* caught = nullptr, GuestSignalSet* guestPrevious = nullptr) {
     if (set != nullptr && (how < 1 || how > 3)) { *__error_nid_postfix() = 22; return -1; }
+    auto& self = CurrentSignals();
     {
         std::lock_guard lock(registration);
         if (previousSet != nullptr)
-            for (int word = 0; word < 4; ++word) previousSet->bits[word] = BlockedWord(word);
+            for (int word = 0; word < 4; ++word) previousSet->bits[word] = BlockedWord(self, word);
         if (set != nullptr) {
             switch (how) {
                 case 1:
-                    blockedMask.fetch_or(set->bits[0] & ~UnblockableSignals);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_or(set->bits[word]);
+                    self.blocked[0].fetch_or(set->bits[0] & ~UnblockableSignals);
+                    for (int word = 1; word < 4; ++word) self.blocked[word].fetch_or(set->bits[word]);
                     break;
                 case 2:
-                    blockedMask.fetch_and(~set->bits[0]);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].fetch_and(~set->bits[word]);
+                    for (int word = 0; word < 4; ++word) self.blocked[word].fetch_and(~set->bits[word]);
                     if (releaseHolds)
                         for (int guest = 1; guest <= MaxSignal; ++guest) {
                             if (!SignalInSet(*set, guest)) continue;
-                            ClearHold(guest);
+                            ClearHold(self, guest);
                             ++holdReleases[guest];
                         }
                     break;
                 case 3:
-                    blockedMask.store(set->bits[0] & ~UnblockableSignals);
-                    for (int word = 1; word < 4; ++word) blockedMaskExtra[word - 1].store(set->bits[word]);
+                    self.blocked[0].store(set->bits[0] & ~UnblockableSignals);
+                    for (int word = 1; word < 4; ++word) self.blocked[word].store(set->bits[word]);
                     if (releaseHolds)
                         for (int guest = 1; guest <= MaxSignal; ++guest) {
-                            ClearHold(guest);
+                            ClearHold(self, guest);
                             ++holdReleases[guest];
                         }
                     break;
@@ -814,8 +827,9 @@ int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
     GuestSignalSet previous{{0, 0, 0, 0}};
     {
         std::lock_guard lock(registration);
-        previous.bits[0] = blockedMask.exchange(set->bits[0] & ~UnblockableSignals);
-        for (int word = 1; word < 4; ++word) previous.bits[word] = blockedMaskExtra[word - 1].exchange(set->bits[word]);
+        auto& self = CurrentSignals();
+        previous.bits[0] = self.blocked[0].exchange(set->bits[0] & ~UnblockableSignals);
+        for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(set->bits[word]);
     }
     WaitForDeliverableSignal();
     ChangeBlockedMask(GuestSigsetmask, &previous, nullptr, false);
@@ -835,7 +849,7 @@ int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {
         auto& pending = Pending();
         std::lock_guard lock(pending.lock);
         for (int word = 0; word < 4; ++word)
-            result.bits[word] = pending.words[word].load(std::memory_order_relaxed) & BlockedWord(word);
+            result.bits[word] = pending.words[word].load(std::memory_order_relaxed) & BlockedWord(CurrentSignals(), word);
     }
     if (!GuestCopyOut_nid_no_patch(set, &result, sizeof(result))) { *__error_nid_postfix() = 14; return -1; }
     return 0;

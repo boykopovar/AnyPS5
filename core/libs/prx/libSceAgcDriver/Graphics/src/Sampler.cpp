@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "PipelineSpecialization.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstdlib>
@@ -7,10 +8,14 @@
 
 namespace AgcDriver::Graphics {
 
+    bool Sampler::ShaderAppliesLodBias(const GuestSamplerResource& descriptor) {
+        return descriptor.lodBias < -ShaderRecompiler::PipelineSpecialization::SamplerLodBiasShaderThreshold || descriptor.lodBias > ShaderRecompiler::PipelineSpecialization::SamplerLodBiasShaderThreshold;
+    }
+
     void Sampler::Validate(const Context& context, const GuestSamplerResource& descriptor) {
         Require(!descriptor.anisotropyEnable || context.samplerAnisotropy, "guest sampler descriptor requests anisotropic filtering which the device does not support");
         Require(descriptor.maxAnisotropy <= context.limits.maxSamplerAnisotropy, "guest sampler descriptor requests an anisotropy ratio beyond the device limit");
-        Require(descriptor.lodBias >= -context.limits.maxSamplerLodBias && descriptor.lodBias <= context.limits.maxSamplerLodBias, "guest sampler descriptor requests a LOD bias beyond the device limit");
+        Require(ShaderAppliesLodBias(descriptor) || (descriptor.lodBias >= -context.limits.maxSamplerLodBias && descriptor.lodBias <= context.limits.maxSamplerLodBias), "guest sampler descriptor requests a LOD bias beyond the device limit");
         const auto mirrorsOnce = [](VkSamplerAddressMode mode) { return mode == VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; };
         Require(context.samplerMirrorClampToEdge || !(mirrorsOnce(descriptor.addressModeU) || mirrorsOnce(descriptor.addressModeV) || mirrorsOnce(descriptor.addressModeW)), "guest sampler descriptor uses a mirror-once clamp mode which the device does not support");
         Require(!(descriptor.unnormalizedCoordinates && descriptor.compareEnable), "guest sampler descriptor with unnormalized coordinates enables depth comparison, which is not implemented");
@@ -36,7 +41,7 @@ namespace AgcDriver::Graphics {
         info.addressModeU = descriptor.addressModeU;
         info.addressModeV = descriptor.addressModeV;
         info.addressModeW = descriptor.addressModeW;
-        info.mipLodBias = descriptor.lodBias;
+        info.mipLodBias = ShaderAppliesLodBias(descriptor) ? 0.0f : descriptor.lodBias;
         info.anisotropyEnable = descriptor.anisotropyEnable ? VK_TRUE : VK_FALSE;
         info.maxAnisotropy = descriptor.maxAnisotropy;
         info.compareEnable = descriptor.compareEnable ? VK_TRUE : VK_FALSE;
