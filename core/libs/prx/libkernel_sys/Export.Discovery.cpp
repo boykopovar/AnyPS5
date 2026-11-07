@@ -1308,7 +1308,6 @@ int APS5_VABI sceKernelInternalSuspendDirectMemoryRelease(void) {
 }
 
 int APS5_VABI sceKernelIsAllowedToSelectDvdRegion(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
