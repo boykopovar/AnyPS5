@@ -34,7 +34,7 @@ namespace {
 constexpr std::uint8_t Reached = 1;
 constexpr std::uint8_t Queued = 2;
 
-void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::vector<std::uint8_t>& state, const std::unordered_set<VirtualAddress>* outside, std::size_t reachedCount, std::vector<VirtualAddress>& added, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData, bool followPadding) {
+void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::vector<std::uint8_t>& state, const std::unordered_set<VirtualAddress>* outside, std::size_t reachedCount, std::vector<VirtualAddress>& added, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData, bool followPadding = false) {
     if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr)
         throw RelinkerException("Text section range exceeds the address space");
     std::size_t codeSize = text.size();

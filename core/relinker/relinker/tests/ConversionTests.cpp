@@ -252,7 +252,7 @@ void scanning() {
     reject([&] {
         Relinker::CodeInstructionCollector().Collect(image, {header}, [](auto completed, auto total) {
             if (completed == total) throw Domain::RelinkerException("cancelled");
-        }, nullptr, {}, &unpublished);
+        }, nullptr, {}, false, &unpublished);
     });
     require(unpublished == std::vector<Domain::CodeRange>{{7, 9}}, "Cancelled analysis published ranges");
     std::vector<std::uint8_t> wrappingImage(0x1000);

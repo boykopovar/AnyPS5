@@ -260,8 +260,8 @@ int OpenStreamDirectory(const wchar_t* path) {
 }
 
 struct StreamRegistration {
-    StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(&OpenStreamDirectory, &File::ForgetDirectoryDescriptor); }
-    ~StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(nullptr, nullptr); }
+    StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(&OpenStreamDirectory, &File::ForgetDirectoryDescriptor, &File::DuplicateDirectoryDescriptor); }
+    ~StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(nullptr, nullptr, nullptr); }
     StreamRegistration(const StreamRegistration&) = delete;
     StreamRegistration& operator=(const StreamRegistration&) = delete;
 };

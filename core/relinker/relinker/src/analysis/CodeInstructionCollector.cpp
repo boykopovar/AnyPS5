@@ -43,23 +43,23 @@ public:
 
 }
 
-std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message, std::vector<Domain::CodeRange>* tailReachableRanges, const std::vector<Domain::VirtualAddress>& extraEntries) const {
-    return collect(bytes, headers, progress, entryRoots, message, tailReachableRanges, false, false, extraEntries);
+std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots, std::vector<Domain::CodeRange>* tailReachableRanges, const std::vector<Domain::VirtualAddress>& extraEntries) const {
+    return collect(bytes, headers, progress, entryRoots, message, tailReachableRanges, false, false, extraEntries, functionSymbolRoots);
 }
 
 std::vector<Domain::CodeRange> CodeInstructionCollector::CollectTailReachableRanges(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress) const {
     std::vector<Domain::CodeRange> ranges;
-    collect(bytes, headers, progress, nullptr, {}, &ranges, true, false, {});
+    collect(bytes, headers, progress, nullptr, {}, &ranges, true, false, {}, false);
     return ranges;
 }
 
 std::set<Domain::VirtualAddress> CodeInstructionCollector::CollectRewriteAnchors(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress) const {
     std::set<Domain::VirtualAddress> anchors;
-    collect(bytes, headers, progress, &anchors, {}, nullptr, true, true, {});
+    collect(bytes, headers, progress, &anchors, {}, nullptr, true, true, {}, false);
     return anchors;
 }
 
-std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message, std::vector<Domain::CodeRange>* tailReachableRanges, bool allowIdenticalDynamicTags, bool forceAuthoritative, const std::vector<Domain::VirtualAddress>& extraEntries) const {
+std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message, std::vector<Domain::CodeRange>* tailReachableRanges, bool allowIdenticalDynamicTags, bool forceAuthoritative, const std::vector<Domain::VirtualAddress>& extraEntries, const bool functionSymbolRoots) const {
     std::uint64_t lastProgress = 0;
     const auto report = [&](std::uint64_t completed) {
         if (completed <= lastProgress) return;
@@ -167,6 +167,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
     };
     codeHeaders.insert(codeHeaders.end(), tailHeaders.begin(), tailHeaders.end());
     std::set<std::uint64_t> roots;
+    std::set<std::uint64_t> functionEntries;
     std::set<std::uint64_t> strongRoots;
     std::set<std::uint64_t> flowRoots;
     std::set<std::uint64_t> symbolAnchors;
@@ -359,8 +360,11 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
             }
             if ((bytes[offset + 4] & 15) == 2 && section != 0 && section != Elfpatcher::SHN_ABS) {
                 const auto address = Io::ReadU64(bytes, offset + 8);
+                if (functionSymbolRoots && !isCode(address))
+                    throw Domain::RelinkerException("Code analysis: function entry is not executable and file-backed", address);
+                if (functionSymbolRoots) functionEntries.insert(address);
                 addStrongRoot(address);
-                addFunction(address, Io::ReadU64(bytes, offset + 16), true);
+                if (!functionSymbolRoots) addFunction(address, Io::ReadU64(bytes, offset + 16), true);
             }
         }
     }
@@ -433,12 +437,19 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
     for (const auto entry : extraEntries) addFlowRoot(entry, true);
     const auto addTransferRoot = [&](std::uint64_t address, const Codegen::DecodedInstructionInfo& info, bool authoritative) {
         if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-            addFlowRoot(address + info.Length + static_cast<std::uint64_t>(info.BranchDisp), authoritative);
-        } else if (info.HasRipRelativeDisp && (info.FlowKind == Codegen::ControlFlowKind::Call || info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump)) {
+            const auto target = address + info.Length + static_cast<std::uint64_t>(info.BranchDisp);
+            if (functionSymbolRoots && (!isCode(target) || inTable(target)))
+                throw Domain::RelinkerException("Code analysis: branch target is not executable and file-backed", target);
+            addFlowRoot(target, authoritative);
+        } else if (info.HasRipRelativeDisp && info.SegmentPrefix == 0 && (info.FlowKind == Codegen::ControlFlowKind::Call || info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump)) {
             const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
             auto slot = address + info.Length + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
             if (info.AddressSize32) slot = static_cast<std::uint32_t>(slot);
-            if (const auto target = pointers.TargetOfSlot(slot)) addFlowRoot(*target, authoritative);
+            if (const auto target = pointers.TargetOfSlot(slot)) {
+                if (functionSymbolRoots && (!isCode(*target) || inTable(*target)))
+                    throw Domain::RelinkerException("Code analysis: branch target is not executable and file-backed", *target);
+                addFlowRoot(*target, authoritative);
+            }
         }
     };
     for (const auto& [addressTag, sizeTag] : {std::pair{25u, 27u}, std::pair{26u, 28u}, std::pair{32u, 33u}}) {
@@ -473,6 +484,8 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
                 end = std::min(end, table.Begin);
             }
         }
+        for (const auto address : functionEntries)
+            if (inTable(address)) throw Domain::RelinkerException("Code analysis: function entry lies in a jump table", address);
         for (const auto root : strongRoots)
             if (inTable(root)) throw Domain::RelinkerException("Code analysis: code entry point lies inside a data table", root);
         std::erase_if(roots, inTable);
@@ -618,7 +631,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
                 if (decoded.empty()) decoded.resize(header.FileSize);
                 auto& reached = sectionReachable[mode][i];
                 if (reached.empty()) reached.resize(header.FileSize);
-                const auto added = UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable, authoritative);
+                const auto added = UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable, authoritative || functionSymbolRoots);
                 for (const auto address : added) {
                     const auto offset = address - header.MappedAddress;
                     if (offset >= decoded.size()) throw Domain::RelinkerException("Code analysis: reachable address outside its section", address);
@@ -628,10 +641,13 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
                     const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
                     addAddressTakenRoot(address, text.data() + offset, info);
                     addTransferRoot(address, info, authoritative);
-                    if (offset + info.Length == header.FileSize && (authoritative || inTail(address + info.Length))) {
-                        const auto flow = info.FlowKind;
-                        if (flow == Codegen::ControlFlowKind::Sequential || flow == Codegen::ControlFlowKind::ConditionalBranch || flow == Codegen::ControlFlowKind::Call || flow == Codegen::ControlFlowKind::IndirectCall)
-                            addFlowRoot(address + info.Length, authoritative);
+                    const auto flow = info.FlowKind;
+                    if (flow == Codegen::ControlFlowKind::Sequential || flow == Codegen::ControlFlowKind::ConditionalBranch || flow == Codegen::ControlFlowKind::Call || flow == Codegen::ControlFlowKind::IndirectCall) {
+                        const auto next = address + info.Length;
+                        if (functionSymbolRoots && (!isCode(next) || inTable(next)))
+                            throw Domain::RelinkerException("Code analysis: fall-through is not executable and file-backed", next);
+                        if ((functionSymbolRoots && next - header.MappedAddress >= header.FileSize) || (offset + info.Length == header.FileSize && (authoritative || inTail(next))))
+                            addFlowRoot(next, authoritative);
                     }
                 }
             }
