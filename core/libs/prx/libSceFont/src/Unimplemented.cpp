@@ -494,8 +494,8 @@ int APS5_VABI sceFontGraphicsCanvasGetPreprocess() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontGraphicsReportError() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontGraphicsReportError(int error) {
+    return Font::ReportGraphicsError(error);
 }
 
 int APS5_VABI sceFontGraphicsDrawRectangleShape() {
