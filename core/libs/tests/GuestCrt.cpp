@@ -19,7 +19,7 @@
 #define Require(condition) do { if (!(condition)) { std::fprintf(stderr, "guest_crt: line %d: %s\n", __LINE__, #condition); std::abort(); } } while (0)
 
 static int g_handlerCalls = 0;
-static void CountingHandler(const char* message, void* pointer, int error) {
+static void APS5_VABI CountingHandler(const char* message, void* pointer, int error) {
     (void)message;
     (void)pointer;
     (void)error;
@@ -44,6 +44,7 @@ int main() {
     Require(sceAmprSinh(0.0, 5.0) == 0.0);
 
     SonyLconv* locale = sceAmprLocaleconv();
+    Require(locale != nullptr && locale == localeconv_nid_postfix());
     Require(reinterpret_cast<std::uintptr_t>(&locale->decimal_point) - reinterpret_cast<std::uintptr_t>(locale) == 0x48);
     Require(std::strcmp(locale->decimal_point, ".") == 0);
     Require(std::memcmp(localeconv_nid_postfix()->chars, locale->chars, sizeof(locale->chars)) == 0);
@@ -154,6 +155,34 @@ int main() {
     previous = sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler));
     Require(previous != nullptr && previous != reinterpret_cast<void*>(&CountingHandler));
     sceAmprIgnoreHandlerS("msg", nullptr, 0);
+
+    void* const defaultHandler = previous;
+    g_handlerCalls = 0;
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 1);
+    g_handlerCalls = 0;
+    Require(fopen_s_nid_postfix(nullptr, nullptr, nullptr) == EINVAL);
+    Require(g_handlerCalls == 1);
+
+    Require(set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&ignore_handler_s_nid_postfix)) == reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 0);
+
+    set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 1);
+
+    Require(sceAmprSetConstraintHandlerS(nullptr) == reinterpret_cast<void*>(&CountingHandler));
+    Require(set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountingHandler)) == defaultHandler);
+    Require(set_constraint_handler_s_nid_postfix(nullptr) == reinterpret_cast<void*>(&CountingHandler));
+    g_handlerCalls = 0;
+    Require(sceAmprWcscpyS(buffer, 4, longText) == ERANGE);
+    Require(wcscpy_s_nid_postfix(buffer, 4, longText) == ERANGE);
+    Require(g_handlerCalls == 0);
+    Require(sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler)) == defaultHandler);
 
     char text[64];
     GuestTm known{};
