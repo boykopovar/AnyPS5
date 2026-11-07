@@ -79,14 +79,14 @@ int APS5_VABI sceMouseMbusInit() {
 int APS5_VABI sceMouseSetHandType(std::int32_t handle, std::uint32_t type) {
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (type > MOUSE_MAX_HAND_TYPE) return MOUSE_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
+    if (const int error = Mouse::CheckHandle(handle)) return error;
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceMouseSetPointerSpeed(std::int32_t handle, std::uint32_t speed) {
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (speed > MOUSE_MAX_POINTER_SPEED) return MOUSE_ERROR_INVALID_ARG;
-    static_cast<void>(handle);
+    if (const int error = Mouse::CheckHandle(handle)) return error;
     NotImplemented_nid_no_patch(__func__);
 }
 
