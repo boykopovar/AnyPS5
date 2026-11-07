@@ -56,4 +56,13 @@ int main() {
     Require(getcwd_nid_postfix(path, sizeof(path)) == path && std::strcmp(path, "/") == 0);
     std::filesystem::remove(directory / "sample.txt");
     std::filesystem::remove(directory);
+    const auto vanishedName = "anyps5-cwd-vanished-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto vanished = host / vanishedName;
+    Require(std::filesystem::create_directory(vanished));
+    Require(chdir_nid_postfix(vanishedName.c_str()) == 0);
+    Require(std::filesystem::remove(vanished));
+    char one[1] = {'x'};
+    Require(getcwd_nid_postfix(one, sizeof(one)) == nullptr && *__error_nid_postfix() == 34);
+    Require(chdir_nid_postfix("/") == 0);
+    Require(getcwd_nid_postfix(path, sizeof(path)) == path && std::strcmp(path, "/") == 0);
 }
