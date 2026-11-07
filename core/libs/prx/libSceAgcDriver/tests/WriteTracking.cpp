@@ -24,6 +24,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1759,6 +1760,34 @@ void CheckImportWindow() {
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
 
+#ifdef __APPLE__
+void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
+    const std::lock_guard held(GpuMutex());
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
+}
+
+void CheckImportUnderGpuMutex() {
+    ::alarm(20);
+    constexpr std::size_t bytes = 256 * Block;
+    void* memory = AllocateWatched(bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, bytes);
+    const auto synced = CollectWritesUncached(base, bytes);
+    Require(synced != 0, "the read-trapped import range is not collected");
+    Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
+    GuestWriteWatch::GuestWriteWatchSetReadTrapBypass_nid_postfix(+[] { return GpuMutex().HeldByThisThread(); });
+    {
+        const std::lock_guard held(GpuMutex());
+        Require(ImportWatched(base, bytes, [&] {
+            std::memset(memory, 0x22, bytes);
+            return GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes);
+        }, true, false), "the import under the GPU mutex failed");
+    }
+    Require(Watched(base, bytes), "the import under the GPU mutex left its range unwatched");
+    Require(WrittenSince(base, bytes, synced), "the stores within the import were missed");
+}
+#endif
+
 void CheckImportWindowOtherThread() {
     void* memory = AllocateWatched(2 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -2436,6 +2465,13 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
+#ifdef __APPLE__
+        if (argc == 2 && std::string_view(argv[1]) == "--import-under-gpu-mutex") {
+            CheckImportUnderGpuMutex();
+            std::cout << "import under the GPU mutex test passed\n";
+            return 0;
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--mark-order") {
             CheckMarkPossiblyWrittenOrder();
             std::cout << "mark order test passed\n";

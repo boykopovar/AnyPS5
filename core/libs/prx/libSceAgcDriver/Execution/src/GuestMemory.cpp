@@ -1032,7 +1032,12 @@ template<typename Range>
 void SplitPages(std::size_t pages, const Range& range) {
     static const unsigned hostThreads = std::max(1u, std::thread::hardware_concurrency() / 2);
     const auto workers = std::min<std::size_t>({ImportHashThreads, hostThreads, pages / ImportHashPagesPerThread});
-    if (workers < 2) {
+#ifdef __APPLE__
+    const bool holder = GpuMutex().HeldByThisThread();
+#else
+    const bool holder = false;
+#endif
+    if (workers < 2 || holder) {
         range(std::size_t{0}, pages);
         return;
     }
