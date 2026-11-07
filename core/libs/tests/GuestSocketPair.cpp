@@ -215,6 +215,12 @@ int main(int argc, char** argv) {
     Require(close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(pair[1]) == -1 && *__error_nid_postfix() == 9);
 
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+    *__error_nid_postfix() = 0;
+    Require(send_nid_postfix(pair[0], "late", 4, NoSignal) == -1 && *__error_nid_postfix() == 32);
+    Require(close_nid_postfix(pair[0]) == 0);
+
     Require(socketpair_nid_postfix(Unix, Stream | NonBlocking | CloseOnExec, 0, pair) == 0);
     Require(fcntl_nid_postfix(pair[0], 3) == 6 && fcntl_nid_postfix(pair[1], 3) == 6);
     Require(fcntl_nid_postfix(pair[0], 1) == 1 && fcntl_nid_postfix(pair[1], 1) == 1);
@@ -268,6 +274,24 @@ int main(int argc, char** argv) {
     Require(Unnamed(pair[1], getpeername_nid_postfix) && Exchange(pair[1], copy, "copy"));
     Require(close_nid_postfix(copy) == 0 && NotConnected(pair[1]));
     Require(close_nid_postfix(pair[1]) == 0);
+
+#ifdef _WIN32
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "q", 1, 0) == 1);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 1 && datagram[0] == 'q');
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "", 0, 0) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 0);
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(close_nid_postfix(pair[1]) == 0);
+#endif
 
     Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
     Require(send_nid_postfix(pair[0], "c", 1, 0) == 1 && Readable(pair[1]));
