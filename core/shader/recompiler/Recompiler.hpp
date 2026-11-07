@@ -572,6 +572,8 @@ struct DescriptorBinding {
     std::vector<std::uint64_t> imageSamplers;
     std::vector<bool> bufferRead;
     std::vector<std::uint32_t> bufferExtent;
+    std::vector<std::uint32_t> bufferVertexExtent;
+    std::vector<bool> bufferVertexByInstance;
 };
 
 struct ImageTableEntryPoison {
