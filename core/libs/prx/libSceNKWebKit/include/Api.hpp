@@ -32,7 +32,6 @@ int APS5_VABI _ZN7WebCore7Element26scrollIntoViewIfNotVisibleEb();
 int APS5_VABI _ZNK3JSC18PropertyDescriptor12configurableEv();
 int APS5_VABI _ZN3JSC30int52AwareSpeculationFromValueENS_7JSValueE();
 int APS5_VABI _ZN9Inspector18InjectedScriptHost7subtypeEPN3JSC14JSGlobalObjectENS1_7JSValueE();
-int APS5_VABI _ZN7WebCore13HTTPHeaderMap3addERKN3WTF6StringES4_();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControllerEPNS_4PageESt10unique_ptrINS0_8SettingsESt14default_deleteIS6_EE();
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD1Ev();
@@ -52,12 +51,10 @@ int APS5_VABI _ZNK7WebCore11WindowProxy6windowEv();
 int APS5_VABI WKPageLoadFile();
 int APS5_VABI _ZN3JSC13JSSetIterator14finishCreationERNS_2VMEPNS_5JSSetENS_13IterationKindE();
 int APS5_VABI _ZN3JSC21MarkedJSValueRefArrayC1EP15OpaqueJSContextj();
-int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE();
 int APS5_VABI _ZNK7WebCore4Page14renderTreeSizeEv();
 int APS5_VABI _ZN9Inspector22HeapFrontendDispatcher13trackingStartEdRKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore11JSDOMWindow9setOpenerERN3JSC14JSGlobalObjectENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore17NowPlayingManagernaEm();
-int APS5_VABI WKContextSetProcessModel();
 int APS5_VABI _ZN9Inspector15InspectorTargetD0Ev();
 int APS5_VABI _ZN7WebCore6Editor16pasteAsPlainTextENS0_20FromMenuOrKeyBindingE();
 int APS5_VABI _ZNK7WebCore6Quirks47shouldAvoidScrollingWhenFocusedContentIsVisibleEv();
@@ -133,7 +130,6 @@ int APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE();
 int APS5_VABI _ZN9Inspector24TargetFrontendDispatchernwEm();
 int APS5_VABI _ZNK7WebCore16HTMLImageElement13naturalHeightEv();
 int APS5_VABI _ZN3JSC10LinkBuffer8linkCodeERNS_14MacroAssemblerENS_20JITCompilationEffortE();
-int APS5_VABI WKNotificationPermissionRequestAllow();
 int APS5_VABI _ZN7WebCore9FrameView11removeChildERNS_6WidgetE();
 
 }

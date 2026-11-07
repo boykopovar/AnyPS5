@@ -1031,6 +1031,21 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
 #endif
 }
 
+#ifdef __linux__
+static std::mutex g_flockTransitions;
+
+static bool HoldsSharedFlock(int descriptor) {
+    std::FILE* info = std::fopen(("/proc/self/fdinfo/" + std::to_string(descriptor)).c_str(), "re");
+    if (info == nullptr) throw std::runtime_error("flock: cannot read the lock state of fd=" + std::to_string(descriptor) + ", errno=" + std::to_string(errno));
+    char line[256];
+    bool shared = false;
+    while (std::fgets(line, sizeof(line), info) != nullptr)
+        if (std::strncmp(line, "lock:", 5) == 0 && std::strstr(line, " FLOCK ") != nullptr && std::strstr(line, " READ ") != nullptr) shared = true;
+    std::fclose(info);
+    return shared;
+}
+#endif
+
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
     if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EOPNOTSUPP);
@@ -1046,6 +1061,11 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 #endif
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
+#ifdef __linux__
+    std::unique_lock serial(g_flockTransitions, std::defer_lock);
+    if ((operation & 4) || type == 8) serial.lock();
+    const bool keepShared = type == 2 && (operation & 4) && HoldsSharedFlock(d);
+#endif
     if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         const auto error = ::GetLastError();
@@ -1053,7 +1073,13 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", error=" + std::to_string(error));
 #else
         const int error = errno;
-        if ((operation & 4) && error == EWOULDBLOCK) return PosixFailure(GUEST_EWOULDBLOCK);
+        if ((operation & 4) && error == EWOULDBLOCK) {
+#ifdef __linux__
+            if (keepShared && ::flock(d, LOCK_SH | LOCK_NB) != 0)
+                throw std::runtime_error(std::string(__func__) + ": cannot take back the shared lock the host dropped in a failed upgrade, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+#endif
+            return PosixFailure(GUEST_EWOULDBLOCK);
+        }
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(error));
 #endif
     }
