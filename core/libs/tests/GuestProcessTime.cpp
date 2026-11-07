@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include <x86intrin.h>
 
 static void Require(bool condition, const char* message) {
     if (!condition) {
@@ -21,6 +22,18 @@ int main(int argc, char** argv) {
     const double scale = scaleText ? std::strtod(scaleText, nullptr) : 1.0;
     const auto elapsedMicros = static_cast<std::uint64_t>(static_cast<double>(sleptMicros) * (scale > 0.0 ? scale : 1.0));
     const auto minimumElapsedMicros = elapsedMicros * 19 / 20;
+    if (argc > 1 && std::strcmp(argv[1], "rdtsc") == 0) {
+        const std::uint64_t frequency = sceKernelGetTscFrequency();
+        const std::uint64_t nativeStart = __rdtsc();
+        const std::uint64_t readStart = sceKernelReadTsc();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(sleptMicros);
+        while (std::chrono::steady_clock::now() < until) std::this_thread::sleep_until(until);
+        const std::uint64_t nativeMicros = (__rdtsc() - nativeStart) * 1000000 / frequency;
+        const std::uint64_t readMicros = (sceKernelReadTsc() - readStart) * 1000000 / frequency;
+        Require(nativeMicros >= minimumElapsedMicros && nativeMicros < elapsedMicros * 3 / 2, "native rdtsc ticks over the reported TSC frequency do not follow the time scale");
+        Require(readMicros >= minimumElapsedMicros && readMicros < elapsedMicros * 3 / 2, "sceKernelReadTsc ticks over the reported TSC frequency do not follow the time scale");
+        return 0;
+    }
     const auto slept = std::chrono::steady_clock::now() + std::chrono::microseconds(sleptMicros);
     while (std::chrono::steady_clock::now() < slept) std::this_thread::sleep_until(slept);
     if (argc > 1 && std::strcmp(argv[1], "tsc") == 0) {

@@ -1,4 +1,6 @@
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/AdditionalExports.hpp"
+#include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
@@ -23,6 +25,8 @@ constexpr int IdMapperRefusedArgument = static_cast<int>(0x80553083u);
 constexpr int IdMapperRefusedRequestId = static_cast<int>(0x80553085u);
 constexpr int ManagerIntTableFull = static_cast<int>(0x80559D05u);
 constexpr int ManagerIntNotInTable = static_cast<int>(0x80559D0Au);
+constexpr int InGameMessageContextNotFound = static_cast<int>(0x80552B03u);
+constexpr int InGameMessageHandleNotFound = static_cast<int>(0x80552B05u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -170,6 +174,36 @@ void CheckLegacyStateCallback() {
     Require(legacyStateCall.calls == 1, "the legacy callback got the state again");
     Require(sceNpUnregisterStateCallback() == 0, "unregistering the legacy callback");
     Require(sceNpUnregisterStateCallback() == NotRegistered, "unregistering the legacy callback twice");
+}
+
+void CheckGamePresenceCallbacksA() {
+    constexpr int CallbackMax = static_cast<int>(0x8055001Du);
+    int dummy = 0;
+    void* const cb1 = reinterpret_cast<void*>(&AbortingGamePresenceCallback);
+    void* const cb2 = reinterpret_cast<void*>(&dummy);
+    Require(sceNpRegisterGamePresenceCallbackA(nullptr, &dummy) == InvalidArgument, "null game presence callback");
+    Require(sceNpUnregisterGamePresenceCallbackA(0) == NotRegistered, "unregistering id 0");
+    Require(sceNpUnregisterGamePresenceCallbackA(-1) == NotRegistered, "unregistering negative id");
+    Require(sceNpUnregisterGamePresenceCallbackA(1) == NotRegistered, "unregistering unknown id");
+    int ids[8]{};
+    for (int i = 0; i < 8; ++i) {
+        void* const cb = (i % 2 == 0) ? cb1 : cb2;
+        ids[i] = sceNpRegisterGamePresenceCallbackA(cb, &dummy);
+        Require(ids[i] == i + 1, "game presence callback id must be monotonic starting at 1");
+    }
+    Require(sceNpRegisterGamePresenceCallbackA(cb1, &dummy) == CallbackMax, "ninth game presence callback");
+    Require(sceNpCheckCallback() == 0, "checking callbacks does not invoke game presence callback A");
+    Require(sceNpUnregisterGamePresenceCallbackA(ids[3]) == 0, "unregistering valid callback id");
+    Require(sceNpUnregisterGamePresenceCallbackA(ids[3]) == NotRegistered, "double unregistering callback id");
+    const int reusedId = sceNpRegisterGamePresenceCallbackA(cb2, &dummy);
+    Require(reusedId == 9, "re-registering into freed slot must receive next monotonic id 9");
+    Require(sceNpRegisterGamePresenceCallbackA(cb1, &dummy) == CallbackMax, "table must be full again");
+    for (int i = 0; i < 8; ++i) {
+        if (i == 3) continue;
+        Require(sceNpUnregisterGamePresenceCallbackA(ids[i]) == 0, "unregistering remaining callback");
+    }
+    Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == 0, "unregistering reused callback id");
+    Require(sceNpUnregisterGamePresenceCallbackA(reusedId) == NotRegistered, "double unregistering reused id");
 }
 
 void CheckRequestTimeouts() {
@@ -501,7 +535,18 @@ void CheckUserIdQueries() {
         Require(sceNpGetAccountLanguageA(request, userId, output) == SignedOut, "sceNpGetAccountLanguageA must report the user as signed out");
         Require(sceNpGetParentalControlInfoA(request, userId, &age, output) == SignedOut, "sceNpGetParentalControlInfoA must report the user as signed out");
         Require(sceNpGetAccountDateOfBirthA(userId, output) == SignedOut, "sceNpGetAccountDateOfBirthA must report the user as signed out");
+        Require(sceNpSetGamePresenceOnlineA(request, userId, 0) == SignedOut, "sceNpSetGamePresenceOnlineA must report NP as signed out");
     }
+    NpCreateAsyncRequestParameter asyncParam{};
+    const int asyncRequest = sceNpCreateAsyncRequest(&asyncParam);
+    Require(asyncRequest > 0, "sceNpCreateAsyncRequest must return a positive request id");
+    Require(sceNpSetGamePresenceOnlineA(asyncRequest, InitialUserId, 0) == SignedOut, "sceNpSetGamePresenceOnlineA must report NP as signed out");
+    Require(sceNpDeleteRequest(asyncRequest) == 0, "sceNpDeleteRequest failed");
+    Require(sceNpSetGamePresenceOnlineA(asyncRequest, InitialUserId, 0) == RequestNotFound, "sceNpSetGamePresenceOnlineA must reject a deleted request");
+    Require(sceNpSetGamePresenceOnlineA(request, InvalidUserId, 0) == InvalidArgument, "sceNpSetGamePresenceOnlineA must reject the invalid user id");
+    Require(sceNpSetGamePresenceOnlineA(0, InitialUserId, 0) == InvalidArgument, "sceNpSetGamePresenceOnlineA must reject request id 0");
+    Require(sceNpSetGamePresenceOnlineA(NeverCreated, InitialUserId, 0) == RequestNotFound, "sceNpSetGamePresenceOnlineA must reject a request that was never created");
+    Require(sceNpSetGamePresenceOnlineA(NeverCreated, InvalidUserId, 0) == InvalidArgument, "sceNpSetGamePresenceOnlineA must check the user before the request");
     Require(sceNpCheckNpAvailabilityA(request, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject the invalid user id");
     Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
@@ -523,6 +568,7 @@ void CheckUserIdQueries() {
     Require(sceNpCheckNpAvailabilityA(request, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a deleted request");
     Require(sceNpGetAccountLanguageA(request, InitialUserId, output) == RequestNotFound, "sceNpGetAccountLanguageA must reject a deleted request");
     Require(sceNpGetParentalControlInfoA(request, InitialUserId, &age, output) == RequestNotFound, "sceNpGetParentalControlInfoA must reject a deleted request");
+    Require(sceNpSetGamePresenceOnlineA(request, InitialUserId, 0) == RequestNotFound, "sceNpSetGamePresenceOnlineA must reject a deleted request");
     Require(std::memcmp(output, untouched, sizeof(output)) == 0 && age == 0x5a, "a signed-out account query wrote its output");
     constexpr std::uint32_t Sentinel = 0x5a5a5a5au;
     constexpr std::uint32_t Offline = 0;
@@ -599,12 +645,96 @@ static void CheckAccountQueriesAndPremiumCallback() {
     Require(sceNpUnregisterPremiumEventCallback() == 0, "unregistering the premium event callback");
 }
 
+void CheckUnregisteredClientError() {
+    const std::uint32_t others[] = {0, 0x82e0104c, 0x82e0104e, 0x80550000, 0x82e1104d, 0xffffffff};
+    Require(sceNpManagerIntIsUnregisteredClientError(static_cast<int>(0x82e0104d)), "0x82E0104D must be the unregistered client error");
+    for (const std::uint32_t error : others) Require(!sceNpManagerIntIsUnregisteredClientError(static_cast<int>(error)), "only 0x82E0104D is the unregistered client error");
+}
+
+static void CheckSandboxInfo() {
+    unsigned char info[0x60];
+    std::memset(info, 0xa5, sizeof(info));
+    Require(sceNpGetSandboxInfo(info) == 0, "sceNpGetSandboxInfo failed");
+    Require(std::memcmp(info, "RETAIL", 7) == 0, "sceNpGetSandboxInfo must report the RETAIL platform at offset 0");
+    Require(std::memcmp(info + 0x28, "LIVE", 5) == 0, "sceNpGetSandboxInfo must report the LIVE environment at offset 0x28");
+    for (std::size_t index = 7; index < 0x28; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the platform field");
+    for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
+    for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
+    Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+}
+
+void CheckAsmLifecycle() {
+    constexpr int AsmAlreadyInitialized = static_cast<int>(0x8055A201u);
+    constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
+    constexpr int AsmInvalidArgument = static_cast<int>(0x8055A203u);
+    constexpr int ClientAlreadyInitialized = static_cast<int>(0x8055A281u);
+    constexpr int ClientNotInitialized = static_cast<int>(0x8055A282u);
+    constexpr int ClientInvalidArgument = static_cast<int>(0x8055A283u);
+    int connection = 0;
+    int request = 0;
+    int result = 0;
+    Require(sceNpAsmTerminate() == AsmNotInitialized, "sceNpAsmTerminate must reject an uninitialized service");
+    Require(sceNpAsmAbort() == AsmNotInitialized, "sceNpAsmAbort must reject an uninitialized service");
+    Require(sceNpAsmCreateConnection(1, &connection) == AsmNotInitialized, "sceNpAsmCreateConnection must reject an uninitialized service");
+    Require(sceNpAsmDeleteConnection(nullptr) == AsmNotInitialized, "sceNpAsmDeleteConnection must reject an uninitialized service");
+    Require(sceNpAsmCreateRequest(nullptr, nullptr, nullptr) == AsmNotInitialized, "sceNpAsmCreateRequest must reject an uninitialized service");
+    Require(sceNpAsmDeleteRequest(nullptr) == AsmNotInitialized, "sceNpAsmDeleteRequest must reject an uninitialized service");
+    Require(sceNpAsmInitialize() == 0, "sceNpAsmInitialize failed");
+    Require(sceNpAsmInitialize() == AsmAlreadyInitialized, "sceNpAsmInitialize must reject a second initialization");
+    Require(sceNpAsmAbort() == 0, "sceNpAsmAbort failed");
+    Require(sceNpAsmCreateConnection(1, nullptr) == AsmInvalidArgument, "sceNpAsmCreateConnection must reject a null connection");
+    Require(sceNpAsmDeleteConnection(nullptr) == AsmInvalidArgument, "sceNpAsmDeleteConnection must reject a null connection");
+    Require(sceNpAsmCreateRequest(nullptr, &request, &result) == AsmInvalidArgument, "sceNpAsmCreateRequest must reject a null connection");
+    Require(sceNpAsmCreateConnection(1, &connection) == 0, "sceNpAsmCreateConnection failed");
+    Require(sceNpAsmCreateRequest(&connection, &request, &result) == 0, "sceNpAsmCreateRequest failed");
+    Require(sceNpAsmDeleteRequest(&request) == 0, "sceNpAsmDeleteRequest failed");
+    Require(sceNpAsmDeleteConnection(&connection) == 0, "sceNpAsmDeleteConnection failed");
+    Require(sceNpAsmDeleteConnection(&connection) == 0, "sceNpAsmDeleteConnection was not idempotent");
+    Require(sceNpAsmTerminate() == 0, "sceNpAsmTerminate failed");
+    Require(sceNpAsmTerminate() == AsmNotInitialized, "sceNpAsmTerminate must reject a second termination");
+    int client = 0;
+    const char param[4] = {};
+    Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject an uninitialized client");
+    Require(sceNpAsmClientInitialize(&client, nullptr) == ClientInvalidArgument, "sceNpAsmClientInitialize must reject a null parameter");
+    Require(sceNpAsmClientInitialize(&client, param) == 0, "sceNpAsmClientInitialize failed");
+    Require(sceNpAsmClientInitialize(&client, nullptr) == ClientAlreadyInitialized, "sceNpAsmClientInitialize must reject a second initialization");
+    char titleId[16] = "PPSA00000_00";
+    Require(sceNpAsmClientSetNpTitleId(nullptr, titleId) == ClientInvalidArgument, "sceNpAsmClientSetNpTitleId must reject a null client");
+    Require(sceNpAsmClientSetNpTitleId(&client, nullptr) == ClientInvalidArgument, "sceNpAsmClientSetNpTitleId must reject a null title id");
+    Require(sceNpAsmClientSetNpTitleId(&client, titleId) == 0, "sceNpAsmClientSetNpTitleId failed");
+    Require(sceNpAsmClientTerminate(&client) == 0, "sceNpAsmClientTerminate failed");
+    Require(sceNpAsmClientSetNpTitleId(&client, titleId) == ClientNotInitialized, "sceNpAsmClientSetNpTitleId must reject a terminated client");
+    Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject a second termination");
+}
+
+void CheckEmptyDestructors() {
+    unsigned char object[0x40];
+    unsigned char untouched[sizeof(object)];
+    std::memset(object, 0xa5, sizeof(object));
+    std::memcpy(untouched, object, sizeof(object));
+    for (auto destructor : {_ZN3sce2np10NpOnlineIdD1Ev, _ZN3sce2np10NpOnlineIdD2Ev, _ZN3sce2np12NpTitleTokenD1Ev, _ZN3sce2np12NpTitleTokenD2Ev,
+                            _ZN3sce2np13NpAccessTokenD1Ev, _ZN3sce2np13NpAccessTokenD2Ev, _ZN3sce2np4NpIdD1Ev, _ZN3sce2np4NpIdD2Ev,
+                            _ZN3sce2np4UserD1Ev, _ZN3sce2np4UserD2Ev}) {
+        destructor(object);
+        Require(std::memcmp(object, untouched, sizeof(object)) == 0, "an empty destructor wrote the object");
+    }
+    libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch();
+    libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch();
+    libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch();
+    libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
+}
+
 int main() {
+    CheckAsmLifecycle();
+    CheckEmptyDestructors();
+    CheckSandboxInfo();
+    CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
     CheckUserIdQueries();
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
+    CheckGamePresenceCallbacksA();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
     CheckWaitAsync();
@@ -676,5 +806,34 @@ int main() {
     std::memset(&untouchedPremiumResult, 0x5a, sizeof(untouchedPremiumResult));
     Require(sceNpCheckPremium(1, &premiumParameter, &premiumResult) == SignedOut, "sceNpCheckPremium must report the user as signed out");
     Require(std::memcmp(&premiumResult, &untouchedPremiumResult, sizeof(premiumResult)) == 0, "sceNpCheckPremium must leave the result untouched");
+    const int messageContext = sceNpInGameMessageInitialize(0x4000, nullptr);
+    Require(messageContext > 0, "sceNpInGameMessageInitialize must return a context id");
+    const int otherMessageContext = sceNpInGameMessageInitialize(0x4000, nullptr);
+    Require(otherMessageContext > 0 && otherMessageContext != messageContext, "sceNpInGameMessageInitialize must return a new id for each context");
+    Require(sceNpInGameMessageCreateHandle(-1) == InGameMessageContextNotFound, "sceNpInGameMessageCreateHandle must reject an unknown context");
+    const int messageHandle = sceNpInGameMessageCreateHandle(messageContext);
+    Require(messageHandle > 0, "sceNpInGameMessageCreateHandle must return a handle id");
+    const int secondMessageHandle = sceNpInGameMessageCreateHandle(messageContext);
+    Require(secondMessageHandle > 0 && secondMessageHandle != messageHandle, "sceNpInGameMessageCreateHandle must return a new id for each handle");
+    Require(sceNpInGameMessageDeleteHandle(messageContext, secondMessageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the second handle");
+    Require(sceNpInGameMessageDeleteHandle(otherMessageContext, messageHandle) == InGameMessageHandleNotFound, "a handle must belong to the context that created it");
+    Require(sceNpInGameMessageAbortHandle(-1, messageHandle) == InGameMessageContextNotFound, "sceNpInGameMessageAbortHandle must reject an unknown context");
+    Require(sceNpInGameMessageAbortHandle(messageContext, -1) == InGameMessageHandleNotFound, "sceNpInGameMessageAbortHandle must reject an unknown handle");
+    Require(sceNpInGameMessageAbortHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageAbortHandle must accept a live handle");
+    Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the handle");
+    Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == InGameMessageHandleNotFound, "a deleted handle must not be found");
+    Require(sceNpInGameMessageTerminate(messageContext) == 0, "sceNpInGameMessageTerminate must end the context");
+    Require(sceNpInGameMessageTerminate(messageContext) == InGameMessageContextNotFound, "a terminated context must not be found");
+    Require(sceNpInGameMessageCreateHandle(messageContext) == InGameMessageContextNotFound, "a terminated context must not create handles");
+    Require(sceNpInGameMessageTerminate(otherMessageContext) == 0, "sceNpInGameMessageTerminate must end the second context");
+    std::int32_t nextMessageId = std::numeric_limits<std::int32_t>::max() - 1;
+    Require(TakeInGameMessageId(nextMessageId, "ids") == std::numeric_limits<std::int32_t>::max() - 1, "the last in-game message id below the limit must be handed out");
+    try {
+        TakeInGameMessageId(nextMessageId, "ids");
+        Require(false, "the in-game message ids must not pass the 32-bit limit");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "ids: the in-game message ids are exhausted", "the exhausted in-game message ids threw");
+    }
+    Require(nextMessageId == std::numeric_limits<std::int32_t>::max(), "an exhausted in-game message id must not wrap");
     return 0;
 }

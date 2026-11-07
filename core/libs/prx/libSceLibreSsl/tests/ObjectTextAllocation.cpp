@@ -9,6 +9,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <new>
+#include <string>
 #include <vector>
 
 namespace {
@@ -79,6 +80,39 @@ NumericRun Run(const unsigned char* data, int length, int space, std::size_t fai
     return result;
 }
 
+std::string Name(const std::vector<unsigned char>& data) {
+    LibreSslAsn1Object object{nullptr, nullptr, 0, static_cast<int>(data.size()), data.data(), 0};
+    char buffer[64];
+    i2t_ASN1_OBJECT_nid_postfix(buffer, sizeof(buffer), &object);
+    return buffer;
+}
+
+void CreateFailures() {
+    const std::vector<unsigned char> replaced{0x2a, 0x03, 0x04}, fresh{0x2a, 0x03, 0x05};
+    for (std::size_t point = 1;; ++point) {
+        OBJ_cleanup_nid_postfix();
+        Check(OBJ_create_nid_postfix("1.2.3.4", "base", nullptr) > 0, "the object to replace is added");
+        allocations = 0; failAt = point; fired = false;
+        armed = true;
+        bool threw = false;
+        int replacing = 0;
+        try { replacing = OBJ_create_nid_postfix("1.2.3.4", "replacing", nullptr); }
+        catch (const std::bad_alloc&) { threw = true; }
+        armed = false;
+        const bool failed = fired;
+        ++faultCases;
+        Check(threw == failed, "an allocation failure in OBJ_create throws std::bad_alloc");
+        Check(Name(replaced) == (failed ? "base" : "replacing"), "a failed OBJ_create leaves the replaced encoding as it was");
+        const int next = OBJ_create_nid_postfix("1.2.3.5", "fresh", nullptr);
+        Check(next > 0 && (failed || next == replacing + 1), "objects can still be added after a failed OBJ_create");
+        Check(Name(fresh) == "fresh", "lookups still work after a failed OBJ_create");
+        OBJ_cleanup_nid_postfix();
+        Check(Live() == 0, "OBJ_cleanup frees everything a failed OBJ_create allocated");
+        Check(Name(replaced) == "1.2.3.4" && Name(fresh) == "1.2.3.5", "OBJ_cleanup removes every added object");
+        if (!failed) break;
+    }
+}
+
 int main() {
     constexpr std::uint64_t allocationError = (3ull << 24) | (0xfffull << 12) | 65;
     std::size_t fastCases = 0;
@@ -129,6 +163,7 @@ int main() {
     Check(!seeded.threw && seeded.returned == 0 && seeded.error == ((8ull << 24) | (0xfffull << 12) | 101) && seeded.following == allocationError,
           "allocation error appends to existing queue entries");
     Check(ERR_get_error_nid_postfix() == 0 && seeded.live == 0, "seeded failure adds exactly one error and leaks nothing");
+    CreateFailures();
     std::printf("{\"fast_cases\":%zu,\"allocation_fault_cases\":%zu,\"checks\":%zu,\"failures\":%zu,\"escaped\":%zu,\"final_live\":%zu}\n",
                 fastCases, faultCases, checks, failures, escaped, Live());
     return failures ? 1 : 0;

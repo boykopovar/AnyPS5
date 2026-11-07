@@ -1,3 +1,4 @@
+#include "prx/libSceNpGameIntent/include/InventoryExports.hpp"
 #include "prx/libSceNpGameIntent/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
@@ -30,6 +31,27 @@ std::atomic_bool& AppLauncherInitialized() {
 }
 
 extern "C" {
+
+int APS5_VABI sceNpGameIntentGetPermittedIntentTypes() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentLaunchAppForPinvoke() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentLaunchAppRequestToGkp() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentRemoveLaunchCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpGameIntentRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize) {
 	if (!NpGameIntentInitialized()) {
@@ -116,21 +138,33 @@ int APS5_VABI sceNpAppLauncherTerminate() {
 }
 
 int APS5_VABI sceNpGameIntentGetUdsNpComId() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchApp() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentLaunchApp2() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
+    if (!NpGameIntentInitialized()) {
+        return NpGameIntentErrorNotInitialized;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -138,6 +172,10 @@ int APS5_VABI sceNpGameIntentNotifyAppLaunched() {
 int APS5_VABI sceNpSessionServiceGetJoinedPartySession() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpSessionServiceInitialize() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
@@ -148,6 +186,14 @@ int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession() {
 int APS5_VABI sceNpSessionServiceSendPlayerSessionInvitations() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpSessionServiceSendPlayerSessionRequestToJoin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSessionServiceTerminate() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

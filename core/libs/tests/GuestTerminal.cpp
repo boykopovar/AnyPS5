@@ -48,13 +48,15 @@ static void RequireControlFails(int descriptor, int error) {
     }
 }
 
-static void RequireProcessGroupFails(int descriptor, int error) {
+static void RequireProcessGroupAndSessionFail(int descriptor, int error) {
     *__error_nid_postfix() = 0;
     Require(Fails(tcgetpgrp_nid_postfix(descriptor), error));
     for (const int group : {0, 1}) {
         *__error_nid_postfix() = 0;
         Require(Fails(tcsetpgrp_nid_postfix(descriptor, group), error));
     }
+    *__error_nid_postfix() = 0;
+    Require(Fails(tcgetsid_nid_postfix(descriptor), error));
 }
 
 template <typename TCall> static bool Throws(TCall call) {
@@ -86,10 +88,10 @@ int main() {
     const int file = open_nid_postfix(name.c_str(), 0x202, 0644);
     Require(file >= 0);
     RequireNotTerminal(file);
-    RequireProcessGroupFails(file, NotTerminal);
+    RequireProcessGroupAndSessionFail(file, NotTerminal);
     for (const int stream : {0, 1, 2}) {
         RequireNotTerminal(stream);
-        RequireProcessGroupFails(stream, NotTerminal);
+        RequireProcessGroupAndSessionFail(stream, NotTerminal);
     }
 
     int ends[2] = {-1, -1};
@@ -98,6 +100,8 @@ int main() {
         RequireNotTerminal(end);
         Require(Throws([end] { tcgetpgrp_nid_postfix(end); }));
         Require(Throws([end] { tcsetpgrp_nid_postfix(end, 0); }));
+        *__error_nid_postfix() = 0;
+        Require(Fails(tcgetsid_nid_postfix(end), NotTerminal));
     }
 
     const int socket = socket_nid_postfix(2, 2, 0);
@@ -110,14 +114,14 @@ int main() {
     Require(std::memcmp(probe, untouched, sizeof(probe)) == 0);
     Require(Fails(tcsetattr_nid_postfix(socket, Flush, probe), AddressNotAvailable));
     RequireControlFails(socket, AddressNotAvailable);
-    RequireProcessGroupFails(socket, AddressNotAvailable);
+    RequireProcessGroupAndSessionFail(socket, AddressNotAvailable);
 
     int pair[2] = {-1, -1};
     Require(socketpair_nid_postfix(1, 1, 0, pair) == 0);
     for (const int end : pair) {
         Require(Fails(tcgetattr_nid_postfix(end, probe), OperationNotSupported));
         RequireControlFails(end, OperationNotSupported);
-        RequireProcessGroupFails(end, OperationNotSupported);
+        RequireProcessGroupAndSessionFail(end, OperationNotSupported);
     }
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 
@@ -126,7 +130,7 @@ int main() {
     const int directory = open_nid_postfix(directoryName.c_str(), 0x00020000, 0);
     Require(directory >= 0);
     RequireNotTerminal(directory);
-    RequireProcessGroupFails(directory, NotTerminal);
+    RequireProcessGroupAndSessionFail(directory, NotTerminal);
     Require(close_nid_postfix(directory) == 0);
     RequireControlFails(directory, BadDescriptor);
     std::filesystem::remove(directoryName);
@@ -151,21 +155,21 @@ int main() {
         }
     }
     RequireControlFails(-1, BadDescriptor);
-    RequireProcessGroupFails(-1, BadDescriptor);
+    RequireProcessGroupAndSessionFail(-1, BadDescriptor);
 
     Require(close_nid_postfix(socket) == 0);
     Require(Fails(tcgetattr_nid_postfix(socket, attributes), BadDescriptor));
     Require(Fails(tcsetattr_nid_postfix(socket, Now, attributes), BadDescriptor));
     RequireControlFails(socket, BadDescriptor);
-    RequireProcessGroupFails(socket, BadDescriptor);
+    RequireProcessGroupAndSessionFail(socket, BadDescriptor);
     Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
     RequireControlFails(ends[0], BadDescriptor);
-    RequireProcessGroupFails(ends[0], BadDescriptor);
+    RequireProcessGroupAndSessionFail(ends[0], BadDescriptor);
     Require(close_nid_postfix(file) == 0);
     Require(Fails(tcgetattr_nid_postfix(file, attributes), BadDescriptor));
     Require(Fails(tcsetattr_nid_postfix(file, Flush, attributes), BadDescriptor));
     RequireControlFails(file, BadDescriptor);
-    RequireProcessGroupFails(file, BadDescriptor);
+    RequireProcessGroupAndSessionFail(file, BadDescriptor);
     std::filesystem::remove(name);
     return 0;
 }

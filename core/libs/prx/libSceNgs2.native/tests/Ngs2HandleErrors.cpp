@@ -1,5 +1,7 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
+#include "tests/ExportLookup.hpp"
 
 #include <cstdint>
 #include <array>
@@ -18,6 +20,45 @@ static void Status(int actual, int expected, const char* message) {
 static void CheckExportLinked() {
     auto* volatile linked = &sceNgs2RackQueryInfo;
     Require(linked != nullptr);
+}
+
+static void CheckPendingExports(const char* path) {
+    struct Export {
+        int (APS5_VABI* function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
+        {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
+        {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
+        {sceNgs2RackRunCommands, "sceNgs2RackRunCommands"},
+        {sceNgs2StreamCreate, "sceNgs2StreamCreate"},
+        {sceNgs2StreamCreateWithAllocator, "sceNgs2StreamCreateWithAllocator"},
+        {sceNgs2StreamDestroy, "sceNgs2StreamDestroy"},
+        {sceNgs2StreamQueryBufferSize, "sceNgs2StreamQueryBufferSize"},
+        {sceNgs2StreamQueryInfo, "sceNgs2StreamQueryInfo"},
+        {sceNgs2StreamResetOption, "sceNgs2StreamResetOption"},
+        {sceNgs2StreamRunCommands, "sceNgs2StreamRunCommands"},
+        {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
+        {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
+    }
+}
+
+static void CheckCorePendingExports(const char* path) {
+    struct Export {
+        void (*function)(void);
+        const char* name;
+    };
+    const Export exports[] = {
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftInit), "sceNgs2FftInit"},
+        {reinterpret_cast<void (*)(void)>(&sceNgs2FftProcess), "sceNgs2FftProcess"},
+    };
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2 exports do not all resolve by name");
+    }
 }
 
 static void CheckResetOption() {
@@ -374,7 +415,7 @@ static void CheckSetGrainSamples() {
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == grain);
     }
-    for (const std::uint32_t grain : {0u, 513u, 576u, 2048u, 0xffffffffu}) {
+    for (const std::uint32_t grain : {0u, 1u, 8u, 63u, 65u, 511u, 513u, 576u, 2048u, 0xffffffffu}) {
         Status(sceNgs2SystemSetGrainSamples(system, grain), grainError, "an invalid grain was accepted");
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == 512);
@@ -401,7 +442,39 @@ static void CheckSetSampleRate() {
     Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
 }
 
-int main() {
+static void CheckFftQuerySize() {
+    std::uint64_t size = 0;
+    Require(sceNgs2FftQuerySize(8, 0, &size) == 0 && size == 2112);
+    Require(sceNgs2FftQuerySize(8, 2, &size) == 0 && size == 1088);
+    Require(sceNgs2FftQuerySize(9, 0, &size) == 0 && size == 4160);
+    Require(sceNgs2FftQuerySize(12, 2, &size) == 0 && size == 16448);
+    Require(sceNgs2FftQuerySize(7, 0, &size) == -1);
+    Require(sceNgs2FftQuerySize(13, 0, &size) == -1);
+    Require(sceNgs2FftQuerySize(8, 0, nullptr) == -1);
+}
+
+static void CheckEnumeration() {
+    constexpr int invalidArgument = static_cast<int>(0x804A0053u);
+    constexpr int invalidSystem = static_cast<int>(0x804A0230u);
+    uintptr_t handles[8] = {};
+    Require(sceNgs2SystemEnumHandles(nullptr, 0) >= 0);
+    Require(sceNgs2SystemEnumHandles(nullptr, 1) == invalidArgument);
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    const int systems = sceNgs2SystemEnumHandles(handles, 8);
+    Require(systems >= 1);
+    bool found = false;
+    for (int i = 0; i < systems && i < 8; ++i) found = found || handles[i] == system;
+    Require(found);
+    Require(sceNgs2SystemEnumHandles(nullptr, 0) == systems);
+    Require(sceNgs2SystemEnumRackHandles(system, nullptr, 1) == invalidArgument);
+    Require(sceNgs2SystemEnumRackHandles(0x1234, handles, 8) == invalidSystem);
+    const int racks = sceNgs2SystemEnumRackHandles(system, handles, 8);
+    Require(racks == 1 && handles[0] == rack);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
@@ -441,7 +514,11 @@ int main() {
         CheckResetScheduler();
         CheckSetGrainSamples();
         CheckSetSampleRate();
+        CheckFftQuerySize();
+        CheckEnumeration();
         CheckExportLinked();
+        CheckPendingExports(argc > 1 ? argv[1] : nullptr);
+        CheckCorePendingExports(argc > 2 ? argv[2] : nullptr);
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {
