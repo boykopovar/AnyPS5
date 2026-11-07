@@ -1716,6 +1716,7 @@ void verifyTypeZeroImageMaterialization() {
     static bool knownRecord0 = false;
     static std::array<std::uint32_t, 4> pendingV0{};
 
+    static std::uint64_t phase3WaitLimit = ~std::uint64_t{0};
     AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
         if (phase == 1u && !flushed && address < syncEnd && syncBegin < address + bytes) {
             flushed = true;
@@ -1726,7 +1727,7 @@ void verifyTypeZeroImageMaterialization() {
             if (waits == 0u && address < record1Addr + 32u && record1Addr + 12u < address + bytes) {
                 ++waits;
                 std::memcpy(reinterpret_cast<void*>(record1Addr), pendingT1.data(), sizeof(pendingT1));
-            } else if ((waits == 1u || (phase == 3u && waits >= 1u)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
+            } else if ((waits == 1u || (phase == 3u && waits >= 1u && waits < phase3WaitLimit)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
                 ++waits;
                 if (phase != 6u) std::memcpy(reinterpret_cast<void*>(record0Addr), pendingT0.data(), sizeof(pendingT0));
                 std::memcpy(reinterpret_cast<void*>(record2Addr), pendingT2.data(), sizeof(pendingT2));
@@ -1984,7 +1985,7 @@ void verifyTypeZeroImageMaterialization() {
         AgcDriver::ShaderMemory twoWaitMemory({}, multiPending, nullptr, hookWaits);
         const auto twoWaitCapture = twoWaitMemory.Capture(twoWaitReq);
         const auto& col = twoWaitCapture->snapshot.tables.tables.at(0);
-        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 5u) && col.keys == 3u,
+        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 3u) && col.keys == 3u,
                 "multi-wait readWords: forced third attempt did not execute or nested forceSync scope was not preserved");
         require(col.words.at(col.codes.at(0)).dwords == newT && col.words.at(col.codes.at(1)).dwords == thirdT && col.words.at(col.codes.at(2)).dwords == newT,
                 "multi-wait readWords: retry pass accepted an unstable epoch after a second invalidation");
@@ -2021,6 +2022,28 @@ void verifyTypeZeroImageMaterialization() {
             refused = true;
         }
         require(refused && waits >= 3u, "unstable epoch refusal: capture succeeded despite invalidation on every retry attempt");
+        for (const std::uint64_t limit : {1u, 2u, 4u, 8u}) {
+            std::fill(srt.begin(), srt.end(), 0u);
+            std::copy(oldT.begin(), oldT.end(), srt.begin());
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + stepWords);
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + 2u * stepWords);
+            std::copy(oldT.begin(), oldT.end(), srt.begin() + 256u);
+            std::copy(outputV.begin(), outputV.end(), srt.begin() + 256u + 16u);
+            srt[256u + 20u] = 1u;
+            fillWholeSrt(srt.data() + 512u, srt.data(), stride, 3u);
+            phase = 3u;
+            phase3WaitLimit = limit;
+            waits = 0u;
+            forcedHookCalls = 0u;
+            srtRootReads = 0u;
+            lastPendingAddr = 0u;
+            flushed = false;
+            AgcDriver::ShaderMemory settlingMemory({}, multiPending, nullptr, hookWaits);
+            const auto settled = settlingMemory.Capture(twoWaitReq);
+            require(settled->snapshot.tables.tables.at(0).keys == 3u,
+                    "settling epoch: a forced pass whose waits ended was disturbed by a Sync read that did not wait and left its raw words unchanged");
+        }
+        phase3WaitLimit = ~std::uint64_t{0};
         phase = 5u;
         waits = 0u;
         forcedHookCalls = 0u;
