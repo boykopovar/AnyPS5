@@ -399,7 +399,7 @@ static int TerminateParameter(void* self) {
 
 static int InitializeParameterWithBody(void* self, const std::uint64_t* context, const bool textsPresent, const IntrusivePtr* body) {
     const int result = InitializeParameter(self, context, textsPresent);
-    if (result != 0 || body->object != nullptr) return result;
+    if (result != 0 || (body != nullptr && body->object != nullptr)) return result;
     static_cast<ParameterObject*>(self)->implementation = nullptr;
     return ParameterBodyMissing;
 }

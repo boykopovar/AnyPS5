@@ -15,6 +15,7 @@
 #include <utility>
 #include <cerrno>
 #include <cstring>
+#include <sys/stat.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -754,20 +755,63 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     return result;
 }
 
+static bool WritingStream(std::FILE* native) {
 #ifdef _WIN32
-static bool SeekTargetBeforeStart(FILE* native, std::int64_t offset, int origin) {
-    if (offset >= 0) return false;
-    std::int64_t base = 0;
-    if (origin != SEEK_SET) {
-        const int saved = errno;
-        if (origin == SEEK_END && std::fflush(native) != 0) { errno = saved; return false; }
-        base = origin == SEEK_CUR ? _ftelli64(native) : _filelengthi64(_fileno(native));
-        errno = saved;
-        if (base < 0) return false;
-    }
-    return offset < -base;
-}
+    constexpr long UcrtWriting = 0x0002;
+    std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(native)->flags);
+    return (state.load() & UcrtWriting) != 0;
+#elif defined(__GLIBC__)
+    return ::__fwriting(native) != 0;
+#else
+    return true;
 #endif
+}
+
+static std::optional<std::int64_t> RegularFileSize(std::FILE* native) {
+#ifdef _WIN32
+    struct _stat64 status;
+    if (_fstat64(_fileno(native), &status) != 0 || (status.st_mode & _S_IFMT) != _S_IFREG) return std::nullopt;
+#else
+    struct stat status;
+    if (::fstat(::fileno(native), &status) != 0 || !S_ISREG(status.st_mode)) return std::nullopt;
+#endif
+    if (status.st_size < 0) return std::nullopt;
+    return status.st_size;
+}
+
+namespace {
+
+class SeekLock {
+    FileStream* stream;
+
+public:
+    explicit SeekLock(FileStream* value) : stream(value) { if (stream) flockfile_nid_postfix(stream); }
+    ~SeekLock() { if (stream) funlockfile_nid_postfix(stream); }
+    SeekLock(const SeekLock&) = delete;
+    SeekLock& operator=(const SeekLock&) = delete;
+};
+
+}
+
+static bool ResolveSeekTarget(FileStream* stream, std::int64_t& offset, int& origin) {
+    std::int64_t base = 0;
+    if (origin == SEEK_CUR) {
+        base = ftello_nid_postfix(stream);
+        if (base == -1) return false;
+        if (base < 0) { errno = 29; return false; }
+    } else if (origin == SEEK_END) {
+        auto* native = GetNativeStream(stream);
+        if (WritingStream(native)) return true;
+        const auto size = RegularFileSize(native);
+        if (!size) return true;
+        base = *size;
+    }
+    if (offset > 0 && base > std::numeric_limits<std::int64_t>::max() - offset) { errno = 84; return false; }
+    offset += base;
+    if (offset < 0) { errno = 22; return false; }
+    origin = SEEK_SET;
+    return true;
+}
 
 int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int origin) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
@@ -775,7 +819,10 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
 #ifdef _WIN32
     auto* native = GetNativeStream(stream);
     if (IsPipeStream(native)) { errno = 29; return -1; }
-    if (SeekTargetBeforeStart(native, offset, origin)) { errno = EINVAL; return -1; }
+#endif
+    const SeekLock lock(stream);
+    if (!ResolveSeekTarget(stream, offset, origin)) return -1;
+#ifdef _WIN32
     const int result = _fseeki64(native, offset, origin);
 #else
     static_assert(sizeof(off_t) == 8);

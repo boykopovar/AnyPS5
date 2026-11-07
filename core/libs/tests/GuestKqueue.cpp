@@ -50,6 +50,7 @@ static constexpr std::int16_t EvfiltProc = -5;
 static constexpr std::int16_t EvfiltSignal = -6;
 static constexpr std::int16_t EvfiltTimer = -7;
 static constexpr std::int16_t EvfiltProcdesc = -8;
+static constexpr std::int16_t EvfiltFs = -9;
 static constexpr std::int16_t EvfiltLio = -10;
 static constexpr std::int16_t EvfiltUser = -11;
 static constexpr std::int16_t EvfiltSendfile = -12;
@@ -368,6 +369,32 @@ static void EqueueIsKqueueDescriptor() {
     Require(close_nid_postfix(static_cast<int>(static_cast<std::uint32_t>(eq))) == 0);
     Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceEbadf);
     Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+}
+
+static void FilesystemEvents() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvDelete)), GuestEnoent);
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvEnable)), GuestEnoent);
+    const KernelEvent add = Change(0, EvfiltFs, EvAdd | EvReceipt, 7, 9, &marker);
+    Require(kevent_nid_postfix(kq, &add, 1, events, 4, nullptr) == 1);
+    Require(events[0].ident == 0 && events[0].filter == EvfiltFs && events[0].flags == EvError && events[0].data == 0 && events[0].fflags == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvAdd)) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvDisable)) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvForceoneshot, 0, 0, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == 0 && events[0].filter == EvfiltFs && events[0].flags == (EvReceipt | EvClear | EvOneshot));
+    Require(events[0].fflags == 0 && events[0].data == 0 && events[0].udata == &marker);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvDelete)), GuestEnoent);
+    Require(Apply(kq, Change(0, EvfiltFs, EvAdd)) == 0);
+    Require(Apply(kq, Change(0, EvfiltFs, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltFs, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(kq) == 0);
 }
 
 static void ProcessExitOnSelf() {
@@ -1830,6 +1857,7 @@ int main(int argc, char** argv) {
 #ifndef __APPLE__
     PipeWrite();
 #endif
+    FilesystemEvents();
     UserEvents();
     ProcessExitOnSelf();
     WatchKqueue();
