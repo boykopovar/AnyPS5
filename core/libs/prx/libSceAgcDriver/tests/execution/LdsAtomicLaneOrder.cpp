@@ -358,6 +358,187 @@ std::uint32_t CheckOperation(AgcDriver::VulkanDevice& device, const ShaderRecomp
     return wrongReturns + wrongMemory;
 }
 
+constexpr std::uint32_t WrxchgRtnB32 = 0x2du;
+
+constexpr Program SwapPairProgram(std::uint32_t waveSize) {
+    auto program = AtomicProgram(WrxchgRtnB32, 0u, waveSize, true);
+    for (std::size_t index = program.words.size() - 1u; index >= 25u; --index) program.words[index] = program.words[index - 2u];
+    program.words[23] = 0xd8000000u | (WrxchgRtnB32 << 18u);
+    program.words[24] = 0x07000301u;
+    return program;
+}
+
+alignas(256) constexpr std::array<Program, 2> SwapPairPrograms{SwapPairProgram(64u), SwapPairProgram(32u)};
+
+std::uint32_t SwapPatterns(std::uint32_t waveSize) {
+    return waveSize == 64u ? 13u : 9u;
+}
+
+bool SwapActive(std::uint32_t pattern, std::uint32_t waveSize, std::uint32_t group, std::uint32_t thread) {
+    const auto lane = thread % waveSize;
+    switch (pattern) {
+    case 0: return true;
+    case 1: return lane % 2u == 0u;
+    case 2: return lane % 2u == 1u;
+    case 3: return lane == 0u || lane == waveSize - 1u;
+    case 4: return lane == waveSize - 1u;
+    case 5: return lane >= 8u && lane < 16u;
+    case 6: return Random(group, thread, 7u) % 2u == 0u;
+    case 7: return Random(group, thread, 7u) % 8u == 0u;
+    case 8: return lane % 3u == 0u;
+    case 9: return lane < 32u;
+    case 10: return lane >= 32u;
+    case 11: return lane == 31u || lane == 32u;
+    default: return lane == 0u || lane == 63u;
+    }
+}
+
+Lane SwapLane(std::uint32_t waveSize, std::uint32_t threads, std::uint32_t repeat, std::uint32_t group, std::uint32_t thread) {
+    const auto wave = thread / waveSize;
+    const auto pattern = (group * (threads / waveSize) + wave + repeat) % SwapPatterns(waveSize);
+    const auto data0 = 0x80000000u | (group << 12u) | (thread << 1u);
+    return Lane{wave * waveSize, data0, data0 | 1u, 0x7f000000u | (group << 12u) | thread, SwapActive(pattern, waveSize, group, thread)};
+}
+
+struct SwapWave {
+    std::vector<bool> active;
+    std::vector<std::uint32_t> data0;
+    std::vector<std::uint32_t> data1;
+    std::vector<std::uint32_t> first;
+    std::vector<std::uint32_t> second;
+    std::uint32_t init = 0;
+    std::uint32_t final = 0;
+};
+
+enum class SwapChain { InOrder, Reordered, Broken };
+
+std::pair<SwapChain, std::vector<std::uint32_t>> ClassifySwapChain(const SwapWave& wave) {
+    std::vector<std::uint32_t> lanes;
+    for (std::uint32_t lane = 0; lane < wave.active.size(); ++lane) {
+        if (wave.active[lane]) lanes.push_back(lane);
+        else if (wave.first[lane] != Untouched || wave.second[lane] != 0u) return {SwapChain::Broken, {}};
+    }
+    std::vector<std::uint32_t> order;
+    auto value = wave.init;
+    for (const auto* returned : {&wave.first, &wave.second}) {
+        const auto& written = returned == &wave.first ? wave.data0 : wave.data1;
+        std::vector<std::uint32_t> chain;
+        std::vector<bool> used(wave.active.size(), false);
+        for (std::size_t step = 0; step < lanes.size(); ++step) {
+            std::uint32_t next = 0;
+            std::uint32_t matches = 0;
+            for (const auto lane : lanes) {
+                if (!used[lane] && (*returned)[lane] == value) {
+                    next = lane;
+                    ++matches;
+                }
+            }
+            if (matches != 1u) return {SwapChain::Broken, {}};
+            used[next] = true;
+            chain.push_back(next);
+            value = written[next];
+        }
+        if (order.empty()) order = chain;
+        else if (chain != order) {
+            order.insert(order.end(), chain.begin(), chain.end());
+            if (wave.final != value) return {SwapChain::Broken, {}};
+            return {SwapChain::Reordered, order};
+        }
+    }
+    if (wave.final != value) return {SwapChain::Broken, {}};
+    return {order == lanes ? SwapChain::InOrder : SwapChain::Reordered, order};
+}
+
+SwapWave SimulatedSwapWave(std::uint32_t size, const std::vector<std::uint32_t>& order) {
+    SwapWave wave;
+    wave.init = 100u;
+    wave.active.assign(size, false);
+    wave.first.assign(size, Untouched);
+    wave.second.assign(size, 0u);
+    for (std::uint32_t lane = 0; lane < size; ++lane) {
+        wave.data0.push_back(0x1000u + 2u * lane);
+        wave.data1.push_back(0x1001u + 2u * lane);
+    }
+    auto value = wave.init;
+    for (const auto lane : order) {
+        wave.active[lane] = true;
+        wave.first[lane] = std::exchange(value, wave.data0[lane]);
+    }
+    for (const auto lane : order) wave.second[lane] = std::exchange(value, wave.data1[lane]);
+    wave.final = value;
+    return wave;
+}
+
+void CheckSwapChainClassifier() {
+    Require(ClassifySwapChain(SimulatedSwapWave(8u, {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u})).first == SwapChain::InOrder, "lds atomic lane order: the swap chain check rejects a chain in lane order");
+    Require(ClassifySwapChain(SimulatedSwapWave(8u, {1u, 4u, 6u})).first == SwapChain::InOrder, "lds atomic lane order: the swap chain check rejects a masked chain in lane order");
+    Require(ClassifySwapChain(SimulatedSwapWave(8u, {})).first == SwapChain::InOrder, "lds atomic lane order: the swap chain check rejects a wave with no active lane");
+    Require(ClassifySwapChain(SimulatedSwapWave(8u, {7u, 6u, 5u, 4u, 3u, 2u, 1u, 0u})).first == SwapChain::Reordered, "lds atomic lane order: the swap chain check accepts a descending chain");
+    Require(ClassifySwapChain(SimulatedSwapWave(8u, {0u, 2u, 1u, 3u})).first == SwapChain::Reordered, "lds atomic lane order: the swap chain check accepts two swapped rounds");
+    auto duplicated = SimulatedSwapWave(8u, {0u, 1u, 2u, 3u});
+    duplicated.first[1] = duplicated.first[0];
+    Require(ClassifySwapChain(duplicated).first == SwapChain::Broken, "lds atomic lane order: the swap chain check accepts a duplicated return");
+    auto lost = SimulatedSwapWave(8u, {0u, 1u, 2u, 3u});
+    lost.final = lost.data1[2];
+    Require(ClassifySwapChain(lost).first == SwapChain::Broken, "lds atomic lane order: the swap chain check accepts a lost final update");
+}
+
+std::uint32_t CheckSwapChain(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::uint32_t waveSize, std::uint32_t threads, std::uint32_t ldsDwords, const std::string& label) {
+    constexpr std::uint32_t Repeats = 8;
+    const auto& program = SwapPairPrograms[waveSize == 64u ? 0u : 1u];
+    std::uint32_t waves = 0;
+    std::uint32_t inOrder = 0;
+    std::uint32_t reordered = 0;
+    std::uint32_t broken = 0;
+    std::uint32_t rounds = 0;
+    std::string example;
+    for (std::uint32_t repeat = 0; repeat < Repeats; ++repeat) {
+        Dispatch(device, program, waveSize, threads, target, ldsDwords, [&](std::uint32_t group, std::uint32_t thread) { return SwapLane(waveSize, threads, repeat, group, thread); });
+        for (std::uint32_t group = 0; group < Groups; ++group) {
+            for (std::uint32_t base = 0; base < threads; base += waveSize) {
+                SwapWave wave;
+                wave.init = SwapLane(waveSize, threads, repeat, group, base).init;
+                wave.final = At(Output, group, 1, base);
+                bool others = true;
+                for (std::uint32_t lane = 0; lane < waveSize; ++lane) {
+                    const auto values = SwapLane(waveSize, threads, repeat, group, base + lane);
+                    wave.active.push_back(values.active);
+                    wave.data0.push_back(values.data0);
+                    wave.data1.push_back(values.data1);
+                    wave.first.push_back(At(Output, group, 0, base + lane));
+                    wave.second.push_back(At(Output, group, 2, base + lane));
+                    rounds += values.active ? 2u : 0u;
+                    others = others && (lane == 0u || At(Output, group, 1, base + lane) == values.init);
+                }
+                const auto [chain, order] = ClassifySwapChain(wave);
+                ++waves;
+                if (!others || chain == SwapChain::Broken) {
+                    ++broken;
+                    if (example.empty()) example = " (first broken chain: group " + std::to_string(group) + " wave " + std::to_string(base / waveSize) + ")";
+                } else if (chain == SwapChain::Reordered) {
+                    ++reordered;
+                    if (example.empty()) example = " (first reordered chain: group " + std::to_string(group) + " wave " + std::to_string(base / waveSize) + " ran lanes " + Join(order) + ")";
+                } else {
+                    ++inOrder;
+                }
+            }
+        }
+    }
+    std::printf("%s: two ds_wrxchg_rtn_b32 on one dword per wave under %u EXEC patterns, wave%u, %u threads, %u dispatches: %u waves (%u same-address swaps), %u chains in lane order, %u valid chains in another order, %u broken chains%s\n", label.c_str(), SwapPatterns(waveSize), waveSize, threads, Repeats, waves, rounds, inOrder, reordered, broken, example.c_str());
+    return reordered + broken;
+}
+
+std::uint32_t RunSwapChains(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& wave64, const ShaderRecompiler::SpirvTarget& wave32, const char* label) {
+    std::uint32_t failures = 0;
+    for (const std::uint32_t ldsDwords : {WorkgroupLdsDwords, DeviceMemoryLdsDwords}) {
+        const std::string place = std::string(label) + (ldsDwords == WorkgroupLdsDwords ? "" : ", LDS in device memory");
+        for (const std::uint32_t waveSize : WaveSizes) {
+            for (const std::uint32_t threads : {MaxThreads, waveSize}) failures += CheckSwapChain(device, waveSize == 64u ? wave64 : wave32, waveSize, threads, ldsDwords, place) != 0u ? 1u : 0u;
+        }
+    }
+    return failures;
+}
+
 std::uint32_t RunAll(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& wave64, const ShaderRecompiler::SpirvTarget& wave32, const char* label) {
     std::uint32_t failures = 0;
     for (const bool masked : {false, true}) {
@@ -385,12 +566,20 @@ int main() {
             return VulkanTestSkipped;
         }
         std::printf("device: %s, driver %s, subgroup %u\n", device->DeviceName().c_str(), device->DriverInfo().c_str(), device->ComputeTarget(64).subgroupSize);
+        CheckSwapChainClassifier();
         auto failures = RunAll(*device, device->ComputeTarget(64), device->ComputeTarget(32), "device target");
+        auto unordered64 = device->ComputeTarget(64);
+        auto unordered32 = device->ComputeTarget(32);
+        unordered64.laneOrderedLdsAtomics = false;
+        unordered32.laneOrderedLdsAtomics = false;
+        const auto unorderedSwaps = RunSwapChains(*device, unordered64, unordered32, "unordered target");
+        std::printf("unordered target: %u swap chain cases out of lane order (reported, not a failure)\n", unorderedSwaps);
         auto ordered64 = device->ComputeTarget(64);
         auto ordered32 = device->ComputeTarget(32);
         ordered64.laneOrderedLdsAtomics = true;
         ordered32.laneOrderedLdsAtomics = true;
         failures += RunAll(*device, ordered64, ordered32, "lane-ordered target");
+        failures += RunSwapChains(*device, ordered64, ordered32, "lane-ordered target");
         std::vector<std::uint32_t> capabilities(ordered64.supportedCapabilities.begin(), ordered64.supportedCapabilities.end());
         std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformArithmetic));
         ordered64.supportedCapabilities = capabilities;
