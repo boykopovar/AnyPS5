@@ -308,6 +308,12 @@ void CheckWideUnits() {
     Require(sceCesIso2022StrToUcs2Str(context, iso, 10, &used, units, 1, &produced) == dstBufferEnd);
     Require(sceCesIso2022StrToUcs2Str(context, iso, 10, &used, nullptr, 0, &produced) == invalidDstBuffer);
     Require(sceCesUcs2StrToIso2022Str(context, ucs2, 2, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesIso2022StrToUtf16Str(context, iso, 10, &used, units, 1, &produced) == dstBufferEnd);
+    Require(sceCesIso2022StrToUtf16Str(context, iso, 10, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesUtf16StrToIso2022Str(context, ucs2, 2, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesIso2022StrToUtf32Str(context, iso, 10, &used, wide, 1, &produced) == dstBufferEnd);
+    Require(sceCesIso2022StrToUtf32Str(context, iso, 10, &used, nullptr, 0, &produced) == invalidDstBuffer);
+    Require(sceCesUtf32StrToIso2022Str(context, utf32, 2, &used, nullptr, 0, &produced) == invalidDstBuffer);
 }
 
 }
