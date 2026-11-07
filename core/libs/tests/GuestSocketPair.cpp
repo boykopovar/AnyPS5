@@ -164,6 +164,11 @@ static void CheckReceiveMessageFaults() {
         *__error_nid_postfix() = 0;
         Require(recvmsg_nid_postfix(pair[1], &message, flag) == -1 && *__error_nid_postfix() == 45);
     }
+    message = {nullptr, 0, &good, 1, nullptr, 0, 0};
+    for (const int flag : {1, 2, 4, 0x100, 0x40000, -1, Peek | 1, 0x80 | 4, NoSignal | 1}) {
+        *__error_nid_postfix() = 0;
+        Require(sendmsg_nid_postfix(pair[0], &message, flag) == -1 && *__error_nid_postfix() == 45);
+    }
 
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
