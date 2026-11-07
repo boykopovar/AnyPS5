@@ -270,14 +270,17 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
-    const bool exact = state.exactRobustLoads && LoadsSelectable(state, access);
+    const bool atomic = state.coherentBufferAtomics && context.Memory(instruction).coherent;
+    const bool selectable = !atomic && LoadsSelectable(state, access);
+    const bool exact = state.exactRobustLoads && selectable;
     if (!exact && boundedEnable != 0u) enable = boundedEnable;
     const auto bounds = exact ? 0u : EmitMemoryElementInBounds(state, access, last);
     const auto inBounds = exact ? 0u : (enable != 0u ? both(state, enable, bounds) : bounds);
     const auto load = [&](std::uint32_t word) {
         const auto value = state.module.AllocateId();
         const auto pointer = EmitMemoryElementPointer(state, access, word);
-        if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
+        if (atomic) state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone));
+        else if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
         else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
         return value;
     };
@@ -303,7 +306,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
         const auto high = EmitValueOrZero(state, unaligned, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), load(highIndex), highShift));
         return combine(low, high);
     }
-    if (!LoadsSelectable(state, access)) {
+    if (!selectable) {
         return EmitValueOrZeroIfCondition(state, inBounds, [&] {
             const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(index), shift);
             const auto high = EmitValueOrZeroIfCondition(state, unaligned, [&] { return Binary(state, spv::OpShiftLeftLogical, TypeU32(state), load(next), highShift); });
@@ -353,7 +356,8 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, u32, unaligned, next, index);
-    const auto bytes = bits != 32u ? byteBuffers(state) : 0u;
+    const bool atomic = state.coherentBufferAtomics && context.Memory(instruction).coherent;
+    const auto bytes = bits != 32u && !atomic ? byteBuffers(state) : 0u;
     if (bytes != 0u) {
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, context.Memory(instruction).resource);
         const auto block = state.module.AllocateId();
@@ -387,7 +391,8 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
         if (bits == 32u) {
             EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), [&] {
                 const auto pointer = EmitMemoryElementPointer(state, access, index);
-                if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
+                if (atomic) state.module.AddFunction(spv::OpAtomicStore, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), value);
+                else if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
                 else state.module.AddFunction(spv::OpStore, pointer, value);
             });
         }

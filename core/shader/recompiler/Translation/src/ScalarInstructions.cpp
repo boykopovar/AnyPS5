@@ -125,7 +125,8 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     }
     case RdnaOpcode::SWaitcnt:
-        emitWaitcnt();
+        if (inst.family == RdnaInstructionFamily::SOPK && inst.opcodeId == 0x17u) (void)ir.Emit(IrOpcode::GuestRelease, IrType::Void, {});
+        else emitWaitcnt();
         return true;
     case RdnaOpcode::SAndSaveexecB32:
         sSaveexec(inst, IrOpcode::LogicalAnd, false, false, false);

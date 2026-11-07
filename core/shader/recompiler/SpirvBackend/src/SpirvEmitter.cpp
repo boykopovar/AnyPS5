@@ -287,6 +287,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.ldsLockFences = target.ldsLockFences;
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
+    state.coherentBufferAtomics = target.coherentBufferAtomics;
     state.hostSubgroupSize = target.subgroupSize;
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
