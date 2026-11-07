@@ -757,9 +757,9 @@ SceV2String* AssignSceV2String(SceV2String* result, const char* text) {
     std::memset(result, 0, sizeof(SceV2String));
     const std::size_t length = std::strlen(text);
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
         result->pointer = data;
     }
