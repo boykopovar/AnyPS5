@@ -28,6 +28,7 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
+#include "src/EncoderMetadata.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -302,8 +303,11 @@ int APS5_VABI PKImageEncode_SetDescriptiveMetadata_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
+    tagPKImageEncode* encoder, const std::uint8_t* metadata, std::uint32_t size) {
+    return Jxr::SetImageEncodeMetadata(
+        static_cast<void*>(encoder), metadata, size, offsetof(Jxr::ImageEncodeMetadataPrefix, exifMetadata),
+        offsetof(Jxr::ImageEncodeMetadataPrefix, exifMetadataByteCount));
 }
 
 int APS5_VABI PKImageEncode_SetGPSInfoMetadata_WMP_nid_postfix() {
@@ -493,10 +497,6 @@ int APS5_VABI getByteRead_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI getDCACPredMode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI getTilePos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -546,10 +546,6 @@ int APS5_VABI setBitIOPointers_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI setUniformQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI slideOneMBRow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -571,18 +567,6 @@ void APS5_VABI termPostProc_nid_postfix(JxrGuestPostProcInfo* (*postProcInfo)[2]
 }
 
 int APS5_VABI updatePostProcInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI updatePredInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI useDCQuantizer_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI useLPQuantizer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
