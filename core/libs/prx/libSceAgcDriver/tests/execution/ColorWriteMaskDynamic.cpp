@@ -29,9 +29,9 @@ constexpr std::uint32_t Height = 16;
 constexpr std::uint32_t WaveSize = 64;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 constexpr std::uint32_t Samples = 4;
-alignas(4096) std::array<std::byte, Width * Height * 4 * Samples> RecordedPixels{};
-alignas(4096) std::array<std::byte, Width * Height * 4 * Samples> RecordedSecondPixels{};
-alignas(4096) std::array<std::byte, Width * Height * 2 * Samples> RecordedPairPixels{};
+alignas(4096) std::array<std::byte, 65536> RecordedPixels{};
+alignas(4096) std::array<std::byte, 65536> RecordedSecondPixels{};
+alignas(4096) std::array<std::byte, 65536> RecordedPairPixels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -124,6 +124,7 @@ AgcDriver::Graphics::State StateFor(VkColorComponentFlags mask, bool recorded, b
         state.color = {reinterpret_cast<std::uintptr_t>(RecordedPixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, RecordedPixels.size(), 0xe4u};
         state.color.surfaceAddress = state.color.address;
         state.color.samples = Samples;
+        state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
         state.colors = {state.color};
         state.samples = Samples;
     }
@@ -143,6 +144,7 @@ AgcDriver::Graphics::State SplitAlphaStateFor(VkColorComponentFlags mask) {
     state.color.elementBytes = 2;
     state.color.surfaceAddress = state.color.address;
     state.color.samples = Samples;
+    state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
     state.colors = {state.color};
     state.blend.blendEnable = VK_TRUE;
     state.blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
