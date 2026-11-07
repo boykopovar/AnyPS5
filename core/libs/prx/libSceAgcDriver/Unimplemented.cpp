@@ -158,6 +158,46 @@ int APS5_VABI sceAgcDriverGetAllocatedToolMemoryForGpuReset(uint64_t, void* rang
     return DRIVER_FEATURE_UNAVAILABLE;
 }
 
+int APS5_VABI sceAgcDriverIsCoredumpValid() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSetTFRingDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverIsSuspendPointInFlightDirect() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverReleaseRazorACQ() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverSdmaCopyLinearBlocking() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverRegisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgcDriverDeregisterCaptureInterface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdSetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetApplicationGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAgdGetSystemGpuDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
 extern "C" {
 
