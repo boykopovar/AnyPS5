@@ -857,11 +857,9 @@ private:
         return domain;
     }
 
-    bool DescriptorWordReads(const IrValue& buffer, bool rereadable, const IrValue& vsharp) const {
+    static bool DescriptorWordReads(const IrValue& buffer, bool rereadable) {
         return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
-            if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
-            if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
-            return rereadable && ChildKeyWord(*read, vsharp);
+            return read->Opcode() == IrOpcode::ReadConstBuffer && (rereadable || (!read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)));
         });
     }
 
@@ -999,7 +997,7 @@ private:
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
                     if (user->Opcode() != IrOpcode::GetBufferResource) return false;
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
-                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
+                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable);
                 });
             })) return false;
             heapIndex = parent.source;
