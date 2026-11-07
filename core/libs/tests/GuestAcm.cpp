@@ -13,9 +13,6 @@ static void Require(bool value) {
     if (!value) std::abort();
 }
 
-constexpr int BadContext = static_cast<int>(0x81940002);
-constexpr int BadPointer = static_cast<int>(0x81940006);
-
 static std::uintptr_t AdvanceRing(std::byte* ring, std::uint32_t capacity, std::uint32_t count, std::uint32_t index, std::uint32_t& nextCount, std::uint32_t& next) {
     std::memcpy(ring + 0x8, &capacity, sizeof(capacity));
     std::memcpy(ring + 0xc, &count, sizeof(count));
@@ -44,8 +41,10 @@ static void TestRingAdvance() {
     Require(ring[0x14] == std::byte{0xEE} && ring[0x17] == std::byte{0xEE});
 }
 
+constexpr int BadContext = static_cast<int>(0x81940002);
+constexpr int BadPointer = static_cast<int>(0x81940006);
+
 int main() {
-    TestRingAdvance();
     Require(sceAcmContextCreate(nullptr) == BadPointer);
     Require(sceAcmContextDestroy(0) == BadContext);
     Require(sceAcmContextDestroy(999999) == BadContext);
@@ -361,5 +360,6 @@ int main() {
     Require(sceAcmContextDestroy(context2) == 0);
     Require(sceAcmContextDestroy(context2) == BadContext);
 
+    TestRingAdvance();
     return 0;
 }
