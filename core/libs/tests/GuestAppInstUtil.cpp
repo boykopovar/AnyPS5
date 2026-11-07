@@ -1,5 +1,6 @@
 #include "prx/libSceAppInstUtil/include/Api.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,9 @@ int main() {
     Require(sceAppInstUtilTerminate() == 0, "the nested termination failed");
     Require(sceAppInstUtilAppExists(nullptr, &untouched) == nullArgument && untouched == 7, "a null title id was not refused");
 
+    errno = 71;
+    Require(sceAppInstUtilAppExists("PPSA00000", reinterpret_cast<std::int32_t*>(0x10)) == nullArgument, "unwritable exists rejected");
+    Require(errno == 71, "errno preserved");
     std::int32_t exists = 0;
     Require(sceAppInstUtilAppExists("PPSA00000", &exists) == 0 && exists == 1, "the running title is not installed");
     exists = 7;
