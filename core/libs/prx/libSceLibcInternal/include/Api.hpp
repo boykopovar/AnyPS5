@@ -114,6 +114,16 @@ int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* p
 int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
 std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
 int APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(const char* path, std::int64_t* seconds, std::int64_t* nanoseconds);
+int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsE_nid_postfix(const char* path, int* perms);
+int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsE_nid_postfix(const char* path, int* perms);
+std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKc_nid_postfix(const char* path);
+std::int64_t APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKc_nid_postfix(const char* path);
+bool APS5_VABI _ZNSt10filesystem20_Set_last_write_timeEPKcl_nid_postfix(const char* path, std::int64_t microseconds);
+int APS5_VABI _ZNSt10filesystem7_RenameEPKcS1__nid_postfix(const char* from, const char* to);
+int APS5_VABI _ZNSt10filesystem7_ResizeEPKcm_nid_postfix(const char* path, std::uint64_t size);
+int APS5_VABI _ZNSt10filesystem10_Copy_fileEPKcS1__nid_postfix(const char* from, const char* to);
+int APS5_VABI _ZNSt10filesystem8_StatvfsEPKcRNS_10space_infoE_nid_postfix(const char* path, std::uint64_t* space);
+int APS5_VABI _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
 void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self);
