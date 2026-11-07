@@ -102,6 +102,23 @@ public:
     bool valid = false;
 };
 
+enum class SerializedScriptValueKind : std::uint8_t {
+    Json = 0,
+    Undefined,
+    NaN,
+    PositiveInfinity,
+    NegativeInfinity,
+};
+
+class SerializedScriptValue final : public ObjectOf<ObjectType::SerializedScriptValue> {
+public:
+    explicit SerializedScriptValue(std::string data, SerializedScriptValueKind kind = SerializedScriptValueKind::Json)
+        : data(std::move(data)), kind(kind) {}
+
+    std::string data;
+    SerializedScriptValueKind kind = SerializedScriptValueKind::Json;
+};
+
 class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
 public:
     URLRequest() = default;
