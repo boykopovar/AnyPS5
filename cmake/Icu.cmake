@@ -19,7 +19,34 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/putil.cpp
     ${ICU_SOURCE_DIR}/common/stringpiece.cpp
     ${ICU_SOURCE_DIR}/common/uarrsort.cpp
+    ${ICU_SOURCE_DIR}/common/ubidi.cpp
     ${ICU_SOURCE_DIR}/common/ubidi_props.cpp
+    ${ICU_SOURCE_DIR}/common/ubidiln.cpp
+    ${ICU_SOURCE_DIR}/common/ubidiwrt.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv2022.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_bld.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_cb.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_cnv.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_ct.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_err.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_ext.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_io.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_lmb.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_set.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u16.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u32.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u7.cpp
+    ${ICU_SOURCE_DIR}/common/ucnv_u8.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvbocu.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvhz.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvisci.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvlat1.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvmbcs.cpp
+    ${ICU_SOURCE_DIR}/common/ucnvscsu.cpp
+    ${ICU_SOURCE_DIR}/common/uenum.cpp
+    ${ICU_SOURCE_DIR}/common/ustr_cnv.cpp
+    ${ICU_SOURCE_DIR}/common/ustrfmt.cpp
     ${ICU_SOURCE_DIR}/common/ucase.cpp
     ${ICU_SOURCE_DIR}/common/uchar.cpp
     ${ICU_SOURCE_DIR}/common/ucharstrie.cpp
@@ -66,7 +93,6 @@ if(WIN32)
         ${ICU_SOURCE_DIR}/common/lsr.cpp
         ${ICU_SOURCE_DIR}/common/resource.cpp
         ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
-        ${ICU_SOURCE_DIR}/common/uenum.cpp
         ${ICU_SOURCE_DIR}/common/uloc.cpp
         ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
         ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
@@ -83,4 +109,24 @@ target_compile_features(icu_common PUBLIC cxx_std_17)
 set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_common INTERFACE LINKER:--exclude-libs,libicu_common.a)
+endif()
+
+add_library(icu_i18n STATIC EXCLUDE_FROM_ALL
+    ${ICU_SOURCE_DIR}/i18n/csdetect.cpp
+    ${ICU_SOURCE_DIR}/i18n/csmatch.cpp
+    ${ICU_SOURCE_DIR}/i18n/csr2022.cpp
+    ${ICU_SOURCE_DIR}/i18n/csrecog.cpp
+    ${ICU_SOURCE_DIR}/i18n/csrmbcs.cpp
+    ${ICU_SOURCE_DIR}/i18n/csrsbcs.cpp
+    ${ICU_SOURCE_DIR}/i18n/csrucode.cpp
+    ${ICU_SOURCE_DIR}/i18n/csrutf8.cpp
+    ${ICU_SOURCE_DIR}/i18n/inputext.cpp
+    ${ICU_SOURCE_DIR}/i18n/ucln_in.cpp
+    ${ICU_SOURCE_DIR}/i18n/ucsdet.cpp)
+target_include_directories(icu_i18n SYSTEM PUBLIC ${ICU_SOURCE_DIR}/i18n)
+target_compile_definitions(icu_i18n PRIVATE U_I18N_IMPLEMENTATION UCONFIG_NO_FILE_IO=1)
+target_link_libraries(icu_i18n PUBLIC icu_common)
+set_target_properties(icu_i18n PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(icu_i18n INTERFACE LINKER:--exclude-libs,libicu_i18n.a)
 endif()
