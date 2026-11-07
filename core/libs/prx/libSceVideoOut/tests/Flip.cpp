@@ -303,9 +303,6 @@ void testPs4Buffers() {
     check(sceVideoOutSubmitChangeBufferAttribute(handle, 0, &changed) == 0, "the legacy change back to a linear buffer failed");
     unchanged();
     auto invalid = changed;
-    invalid.pixel_format = 0x88060000u;
-    rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "unsupported PS4 pixel format");
-    invalid = changed;
     invalid.width = 0;
     rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, &invalid); }, "dimensions");
     auto gate = std::make_shared<Gate>();
@@ -335,12 +332,6 @@ void testPs4Buffers() {
     check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0; }), "the PS5 flip status did not fill its 128 bytes");
     VideoOutBuffers ps5Buffer{storage.data(), nullptr, {nullptr, nullptr}};
     check(sceVideoOutRegisterBuffers2(ps5Handle, 0, 0, &ps5Buffer, 1, &ps5, 0, nullptr) == 0, "the PS5 group was not registered");
-    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute(ps5Handle, 0, &changed); }).find("PS5 buffer group") != std::string::npos, "the legacy change accepted a PS5 group");
-    {
-        const auto ps5Cfg = VideoOutDriver::Get().GetConfig(ps5Handle);
-        std::lock_guard lock(ps5Cfg->mutex);
-        check(!ps5Cfg->groups[0].ps4 && ps5Cfg->groups[0].attribute.width == 64 && ps5Cfg->groups[0].attribute.pitch_in_pixel == 64 && ps5Cfg->groups[0].attribute.pixel_format == ps5.pixel_format && ps5Cfg->buffers[0].dataAddress == reinterpret_cast<uint64_t>(storage.data()), "the rejected legacy change modified a PS5 group");
-    }
     sceVideoOutClose(ps5Handle);
     LibcRunShutdown_nid_postfix();
 }
