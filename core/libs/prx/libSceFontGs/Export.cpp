@@ -1,5 +1,4 @@
 #include "prx/libSceFontGs/include/InventoryExports.hpp"
-#include "prx/libSceFontGs/GnmInitData.hpp"
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -12,7 +11,21 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
+#include <iterator>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <vector>
+#include "mbedtls/sha256.h"
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -677,18 +690,42 @@ std::uint32_t GnmFormatBits(std::uint32_t surface) {
     return GnmElementBits[surface] * scale;
 }
 
-constexpr std::uint32_t GnmChannelSelects[4][4][4] = {
-    {{4, 0, 0, 1}, {0, 4, 0, 1}, {0, 0, 4, 1}, {0, 0, 0, 4}},
-    {{4, 5, 0, 1}, {4, 0, 0, 5}, {5, 4, 0, 1}, {5, 0, 0, 4}},
-    {{4, 5, 6, 1}, {4, 5, 0, 6}, {6, 5, 4, 1}, {6, 5, 0, 4}},
-    {{4, 5, 6, 7}, {6, 5, 4, 7}, {7, 6, 5, 4}, {5, 6, 7, 4}}};
+constexpr std::uint32_t GnmSel0 = 0;
+constexpr std::uint32_t GnmSel1 = 1;
+constexpr std::uint32_t GnmSelX = 4;
+constexpr std::uint32_t GnmSwapAlt = 1;
+constexpr std::uint32_t GnmSwapStdRev = 2;
+constexpr std::uint32_t GnmChannelA = 3;
+
+constexpr std::uint32_t GnmSwapChannel(std::uint32_t count, std::uint32_t swap, std::uint32_t component) {
+    if (count == 1) return swap;
+    const std::uint32_t order = (swap & GnmSwapStdRev) != 0 ? count - 1 - component : component;
+    if ((swap & GnmSwapAlt) == 0) return order;
+    if (count == 4) return order == 0 ? 2 : order == 2 ? 0 : order;
+    return order == count - 1 ? GnmChannelA : order;
+}
+
+using GnmSelects = std::array<std::array<std::array<std::uint32_t, 4>, 4>, 4>;
+
+constexpr GnmSelects GnmSwapSelects() {
+    GnmSelects selects{};
+    for (std::uint32_t count = 1; count <= 4; ++count)
+        for (std::uint32_t swap = 0; swap < 4; ++swap) {
+            auto& channels = selects[count - 1][swap];
+            channels = {GnmSel0, GnmSel0, GnmSel0, GnmSel1};
+            for (std::uint32_t component = 0; component < count; ++component) channels[GnmSwapChannel(count, swap, component)] = GnmSelX + component;
+        }
+    return selects;
+}
+
+constexpr GnmSelects GnmChannelSelects = GnmSwapSelects();
 
 std::uint32_t GnmTextureDataFormat(const std::uint8_t* texture) {
     const std::uint32_t word = Read32(texture, 0x10);
     const std::uint32_t surface = (word >> 2) & 0x1f;
     const std::uint32_t numeric = (word >> 8) & 7;
     const std::uint32_t count = GnmComponentCounts[surface];
-    const std::uint32_t* const selects = count - 1 < 4 ? GnmChannelSelects[count - 1][(word >> 11) & 3] : nullptr;
+    const std::uint32_t* const selects = count - 1 < 4 ? GnmChannelSelects[count - 1][(word >> 11) & 3].data() : nullptr;
     const std::uint32_t channels = selects != nullptr ? GnmDataFormat(0, 0, selects[0], selects[1], selects[2], selects[3]) : 1u << 21;
     return surface | (numeric == 6 ? 0x900 : numeric << 8) | channels;
 }
@@ -854,9 +891,19 @@ int GnmResetVgtControl(std::uint32_t* cmd, std::uint32_t size) {
     return 0;
 }
 
+constexpr std::uint32_t GnmShRegBase = 0x2c00;
+constexpr std::uint32_t GnmComputeUserData0 = 0x2e40;
+constexpr std::uint32_t GnmSpiShaderUserDataPs0 = 0x2c0c;
+constexpr std::uint32_t GnmSpiShaderUserDataVs0 = 0x2c4c;
+constexpr std::uint32_t GnmSpiShaderUserDataGs0 = 0x2c8c;
+constexpr std::uint32_t GnmSpiShaderUserDataEs0 = 0x2ccc;
+constexpr std::uint32_t GnmSpiShaderUserDataHs0 = 0x2d0c;
+constexpr std::uint32_t GnmSpiShaderUserDataLs0 = 0x2d4c;
+
 int GnmDrawIndirect(std::uint32_t* cmd, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t stage, std::uint32_t vertexSgpr,
                     std::uint32_t instanceSgpr, std::uint32_t flags) {
-    constexpr std::uint32_t UserDataBase[7] = {0, 0, 0x4c, 0, 0xcc, 0, 0x14c};
+    constexpr std::uint32_t UserDataBase[7] = {0, 0, GnmSpiShaderUserDataVs0 - GnmShRegBase, 0, GnmSpiShaderUserDataEs0 - GnmShRegBase, 0,
+                                               GnmSpiShaderUserDataLs0 - GnmShRegBase};
     if (cmd == nullptr || size != 9 || vertexSgpr > 0xf || instanceSgpr > 0xf || stage > 6 || ((0x2bu >> stage) & 1) != 0) return -1;
     const std::uint32_t base = UserDataBase[stage];
     cmd[0] = (flags & 1) | 0xc0032400;
@@ -868,12 +915,7 @@ int GnmDrawIndirect(std::uint32_t* cmd, std::uint32_t size, std::uint32_t dataOf
     cmd[6] = 0;
     return 0;
 }
-constexpr std::uint32_t GnmInitRodataBase = 0x27d80;
 constexpr std::uint32_t GnmShaderCount = 9;
-
-const std::uint8_t* GnmRo(std::uint32_t address) {
-    return reinterpret_cast<const std::uint8_t*>(GnmInitRodata) + (address - GnmInitRodataBase);
-}
 
 template <typename T>
 T Load(const void* base, std::size_t offset) {
@@ -895,7 +937,25 @@ void StorePtr(void* base, std::size_t offset, const void* pointer) {
     Store(base, offset, reinterpret_cast<std::uintptr_t>(pointer));
 }
 
-void CopyRo(void* destination, std::uint32_t address, std::size_t size) { std::memcpy(destination, GnmRo(address), size); }
+void GnmStoreFloats(std::uint8_t* at, std::initializer_list<float> values) {
+    std::size_t offset = 0;
+    for (const float value : values) {
+        Store(at, offset, value);
+        offset += 4;
+    }
+}
+
+void GnmStoreWords(std::uint8_t* at, std::initializer_list<std::uint32_t> values) {
+    std::size_t offset = 0;
+    for (const std::uint32_t value : values) {
+        Store(at, offset, value);
+        offset += 4;
+    }
+}
+
+void GnmStoreOnes(std::uint8_t* at, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) Store(at, 4 * i, 1.0f);
+}
 
 std::uint8_t* AlignPtr(std::uint8_t* pointer, std::uintptr_t alignment) {
     return reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(pointer) + alignment - 1) & ~(alignment - 1));
@@ -907,9 +967,122 @@ struct GnmShaderBlob {
     std::uint32_t size;
 };
 
-constexpr GnmShaderBlob GnmShaderBlobs[GnmShaderCount] = {{1, 0x0000, 0x128}, {1, 0x0128, 0x210}, {1, 0x0338, 0x334},
-                                                         {1, 0x0670, 0x2d8}, {1, 0x0948, 0x1324}, {2, 0x1c70, 0x168},
-                                                         {2, 0x1dd8, 0x214}, {2, 0x1ff0, 0x21c}, {2, 0x2210, 0x83d4}};
+constexpr std::uint64_t GnmShaderBytesBegin = 0x341c0;
+constexpr std::uint64_t GnmShaderBytesEnd = 0x3e7a4;
+constexpr std::uint64_t GnmShaderTableBegin = 0x3e7a8;
+constexpr std::uint64_t GnmShaderTableEntry = 0x18;
+constexpr std::uint64_t GnmShaderTableEnd = GnmShaderTableBegin + GnmShaderCount * GnmShaderTableEntry;
+constexpr std::string_view GnmShaderBytesSha256 = "effb7f1f19b0595a6699220a783f3300a63010d0d395c14de358c87edfa6a097";
+constexpr std::string_view GnmShaderTableSha256 = "39ac1e2ea16682de9b3ddc81eb2d19027ee8a1233c91ceac7abcebe02b8c31fb";
+constexpr const char* GnmModuleName = "libSceFontGs.sprx";
+
+struct GnmModuleShaders {
+    std::vector<std::uint8_t> bytes;
+    std::array<GnmShaderBlob, GnmShaderCount> blobs;
+};
+
+std::filesystem::path GnmExecutableDirectory() {
+#ifdef _WIN32
+    wchar_t module[MAX_PATH];
+    const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
+    if (length == 0 || length == MAX_PATH) throw std::runtime_error("libSceFontGs: cannot locate the executable");
+    return std::filesystem::path(module).parent_path();
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::error_code error;
+    std::filesystem::path path;
+    if (_NSGetExecutablePath(executable.data(), &size) == 0) path = std::filesystem::canonical(executable.data(), error);
+    if (path.empty()) throw std::runtime_error("libSceFontGs: cannot locate the executable");
+    return path.parent_path();
+#else
+    return std::filesystem::read_symlink("/proc/self/exe").parent_path();
+#endif
+}
+
+std::filesystem::path GnmModuleDirectory() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_SYSTEM_MODULES");
+#else
+    const char* configured = std::getenv("ANYPS5_SYSTEM_MODULES");
+#endif
+    if (!configured || configured[0] == 0) return GnmExecutableDirectory() / "anyps5-modules";
+    const std::filesystem::path directory(configured);
+    std::error_code error;
+    if (!std::filesystem::is_directory(directory, error)) throw std::runtime_error("libSceFontGs: ANYPS5_SYSTEM_MODULES is not a directory: " + directory.string());
+    return directory;
+}
+
+std::string GnmSha256(const std::vector<std::uint8_t>& bytes) {
+    std::uint8_t digest[32];
+    if (mbedtls_sha256(bytes.data(), bytes.size(), digest, 0) != 0) throw std::runtime_error("libSceFontGs: SHA-256 failed");
+    constexpr char Digits[] = "0123456789abcdef";
+    std::string text;
+    for (const std::uint8_t byte : digest) {
+        text += Digits[byte >> 4];
+        text += Digits[byte & 0xf];
+    }
+    return text;
+}
+
+[[noreturn]] void GnmUnsupportedModule(const std::filesystem::path& path) {
+    throw std::runtime_error("libSceFontGs: " + path.string() + " is not a supported build of " + GnmModuleName +
+                             ": its GNM shaders do not match the PS4 firmware 10.71 module");
+}
+
+std::vector<std::uint8_t> GnmModuleRange(const std::vector<std::uint8_t>& file, const std::filesystem::path& path, std::uint64_t begin,
+                                         std::uint64_t end, std::string_view digest) {
+    const auto offset = Load<std::uint64_t>(file.data(), 0x20);
+    const auto entry = Load<std::uint16_t>(file.data(), 0x36);
+    const auto count = Load<std::uint16_t>(file.data(), 0x38);
+    if (entry < 0x38 || offset > file.size()) GnmUnsupportedModule(path);
+    for (std::uint64_t i = 0; i < count && (i + 1) * entry <= file.size() - offset; ++i) {
+        const std::uint8_t* const header = file.data() + offset + i * entry;
+        const auto data = Load<std::uint64_t>(header, 8);
+        const auto address = Load<std::uint64_t>(header, 0x10);
+        const auto size = Load<std::uint64_t>(header, 0x20);
+        if (Load<std::uint32_t>(header, 0) != 1 || begin < address || end - address > size || data > file.size() || end - address > file.size() - data) continue;
+        const std::vector<std::uint8_t> bytes(file.begin() + static_cast<std::ptrdiff_t>(data + (begin - address)),
+                                              file.begin() + static_cast<std::ptrdiff_t>(data + (end - address)));
+        if (GnmSha256(bytes) != digest) GnmUnsupportedModule(path);
+        return bytes;
+    }
+    GnmUnsupportedModule(path);
+}
+
+GnmModuleShaders GnmLoadShaders() {
+    const std::filesystem::path directory = GnmModuleDirectory();
+    const std::filesystem::path path = directory / GnmModuleName;
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream)
+        throw std::runtime_error("libSceFontGs: " + path.string() + " not found; the GNM font backend uploads the shaders of the console's own " +
+                                 GnmModuleName + ": copy it from your console, decrypted to an ELF, into " + directory.string() +
+                                 " or set ANYPS5_SYSTEM_MODULES to its directory");
+    const std::vector<std::uint8_t> file((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    constexpr std::uint8_t Self[4] = {0x4f, 0x15, 0x3d, 0x1d};
+    constexpr std::uint8_t Elf[4] = {0x7f, 'E', 'L', 'F'};
+    if (file.size() >= 4 && std::memcmp(file.data(), Self, 4) == 0)
+        throw std::runtime_error("libSceFontGs: " + path.string() + " is an encrypted SELF; decrypt it to an ELF on your own console and use that file");
+    if (file.size() < 0x40 || std::memcmp(file.data(), Elf, 4) != 0 || file[4] != 2 || file[5] != 1)
+        throw std::runtime_error("libSceFontGs: " + path.string() + " is not a decrypted 64-bit ELF of " + GnmModuleName);
+    GnmModuleShaders shaders{GnmModuleRange(file, path, GnmShaderBytesBegin, GnmShaderBytesEnd, GnmShaderBytesSha256), {}};
+    const std::vector<std::uint8_t> table = GnmModuleRange(file, path, GnmShaderTableBegin, GnmShaderTableEnd, GnmShaderTableSha256);
+    for (std::uint32_t i = 0; i < GnmShaderCount; ++i) {
+        const auto kind = Load<std::uint64_t>(table.data(), i * GnmShaderTableEntry);
+        const auto address = Load<std::uint64_t>(table.data(), i * GnmShaderTableEntry + 8);
+        const auto size = Load<std::uint64_t>(table.data(), i * GnmShaderTableEntry + 0x10);
+        if ((kind != 1 && kind != 2) || address < GnmShaderBytesBegin || address > GnmShaderBytesEnd || size > GnmShaderBytesEnd - address)
+            GnmUnsupportedModule(path);
+        shaders.blobs[i] = {static_cast<std::uint32_t>(kind), static_cast<std::uint32_t>(address - GnmShaderBytesBegin), static_cast<std::uint32_t>(size)};
+    }
+    return shaders;
+}
+
+const GnmModuleShaders& GnmLoadedShaders() {
+    static const GnmModuleShaders shaders = GnmLoadShaders();
+    return shaders;
+}
 
 constexpr std::uint32_t GnmShaderObjectOffsets[GnmShaderCount] = {0x000, 0x050, 0x0b8, 0x120, 0x188, 0x220, 0x288, 0x320, 0x3b8};
 
@@ -945,6 +1118,7 @@ constexpr GnmShaderClass GnmShaderClasses[GnmShaderCount] = {
      {{0x50, 2, 0, 0, 1}, {0x68, 2, 1, 0, 2}, {0x80, 0, 0, 8, 1}, {0x80, 0, 0, 0xc, 1}, {0x98, 0, 1, 8, 2}}}};
 
 constexpr std::uint32_t GnmFetchShaderIndex = 4;
+constexpr std::uint32_t GnmFetchRemap[1] = {0};
 
 alignas(16) std::uint8_t g_gnmShaders[0x4d0] = {};
 
@@ -1102,7 +1276,7 @@ void GnmPrepareShaderObject(std::uint32_t index, std::uint8_t* header, GnmFetchS
     Store<std::uint32_t>(object, 0x78, 0);
     GnmParseShader(index, header);
     Store<std::uint64_t>(object, 0x48, 0x100000000);
-    StorePtr(object, 0x60, GnmRo(0x28f8c));
+    StorePtr(object, 0x60, GnmFetchRemap);
     Store<std::uint32_t>(object, 0x68, 1);
     Store<std::uint64_t>(object, 0x70, 0);
     Store<std::uint32_t>(object, 0x78, 0);
@@ -1171,9 +1345,12 @@ std::uint32_t GnmSwap32(std::uint32_t value) {
     return value >> 24 | (value >> 8 & 0xff00) | (value << 8 & 0xff0000) | value << 24;
 }
 
+constexpr float GnmShaderKeyDivisor = 100.0f;
+constexpr float GnmShaderKeyStep = 1.1f;
+
 void GnmDecodeShader(std::uint8_t* destination, const std::uint8_t* source, std::uint32_t size) {
-    float key = static_cast<float>(static_cast<std::int32_t>(size)) / std::bit_cast<float>(Load<std::uint32_t>(GnmRo(0x2831c), 0));
-    const float step = std::bit_cast<float>(Load<std::uint32_t>(GnmRo(0x28320), 0));
+    float key = static_cast<float>(static_cast<std::int32_t>(size)) / GnmShaderKeyDivisor;
+    const float step = GnmShaderKeyStep;
     for (std::uint32_t at = 0; at + 4 <= size; at += 4) {
         const std::uint32_t word = (static_cast<std::uint32_t>(source[at]) << 24 | static_cast<std::uint32_t>(source[at + 2]) << 16 |
                                     static_cast<std::uint32_t>(source[at + 1]) << 8 | source[at + 3]) ^
@@ -1191,10 +1368,11 @@ struct GnmInitLayout {
 };
 
 bool GnmUploadShaders(GnmInitLayout& layout) {
-    const auto* const blobs = reinterpret_cast<const std::uint8_t*>(GnmInitShaderData);
+    const GnmModuleShaders& shaders = GnmLoadedShaders();
+    const std::uint8_t* const blobs = shaders.bytes.data();
     for (std::uint32_t i = 0; i < GnmShaderCount; ++i) {
         std::uint8_t* const object = GnmShaderObject(i);
-        const GnmShaderBlob& blob = GnmShaderBlobs[i];
+        const GnmShaderBlob& blob = shaders.blobs[i];
         std::uint8_t* const destination = AlignPtr(layout.cursor, 8);
         std::uint8_t* const next = destination != nullptr ? destination + blob.size : layout.cursor;
         if (next >= layout.gpu) return false;
@@ -1277,13 +1455,14 @@ void GnmIndirectBuffer(std::uint8_t* cb, const void* address, std::uint32_t dwor
                  (dwords & 0xfffff) | 0x1900000});
 }
 
-constexpr std::uint16_t GnmShBases[8] = {0x2e40, 0x2c0c, 0x2c4c, 0x2c8c, 0x2ccc, 0x2d0c, 0x2d4c, 0};
+constexpr std::uint32_t GnmShBases[8] = {GnmComputeUserData0,     GnmSpiShaderUserDataPs0, GnmSpiShaderUserDataVs0, GnmSpiShaderUserDataGs0,
+                                         GnmSpiShaderUserDataEs0, GnmSpiShaderUserDataHs0, GnmSpiShaderUserDataLs0, 0};
 
 void GnmShRegs(std::uint8_t* cb, std::uint32_t stage, std::uint32_t reg, const std::uint32_t* values, std::uint32_t count) {
     std::uint8_t* const at = GnmCbCur(cb);
     Store<std::uint64_t>(at, 0, 0x6875000dc0001000);
     Store(at, 8, count << 16 | (stage == 0 ? 2u : 0u) | 0xc0007600);
-    Store(at, 0xc, reg + GnmShBases[stage] - 0x2c00);
+    Store(at, 0xc, reg + GnmShBases[stage] - GnmShRegBase);
     if (count <= 0x10) {
         if (count == 0) Store<std::uint64_t>(at, 8, 0xc0001000);
         for (std::uint32_t i = 0; i < count; ++i) Store(at, 0x10 + 4 * i, values[i]);
@@ -1466,7 +1645,17 @@ std::uint32_t GnmCallLoop(std::uint8_t* cb) {
 }
 bool GnmIsNeo() { return sceKernelIsNeoMode() != 0; }
 
-std::uint32_t GnmRoWord(std::uint32_t address) { return Load<std::uint32_t>(GnmRo(address), 0); }
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3Ps = 0x2c07;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3Vs = 0x2c46;
+constexpr std::uint32_t GnmSpiShaderLateAllocVs = 0x2c47;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3Gs = 0x2c87;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3Es = 0x2cc7;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3Hs = 0x2d07;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3Ls = 0x2d47;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3CuEnShift = 0;
+constexpr std::uint32_t GnmSpiShaderPgmRsrc3WaveLimitShift = 16;
+
+std::uint32_t GnmFloatBits(float value) { return std::bit_cast<std::uint32_t>(value); }
 
 void GnmUconfigReg(std::uint8_t* cb, std::uint32_t reg, std::uint32_t value) { GnmEmit(cb, {0xc0017900, reg, value}); }
 
@@ -1532,9 +1721,15 @@ std::uint32_t GnmDepthControlValue() {
 std::uint32_t GnmEmitDefaults(std::uint8_t* cb) {
     const bool neo = GnmIsNeo();
     std::uint8_t* const start = GnmCbCur(cb);
-    const std::uint32_t sh[7] = {GnmRoWord(0x29080), GnmRoWord(0x29084), GnmRoWord(0x29088), GnmRoWord(0x2908c), 0x17, 0x1701fd, 0x1c};
-    constexpr std::uint32_t ShRegs[7] = {0x7, 0x46, 0x87, 0xc7, 0x107, 0x147, 0x47};
-    for (std::uint32_t i = 0; i < 7; ++i) GnmEmit(cb, {0xc0017600, ShRegs[i], sh[i]});
+    constexpr std::uint32_t WaveLimit = 0x17;
+    constexpr std::uint32_t AllCus = 0x1ff;
+    constexpr std::uint32_t CusButOne = 0x1fd;
+    const auto rsrc3 = [](std::uint32_t cus) { return WaveLimit << GnmSpiShaderPgmRsrc3WaveLimitShift | cus << GnmSpiShaderPgmRsrc3CuEnShift; };
+    const std::uint32_t sh[7][2] = {{GnmSpiShaderPgmRsrc3Ps, rsrc3(AllCus)},    {GnmSpiShaderPgmRsrc3Vs, rsrc3(CusButOne)},
+                                    {GnmSpiShaderPgmRsrc3Gs, rsrc3(AllCus)},    {GnmSpiShaderPgmRsrc3Es, rsrc3(CusButOne)},
+                                    {GnmSpiShaderPgmRsrc3Hs, WaveLimit},        {GnmSpiShaderPgmRsrc3Ls, rsrc3(CusButOne)},
+                                    {GnmSpiShaderLateAllocVs, 0x1c}};
+    for (const auto& [reg, value] : sh) GnmEmit(cb, {0xc0017600, reg - GnmShRegBase, value});
     const std::uint8_t flags = LoadPtr(LoadPtr(cb, 0x40), 0)[4];
     if ((flags & 1) != 0) GnmContextReg(cb, 0x1b5, (flags & 4) >> 2);
     if (neo) {
@@ -1545,7 +1740,8 @@ std::uint32_t GnmEmitDefaults(std::uint8_t* cb) {
     }
     GnmContextReg(cb, 0x2ad, 0);
     GnmContextReg(cb, 0x2d5, 0);
-    GnmEmit(cb, {GnmRoWord(0x290d0), GnmRoWord(0x290d4), GnmRoWord(0x290d8), GnmRoWord(0x290dc), 0x2e5, 0});
+    GnmContextReg(cb, 0x290, 0);
+    GnmContextReg(cb, 0x2e5, 0);
     if (neo) {
         GnmUconfigReg(cb, 0x248, 0);
         GnmContextReg(cb, 0x2a1, 1);
@@ -1561,7 +1757,7 @@ std::uint32_t GnmEmitDefaults(std::uint8_t* cb) {
     GnmContextReg(cb, 0x292, 0);
     GnmContextReg(cb, 0x205, GnmDepthControlValue() & 0x393fff);
     GnmContextReg(cb, 0x281, 0x20u << 16 | 1);
-    const std::uint32_t scale = GnmRoWord(0x28348);
+    const std::uint32_t scale = GnmFloatBits(1.0f);
     GnmEmit(cb, {0xc0046900, 0x2fa, scale, scale, scale, scale});
     cb[GnmCbFlags] &= 0xfe;
     GnmEmit(cb, {0xc0012000, 0, 0});
@@ -1628,7 +1824,7 @@ std::uint32_t GnmEmitBlend(std::uint8_t* cb) {
     GnmContextReg(cb, 0x282, 0x10);
     GnmContextReg(cb, 0x204, 0);
     GnmContextReg(cb, 0x2f9, (5u & 7) << 3 | (2u & 3) << 1 | (1u & 1));
-    const std::uint32_t scale = GnmRoWord(0x2834c);
+    const std::uint32_t scale = GnmFloatBits(1.0f);
     GnmEmit(cb, {0xc0046900, 0x105, scale, scale, scale, scale});
     GnmContextReg(cb, 0x1e0, GnmBlendControlValue() & 0xffff1fff);
     GnmContextReg(cb, 0x202, (1u << 4 & 0x70) | 0xccu << 16);
@@ -2150,14 +2346,14 @@ std::uint32_t GnmEmitDraws(std::uint8_t* cb) {
     GnmContextReg(cb, 0x1e0, GnmPrimitiveControl(1, 1, 1) & 0xffff1fff);
     GnmDrawIndirectAt(cb, 0, 2, vertex, instance);
     GnmPrimitiveType(cb, 3);
-    const std::uint32_t first = GnmRoWord(0x28350);
+    const std::uint32_t first = GnmFloatBits(1.0f / 8);
     GnmEmit(cb, {0xc0046900, 0x105, first, first, first, first});
     GnmContextReg(cb, 0x1e0, GnmPrimitiveControl(0x13, 4, 1) & 0xffff1fff);
     for (std::uint32_t i = 1; i <= 8; ++i) {
         GnmContextReg(cb, 0x282, i);
         GnmDrawIndirectAt(cb, 0x10, 2, vertex, instance);
     }
-    const std::uint32_t second = GnmRoWord(0x28354);
+    const std::uint32_t second = GnmFloatBits(1.0f / 16);
     GnmEmit(cb, {0xc0046900, 0x105, second, second, second, second});
     GnmContextReg(cb, 0x1e0, GnmPrimitiveControl(0x13, 0, 1) & 0xffff1fff);
     for (std::uint32_t i = 1; i <= 8; ++i) {
@@ -2180,10 +2376,10 @@ static_assert(sizeof(GnmInitFrame) == 0xf80);
 void GnmInitState(std::uint8_t* state, std::uint8_t* command, std::uint8_t* constants, std::uint8_t* header) {
     StorePtr(state, 0xca8, state + 0x6d8);
     Store<std::uint64_t>(state, 0xcd8, 0x4487000044f00000);
-    CopyRo(state + 0xe18, 0x28780, 0x20);
+    GnmStoreOnes(state + 0xe18, 8);
     Store<std::uint16_t>(state, 0xe38, 8);
     Store<std::uint64_t>(state, 0xe40, 0x3f8000003f800000);
-    CopyRo(state + 0xe50, 0x27df0, 0x10);
+    GnmStoreOnes(state + 0xe50, 4);
     Store<std::uint64_t>(state, 0xe78, 0x3f8000003f800000);
     Store<std::uint32_t>(state, 0xe80, 0x3f800000);
     StorePtr(state, 0xcb0, command);
@@ -2193,15 +2389,53 @@ void GnmInitState(std::uint8_t* state, std::uint8_t* command, std::uint8_t* cons
     StorePtr(state, 0xe88, header + 0x2c8);
 }
 
+struct GnmConstantRow {
+    float flag;
+    float value;
+    float kind;
+    float weight;
+};
+
+constexpr std::size_t GnmConstantRowCount = 0x42;
+
+constexpr std::array<GnmConstantRow, GnmConstantRowCount> GnmConstantRows() {
+    std::array<GnmConstantRow, GnmConstantRowCount> rows{};
+    std::size_t at = 0;
+    const auto add = [&](float flag, float value, float kind, float weight = 1.0f) { rows[at++] = {flag, value, kind, weight}; };
+    add(0, 1, 12, 0);
+    add(10, 1, 12);
+    add(0, 1, 12);
+    for (int n = 1; n <= 16; ++n) add(0, static_cast<float>(n), 252);
+    add(1, 3, 252);
+    add(1, 2, 252);
+    add(1, 1, 12);
+    add(0, 1.0f / 8, 188);
+    add(0, 7.0f / 64, 188);
+    add(0, 1.0f / 64, 188);
+    add(0, 1.0f / 8, 186);
+    for (int n = 1; n <= 16; ++n) add(0, 1.0f / static_cast<float>(n), 27);
+    add(0, 1.0f / 4, 188);
+    add(0, 1, 202);
+    for (int n = 2; n <= 4; ++n) add(0, 1.0f / static_cast<float>(n), 10);
+    for (const float value : {1.0f / 16, 1.0f / 8, 1.0f / 4, 1.0f / 2, 3.0f / 4}) add(0, value, 30);
+    add(0, 0.33f, 12);
+    for (int n = 1; n <= 8; ++n) add(0, static_cast<float>(n) / 8, 188);
+    add(0, 3.0f / 4, 190);
+    add(1, 7.0f / 16, 29);
+    add(1, 1.0f / 4, 541);
+    add(1, 1.0f / 2, 524);
+    add(1, 3.0f / 4, 524);
+    return rows;
+}
+
+constexpr std::array<GnmConstantRow, GnmConstantRowCount> GnmConstantTable = GnmConstantRows();
+static_assert(sizeof(GnmConstantTable) == 0x420);
+
 void GnmFillConstantBlock(std::uint8_t* header, std::uint8_t* block) {
-    Store<std::uint32_t>(block, 0, 0);
     StorePtr(header, 0x220, block);
     StorePtr(header, 0x228, block + 0x10);
     StorePtr(header, 0x230, block + 0x20);
-    CopyRo(block + 4, 0x28380, 0x400);
-    CopyRo(block + 0x404, 0x27d80, 0x10);
-    Store<std::uint64_t>(block, 0x414, 0x440300003f400000);
-    Store<std::uint32_t>(block, 0x41c, 0x3f800000);
+    std::memcpy(block, GnmConstantTable.data(), sizeof(GnmConstantTable));
     StorePtr(header, 0x268, block + 0x130);
     StorePtr(header, 0x260, block + 0x160);
     StorePtr(header, 0x238, block + 0x190);
@@ -2213,11 +2447,11 @@ void GnmFillConstantBlock(std::uint8_t* header, std::uint8_t* block) {
     StorePtr(header, 0x278, block + 0x400);
     std::uint8_t* const tail = block + (block - LoadPtr(header, 0x230)) + 0x20;
     StorePtr(header, 0x280, tail + 0x420);
-    CopyRo(tail + 0x420, 0x28780, 0x20);
-    CopyRo(tail + 0x440, 0x287a0, 0x20);
+    GnmStoreOnes(tail + 0x420, 8);
+    GnmStoreFloats(tail + 0x440, {1, 1, 1, 1, 0.5f, 0.5f, 0.5f, 0});
     StorePtr(header, 0x288, tail + 0x460);
-    CopyRo(tail + 0x460, 0x287c0, 0x20);
-    CopyRo(tail + 0x480, 0x287a0, 0x20);
+    GnmStoreFloats(tail + 0x460, {1.0f / 16, 1.0f / 16, 1.0f / 16, 1.0f / 16, 1, 1, 1, 1});
+    GnmStoreFloats(tail + 0x480, {1, 1, 1, 1, 0.5f, 0.5f, 0.5f, 0});
     Store<std::uint64_t>(tail, 0x4a0, 0x100000001);
     std::memset(tail + 0x4a8, 0, 0x38);
     GnmBufferDescriptor(header + 0x178, tail + 0x4a0, 0x40);
@@ -2254,21 +2488,24 @@ void GnmFillConstantBlock(std::uint8_t* header, std::uint8_t* block) {
     StorePtr(header, 0x358, tail + 0x570);
 }
 
+constexpr float GnmScreenWidth = 1920.0f;
+constexpr float GnmScreenHeight = 1080.0f;
+
 std::uint8_t* GnmFillVertexData(std::uint8_t* header, std::uint8_t* at) {
     at = AlignPtr(at + 0xb0, 8);
     Store<std::uint32_t>(at, 0, 4);
     StorePtr(header, 0x158, at);
     StorePtr(header, 0x160, at + 0x10);
-    CopyRo(at + 4, 0x28800, 0x20);
+    GnmStoreWords(at + 4, {1, 0, 0, 4, 4, 0, 0x10, 4});
     StorePtr(header, 0x168, at + 0x20);
-    CopyRo(at + 0x24, 0x27da0, 0x10);
+    GnmStoreWords(at + 0x24, {1, 0, 1, 4});
     Store<std::uint64_t>(at, 0x34, 1);
     Store<std::uint32_t>(at, 0x3c, 0xff);
     StorePtr(header, 0x170, at + 0x30);
-    CopyRo(at + 0x40, 0x28820, 0x20);
-    CopyRo(at + 0x60, 0x28840, 0x20);
+    GnmStoreFloats(at + 0x40, {2.0f / GnmScreenWidth, 0, 0, 0, 0, -2.0f / GnmScreenHeight, 0, 0});
+    GnmStoreFloats(at + 0x60, {0, 0, 1, 0, -1, 1, 0, 1});
     StorePtr(header, 0x328, at + 0x40);
-    CopyRo(at + 0x80, 0x27db0, 0x10);
+    GnmStoreFloats(at + 0x80, {0, 0, 1, -1});
     std::memset(at + 0x90, 0, 0x10);
     StorePtr(header, 0x330, at + 0x80);
     StorePtr(header, 0x3b8, at + 0xa0);
@@ -2279,11 +2516,11 @@ std::uint8_t* GnmFillVertexData(std::uint8_t* header, std::uint8_t* at) {
         }
     };
     identity(0xa0);
-    CopyRo(at + 0xdc, 0x27dc0, 0x10);
+    GnmStoreFloats(at + 0xdc, {1, 1, 0, 0});
     Store<std::uint32_t>(at, 0xec, 0x3f800000);
     std::memset(at + 0xf0, 0, 0x10);
     for (std::size_t offset = 0x100; offset < 0x160; offset += 0x20) {
-        CopyRo(at + offset, 0x27dd0, 0x10);
+        GnmStoreFloats(at + offset, {1, 0, 0, 1});
         std::memset(at + offset + 0x10, 0, 0x10);
     }
     StorePtr(header, 0x338, at + 0xa0);
@@ -2302,21 +2539,21 @@ std::uint8_t* GnmFillVertexData(std::uint8_t* header, std::uint8_t* at) {
     };
     frame(0x160, 1);
     const std::uint8_t* matrix = LoadPtr(header, 0x3b8);
-    constexpr std::size_t Picks[8] = {0, 4, 0x10, 0x14, 0x20, 0x24, 0x30, 0x34};
+    const auto pick = [](std::size_t i) { return i / 2 * 0x10 + i % 2 * 4; };
     for (std::size_t i = 0; i < 8; ++i) {
-        std::memcpy(at + 0x1f0 + 4 * i, matrix + Picks[i], 4);
-        std::memcpy(at + 0x210 + 4 * i, matrix + Picks[i], 4);
+        std::memcpy(at + 0x1f0 + 4 * i, matrix + pick(i), 4);
+        std::memcpy(at + 0x210 + 4 * i, matrix + pick(i), 4);
     }
     StorePtr(header, 0x340, at + 0x160);
     frame(0x230, 0);
-    CopyRo(at + 0x2b0, 0x27de0, 0x10);
+    GnmStoreWords(at + 0x2b0, {0, 0, 0, 1});
     matrix = LoadPtr(header, 0x3b8);
     for (std::size_t i = 0; i < 8; ++i) {
-        std::memcpy(at + 0x2c0 + 4 * i, matrix + Picks[i], 4);
-        std::memcpy(at + 0x2e0 + 4 * i, matrix + Picks[i], 4);
+        std::memcpy(at + 0x2c0 + 4 * i, matrix + pick(i), 4);
+        std::memcpy(at + 0x2e0 + 4 * i, matrix + pick(i), 4);
     }
     StorePtr(header, 0x348, at + 0x230);
-    CopyRo(at + 0x300, 0x27df0, 0x10);
+    GnmStoreOnes(at + 0x300, 4);
     Store<std::uint64_t>(at, 0x310, 0);
     Store<std::uint32_t>(at, 0x318, 1);
     StorePtr(header, 0x350, at + 0x300);
@@ -2324,28 +2561,75 @@ std::uint8_t* GnmFillVertexData(std::uint8_t* header, std::uint8_t* at) {
     return at;
 }
 
-void GnmFillSamplers(std::uint8_t* header) {
-    CopyRo(header + 0x2c8, 0x28860, 0x20);
-    Store<std::uint32_t>(header, 0x2d0, 0x5000000);
-    Store<std::uint32_t>(header, 0x2e0, 0x5500000);
-    CopyRo(header + 0x2e8, 0x28880, 0x20);
-    Store<std::uint32_t>(header, 0x2f0, 0x5500000);
-    Store<std::uint32_t>(header, 0x300, 0x5500000);
-    CopyRo(header + 0x308, 0x288a0, 0x20);
-    Store<std::uint64_t>(header, 0x3b0, 0xc04);
-    CopyRo(header + 0x390, 0x288c0, 0x20);
+constexpr std::uint32_t GnmTexWrap = 0;
+constexpr std::uint32_t GnmTexMirror = 1;
+constexpr std::uint32_t GnmTexClampLastTexel = 2;
+constexpr std::uint32_t GnmTexMirrorOnceLastTexel = 3;
+constexpr std::uint32_t GnmTexClampBorder = 6;
+constexpr std::uint32_t GnmTexMaxLod = 0xfff;
+constexpr std::uint32_t GnmTexXyFilterBilinear = 1;
+constexpr std::uint32_t GnmTexZFilterPoint = 1;
+constexpr std::uint32_t GnmTexMipFilterPoint = 1;
+
+void GnmSampler(std::uint8_t* at, std::uint32_t clampXy, std::uint32_t clampZ) {
+    GnmStoreWords(at, {clampXy | clampXy << 3 | clampZ << 6, GnmTexMaxLod << 12, 0, 0});
 }
 
+std::uint32_t GnmSamplerFilters(std::uint32_t xyFilter) {
+    return xyFilter << 20 | xyFilter << 22 | GnmTexZFilterPoint << 24 | GnmTexMipFilterPoint << 26;
+}
+
+std::uint64_t GnmBlendMode(std::uint32_t color, std::uint32_t alpha) { return color | alpha << 8; }
+
+void GnmFillSamplers(std::uint8_t* header) {
+    GnmSampler(header + 0x2c8, GnmTexWrap, GnmTexClampBorder);
+    Store<std::uint32_t>(header, 0x2d0, GnmSamplerFilters(0));
+    GnmSampler(header + 0x2d8, GnmTexClampLastTexel, GnmTexClampLastTexel);
+    Store<std::uint32_t>(header, 0x2e0, GnmSamplerFilters(GnmTexXyFilterBilinear));
+    GnmSampler(header + 0x2e8, GnmTexMirrorOnceLastTexel, GnmTexMirrorOnceLastTexel);
+    Store<std::uint32_t>(header, 0x2f0, GnmSamplerFilters(GnmTexXyFilterBilinear));
+    GnmSampler(header + 0x2f8, GnmTexMirror, GnmTexMirror);
+    Store<std::uint32_t>(header, 0x300, GnmSamplerFilters(GnmTexXyFilterBilinear));
+    GnmSampler(header + 0x308, GnmTexClampBorder, GnmTexClampBorder);
+    Store<std::uint32_t>(header, 0x310, GnmSamplerFilters(GnmTexXyFilterBilinear));
+    GnmSampler(header + 0x318, GnmTexWrap, GnmTexClampBorder);
+    Store<std::uint32_t>(header, 0x320, GnmSamplerFilters(GnmTexXyFilterBilinear));
+    Store(header, 0x390, GnmBlendMode(0, 12));
+    Store(header, 0x398, GnmBlendMode(12, 12));
+    Store(header, 0x3a0, GnmBlendMode(0, 4));
+    Store(header, 0x3a8, GnmBlendMode(4, 6));
+    Store(header, 0x3b0, GnmBlendMode(4, 12));
+}
+
+struct GnmTextureSpec {
+    std::uint32_t type;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t depth;
+    std::uint32_t pitch;
+    std::uint32_t mips;
+    std::uint32_t slices;
+    std::uint32_t format;
+    std::uint32_t tileMode;
+    std::uint32_t gpuMode;
+    std::uint32_t fragments;
+    std::uint32_t reserved;
+};
+
+static_assert(sizeof(GnmTextureSpec) == 0x30);
+
+constexpr std::uint32_t GnmTextureType2d = 9;
+constexpr std::uint32_t GnmTileModeDisplayLinearAligned = 8;
+
 const std::uint8_t* GnmRampSpec(std::uint8_t* spec) {
-    CopyRo(spec, 0x292c0, 0x20);
-    CopyRo(spec + 0x20, 0x290e0, 0x10);
-    CopyRo(spec, 0x287e0, 0x20);
-    Store<std::uint64_t>(spec, 0x20, 8);
-    Store<std::uint32_t>(spec, 0x28, 0);
+    const GnmTextureSpec ramp{GnmTextureType2d, 0x100, 1, 1, 0, 1, 1, GnmDataFormat(GnmFormat8, 0, GnmSel0, GnmSel0, GnmSel0, GnmSelX),
+                              GnmTileModeDisplayLinearAligned, 0, 0, 0};
+    std::memcpy(spec, &ramp, sizeof(ramp));
     return spec;
 }
 
 int GnmInit(std::uint8_t* instance, std::uint8_t* data, std::uint64_t size) {
+    GnmLoadedShaders();
     static const bool constructed = (GnmConstructShaderObjects(), true);
     static_cast<void>(constructed);
     std::uint8_t* const header = AlignPtr(data, 0x10);
@@ -2383,7 +2667,8 @@ int GnmInit(std::uint8_t* instance, std::uint8_t* data, std::uint64_t size) {
     GnmSetResourceBase(reinterpret_cast<std::uint32_t*>(header + 0x2a0), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(LoadPtr(header, 0x2c0)) >> 8));
     std::memset(at, 0, 0x30);
     std::memcpy(at + 0x70, header + 0x1b8, 0x10);
-    CopyRo(at + 0x80, 0x27d90, 0x10);
+    GnmSampler(at + 0x80, GnmTexClampLastTexel, GnmTexClampLastTexel);
+    Store<std::uint32_t>(at, 0x88, GnmSamplerFilters(GnmTexXyFilterBilinear));
     if (GnmInitTextureSpec(at + 0x90, GnmRampSpec(spec)) != 0) return -1;
     GnmSetResourceBase(reinterpret_cast<std::uint32_t*>(at + 0x90), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(LoadPtr(header, 0x2c0)) >> 8));
     std::memset(at + 0x30, 0, 0x40);
@@ -2457,7 +2742,7 @@ int GnmInit(std::uint8_t* instance, std::uint8_t* data, std::uint64_t size) {
     GnmBindPsStage(state, header);
     Store<std::uint64_t>(header, 0x118, 0x1000000000001);
     std::memset(header + 0x138, 0, 0x20);
-    CopyRo(header + 0x128, 0x27df0, 0x10);
+    GnmStoreOnes(header + 0x128, 4);
     Store<std::uint64_t>(header, 0x120, 0);
     GnmFlush(command);
     StorePtr(state, 0xe00, header + 0x128);
@@ -2835,7 +3120,7 @@ int APS5_VABI GnmBackendEndSequence(void* ctx, void* record) {
 
 void GnmShPointer(std::uint8_t* cb, std::uint32_t stage, std::uint32_t reg, const void* address) {
     const auto value = reinterpret_cast<std::uintptr_t>(address);
-    GnmEmit(cb, {(stage == 0 ? 2u : 0u) + 0xc0027600, reg + GnmShBases[stage] - 0x2c00, static_cast<std::uint32_t>(value),
+    GnmEmit(cb, {(stage == 0 ? 2u : 0u) + 0xc0027600, reg + GnmShBases[stage] - GnmShRegBase, static_cast<std::uint32_t>(value),
                  static_cast<std::uint32_t>(value >> 32)});
 }
 
@@ -3007,6 +3292,18 @@ void GnmRecordVsBuffer(std::uint8_t* command, bool hasBuffer, std::uint8_t* stat
     GnmRecordBlock(command, hasBuffer, state, block, flags, data, [&](std::uint8_t* local) { GnmBindVsBuffer(local, hasBuffer, data); });
 }
 
+constexpr std::uint8_t GnmBlendZero = 0;
+constexpr std::uint8_t GnmBlendOne = 1;
+constexpr std::uint8_t GnmBlendSrcAlpha = 4;
+constexpr std::uint8_t GnmBlendOneMinusSrcAlpha = 5;
+constexpr std::uint8_t GnmBlendDstAlpha = 6;
+constexpr std::uint8_t GnmBlendOneMinusDstAlpha = 7;
+constexpr std::uint8_t GnmBlendOneMinusDstColor = 9;
+constexpr std::uint8_t GnmCombDstPlusSrc = 0;
+constexpr std::uint8_t GnmCombMinDstSrc = 2;
+constexpr std::uint8_t GnmCombMaxDstSrc = 3;
+constexpr std::uint8_t GnmCombDstMinusSrc = 4;
+
 struct GnmBlendFactor {
     std::uint8_t source;
     std::uint8_t op;
@@ -3030,19 +3327,52 @@ std::uint32_t GnmBlendFirst(std::uint32_t value, bool premultiplied) {
     const std::uint8_t opaque = (value & 0xff00) == 0x700 ? 1 : 0;
     const std::uint32_t color = premultiplied ? (value >> 8) & 0xff : value & 0xff;
     const std::uint32_t alpha = premultiplied ? 4 : (value >> 8) & 0xff;
-    const std::uint8_t mixed = static_cast<std::uint8_t>(opaque | 4);
-    const std::uint8_t inverse = static_cast<std::uint8_t>(opaque ^ 5);
-    const GnmBlendFactor colors[13] = {{mixed, 0, inverse, true}, {1, 0, 0, true}, {mixed, 0, 1, true}, {mixed, 4, 1, true}, {0, 0, 1, true},
-                                       {9, 0, inverse, true}, {1, 3, 1, true}, {1, 2, 1, true}, {}, {}, {}, {}, {0, 0, 0, true}};
-    constexpr GnmBlendFactor Alphas[13] = {{4, 0, 5, true}, {1, 0, 0, true}, {1, 0, 1, true}, {1, 4, 1, true}, {0, 0, 1, true},
-                                           {7, 0, 5, true}, {1, 3, 1, true}, {1, 2, 1, true}, {}, {}, {}, {}, {0, 0, 0, true}};
+    const std::uint8_t mixed = static_cast<std::uint8_t>(opaque | GnmBlendSrcAlpha);
+    const std::uint8_t inverse = static_cast<std::uint8_t>(opaque ^ GnmBlendOneMinusSrcAlpha);
+    const GnmBlendFactor colors[13] = {{mixed, GnmCombDstPlusSrc, inverse, true},
+                                       {GnmBlendOne, GnmCombDstPlusSrc, GnmBlendZero, true},
+                                       {mixed, GnmCombDstPlusSrc, GnmBlendOne, true},
+                                       {mixed, GnmCombDstMinusSrc, GnmBlendOne, true},
+                                       {GnmBlendZero, GnmCombDstPlusSrc, GnmBlendOne, true},
+                                       {GnmBlendOneMinusDstColor, GnmCombDstPlusSrc, inverse, true},
+                                       {GnmBlendOne, GnmCombMaxDstSrc, GnmBlendOne, true},
+                                       {GnmBlendOne, GnmCombMinDstSrc, GnmBlendOne, true},
+                                       {},
+                                       {},
+                                       {},
+                                       {},
+                                       {GnmBlendZero, GnmCombDstPlusSrc, GnmBlendZero, true}};
+    constexpr GnmBlendFactor Alphas[13] = {{GnmBlendSrcAlpha, GnmCombDstPlusSrc, GnmBlendOneMinusSrcAlpha, true},
+                                           {GnmBlendOne, GnmCombDstPlusSrc, GnmBlendZero, true},
+                                           {GnmBlendOne, GnmCombDstPlusSrc, GnmBlendOne, true},
+                                           {GnmBlendOne, GnmCombDstMinusSrc, GnmBlendOne, true},
+                                           {GnmBlendZero, GnmCombDstPlusSrc, GnmBlendOne, true},
+                                           {GnmBlendOneMinusDstAlpha, GnmCombDstPlusSrc, GnmBlendOneMinusSrcAlpha, true},
+                                           {GnmBlendOne, GnmCombMaxDstSrc, GnmBlendOne, true},
+                                           {GnmBlendOne, GnmCombMinDstSrc, GnmBlendOne, true},
+                                           {},
+                                           {},
+                                           {},
+                                           {},
+                                           {GnmBlendZero, GnmCombDstPlusSrc, GnmBlendZero, true}};
     return GnmBlendAlpha(GnmBlendColor(3u << 29, GnmBlendPick(colors, color)), GnmBlendPick(Alphas, alpha));
 }
 
 std::uint32_t GnmBlendSecond(std::uint32_t value) {
-    constexpr GnmBlendFactor Colors[13] = {{6, 0, 7, true}, {6, 0, 0, true}, {6, 0, 1, true}, {6, 4, 1, true}, {0, 0, 1, true},
-                                           {9, 0, 5, true}, {6, 3, 1, true}, {7, 2, 1, true}, {}, {}, {}, {}, {0, 0, 0, true}};
-    return GnmBlendColor(GnmBlendAlpha(3u << 29, {1, 0, 0, true}), GnmBlendPick(Colors, (value >> 8) & 0xff));
+    constexpr GnmBlendFactor Colors[13] = {{GnmBlendDstAlpha, GnmCombDstPlusSrc, GnmBlendOneMinusDstAlpha, true},
+                                           {GnmBlendDstAlpha, GnmCombDstPlusSrc, GnmBlendZero, true},
+                                           {GnmBlendDstAlpha, GnmCombDstPlusSrc, GnmBlendOne, true},
+                                           {GnmBlendDstAlpha, GnmCombDstMinusSrc, GnmBlendOne, true},
+                                           {GnmBlendZero, GnmCombDstPlusSrc, GnmBlendOne, true},
+                                           {GnmBlendOneMinusDstColor, GnmCombDstPlusSrc, GnmBlendOneMinusSrcAlpha, true},
+                                           {GnmBlendDstAlpha, GnmCombMaxDstSrc, GnmBlendOne, true},
+                                           {GnmBlendOneMinusDstAlpha, GnmCombMinDstSrc, GnmBlendOne, true},
+                                           {},
+                                           {},
+                                           {},
+                                           {},
+                                           {GnmBlendZero, GnmCombDstPlusSrc, GnmBlendZero, true}};
+    return GnmBlendColor(GnmBlendAlpha(3u << 29, {GnmBlendOne, GnmCombDstPlusSrc, GnmBlendZero, true}), GnmBlendPick(Colors, (value >> 8) & 0xff));
 }
 
 void GnmBindBlend(std::uint8_t* local, bool hasBuffer, const std::uint8_t* data, bool second) {
@@ -3142,7 +3472,7 @@ void GnmBeginRender(std::uint8_t* ctx, std::uint32_t flags) {
         at += Load<std::uint64_t>(stage, 0x540);
     }
     if (hasBuffer) {
-        CopyRo(at, 0x27e00, 0x10);
+        GnmStoreOnes(at, 4);
         std::memcpy(at + 0x10, binding + 0x2d8, 0x10);
     }
     StorePtr(bound, GnmStateConstants, at + 0x20);
@@ -3215,11 +3545,11 @@ int GnmBeginSequence(std::uint8_t* ctx, std::uint8_t* instance, std::uint8_t* pa
     std::memset(state + 0xcf8, 0, 0x10);
     std::memset(state + 0xd68, 0, 0x10);
     Store<std::uint64_t>(state, 0xd78, 0);
-    CopyRo(state + 0xe18, 0x28900, 0x20);
+    GnmStoreOnes(state + 0xe18, 8);
     Store<std::uint16_t>(state, 0xe38, 8);
     Store<std::uint64_t>(state, 0xe40, 0x3f8000003f800000);
     Store<std::uint32_t>(state, 0xe48, 0);
-    CopyRo(state + 0xe50, 0x27e00, 0x10);
+    GnmStoreOnes(state + 0xe50, 4);
     std::memset(state + 0xe60, 0, 0x10);
     Store<std::uint64_t>(state, 0xe70, 0);
     Store<std::uint64_t>(state, 0xe78, 0x3f8000003f800000);
@@ -3235,7 +3565,7 @@ int GnmBeginSequence(std::uint8_t* ctx, std::uint8_t* instance, std::uint8_t* pa
     std::memset(ctx + 0x64, 0, 0x1c);
     const std::uint32_t mode = flags & 0xff;
     std::memset(state + 0xd58, 0, 0x10);
-    CopyRo(state + 0xe08, 0x27e00, 0x10);
+    GnmStoreOnes(state + 0xe08, 4);
     Store(state, 0xd68, mode);
     Store(state, 0xd48, Load<std::uint64_t>(header, 0x3b8));
     Store(state, 0xcf0, Load<std::uint64_t>(ctx, 0x28));

@@ -793,15 +793,102 @@ int RunSelf(const char* program, const char* mode, const std::filesystem::path& 
 #endif
 }
 
-void GnmSurfaceModes(const char* program) {
-    const auto root = std::filesystem::temp_directory_path() / ("guest_font_gs_gnm_" + std::to_string(getpid_nid_postfix()));
+std::filesystem::path TestRoot(const char* name) {
+    const auto root = std::filesystem::temp_directory_path() / (name + std::to_string(getpid_nid_postfix()));
     std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    return root;
+}
+
+void GnmSurfaceModes(const char* program, const std::string& suffix) {
+    const auto root = TestRoot("guest_font_gs_gnm_");
     WriteParamSfo(root / "base", 0);
     WriteParamSfo(root / "neo", 0x00800000);
-    const int base = RunSelf(program, "--surface-base", root / "base");
-    const int neo = RunSelf(program, "--surface-neo", root / "neo");
+    const int base = RunSelf(program, ("--surface-base" + suffix).c_str(), root / "base");
+    const int neo = RunSelf(program, ("--surface-neo" + suffix).c_str(), root / "neo");
     std::filesystem::remove_all(root);
     Require(base == 0 && neo == 0);
+}
+
+std::filesystem::path ModuleDirectory(const char* program) {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_SYSTEM_MODULES");
+#else
+    const char* configured = std::getenv("ANYPS5_SYSTEM_MODULES");
+#endif
+    if (configured != nullptr && configured[0] != 0) return configured;
+    return std::filesystem::absolute(program).parent_path() / "anyps5-modules";
+}
+
+void SetModuleDirectory(const std::filesystem::path& directory) {
+#ifdef _WIN32
+    Require(_wputenv_s(L"ANYPS5_SYSTEM_MODULES", directory.wstring().c_str()) == 0);
+#else
+    Require(::setenv("ANYPS5_SYSTEM_MODULES", directory.c_str(), 1) == 0);
+#endif
+}
+
+void WriteModule(const std::filesystem::path& directory, const std::vector<std::uint8_t>& bytes) {
+    std::filesystem::create_directories(directory);
+    std::ofstream file(directory / "libSceFontGs.sprx", std::ios::binary);
+    file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    Require(static_cast<bool>(file));
+}
+
+std::vector<std::uint8_t> UnsupportedElf() {
+    std::vector<std::uint8_t> elf(0xc000);
+    const std::uint8_t ident[6] = {0x7f, 'E', 'L', 'F', 2, 1};
+    Put(elf.data(), 0, ident, sizeof(ident));
+    Put64(elf.data(), 0x20, 0x40);
+    const std::uint16_t entry = 0x38;
+    const std::uint16_t count = 1;
+    Put(elf.data(), 0x36, &entry, 2);
+    Put(elf.data(), 0x38, &count, 2);
+    Put32(elf.data(), 0x40, 1);
+    Put64(elf.data(), 0x48, 0x1000);
+    Put64(elf.data(), 0x50, 0x34000);
+    Put64(elf.data(), 0x60, 0xb000);
+    return elf;
+}
+
+const char* ModuleErrorText(const std::string& mode) {
+    if (mode == "--module-missing") return " not found; ";
+    if (mode == "--module-self") return " is an encrypted SELF; ";
+    if (mode == "--module-elf") return " is not a decrypted 64-bit ELF of libSceFontGs.sprx";
+    if (mode == "--module-build") return " is not a supported build of libSceFontGs.sprx";
+    std::abort();
+}
+
+int GnmModuleError(const std::string& mode) {
+    const char* const expected = ModuleErrorText(mode);
+    GnmAllocations allocations;
+    allocations.fail = false;
+    const FontMemoryInterface iface{GnmAllocate, GnmDeallocate, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == 0);
+    FontGraphicsService* service = nullptr;
+    try {
+        sceFontCreateGraphicsService(&memory, GnmBackend(), &service);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find(expected) != std::string::npos);
+        return 0;
+    }
+    return 1;
+}
+
+void GnmModuleErrors(const char* program) {
+    const auto root = TestRoot("guest_font_gs_gnm_module_");
+    const std::vector<std::uint8_t> self = {0x4f, 0x15, 0x3d, 0x1d, 0, 0, 0, 0};
+    const std::vector<std::uint8_t> text = {'n', 'o', 't', ' ', 'a', 'n', ' ', 'E', 'L', 'F'};
+    std::filesystem::create_directories(root / "missing");
+    WriteModule(root / "self", self);
+    WriteModule(root / "elf", text);
+    WriteModule(root / "build", UnsupportedElf());
+    for (const char* name : {"missing", "self", "elf", "build"}) {
+        SetModuleDirectory(root / name);
+        Require(RunSelf(program, (std::string("--module-") + name).c_str(), root) == 0);
+    }
+    std::filesystem::remove_all(root);
 }
 
 }
@@ -816,10 +903,18 @@ void ReportError() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string(argv[1]).starts_with("--module-")) return GnmModuleError(argv[1]);
     if (argc == 3) {
+        const std::string mode = argv[1];
+        const bool neo = mode.starts_with("--surface-neo");
         std::filesystem::current_path(argv[2]);
-        GnmSurfaceInitCases(std::string(argv[1]) == "--surface-neo");
-        GnmServiceCreate(std::string(argv[1]) == "--surface-neo");
+        GnmSurfaceInitCases(neo);
+        if (mode.ends_with("-service")) GnmServiceCreate(neo);
+        return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--module") {
+        if (!std::filesystem::is_regular_file(ModuleDirectory(argv[0]) / "libSceFontGs.sprx")) return 77;
+        GnmSurfaceModes(argv[0], "-service");
         return 0;
     }
     ReportError();
@@ -830,7 +925,8 @@ int main(int argc, char** argv) {
     GnmDrawStateCases();
     GnmSurfaceValidation();
     GnmStructureTextureCases();
-    GnmSurfaceModes(argv[0]);
+    GnmSurfaceModes(argv[0], "");
     GnmService();
+    GnmModuleErrors(argv[0]);
     sceFontSetGraphicsErrorCallback(nullptr);
 }
