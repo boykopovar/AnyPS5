@@ -127,11 +127,10 @@ std::uint32_t EmitMinMax3(SpirvEmitterState& state, std::uint32_t a, std::uint32
 }
 
 std::uint32_t EmitMed3(SpirvEmitterState& state, std::uint32_t a, std::uint32_t b, std::uint32_t c, bool signedValue) {
-    const auto minimum = EmitMinMax3(state, a, b, c, signedValue, false);
-    const auto maximum = EmitMinMax3(state, a, b, c, signedValue, true);
-    const auto ab = Binary(state, spv::OpIAdd, TypeU32(state), a, b);
-    const auto abc = Binary(state, spv::OpIAdd, TypeU32(state), ab, c);
-    return Binary(state, spv::OpISub, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), abc, minimum), maximum);
+    const auto minMax = signedValue ? EmitMinMaxI32Value : EmitMinMaxU32Value;
+    const auto minimum = minMax(state, a, b, false);
+    const auto maximum = minMax(state, a, b, true);
+    return minMax(state, minimum, minMax(state, maximum, c, false), true);
 }
 
 std::uint32_t EmitFMinMax3(SpirvEmitterState& state, std::uint32_t a, std::uint32_t b, std::uint32_t c, bool maxValue) {

@@ -134,7 +134,6 @@ void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, con
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -170,8 +169,25 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
         Run(*device);
         Check();
+        constexpr std::array<std::uint32_t, 8> values{0u, 1u, 0x7fffffffu, 0x80000000u, 0xfffffffeu, 0xffffffffu, 0xffffu, 0xffff8000u};
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            Input[tid * Inputs] = values[tid % values.size()];
+            Input[tid * Inputs + 1] = values[tid / values.size() + 1];
+            Input[tid * Inputs + 2] = values[values.size() - 1 - tid % values.size()];
+        }
+        Run(*device);
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            const auto* input = &Input[tid * Inputs];
+            std::array<std::uint32_t, 3> unsignedValues{input[0], input[1], input[2]};
+            std::array<std::int32_t, 3> signedValues{std::bit_cast<std::int32_t>(input[0]), std::bit_cast<std::int32_t>(input[1]), std::bit_cast<std::int32_t>(input[2])};
+            std::sort(unsignedValues.begin(), unsignedValues.end());
+            std::sort(signedValues.begin(), signedValues.end());
+            Expect(tid, Output[tid * Results + 28], std::bit_cast<std::uint32_t>(signedValues[1]), "med3_i32 limits");
+            Expect(tid, Output[tid * Results + 31], unsignedValues[1], "med3_u32 limits");
+        }
         std::puts("vop3 integer alu tests passed");
         return 0;
     } catch (const std::exception& error) {
