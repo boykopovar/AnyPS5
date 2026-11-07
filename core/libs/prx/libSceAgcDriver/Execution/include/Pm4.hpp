@@ -81,6 +81,7 @@ struct DrawArguments {
 // path (which waits for recorded GPU work that writes them).
 DrawArguments ReadDrawArguments(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect);
+DrawArguments ReadDrawArgumentsUnsynced(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 inline bool IndirectDrawOpcode(std::uint32_t opcode) { return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38; }
 inline bool DrawOpcode(std::uint32_t opcode) { return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode); }
 
