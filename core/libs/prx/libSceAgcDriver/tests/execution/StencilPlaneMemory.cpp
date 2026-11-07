@@ -175,6 +175,21 @@ int main() {
             Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, 0x18u)}) == 0u, "a draw testing stencil EQUAL 0x18 passed after the guest wrote 0x05 over the stored stencil plane");
         }
         Require(readOnlyFailures == 0, "read-only stencil draws dirtied the stored plane");
+
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x33u)}) == PlaneTexels, "the draw writing stencil 0x33 before the unmap did not cover the plane");
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(blocks);
+            mutation.Add(blocks, DepthBytes + StencilBytes, true, true, true);
+        }
+        Fill(stencilPlane, 0x44u);
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of a stencil plane unmapped and mapped again stored the stencil drawn before the unmap");
+        device->WaitIdle();
+        Require(Holding(stencilPlane, 0x44u) == StencilBytes, "the stencil drawn before the unmap reached the memory mapped again");
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x18u)}) == PlaneTexels, "the draw writing stencil 0x18 after the unmap did not cover the plane");
+        Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane drawn after the unmap stored nothing");
+        device->WaitIdle();
+        Require(Holding(stencilPlane, 0x18u) == StencilBytes, "the stencil drawn after the unmap did not reach guest memory");
         std::puts("stencil plane memory tests passed");
         return 0;
     } catch (const std::exception& error) {

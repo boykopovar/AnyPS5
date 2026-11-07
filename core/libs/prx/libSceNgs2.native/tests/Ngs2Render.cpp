@@ -2669,6 +2669,16 @@ static std::vector<std::uint8_t> Ps4CustomFilter(std::uint32_t index, std::uint3
                           {{0x8, type}, {0xC, 0}, {0x10, FloatBits(fc)}, {0x14, FloatBits(0.707f)}, {0x18, FloatBits(2.0f)}});
 }
 
+static std::vector<std::uint8_t> Ps5SamplerFilter(std::uint32_t index, std::uint32_t location, std::uint32_t type, float fc) {
+    return RawFilterParam(SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER, 0x38,
+                          {{0x8, index}, {0xC, location}, {0x10, 0}, {0x14, 0}, {0x18, type}, {0x1C, FloatBits(fc)}, {0x20, FloatBits(0.707f)}, {0x24, FloatBits(2.0f)}});
+}
+
+static std::vector<std::uint8_t> Ps5CustomFilter(std::uint32_t index, std::uint32_t type, float fc) {
+    return RawFilterParam(SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER | index, 0x30,
+                          {{0x8, 0}, {0xC, 0}, {0x10, type}, {0x14, FloatBits(fc)}, {0x18, FloatBits(0.707f)}, {0x1C, FloatBits(2.0f)}});
+}
+
 struct Ps4FilterResult {
     std::vector<int> codes;
     std::vector<float> out;
@@ -2728,7 +2738,7 @@ static void TestPs4FilterParams() {
         Require(filtered ? run.out == canonical.out : run.out == none);
     };
     for (std::size_t size = 0x10; size <= 0x48; size += 4) {
-        if (size != 0x30) expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f, size)}), badSize, false);
+        if (size != 0x30 && size != 0x38) expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f, size)}), badSize, false);
     }
     expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f, 0x30)}), SCE_NGS2_OK, true);
     for (const std::uint32_t type : {2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u}) {
@@ -2744,10 +2754,14 @@ static void TestPs4FilterParams() {
     for (const std::uint32_t location : {0u, 1u, 2u}) expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, location, 1, 1000.0f)}), SCE_NGS2_OK, true);
     for (const std::uint32_t location : {3u, 9u, 10u, 17u}) expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, location, 1, 1000.0f)}), SCE_NGS2_OK, false);
     for (const std::uint32_t location : {18u, 20u, 33u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu}) expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, location, 1, 1000.0f)}), badLocation, false);
-    expect(Ps4FilterRun(false, {Ps4SamplerFilter(8, 1, 1, 1000.0f, 0x38)}), badSize, false);
+    expect(Ps4FilterRun(false, {Ps5SamplerFilter(0, 1, 1, 1000.0f)}), SCE_NGS2_OK, true);
+    for (const std::uint32_t type : {2u, 9u, 10u}) Require(Ps4FilterRun(false, {Ps5SamplerFilter(0, 1, type, 1000.0f)}).out == Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, type, 1000.0f)}).out);
+    expect(Ps4FilterRun(false, {Ps5SamplerFilter(8, 1, 1, 1000.0f)}), badIndex, false);
+    expect(Ps4FilterRun(false, {Ps5SamplerFilter(0, 18, 1, 1000.0f)}), badLocation, false);
+    expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f), Ps5SamplerFilter(0, 1, 0, 1000.0f)}), SCE_NGS2_OK, false);
     expect(Ps4FilterRun(false, {Ps4SamplerFilter(8, 18, 12, 1000.0f)}), badIndex, false);
     expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 18, 12, 1000.0f)}), badLocation, false);
-    expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f), Ps4SamplerFilter(0, 1, 0, 1000.0f, 0x38)}), badSize, true);
+    expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f), Ps4SamplerFilter(0, 1, 0, 1000.0f, 0x34)}), badSize, true);
     expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f), Ps4SamplerFilter(8, 1, 0, 1000.0f)}), badIndex, true);
     expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f), Ps4SamplerFilter(0, 18, 0, 1000.0f)}), badLocation, true);
     expect(Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 1, 1000.0f), Ps4SamplerFilter(0, 1, 0, 1000.0f)}), SCE_NGS2_OK, false);
@@ -2855,7 +2869,7 @@ static void TestPs4FilterParams() {
     Require(customCanonical.codes == std::vector<int>{SCE_NGS2_OK} && customCanonical.out == canonical.out);
     Require(Ps4FilterRun(true, {}).out == none);
     for (std::size_t size = 0x10; size <= 0x40; size += 4) {
-        if (size == 0x28) continue;
+        if (size == 0x28 || size == 0x30) continue;
         const auto run = Ps4FilterRun(true, {Ps4CustomFilter(0, 1, 1000.0f, size)});
         Require(run.codes.back() == badSize && run.out == none);
     }
@@ -2873,7 +2887,12 @@ static void TestPs4FilterParams() {
         Require(Ps4FilterRun(true, {Ps4CustomFilter(0, type, 1000.0f)}).out == none);
         Require(Ps4FilterRun(true, {Ps4CustomFilter(0, 1, 1000.0f), Ps4CustomFilter(0, type, 1000.0f)}).out == none);
     }
-    Require(Ps4FilterRun(true, {Ps4CustomFilter(0, 1, 1000.0f), Ps4CustomFilter(0, 1, 1000.0f, 0x30)}).out == canonical.out);
+    Require(Ps4FilterRun(true, {Ps4CustomFilter(0, 1, 1000.0f), Ps4CustomFilter(0, 1, 1000.0f, 0x2C)}).out == canonical.out);
+    const auto ps5Custom = Ps4FilterRun(true, {Ps5CustomFilter(0, 1, 1000.0f)});
+    Require(ps5Custom.codes == std::vector<int>{SCE_NGS2_OK} && ps5Custom.out == canonical.out);
+    Require(Ps4FilterRun(true, {Ps5CustomFilter(0, 9, 1000.0f)}).out == Ps4FilterRun(false, {Ps4SamplerFilter(0, 1, 9, 1000.0f)}).out);
+    Require(Ps4FilterRun(true, {Ps5CustomFilter(1, 1, 1000.0f)}).codes.back() == badId);
+    Require(Ps4FilterRun(true, {Ps4CustomFilter(0, 1, 1000.0f), Ps5CustomFilter(0, 0, 1000.0f)}).out == none);
     Require(Ps4FilterRun(true, {Ps4CustomFilter(0, 1, 1000.0f), Ps4CustomFilter(1, 0, 1000.0f)}).out == canonical.out);
     for (std::uint32_t type = 1; type <= 10; ++type) {
         const auto atFc = [&](float fc) { return Ps4FilterRun(true, {Ps4CustomFilter(0, type, fc)}).out; };

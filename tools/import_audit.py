@@ -74,7 +74,15 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: sectionless ELF needs little-endian ELF64 program headers")
     take(data, program_offset, program_count * program_size, path, "program header table")
     segments = [unpack("<IIQQQQQQ", data, program_offset + index * program_size, path, f"program header {index}") for index in range(program_count)]
-    loads = [segment for segment in segments if segment[0] == 1]
+    loads = []
+    for segment in segments:
+        if segment[0] == 1:
+            _, _, offset, _, _, file_size, mem_size, _ = segment
+            if file_size > mem_size:
+                raise AuditError(f"{path}: load segment file size {file_size} exceeds memory size {mem_size}")
+            if file_size:
+                take(data, offset, file_size, path, "load segment")
+            loads.append(segment)
 
     def file_offset(address, size, what):
         for segment in loads:
@@ -253,12 +261,10 @@ def pe_headers(path, data):
     if magic not in PE_DIRECTORY_OFFSET:
         raise AuditError(f"{path}: unsupported PE optional header magic 0x{magic:x}")
     directory = PE_DIRECTORY_OFFSET[magic]
-    if optional_size < directory + 8:
-        raise AuditError(f"{path}: PE optional header of {optional_size} bytes has no export directory")
+    if optional_size < directory:
+        raise AuditError(f"{path}: PE optional header of {optional_size} bytes is smaller than its fixed fields")
     take(data, optional, optional_size, path, "PE optional header")
     count = unpack("<I", data, optional + directory - 4, path, "data directory count")[0]
-    if count == 0:
-        raise AuditError(f"{path}: PE file declares no data directories")
     if count > (optional_size - directory) // 8:
         raise AuditError(f"{path}: PE data directory count {count} exceeds optional header size {optional_size}")
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
@@ -283,7 +289,9 @@ def pe_headers(path, data):
 
 
 def pe_exports(path, data):
-    to_offset, directory, _ = pe_headers(path, data)
+    to_offset, directory, count = pe_headers(path, data)
+    if count == 0:
+        return set()
     rva, size = unpack("<II", data, directory, path, "export data directory")
     if not rva and not size:
         return set()
@@ -666,33 +674,47 @@ def source_stub_classes(source):
     stubs = {}
     partial = set()
     shared = {}
+    done_by_library = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
         for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
-        if "shared_sources" in group:
-            shared[library.name] = group["shared_sources"]
+        shared[library.name] = progress.shared_source_owners(library)
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
+        done_by_library[library.name] = done
         conditional = conditional_stubs(library) if group["todo_names"] else set()
         for name in group["todo_names"]:
             for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
                 if name in conditional:
                     partial.add((library.name + ".prx", nid))
-    for library, owner in shared.items():
-        chain = [library]
-        while owner in shared:
-            if owner in chain:
-                raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [owner])}")
-            chain.append(owner)
-            owner = shared[owner]
-        for (provider, nid), name in list(stubs.items()):
-            if provider == owner + ".prx":
-                stubs[(library + ".prx", nid)] = name
-                if (provider, nid) in partial:
-                    partial.add((library + ".prx", nid))
+    resolved = set()
+
+    def inherit(library, chain):
+        if library in chain:
+            raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [library])}")
+        if library in resolved:
+            return
+        for owner in shared[library]:
+            inherit(owner, chain + [library])
+            done_by_library[library].update(done_by_library[owner])
+            for (provider, nid), name in list(stubs.items()):
+                if provider == owner + ".prx":
+                    key = (library + ".prx", nid)
+                    stubs.setdefault(key, name)
+                    if (provider, nid) in partial:
+                        partial.add(key)
+        resolved.add(library)
+
+    for library in shared:
+        inherit(library, [])
+    for library, done in done_by_library.items():
+        for nid in done:
+            key = (library + ".prx", nid)
+            stubs.pop(key, None)
+            partial.discard(key)
     return stubs, partial
 
 
@@ -792,6 +814,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
                         return normalized
                     if len(candidates) == 1:
                         return next(iter(candidates))
+                    if normalized in libraries:
+                        return normalized
             if name.casefold().endswith(".prx"):
                 normalized = name[:-4] + ".prx"
                 candidates = windows_names.get(normalized.casefold(), ())
@@ -1040,6 +1064,7 @@ def main(argv=None):
     parser.add_argument("--strict-stubs", action="store_true",
                         help="also fail when a referenced import resolves to a throwing stub")
     parser.add_argument("--strict-providers", action="store_true", help="fail when a named import is provided only by another library; retains the existing libc and title-module rules")
+    parser.add_argument("--strict-partial", action="store_true", help="also fail when an import has known unsupported input paths")
     args = parser.parse_args(argv)
     try:
         dependency_registries = [needed_registry_path(path) for path in args.registries if path.name.endswith(".registry.json")]
@@ -1085,7 +1110,7 @@ def main(argv=None):
         print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
         return 2
     print(render(summary, records, missing, stops, missing_hosts, located))
-    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
+    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) or (args.strict_partial and summary["unique_by_class"]["partial"]) else 0
 
 
 if __name__ == "__main__":

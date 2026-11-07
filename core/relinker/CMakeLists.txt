@@ -6,6 +6,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestImageReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestModuleBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPePatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsExportBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsIconResourceBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPeFormat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsLoadImage.cpp
@@ -300,6 +301,7 @@ if(BUILD_TESTING)
     add_test_executable(elf_reader_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfReaderBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp)
+    target_link_libraries(elf_reader_bounds_tests PRIVATE relinker_core)
     target_include_directories(elf_reader_bounds_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
@@ -626,6 +628,9 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME cli_help COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/test_help.py $<TARGET_FILE:relinker>)
+        add_test(NAME windows_executable_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_executable_exports.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_executable_exports PROPERTIES TIMEOUT 20)
         add_test(NAME windows_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_fixed_base.py $<TARGET_FILE:relinker>)
         set_tests_properties(windows_fixed_base PROPERTIES TIMEOUT 20)
@@ -646,9 +651,13 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_rela_size.py $<TARGET_FILE:relinker>)
         add_test(NAME none_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_none_relocations.py $<TARGET_FILE:relinker>)
-        add_test(NAME guest_none_relocations COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker>)
-        set_tests_properties(guest_none_relocations PROPERTIES TIMEOUT 20)
+        foreach(mode IN ITEMS plain sce)
+            foreach(system IN ITEMS linux windows macos rejected)
+                add_test(NAME guest_none_relocations_${mode}_${system} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> ${mode} ${system})
+                set_tests_properties(guest_none_relocations_${mode}_${system} PROPERTIES TIMEOUT 20)
+            endforeach()
+        endforeach()
         add_test(NAME interpreter_in_code COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_interpreter_in_code.py $<TARGET_FILE:relinker>)
         set_tests_properties(interpreter_in_code PROPERTIES TIMEOUT 20)
@@ -682,6 +691,11 @@ if(BUILD_TESTING)
         add_test(NAME gs_trap_entry_roots COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_gs_trap_entry_roots.py $<TARGET_FILE:relinker>)
         set_tests_properties(gs_trap_entry_roots PROPERTIES TIMEOUT 30)
+        foreach(group IN ITEMS executable module rejected)
+            add_test(NAME function_symbol_roots_${group} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_function_symbol_roots.py $<TARGET_FILE:relinker> ${group})
+            set_tests_properties(function_symbol_roots_${group} PROPERTIES TIMEOUT 30)
+        endforeach()
         set(tlsCoverageGroups metadata padding register_loads displacement_bounds alu_execution register_address_loads moved_branch rejected)
         foreach(register IN ITEMS 0 1 2 3 5 6 7 8 9 10 11 12 13 14 15)
             list(APPEND tlsCoverageGroups displacement_r${register})
@@ -951,6 +965,11 @@ if(BUILD_TESTING)
         add_asan_test_options(input_magic max_allocation_size_mb=512)
         add_test(NAME input_preservation COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_preservation.py $<TARGET_FILE:relinker>)
+        foreach(mode linux windows controls)
+            add_test(NAME patch_input_preservation_${mode} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_input_preservation.py $<TARGET_FILE:relinker> ${mode})
+            set_tests_properties(patch_input_preservation_${mode} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME output_collisions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_collisions.py $<TARGET_FILE:relinker>)
         add_test(NAME secondary_output_collisions COMMAND ${Python3_EXECUTABLE}
