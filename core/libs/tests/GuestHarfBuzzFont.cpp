@@ -1,4 +1,4 @@
-#include "prx/libharfbuzz/include/FontFunctions.hpp"
+#include "prx/libharfbuzz/libharfbuzz.hpp"
 
 #include <hb.h>
 
@@ -52,6 +52,7 @@ struct Api {
     decltype(&hb_font_set_funcs_nid_postfix) setFunctions;
     decltype(&hb_font_set_ppem_nid_postfix) ppem;
     decltype(&hb_font_set_scale_nid_postfix) scale;
+    decltype(&hb_icu_script_to_script_nid_postfix) scriptFromIcu;
 };
 
 struct FontState {
@@ -277,6 +278,38 @@ static void CheckNullLegacy(const Api& api) {
     }
 }
 
+static void CheckIcuScripts(const Api& api) {
+    for (const std::int32_t code : {std::numeric_limits<std::int32_t>::min(), -2, -1, 193, 194, std::numeric_limits<std::int32_t>::max()}) {
+        Require(api.scriptFromIcu(code) == HB_SCRIPT_INVALID);
+    }
+    Require(api.scriptFromIcu(0) == HB_SCRIPT_COMMON);
+    Require(api.scriptFromIcu(1) == HB_SCRIPT_INHERITED);
+    Require(api.scriptFromIcu(25) == HB_SCRIPT_LATIN);
+    Require(api.scriptFromIcu(68) == HB_SCRIPT_CYRILLIC);
+    Require(api.scriptFromIcu(72) == HB_SCRIPT_GEORGIAN);
+    Require(api.scriptFromIcu(73) == HB_SCRIPT_HAN);
+    Require(api.scriptFromIcu(74) == HB_SCRIPT_HAN);
+    Require(api.scriptFromIcu(80) == HB_SCRIPT_LATIN);
+    Require(api.scriptFromIcu(81) == HB_SCRIPT_LATIN);
+    Require(api.scriptFromIcu(95) == HB_SCRIPT_SYRIAC);
+    Require(api.scriptFromIcu(96) == HB_SCRIPT_SYRIAC);
+    Require(api.scriptFromIcu(97) == HB_SCRIPT_SYRIAC);
+    Require(api.scriptFromIcu(103) == HB_SCRIPT_UNKNOWN);
+    Require(api.scriptFromIcu(105) == HB_TAG('J', 'p', 'a', 'n'));
+    Require(api.scriptFromIcu(173) == HB_SCRIPT_HANGUL);
+    Require(api.scriptFromIcu(192) == HB_SCRIPT_YEZIDI);
+
+    std::uint64_t fingerprint = 0xcbf29ce484222325ull;
+    for (std::int32_t code = 0; code < 193; ++code) {
+        const auto script = api.scriptFromIcu(code);
+        Require(script != HB_SCRIPT_INVALID);
+        for (const unsigned shift : {24u, 16u, 8u, 0u}) {
+            fingerprint = (fingerprint ^ ((script >> shift) & 0xffu)) * 0x100000001b3ull;
+        }
+    }
+    Require(fingerprint == 0x49e8e496309c29fdull);
+}
+
 int main(int argc, char** argv) {
     Require(argc == 3);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
@@ -305,7 +338,9 @@ int main(int argc, char** argv) {
     LoadExport(setFunctions, hb_font_set_funcs, "WH6phgWx6TI");
     LoadExport(ppem, hb_font_set_ppem, "ztxZdb1IY+M");
     LoadExport(scale, hb_font_set_scale, "eG5EI3x6twg");
+    LoadExport(scriptFromIcu, hb_icu_script_to_script, "u0E8Xi0easM");
 #undef LoadExport
+    CheckIcuScripts(api);
     CheckCallbacks(api);
     CheckLegacyAndReset(api);
     CheckNullLegacy(api);
