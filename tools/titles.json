@@ -4,6 +4,7 @@
   "PPSA68091": {"relink": ["--registry"]},
   "PPSA69421": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA85300": {"relink": ["--registry"]},
+  "PPSA92280": {"seconds": 30, "pad": {"after_s": 8, "events": [{"at_ms": 0, "hold_ms": 250, "buttons": ["cross"]}]}},
   "PPSA97358": {"relink": ["--registry"]},
   "PPSA99004": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA99008": {"relink": ["--trap-sdk-syscall-stubs"]},
