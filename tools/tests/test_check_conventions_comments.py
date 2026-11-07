@@ -171,7 +171,7 @@ class LicenseHeaderCommentTests(unittest.TestCase):
             check.code()
         return check.findings
 
-    def test_new_comment_in_the_leading_header_is_not_reported(self):
+    def test_an_unmarked_line_in_a_marked_run_is_not_reported(self):
         source = ("/* Derived from FreeBSD lib/msun/src/e_atan2.c (release/11.4.0) */\n"
                    "/* Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. */\n"
                    "#include <cmath>\n"
@@ -215,6 +215,17 @@ class LicenseHeaderCommentTests(unittest.TestCase):
     def test_a_new_comment_is_reported_when_the_file_opens_with_code(self):
         source = "int value;\n/* a new comment after code */\n"
         self.assertEqual(self.findings(source, [2]), [("comment", self.path, 2, "")])
+
+    def test_a_marker_on_a_code_line_is_still_reported(self):
+        source = "#include <cmath>\nint value; // Copyright (c) 2020 X\n"
+        self.assertEqual(self.findings(source, [2]), [("comment", self.path, 2, "")])
+
+    def test_a_marker_sharing_its_line_with_other_text_is_still_exempt(self):
+        source = ("#include <cmath>\n"
+                   "int value;\n"
+                   "// Copyright 2025 TODO: hack\n"
+                   "int other;\n")
+        self.assertEqual(self.findings(source, [3]), [])
 
 
 class HashCommentTests(unittest.TestCase):
