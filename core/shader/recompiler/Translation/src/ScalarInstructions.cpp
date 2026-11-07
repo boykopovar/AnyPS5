@@ -104,14 +104,19 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         const std::uint32_t field = inst.source0.value;
         const std::uint32_t offset = (field >> 6u) & 0x1fu;
         const std::uint32_t size = ((field >> 11u) & 0x1fu) + 1u;
-        if ((field & 0x3fu) != 1u || offset + size > 4u) {
-            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round mode fields are modeled");
+        if ((field & 0x3fu) != 1u || offset + size > 8u) {
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round and denormal mode fields are modeled");
+        }
+        if (offset + size > 4u && !declaredFloatMode.has_value()) {
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE denormal bits without a declared FLOAT_MODE: not implemented");
         }
         const std::uint32_t mask = ((1u << size) - 1u) << offset;
         if ((rounding.unknown & mask) != 0u) {
             throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE rounding bits that differ between the paths reaching it or were written from an SGPR: not implemented");
         }
-        writeRawU32(inst.destination, IrU32(ir.Constant((rounding.value >> offset) & (mask >> offset))));
+        const std::uint32_t denormals = declaredFloatMode.has_value() ? declaredFloatMode->floatMode & 0xf0u : 0u;
+        const std::uint32_t mode = denormals | rounding.value;
+        writeRawU32(inst.destination, IrU32(ir.Constant((mode >> offset) & (mask >> offset))));
         return true;
     }
     case RdnaOpcode::SCmovkI32: {

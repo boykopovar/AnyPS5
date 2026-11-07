@@ -487,6 +487,7 @@ private:
         bool sampled = false;
         bool storage = false;
         std::vector<std::size_t> elementTextures;
+        std::vector<std::uint32_t> representatives;
         std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
         bool heap = false;
         std::vector<std::size_t> elementStorage;

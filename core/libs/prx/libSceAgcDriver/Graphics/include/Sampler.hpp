@@ -24,6 +24,7 @@ public:
     Sampler& operator=(const Sampler&) = delete;
 
     bool ForcesDegamma() const;
+    bool DisablesDegamma() const;
     VkSampler Handle() const;
     bool RequiresFilterMinmax() const;
     bool ReadsOpaqueBlackBorder() const;
@@ -40,6 +41,7 @@ private:
 
     Context context;
     bool forcesDegamma = false;
+    bool disablesDegamma = false;
     VkSampler sampler = VK_NULL_HANDLE;
     bool requiresFilterMinmax = false;
     bool opaqueBlackBorder = false;
@@ -80,6 +82,7 @@ void RequireFilterMinmax(const Context& context, VkFormat format, std::uint64_t 
 bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
+void RequireDisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers);
 
 }
 

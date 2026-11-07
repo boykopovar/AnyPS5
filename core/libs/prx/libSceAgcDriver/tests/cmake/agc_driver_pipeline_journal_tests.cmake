@@ -1,6 +1,11 @@
 target_include_directories(agc_driver_pipeline_journal_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(agc_driver_pipeline_journal_tests PRIVATE ${CMAKE_DL_LIBS})
-if(BUILD_TESTING AND TARGET agc_driver_pipeline_journal_tests)
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_pipeline_journal_undecodable_module COMMAND agc_driver_pipeline_journal_tests --undecodable-module)
+    set_tests_properties(agc_driver_pipeline_journal_undecodable_module PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_pipeline_journal_undecodable_module PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     agc_add_env_test(agc_driver_pipeline_journal_gpu_heap agc_driver_pipeline_journal_tests
             ARGS --gpu-heap ENV APS5_GPU_HEAP=1 TIMEOUT 30)
 endif()

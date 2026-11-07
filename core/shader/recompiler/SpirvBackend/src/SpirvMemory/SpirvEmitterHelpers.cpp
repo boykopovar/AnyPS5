@@ -572,6 +572,12 @@ void DefineDescriptors(SpirvEmitterState& state) {
             state.gdsVariable = Define(StorageBufferBlockType(state), "gds");
             if (layout.UsesDataAddress()) state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::GdsAddress);
             state.module.AddAnnotation(spv::OpDecorate, state.gdsVariable, spv::DecorationCoherent);
+            if (state.requirements.gdsInt64Atomics) {
+                state.gdsU64Variable = Define(StorageBufferU64BlockType(state), "gds_u64");
+                state.module.AddAnnotation(spv::OpDecorate, state.gdsU64Variable, spv::DecorationCoherent);
+                state.module.AddAnnotation(spv::OpDecorate, state.gdsU64Variable, spv::DecorationAliased);
+                state.module.AddAnnotation(spv::OpDecorate, state.gdsVariable, spv::DecorationAliased);
+            }
             break;
         case DescriptorBindingKind::ImageTable:
         case DescriptorBindingKind::ImageStorageTable:

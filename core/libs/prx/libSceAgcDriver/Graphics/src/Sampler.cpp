@@ -54,6 +54,7 @@ namespace AgcDriver::Graphics {
         VkSamplerReductionModeCreateInfoEXT reduction{};
         const auto info = CreateInfo(context, descriptor, reduction);
         forcesDegamma = descriptor.forceDegamma;
+        disablesDegamma = descriptor.disableDegamma;
         requiresFilterMinmax = descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT && (descriptor.magFilter == VK_FILTER_LINEAR || descriptor.minFilter == VK_FILTER_LINEAR);
         opaqueBlackBorder = ReadsOpaqueBlackBorder(descriptor);
         requiresNonSeamlessCube = descriptor.nonSeamlessCube && !context.nonSeamlessCubeMap;
@@ -130,6 +131,10 @@ namespace AgcDriver::Graphics {
     bool Sampler::ForcesDegamma() const {
         return forcesDegamma;
     }
+    bool Sampler::DisablesDegamma() const {
+        return disablesDegamma;
+    }
+
 
     bool Sampler::RequiresNonSeamlessCube() const {
         return requiresNonSeamlessCube;
@@ -160,6 +165,15 @@ namespace AgcDriver::Graphics {
         for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
             const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
             if (element < samplers.size() && samplers[element]->RequiresNonSeamlessCube()) Require(false, "a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+        }
+    }
+    void RequireDisablesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+        if (!IsSrgbTextureFormat(guestFormat)) return;
+        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
+            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
+            if (element < samplers.size() && samplers[element]->DisablesDegamma()) {
+                Require(false, "guest sampler descriptor disables degamma with an sRGB texture, which is not implemented");
+            }
         }
     }
 

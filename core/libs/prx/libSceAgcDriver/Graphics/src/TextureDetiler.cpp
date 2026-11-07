@@ -55,7 +55,7 @@ struct AddressedPush {
 };
 
 struct AddressedRepackPush {
-    std::array<std::uint32_t, 4> push;
+    std::array<std::uint32_t, 5> push;
     std::uint64_t source;
     std::uint64_t destination;
 };
@@ -107,7 +107,7 @@ constexpr std::uint32_t DetileHeapKind = ShaderRecompiler::RuntimeAbi::FirstStor
 static_assert(offsetof(AddressedPush, input) == 80 && sizeof(AddressedPush) == 96);
 static_assert(offsetof(HeapImagePush, tiled) == 80 && offsetof(HeapImagePush, slot) == 88 && sizeof(HeapImagePush) == 96);
 static_assert(ShaderRecompiler::RuntimeAbi::GpuHeapStorageKind(DetileHeapKind));
-static_assert(offsetof(AddressedRepackPush, source) == 16 && sizeof(AddressedRepackPush) == 32);
+static_assert(offsetof(AddressedRepackPush, source) == 24 && sizeof(AddressedRepackPush) == 40);
 
 std::uint32_t BlockBytesFor(TextureTileMode tileMode) {
     switch (tileMode) {
@@ -425,7 +425,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
 }
 
-void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes) {
+void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat) {
     Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel repack needs a command buffer and its buffers");
     Require(bytes != 0 && bytes % 4u == 0 && sourceOffset % 4u == 0 && destinationOffset % 4u == 0, "a texel repack needs whole aligned words");
     if (repackPipeline == VK_NULL_HANDLE) {
@@ -454,7 +454,7 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
     constexpr std::uint64_t rowWords = 64u * 1024u;
     const auto rows = (words + rowWords - 1u) / rowWords;
     Require(words <= UINT32_MAX && rows <= context.limits.maxComputeWorkGroupCount[1], "a texel repack exceeds the device's dispatch limits");
-    const std::array<std::uint32_t, 4> repackPush{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords))};
+    const std::array<std::uint32_t, 5> repackPush{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords)), static_cast<std::uint32_t>(depthToFloat)};
     const auto sourceAddress = bufferAddress(source);
     const auto destinationAddress = sourceAddress != 0 ? bufferAddress(destination) : 0;
     if (sourceAddress != 0 && destinationAddress != 0 && heapRepackPipeline != VK_NULL_HANDLE && HeapPassesActive(context)) {
