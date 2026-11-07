@@ -34,6 +34,8 @@ if(BUILD_TESTING)
 endif()
 
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Sha512_256.cpp)
+
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_libtls_settings_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTlsSettings.cpp)
     target_include_directories(guest_libressl3_libtls_settings_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -235,6 +237,16 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_libressl3_version_tests)
     add_test(NAME guest_libressl3_version COMMAND guest_libressl3_version_tests)
     set_tests_properties(guest_libressl3_version PROPERTIES TIMEOUT 30)
+    add_test_executable(guest_libressl3_sha512_256_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Sha512_256.cpp)
+    target_include_directories(guest_libressl3_sha512_256_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_sha512_256_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_sha512_256_tests)
+    add_test(NAME guest_libressl3_sha512_256 COMMAND guest_libressl3_sha512_256_tests)
+    set_tests_properties(guest_libressl3_sha512_256 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_sha512_256 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference guest_libressl3_evp guest_libressl3_version guest_libressl3_x509_pubkey_param PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
