@@ -94,9 +94,7 @@ if(BUILD_TESTING)
     set_tests_properties(guest_cairo_ft_font_options PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_cairo_ft_font_options PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libfontconfig>"
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libfontconfig>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
