@@ -1080,6 +1080,17 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void CheckKqueueFromEqueue() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "kqueue from equeue") == 0);
+    int kq = -1;
+    Require(sceKernelGetKqueueFromEqueue(eq, &kq) == 0 && kq == static_cast<int>(static_cast<std::uint32_t>(eq)));
+    const KernelEvent change{9, -11, 0x0001, 0, 0, nullptr};
+    Require(kevent_nid_postfix(kq, &change, 1, nullptr, 0, nullptr) == 0);
+    Require(sceKernelGetKqueueFromEqueue(eq, nullptr) == static_cast<int>(0x80020016));
+    Require(sceKernelDeleteEqueue(eq) == 0);
+}
+
 static void CheckProcessQueries() {
     KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39) | (1ull << 63), (1ull << 0) | (1ull << 0x3F)}};
     for (auto query : {sceKernelTitleWorkaroundIsEnabled, sceKernelTitleWorkdaroundIsEnabled}) {
@@ -1232,6 +1243,7 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwd();
+    CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);

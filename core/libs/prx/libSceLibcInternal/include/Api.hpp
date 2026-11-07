@@ -19,6 +19,8 @@ struct GuestOption {
     int value;
 };
 
+struct GuestDirectoryEntry;
+
 struct LibcUtimbuf {
     std::int64_t actime;
     std::int64_t modtime;
@@ -33,6 +35,8 @@ int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip);
+void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location);
 int APS5_VABI __fflush_nid_postfix(FileStream* stream);
 int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
@@ -154,6 +158,44 @@ void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+[[noreturn]] void APS5_VABI _ZNKSs5_XranEv_nid_postfix(const GuestLocale::String* self);
+[[noreturn]] void APS5_VABI _ZNKSs5_XlenEv_nid_postfix(const GuestLocale::String* self);
+GuestLocale::String* APS5_VABI _ZNSs5eraseEmm_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6appendERKSsmm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6appendEmc_nid_postfix(GuestLocale::String* self, std::size_t count, char character);
+GuestLocale::String* APS5_VABI _ZNSs6assignEPKcm_nid_postfix(GuestLocale::String* self, const char* source, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6assignERKSsmm_nid_postfix(GuestLocale::String* self, const GuestLocale::String* source, std::size_t position, std::size_t count);
+GuestLocale::String* APS5_VABI _ZNSs6assignEmc_nid_postfix(GuestLocale::String* self, std::size_t count, char character);
+void APS5_VABI sceLibcInternalFundamentalTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFundamentalTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFundamentalTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalArrayTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalArrayTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalArrayTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFunctionTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFunctionTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFunctionTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalEnumTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalEnumTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalEnumTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalClassTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalClassTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalClassTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSiClassTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSiClassTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSiClassTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalVmiClassTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalVmiClassTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalVmiClassTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPbaseTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPbaseTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPbaseTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPointerTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPointerTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPointerTypeInfoDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPointerToMemberTypeInfoBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPointerToMemberTypeInfoCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPointerToMemberTypeInfoDeletingDestructor_nid_no_patch(void* self);
 char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 char APS5_VABI sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
 GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
@@ -176,6 +218,16 @@ int APS5_VABI sceLibcPafMspaceCheckMemoryBounds();
 int APS5_VABI sceLibcHeapUnsetTraceMarker();
 int APS5_VABI sceLibcHeapGetAddressRanges();
 int APS5_VABI sceLibcHeapMutexFree();
+bool APS5_VABI sceLibcInternalPending3_016_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_021_nid_no_patch(const void* self);
+bool APS5_VABI sceLibcInternalPending3_023_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_037_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_038_nid_no_patch(const void* self);
+bool APS5_VABI sceLibcInternalPending3_039_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending4_007_nid_no_patch(const void* self, const void* name, const void* locale);
+void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int catalog);
+int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale);
+void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog);
 
 
 }
