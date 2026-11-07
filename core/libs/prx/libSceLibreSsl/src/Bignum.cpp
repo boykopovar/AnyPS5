@@ -319,7 +319,7 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
     const char* digits = str + negative;
     std::size_t count = 0;
     while (HexValue(digits[count]) >= 0) count++;
-    if (count == 0 || count > 0x7FFFFFFF / 4) return 0;
+    if (count > 0x7FFFFFFF / 4) return 0;
     const int consumed = static_cast<int>(count + negative);
     if (!a) return consumed;
     Mag m((count + 15) / 16, 0);
@@ -334,6 +334,7 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
         if (!*a) FreeBignum(target);
         return 0;
     }
+    target->neg = negative ? 1 : 0;
     *a = target;
     return consumed;
 }
