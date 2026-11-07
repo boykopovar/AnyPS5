@@ -8,6 +8,7 @@
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"

@@ -60,6 +60,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WebCore::SecurityOrigin](../../../core/libs/prx/libSceNKWebKit/src/SecurityOrigin.cpp) (libSceNKWebKit) - only `isLocalHostOrLoopbackIPAddress` is implemented, from [SecurityOrigin.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/SecurityOrigin.cpp); the `StringView` by-value convention is that of the other `WTF::StringView` exports and is unverified. `create(URL)`, `createFromString`, `toString`, `toRawString`, `isolatedCopy`, `isSameOriginAs`, `isSameSchemeHostPort`, `equal`, `domainForCachePartition` and `isMatchingRegistrableDomainSuffix` still throw `NotImplemented_nid_no_patch`: they need the `SecurityOriginData` variant and opaque-origin identifier layout, URL parsing, `LegacySchemeRegistry`, `OriginAccessEntry` and the public suffix list, none of which are implemented or verified.
 - [Shared string hash](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `WebCore::computeSharedStringHash` follows the pinned [StringHash.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringHash.h#L220-L227), where `AlreadyHashed::avoidDeletedValue` ORs the sign bit in, so a raw hash of `0xFFFFFFFF` stays `0xFFFFFFFF`; current WebKit `main` XORs it and returns `0x7FFFFFFF`. Which of the two the console module uses is unverified.
 - [WebCore::HTTPHeaderField](../../../core/libs/prx/libSceNKWebKit/src/HTTPHeaderField.cpp) (libSceNKWebKit) - the 16-byte layout in [HTTPHeaderFieldAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/HTTPHeaderFieldAbi.hpp) (two `WTF::String`, name then value) follows [HTTPHeaderField.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/HTTPHeaderField.h) and is unverified against the PS5 module. The 9 exports follow that header; the private constructor taking two `WTF::String&&` stores them as given, because the trimming and RFC 7230 validation of [HTTPHeaderField.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/HTTPHeaderField.cpp) belong to `HTTPHeaderField::create`, which is not in the inventory. A null object or string pointer throws.
+- [WebCore::ResourceRequestBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceRequest.cpp) (libSceNKWebKit) - the object layout in [ResourceRequestAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceRequestAbi.hpp) comes from [ResourceRequestBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceRequestBase.h) and [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h) (`HTTPHeaderMap` is 32 bytes: both of its vectors have inline capacity 0, and the 6 of `CommonHeadersVector` is its minimum capacity) and is not checked against the PS5 module. The accessors and setters for the URL, the first-party URL, the HTTP method, the timeout, the cache policy, the priority, the same-site and top-site flags and the default timeout throw when `m_resourceRequestUpdated` is false because `ResourceRequest::doUpdateResourceRequest` of the PS5 network backend is unknown. The default timeout starts at 0 as in the non-iOS branch of [ResourceRequestBase.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceRequestBase.cpp). The 33 exports that read or write `HTTPHeaderMap`, `Vector<String>`, `FormData` or a `ResourceRequest` copy (`isolatedCopy`, `setAsIsolatedCopy`, `equal`, `removeCredentials`, `partitionName`, `isConditional`, `makeUnconditional`, `hasUpload`, `httpBody`, the `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`, referrer, origin, user-agent, content-type and cache-partition accessors) still throw `NotImplemented_nid_no_patch`: they need the `WTF::Vector`, `HTTPHeaderMap` and `FormData` layouts.
 
 - [Quote folding, default MIME type and redirect reuse](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `WebCore::foldQuoteMarks`, `defaultMIMEType` and `redirectChainAllowsReuse` are unmeasured on the console. `defaultMIMEType` is a static string with the refcount, 8-bit and cost-reported bits of the pinned [StringImpl.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h); the console layout is unverified. `redirectChainAllowsReuse` ([PureWebCore.cpp](../../../core/libs/prx/libSceNKWebKit/src/PureWebCore.cpp)) compares with the host wall clock and follows [CacheValidation.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/CacheValidation.cpp#L166-L177), returning false for a status outside the three enumerators where the source asserts.
 - [WTF mapped files](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - mapping an archive-backed file (such as archived `app0` content) terminates the process: guest `mmap_nid_postfix` is `noexcept`, but `File::RefuseArchivedFile` throws through `NotImplemented_nid_no_patch`. The pinned mapping path instead reports failure through `success = false`. PlayStation links `mmap` through an SDK `__wrap_mmap` whose implementation is absent from the pinned source; any additional wrapper behavior is unverified.
@@ -76,7 +77,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6462 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6443 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -3158,13 +3159,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore19MediaResourceLoaderD1Ev` | `QEppJQAXTjk` |
 | `_ZN7WebCore19MediaResourceLoaderD2Ev` | `TiTaYOe80UY` |
 | `_ZN7WebCore19ProtectionSpaceBase7compareERKNS_15ProtectionSpaceES3_` | `6ePLnfc4Qgo` |
-| `_ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPriorityE` | `Ns8YtHWBLyk` |
 | `_ZN7WebCore19ResourceRequestBase12clearPurposeEv` | `gwVFNCkuOQk` |
-| `_ZN7WebCore19ResourceRequestBase12setIsTopSiteEb` | `Cyb-5L6XKbo` |
 | `_ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE` | `1ULaJ4WPLtI` |
-| `_ZN7WebCore19ResourceRequestBase13setHTTPMethodERKN3WTF6StringE` | `5wTstW4Gvks` |
-| `_ZN7WebCore19ResourceRequestBase13setIsSameSiteEb` | `0qAqkGzBFMY` |
-| `_ZN7WebCore19ResourceRequestBase14setCachePolicyENS_26ResourceRequestCachePolicyE` | `xsDEHCFMIlw` |
 | `_ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv` | `OrPeJ6qQgw4` |
 | `_ZN7WebCore19ResourceRequestBase15setHTTPReferrerERKN3WTF6StringE` | `wLP4k8D3hWw` |
 | `_ZN7WebCore19ResourceRequestBase16setHTTPUserAgentERKN3WTF6StringE` | `0NE9SkyhX-s` |
@@ -3180,14 +3176,10 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE` | `cJokY6wAIvA` |
 | `_ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv` | `EID1OUoD76g` |
 | `_ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv` | `SBn5gEySZK4` |
-| `_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv` | `i1VFpGXSPos` |
-| `_ZN7WebCore19ResourceRequestBase23setFirstPartyForCookiesERKN3WTF3URLE` | `op7lZfbflp4` |
-| `_ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd` | `sTTKtmcsvyg` |
 | `_ZN7WebCore19ResourceRequestBase30addHTTPHeaderFieldIfNotPresentENS_14HTTPHeaderNameERKN3WTF6StringE` | `zi-eyYOv8Yw` |
 | `_ZN7WebCore19ResourceRequestBase37setExistingHTTPReferrerToOriginStringEv` | `3hl+3pWsRNY` |
 | `_ZN7WebCore19ResourceRequestBase50setResponseContentDispositionEncodingFallbackArrayERKN3WTF6StringES4_S4_` | `XMPmjIgxBPc` |
 | `_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_` | `-swGGmA0SP8` |
-| `_ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE` | `MUMPpV8t3bg` |
 | `_ZN7WebCore19StorageQuotaManager20resetQuotaForTestingEv` | `HngLT8ghSjc` |
 | `_ZN7WebCore19StorageQuotaManager24requestSpaceOnMainThreadEmON3WTF17CompletionHandlerIFvNS0_8DecisionEEEE` | `P9Tm-o0KYfo` |
 | `_ZN7WebCore19StorageQuotaManager30requestSpaceOnBackgroundThreadEm` | `z3CYZN32+ow` |
@@ -5789,27 +5781,17 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore19ProtectionSpaceBase15isPasswordBasedEv` | `14QqltFJ+xk` |
 | `_ZNK7WebCore19ProtectionSpaceBase26receivesCredentialSecurelyEv` | `r5QyX8BvB2c` |
 | `_ZNK7WebCore19ProtectionSpaceBase7isProxyEv` | `tHkyOSFwdIc` |
-| `_ZNK7WebCore19ResourceRequestBase10httpMethodEv` | `jZRyJ1VcPnA` |
 | `_ZNK7WebCore19ResourceRequestBase10httpOriginEv` | `lPNr2mEWUBU` |
-| `_ZNK7WebCore19ResourceRequestBase10isSameSiteEv` | `kOKDFcsjZrA` |
-| `_ZNK7WebCore19ResourceRequestBase11cachePolicyEv` | `KKNE1wLaEEk` |
 | `_ZNK7WebCore19ResourceRequestBase12httpReferrerEv` | `+vdnJZRFUEg` |
 | `_ZNK7WebCore19ResourceRequestBase12isolatedCopyEv` | `FnhAa5JKqhE` |
 | `_ZNK7WebCore19ResourceRequestBase13httpUserAgentEv` | `ydppzeaHCGY` |
 | `_ZNK7WebCore19ResourceRequestBase13isConditionalEv` | `tPMgXN+Gp0w` |
 | `_ZNK7WebCore19ResourceRequestBase15httpContentTypeEv` | `igDJIsdI3AA` |
 | `_ZNK7WebCore19ResourceRequestBase15httpHeaderFieldENS_14HTTPHeaderNameE` | `lsBWl8HgZSs` |
-| `_ZNK7WebCore19ResourceRequestBase15timeoutIntervalEv` | `coeYWTjevFM` |
 | `_ZNK7WebCore19ResourceRequestBase16httpHeaderFieldsEv` | `3Yr1O6r-8ms` |
 | `_ZNK7WebCore19ResourceRequestBase18hasHTTPHeaderFieldENS_14HTTPHeaderNameE` | `hr4I-u22P2w` |
-| `_ZNK7WebCore19ResourceRequestBase20firstPartyForCookiesEv` | `k6hVHTe+PaY` |
-| `_ZNK7WebCore19ResourceRequestBase3urlEv` | `rrh3-CBqrZQ` |
-| `_ZNK7WebCore19ResourceRequestBase6isNullEv` | `feRK21LbWio` |
-| `_ZNK7WebCore19ResourceRequestBase7isEmptyEv` | `ryUXM2DuqT4` |
 | `_ZNK7WebCore19ResourceRequestBase8httpBodyEv` | `pLh4waaqW7c` |
-| `_ZNK7WebCore19ResourceRequestBase8priorityEv` | `1LiSfUnDEpM` |
 | `_ZNK7WebCore19ResourceRequestBase9hasUploadEv` | `9aGME3ZvhCY` |
-| `_ZNK7WebCore19ResourceRequestBase9isTopSiteEv` | `IAjYih7HkWE` |
 | `_ZNK7WebCore19UIEventWithKeyState16getModifierStateERKN3WTF6StringE` | `QSE-2TsMW0M` |
 | `_ZNK7WebCore20CachedResourceLoader11isPreloadedERKN3WTF6StringE` | `27EhhOjbt+4` |
 | `_ZNK7WebCore20DeprecatedCSSOMValue12cssValueTypeEv` | `Gu4NynMMIE4` |
