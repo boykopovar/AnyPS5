@@ -1548,7 +1548,6 @@ static void TestSessionState() {
     WKRelease(sessionState);
     WKRelease(d);
 }
-}
 
 int main() {
     TestTypeIDs();
