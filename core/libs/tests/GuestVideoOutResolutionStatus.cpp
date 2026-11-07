@@ -60,14 +60,14 @@ int main() {
     Require(sceVideoOutGetOutputStatusWithVrr(-1, vrr.data()) == static_cast<int>(0x8029000Bu));
     for (const auto byte : vrr) Require(byte == std::byte{0xff});
 
-    Require(Rejects(handle, nullptr));
+    Require(sceVideoOutGetResolutionStatus(handle, nullptr) == static_cast<int>(0x80290002u));
     Require(Rejects(-1, nullptr));
-    Require(Rejects(0, &status));
-    Require(Rejects(-1, &status));
-    Require(Rejects(NEVER_OPENED_HANDLE, &status));
+    Require(sceVideoOutGetResolutionStatus(0, &status) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetResolutionStatus(-1, &status) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetResolutionStatus(NEVER_OPENED_HANDLE, &status) == static_cast<int>(0x8029000Bu));
 
     Require(sceVideoOutClose(handle) == 0);
-    Require(Rejects(handle, &status));
+    Require(sceVideoOutGetResolutionStatus(handle, &status) == static_cast<int>(0x8029000Bu));
     Require(sceVideoOutGetOutputStatusWithVrr(handle, vrr.data()) == static_cast<int>(0x8029000Bu));
     LibcRunShutdown_nid_postfix();
 }
