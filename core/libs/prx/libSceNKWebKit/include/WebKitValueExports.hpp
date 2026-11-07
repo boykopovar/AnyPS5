@@ -174,9 +174,15 @@ bool APS5_VABI WKStringIsEqualToUTF8CStringIgnoringCase(const void* aRef, const 
 const void* APS5_VABI WKUInt64Create(std::uint64_t value);
 std::uint32_t APS5_VABI WKUInt64GetTypeID();
 std::uint64_t APS5_VABI WKUInt64GetValue(const void* uint64Ref);
+const void* APS5_VABI WKURLCopyHostName(const void* urlRef);
+const void* APS5_VABI WKURLCopyLastPathComponent(const void* urlRef);
+const void* APS5_VABI WKURLCopyPath(const void* urlRef);
+const void* APS5_VABI WKURLCopyScheme(const void* urlRef);
 const void* APS5_VABI WKURLCopyString(const void* urlRef);
+const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char* relativeURL);
 const void* APS5_VABI WKURLCreateWithUTF8CString(const char* string);
 std::uint32_t APS5_VABI WKURLGetTypeID();
+bool APS5_VABI WKURLIsEqual(const void* aRef, const void* bRef);
 std::uint32_t APS5_VABI WKURLRequestGetTypeID();
 const void* APS5_VABI WKURLResponseCopyMIMEType(const void* responseRef);
 const void* APS5_VABI WKURLResponseCopySuggestedFilename(const void* responseRef);
