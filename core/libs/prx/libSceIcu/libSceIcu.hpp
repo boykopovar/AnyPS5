@@ -26,3 +26,4 @@
 #include "Search.hpp"
 #include "Character.hpp"
 #include "Configuration.hpp"
+#include "Script.hpp"

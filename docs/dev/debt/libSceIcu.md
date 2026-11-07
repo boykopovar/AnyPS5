@@ -1,5 +1,9 @@
 # libSceIcu technical debt
 
+### Script properties backed by ICU 78.1
+
+- [Script dispatch](../../../core/libs/prx/libSceIcu/Script.cpp) has no console validation: NIDs are from the 3.20 inventory, and firmware availability, exact ICU version and console output are unknown. Ten `uscript_*` C exports forward to the pinned [ICU 78.1](https://github.com/unicode-org/icu/tree/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common) `uchar.cpp`, `propname.cpp` and `uscript_props.cpp` implementations with typed LP64 `uscript.h` ABI and one-byte `UBool`. They depend on the source and static target introduced by [#13578](https://github.com/boykopovar/AnyPS5/pull/13578). Script names are borrowed; samples and extension arrays remain caller-owned, with bounded conversion storage. A null error pointer returns a sentinel, including for `uscript_getSampleString` where ICU would dereference it. Closes when: console ABI and results are measured.
+
 ### Additional callable exports
 
 - [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
