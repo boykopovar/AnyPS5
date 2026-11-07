@@ -1090,6 +1090,69 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestNavigationData() {
+    Require(WKNavigationDataGetTypeID() == 74);
+    auto data = NKWebKit::Make<NKWebKit::NavigationData>();
+    data->url = NKWebKit::Make<NKWebKit::URL>("https://example.com/page");
+    data->title = NKWebKit::String::FromUtf8("Example Page");
+    data->navigationDestinationURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/dest");
+    data->originalRequest = NKWebKit::Make<NKWebKit::Object>();
+
+    const void* ref = NKWebKit::ToRef(data);
+
+    auto* url = WKNavigationDataCopyURL(ref);
+    Require(url != nullptr);
+    Require(WKGetTypeID(url) == WKURLGetTypeID());
+    auto* urlStr = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/page"));
+    WKRelease(urlStr);
+    WKRelease(url);
+
+    auto* title = WKNavigationDataCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKGetTypeID(title) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(title, "Example Page"));
+    WKRelease(title);
+
+    auto* destUrl = WKNavigationDataCopyNavigationDestinationURL(ref);
+    Require(destUrl != nullptr);
+    Require(WKGetTypeID(destUrl) == WKURLGetTypeID());
+    auto* destUrlStr = WKURLCopyString(destUrl);
+    Require(WKStringIsEqualToUTF8CString(destUrlStr, "https://example.com/dest"));
+    WKRelease(destUrlStr);
+    WKRelease(destUrl);
+
+    auto* req = WKNavigationDataCopyOriginalRequest(ref);
+    Require(req != nullptr);
+    WKRelease(req);
+
+    auto empty = NKWebKit::Make<NKWebKit::NavigationData>();
+    const void* emptyRef = NKWebKit::ToRef(empty);
+    Require(WKNavigationDataCopyURL(emptyRef) == nullptr);
+    Require(WKNavigationDataCopyTitle(emptyRef) == nullptr);
+    Require(WKNavigationDataCopyNavigationDestinationURL(emptyRef) == nullptr);
+    Require(WKNavigationDataCopyOriginalRequest(emptyRef) == nullptr);
+    WKRelease(emptyRef);
+
+    bool threw = false;
+    try {
+        WKNavigationDataCopyURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKNavigationDataCopyOriginalRequest(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1111,6 +1174,7 @@ int main() {
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestCertificateInfo();
+    TestNavigationData();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
