@@ -1,7 +1,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -102,10 +104,18 @@ std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
     return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 43 ? 20 : guestFormat;
 }
 
+std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];
+const bool formatCountersShared = (LibcRunReportSetFormatCounters_nid_no_patch(formatUse, kMaxGuestFormat + 1), true);
+
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
     const auto remapped = remapGuestFormat(guestFormat);
     const auto* entry = remapped <= kMaxGuestFormat ? kFormatLookupTable[remapped] : nullptr;
-    if (entry == nullptr) Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    if (entry == nullptr) {
+        LibcRunReportImageFormat_nid_no_patch(guestFormat, nullptr, 1, 5);
+        Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    }
+    static const bool reporting = LibcRunReportEnabled_nid_no_patch();
+    if (reporting) formatUse[remapped].fetch_add(1, std::memory_order_relaxed);
     return *entry;
 }
 
@@ -219,6 +229,21 @@ bool IsRepackedTextureFormat(std::uint32_t guestFormat) {
 
 std::uint32_t RepackTextureWord(std::uint32_t word) {
     return ((word >> 21u) & 0x7ffu) | (((word >> 10u) & 0x7ffu) << 11u) | ((word & 0x3ffu) << 22u);
+}
+
+VkFormat Uint16ExportAlias(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16_SNORM:
+        case VK_FORMAT_R16_SFLOAT: return VK_FORMAT_R16_UINT;
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16_SNORM:
+        case VK_FORMAT_R16G16_SFLOAT: return VK_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R16G16B16A16_SNORM:
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return VK_FORMAT_R16G16B16A16_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
 }
 
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes) {
