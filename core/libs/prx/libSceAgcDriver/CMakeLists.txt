@@ -764,6 +764,8 @@ endfunction()
 function(agc_add_draw_pipeline_test agcTestName)
     agc_add_env_test(${agcTestName}_draw_pipeline ${agcTestName}_tests
             ENV ANYPS5_NO_SHADER_CACHE=1 APS5_DRAW_PIPELINE=1 APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1)
+    agc_add_env_test(${agcTestName}_plan_verify ${agcTestName}_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_DRAW_PIPELINE=1 APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1 APS5_VERIFY_DRAW_PLAN=1)
 endfunction()
 
 function(agc_add_gpu_heap_test agcTestName)
