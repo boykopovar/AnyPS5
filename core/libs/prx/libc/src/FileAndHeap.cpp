@@ -754,12 +754,28 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     return result;
 }
 
+#ifdef _WIN32
+static bool SeekTargetBeforeStart(FILE* native, std::int64_t offset, int origin) {
+    if (offset >= 0) return false;
+    std::int64_t base = 0;
+    if (origin != SEEK_SET) {
+        const int saved = errno;
+        if (origin == SEEK_END && std::fflush(native) != 0) { errno = saved; return false; }
+        base = origin == SEEK_CUR ? _ftelli64(native) : _filelengthi64(_fileno(native));
+        errno = saved;
+        if (base < 0) return false;
+    }
+    return offset < -base;
+}
+#endif
+
 int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int origin) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (origin != SEEK_SET && origin != SEEK_CUR && origin != SEEK_END) { errno = 22; return -1; }
 #ifdef _WIN32
     auto* native = GetNativeStream(stream);
     if (IsPipeStream(native)) { errno = 29; return -1; }
+    if (SeekTargetBeforeStart(native, offset, origin)) { errno = EINVAL; return -1; }
     const int result = _fseeki64(native, offset, origin);
 #else
     static_assert(sizeof(off_t) == 8);
