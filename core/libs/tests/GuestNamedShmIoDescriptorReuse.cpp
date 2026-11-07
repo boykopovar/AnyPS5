@@ -89,7 +89,7 @@ static bool ReplaceDescriptor() {
     swapped = true;
     bool replaced = false;
     std::thread reuse([&] {
-        replaced = close_nid_postfix(original) == 0 && dup2_nid_postfix(replacement, original) == original;
+        replaced = ::syscall(SYS_close, original) == 0 && ::syscall(SYS_dup2, replacement, original) == original;
     });
     reuse.join();
     return replaced;
