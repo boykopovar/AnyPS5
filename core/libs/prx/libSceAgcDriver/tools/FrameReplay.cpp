@@ -69,10 +69,9 @@ struct Options {
     bool pace = true;
     bool strict = false;
     std::chrono::milliseconds paceTimeout{10000};
-    std::chrono::milliseconds memoryPaceTimeout{10000};
     std::chrono::milliseconds releaseAfter{3};
     std::chrono::milliseconds drainTimeout{10000};
-    std::chrono::milliseconds busyDrainTimeout{600000};
+    std::chrono::milliseconds busyTimeout{600000};
     bool release = true;
     bool synthesize = true;
     std::size_t repeat = 1;
@@ -353,6 +352,13 @@ struct Replay {
     Clock::time_point startedAt{};
     Clock::time_point endedAt{};
 
+    struct SettledHold {
+        bool held;
+        ~SettledHold() {
+            if (held) AgcDriverReleaseSettled_nid_postfix();
+        }
+    };
+
     double paceWaitedSeconds() const {
         return static_cast<double>(paceWaitedNs.load()) / 1e9;
     }
@@ -380,7 +386,7 @@ struct Replay {
     }
 
     static bool paced(FrameCallKind kind) {
-        return kind == FrameCallKind::Submit || kind == FrameCallKind::Flip || kind == FrameCallKind::ReserveEopFlip || kind == FrameCallKind::Suspend || kind == FrameCallKind::Memory;
+        return kind == FrameCallKind::Submit || kind == FrameCallKind::Flip || kind == FrameCallKind::ReserveEopFlip || kind == FrameCallKind::Suspend;
     }
 
     void pace(const FrameCall& call) {
@@ -390,16 +396,16 @@ struct Replay {
             stalled.store(false);
         }
         const auto inFlight = call.accepted - call.completed;
-        const bool memory = call.kind == FrameCallKind::Memory;
         const auto began = Clock::now();
-        const auto deadline = began + (memory ? options.memoryPaceTimeout : options.paceTimeout);
+        const auto deadline = began + options.paceTimeout;
+        const auto limit = began + options.busyTimeout;
         const auto waited = [&] { paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count(); };
         while (true) {
             const auto [accepted, completed] = progress();
             if (accepted - completed <= inFlight) return waited();
-            if (Clock::now() >= deadline) {
+            const auto now = Clock::now();
+            if (now >= deadline && (now >= limit || (AgcDriverSettled_nid_postfix() && progress() == std::pair{accepted, completed}))) {
                 waited();
-                if (memory) return;
                 stalled.store(true);
                 stalledAt.store(completed);
                 std::fprintf(stderr, "[frame-replay] pacing gave up at call %llu (%s): serials %llu/%llu, the capture had %llu in flight\n", static_cast<unsigned long long>(call.ordinal),
@@ -475,7 +481,13 @@ struct Replay {
             traced(call, [] { AgcDriverSuspendPoint_nid_postfix(); });
             return;
         case FrameCallKind::Memory: {
-            std::lock_guard lock(memoryMutex);
+            const std::unique_lock lock(memoryMutex);
+            const auto began = Clock::now();
+            const bool pacing = options.pace && recording;
+            const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
+            const SettledHold hold{pacing};
+            paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+            if (!settled && options.strict) throw std::runtime_error("frame replay: the replay did not settle before memory delta " + std::to_string(call.ordinal));
             restoreGroup(call.values.at(0));
             return;
         }
@@ -505,6 +517,7 @@ struct Replay {
             if (skipped.Overlaps(*chunk)) continue;
             auto bytes = reader.Read(*chunk);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
             for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
@@ -531,7 +544,8 @@ struct Replay {
             const auto bytes = reader.Read(*chunk);
             std::uint32_t value = 0;
             std::memcpy(&value, bytes.data() + (wait.address - chunk->address), sizeof(value));
-            if ((value & AgcDriver::Pm4::RewindValid) == 0) return false;
+            if ((value & AgcDriver::Pm4::RewindValid) == 0 || !AgcDriverHoldSettled_nid_postfix(0)) return false;
+            const SettledHold hold{true};
             restoreGroup(call.values.at(0));
             return true;
         }
@@ -594,21 +608,19 @@ struct Replay {
     }
 
     void releaseAwaited(std::span<const FrameCall> calls, std::size_t from) {
-        std::lock_guard lock(memoryMutex);
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
         const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
-        for (std::size_t slot = 0; slot < count; ++slot) {
+        bool released = false;
+        for (std::size_t slot = 0; slot < count && !released; ++slot) {
             const auto& wait = awaited[slot];
             if (wait.address == 0) continue;
             const std::size_t bytes = wait.bytes == 8 ? 8 : 4;
             if (wait.function != 0 && satisfies(wait, load(wait.address, bytes))) continue;
-            bool released = false;
             if (rewindWait(wait)) {
                 for (auto index = from; index < calls.size() && !released; ++index) released = releaseRewind(calls[index], wait);
                 if (released) ++earlyReleases;
                 continue;
             }
-            for (auto index = from; index < calls.size() && !released; ++index) released = writeRecordedValue(calls[index], wait);
             for (auto index = std::min(from, calls.size()); index > 0 && !released; --index) {
                 released = writeRecordedValue(calls[index - 1], wait);
                 if (released) ++lateReleases;
@@ -637,17 +649,18 @@ struct Replay {
         stalled.store(false);
         std::thread breaker([&] {
             if (!options.release) return;
-            auto lastCompleted = progress().second;
+            auto lastSeen = progress();
             auto lastProgress = Clock::now();
             while (!finished.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                const auto completed = progress().second;
-                if (completed != lastCompleted) {
-                    lastCompleted = completed;
+                const auto seen = progress();
+                const std::unique_lock lock(memoryMutex, std::try_to_lock);
+                if (seen != lastSeen || !lock.owns_lock()) {
+                    lastSeen = seen;
                     lastProgress = Clock::now();
                     continue;
                 }
-                if (Clock::now() - lastProgress < options.releaseAfter) continue;
+                if (Clock::now() - lastProgress < options.releaseAfter || !AgcDriverSettled_nid_postfix() || progress() != lastSeen) continue;
                 releaseAwaited(calls, sequenced.load());
                 lastProgress = Clock::now();
             }
@@ -704,7 +717,7 @@ struct Replay {
                 std::fprintf(stderr, "[frame-replay] draining: %llu submissions pending for %.0f s (serials %llu/%llu), blocked on%s\n", static_cast<unsigned long long>(unfinished),
                              std::chrono::duration<double>(now - lastProgress).count(), static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), describeBlocked().c_str());
             }
-            if (now - lastProgress >= options.busyDrainTimeout) {
+            if (const auto quiet = now - lastProgress; quiet >= options.busyTimeout || (quiet >= options.drainTimeout && AgcDriverSettled_nid_postfix())) {
                 std::fprintf(stderr, "[frame-replay] %llu submissions did not complete after the last captured call (serials %llu/%llu), blocked on%s\n", static_cast<unsigned long long>(unfinished),
                              static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), describeBlocked().c_str());
                 return;
@@ -743,11 +756,12 @@ struct Replay {
 };
 
 int usage() {
-    std::fprintf(stderr, "usage: agc_frame_replay <capture directory> [--no-pace] [--no-release] [--release-after-ms <n>] [--strict]\n"
+    std::fprintf(stderr, "usage: agc_frame_replay <capture directory> [--no-pace] [--pace-timeout-ms <n>] [--no-release] [--release-after-ms <n>] [--strict]\n"
                          "                        [--repeat <n>] [--cold-pipelines] [--dump <address>:<bytes>:<file>]...\n"
                          "  replays the driver calls and guest memory that APS5_FRAME_CAPTURE=<directory> recorded, through this\n"
                          "  build's AGC driver with no title running, and prints one JSON line with the frame times\n"
                          "  --no-pace           issues calls without waiting for the in-flight depth the title had\n"
+                         "  --pace-timeout-ms   milliseconds a call waits for the captured in-flight depth once no queue runs (10000)\n"
                          "  --no-release        never copies recorded CPU stores early to release a GPU wait\n"
                          "  --release-after-ms  milliseconds without a completion before awaited dwords are released (3)\n"
                          "  --no-synthesize     releases a wait only with a value the capture recorded, never with its reference value\n"
@@ -1242,6 +1256,7 @@ int main(int argc, char** argv) {
         if (argument == "--no-pace") options.pace = false;
         else if (argument == "--no-release") options.release = false;
         else if (argument == "--no-synthesize") options.synthesize = false;
+        else if (argument == "--pace-timeout-ms" && index + 1 < argc) options.paceTimeout = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
         else if (argument == "--release-after-ms" && index + 1 < argc) options.releaseAfter = std::chrono::milliseconds(std::strtoll(argv[++index], nullptr, 10));
         else if (argument == "--strict") options.strict = true;
         else if (argument == "--repeat" && index + 1 < argc) options.repeat = std::max<std::size_t>(1, std::strtoull(argv[++index], nullptr, 10));
