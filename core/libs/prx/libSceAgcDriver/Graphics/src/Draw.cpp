@@ -409,21 +409,6 @@ std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std:
 
 namespace {
 
-GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color) {
-    Require(color.arrayLastSlice != 0, "the color target is not a view of a 2D array");
-    auto surface = SurfaceForTarget(color);
-    surface.baseAddress = color.arrayAddress;
-    surface.width = color.surfaceExtent.width;
-    surface.height = color.surfaceExtent.height;
-    surface.depthOrLastArray = color.arrayLastSlice;
-    surface.dimension = TextureDimension::k2DArray;
-    return surface;
-}
-
-}
-
-namespace {
-
 bool writesStencilTarget(const State& state) {
     const auto keeps = [](const VkStencilOpState& face) {
         return face.writeMask == 0u || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP);
@@ -1440,13 +1425,13 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
 
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes, std::size_t stride) {
     Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
-    GuestMemory::FlushGpuWrites(address, bytes);
     auto readable = validBytes;
     if (stride != 0 && !GuestMemory::Accessible(reinterpret_cast<const void*>(address), validBytes)) {
         const auto ranges = GuestMemory::CommittedRanges(address, validBytes);
         const std::size_t prefix = !ranges.empty() && ranges.front().first == address ? static_cast<std::size_t>(ranges.front().second - address) : 0;
         if (validBytes - prefix < stride) readable = prefix;
     }
+    if (readable != 0) GuestMemory::FlushGpuWrites(address, readable);
     DrawInputCopy copy;
     auto* recorder = context.recorder;
     const bool keep = recorder != nullptr && readable != 0 && readable <= std::numeric_limits<std::uint32_t>::max();
@@ -3225,6 +3210,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             if (color.staged) {
                 const auto packed = StagedMergeTarget(color);
                 binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
+                PrepareMultisampleTargetForDraw_nid_no_patch(context, packed);
                 static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
                 binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
                 Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
@@ -3232,6 +3218,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 timer.phase(PhaseReadTarget);
                 continue;
             }
+            PrepareMultisampleTargetForDraw_nid_no_patch(context, color);
             targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
             timer.phase(PhaseReadTarget);
             continue;
