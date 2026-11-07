@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iterator>
 #include <mutex>
 #include <stdexcept>
@@ -580,7 +581,12 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     memoCost.Stop();
 
     Graphics::HeapCostScope walkCost(Graphics::HeapCost::Walk);
-    auto capture = captureWalk(invocation, userData, shaderBase, reads);
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+    try {
+        capture = captureWalk(invocation, userData, shaderBase, reads);
+    } catch (const std::exception&) {
+        return {};
+    }
     coalesceWords(reads.words, ranges);
     auto& values = HostThreadLocal<std::vector<std::uint32_t>, ValuesStorage>();
     if (!reads.failed) copyRangeValues(ranges, values);
