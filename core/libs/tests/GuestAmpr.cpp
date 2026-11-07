@@ -36,6 +36,7 @@ static void RequireAt(bool value, int line) {
 namespace {
 
 constexpr int invalidArgument = static_cast<int>(0x80020016);
+constexpr int invalidPointer = static_cast<int>(0x8002000E);
 constexpr int permissionDenied = static_cast<int>(0x80020001);
 constexpr int busy = static_cast<int>(0x80020010);
 constexpr std::uint32_t color = 0xFF8040u;
@@ -146,6 +147,9 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(nullptr, &gatherState, &scatterState) == invalidArgument);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, nullptr, &scatterState) == invalidArgument);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferConstructor(reinterpret_cast<Apr::CommandBufferObject*>(0x10)) == invalidPointer);
+    Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, reinterpret_cast<std::uint64_t*>(0x10), &scatterState) == invalidPointer);
+    Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
     Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
 }
@@ -1070,6 +1074,7 @@ void TestAmm() {
     Require(sceAmprAmmCommandBufferMapDirectWithGpuMaskId(&maps.buffer, alias, direct, 2 * page, 0, amprReadWrite, 3) == 0);
     std::uint32_t id = 0;
     Require(sceAmprAmmSubmitCommandBuffer3(maps.memory.data(), maps.Offset(), 0, &id) == 0 && id != 0);
+    Require(sceAmprAmmSubmitCommandBuffer3(maps.memory.data(), maps.Offset(), 0, reinterpret_cast<std::uint32_t*>(0x10)) == invalidPointer);
     Require(sceAmprAmmWaitCommandBufferCompletion(id) == 0);
     Require(sceAmprAmmWaitCommandBufferCompletion(id + 1000) == noSuchSubmission);
     At(automatic) = 0x1111;
@@ -1089,6 +1094,8 @@ void TestAmm() {
     Require(sceAmprAmmCommandBufferMapWithGpuMaskId(&remaps.buffer, reused, 6 * page, 0, cpuReadWrite, 1) == 0);
     std::uint64_t result = ~0ull;
     Require(sceAmprAmmSubmitCommandBuffer2(remaps.memory.data(), remaps.Offset(), 0, reinterpret_cast<AmmSubmitResult*>(&result), &id) == 0 && result == 0);
+    Require(sceAmprAmmSubmitCommandBuffer2(remaps.memory.data(), remaps.Offset(), 0, reinterpret_cast<AmmSubmitResult*>(0x10), &id) == invalidPointer);
+    Require(sceAmprAmmSubmitCommandBuffer2(remaps.memory.data(), remaps.Offset(), 0, reinterpret_cast<AmmSubmitResult*>(&result), reinterpret_cast<std::uint32_t*>(0x10)) == invalidPointer);
     Require(sceAmprAmmWaitCommandBufferCompletion(id) == 0);
     At(reused + 6 * page - 8) = 0x5555;
     Require(At(reused + 6 * page - 8) == 0x5555);
