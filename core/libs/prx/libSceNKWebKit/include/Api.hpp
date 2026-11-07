@@ -53,7 +53,6 @@ int APS5_VABI _ZNK7WebCore4Page14renderTreeSizeEv();
 int APS5_VABI _ZN9Inspector22HeapFrontendDispatcher13trackingStartEdRKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore11JSDOMWindow9setOpenerERN3JSC14JSGlobalObjectENS1_7JSValueE();
 int APS5_VABI _ZN7WebCore17NowPlayingManagernaEm();
-int APS5_VABI WKContextSetProcessModel();
 int APS5_VABI _ZN9Inspector15InspectorTargetD0Ev();
 int APS5_VABI _ZN7WebCore6Editor16pasteAsPlainTextENS0_20FromMenuOrKeyBindingE();
 int APS5_VABI _ZNK7WebCore6Quirks47shouldAvoidScrollingWhenFocusedContentIsVisibleEv();
@@ -129,7 +128,6 @@ int APS5_VABI _ZN3JSC9Integrity22auditCellMinimallySlowERNS_2VMEPNS_6JSCellE();
 int APS5_VABI _ZN9Inspector24TargetFrontendDispatchernwEm();
 int APS5_VABI _ZNK7WebCore16HTMLImageElement13naturalHeightEv();
 int APS5_VABI _ZN3JSC10LinkBuffer8linkCodeERNS_14MacroAssemblerENS_20JITCompilationEffortE();
-int APS5_VABI WKNotificationPermissionRequestAllow();
 int APS5_VABI _ZN7WebCore9FrameView11removeChildERNS_6WidgetE();
 
 }
