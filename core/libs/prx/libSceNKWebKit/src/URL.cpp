@@ -335,11 +335,13 @@ void ConvertToASCIILowercase(std::u16string& text) {
     }
 }
 
+constexpr char16_t kBackslash = 0x5C;
+
 bool IsForbiddenHostCodePoint(char16_t c) {
     if (c <= 0x20 || c == 0x7F) return true;
     switch (c) {
     case u'#': case u'%': case u'/': case u':': case u'<': case u'>': case u'?': case u'@':
-    case u'[': case u'\\': case u']': case u'^': case u'|':
+    case u'[': case kBackslash: case u']': case u'^': case u'|':
         return true;
     default:
         return false;
@@ -521,7 +523,7 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     const bool isSpecial = isFile || protocol == u"http" || protocol == u"https" || protocol == u"ftp" || protocol == u"ws" || protocol == u"wss";
     if (!isSpecial || NKWebKit::IsURLSchemeRegisteredAsNoAccess(protocol)) return CreateOpaqueOrigin();
 
-    const auto isSlash = [](char16_t c) { return c == u'/' || c == u'\\'; };
+    const auto isSlash = [](char16_t c) { return c == u'/' || c == kBackslash; };
     const std::u16string rest = text.substr(schemeEnd + 1);
     std::size_t authorityStart = 0;
     if (isFile) {
@@ -529,7 +531,8 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     } else {
         while (authorityStart < rest.size() && isSlash(rest[authorityStart])) ++authorityStart;
     }
-    const auto authorityEnd = rest.find_first_of(u"/\\?#", authorityStart);
+    static constexpr char16_t authorityDelimiters[] = {u'/', kBackslash, u'?', u'#', 0};
+    const auto authorityEnd = rest.find_first_of(authorityDelimiters, authorityStart);
     auto authority = rest.substr(authorityStart, authorityEnd == std::u16string::npos ? std::u16string::npos : authorityEnd - authorityStart);
 
     std::u16string host;
