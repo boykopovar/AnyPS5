@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <stdexcept>
+#include <vector>
 
 extern "C" {
 
@@ -19,8 +20,15 @@ void APS5_VABI BIO_set_flags_nid_postfix(LibreSsl3Bio* bio, int flags) {
     bio->flags |= flags;
 }
 
-int APS5_VABI BN_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+LibreSsl3Bignum* APS5_VABI BN_dup_nid_postfix(const LibreSsl3Bignum* source) {
+    if (!source) return nullptr;
+    const auto* value = reinterpret_cast<const Bignum*>(source);
+    std::vector<unsigned char> bytes((BN_num_bits_nid_postfix(value) + 7) / 8);
+    BN_bn2bin_nid_postfix(value, bytes.data());
+    auto* copy = BN_bin2bn_nid_postfix(bytes.data(), static_cast<int>(bytes.size()), nullptr);
+    if (!copy) return nullptr;
+    if (copy->top > 0) copy->neg = source->negative;
+    return reinterpret_cast<LibreSsl3Bignum*>(copy);
 }
 
 int APS5_VABI ERR_func_error_string_nid_postfix() {
