@@ -307,7 +307,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     const auto& snapshot = *found->second.registeredShader;
                     std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
                     if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
-                    auto lap = std::chrono::steady_clock::now();
+                    auto lap = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                     std::array<double, DriverPhaseCount> phaseMs{};
                     auto phaseLap = lap;
                     DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
