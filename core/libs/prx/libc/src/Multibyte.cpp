@@ -165,14 +165,15 @@ int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value) {
     return static_cast<int>(EncodeUtf8(destination, value));
 }
 
-int APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void*) {
-    if (!source) return mbtowc_nid_postfix(nullptr, "", count);
-    return mbtowc_nid_postfix(destination, source, count);
+int APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state) {
+    const std::size_t result = mbrtowc_nid_postfix(destination, source, count, state);
+    if (result == Incomplete) return -2;
+    return result == Invalid ? -1 : static_cast<int>(result);
 }
 
-int APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void*) {
-    char scratch[8] {};
-    return wctomb_nid_postfix(destination ? destination : scratch, value);
+int APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state) {
+    const std::size_t result = wcrtomb_nid_postfix(destination, value, state);
+    return result == Invalid ? -1 : static_cast<int>(result);
 }
 
 std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void*) {

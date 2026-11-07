@@ -101,6 +101,9 @@ static void CheckConsoleConversions() {
     unsigned char state[16] {};
     Require(_Mbrtowc_nid_postfix(&wide, "\xc3\xa9", 2, state) == 2 && wide == 0xe9, "_Mbrtowc converts with a caller state");
     Require(_Mbrtowc_nid_postfix(&wide, "\xe2\x82\xac", 3, state) == 3 && wide == 0x20ac, "_Mbrtowc converts a three-byte form");
+    unsigned char pending[16] {};
+    Require(_Mbrtowc_nid_postfix(&wide, "\xe2", 1, pending) == -2, "_Mbrtowc keeps half a character pending in the caller state");
+    Require(_Mbrtowc_nid_postfix(&wide, "\x82\xac", 2, pending) == 2 && wide == 0x20ac, "_Mbrtowc finishes it from the caller state");
     wide = 0x7777;
     Require(_Mbrtowc_nid_postfix(&wide, nullptr, 1, state) == 0 && wide == 0x7777, "_Mbrtowc of a null string converts nothing");
     Require(_Mbrtowc_nid_postfix(nullptr, "A", 1, state) == 1, "_Mbrtowc counts without a destination");
@@ -110,7 +113,7 @@ static void CheckConsoleConversions() {
     char bytes[8] {};
     Require(_Wcrtomb_nid_postfix(bytes, 'A', nullptr) == 1 && bytes[0] == 'A', "_Wcrtomb writes with its own state");
     Require(_Wcrtomb_nid_postfix(bytes, 0x20ac, state) == 3 && std::memcmp(bytes, "\xe2\x82\xac", 3) == 0, "_Wcrtomb writes with a caller state");
-    Require(_Wcrtomb_nid_postfix(nullptr, 0x20ac, state) == 3, "_Wcrtomb counts without a destination");
+    Require(_Wcrtomb_nid_postfix(nullptr, 0x20ac, state) == 1, "_Wcrtomb reports one byte without a destination");
 }
 
 static void CheckStrings() {
