@@ -733,9 +733,21 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words) {
     return Allocate(words, mark);
 }
 
+BindlessHeap::SpanScope::SpanScope(const BindlessHeap& heap) : heap(heap), acquired(heap.spanOwner.load(std::memory_order_relaxed) != std::this_thread::get_id()) {
+    if (!acquired) return;
+    heap.spanMutex.lock();
+    heap.spanOwner.store(std::this_thread::get_id(), std::memory_order_relaxed);
+}
+
+BindlessHeap::SpanScope::~SpanScope() {
+    if (!acquired) return;
+    heap.spanOwner.store(std::thread::id{}, std::memory_order_relaxed);
+    heap.spanMutex.unlock();
+}
+
 bool BindlessHeap::Held(const SpanMark& mark) {
     if (mark.entry == 0u || mark.words == 0u) return false;
-    std::lock_guard lock(mutex);
+    SpanScope scope(*this);
     return heldLocked(mark);
 }
 
@@ -781,12 +793,12 @@ void BindlessHeap::Write(const DataSpan& span, std::span<const std::uint32_t> wo
 }
 
 BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark) {
-    std::lock_guard lock(mutex);
+    SpanScope scope(*this);
     return allocateLocked(words, mark);
 }
 
 std::optional<BindlessHeap::DataSpan> BindlessHeap::KeepOrAllocate(std::size_t words, SpanMark& mark, bool same) {
-    std::lock_guard lock(mutex);
+    SpanScope scope(*this);
     if (same && heldLocked(mark)) return std::nullopt;
     return allocateLocked(words, mark);
 }
@@ -890,13 +902,13 @@ bool BindlessHeap::TakeSlotPressure() {
 
 bool BindlessHeap::TakeRingPressure() {
     if (ringChunks.empty() || ringOpenChunks.load(std::memory_order_relaxed) < std::max<std::size_t>(2u, ringChunks.size() / 2u)) return false;
-    std::lock_guard lock(mutex);
+    SpanScope scope(*this);
     ++counts.ringPressureSubmits;
     return true;
 }
 
 std::pair<VkBuffer, VkDeviceSize> BindlessHeap::DataLocation(VkDeviceAddress address) const {
-    std::lock_guard lock(mutex);
+    SpanScope scope(*this);
     for (const auto& block : poolBlocks) {
         if (block.buffer != nullptr && address >= block.address && address < block.address + block.bytes) return {block.buffer->Handle(), address - block.address};
     }
@@ -907,7 +919,7 @@ BindlessHeap::DataSpan BindlessHeap::RingAllocate(std::size_t words, SpanMark& m
     Require(ringInHeap, "the GPU heap has no descriptor ring");
     const auto bytes = alignUp(words * sizeof(std::uint32_t), RingSpanAlignment);
     if (bytes > ringBytes / 4u) throw std::runtime_error("AGC bindless heap: one draw's buffer descriptors exceed a quarter of the descriptor ring");
-    std::lock_guard lock(mutex);
+    SpanScope scope(*this);
     auto offset = wrapRingOffset(alignUp(ringCursor, ringAlignment), bytes);
     enum class Taken { No, Kept, Busy };
     const auto taken = [&](bool skipBusy) {
@@ -1345,6 +1357,7 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
 
 std::uint32_t BindlessHeap::RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark) {
     Require(ringInHeap && context.descriptorHeapProperties.bufferDescriptorSize == BufferSlotBytes, "ring buffer descriptors need the descriptor ring inside the resource heap");
+    SpanScope scope(*this);
     const auto span = RingAllocate(buffers.size() * (BufferSlotBytes / sizeof(std::uint32_t)), mark);
     counts.bufferDescriptors += buffers.size();
     Require(span.offset % BufferSlotBytes == 0u, "a ring buffer descriptor span is misaligned");
@@ -1706,20 +1719,23 @@ void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {
 
 void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
     if (!recorder.HasTimeline()) throw std::runtime_error("AGC bindless heap: a batch using the heap was submitted by a recorder without a timeline semaphore");
-    std::lock_guard lock(mutex);
-    submitter = &recorder;
-    useEpoch.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard lock(mutex);
+        submitter = &recorder;
+        useEpoch.fetch_add(1, std::memory_order_relaxed);
+        if (refused && imagePool.Unused() + imageRetiring() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked(EvictIdleSubmissions);
+        if (refused && samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(EvictIdleSubmissions);
+        for (auto entry = retiring.rbegin(); entry != retiring.rend() && entry->serial == 0u; ++entry) {
+            entry->serial = serial;
+            if (entry->sampler) ++samplerRetiringAssigned;
+            else ++retiringAssigned;
+        }
+        if (!retiring.empty()) reclaimLocked(false);
+        noteReleasedLocked();
+    }
+    SpanScope scope(*this);
     counts.ringBatchPeakBytes = std::max<std::uint64_t>(counts.ringBatchPeakBytes, ringBatchBytes);
     ringBatchBytes = 0;
-    if (refused && imagePool.Unused() + imageRetiring() < 2u * static_cast<std::size_t>(imageMargin())) evictLocked(EvictIdleSubmissions);
-    if (refused && samplerPool.Unused() + retiringSamplers < 2u * SamplerSlotMargin) evictSamplersLocked(EvictIdleSubmissions);
-    for (auto entry = retiring.rbegin(); entry != retiring.rend() && entry->serial == 0u; ++entry) {
-        entry->serial = serial;
-        if (entry->sampler) ++samplerRetiringAssigned;
-        else ++retiringAssigned;
-    }
-    if (!retiring.empty()) reclaimLocked(false);
-    noteReleasedLocked();
     for (std::size_t index = 0; index < ringChunks.size(); ++index) {
         if (!ringChunks[index].open && index != ringChunk) continue;
         ringChunks[index].recorder = &recorder;
@@ -1740,6 +1756,7 @@ void BindlessHeap::Submitted(Recorder& recorder, std::uint64_t serial) {
 }
 
 BindlessHeap::Counts BindlessHeap::Statistics() const {
+    SpanScope scope(*this);
     std::lock_guard lock(mutex);
     auto snapshot = counts;
     for (const auto& block : poolBlocks) {

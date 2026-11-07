@@ -9,12 +9,15 @@
 #include "RuntimeAbi.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -290,6 +293,45 @@ bool ringPressure(const Context& context) {
     heap.Submitted(recorder, 0u);
     require(heap.Held(kept) && !heap.TakeRingPressure(), "chunks of earlier batches do not count");
     return true;
+}
+
+void writeTails(const Context& context) {
+    BindlessHeap heap(context);
+    for (const std::size_t count : {0u, 1u, 3u, 4u, 5u, 7u, 9u}) {
+        std::vector<std::uint32_t> words(count);
+        for (std::size_t index = 0; index < count; ++index) words[index] = 0x1000u * static_cast<std::uint32_t>(count) + static_cast<std::uint32_t>(index) + 1u;
+        BindlessHeap::SpanMark mark;
+        const auto span = heap.Allocate(count + 1u, mark);
+        span.words[count] = 0xdeadbeefu;
+        BindlessHeap::Write(span, words);
+        require(std::equal(words.begin(), words.end(), span.words.begin()), "a GPU heap span holds other words than were written");
+        require(span.words[count] == 0xdeadbeefu, "writing a GPU heap span wrote past its words");
+    }
+}
+
+void spanScope(const Context& context) {
+    BindlessHeap heap(context);
+    BindlessHeap::SpanMark first;
+    std::atomic<bool> allocated{false};
+    std::thread other;
+    bool waited = false;
+    {
+        const BindlessHeap::SpanScope outer(heap);
+        const BindlessHeap::SpanScope inner(heap);
+        static_cast<void>(heap.Allocate(16u, first));
+        require(heap.Held(first) && !heap.KeepOrAllocate(16u, first, true), "spans are allocated and kept inside nested scopes");
+        other = std::thread([&] {
+            BindlessHeap::SpanMark mark;
+            static_cast<void>(heap.Allocate(16u, mark));
+            allocated.store(true, std::memory_order_release);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        waited = !allocated.load(std::memory_order_acquire);
+    }
+    other.join();
+    require(waited, "another thread's span waits while a scope holds the allocator");
+    require(allocated.load(std::memory_order_acquire) && heap.Held(first), "the other thread allocates once the scope ends");
+    require(heap.Statistics().spansWritten == 2u, "both spans are counted");
 }
 
 void ringCurrentChunk(const Context& context) {
@@ -740,6 +782,8 @@ int main(int argc, char** argv) {
             samplerSlots(context);
             if (!ringPressure(context)) std::printf("the ring pressure test needs at least four chunks\n");
             if (!dataPool(context)) std::printf("the data pool tests need the recorder timeline\n");
+            spanScope(context);
+            writeTails(context);
             if (BindlessHeap(context).RingChunkCount() != 0u) {
                 ringSpans(context);
                 ringCurrentChunk(context);

@@ -6640,6 +6640,7 @@ bool ShaderResources::stageReadsOverride(std::size_t stage, const std::vector<Vk
 std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderResources::addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const {
     auto offsets = heapOffsets;
     auto& heap = BindlessHeap::For(context);
+    const BindlessHeap::SpanScope spans(heap);
     const auto moved = [&](std::size_t stage) { return overrides == nullptr || stageReadsOverride(stage, *overrides); };
     for (std::size_t stage = 0; stage < stageDataWords.size(); ++stage) {
         if (stageDataWords[stage].empty() || !moved(stage)) continue;
@@ -6707,8 +6708,11 @@ PipelineSetLayouts ShaderResources::SetLayouts() const {
 
 void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) {
     resolveBufferAddresses();
+    std::optional<BindlessHeap::SpanScope> spans;
     for (const auto& shader : shaders) {
-        if (HeapShader(shader)) writeHeapStage(shader);
+        if (!HeapShader(shader)) continue;
+        if (!spans) spans.emplace(BindlessHeap::For(context));
+        writeHeapStage(shader);
     }
 }
 
@@ -7232,6 +7236,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     HeapCostScope slotsCost(HeapCost::Slots);
     auto& heap = BindlessHeap::For(context);
+    const BindlessHeap::SpanScope spans(heap);
     const VkShaderStageFlags stageBit = VulkanStage(shader.stage);
     const auto stageIndex = HeapStageIndex(shader.stage);
     auto& stageState = heapStages[stageIndex];

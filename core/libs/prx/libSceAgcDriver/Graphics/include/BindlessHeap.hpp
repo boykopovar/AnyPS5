@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -94,6 +95,17 @@ public:
     DataSpan RingAllocate(std::size_t words, SpanMark& mark);
     static void Write(const DataSpan& span, std::span<const std::uint32_t> words);
     bool Held(const SpanMark& mark);
+    class SpanScope {
+    public:
+        explicit SpanScope(const BindlessHeap& heap);
+        ~SpanScope();
+        SpanScope(const SpanScope&) = delete;
+        SpanScope& operator=(const SpanScope&) = delete;
+
+    private:
+        const BindlessHeap& heap;
+        bool acquired;
+    };
     std::optional<DataSpan> KeepOrAllocate(std::size_t words, SpanMark& mark, bool same);
     std::uint32_t RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark);
     static constexpr std::uint32_t BufferSlotBytes = 16u;
@@ -174,6 +186,8 @@ private:
     void trimPoolLocked();
     std::uint32_t ringAlignment = 256;
     mutable std::mutex mutex;
+    mutable std::mutex spanMutex;
+    mutable std::atomic<std::thread::id> spanOwner{};
     struct EmbeddedSampler {
         VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         VkSamplerReductionModeCreateInfoEXT reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT};
