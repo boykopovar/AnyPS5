@@ -2830,7 +2830,7 @@ void ShaderResources::noteReusable() {
     if (!spaceReusable && (htileClear.has_value() || guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled()))) return;
     static const bool noPerUseTemplates = std::getenv("APS5_NO_PER_USE_TEXTURE_TEMPLATES") != nullptr;
     const bool perUse = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); });
-    if (perUse && (noPerUseTemplates || spaceReusable)) return;
+    if (perUse && (noPerUseTemplates || spaceReusable || !recordsEveryTexture())) return;
     perUseTextures = perUse;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
     if (spaceReusable) {
@@ -3336,6 +3336,10 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 bool ShaderResources::keepsTemplateRecords() const {
     static const bool always = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
     return always || !(usesBda || (usesFaultBuffer && LoopGuardEnabled()));
+}
+
+bool ShaderResources::recordsEveryTexture() const {
+    return validatedTextures.size() == textures.size() && std::all_of(validatedTextures.begin(), validatedTextures.end(), [](const ValidatedSurface& surface) { return surface.valid; });
 }
 
 // Turns the lookups' records into this object's per-texture validation records (see
@@ -3927,7 +3931,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             const auto* images = tableImages(shaders, table.stage);
             if (images == nullptr || images->count != table.elementTextures.size()) return miss("image table of another size at texture", textureIndex);
             std::vector<std::shared_ptr<Texture>> cached;
-            if (auto* reused = FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+            if (auto* reused = partial ? nullptr : FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
                 auto next = cached.begin();
                 bool same = true;
                 for (std::uint32_t element = 0; same && element < images->count; ++element) {
