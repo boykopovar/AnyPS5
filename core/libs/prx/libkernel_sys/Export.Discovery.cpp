@@ -123,9 +123,8 @@ int APS5_VABI get_sdk_compiled_version_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI get_self_auth_info_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI get_self_auth_info_nid_postfix(KernelAuthInfo* info) {
+    return get_authinfo_nid_postfix(0, info);
 }
 
 int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
