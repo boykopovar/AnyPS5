@@ -1868,9 +1868,9 @@ GuestLocale::OutputIterator PutSceV2Field(GuestLocale::OutputIterator out, Guest
 std::string TakeSceV2String(SceV2String* (APS5_VABI* method)(SceV2String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
     SceV2String value{};
     method(&value, AsNumpunct(facet));
-    const bool onHeap = value.capacity > GuestStringInlineCapacity;
+    const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, value.capacity + 1);
     return text;
 }
 
