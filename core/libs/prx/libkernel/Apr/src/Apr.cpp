@@ -28,6 +28,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <new>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -188,9 +189,28 @@ void _readFile(const Apr::ReadFileCommand& command) {
     if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
 }
 
+std::string _addressText(std::uint64_t address) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(address));
+    return text;
+}
+
+void _storeGuestAddress(std::uint64_t address, std::uint64_t value) {
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), &value, sizeof(value)))
+        throw std::runtime_error("APR: the write address " + _addressText(address) + " is not writable guest memory");
+    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(value, std::memory_order_release);
+}
+
+std::uint64_t _loadGuestAddress(std::uint64_t address) {
+    std::uint64_t value = 0;
+    if (!GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address), sizeof(value)))
+        throw std::runtime_error("APR: the wait address " + _addressText(address) + " is not readable guest memory");
+    return value;
+}
+
 void _writeAddress(const Apr::WriteAddressCommand& command) {
     if (command.flags != 0) throw std::runtime_error("APR: WriteAddress flags " + std::to_string(command.flags) + " not implemented");
-    std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(command.value, std::memory_order_release);
+    _storeGuestAddress(command.address, command.value);
 }
 
 std::array<std::atomic<std::uint32_t>, 256> g_counters{};
@@ -651,6 +671,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             const auto command = _read<Apr::WaitCommand>(buffer, cursor);
             const bool counter = header.opcode == Apr::Opcode::WaitOnCounter;
             const std::uint32_t unused = counter ? 64u - _counterField(command.access).bits : 0u;
+            if (!counter) static_cast<void>(_loadGuestAddress(command.address));
             const auto current = [&]() -> std::uint64_t {
                 if (counter) return _readCounter(command.counter, command.access);
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
@@ -668,7 +689,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {
             const auto command = _read<Apr::WriteAddressFromCounterCommand>(buffer, cursor);
-            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(sceKernelGetProcessTimeCounter(), std::memory_order_release);
+            _storeGuestAddress(command.address, sceKernelGetProcessTimeCounter());
             break;
         }
         case Apr::Opcode::WriteAddressFromCounter:
@@ -676,7 +697,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
             const auto command = _read<Apr::WriteAddressFromCounterCommand>(buffer, cursor);
             std::uint64_t value = _counter(command.counter0);
             if (header.opcode == Apr::Opcode::WriteAddressFromCounterPair) value |= static_cast<std::uint64_t>(_counter(command.counter1)) << 32u;
-            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).store(value, std::memory_order_release);
+            _storeGuestAddress(command.address, value);
             break;
         }
         default:
@@ -715,7 +736,6 @@ struct AprQueue {
     std::mutex submit;
     std::mutex mutex;
     std::condition_variable ready;
-    std::condition_variable done;
     struct Work {
         std::vector<std::uint8_t> commands;
         Deferred resume;
@@ -723,13 +743,32 @@ struct AprQueue {
     };
     std::deque<Work> pending;
     bool running = false;
-    std::uint32_t submitted = 0;
-    std::uint32_t completed = 0;
 };
 
-AprQueue* _startQueue() {
+struct AprCompletion {
+    std::mutex mutex;
+    std::condition_variable done;
+    std::set<std::uint32_t> outstanding;
+    std::uint32_t issued = 0;
+};
+
+AprCompletion& _completion(bool amm) {
+    static AprCompletion* const completions[2] = {new AprCompletion(), new AprCompletion()};
+    return *completions[amm ? 1 : 0];
+}
+
+void _complete(bool amm, std::uint32_t id) {
+    auto& completion = _completion(amm);
+    {
+        std::lock_guard lock(completion.mutex);
+        completion.outstanding.erase(id);
+    }
+    completion.done.notify_all();
+}
+
+AprQueue* _startQueue(bool amm) {
     auto* created = new AprQueue();
-    std::thread([created] {
+    std::thread([created, amm] {
         for (;;) {
             AprQueue::Work work;
             {
@@ -750,27 +789,39 @@ AprQueue* _startQueue() {
             {
                 std::lock_guard lock(created->mutex);
                 created->running = false;
-                created->completed = std::max(created->completed, work.id);
             }
-            created->done.notify_all();
+            _complete(amm, work.id);
         }
     }).detach();
     return created;
 }
 
-AprQueue& _queue(bool amm) {
-    static AprQueue* const queues[2] = {_startQueue(), _startQueue()};
-    return *queues[amm ? 1 : 0];
+AprQueue& _queue(bool amm, std::uint32_t priority) {
+    if (amm) {
+        static AprQueue* const ammQueue = _startQueue(true);
+        return *ammQueue;
+    }
+    static std::mutex& queuesLock = *new std::mutex();
+    static std::map<std::uint32_t, AprQueue*>& queues = *new std::map<std::uint32_t, AprQueue*>();
+    std::lock_guard lock(queuesLock);
+    auto& queue = queues[priority];
+    if (queue == nullptr) queue = _startQueue(false);
+    return *queue;
 }
 
-std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm) {
-    auto& queue = _queue(amm);
+std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm, std::uint32_t priority = 0) {
+    auto& queue = _queue(amm, priority);
+    auto& completion = _completion(amm);
     std::lock_guard submitLock(queue.submit);
     std::uint32_t id;
+    {
+        std::lock_guard lock(completion.mutex);
+        id = ++completion.issued;
+        completion.outstanding.insert(id);
+    }
     bool queued;
     {
         std::lock_guard lock(queue.mutex);
-        id = ++queue.submitted;
         queued = queue.running || !queue.pending.empty();
     }
     const auto enqueue = [&](Deferred resume) {
@@ -788,18 +839,14 @@ std::uint32_t _submit(const std::uint8_t* base, std::uint32_t bytes, bool amm) {
         enqueue(*deferred);
         return id;
     }
-    {
-        std::lock_guard lock(queue.mutex);
-        queue.completed = std::max(queue.completed, id);
-    }
-    queue.done.notify_all();
+    _complete(amm, id);
     return id;
 }
 
 void _waitSubmitted(std::uint32_t id, bool amm) {
-    auto& queue = _queue(amm);
-    std::unique_lock lock(queue.mutex);
-    queue.done.wait(lock, [&] { return queue.completed >= id || id > queue.submitted; });
+    auto& completion = _completion(amm);
+    std::unique_lock lock(completion.mutex);
+    completion.done.wait(lock, [&] { return id > completion.issued || !completion.outstanding.contains(id); });
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
@@ -809,9 +856,9 @@ std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
     if (id == 0) return false;
     {
-        auto& queue = _queue(true);
-        std::lock_guard lock(queue.mutex);
-        if (id > queue.submitted) return false;
+        auto& completion = _completion(true);
+        std::lock_guard lock(completion.mutex);
+        if (id > completion.issued) return false;
     }
     _waitSubmitted(id, true);
     return true;
@@ -875,18 +922,37 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     return 0;
 }
 
+std::optional<std::vector<std::uint8_t>> _guestCommands(const Apr::CommandBufferObject& object) {
+    if (object.offset > object.size) return std::nullopt;
+    std::vector<std::uint8_t> commands;
+    try {
+        commands.resize(object.offset);
+    } catch (const std::bad_alloc&) {
+        return std::nullopt;
+    }
+    if (object.offset != 0 && !GuestCopyIn_nid_no_patch(commands.data(), object.base, object.offset)) return std::nullopt;
+    return commands;
+}
+
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
-    (void)priority;
     if (!buffer) return _fail(GUEST_EINVAL);
-    _submit(buffer->base, buffer->offset, false);
+    Apr::CommandBufferObject object{};
+    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
+    const auto commands = _guestCommands(object);
+    if (!commands) return _fail(GUEST_EFAULT);
+    _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
     if (!id) return _fail(GUEST_EINVAL);
-    (void)priority;
     if (!buffer) return _fail(GUEST_EINVAL);
-    *id = _submit(buffer->base, buffer->offset, false);
+    Apr::CommandBufferObject object{};
+    if (!GuestCopyIn_nid_no_patch(&object, buffer, sizeof(object))) return _fail(GUEST_EFAULT);
+    const auto commands = _guestCommands(object);
+    if (!commands) return _fail(GUEST_EFAULT);
+    const std::uint32_t submitted = _submit(commands->data(), static_cast<std::uint32_t>(commands->size()), false, priority);
+    if (!GuestCopyOut_nid_no_patch(id, &submitted, sizeof(submitted))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
@@ -894,7 +960,8 @@ int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBuff
     if (!result) return _fail(GUEST_EINVAL);
     const int submitted = sceKernelAprSubmitCommandBufferAndGetId(buffer, priority, id);
     if (submitted != 0) return submitted;
-    *result = 0;
+    const std::uint32_t succeeded = 0;
+    if (!GuestCopyOut_nid_no_patch(result, &succeeded, sizeof(succeeded))) return _fail(GUEST_EFAULT);
     return 0;
 }
 

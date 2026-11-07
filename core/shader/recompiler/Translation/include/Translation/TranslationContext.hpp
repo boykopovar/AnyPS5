@@ -32,6 +32,8 @@ public:
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+    IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
+    void WriteOperand(const RdnaOperand& operand, IrValue* value) { writeOperand(operand, value); }
 
 private:
     struct AddressOperands {
@@ -63,12 +65,16 @@ private:
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
+    IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> overflowSources);
+    IrF32 clampF16Result(const RdnaOperand& operand, IrF32 value);
+    IrF32 scaleF16Result(std::uint32_t omod, IrF32 value);
+    IrU32 scaleF16Bits(std::uint32_t omod, IrU32 bits);
+    IrValue& scaleF64Result(std::uint32_t omod, IrValue& value);
     bool outputModifierApplies(std::uint32_t denormalShift) const;
     bool dx10Clamp() const { return !floatMode.has_value() || floatMode->dx10Clamp; }
     bool fp16Overflow() const { return floatMode.has_value() && floatMode->fp16Overflow; }
     bool nativeFloat16Mode() const { return nativeFloat16 && (!floatMode.has_value() || (floatMode->floatMode & 0xccu) == 0xc0u); }
     IrF32 clampF16Overflow(IrF32 value, std::initializer_list<IrValue*> sources);
-    void rejectHalfOrDoubleOutputModifier(const RdnaOperand& operand) const;
     IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused = false);
@@ -89,6 +95,7 @@ private:
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr, bool multiplication = false);
+    IrValue* propagatedNanResultF32(std::initializer_list<IrValue*> sources, IrValue* result);
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
@@ -218,6 +225,7 @@ private:
     bool float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool float16Native(const RdnaInstruction& inst, IrOpcode opcode, const RdnaOperand& lhsOperand, const RdnaOperand& rhsOperand);
+    bool float16NativeFma(const RdnaInstruction& inst, bool accumulator);
     IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
