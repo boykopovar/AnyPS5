@@ -96,6 +96,17 @@ int main() {
     std::uint32_t reusedContext = 0;
     Require(sceNpSessionSignalingCreateContext(reinterpret_cast<const SessionSignalingContextParam1*>(contextParam), &reusedContext) == 0, "reuse context slot one");
     Require(sceNpSessionSignalingGetCustomProperty(reusedContext, &previousProperty) == 0 && previousProperty == 0, "reused context one kept state");
+    std::uint32_t customProp = 0x12345678u;
+    std::uint32_t prevProp = 0;
+    Require(sceNpSessionSignalingSetCustomProperty(reusedContext, nullptr, nullptr) == InvalidArgument, "null property parameter");
+    Require(sceNpSessionSignalingSetCustomProperty(999999, &customProp, nullptr) == ContextNotFound, "set custom property unknown context");
+    Require(sceNpSessionSignalingSetCustomProperty(reusedContext, &customProp, &prevProp) == 0, "set custom property success");
+    Require(prevProp == 0, "previous property initial value");
+    Require(sceNpSessionSignalingGetCustomProperty(reusedContext, &previousProperty) == 0 && previousProperty == customProp, "get custom property verified");
+    std::uint32_t newProp = 0x87654321u;
+    Require(sceNpSessionSignalingSetCustomProperty(reusedContext, &newProp, &prevProp) == 0, "set custom property update");
+    Require(prevProp == customProp, "previous property updated value");
+    Require(sceNpSessionSignalingGetCustomProperty(reusedContext, &previousProperty) == 0 && previousProperty == newProp, "get custom property updated");
 
     std::uint32_t requestId = 0xa5a5a5a5u;
     Require(sceNpSessionSignalingRequestPrepare(firstId, &requestId) == ContextNotFound, "prepare stale context");
