@@ -156,6 +156,10 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     std::vector<ProgramHeader> relroProtections;
     for (auto& relro : headers) {
         if (relro.Type != PT_OS_RELRO || relro.MemorySize == 0) continue;
+        if (relro.FileSize > relro.MemorySize)
+            throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
+        if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
+            throw RelinkerException("Segment offset out of bounds", relro.Offset);
         bool covered = false;
         for (const auto& load : headers) {
             if (load.Type != PT_LOAD || load.MemorySize == 0) continue;
@@ -166,10 +170,6 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             covered = true;
         }
         if (!covered) {
-            if (relro.FileSize > relro.MemorySize)
-                throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
-            if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
-                throw RelinkerException("Segment offset out of bounds", relro.Offset);
             auto protection = relro;
             protection.Type = PT_GNU_RELRO;
             protection.Flags = PF_R;
