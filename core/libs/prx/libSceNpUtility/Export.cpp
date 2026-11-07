@@ -24,6 +24,13 @@ static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_ALREADY_INITIALIZED = static_
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055B302);
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055B305);
 static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055B304);
+static constexpr int SCE_NP_APP_INFO_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055B201);
+static constexpr int SCE_NP_APP_LAUNCH_LINK_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055AE01);
+static constexpr int SCE_NP_APP_LAUNCH_LINK2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055C601);
+static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055AD01);
+static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055AD02);
+static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055AD06);
+static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AD0B);
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
@@ -67,6 +74,22 @@ struct ServiceChecker2 {
     std::uint32_t nextRequest = 1;
 };
 ServiceChecker2 serviceChecker2;
+
+struct FamilyState {
+    std::mutex mutex;
+    bool initialized = false;
+};
+FamilyState appInfo;
+FamilyState appLaunchLink;
+FamilyState appLaunchLink2;
+
+struct ServiceChecker1 {
+    std::mutex mutex;
+    bool initialized = false;
+    std::unordered_set<int> requests;
+    std::int32_t nextRequest = 1;
+};
+ServiceChecker1 serviceChecker1;
 
 int AddTitleContext(Service& service) {
     std::lock_guard lock(service.mutex);
@@ -267,12 +290,15 @@ int APS5_VABI sceNpAppInfoIntDestroyRequest() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppInfoIntFinalize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceNpAppInfoIntFinalize(void) {
+    std::lock_guard lock(appInfo.mutex);
+    appInfo.initialized = false;
 }
-int APS5_VABI sceNpAppInfoIntInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAppInfoIntInitialize(std::int32_t userId) {
+    (void)userId;
+    std::lock_guard lock(appInfo.mutex);
+    if (appInfo.initialized) return SCE_NP_APP_INFO_ERROR_ALREADY_INITIALIZED;
+    appInfo.initialized = true;
     return 0;
 }
 int APS5_VABI sceNpAppLaunchLink2IntAbortRequest() {
@@ -287,9 +313,9 @@ int APS5_VABI sceNpAppLaunchLink2IntDestroyRequest() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppLaunchLink2IntFinalize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceNpAppLaunchLink2IntFinalize(void) {
+    std::lock_guard lock(appLaunchLink2.mutex);
+    appLaunchLink2.initialized = false;
 }
 int APS5_VABI sceNpAppLaunchLink2IntGetCompatibleTitleIdList() {
     NotImplemented_nid_no_patch(__func__);
@@ -299,8 +325,11 @@ int APS5_VABI sceNpAppLaunchLink2IntGetCompatibleTitleIdNum() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppLaunchLink2IntInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAppLaunchLink2IntInitialize(std::int32_t userId) {
+    (void)userId;
+    std::lock_guard lock(appLaunchLink2.mutex);
+    if (appLaunchLink2.initialized) return SCE_NP_APP_LAUNCH_LINK2_ERROR_ALREADY_INITIALIZED;
+    appLaunchLink2.initialized = true;
     return 0;
 }
 int APS5_VABI sceNpAppLaunchLinkIntAbortRequest() {
@@ -315,9 +344,9 @@ int APS5_VABI sceNpAppLaunchLinkIntDestroyRequest() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppLaunchLinkIntFinalize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceNpAppLaunchLinkIntFinalize(void) {
+    std::lock_guard lock(appLaunchLink.mutex);
+    appLaunchLink.initialized = false;
 }
 int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdList() {
     NotImplemented_nid_no_patch(__func__);
@@ -327,8 +356,11 @@ int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdNum() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpAppLaunchLinkIntInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAppLaunchLinkIntInitialize(std::int32_t userId) {
+    (void)userId;
+    std::lock_guard lock(appLaunchLink.mutex);
+    if (appLaunchLink.initialized) return SCE_NP_APP_LAUNCH_LINK_ERROR_ALREADY_INITIALIZED;
+    appLaunchLink.initialized = true;
     return 0;
 }
 int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo() {
@@ -459,21 +491,31 @@ int APS5_VABI sceNpServiceChecker2IntIsSetServiceType(const std::uint32_t* servi
     if (!serviceTypes || serviceType > 9) return 0;
     return static_cast<int>((serviceTypes[serviceType >> 5] >> serviceType) & 1);
 }
-int APS5_VABI sceNpServiceCheckerIntAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceCheckerIntAbortRequest(std::int32_t requestId) {
+    std::lock_guard lock(serviceChecker1.mutex);
+    if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
+    if (serviceChecker1.requests.erase(requestId) == 0) return SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND;
     return 0;
 }
-int APS5_VABI sceNpServiceCheckerIntCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceCheckerIntCreateRequest(const void* npId, std::int32_t* requestId) {
+    if (!npId || !requestId) return SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(serviceChecker1.mutex);
+    if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
+    const std::int32_t id = serviceChecker1.nextRequest++;
+    serviceChecker1.requests.insert(id);
+    *requestId = id;
     return 0;
 }
-int APS5_VABI sceNpServiceCheckerIntDestroyRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceCheckerIntDestroyRequest(std::int32_t requestId) {
+    std::lock_guard lock(serviceChecker1.mutex);
+    if (!serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED;
+    serviceChecker1.requests.erase(requestId);
     return 0;
 }
-int APS5_VABI sceNpServiceCheckerIntFinalize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceNpServiceCheckerIntFinalize(void) {
+    std::lock_guard lock(serviceChecker1.mutex);
+    serviceChecker1.initialized = false;
+    serviceChecker1.requests.clear();
 }
 int APS5_VABI sceNpServiceCheckerIntGetAvailability() {
     NotImplemented_nid_no_patch(__func__);
@@ -483,8 +525,11 @@ int APS5_VABI sceNpServiceCheckerIntGetAvailabilityList() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpServiceCheckerIntInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceCheckerIntInitialize(std::int32_t userId) {
+    (void)userId;
+    std::lock_guard lock(serviceChecker1.mutex);
+    if (serviceChecker1.initialized) return SCE_NP_SERVICE_CHECKER_ERROR_ALREADY_INITIALIZED;
+    serviceChecker1.initialized = true;
     return 0;
 }
 int APS5_VABI sceNpServiceCheckerIntIsCached() {
@@ -512,11 +557,9 @@ int APS5_VABI sceNpTitleMetadataIntGetNpTitleId() {
     return 0;
 }
 int APS5_VABI sceNpUtilityInit() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpUtilityTerm() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpWordFilterCreateTitleCtxA(int userId) {

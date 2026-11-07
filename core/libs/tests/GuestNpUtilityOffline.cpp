@@ -120,6 +120,46 @@ void CheckWordFilter() {
     Require(sceNpLookupDeleteTitleCtx(context) == InvalidId, "sceNpLookupDeleteTitleCtx", "a word filter context was found among the lookup contexts");
 }
 
+void CheckNpUtilityLifecycles() {
+    constexpr int AppInfoAlreadyInitialized = static_cast<int>(0x8055B201u);
+    constexpr int AppLaunchLinkAlreadyInitialized = static_cast<int>(0x8055AE01u);
+    constexpr int AppLaunchLink2AlreadyInitialized = static_cast<int>(0x8055C601u);
+    constexpr int ServiceCheckerAlreadyInitialized = static_cast<int>(0x8055AD01u);
+    constexpr int ServiceCheckerNotInitialized = static_cast<int>(0x8055AD02u);
+    constexpr int ServiceCheckerRequestNotFound = static_cast<int>(0x8055AD06u);
+    constexpr int ServiceCheckerInvalidArgument = static_cast<int>(0x8055AD0Bu);
+    Require(sceNpUtilityInit() == 0, "sceNpUtilityInit", "utility initialization failed");
+    Require(sceNpUtilityTerm() == 0, "sceNpUtilityTerm", "utility termination failed");
+    Require(sceNpAppInfoIntInitialize(0) == 0, "sceNpAppInfoIntInitialize", "initialization failed");
+    Require(sceNpAppInfoIntInitialize(0) == AppInfoAlreadyInitialized, "sceNpAppInfoIntInitialize", "a second initialization was taken");
+    sceNpAppInfoIntFinalize();
+    Require(sceNpAppInfoIntInitialize(0) == 0, "sceNpAppInfoIntInitialize", "reinitialization failed");
+    sceNpAppInfoIntFinalize();
+    Require(sceNpAppLaunchLinkIntInitialize(0) == 0, "sceNpAppLaunchLinkIntInitialize", "initialization failed");
+    Require(sceNpAppLaunchLinkIntInitialize(0) == AppLaunchLinkAlreadyInitialized, "sceNpAppLaunchLinkIntInitialize", "a second initialization was taken");
+    sceNpAppLaunchLinkIntFinalize();
+    Require(sceNpAppLaunchLink2IntInitialize(0) == 0, "sceNpAppLaunchLink2IntInitialize", "initialization failed");
+    Require(sceNpAppLaunchLink2IntInitialize(0) == AppLaunchLink2AlreadyInitialized, "sceNpAppLaunchLink2IntInitialize", "a second initialization was taken");
+    sceNpAppLaunchLink2IntFinalize();
+    std::int32_t request = 0;
+    Require(sceNpServiceCheckerIntCreateRequest(nullptr, &request) == ServiceCheckerInvalidArgument, "sceNpServiceCheckerIntCreateRequest", "a null NpId was taken");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, nullptr) == ServiceCheckerInvalidArgument, "sceNpServiceCheckerIntCreateRequest", "a null output was taken");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == ServiceCheckerNotInitialized, "sceNpServiceCheckerIntCreateRequest", "a request was created before initialization");
+    Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceCheckerIntInitialize", "initialization failed");
+    Require(sceNpServiceCheckerIntInitialize(0) == ServiceCheckerAlreadyInitialized, "sceNpServiceCheckerIntInitialize", "a second initialization was taken");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == 0 && request == 1, "sceNpServiceCheckerIntCreateRequest", "the first request is not id 1");
+    std::int32_t second = 0;
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &second) == 0 && second == 2, "sceNpServiceCheckerIntCreateRequest", "the second request is not id 2");
+    Require(sceNpServiceCheckerIntAbortRequest(second) == 0, "sceNpServiceCheckerIntAbortRequest", "aborting the request failed");
+    Require(sceNpServiceCheckerIntAbortRequest(second) == ServiceCheckerRequestNotFound, "sceNpServiceCheckerIntAbortRequest", "an aborted request was found");
+    Require(sceNpServiceCheckerIntDestroyRequest(request) == 0, "sceNpServiceCheckerIntDestroyRequest", "destroying the request failed");
+    Require(sceNpServiceCheckerIntDestroyRequest(request) == 0, "sceNpServiceCheckerIntDestroyRequest", "the destroy wrapper rejected an unknown request");
+    sceNpServiceCheckerIntFinalize();
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == ServiceCheckerNotInitialized, "sceNpServiceCheckerIntCreateRequest", "a request was created after finalization");
+    Require(sceNpServiceCheckerIntAbortRequest(1) == ServiceCheckerNotInitialized, "sceNpServiceCheckerIntAbortRequest", "an abort was accepted after finalization");
+    Require(sceNpServiceCheckerIntDestroyRequest(1) == ServiceCheckerNotInitialized, "sceNpServiceCheckerIntDestroyRequest", "a destroy was accepted after finalization");
+}
+
 void CheckServiceChecker2() {
     constexpr int AlreadyInitialized = static_cast<int>(0x8055B301u);
     constexpr int NotInitialized = static_cast<int>(0x8055B302u);
@@ -313,6 +353,7 @@ int main() {
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
+    CheckNpUtilityLifecycles();
     CheckServiceChecker2();
     CheckLookup();
     CheckWordFilter();
