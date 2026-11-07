@@ -51,7 +51,7 @@ void MemoryAccounting::Record(VkDevice device, VkDeviceMemory memory, const VkMe
 }
 
 VkResult MemoryAccounting::Allocate(const Context& context, const VkMemoryAllocateInfo& allocation, const char* category, VkDeviceMemory* memory) {
-    const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, memory);
+    const auto result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, memory);
     if (result == VK_SUCCESS) Record(context.device, *memory, allocation, context.memory, category);
     return result;
 }
@@ -71,7 +71,7 @@ void MemoryAccounting::Free(PFN_vkFreeMemory freeMemory, VkDevice device, VkDevi
 }
 
 void MemoryAccounting::Free(const Context& context, VkDeviceMemory memory) {
-    Free(context.Function<PFN_vkFreeMemory>("vkFreeMemory"), context.device, memory);
+    Free(context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory"), context.device, memory);
 }
 
 void MemoryAccounting::Use(VkDevice device, VkDeviceMemory memory, const char* category) noexcept {
