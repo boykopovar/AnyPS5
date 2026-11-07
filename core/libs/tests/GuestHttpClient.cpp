@@ -142,6 +142,31 @@ void CheckCacheAndReopen(const std::string& base) {
     Read(client.get(), 41, 23, true);
 }
 
+void CheckRedirects(const std::string& base) {
+    bool opened = true;
+    for (const char* reference : {"absolute", "network", "relative", "root", "query", "empty-query", "encoded", "absolute-slashes", "network-slashes", "absolute-empty", "network-empty"}) {
+        auto client = Create();
+        if (Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/client-reference/" + reference + "?token=direct").c_str()) != 1) {
+            std::fprintf(stderr, "Redirect reference failed: %s\n", reference);
+            opened = false;
+            continue;
+        }
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "redirect body size differs");
+        Read(client.get(), 0, 32);
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "redirect body seek failed");
+        Read(client.get(), 90000, 32);
+    }
+    Check(opened, "redirect reference open failed");
+    auto client = Create();
+    Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/client-unsupported/scheme").c_str()) == 0, "unsupported redirect scheme accepted");
+    for (const char* reference : {"https", "userinfo"}) {
+        bool failed = false;
+        try { Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/client-unsupported/" + reference).c_str()); }
+        catch (const std::runtime_error&) { failed = true; }
+        Check(failed, "unsupported redirect did not throw");
+    }
+}
+
 void CheckFailures(const std::string& base) {
     auto client = Create();
     for (const char* route : {"/bad/", "/short/", "/chunk-bad/"}) Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + route + "payload.bin").c_str()) == 0, "malformed HTTP response accepted");
@@ -194,6 +219,7 @@ int main(int argc, char** argv) {
         const std::string base = argv[1];
         CheckInputValidation(base);
         CheckBodies(base);
+        CheckRedirects(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
         CheckCancellation(base);
