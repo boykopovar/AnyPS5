@@ -24,6 +24,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/QueueSubmitter.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
@@ -5268,7 +5269,10 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
             if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) recorder->Submit();
             for (const auto& texture : selected) {
                 const auto& context = texture->context;
-                Check(context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device), "private image readback wait");
+                {
+                    const QueueAccess access(context.queue);
+                    Check(context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device), "private image readback wait");
+                }
                 Buffer host(context, static_cast<std::size_t>(texture->sliceLinearBytes * texture->arrayLayers), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
                 CommandBatch batch(context);
                 const auto commands = batch.Handle();
