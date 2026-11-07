@@ -20,6 +20,19 @@
 | `Unknown` | `wMvV6XbeFd0` |
 | `Unknown` | `ybhL4IoyGZA` |
 
+- [Later callable exports](../../../core/libs/prx/libScePad/InventoryExports.cpp) - 8 function exports of the primary logical library observed only in the 13.60-labelled image of the [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscepad-190bd602e9.jsonl); they are absent from the older inventory and the pinned public 3.20 catalogue. The label does not authenticate retail firmware. `scePadIsInitialUserHandle` is not in the pinned public symbol database; the name comes from the inventory's `verified-name-map.jsonl` and hashes to its NID. The other seven have no known name and use literal NID aliases. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `scePadIsInitialUserHandle` | `yJZwI7CZKv0` |
+| `Unknown` | `710T88tQmn4` |
+| `Unknown` | `FlTOSPI5cnk` |
+| `Unknown` | `WH0f85fU998` |
+| `Unknown` | `oARLr0ca9N8` |
+| `Unknown` | `ovL0DogAAww` |
+| `Unknown` | `s7DjmajUf0I` |
+| `Unknown` | `vtIU85W8xpY` |
+
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
