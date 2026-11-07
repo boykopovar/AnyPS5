@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceFreeType/include/GuestFreeType.hpp"
 
 extern "C" {
 
@@ -11,6 +12,6 @@ int APS5_VABI freetypeLegacyStreamOpenBzip2_nid_no_patch();
 int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch();
 int APS5_VABI freetypeLegacyErrorString_nid_no_patch();
 int APS5_VABI freetypeLegacyStreamOpenLZW_nid_no_patch();
-int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch();
+int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch(FreeType::GuestLibrary* library, std::uint32_t format, FreeType::GuestGlyphRec** target);
 
 }

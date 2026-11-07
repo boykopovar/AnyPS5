@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include FT_GLYPH_H
 
@@ -94,6 +95,34 @@ Glyph& Register(GuestLibrary* library, bool isBitmap, std::size_t pointCount) {
     return *glyphs.emplace(address, std::move(owner)).first->second;
 }
 
+}
+
+int FreeType::FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target) {
+    if (!library || !library->host || !target) return FT_Err_Invalid_Argument;
+    const auto nativeFormat = static_cast<FT_Glyph_Format>(format);
+    if (nativeFormat != FT_GLYPH_FORMAT_BITMAP && nativeFormat != FT_GLYPH_FORMAT_OUTLINE) {
+        FT_Glyph probe = nullptr;
+        const FT_Error error = FT_New_Glyph(library->host, nativeFormat, &probe);
+        if (error == FT_Err_Invalid_Glyph_Format || error == FT_Err_Invalid_Argument) return error;
+        if (probe) FT_Done_Glyph(probe);
+        NotImplemented_nid_no_patch(__func__);
+    }
+    GuestArena::HostWrite write(target, sizeof(*target));
+    if (!write.Open()) return FT_Err_Invalid_Argument;
+    *target = nullptr;
+    std::lock_guard lock(glyphMutex);
+    auto& owner = Register(library, nativeFormat == FT_GLYPH_FORMAT_BITMAP, 0);
+    auto* address = owner.Root();
+    FT_Glyph result = nullptr;
+    const FT_Error error = FT_New_Glyph(library->host, nativeFormat, &result);
+    if (error) {
+        glyphs.erase(address);
+        return error;
+    }
+    owner.host.reset(result);
+    owner.Publish({}, __func__);
+    *target = address;
+    return 0;
 }
 
 extern "C" {
