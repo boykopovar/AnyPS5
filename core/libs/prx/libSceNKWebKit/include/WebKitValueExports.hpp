@@ -85,6 +85,7 @@ bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
+void APS5_VABI WKFormSubmissionListenerContinue(const void* listenerRef);
 std::uint32_t APS5_VABI WKFrameGetTypeID();
 std::uint32_t APS5_VABI WKFrameHandleGetTypeID();
 std::uint32_t APS5_VABI WKFrameInfoGetTypeID();

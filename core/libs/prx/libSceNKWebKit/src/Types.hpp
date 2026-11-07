@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -174,6 +175,12 @@ class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResul
 public:
     bool cancelled = false;
     std::vector<Retained<String>> chosenFiles;
+};
+
+class FormSubmissionListener final : public ObjectOf<ObjectType::FormSubmissionListener> {
+public:
+    std::function<void()> completionHandler;
+    bool continued = false;
 };
 
 }  // namespace NKWebKit
