@@ -632,6 +632,59 @@ void importJoinTests(const Context& context) {
     ::operator delete(block, std::align_val_t{window});
 }
 
+void importWindowKeepsJoinTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = 4 * piece;
+    void* block = ::operator new(2 * window, std::align_val_t{window});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    std::memset(guest, 0x22, 2 * window);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto viewBegin = base + 3 * piece;
+    const auto viewBytes = piece + 32;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(window);
+    const std::array<std::pair<std::size_t, std::size_t>, 8> ranges{{{0, piece}, {piece, piece}, {2 * piece, piece}, {3 * piece, piece}, {4 * piece, piece}, {5 * piece, piece}, {6 * piece, piece}, {7 * piece, piece}}};
+    const auto change = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& [offset, bytes] : ranges) {
+            if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + offset, bytes, true, false, true);
+            else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + offset);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        const auto* kept = ExistingHostImportFor(importing, viewBegin, viewBytes);
+        const auto buffer = kept != nullptr ? kept->buffer : VK_NULL_HANDLE;
+        leased.AddReadable(viewBegin, viewBytes);
+        leased.Upload(true);
+        leased.WriteBack();
+        return buffer;
+    };
+    const auto bind = [&](std::uintptr_t address) {
+        GuestBufferMemory plain(importing);
+        plain.AddReadable(address, viewBytes);
+        plain.Upload(false);
+        plain.WriteBack();
+    };
+    change(true);
+    static_cast<void>(build());
+    bind(viewBegin);
+    const auto* joined = ExistingHostImportFor(importing, viewBegin, viewBytes);
+    Require(joined != nullptr && joined->joined && joined->base == base + 3 * piece && joined->bytes == 2 * piece, "a view across a window edge was not imported as one joined block");
+    const auto joinedBuffer = joined->buffer;
+    for (int pass = 0; pass < 2; ++pass) {
+        Require(build() == joinedBuffer, "an address-based build imported a window over a joined import and retired it");
+    }
+    const auto* low = ExistingHostImportFor(importing, base, 2 * piece);
+    Require(low != nullptr && low->base + low->bytes <= base + 3 * piece, "the range below a joined import was not imported beside it");
+    change(false);
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{window});
+}
+
 class ImportBudgetRanges {
 public:
     static constexpr std::size_t piece = 65536;
@@ -2033,6 +2086,48 @@ void importAllocationErrorTests(const Context& context, VkResult failure, bool n
     ::operator delete(block, std::align_val_t{piece});
 }
 
+void importMixedAllocationErrorTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 16;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    ImportAllocationProbe probe(importing);
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    SetHostImportBudget(64 * piece);
+    std::size_t next = 0;
+    const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
+    const auto counted = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Access)]; };
+    Require(lookup(), "the mixed allocation error test's first import was not made");
+    const auto before = counted();
+    for (const auto failure : {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_UNKNOWN, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        probe.failure = failure;
+        Require(!lookup(), "an import with an injected mixed allocation failure was made");
+    }
+    const auto after = counted();
+    Require(after.failed - before.failed == 6 && after.refused == before.refused, "interrupted OOM failures lowered the import ceiling");
+    probe.failure = VK_SUCCESS;
+    Require(lookup(), "nonconsecutive OOM failures prevented a later successful import");
+    for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        probe.failure = failure;
+        Require(!lookup(), "an import with an injected consecutive OOM was made");
+    }
+    probe.failure = VK_SUCCESS;
+    Require(!lookup(), "three consecutive OOM failures did not lower the import ceiling");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void importCeilingTests(const Context& context, const BdaTestAccess& access, bool nearBudget) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t count = 24;
@@ -3028,6 +3123,10 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     guest[65536 + 7] = 0x44;
     Require(build(0, {}) == first && MirrorCounters().blocksCopied == one.blocksCopied + 2, "two written heap blocks were not read again");
     Require(access.addressBytes(first)[5] == std::byte{0x33} && access.addressBytes(first)[65536 + 7] == std::byte{0x44}, "the heap mirror missed the CPU writes");
+    const auto stamped = MirrorCounters();
+    AgcDriver::GuestMemory::MarkWritten(address + 65536 + 16, 16);
+    Require(build(0, {}) == first && MirrorCounters().heapRefills == stamped.heapRefills + 1 && MirrorCounters().blocksCopied == stamped.blocksCopied, "a block stamped without a byte change was copied into its mirror again");
+    Require(build(0, {}) == first && MirrorCounters().heapRefills == stamped.heapRefills + 1 && MirrorCounters().blocksCopied == stamped.blocksCopied, "a stamped block whose bytes matched its mirror was found changed again");
     const auto quiet = MirrorCounters();
     Require(build(0, {}) == first && MirrorCounters().heapChecks == quiet.heapChecks && MirrorCounters().sweeps == quiet.sweeps && MirrorCounters().blocksCopied == quiet.blocksCopied, "an unchanged heap range was compared block by block or the mirrors were swept again");
     guest[65536 + 9] = 0x66;
@@ -4780,6 +4879,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceWriteMergedPastImportTests(context, access);
     spaceReadOverWritableImportTableTests(context);
     importJoinTests(context);
+    importWindowKeepsJoinTests(context);
     importCoverageHintBudgetTests(context, access);
     failedImportJoinProbeBudgetTests(context, access);
     failedJoinWrittenViewTests(context, access);
@@ -4814,6 +4914,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     evictingRefusalJoinTests(context);
     evictingRefusalStepDownTests(context);
     importDeviceBudgetTests();
+    importMixedAllocationErrorTests(context);
     importCeilingTests(context, access, false);
     importCeilingTests(context, access, true);
     for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_UNKNOWN}) {

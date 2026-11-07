@@ -94,6 +94,7 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 // UnchangedSince(range, it) holds until the next store over the range.
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
+std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
@@ -216,6 +217,7 @@ unsigned long long CodeOffset(const void* address);
 // every read and store through this interface calls first. Code that reads guest memory directly
 // calls FlushGpuWrites itself.
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
+auto CurrentFlushHook() -> void (*)(std::uint64_t address, std::size_t bytes);
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void GuardRead(std::uint64_t address, std::size_t bytes);
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
