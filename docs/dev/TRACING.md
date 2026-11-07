@@ -21,7 +21,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_SYNC` | Event-flag and semaphore operations and their wait and wake results. |
 | `APS5_TRACE_TIMERS` | Timing measurements for the host wait primitives used by the emulator. |
 | `APS5_TRACE_UDS` | Universal Data System events posted to a context, and the trophy title data it cannot find. |
-| `APS5_TRACE_USLEEP` | Every 2,000 guest `usleep` calls, with caller addresses and requested delays. |
+| `APS5_TRACE_USLEEP` | Every 2,000 `sceKernelUsleep` calls, the call sites that sleep most, with their call counts and requested delays. Calls made through `sceNetUsleep` and by the `APS5_TRACE_TIMERS` measurement on Windows are counted too, under a libSceNet or libkernel address. Guest `usleep` calls are not counted. |
 | `APS5_TRACE_VIDEODEC` | Video decoder API calls and decode results. |
 | `APS5_TRACE_WAITS` | Blocking waits aggregated by guest call site, including timeout counts and longest waits, every three seconds. |
 
@@ -54,7 +54,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_SHADOW` | Unit-shadow publish, seed, eviction and retirement events; a number limits publish output. |
 | `APS5_TRACE_SKIPS` | GPU operations skipped by diagnostics, with a bounded number of recompile-request dumps per reason. |
 | `APS5_TRACE_STAGING` | Distinct guest-buffer ranges admitted to the write-staging window. |
-| `APS5_TRACE_TEXTURES` | Sampled texture addresses, dimensions, format and nonzero-byte counts. |
+| `APS5_TRACE_TEXTURES` | Sampled texture addresses, dimensions, format, tile mode, and how many of the bytes at offsets 0, 64, 128 and so on are nonzero. |
 | `APS5_TRACE_UNREADABLE` | Call sites that check inaccessible guest-memory ranges or fail to read them. |
 | `APS5_TRACE_UPLOAD` | Reasons storage-image data is uploaded again. |
 | `APS5_TRACE_BARRIERS` | Set to a positive integer to print that many skipped barrier decisions and their ranges. |

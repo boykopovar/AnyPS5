@@ -16,6 +16,23 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyGette
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LibTls.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestNames.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EcdsaSig.cpp)
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Values.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_asn1_values_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Asn1Values.cpp)
+    target_include_directories(guest_libressl3_asn1_values_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_asn1_values_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_asn1_values_tests)
+    add_test(NAME guest_libressl3_asn1_values COMMAND guest_libressl3_asn1_values_tests)
+    set_tests_properties(guest_libressl3_asn1_values PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_asn1_values PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_libtls_settings_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTlsSettings.cpp)
@@ -59,6 +76,21 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_libressl3_digest_names PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+    add_test_executable(guest_libressl3_ecdsa_sig_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/EcdsaSig.cpp)
+    target_include_directories(guest_libressl3_ecdsa_sig_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ecdsa_sig_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_libressl3_ecdsa_sig_tests PRIVATE libc)
+    endif()
+    add_dependencies(guest_libressl3_ecdsa_sig_tests libs)
+    configure_windows_unwind(guest_libressl3_ecdsa_sig_tests)
+    add_test(NAME guest_libressl3_ecdsa_sig COMMAND guest_libressl3_ecdsa_sig_tests
+        ${PATCHED_DIR}/libSceLibreSsl3.prx)
+    set_tests_properties(guest_libressl3_ecdsa_sig PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ecdsa_sig PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
     add_test_executable(guest_libressl3_pkey_getters_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyGetters.cpp)
     target_include_directories(guest_libressl3_pkey_getters_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -285,6 +317,20 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
         -P ${LIBS_INCLUDE_DIR}/tests/LibreSsl3MixedEvp.cmake
         -- $<TARGET_FILE:guest_libressl3_mixed_evp_loader>)
     set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SignatureAlgorithms.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_signature_algorithms_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SignatureAlgorithms.cpp)
+    target_include_directories(guest_libressl3_signature_algorithms_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_signature_algorithms_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_signature_algorithms_tests)
+    add_test(NAME guest_libressl3_signature_algorithms COMMAND guest_libressl3_signature_algorithms_tests)
+    set_tests_properties(guest_libressl3_signature_algorithms PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_signature_algorithms PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
 endif()
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SessionMetadata.cpp)
