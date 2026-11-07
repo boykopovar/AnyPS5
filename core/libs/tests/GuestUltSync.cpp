@@ -61,6 +61,16 @@ void MutexTryLock() {
     CHECK(sceUltMutexUnlock(&mutex) == Ok);
     CHECK(sceUltMutexDestroy(&mutex) == Ok);
     CHECK(sceUltMutexTryLock(&mutex) == State);
+    CHECK(sceUltMutexCreate(&mutex, "plain", nullptr, nullptr, 0) == Ok);
+    CHECK(sceUltMutexTryLock(&mutex) == Ok);
+    CHECK(sceUltMutexTryLock(&mutex) == State);
+    CHECK(sceUltMutexUnlock(&mutex) == Ok);
+    std::thread([&] {
+        other = sceUltMutexTryLock(&mutex);
+        if (other == Ok) other = sceUltMutexUnlock(&mutex);
+    }).join();
+    CHECK(other == Ok);
+    CHECK(sceUltMutexDestroy(&mutex) == Ok);
 }
 
 void MutexAndRuntimeOptParams() {
