@@ -531,6 +531,37 @@ static void CheckSingleByteProfiles() {
     Require(used == 6 && produced == 12 && std::memcmp(utf8, "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", 12) == 0);
 }
 
+static void CheckCp864Profile() {
+    constexpr int unassignedCode = static_cast<int>(0x805C0020);
+    const std::uint8_t* arabic = sceCesRefersUcsProfileCp864();
+    Require(arabic != nullptr && arabic == sceCesRefersUcsProfileCp864());
+    Require(arabic != sceCesRefersUcsProfileCp850() && arabic != sceCesRefersUcsProfileCp1256());
+    RequireSbcRoundTrip(arabic, {0x9B, 0x9C, 0x9F, 0xA6, 0xA7, 0xFF});
+    for (int sbc = 1; sbc < 0x80; ++sbc) {
+        if (sbc != 0x25) RequireSbcCode(arabic, static_cast<std::uint8_t>(sbc), static_cast<std::uint32_t>(sbc));
+    }
+    RequireSbcCode(arabic, 0x25, 0x066A);
+    RequireSbcCode(arabic, 0x80, 0x00B0);
+    RequireSbcCode(arabic, 0xB0, 0x0660);
+    RequireSbcCode(arabic, 0xC1, 0xFE80);
+    RequireSbcCode(arabic, 0xFE, 0x25A0);
+    RequireUtf8ToSbc(arabic, "\xD9\xAA", 0x25);
+    Require(Utf8ToSbc(arabic, "%", 1) == unassignedCode);
+    Require(Utf8ToSbc(arabic, "\xEF\xBF\xBF", 3) == unassignedCode);
+
+    char context[256] = {};
+    Require(sceCesMbcsUcsContextInit(context, arabic) == 0);
+    std::uint8_t utf8[16] = {};
+    std::uint32_t used = 0;
+    std::uint32_t produced = 0;
+    Require(sceCesMbcsStrToUtf8Str(context, reinterpret_cast<const std::uint8_t*>("\x25\xB1"), 2, &used, utf8, sizeof(utf8), &produced) == 0);
+    Require(used == 2 && produced == 4 && std::memcmp(utf8, "\xD9\xAA\xD9\xA1", 4) == 0);
+    Require(sceCesMbcsStrToUtf8Str(context, reinterpret_cast<const std::uint8_t*>("\xA6"), 1, &used, utf8, sizeof(utf8), &produced) == unassignedCode);
+    std::uint8_t encoded[4] = {};
+    Require(sceCesUtf8StrToMbcsStr(context, reinterpret_cast<const std::uint8_t*>("\xD9\xAA\xD9\xA1"), 4, &used, encoded, sizeof(encoded), &produced) == 0);
+    Require(used == 4 && produced == 2 && std::memcmp(encoded, "\x25\xB1", 2) == 0);
+}
+
 int main() {
     constexpr int invalidParameter = static_cast<int>(0x805C0001);
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
@@ -543,6 +574,7 @@ int main() {
     const std::uint8_t* profile = sceCesRefersUcsProfileCp1252();
     Require(profile != nullptr && profile == sceCesRefersUcsProfileCp1252());
     CheckSingleByteProfiles();
+    CheckCp864Profile();
 
     RequireSbcToUtf8(profile, 'A', "A");
     RequireSbcToUtf8(profile, 0x80, "\xE2\x82\xAC");
