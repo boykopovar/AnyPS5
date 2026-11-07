@@ -1754,10 +1754,10 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const bool useMemo = memoized && collectMemoEnabled() && bytes != 0;
     const bool epochal = HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0;
-    if (useMemo && !sharedCollectMemo()) {
+    if (useMemo && epochal && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
-        if (epochal && epochCollectMapEnabled()) {
+        if (epochCollectMapEnabled()) {
             const auto& map = epochCollectMap(epoch);
             const auto blockFirst = first & ~(WriteBlockBytes - 1);
             const auto reusable = [&](std::uintptr_t key) {
