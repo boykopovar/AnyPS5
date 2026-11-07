@@ -141,6 +141,10 @@ inline std::uint64_t PreciseMonotonicNanos() {
     return static_cast<std::uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(ts.tv_nsec);
 }
 
+#ifdef __APPLE__
+extern "C" bool PreciseKernelTimerSleep_nid_no_patch(std::uint64_t wakeNanos);
+#endif
+
 #ifdef __linux__
 inline unsigned long long PreciseLinuxSpinTailNanos_nid_no_patch() {
     static thread_local unsigned long long cachedSpinTailNanos = 0;
@@ -181,9 +185,11 @@ inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned lo
     }
 #elif defined(__APPLE__)
     (void)allowLowSlack;
+    constexpr unsigned long long kKernelTimerTailNanos = 30000ULL;
     constexpr unsigned long long kSpinTailNanos = 100000ULL;
     constexpr unsigned long long kMaxWakeMarginNanos = 5000000ULL;
-    if (nanos > kSpinTailNanos) [[unlikely]] {
+    const bool timed = nanos > kKernelTimerTailNanos && PreciseKernelTimerSleep_nid_no_patch(deadlineNanos - kKernelTimerTailNanos);
+    if (!timed && nanos > kSpinTailNanos) [[unlikely]] {
         const unsigned long long beforeTail = nanos - kSpinTailNanos;
         const unsigned long long margin = beforeTail * 3ULL / 10ULL;
         const unsigned long long sleepNanos = beforeTail - (margin < kMaxWakeMarginNanos ? margin : kMaxWakeMarginNanos);
