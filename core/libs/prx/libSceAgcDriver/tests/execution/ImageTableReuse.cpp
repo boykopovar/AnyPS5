@@ -299,6 +299,10 @@ void RunViewedStore(AgcDriver::VulkanDevice& device, const GuestBlock& block, co
         std::puts("host imports are unavailable: a table of storage-viewed entries is not tested");
         return;
     }
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::puts("guest memory has no write watch: a table of storage-viewed entries is not tested");
+        return;
+    }
     for (std::uint32_t texture = 0; texture < Records; ++texture) {
         const auto& texels = texture < Viewed ? block : plain;
         Fill(texels, texture, 0.375f);
