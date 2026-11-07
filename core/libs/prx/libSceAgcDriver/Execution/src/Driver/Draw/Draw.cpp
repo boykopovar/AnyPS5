@@ -1258,7 +1258,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             std::fprintf(stderr, "[drawvariant] 0x%llx stage %d code 0x%llx\n", static_cast<unsigned long long>(stages[i].program->variantId), static_cast<int>(stages[i].stage), static_cast<unsigned long long>(programs[i].binary.codeAddress));
         }
     }
-    if (pipelined && !drawParameters.indirect && (tail.queue == nullptr || deferredLabels().labels.empty())) {
+    if (pipelined && (!drawParameters.indirect || pipelinedIndirect) && (tail.queue == nullptr || deferredLabels().labels.empty())) {
         runCaptureCheckHook();
         if (tail.queue != nullptr && capturedMemoryChanged(memory)) {
             const RecaptureScope recapture;
