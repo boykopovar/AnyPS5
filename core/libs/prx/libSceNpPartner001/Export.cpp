@@ -37,6 +37,7 @@ int APS5_VABI sceNpHasEAAccessSubscription(int userId, bool* result) {
 extern "C" {
 
 int APS5_VABI libSceNpPartner001Unknown_pQfYTZHznMc_nid_no_patch() {
+    if (!g_initialized.load()) throw std::logic_error(std::string(__func__) + ": not initialized");
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("pQfYTZHznMc", libSceNpPartner001Unknown_pQfYTZHznMc_nid_no_patch);
