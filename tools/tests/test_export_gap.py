@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -466,6 +467,37 @@ class ExportGapTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("FAIL:", error)
             self.assertIn("would overwrite input", error)
+
+    def test_out_refuses_to_overwrite_export_table(self):
+        first = nid_names.compute_nid("sceExampleAlpha")
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            table = write_table(tables, MODULE, [first])
+            before = Path(table).read_bytes()
+            db = write_db(directory, [(first, "sceExampleAlpha")])
+            code, _, error = run_tool_with_stderr(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(Path(tables) / (MODULE + ".c"))])
+            self.assertEqual(code, 2)
+            self.assertIn("would overwrite input", error)
+            self.assertEqual(Path(table).read_bytes(), before)
+
+    def test_out_refuses_hardlink_of_export_table(self):
+        first = nid_names.compute_nid("sceExampleAlpha")
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            table = write_table(tables, MODULE, [first])
+            before = Path(table).read_bytes()
+            link = Path(directory) / "alias.c"
+            try:
+                os.link(table, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("hard links unavailable")
+            db = write_db(directory, [(first, "sceExampleAlpha")])
+            code, _, error = run_tool_with_stderr(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(link)])
+            self.assertEqual(code, 2)
+            self.assertIn("would overwrite input", error)
+            self.assertEqual(Path(table).read_bytes(), before)
 
     def test_out_refuses_to_overwrite_nids(self):
         first = nid_names.compute_nid("sceExampleAlpha")

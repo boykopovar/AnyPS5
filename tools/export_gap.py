@@ -322,7 +322,10 @@ def main(argv=None):
             if not (PRX / module).is_dir():
                 raise GapError(f"{PRX / module}: no such library")
         if args.out is not None:
-            for source in filter(None, [args.nids, args.db]):
+            sources = [args.nids, args.db]
+            if args.export_table is not None:
+                sources.extend(Path(args.export_table) / (module + ".c") for module in modules)
+            for source in filter(None, sources):
                 if same_file(args.out, source):
                     raise GapError(f"output {args.out!r} would overwrite input {source!r}")
         try:
