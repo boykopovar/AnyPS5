@@ -484,6 +484,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
         add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_pages.py)
+        add_test(NAME pr_overlap_merge_bases COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_merge_bases.py)
         add_test(NAME pr_overlap_export_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_export_cache.py)
         add_test(NAME pr_overlap_fail_closed COMMAND ${Python3_EXECUTABLE}
