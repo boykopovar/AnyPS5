@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -30,7 +31,40 @@ static std::string Hex(const unsigned char* data, std::size_t size) {
     return text;
 }
 
+void* APS5_VABI Allocate(std::size_t size) {
+    return std::malloc(size);
+}
+
+void APS5_VABI Free(void* memory) {
+    std::free(memory);
+}
+
+void* APS5_VABI Calloc(std::size_t count, std::size_t size) {
+    return std::calloc(count, size);
+}
+
+void* APS5_VABI Reallocate(void* memory, std::size_t size) {
+    return std::realloc(memory, size);
+}
+
+void* APS5_VABI Align(std::size_t, std::size_t size) {
+    return std::malloc(size);
+}
+
+void* APS5_VABI Realign(void* memory, std::size_t size, std::size_t) {
+    return std::realloc(memory, size);
+}
+
+int APS5_VABI PosixAlign(void** memory, std::size_t, std::size_t size) {
+    *memory = std::malloc(size);
+    return *memory ? 0 : 12;
+}
+
 int main() {
+    void* api[10] {reinterpret_cast<void*>(&Allocate), reinterpret_cast<void*>(&Free), reinterpret_cast<void*>(&Calloc),
+                   reinterpret_cast<void*>(&Reallocate), reinterpret_cast<void*>(&Align), reinterpret_cast<void*>(&Realign),
+                   reinterpret_cast<void*>(&PosixAlign)};
+    ApplicationHeapRegister_nid_no_patch(api);
     const auto* abc = reinterpret_cast<const unsigned char*>("abc");
     const std::string million(1000000, 'a');
     const auto* many = reinterpret_cast<const unsigned char*>(million.data());
