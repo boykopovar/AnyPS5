@@ -92,6 +92,7 @@ public:
     };
     DataSpan Allocate(std::size_t words, SpanMark& mark);
     DataSpan RingAllocate(std::size_t words, SpanMark& mark);
+    static void Write(const DataSpan& span, std::span<const std::uint32_t> words);
     bool Held(const SpanMark& mark);
     std::optional<DataSpan> KeepOrAllocate(std::size_t words, SpanMark& mark, bool same);
     std::uint32_t RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark);

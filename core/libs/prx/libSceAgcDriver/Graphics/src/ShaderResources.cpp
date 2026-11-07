@@ -6646,7 +6646,7 @@ std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderR
         auto words = stageDataWords[stage];
         writeBufferAddresses(words, static_cast<std::uint32_t>(stage), overrides);
         auto span = heap.Allocate(words.size());
-        std::memcpy(span.words.data(), words.data(), words.size() * sizeof(std::uint32_t));
+        BindlessHeap::Write(span, words);
         offsets[stageDataIndex[stage]] = span.address;
     }
     for (std::size_t stage = 0; stage < ringDescriptorStages.size(); ++stage) {
@@ -7000,7 +7000,7 @@ std::uint64_t ShaderResources::heapSpan(HeapStageState::KeptSpan& kept, std::spa
     auto& heap = BindlessHeap::For(context);
     const auto span = heap.KeepOrAllocate(words.size(), kept.mark, std::ranges::equal(kept.words, words));
     if (!span) return kept.mark.address;
-    std::memcpy(span->words.data(), words.data(), words.size() * sizeof(std::uint32_t));
+    BindlessHeap::Write(*span, words);
     kept.words.assign(words.begin(), words.end());
     return span->address;
 }

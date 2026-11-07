@@ -27,6 +27,10 @@
 #include <unordered_set>
 #include <spirv/unified1/spirv.hpp>
 
+#if defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
+
 namespace AgcDriver::Graphics {
 
 namespace {
@@ -761,6 +765,19 @@ bool BindlessHeap::heldLocked(const SpanMark& mark) {
     }
     ++counts.spansKept;
     return true;
+}
+
+void BindlessHeap::Write(const DataSpan& span, std::span<const std::uint32_t> words) {
+    Require(words.size() <= span.words.size(), "the words written to a GPU heap span exceed it");
+#if defined(__SSE2__) || defined(_M_X64)
+    std::size_t index = 0;
+    for (; index + 4u <= words.size(); index += 4u)
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(span.words.data() + index), _mm_loadu_si128(reinterpret_cast<const __m128i*>(words.data() + index)));
+    auto* tail = reinterpret_cast<volatile std::uint32_t*>(span.words.data());
+    for (; index < words.size(); ++index) tail[index] = words[index];
+#else
+    std::memcpy(span.words.data(), words.data(), words.size() * sizeof(std::uint32_t));
+#endif
 }
 
 BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark) {
