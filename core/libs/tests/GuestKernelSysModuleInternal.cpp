@@ -109,6 +109,16 @@ static void CheckIsModuleLoaded() {
     Require(sceKernelIsModuleLoaded(reinterpret_cast<const char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 }
 
+static void CheckGetcwd() {
+    char buffer[4096] = {};
+    Require(__getcwd_nid_postfix(buffer, sizeof(buffer)) == 0);
+    Require(buffer[0] == '/');
+    Require(std::strlen(buffer) < sizeof(buffer));
+    Require(__getcwd_nid_postfix(nullptr, sizeof(buffer)) == -1);
+    char small[1] = {};
+    Require(__getcwd_nid_postfix(small, sizeof(small)) == -1);
+}
+
 int main() {
     CheckList();
     CheckEachModule();
@@ -116,5 +126,6 @@ int main() {
     CheckRefusals();
     CheckLoadStartSysmodule();
     CheckIsModuleLoaded();
+    CheckGetcwd();
     return 0;
 }
