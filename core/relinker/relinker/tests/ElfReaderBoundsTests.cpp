@@ -78,10 +78,12 @@ void Require(const bool condition) {
     if (!condition) throw std::runtime_error("Unexpected parsed value");
 }
 
-void RejectSections(Bytes bytes) {
+void RejectSections(Bytes bytes, const std::string& expectedMessage = "", const std::uint64_t expectedOffset = std::numeric_limits<std::uint64_t>::max()) {
     try {
         Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
-    } catch (const Relinker::RelinkerException&) {
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) Require(error.what() == expectedMessage);
+        if (expectedOffset != std::numeric_limits<std::uint64_t>::max()) Require(error.FailureOffset == expectedOffset);
         return;
     }
     throw std::runtime_error("Invalid section metadata was accepted");
