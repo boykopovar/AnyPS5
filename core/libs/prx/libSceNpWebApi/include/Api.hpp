@@ -81,7 +81,7 @@ int APS5_VABI sceNpWebApiGetErrorCode();
 int APS5_VABI sceNpWebApiInitializeForPresence(int libHttpCtxId, std::size_t poolSize);
 int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter();
 int APS5_VABI sceNpWebApiIntCreateRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, const NpWebApiContentParameter* contentParameter, const NpWebApiIntCreateRequestExtraArgs* internalArgs, std::int64_t* requestId);
-int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter();
+int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum);
 int APS5_VABI sceNpWebApiIntInitialize(const NpWebApiIntInitializeArgs* args);
 int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback();
 int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA();
