@@ -30,6 +30,7 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/udata.cpp
     ${ICU_SOURCE_DIR}/common/udatamem.cpp
     ${ICU_SOURCE_DIR}/common/udataswp.cpp
+    ${ICU_SOURCE_DIR}/common/uenum.cpp
     ${ICU_SOURCE_DIR}/common/uhash.cpp
     ${ICU_SOURCE_DIR}/common/uinvchar.cpp
     ${ICU_SOURCE_DIR}/common/umapfile.cpp
@@ -66,7 +67,6 @@ if(WIN32)
         ${ICU_SOURCE_DIR}/common/lsr.cpp
         ${ICU_SOURCE_DIR}/common/resource.cpp
         ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
-        ${ICU_SOURCE_DIR}/common/uenum.cpp
         ${ICU_SOURCE_DIR}/common/uloc.cpp
         ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
         ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
