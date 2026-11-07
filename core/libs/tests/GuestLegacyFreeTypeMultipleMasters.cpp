@@ -1,5 +1,6 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -78,6 +79,35 @@ void CheckLargeCounts(const Faces& faces) {
     for (std::uint32_t index = 0; index < count; ++index) Require(guest[index] == native[index]);
 }
 
+void CheckSetters(const Faces& faces) {
+    FreeType::GuestFaceRec& rec = *faces.guest;
+    const FT_Face host = static_cast<FreeType::GuestFace*>(rec.internal)->host;
+    FT_Fixed blend = 0x8000;
+    if (FT_Set_MM_Blend_Coordinates(host, 1, &blend) == 0) {
+        Require(FT_Set_MM_Blend_Coordinates(faces.native, 1, &blend) == 0);
+        Require((host->face_flags & FT_FACE_FLAG_VARIATION) && !(rec.face_flags & FT_FACE_FLAG_VARIATION));
+    }
+    for (const std::uint32_t instance : {0u, 1u, 2u}) {
+        rec.face_flags = 0;
+        rec.ascender = 1234;
+        const auto error = FT_Set_Named_Instance_nid_postfix(&rec, instance);
+        Require(error == FT_Set_Named_Instance(faces.native, instance));
+        Require(rec.face_flags == host->face_flags && host->face_flags == faces.native->face_flags);
+        Require(rec.face_index == host->face_index && host->face_index == faces.native->face_index);
+        Require(rec.ascender == host->ascender && (error != 0 || !(rec.face_flags & FT_FACE_FLAG_VARIATION)));
+    }
+    std::array<std::int64_t, 2> weights{0x8000, 0x8000};
+    std::array<FT_Fixed, 2> native{0x8000, 0x8000};
+    for (const std::uint32_t length : {0u, 2u}) {
+        rec.ascender = 1234;
+        Require(FT_Set_MM_WeightVector_nid_postfix(&rec, length, weights.data()) == FT_Set_MM_WeightVector(faces.native, length, native.data()));
+        Require(rec.ascender == host->ascender && rec.face_flags == host->face_flags);
+    }
+    Require(FT_Set_MM_WeightVector_nid_postfix(&rec, UINT32_MAX, weights.data()) == FT_Err_Invalid_Argument);
+    Require(FT_Set_MM_WeightVector_nid_postfix(&rec, 2, nullptr) == FT_Err_Invalid_Argument);
+    Require(FT_Set_MM_WeightVector_nid_postfix(&rec, 0, nullptr) == FT_Set_MM_WeightVector(faces.native, 0, nullptr));
+}
+
 }
 
 int main() {
@@ -107,11 +137,16 @@ int main() {
     CheckLargeCounts(variableFaces);
     CheckLargeCounts(fixedFaces);
 
+    CheckSetters(variableFaces);
+    CheckSetters(fixedFaces);
+
     std::array<std::int64_t, 2> empty{Untouched, Untouched};
     std::uint32_t length = 2;
     Require(FT_Get_MM_Blend_Coordinates_nid_postfix(nullptr, 2, empty.data()) == FT_Err_Invalid_Face_Handle);
     Require(FT_Get_MM_WeightVector_nid_postfix(nullptr, &length, empty.data()) == FT_Err_Invalid_Face_Handle);
     Require(length == 2 && empty[0] == Untouched);
+    Require(FT_Set_MM_WeightVector_nid_postfix(nullptr, 2, empty.data()) == FT_Err_Invalid_Face_Handle);
+    Require(FT_Set_Named_Instance_nid_postfix(nullptr, 0) == FT_Err_Invalid_Face_Handle);
 
     Require(FT_Done_Face_nid_postfix(variableFaces.guest) == 0 && FT_Done_Face_nid_postfix(fixedFaces.guest) == 0);
     Require(FT_Done_Face(variableFaces.native) == 0 && FT_Done_Face(fixedFaces.native) == 0);

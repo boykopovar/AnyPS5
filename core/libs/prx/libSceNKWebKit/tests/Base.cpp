@@ -1520,6 +1520,10 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestEmptyFrameLoaderClient() {
+    _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1545,6 +1549,7 @@ int main() {
     TestProtectionSpace();
     TestPermissionRequests();
     TestCertificateInfo();
+    TestEmptyFrameLoaderClient();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }

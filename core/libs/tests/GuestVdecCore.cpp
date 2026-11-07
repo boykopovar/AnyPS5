@@ -94,7 +94,10 @@ void RequireFrameBuffer(const VdecCoreConfigInfo& config, std::uint32_t size, st
 }
 
 void CheckFrameBufferInfo() {
-    VdecCoreFrameBufferInfo info{};
+    VdecCoreFrameBufferInfo info;
+    std::memset(&info, 0xab, sizeof(info));
+    VdecCoreFrameBufferInfo untouched;
+    std::memset(&untouched, 0xab, sizeof(untouched));
     VdecCoreConfigInfo config = Config(0, 0, 0, 0);
     Require(sceVdecCoreQueryFrameBufferInfo(nullptr, &info) == InvalidArgument, "frame buffer info without a config");
     Require(sceVdecCoreQueryFrameBufferInfo(&config, nullptr) == InvalidArgument, "frame buffer info without an output");
@@ -105,6 +108,7 @@ void CheckFrameBufferInfo() {
     Require(sceVdecCoreQueryFrameBufferInfo(&config, &info) == InvalidArgument, "DPB count 17");
     config.maxDpbFrameCount = -2;
     Require(sceVdecCoreQueryFrameBufferInfo(&config, &info) == InvalidArgument, "DPB count -2");
+    Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "a refused frame buffer query leaves the output alone");
 
     RequireFrameBuffer(Config(0, 0, 0, 0), 0x340000, 17, 256, 1920, 1080, "1920x1080 defaults");
     RequireFrameBuffer(Config(64, 40, 256, 0), 0x10000, 17, 256, 64, 40, "64x40, DPB 0");
@@ -133,6 +137,9 @@ void CheckCreateAndDelete() {
     config.decoderType = DecoderVdec2;
     config.codecType = 5;
     Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == InvalidCodecType, "create with codec type 5");
+    config.decoderType = DecoderVdec2Special2 + 1;
+    Require(sceVdecCoreCreateDecoder(&config, &memory, nullptr, &decoder) == InvalidArgument, "the decoder type is checked before the codec type");
+    config.decoderType = DecoderVdec2;
     Require(decoder == &memory, "a refused create leaves the output alone");
 
     config.codecType = CodecAvc;
@@ -423,6 +430,11 @@ void CheckDestinations() {
     const VdecCoreOutputInfo slot = Output(decoder, &unaddressed);
     Require(slot.frameBuffer == slotMemory.data(), "a frame buffer without an address leaves the picture to the slots");
     RequirePicture(slot, 3, SlotSize, 1000 + H264Fixture::DisplayOrderUnits[3], 3000 + H264Fixture::DisplayOrderUnits[3], "a picture in a slot keeps the slot's size, not the caller's");
+    std::vector<std::uint8_t> unsized(SlotSize);
+    VdecCoreFrameBuffer zeroSize{unsized.data(), 0};
+    const VdecCoreOutputInfo sized = Output(decoder, &zeroSize);
+    Require(sized.frameBuffer == unsized.data(), "a caller frame buffer without a size still comes before the slots");
+    RequirePicture(sized, 4, SlotSize, 1000 + H264Fixture::DisplayOrderUnits[4], 3000 + H264Fixture::DisplayOrderUnits[4], "a caller frame buffer without a size takes the decoder's frame buffer size");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the destination decoder");
 }
 
@@ -448,6 +460,19 @@ void CheckOutputStaysInItsDestination() {
     Require(caller.pictures[0].pts == 1000 + unit && caller.pictures[0].userData == 3000 + unit, "the picture in a caller frame buffer with room for the picture only");
     Require(VisibleHash(tight.data(), caller.framePitch, caller.frameHeight) == VisiblePictureHashes[1] && ExtendsLastRows(tight.data(), caller.framePitch, caller.frameHeight), "picture information too large for the room after a picture overwrote the picture");
     Require(std::all_of(tight.begin() + static_cast<std::ptrdiff_t>(pictureSize), tight.end(), [](std::uint8_t byte) { return byte == Guard; }), "picture information was written into a caller frame buffer with no room for it after the picture");
+    std::vector<std::uint8_t> oneShort(pictureSize + sizeof(VdecCoreHwPictureInfo) - 1, Guard);
+    VdecCoreFrameBuffer shortBuffer{oneShort.data(), oneShort.size()};
+    const VdecCoreOutputInfo noInfo = Output(decoder, &shortBuffer);
+    const auto second = H264Fixture::DisplayOrderUnits[2];
+    Require(noInfo.frameBuffer == oneShort.data() && noInfo.pictures[0].pts == 1000 + second && noInfo.pictures[0].userData == 3000 + second, "the picture in a caller frame buffer one byte short of room for its information");
+    Require(VisibleHash(oneShort.data(), noInfo.framePitch, noInfo.frameHeight) == VisiblePictureHashes[2], "the picture in a caller frame buffer one byte short of room for its information was not decoded into it");
+    Require(std::all_of(oneShort.begin() + static_cast<std::ptrdiff_t>(pictureSize), oneShort.end(), [](std::uint8_t byte) { return byte == Guard; }), "picture information was written into a caller frame buffer one byte short of room for it");
+    std::vector<std::uint8_t> exact(pictureSize + sizeof(VdecCoreHwPictureInfo), Guard);
+    VdecCoreFrameBuffer exactBuffer{exact.data(), exact.size()};
+    const VdecCoreOutputInfo withInfo = Output(decoder, &exactBuffer);
+    Require(withInfo.frameBuffer == exact.data(), "a caller frame buffer with exact room for the picture and its information");
+    const auto third = H264Fixture::DisplayOrderUnits[3];
+    RequirePicture(withInfo, 3, exact.size(), 1000 + third, 3000 + third, "picture information in a caller frame buffer with exact room for it");
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the bounds decoder");
 }
 

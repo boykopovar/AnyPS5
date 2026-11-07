@@ -296,6 +296,7 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         gpu = trace.name(tid) == "gpu"
         covered_until = -math.inf
         for ts, dur, name, depth, nested in slices:
+            waiting = is_wait(name)
             begin = max(ts, frames[0][1]) if frames else ts
             end = min(ts + dur, frames[-1][2]) if frames else ts + dur
             overlap = max(end - begin, 0.0)
@@ -305,11 +306,11 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
                     contribution = max(end - max(begin, covered_until), 0.0) if gpu else overlap
                     covered_until = max(covered_until, end)
                     traced += contribution
-                    if contribution > 0 and not is_wait(name):
+                    if contribution > 0 and not waiting:
                         leaders[name] += contribution
-                if is_wait(name) and not nested:
+                if waiting and not nested:
                     waited += overlap
-            if is_wait(name) and not nested and (overlap > 0 or not frames):
+            if waiting and not nested and (overlap > 0 or not frames):
                 waits.append((overlap, name, trace.name(tid), max(ts, frames[0][1]) if frames else ts))
         threads.append({"thread": trace.name(tid), "busy_ms_per_frame": (traced - waited) / 1000.0 / count,
                         "wait_ms_per_frame": waited / 1000.0 / count,
