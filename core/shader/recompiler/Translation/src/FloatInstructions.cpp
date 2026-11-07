@@ -11,7 +11,7 @@ void TranslateFloatInstruction(IrBuilder& builder, const RdnaInstruction& instru
 }
 
 bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool quietSnan) {
-    if (floatMode.has_value() && (floatMode->floatMode & 0x0cu) != 0u) {
+    if (opcode != IrOpcode::FPMin32 && opcode != IrOpcode::FPMax32 && floatMode.has_value() && (floatMode->floatMode & 0x0cu) != 0u) {
         throw std::runtime_error("packed f16 at pc " + std::to_string(inst.programCounter) + " in FLOAT_MODE " + std::to_string(floatMode->floatMode) + " (f16 rounding not to nearest even) is not implemented");
     }
     const bool flushResults = floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u;
