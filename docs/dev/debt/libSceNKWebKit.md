@@ -59,7 +59,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WebCore MIME type cache and media queries](../../../core/libs/prx/libSceNKWebKit/src/Mime.cpp) (libSceNKWebKit) - WebCore::MIMETypeCache and WebCore::MIMETypeRegistry exports (supportedMediaMIMETypes, isSupportedMediaMIMEType, supportedNonImageMIMETypes, canShowMIMEType, extensionsForMIMEType, allowedFileExtensions) throw through NotImplemented_nid_no_patch; media decoding capabilities and container support require the PlayStation media player library (mediaplayer.sprx), extensionsForMIMEType is unimplemented upstream on PlayStation (ASSERT_NOT_IMPLEMENTED_YET), and unpinned WTF hash table runtime structures.
 - [Calculated length ref-counting](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - WebCore::Length::ref and WebCore::Length::deref throw through NotImplemented_nid_no_patch; they manage ref-counts in the WebCore style engine's global CalculationValueMap, whose internal runtime state is not initialized or pinned.
 - [JSON serialisation](../../../core/libs/prx/libSceNKWebKit/src/WtfJson.cpp) (libSceNKWebKit) - the `writeJSON` virtual slot of `WTF::JSONImpl::Value` and of `ArrayBase` throws through `NotImplemented_nid_no_patch`, like the exported `writeJSON` handlers: serialising a value needs WTF's `StringBuilder` and its double-conversion number formatting, which are not implemented.
-- [Filter operations](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - the `WebCore::FilterOperation` subclasses (Default, Blur, DropShadow, InvertLightness, BasicColorMatrix, BasicComponentTransfer) stay stubs: their objects are dispatched through the module's own vtables, which this library does not provide.
 - [WebCore::CredentialBase](../../../core/libs/prx/libSceNKWebKit/src/CredentialBase.cpp) (libSceNKWebKit) - the 24-byte layout in [CredentialBaseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/CredentialBaseAbi.hpp) (two `WTF::String`, then a 32-bit `CredentialPersistence`) follows [CredentialBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/CredentialBase.h) and assumes the generic [Credential.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/Credential.h) (no Cocoa or Soup fields); it is unverified against the PS5 module. The 10 exports follow [CredentialBase.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/CredentialBase.cpp).
 - [WebCore::SecurityOrigin](../../../core/libs/prx/libSceNKWebKit/src/SecurityOrigin.cpp) (libSceNKWebKit) - only `isLocalHostOrLoopbackIPAddress` is implemented, from [SecurityOrigin.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/page/SecurityOrigin.cpp); the `StringView` by-value convention is that of the other `WTF::StringView` exports and is unverified. `create(URL)`, `createFromString`, `toString`, `toRawString`, `isolatedCopy`, `isSameOriginAs`, `isSameSchemeHostPort`, `equal`, `domainForCachePartition` and `isMatchingRegistrableDomainSuffix` still throw `NotImplemented_nid_no_patch`: they need the `SecurityOriginData` variant and opaque-origin identifier layout, URL parsing, `LegacySchemeRegistry`, `OriginAccessEntry` and the public suffix list, none of which are implemented or verified.
 - [Shared string hash](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `WebCore::computeSharedStringHash` follows the pinned [StringHash.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringHash.h#L220-L227), where `AlreadyHashed::avoidDeletedValue` ORs the sign bit in, so a raw hash of `0xFFFFFFFF` stays `0xFFFFFFFF`; current WebKit `main` XORs it and returns `0x7FFFFFFF`. Which of the two the console module uses is unverified.
@@ -70,6 +69,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF mapped files](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - mapping an archive-backed file (such as archived `app0` content) terminates the process: guest `mmap_nid_postfix` is `noexcept`, but `File::RefuseArchivedFile` throws through `NotImplemented_nid_no_patch`. The pinned mapping path instead reports failure through `success = false`. PlayStation links `mmap` through an SDK `__wrap_mmap` whose implementation is absent from the pinned source; any additional wrapper behavior is unverified.
 - [WebCore::ParsedContentRange](../../../core/libs/prx/libSceNKWebKit/src/ParsedContentRange.cpp) (libSceNKWebKit) - the 24-byte layout in [ParsedContentRangeAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ParsedContentRangeAbi.hpp) (first byte, last byte and instance length as `int64`, invalid when the instance length is `INT64_MIN`) follows [ParsedContentRange.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ParsedContentRange.h) and is unverified against the PS5 module. The 5 exports follow [ParsedContentRange.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ParsedContentRange.cpp); a null object or string reference throws, and `headerValue` returns a null `WTF::String` for an invalid range.
 - [WebCore::HistoryItem](../../../core/libs/prx/libSceNKWebKit/src/HistoryItemAbi.hpp) (libSceNKWebKit) - layout from [HistoryItem.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/history/HistoryItem.h) (release build, non-Cocoa, non-iOS, `uint8_t` `ShouldOpenExternalURLsPolicy`) and is not checked against the PS5 module. `notifyChanged` is not reproduced. `url`, `originalURL`, `copy`, constructors, destructor and `hasCachedPageExpired` with a cached page call `NotImplemented_nid_no_patch`. In firmware 13.42 (read from disassembly, not run) `setURLString`, `setOriginalURLString`, `setReferrer`, `setTitle`, `setAlternateTitle` and `setShouldRestoreScrollPosition` end by calling the function pointer in data export `TL1XjYe1xLo`, a no-op until the module installs a handler; these setters do not call it.
+- [Filter operations](../../../core/libs/prx/libSceNKWebKit/src/FilterOperation.cpp) (libSceNKWebKit) - objects this library creates use host vtables laid out from the [PS5 11.x WebKit header](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/filters/FilterOperation.h). Their unexported `blend` (except for `InvertLightnessFilterOperation`), `transformColor` and `inverseTransformColor` overrides, `BlurFilterOperation::isIdentity`, and the blur and drop-shadow `outsets` throw, because they need `Length`, color-matrix, color-blending and filter-effect code that is not implemented. A calculated `Length` throws, because `~Length` would call the unimplemented `Length::deref`, and an out-of-line `Color` throws. Printing a drop-shadow operation throws until the `IntPoint` and `Color` `TextStream` operators exist. Closes when: those dependencies exist and the result is compared with a console module.
 
 ### Known export names; ABI prototypes unverified
 
@@ -84,7 +84,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6368 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a8ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6327 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a8ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -3079,12 +3079,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18throwThisTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEPKcS6_` | `7mLDMf26EJ8` |
 | `_ZN7WebCore19AccessibilityObject13isARIAControlENS_17AccessibilityRoleE` | `it74w78c9NI` |
 | `_ZN7WebCore19AccessibilityObject21ariaRoleToWebCoreRoleERKN3WTF6StringE` | `Xp4D7IRIHE0` |
-| `_ZN7WebCore19BlurFilterOperation6createENS_6LengthE` | `CdS6RU1tzh8` |
-| `_ZN7WebCore19BlurFilterOperationC1ENS_6LengthE` | `Gssl8v-q4A4` |
-| `_ZN7WebCore19BlurFilterOperationC2ENS_6LengthE` | `eKuGGkmzC4o` |
-| `_ZN7WebCore19BlurFilterOperationD0Ev` | `nxREzUJ97nA` |
-| `_ZN7WebCore19BlurFilterOperationD1Ev` | `xIz9VSusdWk` |
-| `_ZN7WebCore19BlurFilterOperationD2Ev` | `JIo6KXGWql0` |
 | `_ZN7WebCore19HTMLTableColElement7setSpanEj` | `M7zDhMX8ddM` |
 | `_ZN7WebCore19HTMLTableRowElement10deleteCellEi` | `FeCbAqqYAJc` |
 | `_ZN7WebCore19HTMLTableRowElement10insertCellEi` | `6puN-DdtP0s` |
@@ -3640,12 +3634,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore24presentingApplicationPIDEv` | `mu7FzFTWB7Q` |
 | `_ZN7WebCore24previousSentencePositionERKNS_15VisiblePositionE` | `Gcx7jKVH4Fo` |
 | `_ZN7WebCore25ArchiveResourceCollection21archiveResourceForURLERKN3WTF3URLE` | `yfRB4uRKs38` |
-| `_ZN7WebCore25DropShadowFilterOperation6createERKNS_8IntPointEiRKNS_5ColorE` | `3rQTgVQshN0` |
-| `_ZN7WebCore25DropShadowFilterOperationC1ERKNS_8IntPointEiRKNS_5ColorE` | `sHnaF6S19xA` |
-| `_ZN7WebCore25DropShadowFilterOperationC2ERKNS_8IntPointEiRKNS_5ColorE` | `a36cmst-zBY` |
-| `_ZN7WebCore25DropShadowFilterOperationD0Ev` | `9JpQlCkEpMA` |
-| `_ZN7WebCore25DropShadowFilterOperationD1Ev` | `2i6PbN7F88k` |
-| `_ZN7WebCore25DropShadowFilterOperationD2Ev` | `AA4U9nG9L2E` |
 | `_ZN7WebCore25JSDeprecatedCSSOMRGBColor9toWrappedERN3JSC2VMENS1_7JSValueE` | `X1vBIfxrUjs` |
 | `_ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_` | `HYFSl8uM4GI` |
 | `_ZN7WebCore25WebSocketChannelInspectorC1ERNS_8DocumentE` | `e3HfkECgcUE` |
@@ -3789,9 +3777,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore29updateRequestForAccessControlERNS_15ResourceRequestERNS_14SecurityOriginENS_23StoredCredentialsPolicyE` | `JC5ommFaOHo` |
 | `_ZN7WebCore30InspectorInstrumentationPublic12hasFrontendsEv` | `jaa1AktSI-g` |
 | `_ZN7WebCore30InspectorInstrumentationWebKit24interceptRequestInternalERNS_14ResourceLoaderEON3WTF8FunctionIFvRKNS_15ResourceRequestEEEE` | `G+6r8z+ZKDY` |
-| `_ZN7WebCore30InvertLightnessFilterOperation6createEv` | `hw4Jl+IMDhA` |
-| `_ZN7WebCore30InvertLightnessFilterOperationC1Ev` | `Xorc5+tFQm8` |
-| `_ZN7WebCore30InvertLightnessFilterOperationC2Ev` | `Ug6uMIR1xcs` |
 | `_ZN7WebCore30closestWordBoundaryForPositionERKNS_15VisiblePositionE` | `wGksbXEKspk` |
 | `_ZN7WebCore30forwardForEachCallToBackingMapERNS_17JSDOMGlobalObjectERN3JSC9CallFrameERNS2_8JSObjectE` | `ohECoBXM0fg` |
 | `_ZN7WebCore30forwardForEachCallToBackingSetERNS_17JSDOMGlobalObjectERN3JSC9CallFrameERNS2_8JSObjectE` | `JMwBt9GFCBo` |
@@ -4446,9 +4431,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_12FilterEffectE` | `oIrASpTTrW8` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_12VelocityDataE` | `BTXZgU0oot8` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_14TimingFunctionE` | `y3GWJqWbvIo` |
-| `_ZN7WebCorelsERN3WTF10TextStreamERKNS_15FilterOperationE` | `bP1QOJouxCM` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_15VisiblePositionE` | `at-9g8ayvfA` |
-| `_ZN7WebCorelsERN3WTF10TextStreamERKNS_16FilterOperationsE` | `1Jbvipwn+Mg` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_16FloatRoundedRectE` | `0kJTcu2ueOE` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_16VisibleSelectionE` | `WsBJZWjWhmc` |
 | `_ZN7WebCorelsERN3WTF10TextStreamERKNS_27AbsolutePositionConstraintsE` | `3s8eZwwVACU` |
@@ -5693,9 +5676,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore18TextureMapperLayer9layerRectEv` | `og6IDmhKqO4` |
 | `_ZNK7WebCore18TextureMapperLayer9rootLayerEv` | `KUMJF3eI5qg` |
 | `_ZNK7WebCore18TextureMapperLayer9transformEv` | `gj02Pc41dZk` |
-| `_ZNK7WebCore19BlurFilterOperation12stdDeviationEv` | `uqTupLakPfA` |
-| `_ZNK7WebCore19BlurFilterOperation5cloneEv` | `UFwDzfdUExo` |
-| `_ZNK7WebCore19BlurFilterOperationeqERKNS_15FilterOperationE` | `H9RRA3+Ow28` |
 | `_ZNK7WebCore19DragCaretController23isContentRichlyEditableEv` | `8zj2LYparBk` |
 | `_ZNK7WebCore19DragCaretController30caretRectInRootViewCoordinatesEv` | `JcCWxUGoKF8` |
 | `_ZNK7WebCore19DragCaretController40editableElementRectInRootViewCoordinatesEv` | `FZRXp-BlmOI` |
@@ -5782,9 +5762,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore21RenderLayerCompositor15rootRenderLayerEv` | `oYipfXRE1HQ` |
 | `_ZNK7WebCore21WheelEventDeltaFilter13filteredDeltaEv` | `XOHmQ9KpwxA` |
 | `_ZNK7WebCore21WheelEventDeltaFilter16filteredVelocityEv` | `uoDJDAlVmgs` |
-| `_ZNK7WebCore22DefaultFilterOperation15representedTypeEv` | `ksB78CcT0mg` |
-| `_ZNK7WebCore22DefaultFilterOperation5cloneEv` | `mx1YlEp90mU` |
-| `_ZNK7WebCore22DefaultFilterOperationeqERKNS_15FilterOperationE` | `EWVFpBhoEGg` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient12blockedErrorERKNS_15ResourceRequestE` | `X1bFhjwBxXU` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient14cancelledErrorERKNS_15ResourceRequestE` | `BywqS3Q8szU` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv` | `bh4bKfeivgQ` |
@@ -5821,13 +5798,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore24CoordinatedGraphicsLayer28shouldDirectlyCompositeImageEPNS_5ImageE` | `RUB6zNhQUJQ` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer2idEv` | `NQvgMXcGmjs` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer41selfOrAncestorHasActiveTransformAnimationEv` | `8reqGK4Jslw` |
-| `_ZNK7WebCore25DropShadowFilterOperation12stdDeviationEv` | `Zwz6pQRbIaI` |
-| `_ZNK7WebCore25DropShadowFilterOperation1xEv` | `ACFqSfIdK+4` |
-| `_ZNK7WebCore25DropShadowFilterOperation1yEv` | `dSXGljvWG7Q` |
-| `_ZNK7WebCore25DropShadowFilterOperation5cloneEv` | `lrKNEr+8Ilk` |
-| `_ZNK7WebCore25DropShadowFilterOperation5colorEv` | `qFXamgC8dMU` |
-| `_ZNK7WebCore25DropShadowFilterOperation8locationEv` | `s-v6QLCddRE` |
-| `_ZNK7WebCore25DropShadowFilterOperationeqERKNS_15FilterOperationE` | `oPnneTu2bro` |
 | `_ZNK7WebCore26HTMLTextFormControlElement12selectionEndEv` | `BIelQlNTFGc` |
 | `_ZNK7WebCore26HTMLTextFormControlElement14selectionStartEv` | `5Xn4Ygw7nlE` |
 | `_ZNK7WebCore26HTMLTextFormControlElement18selectionDirectionEv` | `9KLjPjbLuLY` |
@@ -5855,23 +5825,12 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore29DeprecatedCSSOMPrimitiveValue14getStringValueEv` | `j-NhaWA0Xgk` |
 | `_ZNK7WebCore29DeprecatedCSSOMPrimitiveValue15getCounterValueEv` | `hPZqFseD4ro` |
 | `_ZNK7WebCore29DeprecatedCSSOMPrimitiveValue16getRGBColorValueEv` | `F9xskYej0KY` |
-| `_ZNK7WebCore30InvertLightnessFilterOperation5cloneEv` | `kZU3yHbsYWs` |
-| `_ZNK7WebCore30InvertLightnessFilterOperationeqERKNS_15FilterOperationE` | `Q3q-Iqk-Sqg` |
-| `_ZNK7WebCore31BasicColorMatrixFilterOperation17passthroughAmountEv` | `klmI66i8Ok8` |
-| `_ZNK7WebCore31BasicColorMatrixFilterOperation5cloneEv` | `PKGMqoQ2uCc` |
-| `_ZNK7WebCore31BasicColorMatrixFilterOperation6amountEv` | `2hxunnGMnBU` |
-| `_ZNK7WebCore31BasicColorMatrixFilterOperationeqERKNS_15FilterOperationE` | `DxGwDArtbAo` |
 | `_ZNK7WebCore31SimplifiedBackwardsTextIterator5rangeEv` | `izfIZqB40b4` |
 | `_ZNK7WebCore32FixedPositionViewportConstraints28layerPositionForViewportRectERKNS_9FloatRectE` | `BEErbU1FwoI` |
 | `_ZNK7WebCore33StickyPositionViewportConstraints32layerPositionForConstrainingRectERKNS_9FloatRectE` | `RjbmUrQcU28` |
 | `_ZNK7WebCore36ISOProtectionSystemSpecificHeaderBox4dataEv` | `xpYOrYjAoUc` |
 | `_ZNK7WebCore36ISOProtectionSystemSpecificHeaderBox6keyIDsEv` | `xpSP40U+pqc` |
 | `_ZNK7WebCore36ISOProtectionSystemSpecificHeaderBox8systemIDEv` | `Gi7XC+1X+8o` |
-| `_ZNK7WebCore37BasicComponentTransferFilterOperation14affectsOpacityEv` | `liqE096ThEk` |
-| `_ZNK7WebCore37BasicComponentTransferFilterOperation17passthroughAmountEv` | `qWGMU2q898I` |
-| `_ZNK7WebCore37BasicComponentTransferFilterOperation5cloneEv` | `w0KIjnDwdP4` |
-| `_ZNK7WebCore37BasicComponentTransferFilterOperation6amountEv` | `2POQ965uUbU` |
-| `_ZNK7WebCore37BasicComponentTransferFilterOperationeqERKNS_15FilterOperationE` | `O8S9GxUH2Eo` |
 | `_ZNK7WebCore37CrossOriginAccessControlCheckDisabler36crossOriginAccessControlCheckEnabledEv` | `PPFaXycu-Ek` |
 | `_ZNK7WebCore4Attr5valueEv` | `MTaAdeZUa8U` |
 | `_ZNK7WebCore4Blob4sizeEv` | `1RhlQHv339E` |
