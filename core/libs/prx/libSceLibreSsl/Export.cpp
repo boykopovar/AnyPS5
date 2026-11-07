@@ -68,10 +68,7 @@ int APS5_VABI BN_print_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI CONF_modules_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI CONF_modules_free_nid_postfix(void) {}
 
 int APS5_VABI CONF_modules_load_file_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -220,8 +217,9 @@ int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_DigestVerifyInit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI EVP_DigestVerifyInit_nid_postfix(EvpMdContext* context, void**, const EvpMd*, void*, void* pkey) {
+    if (!context) throw std::invalid_argument("null EVP digest context");
+    if (context->pkeyContext || pkey) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -271,15 +269,9 @@ int APS5_VABI OCSP_response_get1_basic_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void) {}
 
-int APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+void APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void) {}
 
 int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -620,11 +612,6 @@ void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension) {
 }
 
 int APS5_VABI X509_INFO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_oneline_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
