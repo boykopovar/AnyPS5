@@ -6637,11 +6637,26 @@ bool ShaderResources::stageReadsOverride(std::size_t stage, const std::vector<Vk
     return false;
 }
 
+void ShaderResources::settleRingRuns() const {
+    if (std::ranges::none_of(ringRunPending, [](bool pending) { return pending; })) return;
+    const BindlessHeap::SpanScope spans(BindlessHeap::For(context));
+    for (std::size_t stage = 0; stage < ringRunPending.size(); ++stage) {
+        if (!ringRunPending[stage]) continue;
+        ringRunPending[stage] = false;
+        heapOffsets[DataOffsetIndex(stage, ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt)] = ringDescriptors(stage, nullptr, heapStages[stage].descriptors);
+    }
+}
+
 std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderResources::addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const {
-    auto offsets = heapOffsets;
     auto& heap = BindlessHeap::For(context);
     const BindlessHeap::SpanScope spans(heap);
     const auto moved = [&](std::size_t stage) { return overrides == nullptr || stageReadsOverride(stage, *overrides); };
+    for (std::size_t stage = 0; stage < ringRunPending.size(); ++stage) {
+        if (!ringRunPending[stage] || (ringDescriptorStages[stage] && moved(stage))) continue;
+        ringRunPending[stage] = false;
+        heapOffsets[DataOffsetIndex(stage, ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt)] = ringDescriptors(stage, nullptr, heapStages[stage].descriptors);
+    }
+    auto offsets = heapOffsets;
     for (std::size_t stage = 0; stage < stageDataWords.size(); ++stage) {
         if (stageDataWords[stage].empty() || !moved(stage)) continue;
         auto words = stageDataWords[stage];
@@ -6824,7 +6839,13 @@ std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const Comp
 void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     if (!heapStage) return;
-    const auto& offsets = rewritten != nullptr && rewritten->addressOffsets ? rewritten->heapOffsets : heapOffsets;
+    const bool addressed = rewritten != nullptr && rewritten->addressOffsets;
+    if (!addressed) settleRingRuns();
+    for (std::size_t stage = 0; addressed && stage < ringRunPending.size(); ++stage) {
+        if (ringRunPending[stage] && !stageReadsOverride(stage, rewritten->addressOverrides))
+            throw std::runtime_error("AGC graphics: a GPU-mode stage's descriptor run was never written although the draw's moved buffers do not rewrite it");
+    }
+    const auto& offsets = addressed ? rewritten->heapOffsets : heapOffsets;
     VkDeviceAddress table = 0;
     VkDeviceAddress fault = 0;
     std::uint32_t tableDwords = 0;
@@ -7240,6 +7261,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const VkShaderStageFlags stageBit = VulkanStage(shader.stage);
     const auto stageIndex = HeapStageIndex(shader.stage);
     auto& stageState = heapStages[stageIndex];
+    const bool skipped = std::exchange(ringRunPending[stageIndex], false);
     static const bool verifySlots = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
     const auto programIdentity = shader.program->heapTemplateId;
     if (programIdentity != 0 && stageState.inertProgram == programIdentity && !verifySlots) return;
@@ -7336,13 +7358,17 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     if (!flattened) heapSrtDwords[stageIndex] = 0u;
     auto& kept = stageState.descriptors;
     const auto srt = srtRange(stageIndex);
-    const bool keepable = kept.srt.address == srt.address && kept.srt.size == srt.size && (kept.ranges.empty() || heap.Held(kept.mark));
+    const bool keepable = !skipped && kept.srt.address == srt.address && kept.srt.size == srt.size && (kept.ranges.empty() || heap.Held(kept.mark));
     kept.srt = srt;
     if (dataKept && keepable) {
         heapOffsets[flatIndex] = kept.first;
         return;
     }
     if (!(inputsKept && keepable)) {
+        if (!unbound) {
+            ringRunPending[stageIndex] = true;
+            return;
+        }
         heapOffsets[flatIndex] = ringDescriptors(stageIndex, nullptr, kept);
         if (unbound && kept.ranges.empty() && heapOffsets[flatIndex] == 0u) stageState.inertProgram = programIdentity;
         return;

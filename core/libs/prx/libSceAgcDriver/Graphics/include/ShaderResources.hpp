@@ -672,7 +672,9 @@ private:
     };
     bool splitSets = false;
     bool heapStage = false;
-    std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+    mutable std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
+    mutable std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringRunPending{};
+    void settleRingRuns() const;
     void writeHeapStage(const CompiledShader& shader);
     struct RingDescriptors {
         VkDeviceAddressRangeEXT srt{};
@@ -696,7 +698,7 @@ private:
         };
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
-        RingDescriptors descriptors;
+        mutable RingDescriptors descriptors;
         std::uint64_t inertProgram = 0;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
