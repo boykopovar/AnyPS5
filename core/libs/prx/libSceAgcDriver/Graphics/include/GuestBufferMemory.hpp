@@ -525,6 +525,7 @@ private:
         // The device refused the shadow (memory or allocations exhausted): the region takes the
         // path it would take without staging, in both upload stages.
         bool unstaged = false;
+        bool resident = false;
         bool overlay = false;
         bool adaptiveInPlace = false;
     };
