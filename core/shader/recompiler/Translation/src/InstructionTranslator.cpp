@@ -287,21 +287,33 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& waveInfo = entryIr.BitwiseOr(entryIr.ShiftLeftLogical(wave, u32(24u)), u32((totalThreads / options.waveSize) << 28u));
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.BitwiseOr(waveInfo, entryIr.BitwiseOr(entryIr.ShiftLeftLogical(primitiveCount, u32(8u)), vertexCount)));
         const bool strip = mesh.inputPrimitive == kTriStripPrimitiveType;
+        const bool restartable = strip || fan;
         IrValue& stripPosition = entryIr.IAdd(entryIr.IAdd(firstPrimitive, local), firstIndex);
         IrValue& restartTable = entryIr.INotEqual(entryIr.BitwiseAnd(indexWord, u32(MeshIndexRestartTable)), u32(0u));
-        IrValue& stripStart = strip ? entryIr.Emit(IrOpcode::MeshRestartStart, IrOpcodeType(IrOpcode::MeshRestartStart), {&entryIr.IAdd(stripPosition, u32(2u)), &restartTable}) : u32(0u);
-        IrValue& parity = strip ? entryIr.BitwiseAnd(entryIr.ISub(stripPosition, entryIr.Emit(IrOpcode::UMax32, IrOpcodeType(IrOpcode::UMax32), {&stripStart, &firstIndex})), u32(1u)) : u32(0u);
+        const auto restartStart = [&](IrValue& position) -> IrValue& {
+            return entryIr.Emit(IrOpcode::MeshRestartStart, IrOpcodeType(IrOpcode::MeshRestartStart), {&position, &restartTable});
+        };
+        const auto atLeastFirstIndex = [&](IrValue& position) -> IrValue& {
+            return entryIr.Emit(IrOpcode::UMax32, IrOpcodeType(IrOpcode::UMax32), {&position, &firstIndex});
+        };
+        IrValue& stripStart = restartable ? restartStart(entryIr.IAdd(stripPosition, u32(2u))) : u32(0u);
+        IrValue& parity = strip ? entryIr.BitwiseAnd(entryIr.ISub(stripPosition, atLeastFirstIndex(stripStart)), u32(1u)) : u32(0u);
+        IrValue& groupPosition = entryIr.IAdd(firstPrimitive, firstIndex);
+        IrValue& fanCenter = fan ? atLeastFirstIndex(restartStart(groupPosition)) : u32(0u);
+        IrValue& segmentCenter = fan ? atLeastFirstIndex(stripStart) : u32(0u);
+        IrValue& centerSlot = fan ? entryIr.Select(entryIr.ULessThan(groupPosition, segmentCenter), entryIr.ISub(segmentCenter, groupPosition), u32(0u)) : u32(0u);
         IrValue& vertex = entryIr.IMul(local, step);
         IrValue& item = u32(mesh.esgsItemSize);
         const auto unlessRestarted = [&](IrValue& offset) -> IrValue& {
-            return strip ? entryIr.Select(entryIr.ULessThan(stripPosition, stripStart), entryIr.IMul(vertex, item), offset) : offset;
+            return restartable ? entryIr.Select(entryIr.ULessThan(stripPosition, stripStart), entryIr.IMul(vertex, item), offset) : offset;
         };
         const bool last = mesh.provokingVertex != 0u;
-        IrValue& fanSecond = entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item);
-        IrValue& fanThird = entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item);
-        IrValue& first = fan ? (last ? u32(0u) : fanSecond) : unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, parity) : vertex, item));
+        IrValue& fanSecond = unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item));
+        IrValue& fanThird = unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item));
+        IrValue& fanCenterSlot = unlessRestarted(entryIr.IMul(centerSlot, item));
+        IrValue& first = fan ? (last ? fanCenterSlot : fanSecond) : unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, parity) : vertex, item));
         IrValue& second = fan ? (last ? fanSecond : fanThird) : size >= 2u ? unlessRestarted(entryIr.IMul(last ? entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity) : entryIr.IAdd(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
-        IrValue& third = fan ? (last ? fanThird : u32(0u)) : size == 3u ? unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, u32(2u)) : entryIr.ISub(entryIr.IAdd(vertex, u32(2u)), parity), item)) : u32(0u);
+        IrValue& third = fan ? (last ? fanThird : fanCenterSlot) : size == 3u ? unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, u32(2u)) : entryIr.ISub(entryIr.IAdd(vertex, u32(2u)), parity), item)) : u32(0u);
         setVector(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(first, u32(0xffffu)), entryIr.ShiftLeftLogical(second, u32(16u))));
         setVector(static_cast<VectorReg>(1), entryIr.BitwiseAnd(third, u32(0xffffu)));
         setVector(static_cast<VectorReg>(2), entryIr.IAdd(firstPrimitive, local));
@@ -330,7 +342,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             setVector(static_cast<VectorReg>(8), builtin(StageInputKind::WorkgroupId, 1u));
             return;
         }
-        IrValue& inputVertex = fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), u32(0u), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
+        IrValue& inputVertex = fan ? entryIr.Select(entryIr.IEqual(local, u32(0u)), entryIr.ISub(fanCenter, firstIndex), entryIr.IAdd(firstVertex, local)) : entryIr.IAdd(firstVertex, local);
         IrValue& indexBytes = entryIr.BitwiseAnd(indexWord, u32(0xffu));
         IrValue& indexed = entryIr.INotEqual(indexBytes, u32(0u));
         IrValue& byteOffset = entryIr.IMul(entryIr.IAdd(inputVertex, firstIndex), indexBytes);
@@ -622,7 +634,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         TranslationContext context(program, *blocks[typedIndex], vectorLimit);
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
-        context.SetNativeFloat16(options.nativeFloat16);
+        context.SetNativeFloat16(options.nativeFloat16, options.nativeFloat16Fma);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);

@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceHttpCache/include/InventoryExports.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include <array>
 #include <cerrno>
@@ -154,6 +156,10 @@ std::map<StoreKey, Entry> Store;
 std::int32_t LastCacheId = 0;
 bool UserServiceStarted = false;
 std::uint8_t CacheSharing = 1;
+
+bool CopySystemPath(const char* path, std::string& destination) {
+    return CopyGuestString_nid_no_patch(path, 0x401, destination) == 0 && destination.size() <= 0x400;
+}
 
 Cache* FindCache(std::int32_t cacheId) {
     const auto found = Caches.find(cacheId);
@@ -725,6 +731,15 @@ int MakeResponse(const HttpCacheResponseHeader* header, ResponseData& response) 
 
 extern "C" {
 
+int APS5_VABI sceHttpCacheEnableCacheInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
 int APS5_VABI sceHttpCacheClear(std::int32_t cacheId, std::int32_t userId, const char* tag) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -931,12 +946,14 @@ int APS5_VABI sceHttpCacheSetResponseHeader(std::int32_t requestId, const HttpCa
 }
 
 int APS5_VABI sceHttpCacheSystemClearAll(const char* path) {
+    std::string copiedPath;
+    if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceHttpCacheSystemInit(const char* path) {
-    NotImplemented_nid_no_patch(__func__);
+    std::string copiedPath;
+    if (!CopySystemPath(path, copiedPath)) return ErrorInvalidValue;
     return 0;
 }
 
@@ -945,7 +962,6 @@ int APS5_VABI sceHttpCacheSystemSendStatistics() {
 }
 
 int APS5_VABI sceHttpCacheSystemShutdown() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -993,5 +1009,10 @@ int APS5_VABI sceHttpCacheRemoveTag() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y3bCbdeHzNg", libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch);
 
 }

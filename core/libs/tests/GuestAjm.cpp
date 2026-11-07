@@ -931,6 +931,19 @@ void TestBatchBounds(std::uint32_t context) {
 #endif
 }
 
+void TestBatchJobCountRange(std::uint32_t context) {
+    (void)context;
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::vector<std::uint8_t> storage(256);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const AjmBuffer buffer{storage.data(), 16};
+    const std::size_t wrapped = (std::size_t{1} << 32) + 1;
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, wrapped, &buffer, 1, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, wrapped, nullptr, 0) == invalidParameter);
+    Require(info.offset == 0);
+}
+
 void TestBatchWaitRelease(std::uint32_t context) {
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::vector<std::uint8_t> batch(64);
@@ -1948,6 +1961,31 @@ void TestAt9RunDecodesWholeInput(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestStrError() {
+    const char* const expected[] = {
+        "context does not exist", "instance does not exist", "batch does not exist", "invalid parameter",
+        "not enough memory", "not enough resources", "codec is not supported",
+        "codec is already registered in the context", "codec is not registered in the context",
+        "wrong revision in the flags", "flag is not supported", "busy", "priority is invalid", "in progress",
+        "operation cannot be performed at the moment", "malformed batch", "error at job creation",
+        "invalid opcode", "priority violation", "buffer is too big", "invalid address", "batch was cancelled",
+        "specified memory area is already registered", "specified memory area is not registered",
+    };
+    static_assert(sizeof(expected) / sizeof(expected[0]) == 24);
+    for (std::uint32_t i = 0; i < 24; ++i) {
+        const int code = static_cast<int>(0x80930002u + i);
+        const char* text = sceAjmStrError(code);
+        Require(text != nullptr && std::strcmp(text, expected[i]) == 0);
+        Require(sceAjmStrError(code) == text);
+    }
+    const char* ok = sceAjmStrError(0);
+    Require(ok != nullptr && std::strcmp(ok, "ok") == 0);
+    for (std::uint32_t code : {0x80930000u, 0x80930001u, 0x8093001au, 0x8093001bu, 0x8092ffffu, 1u, 0xffffffffu, 0x80020001u, 0x8a6e0001u, 0x7fffffffu}) {
+        const char* text = sceAjmStrError(static_cast<int>(code));
+        Require(text != nullptr && std::strcmp(text, "(unknown)") == 0);
+    }
+}
+
 void TestAt9FlagRules(std::uint32_t context) {
     constexpr std::uint64_t runMultipleFrames = 1ull << 12;
     constexpr std::uint64_t sidebandStream = 1ull << 47;
@@ -2606,6 +2644,7 @@ int main(int argc, char** argv) {
     TestGetInfo(context);
     TestGetStatistics(context);
     TestBatchBounds(context);
+    TestBatchJobCountRange(context);
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
@@ -2629,6 +2668,7 @@ int main(int argc, char** argv) {
     TestAt9GaplessSegments(context);
     TestAt9GaplessResetRestartsTotal(context);
     TestAt9RunDecodesWholeInput(context);
+    TestStrError();
     TestAt9FlagRules(context);
     TestPcmResample(context);
     TestConsoleBufferJobs(context);
