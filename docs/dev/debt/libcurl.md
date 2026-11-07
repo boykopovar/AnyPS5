@@ -1,0 +1,94 @@
+# libcurl technical debt
+
+### Unknown function info
+
+- [curl_strequal, curl_strnequal](../../../core/libs/prx/libcurl/Export.cpp) (libcurl) - signatures and ASCII-only matching follow curl's public [curl_strequal documentation](https://curl.se/libcurl/c/curl_strequal.html) and [strcase.c](https://github.com/curl/curl/blob/curl-7_73_0/lib/strcase.c). No console or title caller was read. A null argument throws, because the module's curl version is unknown and curl differs: 7.73 dereferences it, while 8.10 treats two nulls as equal.
+
+### Callable exports
+
+- [Callable exports](../../../core/libs/prx/libcurl/Export.cpp) - 76 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcurl.c) and the [selected export metadata](https://gist.github.com/kyon-eth/996975adc28d0d270d032fb47eb297a7/52f3b6179ff69fbc0725e02ba146279ecd451f49) from two version-labelled images (SHA-256 `69baa557f91eba487275aa1b8e0aecd8dde1caa261eb2dd04106f8fa00e65361`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+
+| Name | NID |
+| --- | --- |
+| `curl_pushheader_bynum` | `+0geDEimyvE` |
+| `curl_formadd` | `-FwfB5G9ztg` |
+| `curl_multi_socket_action` | `-WWyz1uPfx0` |
+| `curl_easy_recv` | `0i8EaWOLjcY` |
+| `curl_mime_free` | `1N7ft+SiHD0` |
+| `curl_mvfprintf` | `4zl-9Emcwhc` |
+| `curl_share_cleanup` | `5b-D80m2TKc` |
+| `curl_easy_perform` | `7KQckhaDi18` |
+| `curl_multi_remove_handle` | `7ShPrvjazws` |
+| `curl_mvsprintf` | `7h+e56B2oKs` |
+| `curl_global_sslset` | `7ijxBuDNvHY` |
+| `curl_multi_perform` | `9cpxUNV97mM` |
+| `curl_version` | `A+rTLSeCJFQ` |
+| `curl_mvsnprintf` | `BAz8Ji7lJls` |
+| `curl_multi_socket_all` | `BhNAR5P2VEg` |
+| `curl_url_get` | `Cc+Qhdd4ons` |
+| `curl_multi_strerror` | `Dfdbc8trvZg` |
+| `curl_easy_setopt` | `DiBmbfiH8J4` |
+| `curl_mime_data` | `ENFUpkwnFM8` |
+| `curl_mfprintf` | `GldGeV80-58` |
+| `curl_multi_poll` | `H49qutQi9a0` |
+| `curl_easy_cleanup` | `HD+IPUl76Hs` |
+| `curl_mime_name` | `HgFRO6Upsg4` |
+| `curl_global_init` | `I38s92i-Xjk` |
+| `curl_easy_duphandle` | `JBHZ4wLpnx0` |
+| `curl_share_init` | `KBTWh1VVa-8` |
+| `curl_getenv` | `KK03u+6DkBU` |
+| `curl_formget` | `KUolTh2gQ8k` |
+| `curl_mime_type` | `KzSFgeUXy2E` |
+| `curl_mprintf` | `Lr91kLn38uM` |
+| `curl_easy_send` | `MhymOvp1NkU` |
+| `curl_easy_reset` | `N5yPp5dHBQE` |
+| `curl_easy_strerror` | `NGTkAHTkViY` |
+| `curl_easy_init` | `NUbq2aNGojo` |
+| `curl_mime_data_cb` | `PoT9ByTU4ws` |
+| `curl_mvaprintf` | `Pyz55DYmOrI` |
+| `curl_url` | `QwbCXdumE84` |
+| `curl_msnprintf` | `Rwe8bHavOL0` |
+| `curl_multi_socket` | `SxPu8PZuHuU` |
+| `curl_multi_fdset` | `SyLtMxQlS6M` |
+| `curl_multi_wakeup` | `TdLam7xSzmY` |
+| `curl_multi_assign` | `U2tir7V8tzw` |
+| `curl_share_strerror` | `W+jyDVS+594` |
+| `curl_multi_wait` | `WuFNFYQX3NA` |
+| `curl_url_set` | `XKdprgRLQy4` |
+| `curl_easy_option_next` | `YSi2PMczWE8` |
+| `curl_global_cleanup` | `YkyOTEcu7vA` |
+| `curl_easy_getinfo` | `ZhOwNq3lcpk` |
+| `curl_share_setopt` | `b3SWcncY+A0` |
+| `curl_multi_info_read` | `ea8LaHOKFDA` |
+| `curl_easy_upkeep` | `govcxXDyzbw` |
+| `curl_multi_setopt` | `hGv08dyfsNQ` |
+| `curl_mime_addpart` | `hXXC4BDL1gY` |
+| `curl_easy_option_by_name` | `hdaJCex67Tg` |
+| `curl_maprintf` | `hpQlqUYshFI` |
+| `curl_url_cleanup` | `kIbwtX5Mi6c` |
+| `curl_getdate` | `kX88h1qQ7co` |
+| `curl_mime_filedata` | `ln25S0X-S08` |
+| `curl_multi_timeout` | `lxail8CxrHk` |
+| `curl_multi_add_handle` | `mQBD4RanvTc` |
+| `curl_mime_init` | `mUQG6ux03z4` |
+| `curl_easy_option_by_id` | `mmBX7M6ArkM` |
+| `curl_formfree` | `oOckhjRxPps` |
+| `curl_mime_subparts` | `orXjmpvkHuU` |
+| `curl_version_info` | `pZvrLdhriNk` |
+| `curl_pushheader_byname` | `qB5W5ljFCIk` |
+| `curl_mime_encoder` | `rhqf6JmhtHg` |
+| `curl_mvprintf` | `s5XKQo9CHyw` |
+| `curl_global_init_mem` | `sbs5dzWn8cE` |
+| `curl_mime_headers` | `tCOYIku29OE` |
+| `curl_url_dup` | `txIPTHNsC1w` |
+| `curl_multi_init` | `wXEc3+fNcO4` |
+| `curl_multi_cleanup` | `xyRRwQMH5ug` |
+| `curl_easy_pause` | `yQ7SgQu4L98` |
+| `curl_mime_filename` | `yfNiwy8p5Ds` |
+| `curl_msprintf` | `zMA017igJyk` |
+
+### Functional
+
+- [String lists and URL escaping](../../../core/libs/prx/libcurl/Export.cpp) have no console verification of their signatures, behavior or curl revision. The public signatures and 16-byte LP64 `curl_slist` layout follow curl 8.10.1's [list](https://github.com/curl/curl/blob/curl-8_10_1/lib/slist.c) and [escaping](https://github.com/curl/curl/blob/curl-8_10_1/lib/escape.c) APIs. Custom curl allocators are unavailable because `curl_global_init_mem` throws; allocations use the guest libc heap.
+- [Null string arguments](../../../core/libs/prx/libcurl/Export.cpp) to list append or escaping with a nonnegative length throw. curl 8.5.0 faults there; 8.10.1 returns null from escaping. The console behavior is unknown. Invalid non-null pointers and damaged lists are not validated.
+- [Escaping version differences](../../../core/libs/prx/libcurl/Export.cpp) remain unverified: the easy handle is ignored, as curl does from 7.82.0, and input size follows 8.10.1 rather than 8.5.0's dynamic-buffer cap. Older per-handle character conversion is not modeled. Tests do not exercise the unescape output-length overflow for strings larger than `INT_MAX`.

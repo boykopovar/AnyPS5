@@ -205,6 +205,7 @@ struct OverlayDetailSample {
     std::optional<std::uint64_t> refusedShaders;
     std::string title;
     std::string presentMode;
+    std::optional<double> fpsLimit;
 };
 
 struct OverlayHits {
@@ -221,6 +222,7 @@ struct OverlayPresentInfo {
     std::uint64_t displayAddress = 0;
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
     std::uint64_t acquireDrops = 0;
+    double fpsLimit = 0.0;
 };
 
 struct OverlayTraceFigures {

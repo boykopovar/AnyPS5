@@ -17,6 +17,7 @@
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
@@ -37,14 +38,40 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
+
+APS5_RUN_REPORT_COMPONENT("libSceVideoOut")
 
 namespace {
 
 constexpr std::uint64_t FLIP_ROOM_WAIT_MICROS = 60000000;
 constexpr std::uint64_t PRESENT_POLL_MICROS = 10000;
+constexpr std::int64_t FRAME_LIMIT_SLICE_NANOS = 20000000;
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("VideoOut: ") + reason);
+}
+
+std::optional<AgcDriver::FramePacer>& framePacer() {
+    static std::optional<AgcDriver::FramePacer> pacer = []() -> std::optional<AgcDriver::FramePacer> {
+        const auto& limit = AgcDriver::ConfiguredFrameLimit();
+        if (!limit) return std::nullopt;
+        return AgcDriver::FramePacer(limit->milliFramesPerSecond);
+    }();
+    return pacer;
+}
+
+bool paceFlip(FlipRequest& req) {
+    auto& pacer = framePacer();
+    if (!pacer) return true;
+    const auto clock = [] { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    const auto sleep = [&](std::int64_t nanos) {
+        PreciseSleepUs(static_cast<unsigned long long>((nanos + 999) / 1000));
+        std::lock_guard lock(req.cfg->mutex);
+        return !req.cfg->Closed() && !req.cfg->failure;
+    };
+    return pacer->Pace(clock, sleep, FRAME_LIMIT_SLICE_NANOS);
 }
 
 std::uint32_t resolutionIndex(std::uint32_t width, std::uint32_t height) {
@@ -65,6 +92,15 @@ std::optional<std::uint32_t> configuredResolution() {
         throw std::runtime_error("VideoOut: APS5_OUTPUT_RESOLUTION must be <width>x<height> with positive integers, got \"" + text + "\"");
     }
     return resolutionIndex(width, height);
+}
+
+bool readHostClipboard(std::string& text) {
+    if (SDL_HasClipboardText() != SDL_TRUE) return false;
+    char* raw = SDL_GetClipboardText();
+    if (raw == nullptr) return false;
+    text.assign(raw);
+    SDL_free(raw);
+    return true;
 }
 
 std::vector<const char*> windowExtensions(SDL_Window* window) {
@@ -377,19 +413,30 @@ void VideoOutDriver::Shutdown() {
 }
 
 int VideoOutDriver::Open(int busType) {
-    std::lock_guard lock(mutex);
-    {
-        std::lock_guard queueLock(flipQueue->mutex);
-        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
-        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    }
+    std::unique_lock lock(mutex);
     const int handle = busType + 1;
-    require(handle > 0 && handle < VIDEO_OUT_NUM_MAX, "invalid output bus");
-    auto previous = contexts[handle];
+    std::shared_ptr<VideoOutConfig> previous;
+    for (std::shared_ptr<VideoOutConfig> settled;; settled = previous) {
+        {
+            std::lock_guard queueLock(flipQueue->mutex);
+            if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+            if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        }
+        require(handle > 0 && handle < VIDEO_OUT_NUM_MAX, "invalid output bus");
+        previous = contexts[handle];
+        if (!previous) break;
+        {
+            std::lock_guard cfgLock(previous->mutex);
+            if (previous->opened) return -1;
+        }
+        if (previous == settled) break;
+        lock.unlock();
+        AgcDriverWaitIdle_nid_postfix();
+        lock.lock();
+    }
     uint64_t generation = 1;
     if (previous) {
         std::lock_guard cfgLock(previous->mutex);
-        if (previous->opened) return -1;
         require(previous->generation != std::numeric_limits<uint64_t>::max(), "port generation overflow");
         generation = previous->generation + 1;
     }
@@ -610,6 +657,15 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
             req.gpuComplete = true;
         }
     } else {
+        if (!paceFlip(req)) {
+            std::lock_guard lock(req.cfg->mutex);
+            req.cfg->CheckAlive();
+            if (req.cfg->Closed()) {
+                req.ReleaseLocked();
+                return;
+            }
+        }
+        timing.Mark("frame_limit");
         OnMainThread([&] { window.Ensure(req.width, req.height); });
         const auto extensions = windowExtensions(window.Handle());
         const AgcDriver::PresentationWindow target{window.Handle(), extensions, &createWindowSurface, &windowDrawableSize, req.width, req.height, req.timing};
@@ -722,6 +778,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             keyboardInput.emplace();
             imeTextInput.emplace();
             dialogInput.emplace();
+            imeTextInput->SetClipboardProvider(&readHostClipboard);
         });
         while (!token.stop_requested()) {
             {
@@ -752,6 +809,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
+                LibcRunReportQuitRequested_nid_no_patch();
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }

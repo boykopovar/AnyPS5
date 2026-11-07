@@ -24,6 +24,7 @@ int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mountPoint, Save
 int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mountPoint, uint32_t paramType, void* paramBuf, size_t paramBufSize, size_t* gotSize);
 int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mountPoint, SaveDataIcon* icon);
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mountResult);
+int APS5_VABI sceSaveDataMount2(const SaveDataMount2* mount, SaveDataMountResult* mountResult);
 int APS5_VABI sceSaveDataPrepare(const SaveDataMountPoint* mountPoint, const SaveDataPrepareParam* param);
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mountPoint, const SaveDataIcon* icon);
 int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mountPoint, const char* path);
@@ -51,5 +52,6 @@ int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint* mountPoint);
 int APS5_VABI sceSaveDataSetupSaveDataMemory(std::int32_t userId, std::size_t memorySize, const SaveDataParam* param);
 int APS5_VABI sceSaveDataGetSaveDataMemory(std::int32_t userId, void* buf, std::size_t bufSize, std::int64_t offset);
 int APS5_VABI sceSaveDataSetSaveDataMemory(std::int32_t userId, void* buf, std::size_t bufSize, std::int64_t offset);
+void SaveDataSetFileStepHook_nid_no_patch(bool (*hook)(const char* step, const char* path));
 
 }

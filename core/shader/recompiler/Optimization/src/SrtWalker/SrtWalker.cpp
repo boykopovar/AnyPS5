@@ -8,6 +8,11 @@
 
 namespace ShaderRecompiler {
 
+bool& SrtEvaluatingBranch() {
+    thread_local bool evaluating = false;
+    return evaluating;
+}
+
 void SrtWalker::BuildPlan(IrProgram& program) const {
     if (program.Resources().resourceTrackingComplete) {
         throw std::runtime_error("shader SRT planning failed: cannot rebuild SRT after resource tracking");

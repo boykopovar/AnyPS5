@@ -34,6 +34,7 @@ int main() {
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before init");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc before init");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value before init");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay before init");
 
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
@@ -59,7 +60,10 @@ int main() {
         for (int poll = 0; poll < 8; ++poll) RequireRunning();
         Require(sceSaveDataDialogOpen(&param) == SAVE_DATA_DIALOG_ERROR_INVALID_STATE,
                 "opening another dialog must not interrupt an active save");
+        Require(sceSaveDataDialogProgressBarSetValue(1, 25) == SAVE_DATA_DIALOG_ERROR_PARAM, "set progress invalid target");
+        Require(sceSaveDataDialogProgressBarSetValue(0, 101) == SAVE_DATA_DIALOG_ERROR_PARAM, "set progress rate > 100");
         Require(sceSaveDataDialogProgressBarSetValue(0, 25) == 0, "set progress");
+        Require(sceSaveDataDialogProgressBarInc(1, 25) == SAVE_DATA_DIALOG_ERROR_PARAM, "inc progress invalid target");
         Require(sceSaveDataDialogProgressBarInc(0, 25) == 0, "increment progress");
         RequireRunning();
         Require(sceSaveDataDialogProgressBarInc(0, 10) == 0, "inc progress while running");
@@ -70,12 +74,26 @@ int main() {
         Require(sceSaveDataDialogClose(nullptr) == 0, "close save progress");
         Require(sceSaveDataDialogUpdateStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
                 "closing save progress must finish it");
+        Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc when finished");
+        Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value when finished");
         SaveDataDirName selected{};
         SaveDataDialogResult result{};
         result.dir_name = &selected;
         Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
         Require(sceSaveDataDialogGetResult(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with null result pointer");
+        Require(sceSaveDataDialogGetResult(reinterpret_cast<SaveDataDialogResult*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with invalid pointer");
+        SaveDataDialogResult invalidDirResult{};
+        invalidDirResult.dir_name = reinterpret_cast<void*>(0x10);
+        Require(sceSaveDataDialogGetResult(&invalidDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with invalid directory name pointer");
+        SaveDataDialogResult nullDirResult{};
+        nullDirResult.dir_name = nullptr;
+        Require(sceSaveDataDialogGetResult(&nullDirResult) == 0, "get result with null directory name pointer");
+        Require(nullDirResult.mode == param.mode && nullDirResult.result == SAVE_DATA_DIALOG_RESULT_OK &&
+                nullDirResult.user_data == &context,
+                "save result without directory name must preserve mode and context");
         Require(result.mode == param.mode && result.result == SAVE_DATA_DIALOG_RESULT_OK &&
                 result.user_data == &context && std::strcmp(selected.data, "SDU1") == 0,
                 "save result must preserve its mode, directory and caller context");
@@ -92,6 +110,8 @@ int main() {
     Require(sceSaveDataDialogOpen(&param) == 0, "open selection dialog");
     Require(sceSaveDataDialogUpdateStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
             "selection dialog must retain the existing automatic response");
+    Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc on non-progress dialog");
+    Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value on non-progress dialog");
     Require(sceSaveDataDialogTerminate() == 0, "terminate");
     Require(sceSaveDataDialogTerminate() == SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED, "terminate when already terminated");
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
@@ -129,4 +149,5 @@ int main() {
 
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc after terminate");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value after terminate");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay after terminate");
 }

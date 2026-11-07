@@ -11,7 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import select_tests
 
 
-EXPLICIT_ARGS = len(sys.argv) >= 3 and Path(sys.argv[1]).is_dir()
+EXPLICIT_ARGS = (
+    len(sys.argv) >= 3
+    and __name__ == "__main__"
+    and Path(sys.argv[1]).is_dir()
+)
 if EXPLICIT_ARGS:
     SOURCE = Path(sys.argv.pop(1))
     CMAKE = sys.argv.pop(1)
