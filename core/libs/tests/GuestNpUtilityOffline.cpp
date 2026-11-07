@@ -120,6 +120,77 @@ void CheckWordFilter() {
     Require(sceNpLookupDeleteTitleCtx(context) == InvalidId, "sceNpLookupDeleteTitleCtx", "a word filter context was found among the lookup contexts");
 }
 
+template <typename Init, typename Finalize, typename Create, typename Abort, typename Destroy, typename GetNum, typename GetList>
+void CheckAppLaunchLink(const char* name, Init init, Finalize finalize, Create create, Abort abort, Destroy destroy, GetNum getNum, GetList getList, int notInitialized, int requestNotFound, int invalidArgument) {
+    const int param[4] = {};
+    std::int32_t request = 0;
+    Require(init(0) == 0, name, "initialization failed");
+    Require(create(-1, param, &request) == invalidArgument, name, "user -1 was taken");
+    Require(create(1, nullptr, &request) == invalidArgument, name, "a null parameter was taken");
+    Require(create(1, param, nullptr) == invalidArgument, name, "a null output was taken");
+    Require(create(1, param, &request) == 0 && request == 1, name, "the first request is not id 1");
+    std::int32_t num = -1;
+    Require(getNum(request, &num) == 0 && num == 0, name, "the compatible title count was not zero");
+    Require(getNum(request, nullptr) == invalidArgument, name, "a null count was taken");
+    Require(getNum(request + 100, &num) == requestNotFound, name, "an unknown request was taken");
+    std::int32_t list[4] = {};
+    Require(getList(request, list, &num) == 0 && num == 0, name, "the compatible title list was not empty");
+    Require(getList(request, nullptr, &num) == invalidArgument, name, "a null list with a count was taken");
+    Require(abort(request) == 0, name, "aborting the request failed");
+    Require(abort(request) == requestNotFound, name, "an aborted request was found");
+    Require(create(1, param, &request) == 0 && request == 2, name, "the second request is not id 2");
+    Require(destroy(request) == 0, name, "destroying the request failed");
+    Require(getNum(request, &num) == requestNotFound, name, "a destroyed request was found");
+    finalize();
+    Require(create(1, param, &request) == notInitialized, name, "a request was created after finalization");
+}
+
+void CheckNpUtilityPayloads() {
+    constexpr int AppInfoNotInitialized = static_cast<int>(0x8055B202u);
+    constexpr int AppInfoInvalid = static_cast<int>(0x8055B204u);
+    constexpr int LaunchNotInitialized = static_cast<int>(0x8055AE02u);
+    constexpr int LaunchNotFound = static_cast<int>(0x8055AE06u);
+    constexpr int LaunchInvalid = static_cast<int>(0x8055AE0Cu);
+    constexpr int Launch2NotInitialized = static_cast<int>(0x8055C602u);
+    constexpr int Launch2NotFound = static_cast<int>(0x8055C606u);
+    constexpr int Launch2Invalid = static_cast<int>(0x8055C60Cu);
+    constexpr int ServiceNotInitialized = static_cast<int>(0x8055AD02u);
+    constexpr int ServiceNotFound = static_cast<int>(0x8055AD06u);
+    constexpr int ServiceInvalid = static_cast<int>(0x8055AD0Bu);
+    std::int32_t request = 0;
+    Require(sceNpAppInfoIntCreateRequest(&request) == AppInfoNotInitialized, "sceNpAppInfoIntCreateRequest", "a request was created before initialization");
+    Require(sceNpAppInfoIntInitialize(0) == 0, "sceNpAppInfoIntInitialize", "initialization failed");
+    Require(sceNpAppInfoIntCreateRequest(nullptr) == AppInfoInvalid, "sceNpAppInfoIntCreateRequest", "a null output was taken");
+    Require(sceNpAppInfoIntCreateRequest(&request) == 0 && request == 1, "sceNpAppInfoIntCreateRequest", "the first request is not id 1");
+    Require(sceNpAppInfoIntAbortRequest() == 0, "sceNpAppInfoIntAbortRequest", "aborting the request failed");
+    Require(sceNpAppInfoIntAbortRequest() == AppInfoInvalid, "sceNpAppInfoIntAbortRequest", "an aborted request was found");
+    Require(sceNpAppInfoIntCreateRequest(&request) == 0 && request == 2, "sceNpAppInfoIntCreateRequest", "the second request is not id 2");
+    Require(sceNpAppInfoIntDestroyRequest() == 0, "sceNpAppInfoIntDestroyRequest", "destroying the request failed");
+    Require(sceNpAppInfoIntAbortRequest() == AppInfoInvalid, "sceNpAppInfoIntAbortRequest", "a destroyed request was found");
+    sceNpAppInfoIntFinalize();
+    Require(sceNpAppInfoIntCreateRequest(&request) == AppInfoNotInitialized, "sceNpAppInfoIntCreateRequest", "a request was created after finalization");
+    CheckAppLaunchLink("sceNpAppLaunchLink", sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntAbortRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, sceNpAppLaunchLinkIntGetCompatibleTitleIdList, LaunchNotInitialized, LaunchNotFound, LaunchInvalid);
+    CheckAppLaunchLink("sceNpAppLaunchLink2", sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntAbortRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdNum, sceNpAppLaunchLink2IntGetCompatibleTitleIdList, Launch2NotInitialized, Launch2NotFound, Launch2Invalid);
+    Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceCheckerIntInitialize", "initialization failed");
+    Require(sceNpServiceCheckerIntCreateRequest(selfNpId, &request) == 0 && request == 1, "sceNpServiceCheckerIntCreateRequest", "the first request is not id 1");
+    std::uint32_t availability = 0xA5A5A5A5;
+    Require(sceNpServiceCheckerIntGetAvailability(request, nullptr, &availability) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailability", "a null NpId was taken");
+    Require(sceNpServiceCheckerIntGetAvailability(request, selfNpId, nullptr) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailability", "a null result was taken");
+    Require(sceNpServiceCheckerIntGetAvailability(request + 100, selfNpId, &availability) == ServiceNotFound, "sceNpServiceCheckerIntGetAvailability", "an unknown request was taken");
+    Require(sceNpServiceCheckerIntGetAvailability(request, selfNpId, &availability) == SignedOut, "sceNpServiceCheckerIntGetAvailability", "the availability did not return SIGNED_OUT");
+    const void* npIds[2] = {selfNpId, selfNpId};
+    std::uint32_t results[2] = {0xA5A5A5A5, 0xA5A5A5A5};
+    Require(sceNpServiceCheckerIntGetAvailabilityList(request, npIds, 2, results) == SignedOut, "sceNpServiceCheckerIntGetAvailabilityList", "the list did not return SIGNED_OUT");
+    Require(sceNpServiceCheckerIntGetAvailabilityList(request, nullptr, 0, nullptr) == 0, "sceNpServiceCheckerIntGetAvailabilityList", "an empty list was refused");
+    Require(sceNpServiceCheckerIntGetAvailabilityList(request, nullptr, 1, results) == ServiceInvalid, "sceNpServiceCheckerIntGetAvailabilityList", "a null list with a count was taken");
+    std::uint8_t cached = 0xA5;
+    Require(sceNpServiceCheckerIntIsCached(request, &cached) == 0 && cached == 0, "sceNpServiceCheckerIntIsCached", "the request was reported cached");
+    Require(sceNpServiceCheckerIntIsCached(request, nullptr) == ServiceInvalid, "sceNpServiceCheckerIntIsCached", "a null output was taken");
+    Require(sceNpServiceCheckerIntIsCached(request + 100, &cached) == ServiceNotFound, "sceNpServiceCheckerIntIsCached", "an unknown request was taken");
+    sceNpServiceCheckerIntFinalize();
+    Require(sceNpServiceCheckerIntGetAvailability(request, selfNpId, &availability) == ServiceNotInitialized, "sceNpServiceCheckerIntGetAvailability", "availability was checked after finalization");
+}
+
 void CheckNpUtilityLifecycles() {
     constexpr int AppInfoAlreadyInitialized = static_cast<int>(0x8055B201u);
     constexpr int AppLaunchLinkAlreadyInitialized = static_cast<int>(0x8055AE01u);
@@ -354,6 +425,7 @@ int main() {
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
     CheckNpUtilityLifecycles();
+    CheckNpUtilityPayloads();
     CheckServiceChecker2();
     CheckLookup();
     CheckWordFilter();
