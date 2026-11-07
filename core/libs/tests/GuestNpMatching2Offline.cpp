@@ -4,8 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
-#include <string>
+#include <initializer_list>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -152,15 +151,6 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "terminating after the requests failed");
 }
 
-bool NullStatusThrows(std::uint16_t ctxId) {
-    try {
-        sceNpMatching2SignalingGetConnectionStatus(ctxId, 1, 1, nullptr, nullptr, nullptr);
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("not implemented") != std::string::npos;
-    }
-    return false;
-}
-
 }
 
 int main() {
@@ -259,8 +249,8 @@ int main() {
     Require(sceNpMatching2SignalingGetConnectionStatus(1, 0, 0, &status, nullptr, nullptr) == 0 && status == ConnStatusInactive, "sceNpMatching2SignalingGetConnectionStatus", "null peer address and port outputs were refused");
     status = StatusSentinel;
     Require(sceNpMatching2SignalingGetConnectionStatus(99, 1, 1, &status, &peerAddr, &peerPort) == InvalidContextId && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "an unknown context was taken or its status written");
-    Require(NullStatusThrows(1), "sceNpMatching2SignalingGetConnectionStatus", "a null status for a known context did not throw");
-    Require(NullStatusThrows(99), "sceNpMatching2SignalingGetConnectionStatus", "a null status for an unknown context did not throw before the context check");
+    Require(sceNpMatching2SignalingGetConnectionStatus(1, 1, 1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpMatching2SignalingGetConnectionStatus", "a null status for a known context did not return INVALID_ARGUMENT");
+    Require(sceNpMatching2SignalingGetConnectionStatus(99, 1, 1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpMatching2SignalingGetConnectionStatus", "a null status for an unknown context did not return INVALID_ARGUMENT before the context check");
     Require(sceNpMatching2DestroyContext(2) == 0, "sceNpMatching2DestroyContext", "destroying context 2 failed");
     status = StatusSentinel;
     Require(sceNpMatching2SignalingGetConnectionStatus(2, 1, 1, &status, nullptr, nullptr) == InvalidContextId && status == StatusSentinel, "sceNpMatching2SignalingGetConnectionStatus", "a destroyed context was taken");
