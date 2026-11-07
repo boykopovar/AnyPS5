@@ -476,7 +476,6 @@ int APS5_VABI _ZN6webrtc10VideoFrame7Builder22set_video_frame_bufferERKNS_13scop
     return 0;
 }
 
-
 int APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
