@@ -621,6 +621,41 @@ void TestFileAndSocket() {
     Require(BIO_ctrl_nid_postfix(socket, 8, 0, nullptr) == 0, "socket BIO no-close flag");
     Require(BIO_free_nid_postfix(socket) == 1, "free unowned guest socket BIO");
 }
+
+void TestPemReadX509FileWrapper() {
+    auto* const sentinel = reinterpret_cast<LibreSslX509*>(std::uintptr_t{1});
+    LibreSslX509* output = sentinel;
+    bool nullReaderThrew = false;
+    try {
+        PEM_read_X509_nid_postfix(nullptr, &output, nullptr, nullptr);
+    } catch (...) {
+        nullReaderThrew = true;
+    }
+    Require(nullReaderThrew && allocations == 0 && output == sentinel,
+            "null FILE still reaches the unsupported reader and frees its BIO");
+
+    std::FILE* native = std::tmpfile();
+    Require(native != nullptr, "open temporary PEM file");
+    FileStream stream(native);
+    allocationsUntilFailure = 0;
+    Require(PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr) == nullptr,
+            "BIO allocation failure returns null");
+    allocationsUntilFailure = -1;
+    Require(ERR_get_error_nid_postfix() == 0x20fff041, "BIO allocation error precedes the PEM wrapper error");
+    RequireError(0x09fff007);
+    Require(allocations == 0 && output == sentinel, "BIO allocation failure has no leak or output write");
+
+    bool readerThrew = false;
+    try {
+        PEM_read_X509_nid_postfix(&stream, &output, nullptr, nullptr);
+    } catch (...) {
+        readerThrew = true;
+    }
+    Require(readerThrew, "unknown lower X509 PEM reader propagates its exception");
+    Require(allocations == 0 && stream.IsOpen() && output == sentinel,
+            "reader exception frees only the borrowed BIO and preserves the stream and output");
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed PEM file after reader exception");
+}
 #endif
 
 }  // namespace
@@ -644,6 +679,7 @@ int main(int argc, char** argv) {
     TestUnsupported();
 #ifndef ANYPS5_BIO_DYNAMIC
     TestFileAndSocket();
+    TestPemReadX509FileWrapper();
 #endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
