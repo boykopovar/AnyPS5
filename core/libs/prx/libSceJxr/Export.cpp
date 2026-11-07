@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include "Stream.hpp"
 #include "Factory.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
@@ -48,6 +49,20 @@ constexpr std::int64_t WmpErrBufferOverflow = -103;
 constexpr std::size_t MemoryBuffer = 0;
 constexpr std::size_t MemorySize = 1;
 constexpr std::size_t MemoryPosition = 2;
+using DecoderGetResolution = std::int64_t (APS5_VABI*)(void*, float*, float*);
+static_assert(sizeof(DecoderGetResolution) == 8);
+
+std::uintptr_t GuestFieldAddress(const void* base, std::uintptr_t offset, std::size_t size) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) {
+        throw std::invalid_argument("invalid JXR guest field address");
+    }
+    const auto field = address + offset;
+    if (size > std::numeric_limits<std::uintptr_t>::max() - field) {
+        throw std::invalid_argument("invalid JXR guest field range");
+    }
+    return field;
+}
 
 template<typename TSlot, typename TFunction>
 TSlot Slot(TFunction* function) {
@@ -257,8 +272,19 @@ int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_GetResolution_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_GetResolution_nid_postfix(JxrGuestFormatConverter* converter, float* x, float* y) {
+    if (!converter) throw std::invalid_argument("null JXR format converter");
+    void* decoder = nullptr;
+    const auto decoderAddress = GuestFieldAddress(converter, offsetof(JxrGuestFormatConverter, decoder), sizeof(decoder));
+    if (!GuestCopyIn_nid_no_patch(&decoder, reinterpret_cast<const void*>(decoderAddress), sizeof(decoder)) || !decoder) {
+        throw std::invalid_argument("invalid JXR decoder field");
+    }
+    DecoderGetResolution getResolution = nullptr;
+    const auto callbackAddress = GuestFieldAddress(decoder, 24, sizeof(getResolution));
+    if (!GuestCopyIn_nid_no_patch(&getResolution, reinterpret_cast<const void*>(callbackAddress), sizeof(getResolution)) || !getResolution) {
+        throw std::invalid_argument("invalid JXR resolution callback field");
+    }
+    return getResolution(decoder, x, y);
 }
 
 int APS5_VABI PKFormatConverter_GetSize_nid_postfix() {
