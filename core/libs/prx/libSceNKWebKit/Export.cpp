@@ -18630,10 +18630,6 @@ int APS5_VABI _ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF3URL11setProtocolENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -26722,10 +26718,6 @@ int APS5_VABI _ZN7WebCore25WebSocketChannelInspectorC2ERNS_8DocumentE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore25computeViewportAttributesENS_17ViewportArgumentsEiiifNS_7IntSizeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore25directionOfEnclosingBlockERKNS_8PositionE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -27502,14 +27494,6 @@ int APS5_VABI _ZN7WebCore39cleanHTTPRequestHeadersForAccessControlERNS_15Resourc
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore40restrictMinimumScaleFactorToViewportSizeERNS_18ViewportAttributesENS_7IntSizeEf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore44computeMinimumScaleFactorForContentContainedERKNS_18ViewportAttributesERKNS_7IntSizeES5_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore46visibleImageElementsInRangeWithNonLoadedImagesERKNS_11SimpleRangeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -28135,10 +28119,6 @@ int APS5_VABI _ZN7WebCore4toJSERNS_12VoidCallbackE() {
 }
 
 int APS5_VABI _ZN7WebCore4toJSERNS_14StringCallbackE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore50restrictScaleFactorToInitialScaleIfNotUserScalableERNS_18ViewportAttributesE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
