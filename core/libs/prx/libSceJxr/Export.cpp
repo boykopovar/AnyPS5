@@ -519,10 +519,6 @@ int APS5_VABI detachISWrite_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI freePredInfo_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI freeQuantizer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -1,8 +1,13 @@
 #include "prx/libSceJxr/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 extern "C" {
@@ -21,6 +26,8 @@ void JxrPredictReferenceUseDc_nid_no_patch(void* value, std::size_t tile);
 void JxrPredictReferenceUseLp_nid_no_patch(void* value, std::size_t count, std::size_t tile);
 std::int32_t JxrPredictReferenceMode_nid_no_patch(void* value, std::size_t column);
 void JxrPredictReferenceUpdate_nid_no_patch(void* value, void* macroblock, std::size_t column, std::int32_t format);
+void* JxrPredictPredInfoBlock_nid_no_patch(void* value);
+void JxrPredictSetPredInfoBlock_nid_no_patch(void* value, void* memory);
 }
 
 namespace {
@@ -34,6 +41,55 @@ constexpr std::int32_t NComponent = 6;
 constexpr std::int32_t Rgbe = 8;
 constexpr std::size_t Width = 8;
 constexpr std::size_t MacroblockSize = 1160;
+
+bool failAllocation = false;
+int liveBlocks = 0;
+
+void* APS5_VABI Allocate(std::size_t size) {
+    if (failAllocation) return nullptr;
+    ++liveBlocks;
+    return std::malloc(size);
+}
+void APS5_VABI Free(void* pointer) {
+    if (pointer) --liveBlocks;
+    std::free(pointer);
+}
+void* APS5_VABI Calloc(std::size_t count, std::size_t size) {
+    if (failAllocation) return nullptr;
+    ++liveBlocks;
+    return std::calloc(count, size);
+}
+void* APS5_VABI Reallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
+void* APS5_VABI Realign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+int APS5_VABI PosixAlign(void** pointer, std::size_t, std::size_t size) {
+    *pointer = std::malloc(size);
+    return *pointer ? 0 : 12;
+}
+
+void InitializeHeap() {
+    alignas(16) static std::array<std::byte, 0x40> process{};
+    alignas(16) static std::array<std::byte, 0x38> libc{};
+    alignas(16) static std::array<std::byte, 0x78> replacement{};
+    const auto write = [](auto& data, std::size_t offset, auto value) {
+        std::memcpy(data.data() + offset, &value, sizeof(value));
+    };
+    write(process, 0, std::uint64_t{0x40});
+    write(process, 8, std::uint32_t{0x4942524f});
+    write(process, 0x38, libc.data());
+    write(libc, 0, std::uint64_t{0x38});
+    write(libc, 0x30, replacement.data());
+    write(replacement, 0, std::uint64_t{0x78});
+    write(replacement, 8, std::uint64_t{2});
+    write(replacement, 0x20, reinterpret_cast<void*>(&Allocate));
+    write(replacement, 0x28, reinterpret_cast<void*>(&Free));
+    write(replacement, 0x30, reinterpret_cast<void*>(&Calloc));
+    write(replacement, 0x38, reinterpret_cast<void*>(&Reallocate));
+    write(replacement, 0x40, reinterpret_cast<void*>(&Align));
+    write(replacement, 0x48, reinterpret_cast<void*>(&Realign));
+    write(replacement, 0x50, reinterpret_cast<void*>(&PosixAlign));
+    ApplicationHeapInitialize_nid_no_patch(process.data());
+}
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -66,6 +122,24 @@ struct Pair {
     }
     bool Same() const { return JxrPredictEqual_nid_no_patch(guest, native) != 0; }
 };
+
+void TestPredInfoRelease() {
+    RequireInvalidArgument([] { freePredInfo_nid_postfix(nullptr); }, "freePredInfo accepted a null codec");
+    Pair pair(0x2b3c4d5e, 3, Yuv444, 1);
+    void* const block = malloc_nid_postfix(2 * Width * 3 * 48);
+    Require(block != nullptr, "allocation");
+    JxrPredictSetPredInfoBlock_nid_no_patch(pair.guest, block);
+    JxrPredictSetPredInfoBlock_nid_no_patch(pair.native, block);
+    const int live = liveBlocks;
+    freePredInfo_nid_postfix(pair.guest);
+    Require(liveBlocks == live - 1, "freePredInfo did not release the guest block");
+    Require(JxrPredictPredInfoBlock_nid_no_patch(pair.guest) == nullptr, "freePredInfo kept the prediction block");
+    JxrPredictSetPredInfoBlock_nid_no_patch(pair.native, nullptr);
+    Require(pair.Same(), "freePredInfo changed more than the prediction block");
+    freePredInfo_nid_postfix(pair.guest);
+    Require(liveBlocks == live - 1, "freePredInfo of an empty codec released a block");
+    Require(JxrPredictPredInfoBlock_nid_no_patch(pair.guest) == nullptr && pair.Same(), "freePredInfo of an empty codec changed it");
+}
 
 void TestQuantizers() {
     std::uint32_t seed = 0x2468ace1;
@@ -179,6 +253,8 @@ void TestUpdates() {
 } // namespace
 
 int main() {
+    InitializeHeap();
+    TestPredInfoRelease();
     TestQuantizers();
     TestModes();
     TestUpdates();

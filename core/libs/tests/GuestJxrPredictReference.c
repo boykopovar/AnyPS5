@@ -153,3 +153,11 @@ int32_t JxrPredictReferenceMode_nid_no_patch(void* value, size_t column) {
 void JxrPredictReferenceUpdate_nid_no_patch(void* value, void* macroblock, size_t column, int32_t format) {
     updatePredInfo(&((JxrPredictCase*)value)->codec, (CWMIMBInfo*)macroblock, column, (COLORFORMAT)format);
 }
+
+void* JxrPredictPredInfoBlock_nid_no_patch(void* value) {
+    return ((JxrPredictCase*)value)->codec.pPredInfoMemory;
+}
+
+void JxrPredictSetPredInfoBlock_nid_no_patch(void* value, void* memory) {
+    ((JxrPredictCase*)value)->codec.pPredInfoMemory = (CWMIPredInfo*)memory;
+}

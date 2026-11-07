@@ -7,7 +7,8 @@ _Static_assert(sizeof(CWMImageStrCodec) == 35944, "CWMImageStrCodec size");
 _Static_assert(offsetof(CWMImageStrCodec, WMISCP) == 128 && offsetof(CWMImageStrCodec, MBInfo) == 33048 &&
                    offsetof(CWMImageStrCodec, m_param) == 34208 && offsetof(CWMImageStrCodec, m_bCtxLeft) == 34432 &&
                    offsetof(CWMImageStrCodec, pTile) == 34448 && offsetof(CWMImageStrCodec, cmbWidth) == 34528 &&
-                   offsetof(CWMImageStrCodec, PredInfo) == 35392,
+                   offsetof(CWMImageStrCodec, PredInfo) == 35392 &&
+                   offsetof(CWMImageStrCodec, pPredInfoMemory) == 35648,
                "CWMImageStrCodec layout");
 
 static const char* CheckTile(const CWMImageStrCodec* codec, size_t tile) {
@@ -80,6 +81,14 @@ const char* JxrGetDcAcPredMode_nid_no_patch(void* value, size_t column, int32_t*
     }
     if (error) return error;
     *mode = getDCACPredMode(codec, column);
+    return NULL;
+}
+
+const char* JxrDetachPredInfo_nid_no_patch(void* value, void** memory) {
+    CWMImageStrCodec* codec = (CWMImageStrCodec*)value;
+    if (codec == NULL) return "null codec";
+    *memory = codec->pPredInfoMemory;
+    codec->pPredInfoMemory = NULL;
     return NULL;
 }
 
