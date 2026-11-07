@@ -34,6 +34,30 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct TimeInfo {
+    const char* amPm;
+    const char* days;
+    const char* abbreviatedDays;
+    const char* fullDays;
+    const char* months;
+    const char* abbreviatedMonths;
+    const char* fullMonths;
+    const char* formats;
+    const char* dateTimeFormat;
+    const char* dateFormat;
+    const char* timeFormat;
+    const char* timeFormatAmPm;
+    const char* eraFormats;
+    const char* eraDateTimeFormat;
+    const char* eraDateFormat;
+    const char* eraTimeFormat;
+    const char* eraTimeFormatAmPm;
+    const char* era;
+    const char* alternativeDigits;
+    const char* daylightSaving;
+    const char* timeZone;
+};
+
 struct Implementation {
     Facet base;
     Facet** facets;
@@ -52,6 +76,9 @@ struct String {
     std::uint64_t size;
     std::uint64_t capacity;
 };
+
+constexpr std::size_t StringInlineCapacity = 15;
+constexpr std::size_t StringCapacityMask = 15;
 
 void* AllocateStringStorage(std::size_t bytes);
 void ReleaseStringStorage(String& string);
@@ -98,6 +125,24 @@ struct NumpunctVtable {
     String* (APS5_VABI *truename)(String* result, const NumpunctFacet* self);
 };
 
+struct WideNumpunctFacet {
+    Facet base;
+    const char* grouping;
+    std::uint16_t decimalPoint;
+    std::uint16_t thousandsSep;
+    const std::uint16_t* falsename;
+    const std::uint16_t* truename;
+};
+
+struct WideNumpunctVtable {
+    FacetVtable facet;
+    std::uint16_t (APS5_VABI *decimalPoint)(const WideNumpunctFacet* self);
+    std::uint16_t (APS5_VABI *thousandsSep)(const WideNumpunctFacet* self);
+    String* (APS5_VABI *grouping)(String* result, const WideNumpunctFacet* self);
+    String* (APS5_VABI *falsename)(String* result, const WideNumpunctFacet* self);
+    String* (APS5_VABI *truename)(String* result, const WideNumpunctFacet* self);
+};
+
 struct IosBase {
     const void* vtable;
     std::int64_t standardStream;
@@ -111,6 +156,20 @@ struct IosBase {
     void* callbacks;
     Implementation** locale;
 };
+
+struct SceV2IosBase {
+    const void* vtable;
+    std::int64_t standardStream;
+    unsigned char reserved[0x20];
+    void* streamNodes;
+    void* callbackNodes;
+    Implementation** locale;
+};
+
+static_assert(offsetof(SceV2IosBase, streamNodes) == 0x30);
+static_assert(offsetof(SceV2IosBase, callbackNodes) == 0x38);
+static_assert(offsetof(SceV2IosBase, locale) == 0x40);
+static_assert(sizeof(SceV2IosBase) == 0x48);
 
 struct Streambuf;
 
@@ -154,6 +213,8 @@ struct CtypeVtable {
     const void* caseMethods[4];
     char (APS5_VABI *widen)(const Facet* self, char character);
     const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
+    char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
+    const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
 
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
@@ -163,7 +224,10 @@ static_assert(sizeof(OutputIterator) == 0x10);
 static_assert(offsetof(TimePutVtable, put) == 0x20);
 static_assert(offsetof(NumPutVtable, putBool) == 0x20);
 static_assert(offsetof(NumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(CtypeVtable, widen) == 0x40);
 static_assert(offsetof(CtypeVtable, widenRange) == 0x48);
+static_assert(offsetof(CtypeVtable, narrow) == 0x50);
+static_assert(offsetof(CtypeVtable, narrowRange) == 0x58);
 static_assert(sizeof(Facet) == 0x10);
 static_assert(offsetof(Implementation, facets) == 0x10);
 static_assert(offsetof(Implementation, facetCount) == 0x18);
@@ -193,6 +257,14 @@ static_assert(offsetof(NumpunctFacet, falsename) == 0x20);
 static_assert(offsetof(NumpunctFacet, truename) == 0x28);
 static_assert(offsetof(NumpunctVtable, decimalPoint) == 0x20);
 static_assert(offsetof(NumpunctVtable, truename) == 0x40);
+static_assert(sizeof(WideNumpunctFacet) == 0x30);
+static_assert(offsetof(WideNumpunctFacet, grouping) == 0x10);
+static_assert(offsetof(WideNumpunctFacet, decimalPoint) == 0x18);
+static_assert(offsetof(WideNumpunctFacet, thousandsSep) == 0x1a);
+static_assert(offsetof(WideNumpunctFacet, falsename) == 0x20);
+static_assert(offsetof(WideNumpunctFacet, truename) == 0x28);
+static_assert(offsetof(WideNumpunctVtable, decimalPoint) == 0x20);
+static_assert(offsetof(WideNumpunctVtable, truename) == 0x40);
 static_assert(alignof(LocinfoStorage) == 8);
 static_assert(sizeof(SceV2Locinfo) == 24);
 static_assert(offsetof(SceV2Locinfo, name) == 8);
@@ -203,5 +275,14 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+inline constexpr std::size_t kCodecvtCharVtableSlots = 13;
+static_assert(kCodecvtCharVtableSlots * sizeof(std::uintptr_t) == 104);
+extern "C" std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots];
+inline constexpr std::size_t kTimePutCharVtableSlots = 7;
+static_assert(kTimePutCharVtableSlots * sizeof(std::uintptr_t) == 56);
+extern "C" std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots];
+inline constexpr std::size_t kMoneyGetCharVtableSlots = 8;
+static_assert(kMoneyGetCharVtableSlots * sizeof(std::uintptr_t) == 64);
+extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots];
 
 #endif

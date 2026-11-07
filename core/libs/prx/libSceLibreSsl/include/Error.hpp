@@ -3,7 +3,7 @@
 
 extern "C" {
 
-void LibreSslPutError_nid_no_patch(int library, int function, int reason);
+void LibreSslPutError_nid_no_patch(int library, int function, int reason, const char* file = nullptr, int line = 0);
 
 }
 

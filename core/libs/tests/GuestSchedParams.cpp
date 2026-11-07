@@ -4,6 +4,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
+#include <stdexcept>
 
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
@@ -74,6 +76,8 @@ static void CheckTargets() {
     REQUIRE(FailsWith(sched_setparam_nid_postfix(0, reinterpret_cast<const KernelSchedParam*>(0x10)), GUEST_EFAULT));
     *__error_nid_postfix() = 0;
     REQUIRE(FailsWith(sched_setparam_nid_postfix(self + 1, nullptr), GUEST_EFAULT));
+    *__error_nid_postfix() = 0;
+    REQUIRE(FailsWith(sched_setparam_nid_postfix(self + 1, reinterpret_cast<const KernelSchedParam*>(0x10)), GUEST_EFAULT));
 }
 
 static constexpr int WorkerPriority = 700;
@@ -136,6 +140,31 @@ static void CheckOutOfRange() {
 }
 
 #ifndef __APPLE__
+static void* APS5_VABI UnregisteredMainWorker(void*) {
+    const int pid = getpid_nid_postfix();
+    *__error_nid_postfix() = 0;
+    REQUIRE(FailsWith(sched_setparam_nid_postfix(pid, reinterpret_cast<const KernelSchedParam*>(0x10)), GUEST_EFAULT));
+    const KernelSchedParam workerParam{400};
+    REQUIRE(pthread_setschedparam_nid_postfix(scePthreadSelf(), SCHED_RR_POLICY, &workerParam) == 0);
+    KernelSchedParam param{-1};
+    try {
+        const int result = sched_getparam_nid_postfix(pid, &param);
+        REQUIRE(result != 0 || param.sched_priority != workerParam.sched_priority);
+    } catch (const std::runtime_error&) {}
+    try {
+        REQUIRE(sched_getscheduler_nid_postfix(pid) != SCHED_RR_POLICY);
+    } catch (const std::runtime_error&) {}
+    return nullptr;
+}
+
+static void CheckBeforeMainPthreadCall() {
+    std::thread worker([] { UnregisteredMainWorker(nullptr); });
+    worker.join();
+    Pthread guestWorker = nullptr;
+    REQUIRE(scePthreadCreate(&guestWorker, nullptr, UnregisteredMainWorker, nullptr, "unregistered") == 0);
+    REQUIRE(scePthreadJoin(guestWorker, nullptr) == 0);
+}
+
 static void CheckOwnPid() {
     KernelSchedParam original{};
     REQUIRE(sched_getparam_nid_postfix(0, &original) == 0);
@@ -146,11 +175,45 @@ static void CheckOwnPid() {
     KernelSchedParam reported{-1};
     REQUIRE(sched_getparam_nid_postfix(self, &reported) == 0 && reported.sched_priority == 600);
     REQUIRE(sched_getscheduler_nid_postfix(self) == policy);
-    REQUIRE(sched_setparam_nid_postfix(self, &original) == 0);
+    for (const int mainPolicy : {SCHED_FIFO_POLICY, SCHED_RR_POLICY}) {
+        REQUIRE(pthread_setschedparam_nid_postfix(scePthreadSelf(), mainPolicy, &mainParam) == 0);
+        std::thread worker([=] {
+            const int workerPolicy = mainPolicy == SCHED_FIFO_POLICY ? SCHED_RR_POLICY : SCHED_FIFO_POLICY;
+            const KernelSchedParam workerParam{400};
+            REQUIRE(pthread_setschedparam_nid_postfix(scePthreadSelf(), workerPolicy, &workerParam) == 0);
+            KernelSchedParam value{-1};
+            REQUIRE(sched_getparam_nid_postfix(self, &value) == 0 && value.sched_priority == 600);
+            REQUIRE(sched_getscheduler_nid_postfix(self) == mainPolicy);
+            const KernelSchedParam changed{500};
+            REQUIRE(sched_setparam_nid_postfix(self, &changed) == 0);
+            REQUIRE(sched_getparam_nid_postfix(self, &value) == 0 && value.sched_priority == 500);
+            REQUIRE(sched_getscheduler_nid_postfix(self) == mainPolicy);
+            REQUIRE(sched_getparam_nid_postfix(0, &value) == 0 && value.sched_priority == 400);
+            REQUIRE(sched_getscheduler_nid_postfix(0) == workerPolicy);
+            const KernelSchedParam rejected{768};
+            *__error_nid_postfix() = 0;
+            REQUIRE(FailsWith(sched_setparam_nid_postfix(self, &rejected), GUEST_EPERM));
+            *__error_nid_postfix() = 0;
+            REQUIRE(FailsWith(sched_getparam_nid_postfix(self, nullptr), GUEST_EFAULT));
+            *__error_nid_postfix() = 0;
+            REQUIRE(FailsWith(sched_setparam_nid_postfix(self, nullptr), GUEST_EFAULT));
+            *__error_nid_postfix() = 0;
+            REQUIRE(FailsWith(sched_getparam_nid_postfix(self, reinterpret_cast<KernelSchedParam*>(0x10)), GUEST_EFAULT));
+            *__error_nid_postfix() = 0;
+            REQUIRE(FailsWith(sched_setparam_nid_postfix(self, reinterpret_cast<const KernelSchedParam*>(0x10)), GUEST_EFAULT));
+        });
+        worker.join();
+        REQUIRE(sched_getparam_nid_postfix(0, &reported) == 0 && reported.sched_priority == 500);
+        REQUIRE(sched_getscheduler_nid_postfix(0) == mainPolicy);
+    }
+    REQUIRE(pthread_setschedparam_nid_postfix(scePthreadSelf(), policy, &original) == 0);
 }
 #endif
 
 int main() {
+#ifndef __APPLE__
+    CheckBeforeMainPthreadCall();
+#endif
     CheckCallingThread();
     CheckTargets();
     CheckOtherThread();

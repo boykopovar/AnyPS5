@@ -92,6 +92,18 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_mapped_segments_at_virtual_address_zero_keep_their_template(self):
+        for kind in (PT_DYNAMIC, PT_TLS):
+            with self.subTest(kind=kind):
+                segments = default_segments()
+                segments[2] = (kind, 4, 0x1234, 0, 0x10, 8)
+                result, output = self.convert(build_container(segments, default_records(), default_payloads()))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                self.assertEqual(headers[2][2], headers[0][2])
+                self.assertEqual(headers[2][5:7], (0x10, 0x10))
+                self.assertEqual(data[headers[2][2]:headers[2][2] + 0x10], pattern(1, 0x10))
+
     def test_unsupported_inner_elf_machines_are_refused(self):
         for machine in (0, 3, 40, 183, 0x3E00, 0xFFFF):
             with self.subTest(machine=machine):
@@ -1412,6 +1424,23 @@ class UnwrapTest(unittest.TestCase):
         _, _, headers = unwrap_self.parse_elf(container)
         self.assertEqual(headers[2]["align"], 3)
 
+    def test_null_segment_fields_do_not_affect_conversion(self):
+        segments = default_segments()
+        segments[2] = (PT_NULL, 0, 0, 0, 0, 0)
+        original = build_container(segments, default_records(), default_payloads())
+        result, output = self.convert(original)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        for field, format in ((4, "<I"), (8, "<Q"), (16, "<Q"), (24, "<Q"),
+                              (32, "<Q"), (40, "<Q"), (48, "<Q")):
+            with self.subTest(field=field):
+                container = bytearray(original)
+                value = (1 << (struct.calcsize(format) * 8)) - 1
+                struct.pack_into(format, container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + field, value)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_bytes(), expected)
+
     def test_load_alignment_zero_and_one_remain_supported(self):
         for alignment in (0, 1):
             with self.subTest(alignment=alignment):
@@ -1658,4 +1687,5 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    selected_test = os.environ.get("UNWRAP_SELF_TEST")
+    unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)

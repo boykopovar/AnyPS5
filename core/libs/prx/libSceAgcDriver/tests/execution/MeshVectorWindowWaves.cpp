@@ -153,7 +153,11 @@ int main() {
     try {
         {
             const auto device = OpenVulkanTestDevice();
-            if (!device || !TargetHasCapability(device->Target(), spv::CapabilityMeshShadingEXT)) return VulkanTestSkipped;
+            if (!device) return VulkanTestSkipped;
+            if (!TargetHasCapability(device->Target(), spv::CapabilityMeshShadingEXT)) {
+                std::puts("skipped, the device has no VK_EXT_mesh_shader");
+                return VulkanTestSkipped;
+            }
             if (device->DeviceName().starts_with("llvmpipe")) {
                 std::puts("skipped, the device has no mesh shader compiler that handles these programs (llvmpipe)");
                 return VulkanTestSkipped;

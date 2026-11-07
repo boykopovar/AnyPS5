@@ -11,9 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import performance_compare
 
 UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)')
+CHECKLIST_UNBLOCKS = re.compile(r"^[ \t]*-[ \t]*\[[ xX]\][ \t]*Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)", re.M)
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
 NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
+PERF_SCOPE = re.compile(r"perf\(([^)]*)\)")
+UNCAPTURED_SCOPES = {"build", "ci", "tools"}
 FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
 MARKER = "<!-- pr-labels-perf -->"
 UNBLOCKS_LABEL = "unblocks title"
@@ -39,12 +42,19 @@ def strip_comments(body):
 
 
 def title_ids(body):
-    match = UNBLOCKS.search(strip_comments(body))
+    body = strip_comments(body)
+    checklist = CHECKLIST_UNBLOCKS.search(body)
+    match = checklist if checklist and checklist.group(1).strip() else UNBLOCKS.search(body)
     return set(TITLE_ID.findall(match.group(1))) if match and not NONE.match(match.group(1)) else set()
 
 
 def is_perf(title):
     return bool(PERF.match(title or ""))
+
+
+def needs_capture(title):
+    scope = PERF_SCOPE.match(title or "")
+    return is_perf(title) and not (scope and scope.group(1).strip().lower() in UNCAPTURED_SCOPES)
 
 
 def has_numbers(body):
@@ -69,7 +79,7 @@ def labels_for(pr):
         wanted.add(UNBLOCKS_LABEL)
     if is_perf(pr["title"]):
         wanted.add(PERF_LABEL)
-        if not has_numbers(pr["body"]):
+        if needs_capture(pr["title"]) and not has_numbers(pr["body"]):
             wanted.add(MISSING_LABEL)
     current = set(pr["labels"])
     return wanted - current, (MANAGED & current) - wanted
@@ -146,7 +156,10 @@ def main(argv=None):
     which.add_argument("--pr", type=int, help="label one pull request")
     which.add_argument("--all", action="store_true", help="label every open pull request")
     parser.add_argument("--dry-run", action="store_true", help="print the planned changes and write nothing")
+    parser.add_argument("--json", action="store_true", help="emit a dry-run plan as JSON")
     args = parser.parse_args(argv)
+    if args.json and not args.dry_run:
+        parser.error("--json requires --dry-run")
     try:
         repo = repository()
         if args.pr is not None:
@@ -157,19 +170,27 @@ def main(argv=None):
         parser.error((error.stderr or str(error)).strip())
     except (ValueError, RecursionError) as error:
         parser.error(f"cannot read pull requests: {error}")
-    failed = []
+    failed, plans = [], []
     for pr in prs:
         try:
             add, remove, post = process(repo, pr, args.dry_run, comment=args.pr is not None)
         except subprocess.CalledProcessError as error:
             failed.append(pr["number"])
+            plans.append({"number": pr["number"], "error": (error.stderr or str(error)).strip()})
             print(f"cannot label #{pr['number']}: {(error.stderr or '').strip()}", file=sys.stderr)
+            continue
+        plans.append({"number": pr["number"], "add": sorted(add), "remove": sorted(remove),
+                      "comment_marker": MARKER if post else None})
+        if args.json:
             continue
         if add or remove or post:
             plan = [f"+{label}" for label in sorted(add)] + [f"-{label}" for label in sorted(remove)] + (["comment"] if post else [])
             print(f"{'would change' if args.dry_run else 'changed'} #{pr['number']}: {' '.join(plan)}")
             if args.all and not args.dry_run:
                 time.sleep(WRITE_PAUSE)
+    if args.json:
+        print(json.dumps({"repository": repo, "plans": plans, "failed": failed}, sort_keys=True))
+        return int(bool(failed))
     if failed:
         sys.exit(f"{len(failed)} pull requests not labeled: {', '.join(f'#{number}' for number in failed)}")
     return 0
