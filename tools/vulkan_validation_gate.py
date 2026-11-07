@@ -13,11 +13,38 @@ import xml.etree.ElementTree as ET
 
 
 FORCED = {"ANYPS5_REQUIRE_VULKAN": "1", "ANYPS5_NO_SHADER_CACHE": "1",
-          "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation"}
+          "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LOADER_DEBUG": "layer"}
 PUBLIC_ENV = ("ANYPS5_GPU", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "VK_LAYER_PATH")
 DIAGNOSTIC = re.compile(r"\b(VUID-[A-Za-z0-9_-]+|SYNC-HAZARD-[A-Za-z0-9_-]+)")
 MESSAGE = re.compile(r"Validation (?:Error|Warning):|(?:VUID-|SYNC-HAZARD-)[\w-]+\s*\((?:ERROR|WARNING)\s*/")
 MISSING_LAYER = "was not found but was requested by env var VK_INSTANCE_LAYERS"
+INSERTED_LAYER = 'Insert instance layer "VK_LAYER_KHRONOS_validation"'
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class ThreadEntry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("thread", wintypes.DWORD),
+                    ("owner", wintypes.DWORD), ("base_priority", wintypes.LONG), ("delta_priority", wintypes.LONG),
+                    ("flags", wintypes.DWORD)]
+
+    KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    for name, restype, *argtypes in (
+            ("CreateJobObjectW", wintypes.HANDLE, wintypes.LPVOID, wintypes.LPCWSTR),
+            ("OpenProcess", wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD),
+            ("AssignProcessToJobObject", wintypes.BOOL, wintypes.HANDLE, wintypes.HANDLE),
+            ("CreateToolhelp32Snapshot", wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD),
+            ("Thread32First", wintypes.BOOL, wintypes.HANDLE, ctypes.POINTER(ThreadEntry)),
+            ("Thread32Next", wintypes.BOOL, wintypes.HANDLE, ctypes.POINTER(ThreadEntry)),
+            ("OpenThread", wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD),
+            ("ResumeThread", wintypes.DWORD, wintypes.HANDLE),
+            ("TerminateJobObject", wintypes.BOOL, wintypes.HANDLE, wintypes.UINT),
+            ("CloseHandle", wintypes.BOOL, wintypes.HANDLE)):
+        getattr(KERNEL32, name).restype, getattr(KERNEL32, name).argtypes = restype, argtypes
+    CREATE_SUSPENDED, TH32CS_SNAPTHREAD, THREAD_SUSPEND_RESUME = 0x4, 0x4, 0x2
+    PROCESS_SET_QUOTA_AND_TERMINATE = 0x0101
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 
 class GateError(Exception):
@@ -48,17 +75,68 @@ def identity(source, expected):
     return {"source": str(source), "commit": expected}
 
 
-def run(command, log, environment, timeout):
-    with log.open("w", encoding="utf-8") as output:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                                   env=environment, start_new_session=True)
+def win32(name, *arguments, failed=(None, 0)):
+    result = getattr(KERNEL32, name)(*arguments)
+    if result in failed:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return result
+
+
+def contain(pid):
+    job = win32("CreateJobObjectW", None, None)
+    try:
+        process = win32("OpenProcess", PROCESS_SET_QUOTA_AND_TERMINATE, False, pid)
         try:
+            win32("AssignProcessToJobObject", job, process)
+        finally:
+            win32("CloseHandle", process)
+        snapshot = win32("CreateToolhelp32Snapshot", TH32CS_SNAPTHREAD, 0, failed=(INVALID_HANDLE_VALUE,))
+        resumed = 0
+        try:
+            entry = ThreadEntry(ctypes.sizeof(ThreadEntry))
+            more = KERNEL32.Thread32First(snapshot, ctypes.byref(entry))
+            while more:
+                if entry.owner == pid:
+                    thread = win32("OpenThread", THREAD_SUSPEND_RESUME, False, entry.thread)
+                    try:
+                        win32("ResumeThread", thread, failed=(0xFFFFFFFF,))
+                        resumed += 1
+                    finally:
+                        win32("CloseHandle", thread)
+                more = KERNEL32.Thread32Next(snapshot, ctypes.byref(entry))
+        finally:
+            win32("CloseHandle", snapshot)
+        if not resumed:
+            raise GateError(f"process {pid}: no thread to resume after joining the job")
+        return job
+    except BaseException:
+        win32("CloseHandle", job)
+        raise
+
+
+def run(command, log, environment, timeout):
+    windows = os.name == "nt"
+    with log.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, env=environment,
+                                   **({"creationflags": CREATE_SUSPENDED} if windows else {"start_new_session": True}))
+        job = None
+        try:
+            if windows:
+                job = contain(process.pid)
             return process.wait(timeout=timeout)
         finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            if job:
+                try:
+                    win32("TerminateJobObject", job, 1)
+                finally:
+                    win32("CloseHandle", job)
+            elif windows:
+                process.kill()
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             process.wait()
 
 
@@ -121,17 +199,20 @@ def parse_report(path, expected):
             raise GateError(f"{path}: missing or duplicate testcase name")
         messages = collections.Counter()
         missing = []
+        inserted = False
         for channel in ("system-out", "system-err"):
             for line in (case.findtext(channel) or "").splitlines():
                 if MESSAGE.search(line):
                     messages.update(DIAGNOSTIC.findall(line))
                 if MISSING_LAYER in line:
                     missing.append(line)
+                inserted = inserted or INSERTED_LAYER in line
         failed = (case.find("failure") is not None or case.find("error") is not None
                   or case.find("skipped") is not None or case.get("status") in ("disabled", "notrun"))
-        if failed or missing:
+        if failed or missing or not inserted:
             problems.append(name)
-        results[name] = {"diagnostics": dict(messages), "missing_layers": missing, "failed_or_skipped": failed}
+        results[name] = {"diagnostics": dict(messages), "missing_layers": missing, "layer_inserted": inserted,
+                         "failed_or_skipped": failed}
     if set(results) != set(expected):
         problems.append("test coverage differs: missing=" + repr(sorted(set(expected) - set(results)))
                         + " extra=" + repr(sorted(set(results) - set(expected))))
@@ -160,7 +241,7 @@ def save(output, report):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Build and repeatedly compare focused Vulkan CTests on two pinned clean POSIX worktrees")
+    parser = argparse.ArgumentParser(description="Build and repeatedly compare focused Vulkan CTests on two pinned clean worktrees")
     parser.add_argument("--baseline", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))
     parser.add_argument("--candidate", nargs=2, required=True, metavar=("SOURCE", "COMMIT"))
     parser.add_argument("--output", type=Path, required=True, help="new directory outside both source worktrees")
@@ -174,8 +255,6 @@ def main(argv=None):
     parser.add_argument("--runtime", action="append", default=[], help="build-relative runtime file/directory to hash before and after tests")
     parser.add_argument("--cmake", default="cmake")
     parser.add_argument("--ctest", default="ctest")
-    if os.name != "posix":
-        parser.error("execution is currently supported only on POSIX; Windows process containment is not implemented")
     args = parser.parse_args(argv)
     if args.repeat <= 0:
         parser.error("--repeat must be positive")
