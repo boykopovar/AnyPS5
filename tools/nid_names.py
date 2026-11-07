@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import shutil
 import hashlib
 import json
 import os
@@ -50,6 +51,9 @@ def read_db(path):
     return db
 
 
+DOWNLOAD_TIMEOUT = 30
+
+
 def load_db(path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +61,11 @@ def load_db(path):
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
             temporary = Path(download.name)
         try:
-            urllib.request.urlretrieve(DB_URL, str(temporary))
+            with urllib.request.urlopen(DB_URL, timeout=DOWNLOAD_TIMEOUT) as response, temporary.open("wb") as target:
+                shutil.copyfileobj(response, target)
+                expected = response.headers.get("Content-Length")
+                if expected is not None and target.tell() < int(expected):
+                    raise OSError("incomplete NID database download")
             db = read_db(temporary)
             if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
                 raise ValueError(f"{path}: downloaded database contains no valid NID records")
