@@ -362,6 +362,7 @@ struct UltUlthreadState {
     std::atomic<bool> _exited{false};
     char _name[32]{};
     std::uint32_t _contextAttribute = 0;
+    bool _joining = false;
 };
 
 #endif

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -42,6 +43,7 @@ extern const unsigned char _ZTISt12system_error_nid_postfix[];
 
 void APS5_VABI GuestCatch(int code);
 
+void (APS5_VABI *FixtureThrow)(int) = nullptr;
 const void* FixtureCatchType = nullptr;
 const void* FixtureOtherType = nullptr;
 const Expected* FixtureExpected = nullptr;
@@ -129,11 +131,21 @@ extern "C" void APS5_VABI FixtureInspect(void* object) {
 }
 
 static void Catch(const void* type, int code) {
+    FixtureThrow = _ZSt16_Throw_Cpp_errori_nid_postfix;
     FixtureCatchType = type;
     FixtureExpected = &Errors[code];
     const auto before = FixtureInspected;
     GuestCatch(code);
     Require(FixtureInspected == before + 1, 2);
+}
+
+static void CatchCError(const void* type, int code, int cppIndex) {
+    FixtureThrow = _ZSt14_Throw_C_errori_nid_postfix;
+    FixtureCatchType = type;
+    FixtureExpected = &Errors[cppIndex];
+    const auto before = FixtureInspected;
+    GuestCatch(code);
+    Require(FixtureInspected == before + 1, 5);
 }
 
 static void CheckOutOfRange(int code) {
@@ -147,6 +159,15 @@ static void CheckOutOfRange(int code) {
     Require(threw, 3);
 }
 
+static void CheckCErrorReturns(int code) {
+    try {
+        _ZSt14_Throw_C_errori_nid_postfix(code);
+    } catch (...) {
+        std::fprintf(stderr, "guest _Throw_C_error unexpectedly threw for %d\n", code);
+        FixtureFail(6);
+    }
+}
+
 int main() {
     const std::array<void*, 10> api {};
     ApplicationHeapRegister_nid_no_patch(api.data());
@@ -156,6 +177,15 @@ int main() {
     Catch(_ZTISt9exception_nid_postfix, 6);
     CheckOutOfRange(-1);
     CheckOutOfRange(static_cast<int>(std::size(Errors)));
-    std::puts("guest _Throw_Cpp_error system_error, generic category and range: PASS");
+    CatchCError(_ZTISt12system_error_nid_postfix, 1, 6);
+    CatchCError(_ZTISt12system_error_nid_postfix, 2, 6);
+    CatchCError(_ZTISt12system_error_nid_postfix, 3, 0);
+    CatchCError(_ZTISt12system_error_nid_postfix, 4, 1);
+    CatchCError(_ZTISt13runtime_error_nid_postfix, 3, 0);
+    CatchCError(_ZTISt9exception_nid_postfix, 4, 1);
+    const std::array returnCodes {std::numeric_limits<int>::min(), -1, 0, 6, std::numeric_limits<int>::max()};
+    for (const int code : returnCodes) CheckCErrorReturns(code);
+    CatchCError(_ZTISt12system_error_nid_postfix, 5, 4);
+    std::puts("guest _Throw_Cpp_error and _Throw_C_error system_error, generic category and range: PASS");
     return 0;
 }

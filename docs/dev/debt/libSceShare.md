@@ -2,12 +2,12 @@
 
 ### Silent stubs
 
-- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services.
+- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services. Eight of the ten local titles call `sceShareInitialize`: all nine calls pass a 0x20000-byte heap and thread priority 700, and seven pass affinity mask 0x1FFF (PPSA30839 and PPSA31162 pass a computed mask). The constant flags passed to `sceShareFeaturePermit` and `sceShareFeatureProhibit` are 1, 2 and 4 (PPSA36591 sets each bit on its own, PPSA03984 only 2) and 0xFFFFFFFF (PPSA25286); PPSA01494, PPSA30839 and PPSA31162 forward a caller's value.
 
 ### Unknown function info
 
-- [sceShareGetCurrentStatus](../../../core/libs/prx/libSceShare/Export.cpp) (libSceShare) - validation (feature flag non-zero, status non-null) and the all-zero 16-byte status taken from the [KytyPS5](https://github.com/KytyPS5/KytyPS5) reimplementation, not confirmed on a PS5 title; the meaning of the recording status values is unknown
-- [sceShareGetRunningStatus](../../../core/libs/prx/libSceShare/Export.cpp) - the native wrapper writes only the first 32-bit word, populated from a kernel event flag. The host reports zero because capture and broadcast services are absent; native initialization checks and event-flag failures are not modeled.
+- [sceShareGetCurrentStatus](../../../core/libs/prx/libSceShare/Export.cpp) (libSceShare) - validation (feature flag non-zero, status non-null) and the all-zero 16-byte status taken from the [KytyPS5](https://github.com/KytyPS5/KytyPS5) reimplementation, not confirmed on a PS5 title; the meaning of the recording status values is unknown; returning ERROR_INVALID_PARAM for an unwritable status pointer is a defensive host-protection fallback and console behaviour is unmeasured
+- [sceShareGetRunningStatus](../../../core/libs/prx/libSceShare/Export.cpp) - the native wrapper writes only the first 32-bit word, populated from a kernel event flag. The host reports zero because capture and broadcast services are absent; native initialization checks and event-flag failures are not modeled; returning ERROR_INVALID_PARAM for an unwritable status pointer is a defensive host-protection fallback and console behaviour is unmeasured.
 - [sceShareSetContentParamForApplicationTitle](../../../core/libs/prx/libSceShare/Export.cpp) - the recovered string length limit is 1 through 5119 bytes. The title is validated but not sent to the capture service; native initialization and service failures are not modeled.
 
 ### Functional

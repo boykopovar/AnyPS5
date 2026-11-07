@@ -17,6 +17,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+#ifdef __linux__
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 static constexpr int DuplicateCommand = 0;
@@ -39,6 +43,8 @@ static constexpr int ReadOnly = 0;
 static constexpr int WriteOnly = 1;
 static constexpr int ReadWrite = 2;
 static constexpr int NonBlocking = 4;
+static constexpr int CreateFlag = 0x200;
+static constexpr int ExclusiveFlag = 0x800;
 static constexpr int Append = 8;
 static constexpr int ReadAheadFlag = 0x200;
 static constexpr int CreateReadWrite = 0x202;
@@ -56,6 +62,7 @@ static constexpr int GuestEinval = 22;
 static constexpr int GuestEnotty = 25;
 static constexpr int GuestEagain = 35;
 static constexpr int GuestEopnotsupp = 45;
+static constexpr int GuestEaddrnotavail = 49;
 static constexpr int GuestEoverflow = 84;
 static constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 static constexpr std::uint64_t ReadableRequest = 0x4004667f;
@@ -65,7 +72,7 @@ static constexpr std::uint64_t CloseOnExecRequest = 0x20006601;
 static constexpr std::uint64_t KeepOnExecRequest = 0x20006602;
 static constexpr std::uint64_t MalformedRequests[] = {0, 123, 0x5401, 0x5413, 0x40007468, 0x20087468, 0x00087468};
 static constexpr std::uint64_t IntegerArgumentRequest = 0x20046601;
-static constexpr std::uint64_t EmptyInputRequest = 0x80006601;
+static constexpr std::uint64_t EmptyInputRequest = 0x8000667f;
 static constexpr int SceEbadf = static_cast<int>(0x80020009u);
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
 static constexpr int SceEnotsup = static_cast<int>(0x8002002du);
@@ -207,9 +214,23 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, DarwinReadAhead, 1) == SceEbadf);
     int queued = -1;
     Require(ioctl_nid_postfix(socket, ReadableRequest, &queued) == 0 && queued == 0);
+    Require(ioctl_nid_postfix(socket, CloseOnExecRequest, nullptr) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 1);
+    Require(ioctl_nid_postfix(socket, CloseOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 1);
+    Require(ioctl_nid_postfix(socket, KeepOnExecRequest, nullptr) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
+    Require(ioctl_nid_postfix(socket, KeepOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     RequireMalformedRequestsFail(socket);
     RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
-    RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEnotty);
+    char windowSize[8] = {};
+    RequireFailure(ioctl_nid_postfix(socket, WindowSizeRequest, windowSize), GuestEaddrnotavail);
+    RequireFailure(ioctl_nid_postfix(socket, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     for (const int descriptor : {closing, duplicate, socket}) Require(close_nid_postfix(descriptor) == 0);
     Require(sceKernelFcntl(socket, GetFlags) == SceEbadf);
     Require(sceKernelFcntl(-1, GetFlags) == SceEbadf);
@@ -266,6 +287,8 @@ static void FileFlagsRoundTrip() {
     Require(ioctl_nid_postfix(file, ReadableRequest, &readable) == 0 && readable == 3);
     char size[8] = {};
     RequireFailure(ioctl_nid_postfix(file, WindowSizeRequest, size), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(file, EmptyInputRequest, nullptr), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(file, EmptyInputRequest, size), GuestEnotty);
     RequireMalformedRequestsFail(file);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
@@ -512,6 +535,7 @@ static void PipeFlagsRoundTrip() {
     RequireFailure(fcntl_nid_postfix(pipe[1], SetLock, &lock), GuestEbadf);
     char size[8] = {};
     RequireFailure(ioctl_nid_postfix(pipe[0], WindowSizeRequest, size), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(pipe[0], EmptyInputRequest, nullptr), GuestEnotty);
     RequireMalformedRequestsFail(pipe[0]);
     Require(ThrowsWith([&pipe] { fcntl_nid_postfix(pipe[0], SetFlags, NonBlocking | 0x40); }, "fcntl: O_ASYNC on a pipe is not implemented"));
     for (const int descriptor : pipe) Require(close_nid_postfix(descriptor) == 0);
@@ -538,6 +562,31 @@ static void HostSocketFlags() {
 }
 #endif
 
+#ifdef __linux__
+static void HostOnlyDescriptorsAreNotOpenAndSharedMemoryIs() {
+    const int descriptors[] = {::epoll_create1(EPOLL_CLOEXEC), ::eventfd(0, EFD_CLOEXEC)};
+    for (const int descriptor : descriptors) {
+        Require(descriptor >= 0);
+        RequireFailure(fcntl_nid_postfix(descriptor, GetDescriptorFlags), GuestEbadf);
+        RequireFailure(fcntl_nid_postfix(descriptor, GetFlags), GuestEbadf);
+        RequireFailure(fcntl_nid_postfix(descriptor, SetDescriptorFlags, 0), GuestEbadf);
+        int available = 0;
+        RequireFailure(ioctl_nid_postfix(descriptor, ReadableRequest, &available), GuestEbadf);
+        Require(::fcntl(descriptor, F_GETFD) == FD_CLOEXEC);
+        Require(::close(descriptor) == 0);
+    }
+    const std::string name = "/anyps5-fcntl-shm-" + std::to_string(::getpid());
+    static_cast<void>(shm_unlink_nid_postfix(name.c_str()));
+    const int shared = shm_open_nid_postfix(name.c_str(), ReadWrite | CreateFlag | ExclusiveFlag, 0600);
+    Require(shared >= 0);
+    Require(fcntl_nid_postfix(shared, GetFlags) == ReadWrite);
+    Require(fcntl_nid_postfix(shared, SetDescriptorFlags, 1) == 0);
+    Require(fcntl_nid_postfix(shared, GetDescriptorFlags) == 1);
+    Require(close_nid_postfix(shared) == 0);
+    Require(shm_unlink_nid_postfix(name.c_str()) == 0);
+}
+#endif
+
 static void StandardInputFlags() {
     const int flags = fcntl_nid_postfix(0, GetFlags);
     Require(flags >= 0);
@@ -557,6 +606,9 @@ int main() {
     PipeFlagsRoundTrip();
 #ifndef _WIN32
     HostSocketFlags();
+#endif
+#ifdef __linux__
+    HostOnlyDescriptorsAreNotOpenAndSharedMemoryIs();
 #endif
     StandardInputFlags();
     return 0;

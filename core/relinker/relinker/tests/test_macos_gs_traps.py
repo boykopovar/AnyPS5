@@ -7,6 +7,7 @@ import tempfile
 
 from test_macos_output import MachO
 from test_tls_function_coverage import make_image
+from test_windows_tls_protected_entries import make_image as make_entry_image
 
 
 FORMS = {
@@ -23,6 +24,8 @@ FORMS = {
     "gs-clzero": bytes.fromhex("65 0f 01 fc"),
     "gs-umonitor": bytes.fromhex("65 f3 0f ae f0"),
 }
+
+ENTRY_GS_LOAD = bytes.fromhex("65 48 8b 04 25 28 00 00 00")
 
 NON_MEMORY_FORMS = {
     "gs-nop": bytes.fromhex("65 90"),
@@ -65,6 +68,33 @@ def check_refused(relinker, directory, name, body, message):
         raise SystemExit(f"{name}: expected the relinker to refuse with {message!r}: {result.stdout}{result.stderr}")
 
 
+def convert_entry_root(relinker, directory, root):
+    source = Path(directory) / f"entry-{root}.elf"
+    output = Path(directory) / f"entry-{root}"
+    image = make_entry_image(root)
+    image[0x210:0x21a] = ENTRY_GS_LOAD + b"\xc3"
+    source.write_bytes(bytes(image))
+    result = subprocess.run([str(relinker), "--skip-sce-module", "--macos", "unused-filter=0", str(source), str(output)],
+                            capture_output=True, text=True, timeout=60)
+    return result, output
+
+
+def check_entry_roots(relinker, directory):
+    for root in ("relative", "symbol", "lea", "initializer"):
+        result, output = convert_entry_root(relinker, directory, root)
+        if (result.returncode != 2 or "GS trap would overwrite an executable entry point" not in result.stderr
+                or "(offset 0x214)" not in result.stderr or output.exists()):
+            raise SystemExit(f"entry-{root}: expected the GS trap to be refused at offset 0x214: "
+                             f"{result.returncode} {result.stdout}{result.stderr}")
+    for root in ("safe", "access-start"):
+        result, output = convert_entry_root(relinker, directory, root)
+        if result.returncode != 0 or not output.exists():
+            raise SystemExit(f"entry-{root}: relinker failed: {result.stdout}{result.stderr}")
+        data = output.read_bytes()
+        code = b"".join(data[lo:hi] for lo, hi in MachO(data).executable_ranges())
+        check_trapped(f"entry-{root}", code, ENTRY_GS_LOAD)
+
+
 def check_untouched(name, code, instruction):
     if instruction + b"\xc3" not in code:
         raise SystemExit(f"{name}: a non-memory GS instruction was replaced")
@@ -85,6 +115,7 @@ def main():
         check_trapped("gs-without-pt-tls", convert(relinker, directory, "gs-without-pt-tls", image), instruction)
         check_refused(relinker, directory, "branch-into-gs", bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3"),
                       "Branch enters a guest GS instruction")
+        check_entry_roots(relinker, directory)
     print("macOS GS trap checks passed")
 
 

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEPAD_PADSTATE_HPP
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include "SceTypes.hpp"
@@ -49,9 +50,15 @@ struct PadOutputState {
     bool lightBarValid = false;
     std::uint8_t lightBar[3]{};
     PadTriggerRequest trigger[2];
-    bool triggerTouched = false;
+    bool triggerTouched[2]{};
+    bool triggerDisabled = false;
     bool motionEnabled = true;
     int vibrationMode = 0;
+    int audioOutPath = 0;
+    bool volumeGainValid = false;
+    std::uint8_t speakerVolume = 0;
+    std::uint8_t headsetVolume = 0;
+    std::uint8_t micGain = 0;
 };
 
 namespace Pad {
@@ -63,10 +70,14 @@ void SetVibration(int port, std::uint8_t large, std::uint8_t small);
 void SetVibration(std::uint8_t large, std::uint8_t small);
 void SetVibrationMode(int port, int mode);
 void SetVibrationMode(int mode);
+void SetAudioOutPath(int port, int path);
+void SetVolumeGain(int port, std::uint8_t speaker, std::uint8_t headset, std::uint8_t mic);
 void SetLightBar(int port, bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b);
 void SetLightBar(bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b);
 void SetTriggerCommand(int port, int trigger, const std::uint8_t* command);
 void SetTriggerCommand(int trigger, const std::uint8_t* command);
+void SetTriggerEffectsDisabled(int port, bool disabled);
+void SetTriggerEffectsDisabled(bool disabled);
 void ResetOrientation(int port = 0);
 void SetMotionEnabled(int port, bool enabled);
 void SetMotionEnabled(bool enabled);
@@ -84,10 +95,17 @@ extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state);
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error);
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out);
 extern "C" bool PadFetchOutputForPort_nid_postfix(int port, std::uint32_t* seenSequence, PadOutputState* out);
+extern "C" void PadPublishTriggerStatus_nid_postfix(int port, std::uint8_t leftEffect, std::uint8_t leftStatus, std::uint8_t rightEffect, std::uint8_t rightStatus);
+extern "C" void PadClearTriggerStatus_nid_postfix(int port);
+extern "C" void PadGetTriggerEffectState_nid_postfix(int port, std::int32_t* states);
 extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8_t small);
 extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small);
 extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source);
 extern "C" void PadSubmitAudioHapticsForPort_nid_postfix(int port, std::uint8_t large, std::uint8_t small);
 extern "C" void PadSetPortConnected_nid_postfix(int port, bool connected);
+extern "C" void PadSetHapticStreamOpen_nid_postfix(bool open);
+extern "C" bool PadHapticStreamOpen_nid_postfix();
+extern "C" void PadSubmitHapticFrames_nid_postfix(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate);
+extern "C" bool PadWaitTakeHapticBlock_nid_postfix(std::int8_t* block, std::uint32_t timeoutMs);
 
 #endif

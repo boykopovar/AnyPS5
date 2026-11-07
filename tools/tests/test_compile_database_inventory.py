@@ -36,6 +36,24 @@ class Tests(unittest.TestCase):
         self.assertEqual(saved,(path.read_bytes(),path.stat().st_mtime_ns))
         self.assertEqual(list(self.root.iterdir()),[path])
 
+    def test_same_file_in_different_directories_forms_separate_units(self):
+        path = self.root / "compile_commands.json"
+        items = [{"directory": "build-b", "file": "a.c", "command": "missing-compiler -DFIRST a.c"},
+                 {"directory": "build-a", "file": "a.c", "arguments": ["missing-compiler", "-c", "a.c"]},
+                 {"directory": "build-b", "file": "a.c", "command": "missing-compiler -DSECOND a.c"}]
+        path.write_text(json.dumps(items), encoding="utf-8")
+        before = path.read_bytes(), path.stat().st_mtime_ns
+        result = self.run_tool(path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"entries": 3, "units": [
+            {"directory": "build-a", "file": "a.c", "variants": 1, "records": [
+                {"arguments": ["missing-compiler", "-c", "a.c"]}]},
+            {"directory": "build-b", "file": "a.c", "variants": 2, "records": [
+                {"command": "missing-compiler -DFIRST a.c"},
+                {"command": "missing-compiler -DSECOND a.c"}]}]})
+        self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
+        self.assertEqual(list(self.root.iterdir()), [path])
+
     def test_empty_and_invalid_databases(self):
         path=self.root/"db.json"
         for value in ({},[{}],[{"directory":"x","file":"y","arguments":[]}],"bad"):
