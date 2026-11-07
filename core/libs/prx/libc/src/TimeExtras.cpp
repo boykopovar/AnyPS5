@@ -33,10 +33,12 @@ std::int64_t wrappingAdd(std::int64_t left, std::int64_t right) {
 extern "C" {
 
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
+    if (timer == nullptr || result == nullptr) return nullptr;
     return gmtime_s_nid_postfix(timer, result);
 }
 
 GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
+    if (timer == nullptr || result == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, result);
 }
 
