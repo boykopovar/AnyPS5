@@ -6,12 +6,11 @@ namespace AgcDriver {
 
 VkPhysicalDevice8BitStorageFeatures QueryBdaByteFeatures(VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceFeatures2 query, std::span<const VkExtensionProperties> extensions) {
     Graphics::Require(query != nullptr, "missing Vulkan feature query");
-    Graphics::Require(std::any_of(extensions.begin(), extensions.end(), [](const auto& extension) { return std::strcmp(extension.extensionName, VK_KHR_8BIT_STORAGE_EXTENSION_NAME) == 0; }), "VK_KHR_8bit_storage is unavailable");
     VkPhysicalDevice8BitStorageFeatures bytes{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES};
+    if (std::none_of(extensions.begin(), extensions.end(), [](const auto& extension) { return std::strcmp(extension.extensionName, VK_KHR_8BIT_STORAGE_EXTENSION_NAME) == 0; })) return bytes;
     VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &bytes};
     query(physical, &features);
-    Graphics::Require(bytes.storageBuffer8BitAccess == VK_TRUE, "BDA requires exact byte access through storageBuffer8BitAccess");
-    return {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, nullptr, VK_TRUE, VK_FALSE, VK_FALSE};
+    return {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, nullptr, bytes.storageBuffer8BitAccess, VK_FALSE, VK_FALSE};
 }
 
 VkPhysicalDeviceBufferDeviceAddressFeatures QueryBdaFeatures(VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceFeatures2 query, std::span<const VkExtensionProperties> extensions) {
