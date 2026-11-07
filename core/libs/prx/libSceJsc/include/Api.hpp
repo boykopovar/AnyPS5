@@ -89,7 +89,7 @@ int APS5_VABI _ZN3JSC12CachePayloadD2Ev();
 int APS5_VABI _ZN3WTF13StringBuilder6resizeEj();
 int APS5_VABI _ZN3JSC2VM29scopedArgumentsTableSpaceSlowEv();
 int APS5_VABI _ZN9Inspector14ConsoleMessageC2EN3JSC13MessageSourceENS1_11MessageTypeENS1_12MessageLevelERKN3WTF6StringEONS5_3RefINS_15ScriptArgumentsENS5_13DumbPtrTraitsISA_EEEEPNS1_14JSGlobalObjectEm();
-int APS5_VABI _ZN9Inspector13AgentRegistryC1Ev();
+void APS5_VABI _ZN9Inspector13AgentRegistryC1Ev(void* self);
 int APS5_VABI _ZN3JSC2VM16weakSetSpaceSlowEv();
 int APS5_VABI _ZN3JSC17checkModuleSyntaxEPNS_14JSGlobalObjectERKNS_10SourceCodeERNS_11ParserErrorE();
 int APS5_VABI _ZN9Inspector14InspectorAgentD1Ev();
@@ -123,7 +123,7 @@ int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcher17recordingProgressERKN3WTF
 int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcher25enableControlFlowProfilerElON3WTF6RefPtrINS1_8JSONImpl6ObjectENS1_13DumbPtrTraitsIS4_EEEE();
 int APS5_VABI _ZNK3WTF3URL5queryEv();
 int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2EPNS_14JSGlobalObjectE();
-int APS5_VABI _ZN7bmalloc8FreeListC2Ev();
+void APS5_VABI _ZN7bmalloc8FreeListC2Ev(void* self);
 int APS5_VABI _ZN9Inspector15RemoteInspector9setClientEPNS0_6ClientE();
 int APS5_VABI _ZN3JSC14JSGlobalObject13visitChildrenEPNS_6JSCellERNS_11SlotVisitorE();
 int APS5_VABI _ZN9Inspector22RemoteInspectionTargetD0Ev();

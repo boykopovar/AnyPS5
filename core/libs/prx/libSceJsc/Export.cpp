@@ -381,8 +381,8 @@ int APS5_VABI _ZN9Inspector14ConsoleMessageC2EN3JSC13MessageSourceENS1_11Message
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector13AgentRegistryC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN9Inspector13AgentRegistryC1Ev(void* self) {
+    std::memset(self, 0, 16);
 }
 
 int APS5_VABI _ZN3JSC2VM16weakSetSpaceSlowEv() {
@@ -513,8 +513,8 @@ int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2EPNS_14JSGlobalObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc8FreeListC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7bmalloc8FreeListC2Ev(void* self) {
+    std::memset(self, 0, 32);
 }
 
 int APS5_VABI _ZN9Inspector15RemoteInspector9setClientEPNS0_6ClientE() {
@@ -777,8 +777,8 @@ int APS5_VABI _ZN10Deprecated11ScriptValueC1ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN10Deprecated11ScriptValueC1Ev(void* self) {
+    std::memset(self, 0, 8);
 }
 
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERKS0_() {
@@ -789,8 +789,8 @@ int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN10Deprecated11ScriptValueC2Ev(void* self) {
+    std::memset(self, 0, 8);
 }
 
 int APS5_VABI _ZN10Deprecated11ScriptValueD1Ev() {
@@ -905,32 +905,32 @@ int APS5_VABI _ZN3JSC10loadModuleEPNS_14JSGlobalObjectERKN3WTF6StringENS_7JSValu
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet12argumentGPRSEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet12argumentGPRSEv() {
+    return 0x3c6;
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet14stackRegistersEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet14stackRegistersEv() {
+    return 0x30;
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet19calleeSaveRegistersEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet19calleeSaveRegistersEv() {
+    return 0xf028;
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet21macroScratchRegistersEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet21macroScratchRegistersEv() {
+    return 0x800;
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet25reservedHardwareRegistersEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet25reservedHardwareRegistersEv() {
+    return 0x0;
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet7allFPRsEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet7allFPRsEv() {
+    return 0xffff0000;
 }
 
-int APS5_VABI _ZN3JSC11RegisterSet7allGPRsEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI _ZN3JSC11RegisterSet7allGPRsEv() {
+    return 0xffff;
 }
 
 int APS5_VABI _ZN3JSC11SymbolTable14finishCreationERNS_2VME() {
@@ -1833,12 +1833,12 @@ int APS5_VABI _ZN3WTF8pageMaskEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc11AllIsoHeapsC1ERKSt11scoped_lockIJNS_5MutexEEE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7bmalloc11AllIsoHeapsC1ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
+    std::memset(self, 0, 8);
 }
 
-int APS5_VABI _ZN7bmalloc11AllIsoHeapsC2ERKSt11scoped_lockIJNS_5MutexEEE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7bmalloc11AllIsoHeapsC2ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
+    std::memset(self, 0, 8);
 }
 
 int APS5_VABI _ZN7bmalloc11EnvironmentC1ERKSt11scoped_lockIJNS_5MutexEEE() {
@@ -1849,12 +1849,12 @@ int APS5_VABI _ZN7bmalloc11EnvironmentC2ERKSt11scoped_lockIJNS_5MutexEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc12IsoTLSLayoutC1ERKSt11scoped_lockIJNS_5MutexEEE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7bmalloc12IsoTLSLayoutC1ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
+    std::memset(self, 0, 16);
 }
 
-int APS5_VABI _ZN7bmalloc12IsoTLSLayoutC2ERKSt11scoped_lockIJNS_5MutexEEE() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN7bmalloc12IsoTLSLayoutC2ERKSt11scoped_lockIJNS_5MutexEEE(void* self, const void*) {
+    std::memset(self, 0, 16);
 }
 
 int APS5_VABI _ZN7bmalloc9ScavengerC1ERKSt11scoped_lockIJNS_5MutexEEE() {
