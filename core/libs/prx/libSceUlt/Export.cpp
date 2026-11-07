@@ -1061,8 +1061,26 @@ int APS5_VABI _sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthrea
 }
 
 int APS5_VABI sceUltConditionVariableSignalAll(void* conditionVariable) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (conditionVariable == nullptr) return ULT_ERROR_NULL;
+    if ((reinterpret_cast<std::uintptr_t>(conditionVariable) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    std::shared_ptr<UltConditionState> state;
+    {
+        std::lock_guard lock(gMutex);
+        const auto it = gConditions.find(conditionVariable);
+        if (it == gConditions.end()) {
+            throw std::runtime_error("ULT condition variable signal-all on a never-created object is not implemented");
+        }
+        state = it->second;
+    }
+    std::lock_guard stateLock(state->_mutex->_mutex);
+    if (!state->_alive || !state->_mutex->_alive) return ULT_ERROR_STATE;
+    while (!state->_queue.empty()) {
+        auto* waiter = state->_queue.front();
+        state->_queue.pop_front();
+        waiter->_signaled = true;
+        waiter->_available.notify_one();
+    }
+    return ULT_OK;
 }
 
 int APS5_VABI sceUltGetConditionVariableInfo(void* object, UltConditionVariableInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {

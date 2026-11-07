@@ -67,6 +67,9 @@ static void Validation() {
     CHECK(sceUltConditionVariableSignal(&unused) == State);
     CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 1) == Alignment);
     CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 4) == Alignment);
+    CHECK(sceUltConditionVariableSignalAll(nullptr) == Null);
+    CHECK(sceUltConditionVariableSignalAll(reinterpret_cast<unsigned char*>(&unused) + 1) == Alignment);
+    CHECK(sceUltConditionVariableSignalAll(reinterpret_cast<unsigned char*>(&unused) + 4) == Alignment);
     CHECK(sceUltConditionVariableWait(nullptr) == Null);
     CHECK(sceUltConditionVariableWait(&unused) == State);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, nullptr, nullptr, 0) == Null);
@@ -221,12 +224,37 @@ static void Finalize(bool signaled) {
     CHECK(sceUltMutexDestroy(&mutex) == 0);
 }
 
+static void WakeAll() {
+    Fixture f;
+    std::atomic<int> entered = 0;
+    std::atomic<int> woken = 0;
+    const auto waiter = [&] {
+        f.Lock();
+        ++entered;
+        f.Wait();
+        ++woken;
+        f.Unlock();
+    };
+    auto first = std::async(std::launch::async, waiter);
+    auto second = std::async(std::launch::async, waiter);
+    Await(entered, 2);
+    f.Lock();
+    CHECK(sceUltConditionVariableSignalAll(&f.condition) == 0);
+    f.Unlock();
+    CHECK(first.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+    CHECK(second.wait_for(std::chrono::seconds(3)) == std::future_status::ready);
+    first.get();
+    second.get();
+    CHECK(woken.load() == 2);
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) return 1;
     const std::string test = argv[1];
     if (test == "validation") Validation();
     else if (test == "handoff") Handoff();
     else if (test == "signal-one") SignalOne();
+    else if (test == "signal-all") WakeAll();
     else if (test == "stress") Stress();
     else if (test == "finalize-queued") Finalize(false);
     else if (test == "finalize-reacquire") Finalize(true);
