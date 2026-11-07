@@ -107,6 +107,7 @@ inline constexpr std::int64_t DT_INIT_ARRAYSZ = 27;
 inline constexpr std::int64_t DT_FINI_ARRAYSZ = 28;
 inline constexpr std::int64_t DT_RUNPATH = 29;
 inline constexpr std::int64_t DT_FLAGS = 30;
+inline constexpr std::int64_t DT_GNU_HASH = 0x6ffffef5;
 inline constexpr std::int64_t DT_PREINIT_ARRAY = 32;
 inline constexpr std::int64_t DT_PREINIT_ARRAYSZ = 33;
 inline constexpr std::int64_t DT_RELRSZ = 35;

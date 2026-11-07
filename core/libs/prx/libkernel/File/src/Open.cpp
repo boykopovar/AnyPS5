@@ -84,6 +84,11 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
         throw std::runtime_error("sceKernelWrite: nbytes exceeds platform limit");
     }
     const auto positioned = File::LockPositionedTransfer(fd);
+    if (File::HasFixedSizeWrites(fd)) {
+        const auto position = ::_lseeki64(fd, 0, SEEK_CUR);
+        if (position < 0 || !File::LimitSharedMemoryWrite_nid_no_patch(fd, n, position)) return -1;
+        if (n == 0) return 0;
+    }
     const auto shared = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
     if (shared != -2) return static_cast<int>(shared);
     if (File::Appends(fd)) {
@@ -525,7 +530,9 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
     const auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
     if (follow) return StatNative(native, std::string_view(path).back() == '/', sb);
     if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-    if (!File::FillLinkStat(native, sb)) return SceErrorFromErrno(errno);
+    FileStat result{};
+    if (!File::FillLinkStat(native, &result)) return SceErrorFromErrno(errno);
+    if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GuestEfault);
     return 0;
 }
 

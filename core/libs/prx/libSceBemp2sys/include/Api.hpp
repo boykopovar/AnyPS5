@@ -5,9 +5,9 @@
 extern "C" {
 
 int APS5_VABI bemp2sys_logprintf_getlevel_nid_postfix(void);
-int APS5_VABI bemp2sys_logprintf_setfunc_nid_postfix(void);
-int APS5_VABI bemp2sys_logprintf_setlevel_nid_postfix(void);
-int APS5_VABI bemp2sys_memmanager_set_nid_postfix(void);
+void APS5_VABI bemp2sys_logprintf_setfunc_nid_postfix(void* function);
+void APS5_VABI bemp2sys_logprintf_setlevel_nid_postfix(int level);
+void APS5_VABI bemp2sys_memmanager_set_nid_postfix(void* allocate, void* deallocate, void* reallocate);
 int APS5_VABI bemp2sys_packetizer_create_nid_postfix(void);
 int APS5_VABI bemp2sys_packetizer_destroy_nid_postfix(void);
 int APS5_VABI bemp2sys_packetizer_init_nid_postfix(void);

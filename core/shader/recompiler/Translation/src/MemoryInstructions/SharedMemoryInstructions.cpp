@@ -208,6 +208,8 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
     IrValue* value = loadSharedU32(1u, address, source, inst.programCounter);
     MemoryInfo target = memory;
     target.secondaryOffset = 0u;
+    target.flushDenormals = floatAtomicFlush(opcode);
+    target.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
     IrValue& active = ir.GetExec();
     (void)ir.Emit(opcode, IrOpcodeType(opcode), {&address.Value(), value, &active}, addMemoryInfo(target, inst.programCounter));
     return true;

@@ -164,6 +164,32 @@ void StagedRun(std::uint32_t round) {
     check(joined == StoreCodes.size() - 1, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(joined) + " joined a run, expected 3");
 }
 
+void RefusedRun() {
+    std::vector<std::uint32_t> words{0xc0037600u, 0x207u, Lanes, 1u, 1u, 0xc0017600u, 0x213u, 4u << 1u};
+    for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
+        std::memset(Staged[build], 0xff, BufferBytes);
+        const auto data = reinterpret_cast<std::uintptr_t>(Staged[build]);
+        const auto codeAddress = reinterpret_cast<std::uintptr_t>(StoreCodes[build]);
+        words.insert(words.end(), {0xc0047600u, 0x240u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), BufferBytes, 0x31016facu});
+        words.insert(words.end(), {0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u), 0xc0031500u, 1u, 1u, 1u, 0x8041u});
+    }
+    AgcDriver::Graphics::SetDeviceLocalFullForTests(true);
+    const auto refused = AgcDriver::Graphics::StagingShadowsRefused();
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    const auto submitted = sceAgcDriverSubmitAcb(ComputeQueue, &packet);
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::Graphics::SetDeviceLocalFullForTests(false);
+    check(submitted == 0, "submission failed");
+    check(AgcDriver::Graphics::StagingShadowsRefused() > refused, "a device-local heap reported full still gave the written buffers device-local shadows");
+    for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[build]), BufferBytes);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            const auto value = std::atomic_ref<std::uint32_t>(Staged[build][lane]).load(std::memory_order_acquire);
+            check(value == lane + static_cast<std::uint32_t>(build) + 1u, "dispatches whose write shadows were refused, build " + std::to_string(build + 1) + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(lane + build + 1u));
+        }
+    }
+}
+
 void Round(std::uint32_t dispatches, std::uint32_t& expected, const std::string& what) {
     auto words = Dispatches(dispatches);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -195,6 +221,9 @@ int main() {
         for (auto& block : Staged) block = NewBlock();
         for (std::uint32_t round = 1; round <= 3; ++round) StagedRun(round);
         std::puts("overlap staged copies: unordered staged dispatches of four builds ran in one run");
+        for (auto& block : Staged) block = NewBlock();
+        RefusedRun();
+        std::puts("overlap staged copies: written buffers whose shadows a full device-local heap refused kept their results");
         Register(IncrementCode.data(), sizeof(IncrementCode));
         Register(AtomicAddCode.data(), sizeof(AtomicAddCode));
         Register(AtomicAddCopy.data(), sizeof(AtomicAddCopy));
