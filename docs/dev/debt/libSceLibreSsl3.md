@@ -54,6 +54,7 @@
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
 
 - [SSL_SESSION_get_timeout, SSL_SESSION_set_time and SSL_SESSION_get_protocol_version](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - forwarded session lifecycle interoperability, independent console execution, resumption, serialization and expiry remain unverified. The fields follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl). [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h) instead puts timeout/time at 144/152; these accessors must not receive that older layout. Tests use caller-owned storage. A null protocol-version input throws instead of dereferencing it.
+- [SSL_get_version](../../../core/libs/prx/libSceLibreSsl3/src/Ssl.cpp) - not checked on a console. The names and the version values follow [LibreSSL 4.0.0 `ssl_lib.c`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl/ssl_lib.c), and the field at offset 0 is the layout `SSL_up_ref` already relies on. A null connection throws, where LibreSSL would fault.
 - [Session metadata fields](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - other firmware revisions are unverified. [BunnyFl reports disassembly only](https://github.com/boykopovar/AnyPS5/pull/15119#pullrequestreview-5742135511) of firmware 13.42 `system/common/lib/libSceLibreSsl3.sprx` (SHA256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`): getter `0xf2130` reads 64-bit timeout at 168 with null returning zero; setter `0xf2150` writes 64-bit creation time at 176 and returns it, with null returning zero; getter `0xf2170` reads 32-bit version at 0 without a null check. The module and listing have not been independently acquired or executed here.
 
 - [tls_config_parse_protocols](../../../core/libs/prx/libSceLibreSsl3/src/TlsProtocols.cpp) has no independent console execution or TLS configuration interoperability verification. Parsing follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls). A null output pointer throws instead of an upstream fault. Tests use caller-owned text/output and guest-heap allocation failure; other TLS configuration and handshake exports are only partly implemented. Closes when: console grammar and TLS configuration interoperability are measured.
@@ -65,7 +66,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 140 still-unimplemented callable exports: 130 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 139 still-unimplemented callable exports: 129 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -157,7 +158,6 @@
 | `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
 | `SSL_CTX_set_ciphersuites` | `bpOQdoGE2es` |
-| `SSL_get_version` | `dL2V0os4TZ4` |
 | `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
 | `i2d_X509` | `e2ReciVG21w` |
 | `BIO_set_data` | `f6Pa2rYH-dw` |
