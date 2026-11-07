@@ -116,6 +116,7 @@ public:
 
     std::string data;
     SerializedScriptValueKind kind = SerializedScriptValueKind::Json;
+};
 
 class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
 public:
