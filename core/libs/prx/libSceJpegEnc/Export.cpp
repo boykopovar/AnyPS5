@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cerrno>
 #include <new>
 #include <stdexcept>
 #include <vector>
@@ -176,7 +177,10 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
     auto* encoder = new (reinterpret_cast<void*>(aligned)) Encoder{};
     encoder->self = encoder;
-    *handle = encoder;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &encoder, sizeof(encoder));
+    errno = savedErrno;
+    if (!copied) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     return 0;
 }
 
