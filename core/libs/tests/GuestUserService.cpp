@@ -183,22 +183,28 @@ int main() {
         Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
-    std::int32_t accessibilityValue = 0;
-    bool threwKeyremap = false;
-    try {
-        sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
-    } catch (const std::runtime_error&) {
-        threwKeyremap = true;
-    }
-    Require(threwKeyremap);
 
-    bool threwZoom = false;
-    try {
-        sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
-    } catch (const std::runtime_error&) {
-        threwZoom = true;
+    using UnmeasuredSetting = int (APS5_VABI *)(std::int32_t, std::int32_t*);
+    const UnmeasuredSetting unmeasuredSettings[] = {
+        sceUserServiceGetAccessibilityKeyremapEnable,
+        sceUserServiceGetAccessibilityZoom,
+    };
+    for (const UnmeasuredSetting& get : unmeasuredSettings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(get(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        for (int user_id : absent_users) {
+            Require(get(user_id, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+            Require(value == 0x5a5a5a5a);
+            Require(get(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        }
+        bool threw = false;
+        try {
+            get(USER_SERVICE_INITIAL_USER_ID, &value);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
     }
-    Require(threwZoom);
 
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -223,6 +229,28 @@ int main() {
 
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + 1, &color) == USER_SERVICE_OK);
     Require(color == 1);
+
+    char homePath[64]{};
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(std::strstr(homePath, "/priv/home/10000000") != nullptr);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, nullptr, 37) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 36) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 37) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 38) == USER_SERVICE_OK);
+    Require(std::strlen(homePath) == 36);
+    Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceSetUserGroupIndex(-2) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceSetUserGroupIndex(129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupName(0, nullptr, 129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupName(0, homePath, 128) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    char oversizedGroupName[256]{};
+    Require(sceUserServiceGetUserGroupName(0, oversizedGroupName, sizeof(oversizedGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);

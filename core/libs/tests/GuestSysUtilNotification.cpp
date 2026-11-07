@@ -75,12 +75,18 @@ int main() {
 
     int hello = -1;
     int empty = -1;
+    int emptyString = -1;
+    int type1 = -1;
+    int type2 = -1;
     int truncated = -1;
     std::string output;
     try {
         StandardErrorCapture capture;
         hello = sceSysUtilSendSystemNotificationWithText(7, "hello");
         empty = sceSysUtilSendSystemNotificationWithText(-1, nullptr);
+        emptyString = sceSysUtilSendSystemNotificationWithText(0, "");
+        type1 = sceSysUtilSendSystemNotificationWithText(1, "notification type 1");
+        type2 = sceSysUtilSendSystemNotificationWithText(2, "notification type 2");
         truncated = sceSysUtilSendSystemNotificationWithText(0, longText.c_str());
         output = capture.Text();
     } catch (const std::exception& error) {
@@ -90,10 +96,19 @@ int main() {
 
     Require(hello == 0, "a text notification was not sent");
     Require(empty == 0, "a null message was not sent as an empty text");
+    Require(emptyString == 0, "an empty string notification was not sent");
+    Require(type1 == 0, "a type 1 notification was not sent");
+    Require(type2 == 0, "a type 2 notification was not sent");
     Require(truncated == 0, "a long message was not sent");
     Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
     Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(~std::uintptr_t{0xfff})) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
-    const std::string expected = "[notification] hello\n[notification] \n[notification] " + longText.substr(0, 179) + "\n";
+    const std::string expected =
+        "[notification] hello\n"
+        "[notification] \n"
+        "[notification] \n"
+        "[notification] notification type 1\n"
+        "[notification] notification type 2\n"
+        "[notification] " + longText.substr(0, 179) + "\n";
     if (output != expected) {
         std::fprintf(stderr, "notification output was:\n%s", output.c_str());
         Require(false, "the notification output differs from the sent texts");

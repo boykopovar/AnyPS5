@@ -71,12 +71,13 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sanitizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Rtld.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Process.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Cpuset.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sandbox.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostCpu.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceProcess.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceStartup.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocMacOs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocRestart.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Login.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Getlogin.cpp
@@ -116,6 +117,31 @@ endif()
 configure_windows_unwind(libkernel)
 
 if(BUILD_TESTING)
+    if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_io_read_shutdown_tests ${LIBS_INCLUDE_DIR}/tests/GuestIoReadShutdown.cpp)
+        target_include_directories(guest_io_read_shutdown_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_io_read_shutdown_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_io_read_shutdown_tests)
+        foreach(shutdownNetwork stream datagram)
+            foreach(shutdownApi read alias readv readv_alias recv recvfrom recvfrom_alias recvmsg recvmsg_alias sce_read sce_readv)
+                foreach(shutdownMode shutdown alias parallel disabled native timeout cancel waitall)
+                    if(shutdownApi MATCHES "^sce_" AND shutdownMode MATCHES "^(disabled|cancel|waitall)$")
+                        continue()
+                    endif()
+                    if(shutdownMode STREQUAL "waitall" AND (shutdownNetwork STREQUAL "datagram" OR NOT shutdownApi MATCHES "^recv"))
+                        continue()
+                    endif()
+                    set(shutdownTest guest_io_read_shutdown_${shutdownNetwork}_${shutdownApi}_${shutdownMode})
+                    add_test(NAME ${shutdownTest} COMMAND guest_io_read_shutdown_tests ${shutdownNetwork} ${shutdownApi} ${shutdownMode})
+                    set_tests_properties(${shutdownTest} PROPERTIES TIMEOUT 15)
+                    if(WIN32)
+                        set_tests_properties(${shutdownTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+                    endif()
+                endforeach()
+            endforeach()
+        endforeach()
+    endif()
     add_test_executable(guest_io_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestIoContext.cpp)
     target_include_directories(guest_io_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_io_context_tests PRIVATE libSceLibcInternal libkernel libc)
@@ -401,7 +427,7 @@ if(BUILD_TESTING)
     endforeach()
     add_library(guest_exec_host SHARED ${LIBS_INCLUDE_DIR}/tests/GuestExecHost.cpp)
     target_include_directories(guest_exec_host PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_exec_host PRIVATE libkernel libc libSceAgcDriver)
+    target_link_libraries(guest_exec_host PRIVATE libkernel libkernel_sys libc libSceAgcDriver)
     set_target_properties(guest_exec_host PROPERTIES PREFIX "" SUFFIX ".prx" BUILD_RPATH "$ORIGIN")
     configure_windows_unwind(guest_exec_host)
     find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -409,9 +435,17 @@ if(BUILD_TESTING)
         add_test(NAME exec_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_exec_arguments.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_exec_host>
-            $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> ${CMAKE_CXX_COMPILER})
+            $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> $<TARGET_FILE:libkernel_sys> ${CMAKE_CXX_COMPILER})
         set_tests_properties(exec_arguments PROPERTIES TIMEOUT 30)
         add_asan_test_options(exec_arguments verify_asan_link_order=0)
+        foreach(mode IN ITEMS ve vpe)
+            add_test(NAME exec_sys_${mode}_arguments COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_exec_arguments.py
+                $<TARGET_FILE:relinker> $<TARGET_FILE:guest_exec_host>
+                $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> $<TARGET_FILE:libkernel_sys> ${CMAKE_CXX_COMPILER})
+            set_tests_properties(exec_sys_${mode}_arguments PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_KERNEL_SYS_EXEC_MODE=${mode}")
+            add_asan_test_options(exec_sys_${mode}_arguments verify_asan_link_order=0)
+        endforeach()
     endif()
     if(NOT WIN32)
         add_library(guest_memory_lifetime_module MODULE ${LIBS_INCLUDE_DIR}/tests/GuestMemoryLifetimeModule.cpp)
@@ -826,6 +860,14 @@ if(BUILD_TESTING)
     file(MAKE_DIRECTORY ${sandboxCertificatesRun})
     add_test(NAME guest_sandbox_certificates COMMAND guest_sandbox_certificates_tests WORKING_DIRECTORY ${sandboxCertificatesRun})
     set_tests_properties(guest_sandbox_certificates PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_sandbox_certificate_failure_tests ${LIBS_INCLUDE_DIR}/tests/GuestSandboxCertificateFailure.cpp)
+    target_include_directories(guest_sandbox_certificate_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sandbox_certificate_failure_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_sandbox_certificate_failure_tests)
+    set(sandboxCertificateFailureRun ${CMAKE_CURRENT_BINARY_DIR}/guest_sandbox_certificate_failure)
+    file(MAKE_DIRECTORY ${sandboxCertificateFailureRun})
+    add_test(NAME guest_sandbox_certificate_failure COMMAND guest_sandbox_certificate_failure_tests WORKING_DIRECTORY ${sandboxCertificateFailureRun})
+    set_tests_properties(guest_sandbox_certificate_failure PROPERTIES TIMEOUT 20)
     if(WIN32)
         add_test_executable(guest_sandbox_certificate_trust_tests ${LIBS_INCLUDE_DIR}/tests/GuestSandboxCertificateTrust.cpp)
         target_include_directories(guest_sandbox_certificate_trust_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -834,7 +876,7 @@ if(BUILD_TESTING)
         add_test(NAME guest_sandbox_certificate_trust COMMAND guest_sandbox_certificate_trust_tests)
         set_tests_properties(guest_sandbox_certificate_trust PROPERTIES TIMEOUT 10 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-        set_tests_properties(guest_sandbox_certificates PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_sandbox_certificates guest_sandbox_certificate_failure PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_kernel_rename_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelRename.cpp)
@@ -1240,6 +1282,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_pthread_cond_setname PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_pthread_cond_setname PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_pthread_cond_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadCond.cpp)
+    target_include_directories(guest_pthread_cond_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pthread_cond_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_pthread_cond_tests)
+    add_test(NAME guest_pthread_cond COMMAND guest_pthread_cond_tests)
+    set_tests_properties(guest_pthread_cond PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pthread_cond PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_cond_recursive_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestCondRecursiveMutex.cpp)
@@ -1816,6 +1868,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_current_cpu PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_pthread_yield_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadYield.cpp)
+        target_include_directories(guest_pthread_yield_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_pthread_yield_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_pthread_yield_tests)
+        add_test(NAME guest_pthread_yield COMMAND guest_pthread_yield_tests)
+        set_tests_properties(guest_pthread_yield PROPERTIES TIMEOUT 60)
+        if(WIN32)
+            set_tests_properties(guest_pthread_yield PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endif()
     add_test_executable(guest_getrusage_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrusage.cpp)
     target_include_directories(guest_getrusage_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_getrusage_tests PRIVATE libkernel libc)
@@ -2065,17 +2129,21 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_configuration PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    if(APPLE AND TARGET mimalloc)
+    if(NOT WIN32 AND TARGET mimalloc)
         add_test_executable(mimalloc_restart_tests ${LIBS_INCLUDE_DIR}/tests/MimallocRestart.cpp)
         target_link_libraries(mimalloc_restart_tests PRIVATE libkernel libc)
         add_custom_command(TARGET mimalloc_restart_tests POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> $<TARGET_FILE_DIR:libkernel>/libmimalloc.dylib)
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> $<TARGET_FILE_DIR:libkernel>/${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
         add_test(NAME mimalloc_restart_off COMMAND mimalloc_restart_tests off)
         set_tests_properties(mimalloc_restart_off PROPERTIES ENVIRONMENT_MODIFICATION "APS5_MIMALLOC=unset:")
         add_test(NAME mimalloc_restart_on COMMAND mimalloc_restart_tests on)
         set_tests_properties(mimalloc_restart_on PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1")
         add_test(NAME mimalloc_restart_once COMMAND mimalloc_restart_tests once)
         set_tests_properties(mimalloc_restart_once PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1;APS5_MIMALLOC_RESTARTED=1")
+        add_test(NAME mimalloc_restart_log COMMAND mimalloc_restart_tests log)
+        set_tests_properties(mimalloc_restart_log PROPERTIES
+            ENVIRONMENT "APS5_MIMALLOC=1;ANYPS5_LOG_FILE=${CMAKE_CURRENT_BINARY_DIR}/mimalloc_restart_log.txt"
+            PASS_REGULAR_EXPRESSION "mimalloc_restart_tests: the restarted process writes to its standard output")
     endif()
     add_test_executable(guest_software_version_tests ${LIBS_INCLUDE_DIR}/tests/GuestSoftwareVersion.cpp)
     target_include_directories(guest_software_version_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -2232,6 +2300,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_tcp PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_tcp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_socket_send_before_connect_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketSendBeforeConnect.cpp)
+    target_include_directories(guest_socket_send_before_connect_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_socket_send_before_connect_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_socket_send_before_connect_tests)
+    add_test(NAME guest_socket_send_before_connect COMMAND guest_socket_send_before_connect_tests)
+    set_tests_properties(guest_socket_send_before_connect PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_socket_send_before_connect PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_socket_port_zero_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketPortZero.cpp)
@@ -2471,6 +2549,15 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY ${flexibleMemoryRun})
         if(WIN32)
             set_tests_properties(guest_flexible_memory_${flexibleMemoryName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
+    foreach(flexibleMemoryName IN ITEMS declared limited none)
+        add_test(NAME guest_flexible_memory_${flexibleMemoryName}_from_flexible COMMAND guest_flexible_memory_budget_tests ${flexibleMemoryName}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_flexible_memory_${flexibleMemoryName})
+        set_tests_properties(guest_flexible_memory_${flexibleMemoryName}_from_flexible PROPERTIES ENVIRONMENT "APS5_DIRECT_MEMORY_FROM_FLEXIBLE=1")
+        if(WIN32)
+            set_tests_properties(guest_flexible_memory_${flexibleMemoryName}_from_flexible PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
