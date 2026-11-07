@@ -108,7 +108,7 @@ void PermuteArguments(int nonOptionStart, int nonOptionEnd, int optionEnd, char*
     }
 }
 
-int ParseLongOptions(char* const* arguments, const char* options, const GuestOption* longOptions, int* index, const char* dash, bool shortToo, int flags) {
+int ParseLongOptions(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index, const char* dash, bool shortToo, int flags) {
     char* const current = g_longPlace;
     int match = -1;
     bool exactMatch = false;
@@ -162,12 +162,11 @@ int ParseLongOptions(char* const* arguments, const char* options, const GuestOpt
     }
     if (option.hasArgument == RequiredArgument || option.hasArgument == OptionalArgument) {
         if (hasEqual) optarg_nid_postfix = hasEqual;
-        else if (option.hasArgument == RequiredArgument) optarg_nid_postfix = arguments[optind_nid_postfix++];
+        else if (option.hasArgument == RequiredArgument && optind_nid_postfix < count) optarg_nid_postfix = arguments[optind_nid_postfix++];
     }
     if (option.hasArgument == RequiredArgument && !optarg_nid_postfix) {
         if (PrintError(options)) Warn(std::string("option `") + dash + current + "' requires an argument");
         optopt_nid_postfix = option.flag ? 0 : option.value;
-        --optind_nid_postfix;
         return BadArgument(options);
     }
     if (index) *index = match;
@@ -248,7 +247,7 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
         } else if (*g_longPlace != ':' && std::strchr(options, *g_longPlace)) {
             shortToo = true;
         }
-        const int result = ParseLongOptions(arguments, options, longOptions, index, dash, shortToo, flags);
+        const int result = ParseLongOptions(count, arguments, options, longOptions, index, dash, shortToo, flags);
         if (result != -1) {
             g_longPlace = g_emptyMessage;
             return result;
@@ -276,7 +275,7 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
             }
             g_longPlace = Argument(arguments, optind_nid_postfix, "getopt_long");
         }
-        const int result = ParseLongOptions(arguments, options, longOptions, index, "-W ", false, flags);
+        const int result = ParseLongOptions(count, arguments, options, longOptions, index, "-W ", false, flags);
         g_longPlace = g_emptyMessage;
         return result;
     }

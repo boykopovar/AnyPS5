@@ -44,6 +44,8 @@ int main() {
     Require(Parses("1.2.3.4 trailing", Network(1, 2, 3, 4)), "trailing after space");
     Require(Parses("0", Network(0, 0, 0, 0)), "zero");
     Require(Parses("0xffffffff", Network(255, 255, 255, 255)), "broadcast");
+    Require(Parses("4294967295", Network(255, 255, 255, 255)), "largest single number");
+    Require(Rejects("4294967296") && Rejects("0x100000000") && Rejects("18446744073709551617"), "single number above 32 bits");
     Require(Rejects("256.1.1.1") && Rejects("1.2.3.256") && Rejects("1.2.65536"), "part out of range");
     Require(Rejects("1.2.3.4.5") && Rejects("08") && Rejects("0x") && Rejects("1.2.3.4x"), "malformed");
     Require(Rejects("") && Rejects(".1") && Rejects("1..2") && Rejects("-1"), "missing digits");
