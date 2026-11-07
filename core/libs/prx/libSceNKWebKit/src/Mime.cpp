@@ -419,6 +419,21 @@ const char* MimeTypeForExtension(std::string_view ext) {
 
 }  // namespace
 
+namespace NKWebKit {
+
+bool IsURLSchemeRegisteredAsNoAccess(std::u16string_view scheme) {
+    std::string lowered;
+    lowered.reserve(scheme.size());
+    for (const char16_t c : scheme) {
+        if (c > 0x7F) return false;
+        lowered.push_back(static_cast<char>((c >= u'A' && c <= u'Z') ? c - u'A' + u'a' : c));
+    }
+    std::lock_guard lock(g_schemeMutex);
+    return std::find(g_noAccessSchemes.begin(), g_noAccessSchemes.end(), lowered) != g_noAccessSchemes.end();
+}
+
+}  // namespace NKWebKit
+
 extern "C" {
 
 bool APS5_VABI _ZN7WebCore20LegacySchemeRegistry15isBuiltinSchemeERKN3WTF6StringE(const NKWebKit::WtfAbi::String& scheme) {

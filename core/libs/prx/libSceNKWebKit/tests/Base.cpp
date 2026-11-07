@@ -259,14 +259,38 @@ static void TestSecurityOrigin() {
     for (const char* input : {"http://[::1]/", "http://[::1]:8080/", "file://[::1]/x", "http://caf\xC3\xA9.example/", "http://a%20b.example/", "http://%41.example/", "http://xn--nxasmq6b.example/", "http://sub.XN--abc.example/", "http://127.0.0.1/", "http://0x7f.1/", "http://1.2.3.4./", "http://192.168.1/", "http://example.0x/", "blob:https://example.com/uuid", "BLOB:foo"}) {
         const auto* inStr = WKStringCreateWithUTF8CString(input);
         bool threw = false;
+        const void* created = nullptr;
         try {
-            WKSecurityOriginCreateFromString(inStr);
+            created = WKSecurityOriginCreateFromString(inStr);
         } catch (const std::runtime_error&) {
             threw = true;
         }
+        if (created) WKRelease(created);
         WKRelease(inStr);
         Require(threw);
     }
+    const auto noAccessScheme = _ZN3WTF10StringImpl6createEPKDsj(u"wss", 3);
+    const auto* wssInStr = WKStringCreateWithUTF8CString("wss://example.com");
+    const auto* beforeRegistration = WKSecurityOriginCreateFromString(wssInStr);
+    WKRelease(wssInStr);
+    CheckOriginString(WKSecurityOriginCopyToString(beforeRegistration), "wss://example.com");
+    WKRelease(beforeRegistration);
+    _ZN7WebCore20LegacySchemeRegistry27registerURLSchemeAsNoAccessERKN3WTF6StringE(noAccessScheme);
+    for (const char* input : {"wss://example.com", "WSS://example.com:443/path", "wss://[::1]/"}) {
+        const auto* inStr = WKStringCreateWithUTF8CString(input);
+        const auto* noAccess = WKSecurityOriginCreateFromString(inStr);
+        WKRelease(inStr);
+        CheckOriginString(WKSecurityOriginCopyProtocol(noAccess), "");
+        CheckOriginString(WKSecurityOriginCopyHost(noAccess), "");
+        CheckOriginString(WKSecurityOriginCopyToString(noAccess), "");
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(noAccess), "__0");
+        WKRelease(noAccess);
+    }
+    const auto* wsInStr = WKStringCreateWithUTF8CString("ws://example.com");
+    const auto* stillWs = WKSecurityOriginCreateFromString(wsInStr);
+    WKRelease(wsInStr);
+    CheckOriginString(WKSecurityOriginCopyToString(stillWs), "ws://example.com");
+    WKRelease(stillWs);
     const auto* fromNull = WKSecurityOriginCreateFromString(nullString.Get());
     Require(fromNull != nullptr);
     Require(WKSecurityOriginGetPort(fromNull) == 0);

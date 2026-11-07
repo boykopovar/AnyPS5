@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 
@@ -529,6 +530,7 @@ const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     if (!IsValidScheme(protocol)) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(protocol);
     if (protocol == u"blob") throw std::runtime_error("WKSecurityOriginCreateFromString: blob URL origins are not implemented");
+    if (NKWebKit::IsURLSchemeRegisteredAsNoAccess(protocol)) return CreateOpaqueOrigin();
     const bool isFile = protocol == u"file";
     const bool isSpecial = isFile || protocol == u"http" || protocol == u"https" || protocol == u"ftp" || protocol == u"ws" || protocol == u"wss";
     if (!isSpecial) return CreateOpaqueOrigin();
