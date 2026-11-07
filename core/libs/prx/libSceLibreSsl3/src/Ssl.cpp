@@ -9,8 +9,10 @@
 
 namespace {
 
+constexpr std::uint16_t Tls1Version = 0x0301;
 constexpr std::uint16_t Tls11Version = 0x0302;
 constexpr std::uint16_t Tls12Version = 0x0303;
+constexpr std::uint16_t Tls13Version = 0x0304;
 constexpr std::uint16_t Dtls1Version = 0xfeff;
 constexpr std::uint16_t Dtls12Version = 0xfefd;
 
@@ -56,6 +58,15 @@ int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
     if (!ssl)
         throw std::invalid_argument("SSL_up_ref requires an SSL");
     return Retain_nid_no_patch(ssl->references);
+}
+
+const LibreSsl3SslMethod* APS5_VABI TLS_method_nid_postfix() {
+    static constexpr LibreSsl3SslMethod method{0, 1, Tls13Version, Tls1Version, Tls13Version};
+    return &method;
+}
+
+const LibreSsl3SslMethod* APS5_VABI TLS_server_method_nid_postfix() {
+    return TLS_method_nid_postfix();
 }
 
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
