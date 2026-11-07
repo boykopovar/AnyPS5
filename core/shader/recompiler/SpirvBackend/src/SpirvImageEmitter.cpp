@@ -1836,25 +1836,32 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operandMask |= spv::ImageOperandsBiasMask;
         operands.push_back(AddressF32(ctx, access, setup.layout.bias));
     }
+    const auto unclampedLod = (operandMask & spv::ImageOperandsLodMask) != 0u ? operands.back() : 0u;
+    std::uint32_t lodClamp = 0;
+    std::uint32_t lodViewClamp = 0;
+    const auto fmax = [&](std::uint32_t left, std::uint32_t right) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32(state), value, GlslStd450(state), GLSLstd450FMax, left, right);
+        return value;
+    };
+    const auto clampLod = [&](std::uint32_t lod) {
+        if (lodClamp != 0u) lod = fmax(lod, lodClamp);
+        if (lodViewClamp != 0u) lod = Select(state, TypeF32(state), Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), lodViewClamp, ZeroF32(state)), fmax(lod, lodViewClamp), lod);
+        return lod;
+    };
     const bool descriptorClamp = state.shaderImageMinLod && state.program.Info().images.at(mem.resource).table == NoTable;
     if (descriptorClamp && state.registrationModules) ctx.Fail(access.inst, "applies its T#'s minimum LOD clamp in the shader, which registration modules do not implement");
     if (setup.layout.clamp != NoImageComponent || descriptorClamp) {
         const auto& capabilities = state.supportedCapabilities;
         if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityMinLod)) == capabilities.end()) ctx.Fail(access.inst, "clamps its LOD, which needs the device's shaderResourceMinLod");
-        const auto fmax = [&](std::uint32_t left, std::uint32_t right) {
-            const auto value = state.module.AllocateId();
-            state.module.AddFunction(spv::OpExtInst, TypeF32(state), value, GlslStd450(state), GLSLstd450FMax, left, right);
-            return value;
-        };
-        const auto clamp = setup.layout.clamp != NoImageComponent ? AddressF32(ctx, access, setup.layout.clamp) : 0u;
-        const auto viewClamp = descriptorClamp ? Unary(state, spv::OpBitcast, TypeF32(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MinLodBase + mem.resource, 0u)) : 0u;
+        lodClamp = setup.layout.clamp != NoImageComponent ? AddressF32(ctx, access, setup.layout.clamp) : 0u;
+        lodViewClamp = descriptorClamp ? Unary(state, spv::OpBitcast, TypeF32(state), state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MinLodBase + mem.resource, 0u)) : 0u;
         if ((operandMask & spv::ImageOperandsLodMask) != 0u) {
-            if (clamp != 0u) operands.back() = fmax(operands.back(), clamp);
-            if (viewClamp != 0u) operands.back() = Select(state, TypeF32(state), Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), viewClamp, ZeroF32(state)), fmax(operands.back(), viewClamp), operands.back());
+            operands.back() = clampLod(operands.back());
         } else {
             state.module.EmitCapability(spv::CapabilityMinLod);
             operandMask |= spv::ImageOperandsMinLodMask;
-            operands.push_back(clamp == 0u ? viewClamp : viewClamp == 0u ? clamp : fmax(clamp, viewClamp));
+            operands.push_back(lodClamp == 0u ? lodViewClamp : lodViewClamp == 0u ? lodClamp : fmax(lodClamp, lodViewClamp));
         }
     }
     const auto constantOffset = [&]() -> const IrValue* {
@@ -1920,6 +1927,42 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             return emitDirectSample(coord, mask, arguments, sampleOpcode);
         });
     };
+    const auto emitBiasedSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+        if (!AppliesLodBiasInShader(state.program.Info().samplers.at(mem.sampler))) return emitSample(coord, mask, arguments, sampleOpcode);
+        const auto f32 = TypeF32(state);
+        const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::SamplerLodBiasBase + mem.sampler, 0u);
+        const auto beyondLimit = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
+        return EmitValueIfElse(state, beyondLimit, resultType, [&] {
+            const auto bias = Unary(state, spv::OpBitcast, f32, selector);
+            auto biased = arguments;
+            if ((mask & spv::ImageOperandsLodMask) != 0u) {
+                biased.front() = clampLod(Binary(state, spv::OpFAdd, f32, unclampedLod, bias));
+                return emitSample(coord, mask, biased, sampleOpcode);
+            }
+            auto gradMask = mask;
+            auto total = bias;
+            if ((mask & spv::ImageOperandsBiasMask) != 0u) {
+                total = Binary(state, spv::OpFAdd, f32, total, biased.front());
+                biased.erase(biased.begin());
+                gradMask &= ~static_cast<std::uint32_t>(spv::ImageOperandsBiasMask);
+            }
+            const auto components = setup.dimensionInfo.spatialComponents;
+            const auto gradientType = components == 1u ? f32 : TypeF32Vector(state, components);
+            if ((mask & spv::ImageOperandsGradMask) == 0u) {
+                const auto spatial = CoordF32(ctx, access, setup.layout.coord, components, AddressDimension(access).spatialComponents);
+                biased.insert(biased.begin(), {Unary(state, spv::OpDPdx, gradientType, spatial), Unary(state, spv::OpDPdy, gradientType, spatial)});
+                gradMask |= spv::ImageOperandsGradMask;
+            }
+            const auto scale = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, f32, scale, GlslStd450(state), GLSLstd450Pow, ConstantF32(state, 0x40000000u), total);
+            for (std::size_t index = 0; index < 2u; ++index) {
+                biased[index] = Binary(state, components == 1u ? spv::OpFMul : spv::OpVectorTimesScalar, gradientType, biased[index], scale);
+            }
+            return emitSample(coord, gradMask, biased, setup.dref ? spv::OpImageSampleDrefExplicitLod : spv::OpImageSampleExplicitLod);
+        }, [&] {
+            return emitSample(coord, mask, arguments, sampleOpcode);
+        });
+    };
     std::uint32_t sample = 0;
     const bool alreadyBaseLevel = !hasOffset && opcode == spv::OpImageSampleExplicitLod && operandMask == spv::ImageOperandsLodMask && !HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.clamp == NoImageComponent;
     const bool baseLevelIfUnnormalized = !setup.dref && !alreadyBaseLevel && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
@@ -1929,12 +1972,12 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
             return emitSample(hasOffset ? FoldedOffsetCoord(ctx, access, setup) : setup.coord, spv::ImageOperandsLodMask, {ZeroF32(state)}, spv::OpImageSampleExplicitLod);
         }, [&] {
-            return emitSample(setup.coord, operandMask, operands, opcode);
+            return emitBiasedSample(setup.coord, operandMask, operands, opcode);
         });
     } else if (!foldOffset) {
-        sample = emitSample(setup.coord, operandMask, operands, opcode);
+        sample = emitBiasedSample(setup.coord, operandMask, operands, opcode);
     } else if (!offsetOperand) {
-        sample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
+        sample = emitBiasedSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
     } else {
         const auto selector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::FoldOffsetBase + mem.sampler, 0u);
         const auto folded = Binary(state, spv::OpINotEqual, TypeBool(state), selector, ConstantU32(state, 0u));
@@ -1944,11 +1987,11 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
         state.module.AddFunction(spv::OpBranchConditional, folded, foldLabel, operandLabel);
         EmitLabel(state, foldLabel);
-        const auto foldSample = emitSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
+        const auto foldSample = emitBiasedSample(FoldedOffsetCoord(ctx, access, setup), foldedMask, foldedOperands, opcode);
         const auto foldEnd = state.currentLabel;
         state.module.AddFunction(spv::OpBranch, merge);
         EmitLabel(state, operandLabel);
-        const auto operandSample = emitSample(setup.coord, operandMask, operands, opcode);
+        const auto operandSample = emitBiasedSample(setup.coord, operandMask, operands, opcode);
         const auto operandEnd = state.currentLabel;
         state.module.AddFunction(spv::OpBranch, merge);
         EmitLabel(state, merge);
@@ -2038,17 +2081,10 @@ struct TableWord {
     std::uint32_t poisoned = 0;
 };
 
-TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t source, std::uint32_t table, std::size_t argument) {
-    auto& state = ctx.state;
-    const IrValue* handle = inst.Argument(argument)->Resolve();
-    const auto& sources = state.program.Resources().descriptorSources;
-    if (handle->ArgumentCount() == 0u || source >= sources.size() || !sources[source].tableColumn.has_value()) ctx.Fail(inst, "has an image table handle without its column");
-    const auto& column = *sources[source].tableColumn;
-    const auto offset = ctx.Def(handle->Argument(0));
+TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
-    const auto header = ImageTableAbi::TableHeader(table);
-    const auto field = [&](std::uint32_t index) { return LoadTableMap(state, ConstantU32(state, header + index)); };
+    const auto field = [&](std::uint32_t index) { return dynamicHeader ? TableMapAt(state, header, index) : LoadTableMap(state, ConstantU32(state, header + index)); };
     const auto mapStart = field(ImageTableAbi::TableMapStart);
     const auto keys = field(ImageTableAbi::TableKeyCount);
     const auto sizeLow = field(ImageTableAbi::TableSizeLow);
@@ -2096,6 +2132,82 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     state.module.AddFunction(spv::OpCompositeExtract, u32, carry, low, 1u);
     word.addressHigh = Binary(state, spv::OpIAdd, u32, baseHigh, carry);
     word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
+    return word;
+}
+
+TableWord LookupTablePointer(SpirvEmitterState& state, std::uint32_t pointerLow, std::uint32_t pointerHigh, std::uint32_t tableHeader) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto field = [&](std::uint32_t offset) { return LoadTableMap(state, constant(tableHeader + offset)); };
+    const auto both = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalAnd, boolean, left, right); };
+    const auto mapStart = field(ImageTableAbi::TableMapStart);
+    const auto storedCount = field(ImageTableAbi::TableKeyCount);
+    const auto fault = field(ImageTableAbi::TableFault);
+    const auto usable = both(Binary(state, spv::OpULessThanEqual, boolean, storedCount, constant(ImageTableAbi::MaxParentKeys)), Binary(state, spv::OpIEqual, boolean, fault, constant(0u)));
+    const auto count = Select(state, u32, usable, storedCount, constant(0u));
+    const auto recordAt = [&](std::uint32_t index) { return Binary(state, spv::OpIAdd, u32, mapStart, Binary(state, spv::OpIMul, u32, index, constant(ImageTableAbi::PointerRecordWords))); };
+    const auto header = state.module.AllocateId();
+    const auto body = state.module.AllocateId();
+    const auto continuation = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    const auto entryLabel = state.currentLabel;
+    const auto lower = state.module.AllocateId();
+    const auto upper = state.module.AllocateId();
+    const auto newLower = state.module.AllocateId();
+    const auto newUpper = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, header);
+    state.module.AddFunction(spv::OpPhi, u32, lower, constant(0u), entryLabel, newLower, continuation);
+    state.module.AddFunction(spv::OpPhi, u32, upper, count, entryLabel, newUpper, continuation);
+    const auto search = Binary(state, spv::OpULessThan, boolean, lower, upper);
+    state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, search, body, merge);
+    EmitLabel(state, body);
+    const auto midpoint = Binary(state, spv::OpIAdd, u32, lower, Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpISub, u32, upper, lower), constant(1u)));
+    const auto record = recordAt(midpoint);
+    const auto low = TableMapAt(state, record, 0u);
+    const auto high = TableMapAt(state, record, 1u);
+    const auto less = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpULessThan, boolean, high, pointerHigh), both(Binary(state, spv::OpIEqual, boolean, high, pointerHigh), Binary(state, spv::OpULessThan, boolean, low, pointerLow)));
+    state.module.AddFunction(spv::OpSelect, u32, newLower, less, Binary(state, spv::OpIAdd, u32, midpoint, constant(1u)), lower);
+    state.module.AddFunction(spv::OpSelect, u32, newUpper, less, upper, midpoint);
+    state.module.AddFunction(spv::OpBranch, continuation);
+    EmitLabel(state, continuation);
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, merge);
+    const auto inBounds = Binary(state, spv::OpULessThan, boolean, lower, count);
+    const auto selected = Select(state, u32, inBounds, recordAt(lower), constant(tableHeader));
+    const auto same = both(Binary(state, spv::OpIEqual, boolean, TableMapAt(state, selected, 0u), pointerLow), Binary(state, spv::OpIEqual, boolean, TableMapAt(state, selected, 1u), pointerHigh));
+    const auto nullPointer = both(Binary(state, spv::OpIEqual, boolean, pointerLow, constant(0u)), Binary(state, spv::OpIEqual, boolean, pointerHigh, constant(0u)));
+    const auto missing = Select(state, u32, nullPointer, field(ImageTableAbi::TableOutsideCode), constant(ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)));
+    const auto code = Select(state, u32, both(inBounds, same), TableMapAt(state, selected, 2u), missing);
+    TableWord word;
+    word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, fault, constant(0u)), fault, code);
+    word.addressLow = pointerLow;
+    word.addressHigh = pointerHigh;
+    word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, constant(ImageTableAbi::PoisonFlag)), constant(0u));
+    return word;
+}
+
+TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t source, std::uint32_t table, std::size_t argument) {
+    auto& state = ctx.state;
+    const IrValue* handle = inst.Argument(argument)->Resolve();
+    const auto& sources = state.program.Resources().descriptorSources;
+    if (handle->ArgumentCount() == 0u || source >= sources.size() || !sources[source].tableColumn.has_value()) ctx.Fail(inst, "has an image table handle without its column");
+    const auto& column = *sources[source].tableColumn;
+    const auto offset = ctx.Def(handle->Argument(0));
+    const auto header = ImageTableAbi::TableHeader(table);
+    const auto& parent = sources.at(column.heapSource).tableColumn;
+    if (!parent.has_value()) return LookupTableWord(state, column, offset, header);
+    if (!parent->buffer || !parent->indirect || handle->ArgumentCount() < 3u) ctx.Fail(inst, "has a nested image table without its buffer pointer");
+    const auto root = LookupTablePointer(state, ctx.Def(handle->Argument(1)), ctx.Def(handle->Argument(2)), header);
+    const auto u32 = TypeU32(state);
+    const auto childHeader = Select(state, u32, root.poisoned, ConstantU32(state, header), root.code);
+    auto word = LookupTableWord(state, column, offset, childHeader, true);
+    word.code = Select(state, u32, root.poisoned, root.code, word.code);
+    word.addressLow = Select(state, u32, root.poisoned, root.addressLow, word.addressLow);
+    word.addressHigh = Select(state, u32, root.poisoned, root.addressHigh, word.addressHigh);
+    word.poisoned = Binary(state, spv::OpLogicalOr, TypeBool(state), root.poisoned, word.poisoned);
     return word;
 }
 

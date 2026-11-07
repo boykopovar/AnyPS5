@@ -74,7 +74,15 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: sectionless ELF needs little-endian ELF64 program headers")
     take(data, program_offset, program_count * program_size, path, "program header table")
     segments = [unpack("<IIQQQQQQ", data, program_offset + index * program_size, path, f"program header {index}") for index in range(program_count)]
-    loads = [segment for segment in segments if segment[0] == 1]
+    loads = []
+    for segment in segments:
+        if segment[0] == 1:
+            _, _, offset, _, _, file_size, mem_size, _ = segment
+            if file_size > mem_size:
+                raise AuditError(f"{path}: load segment file size {file_size} exceeds memory size {mem_size}")
+            if file_size:
+                take(data, offset, file_size, path, "load segment")
+            loads.append(segment)
 
     def file_offset(address, size, what):
         for segment in loads:
@@ -1040,6 +1048,7 @@ def main(argv=None):
     parser.add_argument("--strict-stubs", action="store_true",
                         help="also fail when a referenced import resolves to a throwing stub")
     parser.add_argument("--strict-providers", action="store_true", help="fail when a named import is provided only by another library; retains the existing libc and title-module rules")
+    parser.add_argument("--strict-partial", action="store_true", help="also fail when an import has known unsupported input paths")
     args = parser.parse_args(argv)
     try:
         dependency_registries = [needed_registry_path(path) for path in args.registries if path.name.endswith(".registry.json")]
@@ -1085,7 +1094,7 @@ def main(argv=None):
         print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
         return 2
     print(render(summary, records, missing, stops, missing_hosts, located))
-    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
+    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) or (args.strict_partial and summary["unique_by_class"]["partial"]) else 0
 
 
 if __name__ == "__main__":

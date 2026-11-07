@@ -42,6 +42,7 @@ std::atomic<KernelSocketPoll::Closer> g_socketCloser{nullptr};
 std::atomic<KernelSocketPoll::OptionSetter> g_socketOptionSetter{nullptr};
 std::atomic<KernelSocketPoll::OptionGetter> g_socketOptionGetter{nullptr};
 std::atomic<KernelSocketPoll::StatusControl> g_socketStatusControl{nullptr};
+std::atomic<KernelSocketPoll::IoctlControl> g_socketIoctlControl{nullptr};
 std::atomic<KernelSocketPoll::NativeLookup> g_socketNativeLookup{nullptr};
 
 bool DescriptorSet(const void* set, int descriptor) {
@@ -188,6 +189,15 @@ void KernelSetSocketStatusControl_nid_no_patch(KernelSocketPoll::StatusControl c
 bool KernelControlSocketStatus_nid_no_patch(int descriptor, int command, int flags, int* result, int* error) {
     const auto control = g_socketStatusControl.load();
     return control != nullptr && control(descriptor, command, flags, result, error);
+}
+
+void KernelSetSocketIoctlControl_nid_no_patch(KernelSocketPoll::IoctlControl control) {
+    g_socketIoctlControl.store(control);
+}
+
+bool KernelControlSocketIoctl_nid_no_patch(int descriptor, std::uint32_t request, void* argument, int* error) {
+    const auto control = g_socketIoctlControl.load();
+    return control != nullptr && control(descriptor, request, argument, error);
 }
 
 void KernelSetSocketNativeLookup_nid_no_patch(KernelSocketPoll::NativeLookup lookup) {
