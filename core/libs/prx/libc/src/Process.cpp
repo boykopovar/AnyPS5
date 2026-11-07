@@ -35,6 +35,8 @@ std::exception_ptr shutdownFailure;
 std::stop_source shutdownSource;
 std::atomic<bool> exitRequested{false};
 std::atomic<bool> exitStarted{false};
+std::atomic<int> exitCode{0};
+std::atomic<bool> hostShutdownAbandoned{false};
 
 thread_local bool runningExit = false;
 
@@ -52,7 +54,26 @@ extern "C" void LibcRequestShutdown_nid_postfix() {
     shutdownSource.request_stop();
 }
 
+extern "C" int LibcExitCode_nid_no_patch() {
+    return exitCode.load(std::memory_order_acquire);
+}
+
+extern "C" void LibcNoteHostShutdownAbandoned_nid_no_patch() {
+    hostShutdownAbandoned.store(true, std::memory_order_release);
+}
+
+extern "C" bool LibcHostShutdownAbandoned_nid_no_patch() {
+    return hostShutdownAbandoned.load(std::memory_order_acquire);
+}
+
+#ifndef __APPLE__
+extern "C" bool LibcUnwindMissAtHostThreadRoot_nid_no_patch() {
+    return false;
+}
+#endif
+
 extern "C" void LibcRequestExit_nid_postfix(int code) {
+    exitCode.store(code, std::memory_order_release);
     if (exitRequested.exchange(true)) return;
     LibcRequestShutdown_nid_postfix();
     std::thread([code] { LibcExitWithoutHandlers_nid_no_patch(code); }).detach();
@@ -164,6 +185,8 @@ extern "C" {
 }
 
 [[noreturn]] void LibcTerminate_nid_no_patch(int code) {
+    exitCode.store(code, std::memory_order_release);
+    if (hostShutdownAbandoned.load(std::memory_order_acquire)) std::_Exit(code);
     if (const auto drain = exitDrain.exchange(nullptr)) {
         try {
             auto completion = std::make_shared<std::promise<void>>();
@@ -197,6 +220,7 @@ void LibcStartExit_nid_postfix() {
 }
 
 [[noreturn]] void LibcExit_nid_no_patch(int code) {
+    exitCode.store(code, std::memory_order_release);
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
     LibcRunShutdown_nid_postfix();
@@ -205,6 +229,7 @@ void LibcStartExit_nid_postfix() {
 }
 
 [[noreturn]] void LibcExitWithoutHandlers_nid_no_patch(int code) {
+    exitCode.store(code, std::memory_order_release);
     StartExit();
     LibcRunShutdown_nid_postfix();
     std::fflush(nullptr);

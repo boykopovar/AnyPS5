@@ -57,6 +57,7 @@ struct QueueWorker {
     bool executingWaits = false;
     alignas(64) std::atomic<std::uint64_t> executingPacket{0};
     std::thread thread;
+    std::atomic<bool> exited{false};
 };
 
 }
