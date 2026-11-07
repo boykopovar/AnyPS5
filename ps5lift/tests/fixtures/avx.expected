@@ -1,0 +1,21 @@
+vmaskmovps 128 b472cf4570bb8e06
+vmaskmovps 256 4b8c00a344be15c5
+vmaskmovpd 128 a14d97f849870be0
+vmaskmovpd 256 1d427a48da8e7c4e
+vpmaskmovd 128 e50d1e118b18d690
+vpmaskmovd 256 7c15b18c084ea640
+vpmaskmovq 128 b9b278e3ef92b1f3
+vpmaskmovq 256 502f70fb09f9d776
+vpermilps 128 70ddf3e177022f95
+vpermilps 256 8282147c19509d94
+vpermilpd 128 b3504e58c1b2675f
+vpermilpd 256 7c091bb3f44ba9f4
+phminposuw 69e8e3d9c7400a4d
+vphminposuw 69e8e3d9c7400a4d
+vbroadcastss register 128 aedfc6a28123521d
+vbroadcastss register 256 8ecdec74224f4815
+vbroadcastsd register 256 5265365e2b07393d
+vpbroadcastb register 128 cb7561c7cb9067c5
+vpbroadcastw register 256 f1e661b1e7ed9385
+vpbroadcastd register 128 aedfc6a28123521d
+vpbroadcastq register 256 5265365e2b07393d
