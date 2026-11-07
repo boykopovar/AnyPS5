@@ -210,6 +210,11 @@ void Driver::runCaptureCheckHook() {
 
 bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared) {
     if (recapturing()) return false;
+    if (pendingWaits().empty()) {
+        ++captureChecksSkipped;
+        return false;
+    }
+    ++captureChecks;
     const bool mark = compared.size() == regions.size();
     for (std::size_t i = 0; i < regions.size(); ++i) {
         const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
