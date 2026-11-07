@@ -92,8 +92,10 @@ const char* CaughtWhat(const char** typeName) {
 
 inline std::atomic<void(*)()> terminateHandler {DefaultTerminate};
 [[noreturn]] void InvokeTerminate(void (*handler)()) {
-    LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
+    const bool runtimeHandler = handler == nullptr || handler == DefaultTerminate || handler == std::abort;
+    if (runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     try { if (handler) handler(); } catch (...) {}
+    if (!runtimeHandler) LibcRunReportTerminate_nid_no_patch(CaughtWhat(nullptr));
     std::abort();
 }
 [[noreturn]] void Terminate() { InvokeTerminate(terminateHandler.load(std::memory_order_acquire)); }
