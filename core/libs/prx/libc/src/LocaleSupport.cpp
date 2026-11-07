@@ -20,6 +20,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -1072,12 +1073,24 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLo
 template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::int64_t* value);
 template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, std::uint64_t* value);
 template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetPointer_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, void** value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetFloat_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, float* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetDouble_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, double* value);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongDouble_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, long double* value);
+
+template<typename Text> auto SceV2NumGetFloatingSlots() {
+    using Virtual = void (APS5_VABI*)();
+    if constexpr (std::is_same_v<Text, char>) {
+        return std::array<Virtual, 3>{reinterpret_cast<Virtual>(&SceV2NumGetFloat_nid_no_patch<Text>), reinterpret_cast<Virtual>(&SceV2NumGetDouble_nid_no_patch<Text>), reinterpret_cast<Virtual>(&SceV2NumGetLongDouble_nid_no_patch<Text>)};
+    } else {
+        return std::array<Virtual, 3>{SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>};
+    }
+}
 
 template<typename Text> const SceV2NumGetVtable<Text> g_sceV2NumGetVtable{
     {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
     SceV2NumGetBool_nid_no_patch<Text>, SceV2NumGetUnsignedShort_nid_no_patch<Text>, SceV2NumGetUnsignedInt_nid_no_patch<Text>, SceV2NumGetLong_nid_no_patch<Text>,
     SceV2NumGetUnsignedLong_nid_no_patch<Text>, SceV2NumGetLongLong_nid_no_patch<Text>, SceV2NumGetUnsignedLongLong_nid_no_patch<Text>,
-    {SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>},
+    {SceV2NumGetFloatingSlots<Text>()[0], SceV2NumGetFloatingSlots<Text>()[1], SceV2NumGetFloatingSlots<Text>()[2]},
     SceV2NumGetPointer_nid_no_patch<Text>};
 constexpr auto g_sceV2NumGetWideVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
@@ -2526,6 +2539,431 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetPointer_ni
     }
     if ((field & SceV2BadGrouping) != 0) *state = SceV2IosFailBit;
     return FinishSceV2Get(first, last, state);
+}
+
+constexpr char g_sceV2FloatingAtoms[] = "0123456789ABCDEFabcdef-+XxPp";
+constexpr char g_sceV2DecimalAtoms[] = "0123456789-+Ee";
+constexpr std::size_t SceV2FloatUpperE = 14;
+constexpr std::size_t SceV2FloatLowerE = 20;
+constexpr std::size_t SceV2FloatUpperP = 26;
+constexpr std::size_t SceV2FloatLowerP = 27;
+constexpr std::size_t SceV2DecimalMinus = 10;
+constexpr std::size_t SceV2DecimalPlus = 11;
+constexpr std::size_t SceV2DecimalUpperE = 12;
+constexpr std::size_t SceV2DecimalLowerE = 13;
+constexpr int SceV2FloatSignificant = 768;
+constexpr std::size_t SceV2FloatDigits = SceV2FloatSignificant + 32;
+constexpr int SceV2ClassicSignificant = 48;
+constexpr int SceV2ClassicExponent = 8;
+constexpr int SceV2HexSignificant = 36;
+
+template<typename Text> std::size_t FindSceV2Atom(const Text* atoms, std::size_t count, Text character) {
+    return static_cast<std::size_t>(std::find(atoms, atoms + count, character) - atoms);
+}
+
+template<typename Text> bool NextSceV2Is(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, Text character) {
+    return !SceV2InputEnded(first, last) && PeekSceV2Character(first) == character;
+}
+
+template<typename Text> std::uint32_t GetSceV2FloatingField(char* digits, int maxSignificant, SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, const GuestLocale::Implementation* locale) {
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
+    Text atoms[sizeof(g_sceV2FloatingAtoms)];
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, g_sceV2FloatingAtoms, g_sceV2FloatingAtoms + sizeof(g_sceV2FloatingAtoms), atoms);
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
+    const Text separator = grouping.empty() ? Text{} : SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
+    bool bad = false;
+    if (!grouping.empty()) {
+        while (NextSceV2Is(first, last, separator)) {
+            AdvanceSceV2Character(first);
+            bad = true;
+        }
+    }
+    char* out = digits;
+    if (!SceV2InputEnded(first, last)) {
+        const Text sign = PeekSceV2Character(first);
+        if (sign == atoms[SceV2AtomPlus] || sign == atoms[SceV2AtomMinus]) {
+            *out++ = sign == atoms[SceV2AtomPlus] ? '+' : '-';
+            AdvanceSceV2Character(first);
+        }
+    }
+    *out++ = '0';
+    bool hex = false;
+    bool seen = false;
+    char leadingZero = '\0';
+    if (NextSceV2Is(first, last, atoms[SceV2AtomZero])) {
+        AdvanceSceV2Character(first);
+        if (SceV2InputEnded(first, last)) {
+            *out = '\0';
+            return 10 | (bad ? SceV2BadGrouping : 0);
+        }
+        const Text next = PeekSceV2Character(first);
+        if (next == atoms[SceV2AtomLowerX] || next == atoms[SceV2AtomUpperX]) {
+            hex = true;
+            AdvanceSceV2Character(first);
+            *out++ = 'x';
+        } else {
+            seen = true;
+            ++leadingZero;
+        }
+    }
+    bool lost = false;
+    int significant = 0;
+    std::int64_t power = 0;
+    const std::size_t digitLimit = hex ? 22 : 10;
+    const auto takeDigit = [&](std::size_t index) {
+        if (significant >= maxSignificant) {
+            ++power;
+            if (index > 0) lost = true;
+        } else if (index != 0 || significant != 0) {
+            *out++ = g_sceV2FloatingAtoms[index];
+            ++significant;
+        }
+    };
+    if (grouping.empty()) {
+        std::size_t index = 0;
+        while (!SceV2InputEnded(first, last) && (index = FindSceV2Atom(atoms, SceV2AtomCount + 2, PeekSceV2Character(first))) < digitLimit) {
+            takeDigit(index);
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+    } else {
+        while (NextSceV2Is(first, last, separator)) {
+            AdvanceSceV2Character(first);
+            bad = true;
+        }
+        std::string groups(1, leadingZero);
+        std::size_t group = 0;
+        while (!SceV2InputEnded(first, last)) {
+            const Text character = PeekSceV2Character(first);
+            const std::size_t index = FindSceV2Atom(atoms, SceV2AtomCount + 2, character);
+            if (index < digitLimit) {
+                seen = true;
+                takeDigit(index);
+                if (groups[group] != CHAR_MAX) ++groups[group];
+            } else if (character != separator) {
+                break;
+            } else if (groups[group] == '\0') {
+                bad = true;
+            } else {
+                groups.push_back('\0');
+                ++group;
+            }
+            AdvanceSceV2Character(first);
+        }
+        if (group != 0) {
+            if (groups[group] > '\0') ++group;
+            else bad = true;
+        }
+        while (NextSceV2Is(first, last, separator)) {
+            AdvanceSceV2Character(first);
+            bad = true;
+        }
+        std::size_t next = 0;
+        char size = '\0';
+        while (!bad && group > 0) {
+            if (next != grouping.size()) size = grouping[next++];
+            --group;
+            if (size > '\0' && size != CHAR_MAX && ((group > 0 && groups[group] != size) || (group == 0 && groups[group] > size))) bad = true;
+        }
+    }
+    if (hex && seen && significant == 0) *out++ = '0';
+    const char point = localeconv_nid_postfix()->decimal_point[0];
+    if (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == SceV2Punctuation<Text>(punct).decimalPoint(AsSceV2Punct<Text>(punct))) {
+        *out++ = point;
+        AdvanceSceV2Character(first);
+    }
+    if (significant == 0) {
+        while (NextSceV2Is(first, last, atoms[SceV2AtomZero])) {
+            --power;
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+    }
+    std::size_t index = 0;
+    while (!SceV2InputEnded(first, last) && (index = FindSceV2Atom(atoms, SceV2AtomCount + 2, PeekSceV2Character(first))) < digitLimit) {
+        if (significant < maxSignificant) {
+            *out++ = g_sceV2FloatingAtoms[index];
+            ++significant;
+        } else if (index > 0) {
+            lost = true;
+        }
+        seen = true;
+        AdvanceSceV2Character(first);
+    }
+    if (lost) {
+        char& lastDigit = out[-1] == point ? out[-2] : out[-1];
+        if (lastDigit == '0' || lastDigit == (hex ? '8' : '5')) ++lastDigit;
+    }
+    const Text lowerExponent = atoms[hex ? SceV2FloatLowerP : SceV2FloatLowerE];
+    const Text upperExponent = atoms[hex ? SceV2FloatUpperP : SceV2FloatUpperE];
+    std::int64_t exponent = 0;
+    if (seen && !SceV2InputEnded(first, last) && (PeekSceV2Character(first) == lowerExponent || PeekSceV2Character(first) == upperExponent)) {
+        AdvanceSceV2Character(first);
+        seen = false;
+        bool negative = false;
+        if (!SceV2InputEnded(first, last)) {
+            const Text sign = PeekSceV2Character(first);
+            if (sign == atoms[SceV2AtomPlus]) {
+                AdvanceSceV2Character(first);
+            } else if (sign == atoms[SceV2AtomMinus]) {
+                negative = true;
+                AdvanceSceV2Character(first);
+            }
+        }
+        while (NextSceV2Is(first, last, atoms[SceV2AtomZero])) {
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+        while (!SceV2InputEnded(first, last) && (index = FindSceV2Atom(atoms, SceV2AtomCount + 2, PeekSceV2Character(first))) < 10) {
+            constexpr std::int64_t limit = std::numeric_limits<std::int64_t>::max();
+            if (exponent < limit / 10 || (exponent == limit / 10 && static_cast<std::int64_t>(index) <= limit % 10)) exponent = exponent * 10 + static_cast<std::int64_t>(index);
+            else exponent = limit;
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+        if (negative) exponent = -exponent;
+    }
+    if (!seen) return 0;
+    const std::int64_t bound = hex ? 4200 : 1100;
+    const std::int64_t powerBound = hex ? 4200 / 4 : 1100;
+    for (std::int64_t adjusted = power;;) {
+        if (exponent >= 0 && adjusted >= 0 && (exponent >= bound || adjusted >= powerBound)) {
+            exponent = bound;
+            break;
+        }
+        if (exponent <= 0 && adjusted <= 0 && (exponent <= -bound || adjusted <= -powerBound)) {
+            exponent = -bound;
+            break;
+        }
+        if (std::llabs(exponent) <= bound && std::llabs(adjusted) <= powerBound) {
+            exponent += hex ? adjusted * 4 : adjusted;
+            exponent = std::clamp(exponent, -bound, bound);
+            break;
+        }
+        const std::int64_t roundedUp = hex ? (std::llabs(exponent) - 1) / 4 + 1 : std::llabs(exponent);
+        const std::int64_t adjustment = std::min(roundedUp, std::llabs(power));
+        if (exponent >= 0) {
+            exponent -= hex ? adjustment * 4 : adjustment;
+            adjusted += adjustment;
+        } else {
+            exponent += hex ? adjustment * 4 : adjustment;
+            adjusted -= adjustment;
+        }
+    }
+    if (exponent != 0) {
+        *out++ = hex ? 'p' : 'e';
+        if (exponent < 0) *out++ = '-';
+        char* reversed = out;
+        for (std::int64_t magnitude = std::llabs(exponent); magnitude != 0; magnitude /= 10) *out++ = static_cast<char>('0' + magnitude % 10);
+        std::reverse(reversed, out);
+    }
+    *out = '\0';
+    return (hex ? 16u : 10u) | (bad ? SceV2BadGrouping : 0);
+}
+
+bool SceV2ClassicGroupsMatch(const std::string& grouping, const std::string& groups, std::size_t count) {
+    const char* size = grouping.c_str();
+    while (count > 0) {
+        if (*size == CHAR_MAX) return true;
+        --count;
+        if ((count > 0 && *size != groups[count]) || (count == 0 && *size < groups[count])) return false;
+        if (size[1] > '\0') ++size;
+    }
+    return true;
+}
+
+template<typename Text> int GetSceV2ClassicFloatingField(char* digits, SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, const GuestLocale::SceV2IosBase* stream) {
+    const GuestLocale::Implementation* locale = *stream->locale;
+    const char* source = g_sceV2DecimalAtoms;
+    const std::size_t sourceSize = sizeof(g_sceV2DecimalAtoms);
+    const GuestLocale::Facet* punct = UseSceV2Facet(SceV2TextFacets<Text>::NumpunctKind(), locale);
+    const std::string grouping = TakeSceV2String(SceV2Punctuation<Text>(punct).grouping, punct);
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), locale);
+    Text atoms[sizeof(g_sceV2DecimalAtoms)];
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, source, source + sourceSize, atoms);
+    const Text plus = atoms[SceV2DecimalPlus];
+    const Text minus = atoms[SceV2DecimalMinus];
+    const std::size_t digitLimit = 10;
+    const std::size_t atomCount = sourceSize - 1;
+    char* out = digits;
+    bool bad = false;
+    bool sticky = false;
+    if (!SceV2InputEnded(first, last)) {
+        const Text sign = PeekSceV2Character(first);
+        if (sign == plus || sign == minus) {
+            *out++ = sign == plus ? '+' : '-';
+            AdvanceSceV2Character(first);
+        }
+    }
+    char* leading = out;
+    *out++ = '0';
+    bool seen = false;
+    int significant = 0;
+    int power = 0;
+    const auto takeDigit = [&](std::size_t index) {
+        if (SceV2ClassicSignificant <= significant) {
+            ++power;
+            if (index > 0) sticky = true;
+        } else if (index != 0 || significant != 0) {
+            *out++ = source[index];
+            ++significant;
+        }
+    };
+    const signed char firstSize = grouping.empty() ? 0 : static_cast<signed char>(grouping[0]);
+    if (firstSize == CHAR_MAX || firstSize <= 0) {
+        std::size_t index = 0;
+        while (!SceV2InputEnded(first, last) && (index = FindSceV2Atom(atoms, atomCount, PeekSceV2Character(first))) < digitLimit) {
+            takeDigit(index);
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+    } else {
+        const Text separator = SceV2Punctuation<Text>(punct).thousandsSep(AsSceV2Punct<Text>(punct));
+        std::string groups(1, '\0');
+        std::size_t group = 0;
+        while (!SceV2InputEnded(first, last)) {
+            const Text character = PeekSceV2Character(first);
+            const std::size_t index = FindSceV2Atom(atoms, atomCount, character);
+            if (index < digitLimit) {
+                seen = true;
+                takeDigit(index);
+                if (groups[group] != CHAR_MAX) ++groups[group];
+            } else if (separator == Text{} || groups[group] == '\0' || character != separator) {
+                break;
+            } else {
+                groups.push_back('\0');
+                ++group;
+            }
+            AdvanceSceV2Character(first);
+        }
+        if (group != 0) {
+            if (groups[group] > '\0') ++group;
+            else bad = true;
+        }
+        if (!bad) bad = !SceV2ClassicGroupsMatch(grouping, groups, group);
+    }
+    const char point = localeconv_nid_postfix()->decimal_point[0];
+    if (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == SceV2Punctuation<Text>(punct).decimalPoint(AsSceV2Punct<Text>(punct))) {
+        *out++ = point;
+        AdvanceSceV2Character(first);
+    }
+    if (significant == 0) {
+        while (NextSceV2Is(first, last, atoms[SceV2AtomZero])) {
+            --power;
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+        if (power < 0) {
+            *out++ = '0';
+            ++power;
+        }
+    }
+    std::size_t index = 0;
+    while (!SceV2InputEnded(first, last) && (index = FindSceV2Atom(atoms, atomCount, PeekSceV2Character(first))) < digitLimit) {
+        if (significant < SceV2ClassicSignificant) {
+            *out++ = source[index];
+            ++significant;
+        } else if (index > 0) {
+            sticky = true;
+        }
+        seen = true;
+        AdvanceSceV2Character(first);
+    }
+    if (sticky) {
+        char* digit = out;
+        while (--digit != leading) {
+            if (*digit == point) continue;
+            if (*digit != '9') {
+                ++*digit;
+                break;
+            }
+            *digit = '0';
+        }
+        if (digit == leading) {
+            *digit = '1';
+            ++power;
+        }
+    }
+    const Text lowerExponent = atoms[SceV2DecimalLowerE];
+    const Text upperExponent = atoms[SceV2DecimalUpperE];
+    if (seen && !SceV2InputEnded(first, last) && (PeekSceV2Character(first) == lowerExponent || PeekSceV2Character(first) == upperExponent)) {
+        *out++ = 'e';
+        AdvanceSceV2Character(first);
+        seen = false;
+        significant = 0;
+        if (!SceV2InputEnded(first, last)) {
+            const Text sign = PeekSceV2Character(first);
+            if (sign == plus || sign == minus) {
+                *out++ = sign == plus ? '+' : '-';
+                AdvanceSceV2Character(first);
+            }
+        }
+        while (NextSceV2Is(first, last, atoms[SceV2AtomZero])) {
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+        if (seen) *out++ = '0';
+        while (!SceV2InputEnded(first, last) && (index = FindSceV2Atom(atoms, atomCount, PeekSceV2Character(first))) < 10) {
+            if (significant < SceV2ClassicExponent) {
+                *out++ = source[index];
+                ++significant;
+            }
+            seen = true;
+            AdvanceSceV2Character(first);
+        }
+    }
+    if (bad || !seen) out = digits;
+    *out = '\0';
+    return power;
+}
+
+template<typename Value, typename Text> SceV2InputIterator<Text> GetSceV2Floating(SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, Value* value, Value (APS5_VABI *convert)(const char*, char**, std::int64_t)) {
+    char digits[SceV2FloatDigits];
+    const std::uint32_t field = GetSceV2FloatingField(digits, SceV2FloatSignificant, first, last, *stream->locale);
+    if ((field & 0xff) == 0) {
+        *state = SceV2IosFailBit;
+        *value = 0;
+        return FinishSceV2Get(first, last, state);
+    }
+    int& guestErrno = *__error_nid_postfix();
+    const int saved = guestErrno;
+    guestErrno = 0;
+    char* end = nullptr;
+    *value = convert(digits, &end, 0);
+    const int error = guestErrno;
+    guestErrno = saved;
+    if ((field & SceV2BadGrouping) != 0 || end == digits || error != 0) {
+        *state = SceV2IosFailBit;
+        if (end == digits) *value = 0;
+    }
+    return FinishSceV2Get(first, last, state);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetFloat_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, float* value) {
+    return GetSceV2Floating(first, last, stream, state, value, _Stof_nid_postfix);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetDouble_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, double* value) {
+    return GetSceV2Floating(first, last, stream, state, value, _Stod_nid_postfix);
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongDouble_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, long double* value) {
+    char digits[SceV2FloatDigits];
+    int power = 0;
+    if ((stream->flags & SceV2IosFloatField) == SceV2IosFloatField) {
+        const std::uint32_t field = GetSceV2FloatingField(digits, SceV2HexSignificant, first, last, *stream->locale);
+        if ((field & 0xff) == 0 || (field & SceV2BadGrouping) != 0) digits[0] = '\0';
+    } else {
+        power = GetSceV2ClassicFloatingField(digits, first, last, stream);
+    }
+    char* end = nullptr;
+    int error = 0;
+    const long double parsed = _Stoldx_nid_postfix(digits, &end, power, &error);
+    if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
+    if (end == digits || error != 0) *state |= SceV2IosFailBit;
+    *value = parsed;
+    return first;
 }
 
 }

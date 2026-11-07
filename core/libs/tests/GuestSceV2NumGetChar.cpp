@@ -1,5 +1,6 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 
 extern "C" {
@@ -30,6 +32,7 @@ constexpr std::int32_t Dec = 0x200;
 constexpr std::int32_t Oct = 0x400;
 constexpr std::int32_t Hex = 0x800;
 constexpr std::int32_t BoolAlpha = 0x4000;
+constexpr std::int32_t HexFloat = 0x3000;
 constexpr std::int32_t EofBit = 0x1;
 constexpr std::int32_t FailBit = 0x2;
 constexpr std::int32_t BadBit = 0x4;
@@ -57,7 +60,7 @@ struct InputVtable {
 struct Source {
     GuestLocale::Streambuf buffer{};
     InputVtable vtable{};
-    std::array<char, 256> storage{};
+    std::array<char, 4096> storage{};
     std::string text;
     char* next = nullptr;
     std::int32_t count = 0;
@@ -119,7 +122,7 @@ template<typename Value> struct Outcome {
     InputIterator out;
 };
 
-template<typename Value> static Outcome<Value> Run(Bench& bench, int slot, const std::string& text, std::int32_t flags, std::size_t direct = 256, std::int32_t state = 0) {
+template<typename Value> static Outcome<Value> Run(Bench& bench, int slot, const std::string& text, std::int32_t flags, std::size_t direct = 4096, std::int32_t state = 0) {
     Load(bench.source, text, direct);
     bench.stream.flags = flags;
     Outcome<Value> outcome{};
@@ -306,6 +309,86 @@ int main() {
     CheckState(bench, "pointer keeps the value on bad groups", 14, "1,23", Dec, 0x123, FailBit | EofBit);
     numpunct->grouping = savedGrouping;
     numpunct->thousandsSep = savedSeparator;
+
+    const auto floatValue = Run<float>(bench, 11, "1.5x", Dec);
+    Require(floatValue.value == 1.5f && floatValue.state == 0 && floatValue.consumed == 3, "float");
+    const auto exponentValue = Run<double>(bench, 12, "-2.5e3", Dec);
+    Require(exponentValue.value == -2500.0 && exponentValue.state == EofBit, "double exponent");
+    const auto hexValue = Run<double>(bench, 12, "0x1.8p1", Dec);
+    Require(hexValue.value == 3.0 && hexValue.state == EofBit, "double reads hex without hexfloat");
+    const auto hexLetters = Run<double>(bench, 12, "0xfF", Dec);
+    Require(hexLetters.value == 255.0 && hexLetters.state == EofBit, "hex letters are digits after 0x");
+    const auto negativeExponent = Run<double>(bench, 12, "1e-2", Dec);
+    Require(negativeExponent.value == 0.01 && negativeExponent.state == EofBit, "a negative exponent");
+    const auto hexFraction = Run<double>(bench, 12, "0x.01p0", Dec);
+    Require(hexFraction.value == 1.0 / 256 && hexFraction.state == EofBit, "hex fraction zeros scale by sixteen");
+    const auto balanced = Run<double>(bench, 12, "1" + std::string(850, '0') + "e-849", Dec);
+    Require(balanced.value == 10.0 && balanced.state == EofBit, "a large digit count and a large negative exponent cancel");
+    *__error_nid_postfix() = 777;
+    Run<double>(bench, 12, "1e999", Dec);
+    Require(*__error_nid_postfix() == 777, "a failed conversion restores errno");
+    const auto onlyZero = Run<double>(bench, 12, "0", Dec);
+    Require(onlyZero.value == 0.0 && onlyZero.state == EofBit, "a lone zero converts");
+    const auto onlyPoint = Run<double>(bench, 12, ".", Dec);
+    Require(onlyPoint.value == 0.0 && onlyPoint.state == (FailBit | EofBit) && onlyPoint.consumed == 1, "a lone point fails");
+    const auto bareExponent = Run<double>(bench, 12, "1e", Dec);
+    Require(bareExponent.value == 0.0 && bareExponent.state == (FailBit | EofBit) && bareExponent.consumed == 2, "an exponent without digits fails");
+    const auto leadingFraction = Run<double>(bench, 12, "0.000125", Dec);
+    Require(leadingFraction.value == 0.000125 && leadingFraction.state == EofBit, "leading fraction zeros");
+    const auto huge = Run<double>(bench, 12, "1" + std::string(800, '0'), Dec);
+    Require(huge.value == std::numeric_limits<double>::infinity() && huge.state == (FailBit | EofBit) && huge.consumed == 801, "an overflow keeps infinity and fails");
+    const auto lostDigits = Run<double>(bench, 12, "1." + std::string(800, '0') + "1", Dec);
+    Require(lostDigits.state == EofBit && lostDigits.value == 1.0 && lostDigits.consumed == 803, "digits past 768 are read and only mark the last kept digit");
+    const auto longValue = Run<long double>(bench, 13, "1.5", Dec);
+    Require(longValue.value == 1.5L && longValue.state == EofBit, "long double");
+    const auto longHex = Run<long double>(bench, 13, "0x1p4", HexFloat);
+    Require(longHex.value == 16.0L && longHex.state == EofBit, "long double hexfloat");
+    const auto longDecimalHex = Run<long double>(bench, 13, "164", HexFloat);
+    Require(longDecimalHex.value == 164.0L && longDecimalHex.state == EofBit, "hexfloat still reads decimal digits as decimal");
+    const auto longPrefix = Run<long double>(bench, 13, "0x10", Dec);
+    Require(longPrefix.value == 0.0L && longPrefix.state == 0 && longPrefix.consumed == 1, "long double without hexfloat stops at x");
+    const auto longFail = Run<long double>(bench, 13, "x", Dec, 256, BadBit);
+    Require(longFail.value == 0.0L && longFail.state == (BadBit | FailBit), "long double adds failbit");
+    const auto longExponent = Run<long double>(bench, 13, "25e-1", Dec);
+    Require(longExponent.value == 2.5L && longExponent.state == EofBit, "long double exponent");
+    const auto longMany = Run<long double>(bench, 13, std::string(60, '9'), Dec);
+    Require(longMany.value > 9.9e60L && longMany.value < 1.01e61L && longMany.state == EofBit, "a carry past 48 digits into the backstop also scales by ten");
+
+    numpunct->decimalPoint = ',';
+    const auto comma = Run<double>(bench, 12, "1,5", Dec);
+    Require(comma.value == 1.5 && comma.state == EofBit, "the numpunct decimal point");
+    const auto commaLong = Run<long double>(bench, 13, "2,25", Dec);
+    Require(commaLong.value == 2.25L && commaLong.state == EofBit, "the numpunct decimal point for long double");
+    numpunct->decimalPoint = '.';
+    const char* floatGrouping = numpunct->grouping;
+    const char floatSeparator = numpunct->thousandsSep;
+    numpunct->grouping = "\3";
+    numpunct->thousandsSep = ',';
+    const auto grouped = Run<double>(bench, 12, "1,234.5", Dec);
+    Require(grouped.value == 1234.5 && grouped.state == EofBit, "grouped double");
+    const auto badGroups = Run<double>(bench, 12, "12,34.5", Dec);
+    Require(badGroups.value == 1234.5 && badGroups.state == (FailBit | EofBit), "a bad group fails but keeps the value");
+    const auto trailingSeparators = Run<double>(bench, 12, "1,234,,.5", Dec);
+    Require(trailingSeparators.value == 1234.5 && trailingSeparators.state == (FailBit | EofBit), "separators before the point are consumed");
+    const auto groupedLong = Run<long double>(bench, 13, "1,234.5", Dec);
+    Require(groupedLong.value == 1234.5L && groupedLong.state == EofBit, "grouped long double");
+    const auto badLong = Run<long double>(bench, 13, "12,34", Dec);
+    Require(badLong.value == 0.0L && badLong.state == (FailBit | EofBit), "a bad group empties the long double field");
+    const auto doubleSeparator = Run<long double>(bench, 13, "1,,234", Dec);
+    Require(doubleSeparator.value == 0.0L && doubleSeparator.state == FailBit && doubleSeparator.consumed == 2, "a second separator stops the long double field");
+    const auto leadingSeparator = Run<double>(bench, 12, ",1.5", Dec);
+    Require(leadingSeparator.value == 1.5 && leadingSeparator.state == (FailBit | EofBit), "a leading separator fails the double");
+    const auto separatorBeforeSign = Run<double>(bench, 12, ",-1.5", Dec);
+    Require(separatorBeforeSign.value == -1.5 && separatorBeforeSign.state == (FailBit | EofBit), "a separator before the sign is skipped");
+    const auto adjacentSeparators = Run<double>(bench, 12, "1,,2.5", Dec);
+    Require(adjacentSeparators.value == 12.5 && adjacentSeparators.state == (FailBit | EofBit) && adjacentSeparators.consumed == 6, "adjacent separators fail the double but are read");
+    const auto hexBadGroups = Run<long double>(bench, 13, "12,34", HexFloat);
+    Require(hexBadGroups.value == 0.0L && hexBadGroups.state == (FailBit | EofBit), "hexfloat empties a badly grouped long double field");
+    numpunct->grouping = "\177";
+    const auto classicStop = Run<long double>(bench, 13, "1,234", Dec);
+    Require(classicStop.value == 1.0L && classicStop.state == 0 && classicStop.consumed == 1, "a first size of 127 reads the long double without separators");
+    numpunct->grouping = floatGrouping;
+    numpunct->thousandsSep = floatSeparator;
 
     const auto split = Run<std::int64_t>(bench, 9, "12345", Dec, 2);
     Require(split.value == 12345 && split.consumed == 5 && bench.source.count == 0 && bench.source.uflows == 3 && bench.source.underflows == 4,
