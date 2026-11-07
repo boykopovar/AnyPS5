@@ -79,6 +79,9 @@
 [submodule "3rdparty/quickjs"]
 	path = 3rdparty/quickjs
 	url = https://github.com/quickjs-ng/quickjs.git
+[submodule "zlib"]
+	path = 3rdparty/zlib
+	url = https://github.com/madler/zlib.git
 [submodule "3rdparty/sqlite"]
 	path = 3rdparty/sqlite
 	url = https://github.com/sqlite/sqlite.git
