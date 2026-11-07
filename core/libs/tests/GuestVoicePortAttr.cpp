@@ -26,6 +26,8 @@ int main() {
     constexpr auto invalidPort = static_cast<std::int32_t>(0x804e0804u);
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x804e0805u);
     Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(0, 1001, nullptr, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(500, 9999, nullptr, -1) == notInitialized);
     VoiceInitParam init{};
     init.app_type = 0x10000000;
     Require(sceVoiceInit(&init, 100) == 0);
@@ -34,7 +36,11 @@ int main() {
     std::array<unsigned char, 6> buffer{0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5};
     const auto original = buffer;
     Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == invalidPort);
+    Require(sceVoiceGetPortAttr(255, 1001, buffer.data() + 1, 1) == invalidPort);
     Require(sceVoiceGetPortAttr(0, 1001, nullptr, 1) == invalidArgument);
+    Require(sceVoiceGetPortAttr(0, 9999, buffer.data() + 1, 1) == invalidArgument);
+    Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, -1) == invalidArgument);
+    Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, 0) == invalidArgument);
     for (std::int32_t type = 0; type <= 5; ++type) {
         param = {};
         param.port_type = type;
@@ -67,5 +73,7 @@ int main() {
         Require(sceVoiceGetPortAttr(port, 1001, buffer.data() + 1, 1) == invalidPort);
     }
     Require(sceVoiceEnd_nid_postfix() == 0);
+    Require(sceVoiceGetPortAttr(0, 1001, buffer.data() + 1, 1) == notInitialized);
+    Require(sceVoiceGetPortAttr(128, 1001, nullptr, 1) == notInitialized);
     return 0;
 }
