@@ -1,5 +1,6 @@
 add_library(libwebrtc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoFrameDimensions.cpp)
 configure_windows_unwind(libwebrtc)
 
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioCodecInfo.cpp)
@@ -53,6 +54,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_webrtc_fast_int_to_buffer PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_webrtc_fast_int_to_buffer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+    add_test_executable(guest_webrtc_video_frame_dimensions_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/VideoFrameDimensions.cpp)
+    target_include_directories(guest_webrtc_video_frame_dimensions_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_video_frame_dimensions_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_video_frame_dimensions_tests)
+    add_test(NAME guest_webrtc_video_frame_dimensions COMMAND guest_webrtc_video_frame_dimensions_tests)
+    set_tests_properties(guest_webrtc_video_frame_dimensions PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_video_frame_dimensions PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
     endif()
     add_test_executable(guest_webrtc_time_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Time.cpp)
