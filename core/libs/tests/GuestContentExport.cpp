@@ -204,7 +204,6 @@ int main() {
     Require(Throws<std::invalid_argument>([&] { ExportFileForSf(first); }));
     Require(Throws<std::invalid_argument>([&] { ExportFileWithContentIdList(first); }));
     Require(Throws<std::invalid_argument>([&] { ExportFileWithTitleIdList(first); }));
-    Require(Throws<std::invalid_argument>([] { ExportData(0); }));
     Require(ExportData(0) == static_cast<int>(0x809D3016u));
     Require(Throws<std::invalid_argument>([] { ExportFile(0); }));
     Require(Throws<std::invalid_argument>([] { ExportFileWithThumbnail(0); }));
