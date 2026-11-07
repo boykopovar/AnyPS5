@@ -762,9 +762,9 @@ SceV2String* AssignSceV2String(SceV2String* result, const char* text) {
     std::memset(result, 0, sizeof(SceV2String));
     const std::size_t length = std::strlen(text);
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
         result->pointer = data;
     }
@@ -2046,7 +2046,7 @@ template<typename Text, typename Punct> std::basic_string<Text> TakeSceV2String(
     method(&value, reinterpret_cast<const Punct*>(facet));
     const bool onHeap = value.capacity > SceV2BasicString<Text>::InlineCapacity;
     std::basic_string<Text> text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) _ZdlPv_nid_postfix((value.capacity + 1) * sizeof(Text) < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, (value.capacity + 1) * sizeof(Text));
     return text;
 }
 
