@@ -1533,7 +1533,6 @@ static void TestAccessibility() {
     _ZN7WebCore13AXObjectCache37setEnhancedUserInterfaceAccessibilityEb(false);
     Require(!WKAccessibilityEnhancedAccessibilityEnabled());
 }
-}
 
 int main() {
     TestTypeIDs();
