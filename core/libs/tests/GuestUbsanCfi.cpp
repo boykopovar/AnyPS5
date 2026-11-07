@@ -45,7 +45,7 @@ std::string Captured(TAction action) {
     const auto path = (std::filesystem::temp_directory_path() / "anyps5-ubsan-cfi.txt").string();
     std::fflush(stderr);
     const int saved = DUPLICATE(FILENO(stderr));
-    std::FILE* file = std::fopen(path.c_str(), "w");
+    std::FILE* file = std::fopen(path.c_str(), "wb");
     Require(file != nullptr, "temporary file");
     REPLACE(FILENO(file), FILENO(stderr));
     try {
