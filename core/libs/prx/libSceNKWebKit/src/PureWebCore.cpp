@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 
 #include <cmath>
@@ -48,6 +49,19 @@ bool APS5_VABI _ZN7WebCore32isStatusCodePotentiallyCacheableEi(int statusCode) {
     default:
         return false;
     }
+}
+
+bool APS5_VABI _ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE(
+    WebCore::RedirectChainCacheStatus status, int reuseExpiredRedirection) {
+    switch (status.status) {
+    case WebCore::RedirectChainCacheStatus::Status::NoRedirection:
+        return true;
+    case WebCore::RedirectChainCacheStatus::Status::NotCachedRedirection:
+        return false;
+    case WebCore::RedirectChainCacheStatus::Status::CachedRedirection:
+        return reuseExpiredRedirection != 0 || _ZN3WTF8WallTime3nowEv().m_value <= status.endOfValidity.m_value;
+    }
+    return false;
 }
 
 unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostEv() {
