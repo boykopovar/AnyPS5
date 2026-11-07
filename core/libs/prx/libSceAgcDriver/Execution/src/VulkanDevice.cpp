@@ -110,6 +110,10 @@ void ResetCheckpointSnapshots() noexcept;
 #include <vector>
 #include <utility>
 
+#ifndef _WIN32
+extern char** environ;
+#endif
+
 namespace AgcDriver {
 
 DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents) {
