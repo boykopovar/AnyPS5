@@ -9,7 +9,7 @@ namespace AgcDriver::Graphics {
 
 struct VertexInputLayout;
 
-void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline);
+void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders = {});
 
 // The attachments of one render pass instance. Work recorded with it references the handle until
 // the batch completes, so a recorded draw keeps the object (Recorder::Keep) like its pipeline.
