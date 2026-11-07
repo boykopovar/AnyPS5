@@ -340,7 +340,7 @@ std::int16_t* APS5_VABI _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(WebRt
 void APS5_VABI _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(WebRtcAudioFrame* frame);
 void APS5_VABI _ZN6webrtc10AudioFrameC1Ev_nid_postfix(WebRtcAudioFrame* frame);
 WebRtcEchoCanceller3Config* APS5_VABI _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other);
-int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(WebRtcEchoCanceller3Config* config);
 void APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(WebRtcEchoCanceller3Config* config, const WebRtcEchoCanceller3Config* other);
 int APS5_VABI libwebrtcUnknown41(void);
 bool APS5_VABI _ZN6webrtc11FileWrapper5FlushEv_nid_postfix(WebRtcFileWrapper* wrapper);
