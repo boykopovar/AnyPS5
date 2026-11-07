@@ -33,13 +33,19 @@ static bool Zeroed(const Stat& stat) {
 }
 
 int main() {
-    CHECK(RejectsArgument([] { sceNpUniversalDataSystemInitialize(nullptr); }));
+    constexpr int invalidArgument = static_cast<int>(0x80553102u);
+    constexpr int invalidParamSize = static_cast<int>(0x80553112u);
+    CHECK(sceNpUniversalDataSystemInitialize(nullptr) == invalidArgument);
     const NpUniversalDataSystemInitParam init{sizeof(NpUniversalDataSystemInitParam), 0x10000};
-    NpUniversalDataSystemInitParam invalidSizeInit = init;
-    invalidSizeInit.size = sizeof(NpUniversalDataSystemInitParam) - 1;
-    CHECK(RejectsArgument([invalidSizeInit] { sceNpUniversalDataSystemInitialize(&invalidSizeInit); }));
-    invalidSizeInit.size = sizeof(NpUniversalDataSystemInitParam) + 8;
-    CHECK(RejectsArgument([invalidSizeInit] { sceNpUniversalDataSystemInitialize(&invalidSizeInit); }));
+    for (const std::size_t size : {std::size_t{0}, std::size_t{8}, std::size_t{0xf}, std::size_t{0x11}, std::size_t{0x18},
+                                   std::size_t{0x20}, std::size_t{0x100}, ~std::size_t{0}}) {
+        const NpUniversalDataSystemInitParam wrongSize{size, 0x10000};
+        CHECK(sceNpUniversalDataSystemInitialize(&wrongSize) == invalidParamSize);
+    }
+    const NpUniversalDataSystemInitParam emptyPool{sizeof(NpUniversalDataSystemInitParam), 0};
+    CHECK(sceNpUniversalDataSystemInitialize(&emptyPool) == invalidArgument);
+    const NpUniversalDataSystemInitParam wrongSizeEmptyPool{0x18, 0};
+    CHECK(sceNpUniversalDataSystemInitialize(&wrongSizeEmptyPool) == invalidParamSize);
     CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
 
     NpUniversalDataSystemMemoryStat memory;

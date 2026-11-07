@@ -9,8 +9,14 @@
 extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInitParam* param) {
-    if (param == nullptr || param->size != sizeof(NpUniversalDataSystemInitParam)) {
-        APS5_INVALID_ARG_EX;
+    if (param == nullptr) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    }
+    if (param->size != sizeof(NpUniversalDataSystemInitParam)) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_PARAM_SIZE;
+    }
+    if (param->pool_size == 0) {
+        return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
