@@ -176,4 +176,12 @@ public:
     std::vector<Retained<String>> chosenFiles;
 };
 
+
+class NavigationData final : public ObjectOf<ObjectType::NavigationData> {
+public:
+    Retained<Object> originalRequest;
+    Retained<URL> url;
+    Retained<String> title;
+    Retained<URL> navigationDestinationURL;
+};
 }  // namespace NKWebKit
