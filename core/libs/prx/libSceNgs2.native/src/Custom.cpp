@@ -387,6 +387,7 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         const auto& modules = voice.rack->customModuleIds;
         if (index >= modules.size()) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PARAM_ID};
         if (modules[index] != SCE_NGS2_CUSTOM_MODULE_ID_FILTER) throw std::runtime_error("NGS2: a custom filter param naming a module other than a filter is not implemented");
+        if (param.size < sizeof(Ngs2CustomVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
         const auto& custom = reinterpret_cast<const Ngs2CustomVoiceFilterParam&>(param);
         if (custom.type >= 1 && custom.type <= 11 &&
             std::any_of(modules.begin(), modules.begin() + index, [](std::uint32_t id) { return id != SCE_NGS2_CUSTOM_MODULE_ID_FILTER; })) {

@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -572,6 +573,9 @@ struct VulkanDevice::State {
     bool float16DenormPreserve = false;
     bool float32FlushToZeroCandidate = false;
     bool float32FlushToZero = false;
+    bool float32FlushComputeOnly = false;
+    bool float16WidenNans = false;
+    bool float16NarrowNans = false;
     bool float32DenormPreserve = false;
     bool probingFloatControls = false;
     bool demoteToHelperInvocation = false;
@@ -607,6 +611,7 @@ struct VulkanDevice::State {
     bool pushDescriptors = false;
     bool maintenance5 = false;
     bool fillModeNonSolid = false;
+    bool wideLines = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
     bool storageImageWithoutFormat = false;
@@ -626,6 +631,7 @@ struct VulkanDevice::State {
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
+    bool sparseResidencyImage2D = false;
     std::uint32_t queueFamily = 0;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     std::uint32_t sparseIndex = 0;
@@ -1777,6 +1783,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         floatControls.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
     const auto float32Flush = Float32FlushControlFor(driverId, floatControls.shaderDenormFlushToZeroFloat32, floatControls.denormBehaviorIndependence);
     state->float32FlushToZeroCandidate = float32Flush.probe && std::getenv("APS5_NO_HW_F32_FLUSH") == nullptr;
+    state->float32FlushComputeOnly = float32Flush.computeOnly;
     if (state->float32FlushToZeroCandidate && float32Flush.declared) state->capabilities.push_back(spv::CapabilityDenormFlushToZero);
     state->float32DenormPreserve = floatControls.shaderDenormPreserveFloat32 == VK_TRUE && floatControls.denormBehaviorIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_NONE && std::getenv("APS5_NO_HW_F32_PRESERVE") == nullptr;
     if ((state->float16DenormPreserve || state->float32DenormPreserve) && std::find(state->capabilities.begin(), state->capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormPreserve)) == state->capabilities.end()) state->capabilities.push_back(spv::CapabilityDenormPreserve);
@@ -2107,6 +2114,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.sparseResidencyAliased = state->sparseBinding ? available.sparseResidencyAliased : VK_FALSE;
     state->sparseResidencyBuffer = enabled.sparseResidencyBuffer == VK_TRUE;
     state->sparseResidencyAliased = enabled.sparseResidencyAliased == VK_TRUE;
+    enabled.sparseResidencyImage2D = state->sparseBinding ? available.sparseResidencyImage2D : VK_FALSE;
+    state->sparseResidencyImage2D = enabled.sparseResidencyImage2D == VK_TRUE;
     // Indirect draw records with a non-zero first instance, and several records per call.
     enabled.drawIndirectFirstInstance = available.drawIndirectFirstInstance;
     enabled.multiDrawIndirect = available.multiDrawIndirect;
@@ -2117,6 +2126,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->depthClamp = enabled.depthClamp == VK_TRUE;
     enabled.fillModeNonSolid = available.fillModeNonSolid;
     state->fillModeNonSolid = enabled.fillModeNonSolid == VK_TRUE;
+    enabled.wideLines = available.wideLines;
+    state->wideLines = enabled.wideLines == VK_TRUE;
     enabled.depthBounds = available.depthBounds;
     state->depthBounds = enabled.depthBounds == VK_TRUE;
     enabled.depthBiasClamp = available.depthBiasClamp;
@@ -2699,6 +2710,25 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->probingFloatControls = false;
         state->float32DenormPreserve = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f32 denormal preserve: %s (%u of %u probe results on normal values differ from the default mode by more than the Vulkan precision bounds, %.0f ms)\n", state->float32DenormPreserve ? "requested" : "not requested", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
+    if (std::getenv("APS5_NO_NATIVE_F16_NANS") == nullptr) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        state->probingFloatControls = true;
+        const auto probe = ProbeFloat16Conversions(*this, Target());
+        state->probingFloatControls = false;
+        state->float16WidenNans = probe.widen.probed && probe.widen.mismatches == 0u;
+        state->float16NarrowNans = probe.narrow.probed && probe.narrow.mismatches == 0u;
+        const auto describe = [](const Float16ConversionProbeDirection& direction, bool native) {
+            if (!direction.probed) return std::string("emulated (no native conversion)");
+            std::string text = std::string(native ? "native" : "emulated") + " (" + std::to_string(direction.mismatches) + " of " + std::to_string(direction.compared) + " probe results differ";
+            if (direction.first) {
+                char first[96];
+                std::snprintf(first, sizeof(first), ", first 0x%08x: 0x%08x emulated, 0x%08x native", direction.first->input, direction.first->emulated, direction.first->native);
+                text += first;
+            }
+            return text + ")";
+        };
+        std::fprintf(stderr, "[float-controls] f16 to f32 NaN results: %s; f32 to f16 NaN results: %s (%.0f ms)\n", describe(probe.widen, state->float16WidenNans).c_str(), describe(probe.narrow, state->float16NarrowNans).c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
@@ -4049,7 +4079,7 @@ bool VulkanDevice::AcquireImage() {
     std::uint32_t index = 0;
     timing.Mark("fence_reset");
     // An out-of-date swapchain (the window changed) drops this frame; the next Resize recreates it.
-    const auto acquired = state->DeviceFunction<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")(state->device, state->swapchain, 0, VK_NULL_HANDLE, state->acquireFence, &index);
+    const auto acquired = state->DeviceFunction<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")(state->device, state->swapchain, AgcDriver::SwapchainAcquireTimeoutNs, VK_NULL_HANDLE, state->acquireFence, &index);
     if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
         state->extent = {0, 0};
         return false;
@@ -4472,6 +4502,7 @@ bool VulkanDevice::PresentsOnOwnQueue() const {
 
 ShaderRecompiler::SpirvTarget VulkanDevice::ComputeTarget(std::uint32_t waveSize) const {
     auto target = Target();
+    target.float32FlushToZero = state->float32FlushToZero;
     if (waveSize == 32u && state->computeWave32) target.subgroupSize = 32u;
     return target;
 }
@@ -4533,10 +4564,12 @@ bool VulkanDevice::SupportsImageFormat(VkFormat format, VkImageUsageFlags usage)
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
     auto target = state->shaderProfile->Target();
-    target.float32FlushToZero = state->float32FlushToZero;
+    target.float32FlushToZero = state->float32FlushToZero && !state->float32FlushComputeOnly;
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.hostInterpolationFirst = state->hostInterpolationFirst;
     target.float32DenormPreserve = state->float32DenormPreserve;
+    target.float16WidenNans = state->float16WidenNans;
+    target.float16NarrowNans = state->float16NarrowNans;
     return target;
 }
 
@@ -4670,6 +4703,8 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.sparseBinding = state->sparseBinding;
     context.sparseResidencyBuffer = state->sparseResidencyBuffer;
     context.sparseResidencyAliased = state->sparseResidencyAliased;
+    context.sparseResidencyImage2D = state->sparseResidencyImage2D;
+    context.sparseImageFormatProperties = state->sparseResidencyImage2D ? state->InstanceFunction<PFN_vkGetPhysicalDeviceSparseImageFormatProperties>("vkGetPhysicalDeviceSparseImageFormatProperties") : nullptr;
     context.queueFamily = state->queueFamily;
     context.sparseFamily = state->sparseFamily;
     context.sparseQueue = state->sparseQueue;
@@ -4725,6 +4760,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.largePoints = state->largePoints;
     context.sampleRateShading = state->sampleRateShading;
     context.fillModeNonSolid = state->fillModeNonSolid;
+    context.wideLines = state->wideLines;
     context.maintenance5 = state->maintenance5;
     context.storageImageMultisample = state->storageImageMultisample;
     context.storageImageWriteWithoutFormat = state->storageImageWriteWithoutFormat;
