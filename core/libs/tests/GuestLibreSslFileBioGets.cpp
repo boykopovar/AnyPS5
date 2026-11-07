@@ -105,6 +105,33 @@ void CheckReadError() {
 #endif
 }
 
+void RequireInvalidArgument(LibreSsl::Bio* bio, char* data, int size, const char* message) {
+    try {
+        bio->method->gets(bio, data, size);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, message);
+}
+
+void CheckNullArguments() {
+    auto* unbound = BIO_new_nid_postfix(BIO_s_file_nid_postfix());
+    Require(unbound && !unbound->data, "create file BIO without a stream");
+    char output[4] = "abc";
+    RequireInvalidArgument(unbound, output, sizeof(output), "file gets without a stream throws");
+    Require(BIO_free_nid_postfix(unbound) == 1, "free unbound file BIO");
+    auto* native = std::tmpfile();
+    Require(native && std::fwrite("AB\n", 1, 3, native) == 3, "write null-buffer fixture");
+    std::rewind(native);
+    FileStream stream(native);
+    auto* bio = BIO_new_fp_nid_postfix(&stream, 0);
+    Require(bio != nullptr, "create null-buffer BIO");
+    RequireInvalidArgument(bio, nullptr, 4, "file gets with a null buffer throws");
+    Require(std::ftell(native) == 0, "null-buffer gets does not consume input");
+    Require(BIO_free_nid_postfix(bio) == 1, "free null-buffer BIO");
+    Require(std::fclose(native) == 0, "close null-buffer fixture");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -127,5 +154,6 @@ int main(int argc, char** argv) {
         Check("ABC", 0, 0, 0, true);
         Check("ABC", -1, 0, 0, true);
     } else if (name == "read_error") CheckReadError();
+    else if (name == "null_arguments") CheckNullArguments();
     else Require(false, "unknown file gets case");
 }

@@ -7,6 +7,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -39,7 +40,7 @@ int APS5_VABI FilePuts(Bio* bio, const char* data) {
 }
 
 int APS5_VABI FileGets(Bio* bio, char* data, int size) {
-    if (!data || !bio->data) NotImplemented_nid_no_patch(__func__);
+    if (!data || !bio->data) throw std::invalid_argument("BIO_gets: null line buffer or file stream");
     const GuestArena::HostWrite write(data, size > 1 ? static_cast<std::size_t>(size) : 1);
     *data = 0;
     const auto line = fgets_nid_postfix(data, size, static_cast<FileStream*>(bio->data));
