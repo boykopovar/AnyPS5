@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <stdexcept>
 
@@ -172,8 +173,8 @@ int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl3BioMethod* method) {
+    if (method) free_nid_postfix(method);
 }
 
 int APS5_VABI tls_handshake_nid_postfix() {
@@ -219,8 +220,10 @@ int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch() {
 }
 APS5_EXPORT("4pEl-5DmrrM", Unknown_4pEl_minus_5DmrrM_nid_no_patch);
 
-int APS5_VABI BIO_meth_set_write_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl3BioMethod* method, void* write) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_write requires a method");
+    method->write = write;
+    return 1;
 }
 
 int APS5_VABI BIO_meth_set_create_nid_postfix() {
@@ -231,8 +234,10 @@ int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_read_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl3BioMethod* method, void* read) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_read requires a method");
+    method->read = read;
+    return 1;
 }
 
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
@@ -500,8 +505,12 @@ int APS5_VABI SSL_provide_quic_data_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+LibreSsl3BioMethod* APS5_VABI BIO_meth_new_nid_postfix(int type, const char* name) {
+    auto* method = static_cast<LibreSsl3BioMethod*>(calloc_nid_postfix(1, sizeof(LibreSsl3BioMethod)));
+    if (!method) return nullptr;
+    method->type = type;
+    method->name = name;
+    return method;
 }
 
 int APS5_VABI d2i_PUBKEY_nid_postfix() {
