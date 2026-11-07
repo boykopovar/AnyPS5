@@ -18,23 +18,11 @@ std::uint8_t ByteExtremum(const void* first, const void* last, bool minimum) {
 
 extern "C" {
 
-int APS5_VABI __std_minmax_d_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_minmax_element_f_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_bitset_to_string_1_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI __std_max_1i_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_minmax_element_d_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -50,10 +38,6 @@ int APS5_VABI __std_atomic_notify_multi_direct_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_min_d_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::uint8_t APS5_VABI __std_max_1u_nid_postfix(const void* first, const void* last) {
     return ByteExtremum(first, last, false);
 }
@@ -62,24 +46,8 @@ int APS5_VABI __std_min_2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_max_element_d_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::uint8_t APS5_VABI __std_min_1u_nid_postfix(const void* first, const void* last) {
     return ByteExtremum(first, last, true);
-}
-
-int APS5_VABI __std_min_element_f_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_minmax_f_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_min_f_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI __std_minmax_1u_nid_postfix() {
@@ -130,14 +98,6 @@ int APS5_VABI __std_minmax_8i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_max_d_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_max_element_f_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_minmax_4u_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -158,15 +118,7 @@ int APS5_VABI __std_minmax_2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_max_f_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_minmax_8u_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_min_element_d_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
