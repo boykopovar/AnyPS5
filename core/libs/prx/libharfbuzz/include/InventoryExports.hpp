@@ -23,7 +23,7 @@ void APS5_VABI hb_buffer_set_script_nid_postfix(hb_buffer_t* buffer, std::uint32
 int APS5_VABI hb_face_create_for_tables_nid_postfix();
 int APS5_VABI hb_face_destroy_nid_postfix();
 int APS5_VABI hb_ft_face_create_cached_nid_postfix();
-int APS5_VABI hb_icu_script_to_script_nid_postfix();
+std::uint32_t APS5_VABI hb_icu_script_to_script_nid_postfix(std::int32_t scriptCode);
 int APS5_VABI hb_ot_layout_language_find_feature_nid_postfix();
 int APS5_VABI hb_ot_layout_script_get_language_tags_nid_postfix();
 int APS5_VABI hb_ot_layout_table_get_script_tags_nid_postfix();
