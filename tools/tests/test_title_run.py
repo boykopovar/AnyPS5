@@ -354,6 +354,10 @@ class PadTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
+              "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
+              "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
+
     def start(self, code, **options):
         session = title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, **options)
         self.addCleanup(session.kill)
@@ -376,10 +380,6 @@ class SessionTests(unittest.TestCase):
         session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
-
-    WINDOW = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
-              "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
-              "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
 
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
     def test_new_windows_go_behind_the_others_without_polling(self):
