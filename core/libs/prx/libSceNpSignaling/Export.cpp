@@ -1,5 +1,6 @@
 #include "prx/libSceNpSignaling/include/InventoryExports.hpp"
 #include "prx/libSceNpSignaling/include/Api.hpp"
+#include "prx/libSceNpSignaling/include/SignalingState.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -73,6 +74,11 @@ Context* FindContext(int ctxId) {
     const auto context = contexts.find(ctxId);
     return context == contexts.end() ? nullptr : &context->second;
 }
+}
+
+extern "C" bool NpSignalingIsInitialized_nid_no_patch() {
+    std::lock_guard lock(signalingMutex);
+    return initialized;
 }
 
 extern "C" {
@@ -266,10 +272,6 @@ int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignal
 }
 
 int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatistics*) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceNpSignalingGetLocalNetInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
