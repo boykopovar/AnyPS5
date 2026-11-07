@@ -107,7 +107,34 @@ void ReturnBdaFailureIf(SpirvEmitterState& state, std::uint32_t condition, std::
     EmitLabel(state, next);
 }
 
+namespace {
+
+std::uint32_t BdaFaultedVariable(SpirvEmitterState& state, std::uint32_t half) {
+    auto& variable = state.bdaFaultedVariables.at(half);
+    if (variable == 0) variable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeBool(state)), spv::StorageClassPrivate, ConstantBool(state, false));
+    return variable;
+}
+
+std::uint32_t LoadBdaFaulted(SpirvEmitterState& state, std::uint32_t half) {
+    const auto faulted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeBool(state), faulted, BdaFaultedVariable(state, half));
+    return faulted;
+}
+
+}
+
+std::uint32_t BdaInvocationFaulted(SpirvEmitterState& state) {
+    return LoadBdaFaulted(state, state.laneHalf);
+}
+
 void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition) {
+    if (state.bdaFaultMasksWrites && state.bdaStopValue == 0) {
+        for (std::uint32_t half = 0; half < state.laneCount; half++) {
+            if (half != state.laneHalf && !state.laneValueShared) continue;
+            state.module.AddFunction(spv::OpStore, BdaFaultedVariable(state, half), Binary(state, spv::OpLogicalOr, TypeBool(state), LoadBdaFaulted(state, half), condition));
+        }
+        return;
+    }
     if (!state.bdaStopsInvocations) return;
     const auto failed = state.module.AllocateId();
     const auto next = state.module.AllocateId();
