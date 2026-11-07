@@ -226,11 +226,11 @@ void CheckDeliveryThreadStartsAtRegistration() {
     Check(sceSaveDataRegisterEventCallback(nullptr, &tag) == SaveDataErrorParameter, "a null callback is PARAMETER in the delivery thread check");
     Check(TaskCount() == before, counted("a refused registration starts no delivery thread"));
     Check(sceSaveDataRegisterEventCallback(First, &tag) == 0, "the first callback registers in the delivery thread check");
-    Check(TaskCount() == before + 1, counted("the first registration starts one delivery thread"));
+    Check(WaitForTaskCount(before + 1), counted("the first registration starts one delivery thread"));
     Check(sceSaveDataRegisterEventCallback(Second, &tag) == 0, "the second callback registers in the delivery thread check");
     Check(sceSaveDataUnregisterEventCallback() == 0, "the second callback unregisters in the delivery thread check");
     Check(sceSaveDataRegisterEventCallback(First, &tag) == 0, "the first callback registers again in the delivery thread check");
-    Check(TaskCount() == before + 1, counted("a replacing registration and one after an unregister reuse the delivery thread"));
+    Check(WaitForTaskCount(before + 1), counted("a replacing registration and one after an unregister reuse the delivery thread"));
     {
         Watchdog watchdog("the terminate that joins the delivery thread");
         Check(sceSaveDataTerminate() == 0, "SaveData terminates after the delivery thread check");
