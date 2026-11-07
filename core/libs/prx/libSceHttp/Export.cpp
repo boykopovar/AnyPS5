@@ -836,7 +836,12 @@ int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* ssl
 }
 
 int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnectionStat* stat) {
-    NotImplemented_nid_no_patch(__func__);
+    static_assert(sizeof(HttpConnectionStat) == 16);
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!stat) return ERROR_INVALID_VALUE;
+    const auto options = FindHttpOptions(connectionId);
+    if (!options) return ERROR_INVALID_ID;
+    *stat = {};
     return 0;
 }
 
