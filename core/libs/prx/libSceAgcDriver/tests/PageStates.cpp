@@ -267,6 +267,25 @@ void CheckForgetStamps() {
         mutation.RegisterMainImage();
     }
     Require(ForgetStamp(image, Unit) <= again, "registering an image that was already registered stamped it again");
+    HMODULE other = nullptr;
+    Require(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&GetTickCount), &other) != 0 && other != nullptr, "cannot locate a second image");
+    const auto otherImage = reinterpret_cast<std::uint64_t>(other);
+    const auto loaded = ForgetSerial();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterImage(other);
+    }
+    Require(ForgetStamp(otherImage, Unit) > loaded, "registering an image did not stamp it");
+    const auto loadedAgain = ForgetSerial();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterImage(other);
+    }
+    Require(ForgetStamp(otherImage, Unit) <= loadedAgain, "registering an image that was already registered stamped it again");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.UnregisterImage(other);
+    }
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block);
