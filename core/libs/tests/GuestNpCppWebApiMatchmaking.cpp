@@ -127,6 +127,7 @@ int main() {
         std::memset(storage.bytes, 0, kParameterSize);
         std::uint64_t context = 1;
         IntrusivePtr empty{};
+        Require(kBodyInitializer(storage.bytes, &context, nullptr) == kBodyMissing);
         Require(kBodyInitializer(storage.bytes, &context, &empty) == kBodyMissing);
         IntrusivePtr body{};
         body.object = storage.bytes;
