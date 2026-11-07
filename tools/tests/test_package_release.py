@@ -414,6 +414,39 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
             self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
 
+    def test_windows_packages_preserve_unicode_separators_in_compiler_paths(self):
+        names = ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(name.encode())
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"Windows executable")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=repr(separator), newline=repr(newline)):
+                    runtime = self.root / ("tool" + separator + "chain") / "bin"
+                    runtime.mkdir(parents=True, exist_ok=True)
+                    for name in names:
+                        (runtime / name).write_bytes(name.encode())
+                    cache = "CMAKE_CXX_COMPILER:FILEPATH=" + (runtime / "g++.exe").as_posix() + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    package_release.package("windows", self.build, self.output, "v1")
+                    for filename in ("prx-windows-v1.zip", "prx-windows-unpatched-v1.zip"):
+                        with zipfile.ZipFile(self.output / filename) as archive:
+                            for name in names:
+                                self.assertEqual(archive.read("libs/" + name), name.encode())
+
+    def test_tracy_cache_records_are_not_created_by_unicode_separators(self):
+        client = self.library.with_name("libTracyClient.dll")
+        client.write_bytes(b"Tracy client")
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(separator=repr(separator), newline=repr(newline)):
+                    cache = "OTHER:STRING=value" + separator + "APS5_ENABLE_TRACY:BOOL=ON" + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    self.assertEqual(package_release.tracy_runtime("windows", self.build), [])
+                    cache += "APS5_ENABLE_TRACY:BOOL=ON" + newline
+                    (self.build / "CMakeCache.txt").write_bytes(cache.encode("utf-8"))
+                    self.assertEqual(package_release.tracy_runtime("windows", self.build), [client])
+
     def test_webrtc_library_archives_include_vad_notices(self):
         (self.source / "core/libs/prx/libwebrtc").mkdir()
         (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")

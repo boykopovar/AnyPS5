@@ -36,7 +36,7 @@ def windows_runtime(build):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
         raise RuntimeError(f"Missing CMakeCache.txt in build directory: {build}")
-    for line in cache.read_text(encoding="utf-8-sig").splitlines():
+    for line in cache.read_text(encoding="utf-8-sig").split("\n"):
         if line.startswith("CMAKE_CXX_COMPILER:"):
             compiler = line.partition("=")[2]
             if compiler and not compiler.endswith("-NOTFOUND"):
@@ -53,7 +53,7 @@ def tracy_runtime(platform, build):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
         return []
-    lines = cache.read_text(encoding="utf-8-sig").splitlines()
+    lines = cache.read_text(encoding="utf-8-sig").split("\n")
     enabled = next((line.partition("=")[2].upper() for line in lines if line.startswith("APS5_ENABLE_TRACY:")), "OFF")
     if enabled in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") or enabled.endswith("-NOTFOUND"):
         return []
