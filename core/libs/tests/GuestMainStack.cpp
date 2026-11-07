@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <dlfcn.h>
 #include <stdexcept>
 #include <string>
 
@@ -60,6 +62,7 @@ static void* APS5_VABI Worker(void* arg) {
 struct Walk {
     unsigned frames = 0;
     std::uintptr_t highestCfa = 0;
+    std::uintptr_t lastIp = 0;
 };
 
 static _Unwind_Reason_Code APS5_VABI CountFrame(_Unwind_Context* context, void* argument) {
@@ -67,6 +70,7 @@ static _Unwind_Reason_Code APS5_VABI CountFrame(_Unwind_Context* context, void* 
     ++walk.frames;
     const auto cfa = static_cast<std::uintptr_t>(_Unwind_GetCFA_nid_postfix(context));
     if (cfa > walk.highestCfa) walk.highestCfa = cfa;
+    walk.lastIp = static_cast<std::uintptr_t>(_Unwind_GetIP_nid_postfix(context));
     return _URC_NO_REASON;
 }
 
@@ -111,6 +115,9 @@ static void APS5_VABI Entry(void* arguments) {
     Require(_Unwind_Backtrace_nid_postfix(CountFrame, &walk) == _URC_END_OF_STACK);
     Require(walk.frames >= 2);
     Require(walk.highestCfa <= high);
+    Dl_info outermost{};
+    Require(dladdr(reinterpret_cast<void*>(walk.lastIp - 1), &outermost) != 0 && outermost.dli_sname != nullptr);
+    Require(std::strcmp(outermost.dli_sname, "Aps5CallOnGuestMainStack_nid_no_patch") == 0);
     std::exit(0);
 }
 
