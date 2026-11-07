@@ -767,6 +767,45 @@ void TestIntegersAndConstructors() {
     { CString value; _ZN3WTF7CStringC2EPKcm(&value, nullptr, 0); Check(!value.buffer); }
 }
 
+void TestSharedStringHash() {
+    const auto hash16 = &_ZN7WebCore23computeSharedStringHashEPKDsj;
+    const auto hashString = &_ZN7WebCore23computeSharedStringHashERKN3WTF6StringE;
+    struct Vector { const char* latin1; const char16_t* utf16; unsigned length; unsigned expected; };
+    const Vector vectors[] = {
+        {"", u"", 0, 0x04ec889eu},
+        {"a", u"a", 1, 0xf095343bu},
+        {"ab", u"ab", 2, 0x1b7603e0u},
+        {"abc", u"abc", 3, 0xcc946882u},
+        {"http://example.com/", u"http://example.com/", 19, 0x836f1d81u},
+    };
+    for (const auto& vector : vectors) {
+        Check(hash16(vector.utf16, vector.length) == vector.expected);
+        String narrow;
+        _ZN3WTF6StringC1EPKcj(&narrow, vector.latin1, vector.length);
+        Check(!vector.length || (narrow.impl->hashAndFlags & 4));
+        Check(hashString(&narrow) == vector.expected);
+        String wide;
+        _ZN3WTF6StringC1EPKDsj(&wide, vector.utf16, vector.length);
+        Check(!vector.length || !(wide.impl->hashAndFlags & 4));
+        Check(hashString(&wide) == vector.expected);
+    }
+    const char16_t nonLatin1[] = {0x00e9, 0x4e2d};
+    Check(hash16(nonLatin1, 2) == 0x77f0e865u);
+    String nonLatin1String;
+    _ZN3WTF6StringC1EPKDsj(&nonLatin1String, nonLatin1, 2);
+    Check(hashString(&nonLatin1String) == 0x77f0e865u);
+    const char16_t deletedValue[] = {3163, 53528};
+    Check(hash16(deletedValue, 2) == 0xffffffffu);
+    String deletedString;
+    _ZN3WTF6StringC1EPKDsj(&deletedString, deletedValue, 2);
+    Check(hashString(&deletedString) == 0xffffffffu);
+    String absent;
+    Check(hashString(&absent) == 0x04ec889eu);
+    Check(hash16(nullptr, 0) == 0x04ec889eu);
+    Throws([&] { hash16(nullptr, 1); });
+    Throws([&] { hashString(nullptr); });
+}
+
 void Run() {
     TestStorageAndQueries();
     TestASCIIAndViews();
@@ -775,6 +814,7 @@ void Run() {
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
+    TestSharedStringHash();
 }
 
 }  // namespace Wtf2Tests
