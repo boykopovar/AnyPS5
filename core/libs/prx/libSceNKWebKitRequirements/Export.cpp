@@ -9,12 +9,12 @@
 extern "C" {
 
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable) {
+    Ubsan::ReportCfiCheckFail(data, value, validVtable, true);
 }
 
 int APS5_VABI jpeg_CreateDecompress_nid_postfix() {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libkernel_sys/include/CfiCheckFail.hpp"
 
 #include <cstdint>
 
@@ -50,8 +51,8 @@ int APS5_VABI __sys_socketclose_nid_postfix();
 int APS5_VABI __sys_suspend_process_nid_postfix();
 int APS5_VABI __sys_test_debug_rwmem_nid_postfix();
 int APS5_VABI __sys_workaround8849_nid_postfix();
-int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix();
-int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix();
+void APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable);
+void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData* data, std::uint64_t value, std::uint64_t validVtable);
 int APS5_VABI _dup2_nid_postfix(int from, int to);
 int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp);
 int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp);
