@@ -162,6 +162,9 @@ int main() {
         std::ranges::copy_if(target.supportedCapabilities, std::back_inserter(withoutFma), [](std::uint32_t capability) { return capability != spv::CapabilityFMAKHR; });
         auto unfusedTarget = target;
         unfusedTarget.supportedCapabilities = withoutFma;
+        unfusedTarget.fmaFloat16 = false;
+        auto fmaFeatureOffTarget = target;
+        fmaFeatureOffTarget.fmaFloat16 = false;
 
         const std::span<const std::uint32_t> code(Code);
         std::vector<std::uint32_t> userData(8, 0u);
@@ -194,13 +197,18 @@ int main() {
             const auto native = compile(target, mode);
             const auto unfused = compile(unfusedTarget, mode);
             const auto emulated = compile(emulatedTarget, mode);
+            const auto fmaFeatureOff = compile(fmaFeatureOffTarget, mode);
             const F16x2Math nativeMath = FindF16x2Math(native.spirv.Words());
             const F16x2Math unfusedMath = FindF16x2Math(unfused.spirv.Words());
             const F16x2Math emulatedMath = FindF16x2Math(emulated.spirv.Words());
+            const F16x2Math fmaFeatureOffMath = FindF16x2Math(fmaFeatureOff.spirv.Words());
             Require(nativeMath.add && nativeMath.mul && unfusedMath.add && unfusedMath.mul, std::string("packed f16 native: ") + mode.name + " does not use f16vec2 add and mul");
             Require(!nativeMath.fma && !unfusedMath.fma, std::string("packed f16 native: ") + mode.name + " uses an f16vec2 Fma, which Vulkan does not require to be fused");
             Require(nativeMath.fusedFma == fused, std::string("packed f16 native: ") + mode.name + (fused ? " does not use OpFmaKHR on f16vec2 with FMAKHR" : " uses OpFmaKHR without FMAKHR"));
             Require(!unfusedMath.fusedFma, std::string("packed f16 native: ") + mode.name + " uses OpFmaKHR without FMAKHR");
+            Require(!fused || !fmaFeatureOffMath.fusedFma, std::string("packed f16 native: ") + mode.name + " fuses f16 fma when the FMAKHR capability is present but the f16 fma feature is off");
+            Require(!fused || fmaFeatureOffMath.add, std::string("packed f16 native: ") + mode.name + " drops f16vec2 add when the f16 fma feature is off");
+            Require(!fused || nativeMath.fusedFma, std::string("packed f16 native: ") + mode.name + " does not fuse f16 fma when the FMAKHR capability is present and the f16 fma feature is on");
             Require(!emulatedMath.add && !emulatedMath.mul && !emulatedMath.fma && !emulatedMath.fusedFma, std::string("packed f16 native: ") + mode.name + " uses f16vec2 math without Float16");
             for (std::uint32_t batch = 0; batch < Batches; ++batch) {
                 for (auto& word : Input) word = Half() | (Half() << 16u);

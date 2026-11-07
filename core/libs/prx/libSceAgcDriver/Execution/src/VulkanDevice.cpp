@@ -1717,7 +1717,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
     }
     const bool float16Fma = float16Rte && fmaFeatures.shaderFmaFloat16 == VK_TRUE;
-    const bool float32Fma = hasExtension(VK_KHR_SHADER_FMA_EXTENSION_NAME) && fmaFeatures.shaderFmaFloat32 == VK_TRUE;
+    const bool float32Fma = hasExtension(VK_KHR_SHADER_FMA_EXTENSION_NAME) && fmaFeatures.shaderFmaFloat32 == VK_TRUE && driverId == VK_DRIVER_ID_MESA_RADV;
     fmaFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FMA_FEATURES_KHR};
     fmaFeatures.shaderFmaFloat16 = float16Fma ? VK_TRUE : VK_FALSE;
     fmaFeatures.shaderFmaFloat32 = float32Fma ? VK_TRUE : VK_FALSE;
@@ -4388,6 +4388,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.hostInterpolationFirst = state->hostInterpolationFirst;
     target.float32DenormPreserve = state->float32DenormPreserve;
+    target.fmaFloat16 = state->fmaFloat16;
+    target.fmaFloat32 = state->fmaFloat32;
     return target;
 }
 
