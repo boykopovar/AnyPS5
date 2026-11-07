@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [libSceHmd](../../../core/libs/prx/libSceHmd/Export.cpp) implements only the disconnected-headset path: initialization succeeds, device queries report `NotDetected`, and opening a device returns `DeviceDisconnected`. Headset support, tracking, rendering and additional HMD exports are not implemented; SDK-level ABI compatibility and in-game behaviour remain unverified.
+- [libSceHmd](../../../core/libs/prx/libSceHmd/Export.cpp) implements only the disconnected-headset path: initialization succeeds, device queries report `NotDetected`, and opening a device returns `DeviceDisconnected`. Firmware 13.42 checks only for null and stores directly (read from disassembly, not measured on a console), so the console faults on an unwritable non-null pointer in sceHmdGetDeviceInformation and sceHmdInternalGetDeviceStatus; AnyPS5 returns ParameterNull (0x81110008) instead. Headset support, tracking, rendering and additional HMD exports are not implemented; SDK-level ABI compatibility and in-game behaviour remain unverified.
 
 ### Unknown function info
 
