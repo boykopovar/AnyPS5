@@ -84,12 +84,15 @@ const char* JxrGetDcAcPredMode_nid_no_patch(void* value, size_t column, int32_t*
     return NULL;
 }
 
-const char* JxrDetachPredInfo_nid_no_patch(void* value, void** memory) {
+const char* JxrPredInfoMemory_nid_no_patch(void* value, void** memory) {
     CWMImageStrCodec* codec = (CWMImageStrCodec*)value;
     if (codec == NULL) return "null codec";
     *memory = codec->pPredInfoMemory;
-    codec->pPredInfoMemory = NULL;
     return NULL;
+}
+
+void JxrClearPredInfo_nid_no_patch(void* value) {
+    ((CWMImageStrCodec*)value)->pPredInfoMemory = NULL;
 }
 
 const char* JxrUpdatePredInfo_nid_no_patch(void* value, void* macroblock, size_t column, int32_t format) {

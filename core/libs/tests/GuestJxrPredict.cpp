@@ -44,6 +44,8 @@ constexpr std::size_t MacroblockSize = 1160;
 
 bool failAllocation = false;
 int liveBlocks = 0;
+void* releasingCodec = nullptr;
+void* observedPredInfoBlock = nullptr;
 
 void* APS5_VABI Allocate(std::size_t size) {
     if (failAllocation) return nullptr;
@@ -51,6 +53,7 @@ void* APS5_VABI Allocate(std::size_t size) {
     return std::malloc(size);
 }
 void APS5_VABI Free(void* pointer) {
+    if (pointer && releasingCodec) observedPredInfoBlock = JxrPredictPredInfoBlock_nid_no_patch(releasingCodec);
     if (pointer) --liveBlocks;
     std::free(pointer);
 }
@@ -131,7 +134,14 @@ void TestPredInfoRelease() {
     JxrPredictSetPredInfoBlock_nid_no_patch(pair.guest, block);
     JxrPredictSetPredInfoBlock_nid_no_patch(pair.native, block);
     const int live = liveBlocks;
+    std::array<std::byte, 35944> expectedCodec{};
+    std::memcpy(expectedCodec.data(), pair.guest, expectedCodec.size());
+    std::memset(expectedCodec.data() + 35648, 0, sizeof(void*));
+    releasingCodec = pair.guest;
     freePredInfo_nid_postfix(pair.guest);
+    releasingCodec = nullptr;
+    Require(observedPredInfoBlock == block, "freePredInfo cleared the field before the guest free");
+    Require(std::memcmp(pair.guest, expectedCodec.data(), expectedCodec.size()) == 0, "freePredInfo changed other codec bytes");
     Require(liveBlocks == live - 1, "freePredInfo did not release the guest block");
     Require(JxrPredictPredInfoBlock_nid_no_patch(pair.guest) == nullptr, "freePredInfo kept the prediction block");
     JxrPredictSetPredInfoBlock_nid_no_patch(pair.native, nullptr);

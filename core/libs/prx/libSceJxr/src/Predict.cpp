@@ -11,7 +11,8 @@ const char* JxrUseDcQuantizer_nid_no_patch(void* codec, std::size_t tile);
 const char* JxrUseLpQuantizer_nid_no_patch(void* codec, std::size_t count, std::size_t tile);
 const char* JxrGetDcAcPredMode_nid_no_patch(void* codec, std::size_t column, std::int32_t* mode);
 const char* JxrUpdatePredInfo_nid_no_patch(void* codec, void* macroblock, std::size_t column, std::int32_t format);
-const char* JxrDetachPredInfo_nid_no_patch(void* codec, void** memory);
+const char* JxrPredInfoMemory_nid_no_patch(void* codec, void** memory);
+void JxrClearPredInfo_nid_no_patch(void* codec);
 }
 
 namespace {
@@ -48,8 +49,9 @@ void APS5_VABI updatePredInfo_nid_postfix(void* codec, void* macroblock, std::si
 
 void APS5_VABI freePredInfo_nid_postfix(void* codec) {
     void* memory = nullptr;
-    Check(JxrDetachPredInfo_nid_no_patch(codec, &memory), __func__);
+    Check(JxrPredInfoMemory_nid_no_patch(codec, &memory), __func__);
     if (memory) free_nid_postfix(memory);
+    JxrClearPredInfo_nid_no_patch(codec);
 }
 
 } // extern "C"
