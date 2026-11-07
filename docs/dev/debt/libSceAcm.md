@@ -33,15 +33,16 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceAcm/Export.cpp) - 5 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceAcm/Export.cpp) - 4 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
-| `Unknown` | `9+f3tPdeyP0` |
 | `Unknown` | `DvsnlQr4yyk` |
 | `Unknown` | `PLNywpi1zR4` |
 | `Unknown` | `YpYvibqaqz0` |
 | `Unknown` | `ngDRON91+-Y` |
+
+- [Unknown NID `9+f3tPdeyP0`](../../../core/libs/prx/libSceAcm/Export.cpp) (libSceAcm) - its name and the structure it advances are unknown; the parameter and result types come from the body, not a prototype, and nothing is claimed about the object beyond the fields used. Firmware 13.42 `libSceAcm.sprx` (`0x8190`, disassembly only, not run on a console) returns null for a null argument. Otherwise it reads a base pointer at `+0` and 32-bit fields at `+8`, `+0xc` and `+0x10`, raises `+0xc` to at most `+8`, moves `+0x10` to the next slot (0 after an empty state, 0 again at `+8`) and returns the base plus 1024 bytes per slot, with the slot shifted by 8 in 32 bits. Only null is checked; a bad pointer faults there too.
 
 - [Unnamed firmware 13.42 exports](../../../core/libs/prx/libSceAcm/Export.cpp) - 44 function NIDs that firmware 13.42's `system/common/lib/libSceAcm.sprx` exports (read from its export table) are import-resolution declarations only. The [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl) lists the same NIDs as defined function exports with no name, and none is in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Names, parameter lists, return types and behavior are unknown; parameterless `int` declarations are placeholders, not verified ABI contracts, and every entry throws through `NotImplemented_nid_no_patch`.
 

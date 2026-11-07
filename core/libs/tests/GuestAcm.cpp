@@ -1,4 +1,5 @@
 #include "prx/libSceAcm/include/Api.hpp"
+#include "prx/libSceAcm/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cerrno>
@@ -15,7 +16,36 @@ static void Require(bool value) {
 constexpr int BadContext = static_cast<int>(0x81940002);
 constexpr int BadPointer = static_cast<int>(0x81940006);
 
+static std::uintptr_t AdvanceRing(std::byte* ring, std::uint32_t capacity, std::uint32_t count, std::uint32_t index, std::uint32_t& nextCount, std::uint32_t& next) {
+    std::memcpy(ring + 0x8, &capacity, sizeof(capacity));
+    std::memcpy(ring + 0xc, &count, sizeof(count));
+    std::memcpy(ring + 0x10, &index, sizeof(index));
+    const auto slot = reinterpret_cast<std::uintptr_t>(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(ring));
+    std::memcpy(&nextCount, ring + 0xc, sizeof(nextCount));
+    std::memcpy(&next, ring + 0x10, sizeof(next));
+    return slot;
+}
+
+static void TestRingAdvance() {
+    Require(libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch(nullptr) == nullptr);
+    alignas(8) std::byte ring[0x18];
+    std::memset(ring, 0xEE, sizeof(ring));
+    const std::uint64_t base = 0x123400000ull;
+    std::memcpy(ring, &base, sizeof(base));
+    std::uint32_t count = 0;
+    std::uint32_t next = 0;
+    Require(AdvanceRing(ring, 3, 0, 7, count, next) == base && count == 1 && next == 0);
+    Require(AdvanceRing(ring, 3, 1, 0, count, next) == base + 1024 && count == 2 && next == 1);
+    Require(AdvanceRing(ring, 3, 2, 1, count, next) == base + 2048 && count == 3 && next == 2);
+    Require(AdvanceRing(ring, 3, 3, 2, count, next) == base && count == 3 && next == 0);
+    Require(AdvanceRing(ring, 0xffffffffu, 5, 0x00ffffffu, count, next) == base && count == 6 && next == 0x01000000u);
+    Require(AdvanceRing(ring, 5, 0xffffffffu, 1, count, next) == base + 2048 && count == 0 && next == 2);
+    Require(AdvanceRing(ring, 0, 0, 9, count, next) == base && count == 0 && next == 0);
+    Require(ring[0x14] == std::byte{0xEE} && ring[0x17] == std::byte{0xEE});
+}
+
 int main() {
+    TestRingAdvance();
     Require(sceAcmContextCreate(nullptr) == BadPointer);
     Require(sceAcmContextDestroy(0) == BadContext);
     Require(sceAcmContextDestroy(999999) == BadContext);
