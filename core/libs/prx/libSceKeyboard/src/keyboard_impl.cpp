@@ -101,6 +101,11 @@ std::uint16_t character(bool jis, std::uint32_t ledState, std::uint32_t modifier
 
 namespace Keyboard {
 
+bool IsInitialized() {
+    std::lock_guard lock(keyboardMutex);
+    return initialized;
+}
+
 int Initialize() {
     std::lock_guard lock(keyboardMutex);
     initialized = true;
@@ -160,6 +165,16 @@ int GetConnection(std::int32_t handle, bool* isConnected) {
     if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     if (isConnected == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     *isConnected = connected;
+    return KEYBOARD_OK;
+}
+
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (deviceId == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    *deviceId = -1;
+    if (handle != KEYBOARD_HANDLE || !opened || !connected) return KEYBOARD_ERROR_INVALID_HANDLE;
+    *deviceId = KEYBOARD_DEVICE_ID;
     return KEYBOARD_OK;
 }
 
