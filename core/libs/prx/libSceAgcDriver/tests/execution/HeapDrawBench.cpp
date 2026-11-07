@@ -107,6 +107,7 @@ std::span<std::byte> MergedTarget(std::size_t index) {
     static std::array<std::byte*, 2> data{};
     if (data.at(index) == nullptr) data[index] = [] {
         std::byte* block = nullptr;
+        const bool watched = AgcDriver::GuestMemory::WriteWatched();
 #ifdef _WIN32
         block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, Bytes));
         GuestArena::GuestArenaCommit_nid_postfix(block, Bytes, PAGE_READWRITE, Bytes);
@@ -117,6 +118,7 @@ std::span<std::byte> MergedTarget(std::size_t index) {
         block = reinterpret_cast<std::byte*>((begin + Bytes - 1u) & ~static_cast<std::uintptr_t>(Bytes - 1u));
         GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, Bytes);
 #endif
+        Require(!watched || AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uintptr_t>(block), Bytes), "the merged color target is not write-watched");
         GuestAllocations::Mutation mutation;
         mutation.Add(block, Bytes, true, true, true);
         return block;
