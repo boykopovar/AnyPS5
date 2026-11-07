@@ -42,6 +42,7 @@ struct Settings {
     void* authInfoArgument = nullptr;
     void* preSendCallback = nullptr;
     void* preSendArgument = nullptr;
+    int cookieBox = 0;
 };
 
 struct Capacity {
@@ -61,6 +62,7 @@ public:
     int Status(int* status);
     int ContentLength(int* kind, std::uint64_t* length);
     int Headers(char** header, std::size_t* size);
+    int TrailingHeaders(char** header, std::size_t* size);
     void Cancel();
     void Stop();
 private:

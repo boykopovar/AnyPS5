@@ -225,8 +225,8 @@ bool FindFrameFast(Lookup& query) {
     if (_dl_find_object(reinterpret_cast<void*>(query.pc), &object) != 0 || object.dlfo_eh_frame == nullptr) return false;
     const auto* header = static_cast<const Byte*>(object.dlfo_eh_frame);
     if (header[0] != 1) return false;
-    static std::mutex mutex;
-    static std::map<std::tuple<const Byte*, const void*, const void*>, std::pair<Word, Word>> bases;
+    static std::mutex& mutex = *new std::mutex();
+    static auto& bases = *new std::map<std::tuple<const Byte*, const void*, const void*>, std::pair<Word, Word>>();
     const std::tuple key {header, static_cast<const void*>(object.dlfo_map_start), static_cast<const void*>(object.dlfo_map_end)};
     {
         std::lock_guard lock(mutex);
@@ -279,8 +279,8 @@ using FrameIndex = std::vector<std::pair<Word, const Byte*>>;
 using ImageKey = std::array<Word, 6>;
 
 const FrameIndex& IndexFrames(const ImageKey& key, const Byte* begin, const Byte* end) {
-    static std::mutex mutex;
-    static std::map<ImageKey, FrameIndex> indexes;
+    static std::mutex& mutex = *new std::mutex();
+    static auto& indexes = *new std::map<ImageKey, FrameIndex>();
     std::lock_guard lock(mutex);
     const auto [entry, inserted] = indexes.try_emplace(key);
     auto& index = entry->second;
@@ -439,7 +439,8 @@ bool AppleCompact(_Unwind_Context& context, Frame& frame, Lookup& query) {
     frame.compactEncoding = entry.encoding;
     frame.functionStart = base + entry.functionOffset;
     frame.functionEnd = base + entry.functionEndOffset;
-    frame.personality = entry.hasPersonality ? static_cast<Word>(static_cast<std::intptr_t>(base) + entry.personalityDelta) : 0;
+    frame.personality = 0;
+    if (entry.hasPersonality) std::memcpy(&frame.personality, reinterpret_cast<const void*>(static_cast<std::intptr_t>(base) + entry.personalityDelta), sizeof(frame.personality));
     frame.lsda = entry.hasLsda ? base + entry.lsdaOffset : 0;
     frame.returnRegister = 16;
     context.region = frame.functionStart;
