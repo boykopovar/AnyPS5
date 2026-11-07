@@ -12,6 +12,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [FastBitVector exports](../../../core/libs/prx/libSceNKWebKit/src/WtfFastBitVector.cpp) have no console ABI or behavior verification. The 16-byte owner (word pointer at 0, 64-bit bit count at 8), range clearing, growth and copying follow the paired header and [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastBitVector.cpp). `resizeSlow` preserves the stored bit count and unused bits of existing words; new words are zeroed. Allocation uses the module's `fastMalloc` and `fastFree`. Invalid ranges, null accessed storage, shrinking the word count and overflowing the upstream round-up throw instead of reproducing assertion failures or invalid memory access. Closes when: compared with a console module.
 
+- [ConcurrentPtrHashSet exports](../../../core/libs/prx/libSceNKWebKit/src/WtfConcurrentPtrHashSet.cpp) have no console ABI or behavior verification. The 88-byte layout (a `Vector<std::unique_ptr<Table>, 4>` at 0, the current table at 48, the 24-byte stub table at 56, the one-byte `Lock` at 80), the `PtrHash` probe sequence, resizing at half load and the table list growth follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/ConcurrentPtrHashSet.cpp) and its `Vector.h`. The lock spins with `std::this_thread::yield` instead of parking, and throws if it finds the parked bit set. A null set, table or pointer, an index or mask that does not fit the table, a full table and a table size that overflows on doubling throw instead of reproducing `RELEASE_ASSERT` crashes or invalid memory access. Closes when: compared with a console module.
+
 - [PAL::SessionID exports](../../../core/libs/prx/libSceNKWebKit/src/PalSessionID.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/PAL/pal/SessionID.cpp). The generators throw after `enableGenerationProtection` instead of reproducing the `RELEASE_ASSERT` crash. Closes when: compared with a console module.
 - [bmalloc::FreeList exports](../../../core/libs/prx/libSceNKWebKit/src/BmallocFreeList.cpp) have no console ABI or behavior verification. The 32-byte layout and field writes follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/bmalloc/bmalloc/FreeList.cpp), which compiles only without libpas; that the console build has libpas off is inferred from the PlayStation build options and the exported symbols. A null `self` throws instead of reproducing invalid memory access. Closes when: compared with a console module.
 
@@ -1572,13 +1574,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF19ParallelEnvironmentC2EPFvPvEmi` | `ciXM3j2URKk` |
 | `_ZN3WTF19isCompilationThreadEv` | `qoO6VaMuvG0` |
 | `_ZN3WTF19numGraphemeClustersENS_10StringViewE` | `K7qAbz7P3rs` |
-| `_ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv` | `K59xDVxbCyM` |
-| `_ZN3WTF20ConcurrentPtrHashSet5clearEv` | `sDuWnr1d9ko` |
-| `_ZN3WTF20ConcurrentPtrHashSet7addSlowEPNS0_5TableEjjjPv` | `V-fPa0Bhh0w` |
-| `_ZN3WTF20ConcurrentPtrHashSetC1Ev` | `CQtwXOnCU1M` |
-| `_ZN3WTF20ConcurrentPtrHashSetC2Ev` | `ZVyMTXVUQN0` |
-| `_ZN3WTF20ConcurrentPtrHashSetD1Ev` | `NWIItqDdYTQ` |
-| `_ZN3WTF20ConcurrentPtrHashSetD2Ev` | `VZF7dCw7zNo` |
 | `_ZN3WTF20ParallelHelperClient13doSomeHelpingEv` | `jLYyt8tfmkE` |
 | `_ZN3WTF20ParallelHelperClient6finishEv` | `X+GUHRxWSq4` |
 | `_ZN3WTF20ParallelHelperClientD1Ev` | `pCPHOY0VhUY` |
