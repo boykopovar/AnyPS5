@@ -37,6 +37,13 @@ std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
     return 7;
 }
 
+std::int32_t APS5_VABI UnmappedChunk(JpegDecInputChunk* chunk, void* argument) {
+    ++*static_cast<std::size_t*>(argument);
+    chunk->data = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    chunk->size = 16;
+    return 7;
+}
+
 std::vector<std::uint8_t> TestJpeg(std::uint32_t width, std::uint32_t height, std::uint32_t channels) {
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * channels);
     for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<std::uint8_t>((i * 7) ^ (i >> 5));
@@ -249,6 +256,15 @@ int main() {
     JpegDecInputControlParam brokenParse = StreamParam(0x10, brokenSource);
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &brokenParse, &info) == decodeError);
     Require(brokenSource.calls == 3);
+
+    JpegHandle unmapped(96);
+    std::size_t unmappedCalls = 0;
+    JpegDecInputControlParam unmappedParse = StreamParam(0x10, source);
+    unmappedParse.input = UnmappedChunk;
+    unmappedParse.input_argument = &unmappedCalls;
+    Require(sceJpegDecDecodeWithInputControl(unmapped.handle, &unmappedParse, &info) == invalidAddr);
+    Require(unmappedCalls == 1);
+    Require(sceJpegDecDelete(unmapped.handle) == 0);
 
     Source again{jpeg, 512};
     JpegDecInputControlParam againParse = StreamParam(0x10, again);
