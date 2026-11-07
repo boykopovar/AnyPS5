@@ -38,6 +38,13 @@ static void CheckInvalidDestination() {
         threw = true;
     }
     Require(threw, "null destination must throw invalid_argument");
+    threw = false;
+    try {
+        sceAudio3dGetDefaultOpenParameters(reinterpret_cast<Audio3dOpenParameters*>(std::uintptr_t{0x10}));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "unwritable destination must throw invalid_argument");
 }
 
 static void CheckShortBuffer() {

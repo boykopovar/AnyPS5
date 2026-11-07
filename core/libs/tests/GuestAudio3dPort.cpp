@@ -119,6 +119,7 @@ void CheckOpenParameters() {
     };
     rejects([](auto& p) { p.size_this = 0x30; }, "unknown parameter size");
     rejects([](auto& p) { p.size_this = 0x21; }, "parameter size is not masked");
+    rejects([](auto& p) { p.size_this = 0x100000020ULL; }, "oversized parameter size");
     rejects([](auto& p) { p.rate = 1; }, "only 48 kHz");
     rejects([](auto& p) { p.granularity = 0x80; }, "granularity below 256");
     rejects([](auto& p) { p.granularity = 0x180; }, "granularity not a multiple of 256");
@@ -145,6 +146,16 @@ void CheckOpenClose() {
     parameters.size_this = 0x28;
     parameters.num_beds = 2;
     Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0");
+    auto* const badPtr = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    Require(sceAudio3dPortGetQueueLevel(0, badPtr, nullptr) == INVALID_PARAMETER, "unwritable queue level pointer");
+    Require(sceAudio3dPortGetQueueLevel(0, nullptr, badPtr) == INVALID_PARAMETER, "unwritable queue available pointer");
+    Require(sceAudio3dPortGetAttributesSupported(0, badPtr, nullptr) == INVALID_PARAMETER, "unwritable attributes pointer with null count");
+    std::uint32_t numAttributes = 0;
+    Require(sceAudio3dPortGetAttributesSupported(0, badPtr, &numAttributes) == INVALID_PARAMETER, "unwritable attributes pointer");
+    Require(sceAudio3dPortGetAttributesSupported(0, nullptr, badPtr) == INVALID_PARAMETER, "unwritable numAttributes pointer");
+    Require(sceAudio3dObjectReserve(0, badPtr) == INVALID_PARAMETER, "unwritable object id pointer");
+    Require(sceAudio3dPortGetStatus(0, badPtr, nullptr, 0) == INVALID_PARAMETER, "unwritable status pointer");
+    Require(sceAudio3dPortGetStatus(0, nullptr, reinterpret_cast<char*>(badPtr), 16) == INVALID_PARAMETER, "unwritable description pointer");
     std::uint32_t second = 7;
     Require(Open(parameters, &second) == OUT_OF_RESOURCES && second == 7, "only one port");
     std::uint32_t level = 0;
@@ -153,6 +164,10 @@ void CheckOpenClose() {
     Require(sceAudio3dPortClose(0) == 0, "close");
     Require(sceAudio3dPortClose(0) == INVALID_PORT, "double close");
     Require(sceAudio3dPortGetQueueLevel(0, &level, nullptr) == INVALID_PORT, "closed port");
+    Require(Open(parameters, badPtr) == INVALID_PARAMETER, "open with unwritable id pointer");
+    id = 7;
+    Require(Open(parameters, &id) == 0 && id == 0, "open hands out port 0 after rejected id pointer");
+    Require(sceAudio3dPortClose(0) == 0, "close after rejected id pointer");
 }
 
 void CheckPortWrappers() {
