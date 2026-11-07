@@ -913,7 +913,14 @@ int APS5_VABI sceAmprAmmGiveDirectMemory(std::int64_t searchStart, std::int64_t 
 
 int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t* start, std::uint64_t* end, std::uint64_t* multimapStart, std::uint64_t* multimapEnd) {
     if (!start || !end || !multimapStart || !multimapEnd) throw std::invalid_argument("sceAmprAmmGetVirtualAddressRanges: null output");
-    AmmVirtualAddressRanges_nid_no_patch(start, end, multimapStart, multimapEnd);
+    std::uint64_t localStart = 0;
+    std::uint64_t localEnd = 0;
+    std::uint64_t localMultimapStart = 0;
+    std::uint64_t localMultimapEnd = 0;
+    AmmVirtualAddressRanges_nid_no_patch(&localStart, &localEnd, &localMultimapStart, &localMultimapEnd);
+    if (!GuestCopyOut_nid_no_patch(start, &localStart, sizeof(localStart)) || !GuestCopyOut_nid_no_patch(end, &localEnd, sizeof(localEnd)) ||
+        !GuestCopyOut_nid_no_patch(multimapStart, &localMultimapStart, sizeof(localMultimapStart)) || !GuestCopyOut_nid_no_patch(multimapEnd, &localMultimapEnd, sizeof(localMultimapEnd)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

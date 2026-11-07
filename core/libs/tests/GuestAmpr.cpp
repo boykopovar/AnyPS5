@@ -1005,6 +1005,7 @@ void TestAmmRangesAboveHintedMaps() {
     std::uint64_t multimapStart = 0;
     std::uint64_t multimapEnd = 0;
     Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    Require(sceAmprAmmGetVirtualAddressRanges(reinterpret_cast<std::uint64_t*>(0x10), &end, &multimapStart, &multimapEnd) == invalidPointer);
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;
     GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
