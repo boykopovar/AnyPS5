@@ -1,0 +1,15 @@
+add_library(libSceMetadataReaderWriter SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceMetadataReaderWriter PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceMetadataReaderWriter)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_metadata_reader_writer_tests ${LIBS_INCLUDE_DIR}/tests/GuestMetadataReaderWriter.cpp)
+    target_include_directories(guest_metadata_reader_writer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_metadata_reader_writer_tests PRIVATE libSceMetadataReaderWriter libc)
+    configure_windows_unwind(guest_metadata_reader_writer_tests)
+    add_test(NAME guest_metadata_reader_writer COMMAND guest_metadata_reader_writer_tests)
+    if(WIN32)
+        set_tests_properties(guest_metadata_reader_writer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMetadataReaderWriter>")
+    endif()
+endif()
