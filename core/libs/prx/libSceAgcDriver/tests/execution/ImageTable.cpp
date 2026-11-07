@@ -470,6 +470,18 @@ alignas(256) constexpr std::array<std::uint32_t, 59> PointerChaseDirectCode{
     0x01090401u, 0x8afe3032u, 0xbf89ffe5u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u,
     0xe0781000u, 0x80070408u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 77> PointerChaseDeepCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
+    0xbf0d8012u, 0xbf840004u, 0xf4040f16u, 0xfa000060u, 0xbf8cc07fu, 0xbeac043cu, 0xbf0d8112u, 0xbf840004u,
+    0xf4040f16u, 0xfa000060u, 0xbf8cc07fu, 0xbeac043cu, 0xbf0d8212u, 0xbf840004u, 0xf4040f16u, 0xfa000060u,
+    0xbf8cc07fu, 0xbeac043cu, 0xbf0d8312u, 0xbf840004u, 0xf4040f16u, 0xfa000060u, 0xbf8cc07fu, 0xbeac043cu,
+    0xbf0d8412u, 0xbf840004u, 0xf4040f16u, 0xfa000060u, 0xbf8cc07fu, 0xbeac043cu, 0xf40c0916u, 0xfa000000u,
+    0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffd3u, 0xbefe042eu, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 73> PointerChaseSplitCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2623,6 +2635,85 @@ void RunPointerChaseDirectTests(AgcDriver::VulkanDevice& device) {
     std::puts("pointer table with a conditional direct pointer chase: a T# at a record pointer chased up to twice through the pointer loaded at the pointer plus 0x60 checked for every taken and skipped step, a moved link and a link to a node outside the snapshot");
 }
 
+void RunPointerChaseDeepTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    alignas(256) std::array<std::array<std::uint32_t, 64>, 8> nodes{};
+    Table = {};
+    Keys = {};
+    const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
+    std::array<std::uint32_t, 8> next{};
+    const auto address = [](const void* data) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data)); };
+    const auto chase = [&](std::uint32_t from, std::uint32_t to) {
+        nodes[from][0x60u / 4u] = static_cast<std::uint32_t>(address(nodes[to].data()));
+        nodes[from][0x64u / 4u] = static_cast<std::uint32_t>(address(nodes[to].data()) >> 32u);
+        next[from] = to;
+    };
+    for (std::uint32_t node = 0; node < 8u; ++node) {
+        std::copy(images[node % 2u].begin(), images[node % 2u].end(), nodes[node].begin());
+        chase(node, std::min(node + 1u, 7u));
+    }
+    const std::array<std::uint32_t, 4> recordNode{2u, 0u, 1u, 2u};
+    for (std::uint32_t record = 0; record < 4u; ++record) {
+        Table[record * 4u + 2u] = static_cast<std::uint32_t>(address(nodes[recordNode[record]].data()));
+        Table[record * 4u + 3u] = static_cast<std::uint32_t>(address(nodes[recordNode[record]].data()) >> 32u);
+    }
+    const std::string name = "pointer table with five conditional direct pointer chase steps";
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    };
+    const Registration registeredNodes(nodes.data(), sizeof(nodes));
+    const auto run = [&](std::span<const std::uint32_t> code) {
+        const auto table = Buffer(Table.data(), 64u);
+        const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
+        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        Srt = {};
+        std::copy(table.begin(), table.end(), Srt.begin());
+        std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
+        std::copy(output.begin(), output.end(), Srt.begin() + 8u);
+        std::copy(PointWrap.begin(), PointWrap.end(), Srt.begin() + 12u);
+        const std::vector<ShaderRecompiler::MemoryRegion> memory{
+            {reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)},
+            {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
+            {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
+            {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
+            {reinterpret_cast<std::uintptr_t>(nodes.data()), std::as_bytes(std::span(nodes))},
+        };
+        const auto inputTable = Table;
+        const auto inputNodes = nodes;
+        auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u);
+        Require(Table == inputTable && nodes == inputNodes, name + ": dispatch modified its input memory");
+        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        return result;
+    };
+    const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
+    const std::array<std::uint32_t, 4> steps{0x1fu, 0x15u, 0x00u, 0x0eu};
+    for (std::uint32_t group = 0; group < 4u; ++group) {
+        Keys[group * 4u] = keys[group][0];
+        Keys[group * 4u + 1u] = keys[group][1];
+        Keys[group * 4u + 2u] = steps[group];
+    }
+    const auto sampled = [&](std::uint32_t group) {
+        return std::function<std::uint32_t(std::uint32_t)>([&, group](std::uint32_t x) {
+            auto node = recordNode[keys[group][x < 32u ? 0u : 1u]];
+            for (std::uint32_t step = 0; step < 5u; ++step) {
+                if ((steps[group] >> step) & 1u) node = next[node];
+            }
+            return std::bit_cast<std::uint32_t>(node % 2u != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
+        });
+    };
+    const auto taken = run(PointerChaseDeepCode);
+    Require(!Faulted(taken), name + ": the T# at the end of the chase faulted:\n" + taken.log);
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group), name + ": the T# at the pointer reached by the chase steps taken in group " + std::to_string(group));
+    chase(3u, 5u);
+    const auto moved = run(PointerChaseDeepCode);
+    Require(!Faulted(moved), name + ": the T# behind a moved chase link faulted:\n" + moved.log);
+    Require(moved.artifactId == taken.artifactId, name + ": moving a chased link recompiled the shader");
+    for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(moved, group, Lanes, sampled(group), name + ": the T# after node 3's link moved to node 5 in group " + std::to_string(group));
+    std::puts("pointer table with five conditional direct pointer chase steps: a T# at a record pointer chased up to five times through the pointer loaded at the pointer plus 0x60, checked for every taken and skipped step and a moved link");
+}
+
 void RunPointerChaseSplitTests(AgcDriver::VulkanDevice& device) {
     Fill();
     alignas(256) std::array<std::array<std::uint32_t, 128>, 8> nodes{};
@@ -3306,6 +3397,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-direct") == 0) {
             RunPointerChaseDirectTests(*device);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-deep") == 0) {
+            RunPointerChaseDeepTests(*device);
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-chase-split") == 0) {

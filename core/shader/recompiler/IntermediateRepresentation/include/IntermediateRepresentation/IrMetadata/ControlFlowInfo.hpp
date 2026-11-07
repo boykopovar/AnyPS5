@@ -35,7 +35,7 @@ struct PointerHop {
     bool operator==(const PointerHop& other) const = default;
 };
 
-inline constexpr std::uint32_t MaxPointerChaseDepth = 4;
+inline constexpr std::uint32_t MaxPointerChaseDepth = 8;
 
 struct DescriptorWordEdit {
     std::uint32_t shift = 0;
