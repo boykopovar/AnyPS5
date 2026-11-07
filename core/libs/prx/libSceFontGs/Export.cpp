@@ -1,6 +1,7 @@
 #include "prx/libSceFontGs/include/InventoryExports.hpp"
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -66,31 +67,288 @@ static_assert(offsetof(FontGnmSequence, commands) == 0x28);
 constexpr int FontGsSurfaceConfigInvalid = static_cast<int>(0x8046005c);
 constexpr std::uint8_t FontGnmSurfaceConfigTag = 0x44;
 
+enum GnmArrayModeValue : std::uint32_t {
+    GnmArrayModeLinearGeneral = 0,
+    GnmArrayModeLinearAligned = 1,
+    GnmArrayMode1dTiledThin1 = 2,
+    GnmArrayMode1dTiledThick = 3,
+    GnmArrayMode2dTiledThin1 = 4,
+    GnmArrayModePrtTiledThin1 = 5,
+    GnmArrayModePrt2dTiledThin1 = 6,
+    GnmArrayMode2dTiledThick = 7,
+    GnmArrayMode2dTiledXThick = 8,
+    GnmArrayModePrtTiledThick = 9,
+    GnmArrayModePrt2dTiledThick = 10,
+    GnmArrayModePrt3dTiledThin1 = 11,
+    GnmArrayMode3dTiledThin1 = 12,
+    GnmArrayMode3dTiledThick = 13,
+    GnmArrayMode3dTiledXThick = 14,
+    GnmArrayModePrt3dTiledThick = 15,
+};
+
+enum GnmMicroTileModeValue : std::uint32_t {
+    GnmMicroTileModeDisplay = 0,
+    GnmMicroTileModeThin = 1,
+    GnmMicroTileModeDepth = 2,
+    GnmMicroTileModeRotated = 3,
+    GnmMicroTileModeThick = 4,
+};
+
+enum GnmPipeConfigValue : std::uint32_t {
+    GnmPipeConfigP2 = 0,
+    GnmPipeConfigP8_32x32_8x16 = 0xa,
+    GnmPipeConfigP8_32x32_16x16 = 0xc,
+    GnmPipeConfigNeoP16 = 0x12,
+};
+
+enum GnmTileSplitValue : std::uint32_t {
+    GnmTileSplit64B = 0,
+    GnmTileSplit128B = 1,
+    GnmTileSplit256B = 2,
+    GnmTileSplit512B = 3,
+    GnmTileSplit1KB = 4,
+};
+
+enum GnmSampleSplitValue : std::uint32_t {
+    GnmSampleSplit1 = 0,
+    GnmSampleSplit2 = 1,
+};
+
+constexpr std::uint32_t GnmTileModeWord(std::uint32_t arrayMode, std::uint32_t pipeConfig, std::uint32_t tileSplit, std::uint32_t microMode,
+                                        std::uint32_t sampleSplit, std::uint32_t altPipeConfig) {
+    return arrayMode << 2 | pipeConfig << 6 | tileSplit << 11 | microMode << 22 | sampleSplit << 25 | altPipeConfig << 27;
+}
+
+constexpr std::uint32_t GnmTile(std::uint32_t arrayMode, std::uint32_t pipeConfig, std::uint32_t tileSplit, std::uint32_t microMode,
+                                std::uint32_t sampleSplit) {
+    return GnmTileModeWord(arrayMode, pipeConfig, tileSplit, microMode, sampleSplit, GnmPipeConfigNeoP16);
+}
+
 constexpr std::uint32_t GnmTileModes[32] = {
-    0x90800310, 0x90800b10, 0x90801310, 0x90801b10, 0x90802310, 0x90800308, 0x90801318, 0x90802318,
-    0x90000304, 0x90000308, 0x92000310, 0x92000294, 0x92000318, 0x90400308, 0x92400310, 0x924002b0,
-    0x92400294, 0x92400318, 0x9240032c, 0x9100030c, 0x9100031c, 0x910002b4, 0x910002a4, 0x91000328,
-    0x910002bc, 0x91000320, 0x910002b8, 0x90c00308, 0x92c00310, 0x92c00294, 0x92c00318, 0x00000000};
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit128B, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit256B, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit512B, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit1KB, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayMode1dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayModePrt2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit256B, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayModePrt2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit1KB, GnmMicroTileModeDepth, GnmSampleSplit1),
+    GnmTile(GnmArrayModeLinearAligned, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeDisplay, GnmSampleSplit1),
+    GnmTile(GnmArrayMode1dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeDisplay, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeDisplay, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrtTiledThin1, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeDisplay, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrt2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeDisplay, GnmSampleSplit2),
+    GnmTile(GnmArrayMode1dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThin, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThin, GnmSampleSplit2),
+    GnmTile(GnmArrayMode3dTiledThin1, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeThin, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrtTiledThin1, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeThin, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrt2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThin, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrt3dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThin, GnmSampleSplit2),
+    GnmTile(GnmArrayMode1dTiledThick, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThick, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayMode3dTiledThick, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayModePrtTiledThick, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayModePrt2dTiledThick, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayModePrt3dTiledThick, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledXThick, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayMode3dTiledXThick, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeThick, GnmSampleSplit1),
+    GnmTile(GnmArrayMode1dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeRotated, GnmSampleSplit1),
+    GnmTile(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeRotated, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrtTiledThin1, GnmPipeConfigP8_32x32_8x16, GnmTileSplit64B, GnmMicroTileModeRotated, GnmSampleSplit2),
+    GnmTile(GnmArrayModePrt2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit64B, GnmMicroTileModeRotated, GnmSampleSplit2),
+    GnmTileModeWord(GnmArrayModeLinearGeneral, GnmPipeConfigP2, GnmTileSplit64B, GnmMicroTileModeDisplay, GnmSampleSplit1, GnmPipeConfigP2)};
 
-constexpr std::uint32_t GnmMacroTileModes[32] = {
-    0x26e8, 0x26d4, 0x21d0, 0x21d0, 0x2080, 0x2040, 0x1000, 0x0000, 0x36ec, 0x26e8, 0x21d4, 0x20d0, 0x1080, 0x1040, 0x0000, 0x0000,
-    0x100020, 0x80008, 0x200008, 0x200020, 0x80010, 0x80008, 0x200020, 0x100020, 0x80008, 0x200008, 0x200020, 0x80010, 0x80008, 0x200020,
-    0x100010, 0x100010};
+enum GnmMacroTileFieldValue : std::uint32_t {
+    GnmBankWidth1 = 0,
+    GnmBankHeight1 = 0,
+    GnmBankHeight2 = 1,
+    GnmBankHeight4 = 2,
+    GnmBankHeight8 = 3,
+    GnmMacroAspect1 = 0,
+    GnmMacroAspect2 = 1,
+    GnmMacroAspect4 = 2,
+    GnmBanks2 = 0,
+    GnmBanks4 = 1,
+    GnmBanks8 = 2,
+    GnmBanks16 = 3,
+};
 
-constexpr std::uint32_t GnmThickness[13] = {4, 1, 1, 1, 4, 8, 4, 4, 1, 1, 4, 8, 4};
-constexpr std::uint32_t GnmThickTileBits[13] = {0x100, 0x100, 0x100, 0x100, 0x100, 0x200, 0x100, 0x100, 0x100, 0x100, 0x100, 0x200, 0x100};
-constexpr std::uint32_t GnmArrayModeTileModes[12] = {0xd, 0x13, 0xe, 0x10, 0x11, 0x14, 0x15, 0x15, 0x15, 0x12, 0xf, 0x15};
-constexpr std::uint32_t GnmNumericTypes[10] = {0, 1, 0, 0, 4, 5, 0, 7, 0, 6};
+constexpr std::uint32_t GnmMacroTile(std::uint32_t bankWidth, std::uint32_t bankHeight, std::uint32_t aspect, std::uint32_t banks,
+                                     std::uint32_t altBankHeight, std::uint32_t altAspect, std::uint32_t altBanks) {
+    return bankWidth | bankHeight << 2 | aspect << 4 | banks << 6 | altBankHeight << 8 | altAspect << 10 | altBanks << 12;
+}
 
-constexpr std::uint32_t GnmComponentCounts[61] = {
-    0, 1, 1, 2, 1, 2, 3, 3, 4, 4, 4, 2, 4, 3, 4, 0xffffffff, 3, 4, 4, 4, 2, 2, 2, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 3, 3, 3, 4, 4, 4, 1, 2, 3, 4, 0xffffffff, 0xffffffff, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1};
+constexpr std::uint32_t GnmMacroTileModes[16] = {
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight4, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight2, GnmMacroAspect2, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks8, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks4, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight8, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks16),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight4, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight2, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks8, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks4, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2),
+    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2)};
 
-constexpr std::uint32_t GnmElementBits[61] = {
-    0, 8, 16, 16, 32, 32, 32, 32, 32, 32, 32, 64, 64, 96, 128, 0xffffffff, 16, 16, 16, 16, 32, 32, 64, 0xffffffff, 0xffffffff,
-    0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 16, 16, 32, 4, 8, 8, 4, 8, 8, 8, 0xffffffff,
-    0xffffffff, 8, 8, 8, 8, 8, 8, 16, 16, 32, 32, 32, 64, 64, 8, 16, 1, 1};
+enum GnmChannelTypeValue : std::uint32_t {
+    GnmChannelTypeUNorm = 0,
+    GnmChannelTypeSNorm = 1,
+    GnmChannelTypeUInt = 4,
+    GnmChannelTypeSInt = 5,
+    GnmChannelTypeFloat = 7,
+    GnmChannelTypeSrgb = 9,
+};
+
+constexpr std::uint32_t GnmRenderTargetTypeSrgb = 6;
+constexpr std::uint32_t GnmMicroTileTexels = 64;
+
+enum GnmSurfaceFormatValue : std::uint32_t {
+    GnmFormatInvalid = 0x00,
+    GnmFormat8 = 0x01,
+    GnmFormat16 = 0x02,
+    GnmFormat8_8 = 0x03,
+    GnmFormat32 = 0x04,
+    GnmFormat16_16 = 0x05,
+    GnmFormat10_11_11 = 0x06,
+    GnmFormat11_11_10 = 0x07,
+    GnmFormat10_10_10_2 = 0x08,
+    GnmFormat2_10_10_10 = 0x09,
+    GnmFormat8_8_8_8 = 0x0a,
+    GnmFormat32_32 = 0x0b,
+    GnmFormat16_16_16_16 = 0x0c,
+    GnmFormat32_32_32 = 0x0d,
+    GnmFormat32_32_32_32 = 0x0e,
+    GnmFormat5_6_5 = 0x10,
+    GnmFormat1_5_5_5 = 0x11,
+    GnmFormat5_5_5_1 = 0x12,
+    GnmFormat4_4_4_4 = 0x13,
+    GnmFormat8_24 = 0x14,
+    GnmFormat24_8 = 0x15,
+    GnmFormatX24_8_32 = 0x16,
+    GnmFormatGB_GR = 0x20,
+    GnmFormatBG_RG = 0x21,
+    GnmFormat5_9_9_9 = 0x22,
+    GnmFormatBc1 = 0x23,
+    GnmFormatBc2 = 0x24,
+    GnmFormatBc3 = 0x25,
+    GnmFormatBc4 = 0x26,
+    GnmFormatBc5 = 0x27,
+    GnmFormatBc6 = 0x28,
+    GnmFormatBc7 = 0x29,
+    GnmFormatFmask8_S2_F1 = 0x2c,
+    GnmFormatFmask8_S4_F1 = 0x2d,
+    GnmFormatFmask8_S8_F1 = 0x2e,
+    GnmFormatFmask8_S2_F2 = 0x2f,
+    GnmFormatFmask8_S4_F2 = 0x30,
+    GnmFormatFmask8_S4_F4 = 0x31,
+    GnmFormatFmask16_S16_F1 = 0x32,
+    GnmFormatFmask16_S8_F2 = 0x33,
+    GnmFormatFmask32_S16_F2 = 0x34,
+    GnmFormatFmask32_S8_F4 = 0x35,
+    GnmFormatFmask32_S8_F8 = 0x36,
+    GnmFormatFmask64_S16_F4 = 0x37,
+    GnmFormatFmask64_S16_F8 = 0x38,
+    GnmFormat4_4 = 0x39,
+    GnmFormat6_5_5 = 0x3a,
+    GnmFormat1 = 0x3b,
+    GnmFormat1Reversed = 0x3c,
+};
+
+constexpr std::uint32_t GnmFormatCount = GnmFormat1Reversed + 1;
+constexpr std::uint32_t GnmFormatUndefined = 0xffffffff;
+constexpr std::uint32_t GnmBlockTexels = 16;
+constexpr std::uint32_t GnmFmaskComponents = 2;
+
+struct GnmFormatShape {
+    std::uint32_t bits;
+    std::uint32_t components;
+};
+
+constexpr GnmFormatShape GnmChannels(std::uint32_t x = 0, std::uint32_t y = 0, std::uint32_t z = 0, std::uint32_t w = 0) {
+    return {x + y + z + w, static_cast<std::uint32_t>((x != 0) + (y != 0) + (z != 0) + (w != 0))};
+}
+
+constexpr GnmFormatShape GnmPadded(std::uint32_t padding, GnmFormatShape shape) { return {shape.bits + padding, shape.components}; }
+
+constexpr GnmFormatShape GnmBlock(std::uint32_t blockBits, std::uint32_t components) { return {blockBits / GnmBlockTexels, components}; }
+
+constexpr GnmFormatShape GnmShape(std::uint32_t format) {
+    switch (format) {
+    case GnmFormatInvalid: return GnmChannels();
+    case GnmFormat8: return GnmChannels(8);
+    case GnmFormat16: return GnmChannels(16);
+    case GnmFormat8_8: return GnmChannels(8, 8);
+    case GnmFormat32: return GnmChannels(32);
+    case GnmFormat16_16: return GnmChannels(16, 16);
+    case GnmFormat10_11_11: return GnmChannels(10, 11, 11);
+    case GnmFormat11_11_10: return GnmChannels(11, 11, 10);
+    case GnmFormat10_10_10_2: return GnmChannels(10, 10, 10, 2);
+    case GnmFormat2_10_10_10: return GnmChannels(2, 10, 10, 10);
+    case GnmFormat8_8_8_8: return GnmChannels(8, 8, 8, 8);
+    case GnmFormat32_32: return GnmChannels(32, 32);
+    case GnmFormat16_16_16_16: return GnmChannels(16, 16, 16, 16);
+    case GnmFormat32_32_32: return GnmChannels(32, 32, 32);
+    case GnmFormat32_32_32_32: return GnmChannels(32, 32, 32, 32);
+    case GnmFormat5_6_5: return GnmChannels(5, 6, 5);
+    case GnmFormat1_5_5_5: return GnmChannels(1, 5, 5, 5);
+    case GnmFormat5_5_5_1: return GnmChannels(5, 5, 5, 1);
+    case GnmFormat4_4_4_4: return GnmChannels(4, 4, 4, 4);
+    case GnmFormat8_24: return GnmChannels(8, 24);
+    case GnmFormat24_8: return GnmChannels(24, 8);
+    case GnmFormatX24_8_32: return GnmPadded(24, GnmChannels(8, 32));
+    case GnmFormatGB_GR:
+    case GnmFormatBG_RG: return {GnmChannels(8, 8, 8, 8).bits / 2, 3};
+    case GnmFormat5_9_9_9: return GnmPadded(5, GnmChannels(9, 9, 9));
+    case GnmFormatBc1: return GnmBlock(64, 4);
+    case GnmFormatBc2:
+    case GnmFormatBc3:
+    case GnmFormatBc7: return GnmBlock(128, 4);
+    case GnmFormatBc4: return GnmBlock(64, 1);
+    case GnmFormatBc5: return GnmBlock(128, 2);
+    case GnmFormatBc6: return GnmBlock(128, 3);
+    case GnmFormatFmask8_S2_F1:
+    case GnmFormatFmask8_S4_F1:
+    case GnmFormatFmask8_S8_F1:
+    case GnmFormatFmask8_S2_F2:
+    case GnmFormatFmask8_S4_F2:
+    case GnmFormatFmask8_S4_F4: return {8, GnmFmaskComponents};
+    case GnmFormatFmask16_S16_F1:
+    case GnmFormatFmask16_S8_F2: return {16, GnmFmaskComponents};
+    case GnmFormatFmask32_S16_F2:
+    case GnmFormatFmask32_S8_F4:
+    case GnmFormatFmask32_S8_F8: return {32, GnmFmaskComponents};
+    case GnmFormatFmask64_S16_F4:
+    case GnmFormatFmask64_S16_F8: return {64, GnmFmaskComponents};
+    case GnmFormat4_4: return GnmChannels(4, 4);
+    case GnmFormat6_5_5: return GnmChannels(6, 5, 5);
+    case GnmFormat1:
+    case GnmFormat1Reversed: return GnmChannels(1);
+    default: return {GnmFormatUndefined, GnmFormatUndefined};
+    }
+}
+
+template <std::uint32_t GnmFormatShape::*Field>
+constexpr std::array<std::uint32_t, GnmFormatCount> GnmFormatTable() {
+    std::array<std::uint32_t, GnmFormatCount> table{};
+    for (std::uint32_t format = 0; format < GnmFormatCount; ++format) table[format] = GnmShape(format).*Field;
+    return table;
+}
+
+constexpr std::array<std::uint32_t, GnmFormatCount> GnmComponentCounts = GnmFormatTable<&GnmFormatShape::components>();
+constexpr std::array<std::uint32_t, GnmFormatCount> GnmElementBits = GnmFormatTable<&GnmFormatShape::bits>();
+
+static_assert(GnmElementBits[GnmFormat8_8_8_8] == 32 && GnmComponentCounts[GnmFormat8_8_8_8] == 4);
+static_assert(GnmElementBits[GnmFormat32_32_32] == 96 && GnmComponentCounts[GnmFormat32_32_32] == 3);
+static_assert(GnmElementBits[GnmFormat5_6_5] == 16 && GnmComponentCounts[GnmFormat5_6_5] == 3);
+static_assert(GnmElementBits[GnmFormatBc1] == 4 && GnmElementBits[GnmFormatBc7] == 8);
+static_assert(GnmTileModeWord(GnmArrayMode2dTiledThin1, GnmPipeConfigP8_32x32_16x16, GnmTileSplit1KB, GnmMicroTileModeDepth, GnmSampleSplit2,
+                              GnmPipeConfigNeoP16) == (4u << 2 | 0xcu << 6 | 4u << 11 | 2u << 22 | 1u << 25 | 0x12u << 27));
 
 struct GnmSurfaceLayout {
     std::uint32_t pitch;
@@ -119,11 +377,51 @@ std::uint32_t AlignUp(std::uint32_t value, std::uint32_t alignment) {
     return (value + alignment - 1) & (0u - alignment);
 }
 
-std::uint32_t GnmArrayMode(std::uint32_t entry) { return (entry >> 2) & 0xf; }
+constexpr std::uint32_t GnmArrayMode(std::uint32_t entry) { return (entry >> 2) & 0xf; }
 
-std::uint32_t GnmMicroMode(std::uint32_t entry) { return (entry >> 22) & 7; }
+constexpr std::uint32_t GnmMicroMode(std::uint32_t entry) { return (entry >> 22) & 7; }
 
-std::uint32_t GnmThicknessOf(std::uint32_t arrayMode) { return arrayMode - 3 <= 0xc ? GnmThickness[arrayMode - 3] : 1; }
+constexpr std::uint32_t GnmThicknessOf(std::uint32_t arrayMode) {
+    switch (arrayMode) {
+    case GnmArrayMode1dTiledThick:
+    case GnmArrayMode2dTiledThick:
+    case GnmArrayModePrtTiledThick:
+    case GnmArrayModePrt2dTiledThick:
+    case GnmArrayMode3dTiledThick:
+    case GnmArrayModePrt3dTiledThick: return 4;
+    case GnmArrayMode2dTiledXThick:
+    case GnmArrayMode3dTiledXThick: return 8;
+    default: return 1;
+    }
+}
+
+constexpr std::uint32_t GnmThinOrThickTileMode(std::uint32_t arrayMode) {
+    std::uint32_t tileMode = 0;
+    while (tileMode < 0x1f) {
+        const std::uint32_t micro = GnmMicroMode(GnmTileModes[tileMode]);
+        if ((micro == GnmMicroTileModeThin || micro == GnmMicroTileModeThick) && GnmArrayMode(GnmTileModes[tileMode]) == arrayMode) break;
+        ++tileMode;
+    }
+    return tileMode;
+}
+
+static_assert([] {
+    for (std::uint32_t arrayMode = 2; arrayMode < 0xe; ++arrayMode) {
+        if (((0xe3fu >> (arrayMode - 2)) & 1) != 0 && GnmThinOrThickTileMode(arrayMode) == 0x1f) return false;
+    }
+    return true;
+}());
+
+constexpr std::uint32_t GnmRenderTargetType(std::uint32_t channelType) {
+    switch (channelType) {
+    case GnmChannelTypeSNorm:
+    case GnmChannelTypeUInt:
+    case GnmChannelTypeSInt:
+    case GnmChannelTypeFloat: return channelType;
+    case GnmChannelTypeSrgb: return GnmRenderTargetTypeSrgb;
+    default: return GnmChannelTypeUNorm;
+    }
+}
 
 std::uint32_t GnmDataFormat(std::uint32_t surface, std::uint32_t type, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint32_t w) {
     return (surface & 0xff) | (type & 0xf) << 8 | (x & 7) << 12 | (y & 7) << 15 | (z & 7) << 18 | (w & 7) << 21;
@@ -183,8 +481,8 @@ bool GnmTextureFormatSupported(std::uint32_t format) {
 
 std::uint32_t GnmDegradeArrayMode(std::uint32_t arrayMode, std::uint32_t bits) {
     const std::uint32_t index = arrayMode - 3;
-    if (index > 0xc || ((0x1cf1u >> index) & 1) == 0) return arrayMode;
-    const std::uint32_t size = bits * GnmThickTileBits[index];
+    if (GnmThicknessOf(arrayMode) == 1) return arrayMode;
+    const std::uint32_t size = bits * GnmMicroTileTexels * GnmThicknessOf(arrayMode);
     if (size < 0x2001) return arrayMode;
     switch (index) {
     case 0: return 3;
@@ -214,7 +512,7 @@ bool GnmTileModeForArrayMode(std::uint32_t tileMode, std::uint32_t arrayMode, st
     case 1:
     case 4:
         if (arrayMode - 2 >= 0xc || ((0xe3fu >> (arrayMode - 2)) & 1) == 0) return false;
-        result = GnmArrayModeTileModes[arrayMode - 2];
+        result = GnmThinOrThickTileMode(arrayMode);
         return true;
     case 2:
         result = 5;
@@ -292,7 +590,7 @@ bool GnmComputeSurface(std::uint32_t tileMode, bool neo, std::uint32_t width, st
     const std::uint32_t pipeConfig = neo ? entry >> 27 : (entry >> 6) & 0x1f;
     const std::uint32_t pipes = pipeConfig == 0xa || pipeConfig == 0xc ? 8 : pipeConfig == 0x12 ? 16 : 0;
     const std::uint32_t original = GnmArrayMode(entry);
-    if (original - 3 < 0xd && GnmThickness[original - 3] == 8 && bits >= 0x41) return false;
+    if (GnmThicknessOf(original) == 8 && bits >= 0x41) return false;
     const std::uint32_t arrayMode = GnmDegradeArrayMode(original, bits);
     std::uint32_t macroMode = tileMode;
     GnmTileModeForArrayMode(tileMode, arrayMode, macroMode);
@@ -318,7 +616,7 @@ bool GnmComputeSurface(std::uint32_t tileMode, bool neo, std::uint32_t width, st
 }
 
 std::uint32_t GnmTextureFormatWord(std::uint32_t format) {
-    const std::uint32_t numeric = GnmNumericTypes[(format >> 8) & 0xf];
+    const std::uint32_t numeric = GnmRenderTargetType((format >> 8) & 0xf);
     const std::uint32_t paired = numeric & ~1u;
     std::uint32_t swizzle = 0;
     GnmSwizzle(format, &swizzle);
