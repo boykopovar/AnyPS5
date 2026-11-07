@@ -1151,7 +1151,7 @@ int WaitForTransfer(Socket& socket, bool send, int flags, int receiver = -1) {
         if (entries[1].revents != 0) DrainWaker(entries[1].fd);
 #else
         entries[0].events = static_cast<short>(send ? POLLOUT : POLLIN);
-        const int ready = ThreadCancel::Native([&] { return ::poll(entries, 1, milliseconds); });
+        const int ready = ThreadCancel::Native([&] { if (!send) ObserveReadWait(); return ::poll(entries, 1, milliseconds); });
         if (ready > 0 || (ready < 0 && errno != EINTR)) return 0;
 #endif
     }
