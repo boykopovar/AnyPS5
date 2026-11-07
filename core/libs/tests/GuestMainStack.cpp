@@ -58,6 +58,7 @@ static void* APS5_VABI Worker(void* arg) {
 static void APS5_VABI Entry(void* arguments) {
     Require(!expectRefusal);
     Require(arguments == &marker);
+    Require(__builtin_return_address(0) == nullptr);
     int local = 0;
     const auto address = reinterpret_cast<std::uintptr_t>(&local);
     void* start = nullptr;

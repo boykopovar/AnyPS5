@@ -271,8 +271,8 @@ extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* ar
         "pushq $0\n\t"
         "mov %%rsp, %%rbp\n\t"
         "xor %%esi, %%esi\n\t"
-        "call *%2\n\t"
-        "ud2"
+        "pushq $0\n\t"
+        "jmp *%2"
         :
         : "r"(top), "D"(arguments), "a"(entry)
         : "memory");
