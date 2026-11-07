@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "../WatchedBlock.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -297,6 +298,10 @@ alignas(256) std::array<std::uint32_t, 65538> VertexSlots{};
 alignas(256) std::array<std::uint32_t, 60000> InstanceSlots{};
 alignas(256) std::array<std::uint32_t, 8> BufferTable{};
 alignas(256) constexpr std::array<std::uint16_t, 4> Indices{2, 0, 1, 0};
+alignas(256) constexpr std::array<std::uint16_t, 4> RaisedIndices{5, 3, 4, 0};
+alignas(256) constexpr std::array<std::uint16_t, 4> RestartIndices{0xffff, 5, 3, 4};
+
+constexpr std::size_t WatchedBytes = 65536;
 
 std::array<std::uint32_t, 4> SlotDescriptor(const void* data, std::uint32_t records) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -365,15 +370,16 @@ public:
         return result;
     }
 
-    AgcDriver::Graphics::State State(bool rectList = false) const {
+    AgcDriver::Graphics::State State(bool rectList = false, bool restartStrip = false) const {
         AgcDriver::Graphics::State state{};
         state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
         state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
         state.colors = {state.color};
         state.hasColorTarget = true;
         state.renderExtent = {Width, Height};
-        state.topology = rectList ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        state.topology = rectList ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : restartStrip ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         state.rectList = rectList;
+        state.primitiveRestart = restartStrip;
         state.viewport = {0.0f, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0.0f, 1.0f};
         state.scissor = {{0, 0}, {Width, Height}};
         state.cullMode = VK_CULL_MODE_NONE;
@@ -383,7 +389,7 @@ public:
         return state;
     }
 
-    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool compactRestart = false) {
+    void Draw(const ShaderRecompiler::RecompileResult& vertex, const AgcDriver::Pm4::DrawParameters& draw, bool restartStrip = false, bool compactRestart = false) {
         const auto vertexPush = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -401,7 +407,7 @@ public:
             state.primitiveRestart = true;
             AgcDriver::Graphics::Draw(context, state, draw, shaders);
         } else {
-            device->Draw(State(), draw, shaders);
+            device->Draw(State(false, restartStrip), draw, shaders);
         }
         device->WaitIdle();
     }
@@ -511,7 +517,7 @@ std::string RuntimeFetch(Fixture& fixture, std::uint32_t index, bool compactRest
     const auto first = compactRestart ? 0u : 1u;
     const auto count = compactRestart ? 5u : 3u;
     const AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(indices.data() + first), count, 4, 1, 0, true, 0, 0};
-    fixture.Draw(vertex, draw, compactRestart);
+    fixture.Draw(vertex, draw, false, compactRestart);
     std::cout << "runtime fetch, index " << index << ", compact restart " << compactRestart
               << ", attributes " << vertex.vertexAttributes.size() << ": atomic readback "
               << Output[0] << ' ' << Output[1] << ' ' << Output[2] << ' ' << Output[3] << '\n';
@@ -546,6 +552,49 @@ std::string Run(Fixture& fixture) {
         fixture.Place(baseVertex, bufferIndices, startInstance);
         fixture.Draw(vertex, draw);
         failures += fixture.Check("direct indexed draw, s16 1000, s17 40", bufferIndices, baseVertex, startInstance, true);
+    }
+    {
+        constexpr std::uint32_t baseVertex = 1000;
+        constexpr std::uint32_t startInstance = 40;
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const std::array<std::uint32_t, Vertices> raised{RaisedIndices[0], RaisedIndices[1], RaisedIndices[2]};
+        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(RaisedIndices.data()), Vertices, 2, Instances, 0, true, 0, 0});
+        fixture.Place(baseVertex, raised, startInstance);
+        fixture.Draw(vertex, draw);
+        failures += fixture.Check("direct indexed draw whose lowest index is 3, s16 1000, s17 40", raised, baseVertex, startInstance, true);
+    }
+    {
+        constexpr std::uint32_t baseVertex = 1000;
+        constexpr std::uint32_t startInstance = 40;
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const std::array<std::uint32_t, Vertices> raised{RestartIndices[1], RestartIndices[2], RestartIndices[3]};
+        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(RestartIndices.data()), static_cast<std::uint32_t>(RestartIndices.size()), 2, Instances, 0, true, 0, 0});
+        fixture.Place(baseVertex, raised, startInstance);
+        fixture.Draw(vertex, draw, true);
+        failures += fixture.Check("direct indexed strip that starts with a restart index, lowest index 3, s16 1000, s17 40", raised, baseVertex, startInstance, true);
+    }
+    if (void* watched = AllocateWatched(WatchedBytes, WatchedBytes)) {
+        struct Release {
+            void* block;
+            ~Release() { ReleaseWatched(block, WatchedBytes); }
+        } release{watched};
+        constexpr std::uint32_t baseVertex = 1000;
+        constexpr std::uint32_t startInstance = 40;
+        auto* guestIndices = static_cast<std::uint16_t*>(watched);
+        std::copy(RaisedIndices.begin(), RaisedIndices.end(), guestIndices);
+        const auto userData = fixture.UserData(baseVertex, startInstance);
+        const auto vertex = fixture.Vertex(VertexCode, userData);
+        const std::array<std::uint32_t, Vertices> raised{RaisedIndices[0], RaisedIndices[1], RaisedIndices[2]};
+        const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(guestIndices), Vertices, 2, Instances, 0, true, 0, 0});
+        for (const auto* pass : {"first", "second"}) {
+            fixture.Place(baseVertex, raised, startInstance);
+            fixture.Draw(vertex, draw);
+            failures += fixture.Check(std::string("indexed draw from write-watched indices whose lowest index is 3, s16 1000, s17 40, ") + pass + " time", raised, baseVertex, startInstance, true);
+        }
+    } else {
+        std::cout << "write watching unavailable: indices kept between draws not tested\n";
     }
 
     const auto staleUserData = fixture.UserData(0x51u, 0x62u);
