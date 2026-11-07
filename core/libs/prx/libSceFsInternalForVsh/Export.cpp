@@ -1258,7 +1258,7 @@ int APS5_VABI libSceFsInternalForVshUnknown_0JhonchgIa8_nid_no_patch() {
 APS5_EXPORT("0JhonchgIa8", libSceFsInternalForVshUnknown_0JhonchgIa8_nid_no_patch);
 
 int APS5_VABI libSceFsInternalForVshUnknown_0XlyVxRNeIw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("0XlyVxRNeIw", libSceFsInternalForVshUnknown_0XlyVxRNeIw_nid_no_patch);
 
@@ -1433,7 +1433,7 @@ int APS5_VABI libSceFsInternalForVshUnknown_UD35isX9168_nid_no_patch() {
 APS5_EXPORT("UD35isX9168", libSceFsInternalForVshUnknown_UD35isX9168_nid_no_patch);
 
 int APS5_VABI libSceFsInternalForVshUnknown_W8CmA_plus_wZ9_plus_w_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("W8CmA+wZ9+w", libSceFsInternalForVshUnknown_W8CmA_plus_wZ9_plus_w_nid_no_patch);
 
@@ -1553,7 +1553,7 @@ int APS5_VABI libSceFsInternalForVshUnknown_lZ_plus_oSeAyI8Q_nid_no_patch() {
 APS5_EXPORT("lZ+oSeAyI8Q", libSceFsInternalForVshUnknown_lZ_plus_oSeAyI8Q_nid_no_patch);
 
 int APS5_VABI libSceFsInternalForVshUnknown_lxyJjALNmp4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("lxyJjALNmp4", libSceFsInternalForVshUnknown_lxyJjALNmp4_nid_no_patch);
 
