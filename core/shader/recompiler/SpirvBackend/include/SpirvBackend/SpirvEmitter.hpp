@@ -48,6 +48,7 @@ struct SpirvTargetOptions {
     bool meshWindowBuffer = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool meshInlineFunctions = false;
 };
 
 struct SpirvEmitInfo {
