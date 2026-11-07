@@ -38,25 +38,13 @@
  */
 
 #include "prx/libcairo/include/FtFontOptions.hpp"
+#include "prx/libcairo/include/FontOptions.hpp"
 #include "prx/libfontconfig/libfontconfig.hpp"
-#include <cstring>
-
-namespace {
-
-struct FontOptionsValues {
-    cairo_antialias_t antialias;
-    cairo_subpixel_order_t subpixelOrder;
-    cairo_hint_style_t hintStyle;
-    cairo_hint_metrics_t hintMetrics;
-};
-
-}
 
 extern "C" void APS5_VABI cairo_ft_font_options_substitute(const cairo_font_options_t* options, FcPattern* pattern) {
-    if (options == nullptr || options == cairo_font_options_copy(nullptr)) return;
+    CairoFontOptionsValues values;
+    if (!CairoFontOptionsRead(options, values)) return;
 
-    FontOptionsValues values;
-    std::memcpy(&values, options, sizeof(values));
     FcValue value;
 
     if (values.antialias != CAIRO_ANTIALIAS_DEFAULT) {
