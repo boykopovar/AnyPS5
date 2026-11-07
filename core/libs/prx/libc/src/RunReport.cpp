@@ -15,6 +15,7 @@
 #include <regex>
 #include <set>
 #include <system_error>
+#include <thread>
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
