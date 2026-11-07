@@ -12,6 +12,7 @@
 ### Functional
 
 - [sceWebBrowserDialogGetEvent, sceWebBrowserDialogNavigate, sceWebBrowserDialogSetZoom](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - return `COMMON_DIALOG_ERROR_NOT_INITIALIZED` (`0x80B80003`) when status is `NONE` before initialization and after termination, with both the error code and state-first check order inferred from the existing dialog lifecycle rather than export-specific evidence. Signatures, argument validation, error precedence and initialized behavior remain unknown and unmodelled; initialized calls throw through `NotImplemented_nid_no_patch`. Not measured on a console.
+- [sceWebBrowserDialogGetResult](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - returning `COMMON_DIALOG_ERROR_ARG_NULL` (`0x80B8000D`) for unmapped or unwritable result or extended pointers is a host-safety fallback with console fault behavior unmeasured.
 
 ### Additional callable exports
 
