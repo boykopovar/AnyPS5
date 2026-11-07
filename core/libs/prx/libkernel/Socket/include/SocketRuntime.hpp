@@ -47,3 +47,4 @@ extern "C" std::uint64_t GuestSocketWakerCreationsForTest_nid_no_patch();
 extern "C" void GuestSocketAcceptObserverForTest_nid_no_patch(void (*observer)());
 
 extern "C" void GuestSocketAcceptInstallFaultForTest_nid_no_patch(int stage);
+extern "C" void GuestSocketReadWaitObserverForTest_nid_no_patch(void (*observer)(std::size_t) noexcept);
