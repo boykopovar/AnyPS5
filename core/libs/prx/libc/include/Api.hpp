@@ -237,8 +237,8 @@ void* APS5_VABI _ZNSt8__sce_v210filesystem9_Open_dirERA260_cPKcRiRNS0_9file_type
 char* APS5_VABI _ZNSt8__sce_v210filesystem9_Read_dirERA260_cPvRNS0_9file_typeE_nid_postfix(char* target, void* handle, int* type);
 int APS5_VABI _ZNSt8__sce_v210filesystem10_Close_dirEPv_nid_postfix(void* handle);
 bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char* target);
-void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix();
-void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix();
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(const char* message, LibcException::ErrorCode code);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix(const char* path, int* perms);
 std::uint64_t APS5_VABI _ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
