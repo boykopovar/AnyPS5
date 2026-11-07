@@ -943,7 +943,14 @@ int CreateInstance(const FontGraphicsServiceParam* param, FontGraphicsInstance*&
     created->block = block;
     param->enumerate(created->dispatch, FillBackendDispatch);
     const auto init = reinterpret_cast<BackendInitFunction>(created->dispatch[0]);
-    if (init(created, created + 1, param->instanceSize - sizeof(FontGraphicsInstance)) != 0) {
+    int initialized = 0;
+    try {
+        initialized = init(created, created + 1, param->instanceSize - sizeof(FontGraphicsInstance));
+    } catch (...) {
+        FreeBlock(block);
+        throw;
+    }
+    if (initialized != 0) {
         FreeBlock(block);
         return FONT_GRAPHICS_ERROR_UNINITIALIZED;
     }
@@ -956,11 +963,15 @@ int AttachInstance(const FontGraphicsServiceParam* param) {
     void** const slot = param->instanceSlot;
     if (slot == nullptr || param->instanceSize <= sizeof(FontGraphicsInstance)) return FONT_GRAPHICS_ERROR_INVALID_PARAMETER;
     FontGraphicsInstance* instance = LockInstanceSlot(slot);
+    struct SlotRelease {
+        void** slot;
+        FontGraphicsInstance*& instance;
+        ~SlotRelease() { UnlockInstanceSlot(slot, instance); }
+    } release{slot, instance};
     int error = SCE_FONT_OK;
     if (instance == nullptr) error = CreateInstance(param, instance);
     else if (instance->references == InstanceReferencesExhausted) error = FONT_GRAPHICS_ERROR_UNINITIALIZED;
     else ++instance->references;
-    UnlockInstanceSlot(slot, instance);
     return error;
 }
 

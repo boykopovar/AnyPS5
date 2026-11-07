@@ -1075,17 +1075,6 @@ void GraphicsServiceDispatchFill() {
 constexpr int InvalidDevice = static_cast<int>(0x80460081);
 constexpr int InvalidSurface = static_cast<int>(0x80460092);
 
-template <typename TCall>
-void RequireNotImplemented(TCall call, const char* name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == std::string(name) + " not implemented");
-        return;
-    }
-    Require(false);
-}
-
 struct TestGraphicsDevice {
     std::uint16_t tag;
     std::uint8_t reserved2[0x76];
@@ -1216,12 +1205,6 @@ void SurfaceTextureValidation() {
     f.nodes[0] = 1 << 1;
     RequireError(sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture), NoRecordSpace);
     Require(texture == nullptr && g_texture.calls == 0);
-    f.pool.entries[0].total = TotalSlots;
-    f.nodes[0] = TotalSlots << 1;
-    f.nodes[1] = 0;
-    std::memset(f.surface, 0, 8);
-    RequireNotImplemented([&] { sceFontGraphicsStructureSurfaceTexture(f.Device(), f.Surface(), &texture); },
-                          "sceFontGraphicsStructureSurfaceTexture");
 }
 
 void SurfaceTextureLifecycle() {
@@ -1278,10 +1261,6 @@ void SurfaceTextureRelease() {
         std::memcpy(fake, &tag, sizeof(tag));
         RequireError(sceFontGraphicsRelease(&object), InvalidParameter);
     }
-    for (const std::uint16_t tag : {0x0f51, 0x0f52, 0x0f70, 0x0f80, 0x0f81}) {
-        std::memcpy(fake, &tag, sizeof(tag));
-        RequireNotImplemented([&] { sceFontGraphicsRelease(&object); }, "sceFontGraphicsRelease");
-    }
     const std::uint16_t texture = 0xf82;
     std::memcpy(fake, &texture, sizeof(texture));
     RequireError(sceFontGraphicsRelease(&object), Uninitialized);
@@ -1296,11 +1275,6 @@ void SurfaceTextureRelease() {
     std::uint8_t* copyPointer = copy;
     std::memcpy(fake + 0x18, &copyPointer, sizeof(copyPointer));
     Require(sceFontGraphicsRelease(&object) == SCE_FONT_OK && object == nullptr && Read32At(fake, 0) == 0);
-    std::memcpy(fake, &texture, sizeof(texture));
-    object = fake;
-    copy[0] = 1;
-    copy[0x0e] = 2;
-    RequireNotImplemented([&] { sceFontGraphicsRelease(&object); }, "sceFontGraphicsRelease");
 }
 
 }

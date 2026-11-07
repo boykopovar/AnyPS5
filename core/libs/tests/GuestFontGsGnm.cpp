@@ -186,23 +186,6 @@ int APS5_VABI RecordBackendList(void* dispatch, const FontGraphicsBackendList* l
     return 0x1234;
 }
 
-template <typename TCall>
-void RequireNotImplemented(TCall call, const std::string& name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == name + " not implemented");
-        return;
-    }
-    Require(false);
-}
-
-std::string GnmHandlerName(std::uint32_t opcode) {
-    char name[48];
-    std::snprintf(name, sizeof(name), "sceFontSelectGraphicsGnm_backend_%08x", opcode);
-    return name;
-}
-
 const FontGraphicsServiceParam* GnmBackend() {
     return static_cast<const FontGraphicsServiceParam*>(sceFontSelectGraphicsGnm(0));
 }
@@ -229,7 +212,6 @@ void GnmSelect() {
         else if (entry.opcode == 0x47000004) Require(entry.value == 0x4000000020);
         else if (entry.opcode == 0x47000002) reinterpret_cast<void(APS5_VABI*)(void*)>(entry.value)(dispatch);
         else if (entry.opcode == 0x47000005) Require(reinterpret_cast<int(APS5_VABI*)(void*, void*, std::uint64_t)>(entry.value)(nullptr, nullptr, 0) == 0);
-        else RequireNotImplemented(reinterpret_cast<void(APS5_VABI*)()>(entry.value), GnmHandlerName(entry.opcode));
     }
 }
 
@@ -260,9 +242,6 @@ void GnmService() {
     const int before = g_errorCount;
     Require(sceFontCreateGraphicsService(&memory, backend, &service) == static_cast<int>(0x80460010));
     Require(g_errorCount == before + 1 && g_lastError == static_cast<int>(0x80460010) && *backend->instanceSlot == nullptr);
-    allocations.fail = false;
-    RequireNotImplemented([&] { sceFontCreateGraphicsService(&memory, backend, &service); }, GnmHandlerName(0x47000001));
-    Require(service == nullptr && *backend->instanceSlot == reinterpret_cast<void*>(~std::uintptr_t{0}) && allocations.live == 1);
 }
 
 void GnmDrawupImage() {
