@@ -28,4 +28,10 @@ int APS5_VABI sceVoiceCommandGetResultDetail();
 int APS5_VABI sceVoiceCommandOpenMainDictionary();
 int APS5_VABI sceVoiceCommandOpenMainDictionary_internal();
 
+int APS5_VABI libSceVoiceCommandUnknown_DqiLppOEfzM_nid_no_patch();
+int APS5_VABI libSceVoiceCommandUnknown_Vl5tQluXeUE_nid_no_patch();
+int APS5_VABI libSceVoiceCommandUnknown_ou72J_minus_L08Uw_nid_no_patch();
+int APS5_VABI libSceVoiceCommandUnknown_uHhh4t2nQt8_nid_no_patch();
+int APS5_VABI libSceVoiceCommandUnknown_wGovZflN_plus_dA_nid_no_patch();
+int APS5_VABI libSceVoiceCommandUnknown_xUcAaFdNtvY_nid_no_patch();
 }
