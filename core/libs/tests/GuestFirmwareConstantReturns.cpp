@@ -4,8 +4,10 @@
 #include "prx/libSceFsInternalForVsh/libSceFsInternalForVsh.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include "prx/libScePlayReady/libScePlayReady.hpp"
+#include "prx/libScePSNowGkp/libScePSNowGkp.hpp"
 #include "prx/libSceSdma/libSceSdma.hpp"
 #include "prx/libSceSsl/libSceSsl.hpp"
+#include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
 #include <array>
@@ -232,6 +234,11 @@ void CheckDebugSyscore() {
     Require(sceDebugSetProcessEventCntlFlag() == 1);
 }
 
+void CheckTerminates() {
+    Require(sceCloudClientTerminate() == 0);
+    Require(sceSystemLogger2Terminate() == 0);
+}
+
 }
 
 int main() {
@@ -245,5 +252,6 @@ int main() {
     CheckSsl();
     CheckVisionManager();
     CheckDebugSyscore();
+    CheckTerminates();
     return 0;
 }

@@ -48,7 +48,7 @@ int APS5_VABI sceCloudClientSetSettings() {
 }
 
 int APS5_VABI sceCloudClientTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }
