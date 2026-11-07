@@ -21382,26 +21382,6 @@ int APS5_VABI _ZN7WebCore14CachedResource9addClientERNS_20CachedResourceClientE(
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14CredentialBase7compareERKNS_10CredentialES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14CredentialBaseC1ERKN3WTF6StringES4_NS_21CredentialPersistenceE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14CredentialBaseC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14CredentialBaseC2ERKN3WTF6StringES4_NS_21CredentialPersistenceE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14CredentialBaseC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14DOMCacheEngine15queryCacheMatchERKNS_15ResourceRequestES3_RKNS_16ResourceResponseERKNS_17CacheQueryOptionsE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -21855,10 +21835,6 @@ int APS5_VABI _ZN7WebCore14ScrollbarTheme5themeEv() {
 }
 
 int APS5_VABI _ZN7WebCore14SecurityOrigin16createFromStringERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore14SecurityOrigin30isLocalHostOrLoopbackIPAddressEN3WTF10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -34204,26 +34180,6 @@ int APS5_VABI _ZNK7WebCore13RenderElement16imageOrientationEv() {
 }
 
 int APS5_VABI _ZNK7WebCore13ScriptElement13scriptContentEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore14CredentialBase11hasPasswordEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore14CredentialBase11persistenceEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore14CredentialBase4userEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore14CredentialBase7isEmptyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore14CredentialBase8passwordEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
