@@ -631,7 +631,6 @@ int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* 
  (void)arguments;
  (void)param;
  NotImplemented_nid_no_patch("sceSystemServiceLaunchApp: launching another application");
- return 0;
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
@@ -652,13 +651,11 @@ int APS5_VABI sceSystemServiceOpenTournamentOccurrence(const SystemServiceTourna
 }
 
 int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char*, const char* const*, const void*) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ NotImplemented_nid_no_patch("sceSystemServiceAddLocalProcessForPsmKit: starting another process");
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ NotImplemented_nid_no_patch("sceSystemServiceKillLocalProcessForPsmKit: stopping another process");
 }
 
 int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
@@ -683,17 +680,16 @@ int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
 }
 
 int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
- CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
- return SYSTEM_SERVICE_OK;
+ return sceSystemServiceGetAppTitleId(appId, titleId);
 }
 
 int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
- return RunningAppId("sceLncUtilGetAppId", titleId);
+ return sceSystemServiceGetAppId(titleId);
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- static_cast<void>(RunningAppId("sceLncUtilIsAppLaunched", titleId));
+ static_cast<void>(sceSystemServiceGetAppId(titleId));
  *launched = true;
  return SYSTEM_SERVICE_OK;
 }
@@ -707,7 +703,7 @@ int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t
 }
 
 int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
- return ListRunningBigApp("sceSystemServiceGetAppIdListOfBigApp", appIds, capacity, count);
+ return sceLncUtilGetAppIdListOfBigApp(appIds, capacity, count);
 }
 
 int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
@@ -715,11 +711,12 @@ int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* use
 }
 
 int APS5_VABI sceSystemServiceGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
- return AnswerForRunningApp("sceSystemServiceGetAppLaunchedUser", appId, userId, USER_SERVICE_INITIAL_USER_ID, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+ return sceLncUtilGetAppLaunchedUser(appId, userId);
 }
 
 int APS5_VABI sceShellCoreUtilGetUserFocus(std::int32_t appId, std::int32_t* userId) {
- return AnswerForRunningApp("sceShellCoreUtilGetUserFocus", appId, userId, USER_SERVICE_INITIAL_USER_ID, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+ if (userId == nullptr) return SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT;
+ return sceLncUtilGetAppLaunchedUser(appId, userId);
 }
 
 int APS5_VABI sceLncUtilIsAppSuspended(std::int32_t appId, bool* suspended) {
@@ -727,7 +724,7 @@ int APS5_VABI sceLncUtilIsAppSuspended(std::int32_t appId, bool* suspended) {
 }
 
 int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended) {
- return AnswerForRunningApp("sceSystemServiceIsAppSuspended", appId, suspended, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+ return sceLncUtilIsAppSuspended(appId, suspended);
 }
 
 int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
