@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +28,7 @@ constexpr int SaveDataErrorNotFound = -2137063416;
 constexpr int SaveDataErrorNotMounted = -2137063420;
 constexpr int SaveDataErrorBusy = -2137063421;
 constexpr int SaveDataErrorInvalidLoginUser = -2137063407;
+constexpr int SaveDataErrorMountFull = -2137063412;
 constexpr std::uint32_t MountReadWrite = 2;
 constexpr std::uint32_t MountCreate = 4;
 constexpr std::uint32_t MountCreate2 = 32;
@@ -214,6 +216,70 @@ void TestMountPs4() {
     Check(result.mount_point.data[0] != '\0', "mount writes mount point");
     Check(sceSaveDataUmount(&result.mount_point) == 0, "umount mounted point succeeds");
     Check(sceSaveDataUmount(&result.mount_point) == SaveDataErrorNotMounted, "umount unmounted point is NOT_MOUNTED");
+
+    for (const char* invalid : {
+             "",
+             ".",
+             "..",
+             "../",
+             "..\\",
+             "../../",
+             "..\\..\\",
+             "../victim",
+             "..\\victim",
+             "../../escape",
+             "..\\..\\escape",
+             "a/b",
+             "a\\b",
+             "c:d",
+             "dir/..",
+             "dir\\..",
+             "dir/../dir",
+             "dir\\..\\dir",
+             "foo/../../bar",
+             "foo\\..\\..\\bar",
+             "a/../b",
+             "a\\..\\b"
+         }) {
+        SceSaveDataDirName badDir{};
+        std::strcpy(badDir.data, invalid);
+        SaveDataMountPs4 badMount{};
+        badMount.dir_name = &badDir;
+        badMount.mount_mode = MountReadWrite;
+        Check(sceSaveDataMount(&badMount, &result) == SaveDataErrorParameter, std::string("sceSaveDataMount rejects ") + invalid);
+    }
+    std::array<SceSaveDataDirName, 17> ps4Names{};
+    std::array<SaveDataMountResult, 16> ps4Mounted{};
+    for (std::size_t i = 0; i < 16; ++i) {
+        std::snprintf(ps4Names[i].data, sizeof(ps4Names[i].data), "ps4-cap-%zu", i);
+        std::filesystem::create_directories(std::filesystem::path("_sd") / ps4Names[i].data);
+        SaveDataMountPs4 capMount{};
+        capMount.dir_name = &ps4Names[i];
+        capMount.mount_mode = MountReadWrite;
+        Check(sceSaveDataMount(&capMount, &ps4Mounted[i]) == 0, "sceSaveDataMount slot " + std::to_string(i));
+    }
+    std::strcpy(ps4Names.back().data, "ps4-cap-overflow");
+    std::filesystem::create_directories(std::filesystem::path("_sd") / ps4Names.back().data);
+    SaveDataMountPs4 overflowMount{};
+    overflowMount.dir_name = &ps4Names.back();
+    overflowMount.mount_mode = MountReadWrite;
+    SaveDataMountResult overflowResult{};
+    Check(sceSaveDataMount(&overflowMount, &overflowResult) == SaveDataErrorMountFull, "sceSaveDataMount beyond 16 slots is MOUNT_FULL");
+    Check(sceSaveDataUmount(&ps4Mounted[4].mount_point) == 0, "sceSaveDataUmount slot 4 succeeds");
+    SceSaveDataDirName reclaimedPs4{};
+    std::strcpy(reclaimedPs4.data, "ps4-cap-reclaimed");
+    std::filesystem::create_directories(std::filesystem::path("_sd") / reclaimedPs4.data);
+    SaveDataMountPs4 reclaimedMount{};
+    reclaimedMount.dir_name = &reclaimedPs4;
+    reclaimedMount.mount_mode = MountReadWrite;
+    SaveDataMountResult reclaimedResult{};
+    Check(sceSaveDataMount(&reclaimedMount, &reclaimedResult) == 0, "sceSaveDataMount after slot release succeeds");
+    Check(sceSaveDataMount(&overflowMount, &overflowResult) == SaveDataErrorMountFull, "sceSaveDataMount beyond capacity after refill is MOUNT_FULL");
+    Check(sceSaveDataUmount(&reclaimedResult.mount_point) == 0, "sceSaveDataUmount reclaimed slot succeeds");
+    for (std::size_t i = 0; i < ps4Mounted.size(); ++i) {
+        if (i == 4) continue;
+        Check(sceSaveDataUmount(&ps4Mounted[i].mount_point) == 0, "sceSaveDataUmount remaining slots succeed");
+    }
 }
 
 }
