@@ -21,6 +21,11 @@ using namespace SceVideodec2;
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
+static_assert(sizeof(DirectMemoryInfo) == 0x20);
+static_assert(offsetof(DirectMemoryInfo, thisSize) == 0);
+static_assert(offsetof(DirectMemoryInfo, memorySize) == 8);
+static_assert(offsetof(DirectMemoryInfo, memoryAddr) == 16);
+static_assert(offsetof(DirectMemoryInfo, reserved) == 24);
 
 namespace {
 
@@ -1061,6 +1066,37 @@ void testConcurrentOwnership() {
     check(sceVideodec2DeleteDecoder_nid_postfix(keeper) == 0, "delete failed");
 }
 
+void testMapDirectMemoryErrors() {
+    constexpr int errorStructureSize = static_cast<int>(0x811D0101u);
+    constexpr int errorArgumentPointer = static_cast<int>(0x811D0102u);
+    constexpr int errorDecoderInstance = static_cast<int>(0x811D0103u);
+    constexpr int errorMemorySize = static_cast<int>(0x811D0104u);
+
+    auto inaccessibleDesc = reinterpret_cast<const DirectMemoryInfo*>(static_cast<std::uintptr_t>(0x1));
+    check(sceVideodec2MapDirectMemory(nullptr, nullptr) == errorDecoderInstance, "null decoder with null memory must return DECODER_INSTANCE");
+    check(sceVideodec2MapDirectMemory(nullptr, inaccessibleDesc) == errorDecoderInstance, "null decoder with inaccessible memory must return DECODER_INSTANCE");
+
+    void* opaqueDecoder = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
+    check(sceVideodec2MapDirectMemory(opaqueDecoder, nullptr) == errorArgumentPointer, "non-null decoder with null memory must return ARGUMENT_POINTER");
+
+    std::uint8_t dummyByte = 0;
+    auto checkRejection = [&](const DirectMemoryInfo& original, int expectedError, const std::string& message) {
+        DirectMemoryInfo copy = original;
+        const int result = sceVideodec2MapDirectMemory(opaqueDecoder, &copy);
+        check(result == expectedError, message);
+        check(std::memcmp(&copy, &original, sizeof(DirectMemoryInfo)) == 0, "descriptor must not be mutated");
+    };
+
+    checkRejection(DirectMemoryInfo{0, 0, nullptr, 0}, errorStructureSize, "zero size with invalid payload must return STRUCT_SIZE");
+    checkRejection(DirectMemoryInfo{0x18, 0, nullptr, 0}, errorStructureSize, "small size with invalid payload must return STRUCT_SIZE");
+    checkRejection(DirectMemoryInfo{0x28, 0, nullptr, 0}, errorStructureSize, "large size with invalid payload must return STRUCT_SIZE");
+    checkRejection(DirectMemoryInfo{0x10, 0x1000, &dummyByte, 0}, errorStructureSize, "bad size with valid payload must return STRUCT_SIZE");
+
+    checkRejection(DirectMemoryInfo{sizeof(DirectMemoryInfo), 0x1000, nullptr, 0}, errorMemorySize, "null memoryAddr must return MEMORY_SIZE");
+    checkRejection(DirectMemoryInfo{sizeof(DirectMemoryInfo), 0, &dummyByte, 0}, errorMemorySize, "zero memorySize must return MEMORY_SIZE");
+    checkRejection(DirectMemoryInfo{sizeof(DirectMemoryInfo), 0, nullptr, 0}, errorMemorySize, "null memoryAddr and zero memorySize must return MEMORY_SIZE");
+}
+
 void testParameterSetsBound() {
     constexpr std::uint8_t DifferentParameters[] = {
         0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xda, 0x11,
@@ -1142,6 +1178,7 @@ void testComputeQueues() {
 
 int main() {
     try {
+        testMapDirectMemoryErrors();
         testComputeQueues();
         testFailures();
         testDecode(false);
