@@ -1,4 +1,4 @@
-add_library(libSceNpMatching2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceNpMatching2 SHARED EXCLUDE_FROM_ALL Export.cpp SignalingLocalNetInfo.cpp)
 target_include_directories(libSceNpMatching2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpMatching2)
 
