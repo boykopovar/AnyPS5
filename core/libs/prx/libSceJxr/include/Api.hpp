@@ -145,7 +145,7 @@ int APS5_VABI allocateTileInfo_nid_postfix();
 std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream, void* codec);
 std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream);
 int APS5_VABI checkImageBuffer_nid_postfix();
-int APS5_VABI detachISRead_nid_postfix();
+std::int64_t APS5_VABI detachISRead_nid_postfix(void* codec, Jxr::BitIo* io);
 int APS5_VABI detachISWrite_nid_postfix();
 int APS5_VABI freePredInfo_nid_postfix();
 int APS5_VABI freeQuantizer_nid_postfix();
