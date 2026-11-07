@@ -176,4 +176,14 @@ public:
     std::vector<Retained<String>> chosenFiles;
 };
 
+
+class OpenPanelParameters final : public ObjectOf<ObjectType::OpenPanelParameters> {
+public:
+    std::vector<std::u16string> acceptedFileExtensions;
+    std::vector<std::u16string> acceptedMIMETypes;
+    std::vector<std::u16string> allowedMIMETypes;
+    std::vector<std::u16string> selectedFileNames;
+    bool allowsDirectories = false;
+    bool allowsMultipleFiles = false;
+};
 }  // namespace NKWebKit
