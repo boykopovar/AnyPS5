@@ -81,6 +81,7 @@ int channelLowBit(VkFormat format, VkComponentSwizzle channel) {
     const auto index = static_cast<std::size_t>(channel - VK_COMPONENT_SWIZZLE_R);
     switch (format) {
         case VK_FORMAT_R5G6B5_UNORM_PACK16: return std::array{11, 5, 0, -1}[index];
+        case VK_FORMAT_R5G5B5A1_UNORM_PACK16: return std::array{11, 6, 1, 0}[index];
         case VK_FORMAT_A1R5G5B5_UNORM_PACK16: return std::array{10, 5, 0, 15}[index];
         case VK_FORMAT_B4G4R4A4_UNORM_PACK16: return std::array{4, 8, 12, 0}[index];
         default: throw std::runtime_error("no channel layout for packed format " + std::to_string(format));
@@ -88,7 +89,7 @@ int channelLowBit(VkFormat format, VkComponentSwizzle channel) {
 }
 
 void packedChannelTests() {
-    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 3> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {136u, {0, 4, 8, 12}}}};
+    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 4> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {135u, {0, 1, 6, 11}}, {136u, {0, 4, 8, 12}}}};
     constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     for (const auto& [format, lowBits] : packed) {
         for (std::size_t component = 0; component < components.size(); ++component) {
