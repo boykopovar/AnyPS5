@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -101,6 +102,31 @@ public:
     bool valid = false;
 };
 
+class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
+public:
+    URLRequest() = default;
+    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {}
+
+    Retained<URL> url;
+    Retained<URL> firstPartyForCookies;
+    std::string httpMethod = "GET";
+    Retained<Data> httpBody;
+};
+
+class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
+public:
+    URLResponse() = default;
+    URLResponse(Retained<URL> url, Retained<String> mimeType, int statusCode, Retained<String> suggestedFilename, bool isAttachment, std::int64_t expectedContentLength)
+        : url(std::move(url)), mimeType(std::move(mimeType)), statusCode(statusCode), suggestedFilename(std::move(suggestedFilename)), isAttachment(isAttachment), expectedContentLength(expectedContentLength) {}
+
+    Retained<URL> url;
+    Retained<String> mimeType;
+    int statusCode = 0;
+    Retained<String> suggestedFilename;
+    bool isAttachment = false;
+    std::int64_t expectedContentLength = 0;
+};
+
 class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
     std::string absoluteImageURL;
@@ -112,6 +138,110 @@ public:
     std::u16string lookupText;
     RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
     bool isContentEditable = false;
+};
+
+class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
+public:
+    Retained<String> name;
+    static BundleScriptWorld* NormalWorld() {
+        static auto world = Make<BundleScriptWorld>();
+        return world.Get();
+    }
+};
+
+class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
+public:
+    Retained<URL> absoluteImageURL;
+    Retained<URL> absoluteLinkURL;
+    Retained<URL> absoluteMediaURL;
+    Retained<URL> absolutePDFURL;
+    Retained<String> linkLabel;
+    Retained<String> linkTitle;
+};
+
+class Download final : public ObjectOf<ObjectType::Download> {
+public:
+    Retained<Object> request;
+    Retained<Object> originatingPage;
+    bool wasUserInitiated = false;
+};
+
+class AccessibilityObject final : public ObjectOf<ObjectType::AccessibilityObject> {
+public:
+    Retained<String> title;
+    Retained<String> description;
+    Retained<String> helpText;
+    Retained<String> url;
+};
+
+class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
+public:
+    Retained<String> text;
+    bool enabled = true;
+    bool isItem = true;
+    bool isSeparator = false;
+};
+
+class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResultListener> {
+public:
+    bool cancelled = false;
+    std::vector<Retained<String>> chosenFiles;
+};
+
+class GeolocationPermissionRequest final : public ObjectOf<ObjectType::GeolocationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    GeolocationPermissionRequest() = default;
+    explicit GeolocationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class NotificationPermissionRequest final : public ObjectOf<ObjectType::NotificationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    NotificationPermissionRequest() = default;
+    explicit NotificationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
 };
 
 }  // namespace NKWebKit
