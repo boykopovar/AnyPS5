@@ -1,10 +1,13 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -67,6 +70,23 @@ static void TestGetCertStore() {
     Require(SSL_CTX_get_cert_store_nid_postfix(Context(&ctx)) == &store);
 }
 
+static void TestLoadVerifyLocations() {
+    TestCtx ctx {};
+    ctx.certStore = reinterpret_cast<void*>(1);
+    std::array<unsigned char, sizeof(ctx)> before {};
+    std::memcpy(before.data(), &ctx, sizeof(ctx));
+    LibreSslPutError_nid_no_patch(32, 0xfff, 67);
+    LibreSslPutError_nid_no_patch(32, 0xfff, 68);
+    Require(SSL_CTX_load_verify_locations_nid_postfix(Context(&ctx), nullptr, nullptr) == 0);
+    Require(std::memcmp(before.data(), &ctx, sizeof(ctx)) == 0);
+    Require(ERR_get_error_nid_postfix() == 0x20fff043);
+    Require(ERR_get_error_nid_postfix() == 0x20fff044);
+    Require(ERR_get_error_nid_postfix() == 0);
+    RequireThrows([] { SSL_CTX_load_verify_locations_nid_postfix(nullptr, nullptr, nullptr); });
+    RequireThrows([&] { SSL_CTX_load_verify_locations_nid_postfix(Context(&ctx), reinterpret_cast<const char*>(1), nullptr); });
+    RequireThrows([&] { SSL_CTX_load_verify_locations_nid_postfix(Context(&ctx), nullptr, reinterpret_cast<const char*>(1)); });
+}
+
 static void TestSetQuietShutdown() {
     TestCtxInternal internal {};
     TestCtx ctx {};
@@ -106,6 +126,7 @@ static void TestSetPasswordUserdata() {
 int main() {
     TestGetVerifyMode();
     TestGetCertStore();
+    TestLoadVerifyLocations();
     TestSetQuietShutdown();
     TestSetPasswordCallback();
     TestSetPasswordUserdata();
