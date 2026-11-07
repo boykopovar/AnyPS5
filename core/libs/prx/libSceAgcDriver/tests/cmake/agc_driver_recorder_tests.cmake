@@ -16,6 +16,8 @@ target_include_directories(agc_driver_recorder_tests PRIVATE
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
 )
 
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/Recorder.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
+
 target_link_libraries(agc_driver_recorder_tests PRIVATE
         libSceAgc
         libkernel
@@ -304,6 +306,12 @@ if(BUILD_TESTING)
     set_tests_properties(agc_storage_write_back PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "APS5_PIN_WAIT_MS=3000")
     if(WIN32)
         set_tests_properties(agc_storage_write_back PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_storage_write_back_scratch COMMAND agc_driver_recorder_tests --storage-write-back-only)
+    set_tests_properties(agc_storage_write_back_scratch PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "APS5_PIN_WAIT_MS=3000;APS5_NO_LINEAR_IMPORT_RETILE=1")
+    if(WIN32)
+        set_tests_properties(agc_storage_write_back_scratch PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_copied_direct_ordering COMMAND agc_driver_recorder_tests --copied-direct-only)
