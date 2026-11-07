@@ -301,6 +301,7 @@ if(BUILD_TESTING)
     add_test_executable(elf_reader_bounds_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfReaderBoundsTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp)
+    target_link_libraries(elf_reader_bounds_tests PRIVATE relinker_core)
     target_include_directories(elf_reader_bounds_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
@@ -651,8 +652,10 @@ if(BUILD_TESTING)
         add_test(NAME none_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_none_relocations.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_none_relocations COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker>)
-        set_tests_properties(guest_none_relocations PROPERTIES TIMEOUT 20)
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> plain)
+        add_test(NAME guest_none_relocations_sce COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_none_relocations.py $<TARGET_FILE:relinker> sce)
+        set_tests_properties(guest_none_relocations guest_none_relocations_sce PROPERTIES TIMEOUT 20)
         add_test(NAME interpreter_in_code COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_interpreter_in_code.py $<TARGET_FILE:relinker>)
         set_tests_properties(interpreter_in_code PROPERTIES TIMEOUT 20)

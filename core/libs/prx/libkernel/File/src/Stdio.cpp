@@ -175,12 +175,22 @@ static int NativeFchmod(int descriptor, int mode) {
     const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
     return path ? NativeChmod(*path, mode) : -1;
 }
+static bool PrepareSparseExtension(HANDLE handle, std::int64_t length) {
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(handle, &size)) return true;
+    if (length <= size.QuadPart) return true;
+    DWORD flags = 0;
+    if (!GetVolumeInformationByHandleW(handle, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0)) return true;
+    if ((flags & FILE_SUPPORTS_SPARSE_FILES) == 0) return true;
+    DWORD returned = 0;
+    return DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
+}
 static int TruncateThroughWriter(HANDLE handle, std::int64_t length) {
     const auto writer = ReOpenFile(handle, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
     if (writer == INVALID_HANDLE_VALUE) return WindowsOpenError_nid_no_patch(GetLastError());
     FILE_END_OF_FILE_INFO end{};
     end.EndOfFile.QuadPart = length;
-    const bool truncated = SetFileInformationByHandle(writer, FileEndOfFileInfo, &end, sizeof(end));
+    const bool truncated = PrepareSparseExtension(writer, length) && SetFileInformationByHandle(writer, FileEndOfFileInfo, &end, sizeof(end));
     const DWORD error = GetLastError();
     CloseHandle(writer);
     return truncated ? 0 : WindowsOpenError_nid_no_patch(error);
@@ -196,7 +206,7 @@ static int NativeFtruncate(int descriptor, std::int64_t length) {
     if (WindowsHandleOnlyAppends_nid_no_patch(WindowsHandleAccess_nid_no_patch(handle, descriptor, "ftruncate"))) return TruncateThroughWriter(handle, length);
     FILE_END_OF_FILE_INFO end{};
     end.EndOfFile.QuadPart = length;
-    if (::SetFileInformationByHandle(handle, FileEndOfFileInfo, &end, sizeof(end))) return 0;
+    if (PrepareSparseExtension(handle, length) && ::SetFileInformationByHandle(handle, FileEndOfFileInfo, &end, sizeof(end))) return 0;
     switch (::GetLastError()) {
         case ERROR_ACCESS_DENIED: return EACCES;
         case ERROR_DISK_FULL:
@@ -1021,6 +1031,21 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
 #endif
 }
 
+#ifdef __linux__
+static std::mutex g_flockTransitions;
+
+static bool HoldsSharedFlock(int descriptor) {
+    std::FILE* info = std::fopen(("/proc/self/fdinfo/" + std::to_string(descriptor)).c_str(), "re");
+    if (info == nullptr) throw std::runtime_error("flock: cannot read the lock state of fd=" + std::to_string(descriptor) + ", errno=" + std::to_string(errno));
+    char line[256];
+    bool shared = false;
+    while (std::fgets(line, sizeof(line), info) != nullptr)
+        if (std::strncmp(line, "lock:", 5) == 0 && std::strstr(line, " FLOCK ") != nullptr && std::strstr(line, " READ ") != nullptr) shared = true;
+    std::fclose(info);
+    return shared;
+}
+#endif
+
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
     if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EOPNOTSUPP);
@@ -1036,6 +1061,11 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 #endif
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
+#ifdef __linux__
+    std::unique_lock serial(g_flockTransitions, std::defer_lock);
+    if ((operation & 4) || type == 8) serial.lock();
+    const bool keepShared = type == 2 && (operation & 4) && HoldsSharedFlock(d);
+#endif
     if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         const auto error = ::GetLastError();
@@ -1043,7 +1073,13 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", error=" + std::to_string(error));
 #else
         const int error = errno;
-        if ((operation & 4) && error == EWOULDBLOCK) return PosixFailure(GUEST_EWOULDBLOCK);
+        if ((operation & 4) && error == EWOULDBLOCK) {
+#ifdef __linux__
+            if (keepShared && ::flock(d, LOCK_SH | LOCK_NB) != 0)
+                throw std::runtime_error(std::string(__func__) + ": cannot take back the shared lock the host dropped in a failed upgrade, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+#endif
+            return PosixFailure(GUEST_EWOULDBLOCK);
+        }
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(error));
 #endif
     }
