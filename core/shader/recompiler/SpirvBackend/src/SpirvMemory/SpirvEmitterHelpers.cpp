@@ -174,10 +174,6 @@ void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
         module.EmitExtension("SPV_KHR_physical_storage_buffer");
     }
-    if (program.Info().usesDma) {
-        module.EmitCapability(spv::CapabilityStorageBuffer8BitAccess);
-        module.EmitExtension("SPV_KHR_8bit_storage");
-    }
     module.AddMemoryModel(physical ? spv::AddressingModelPhysicalStorageBuffer64 : spv::AddressingModelLogical, spv::MemoryModelGLSL450);
 }
 
