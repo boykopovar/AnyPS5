@@ -137,6 +137,51 @@ bool ClobbersReadConst(IrOpcode opcode) {
     return address == AddressAccess::Write || address == AddressAccess::Atomic || opcode == IrOpcode::Barrier;
 }
 
+bool Immediate(const IrValue* value, std::uint32_t bits) {
+    return value->HasImmediate() && value->ImmediateU32() == bits;
+}
+
+IrValue* MaskedOperand(IrValue* value, IrOpcode opcode, std::uint32_t bits) {
+    if (value->Opcode() != opcode || value->ArgumentCount() != 2u || value->Flags<std::uint64_t>() != 0u) return nullptr;
+    IrValue* lhs = value->Argument(0)->Resolve();
+    IrValue* rhs = value->Argument(1)->Resolve();
+    if (Immediate(rhs, bits)) return lhs;
+    if (Immediate(lhs, bits)) return rhs;
+    return nullptr;
+}
+
+IrValue* BitsOf(IrValue* value) {
+    value = value->Resolve();
+    while ((value->Opcode() == IrOpcode::BitCastU32F32 || value->Opcode() == IrOpcode::BitCastF32U32) && value->ArgumentCount() == 1u && value->Flags<std::uint64_t>() == 0u) value = value->Argument(0)->Resolve();
+    return value;
+}
+
+IrValue* NanSource(IrValue* query) {
+    if (query->Opcode() != IrOpcode::UGreaterThan32 || query->ArgumentCount() != 2u || query->Flags<std::uint64_t>() != 0u || !Immediate(query->Argument(1)->Resolve(), 0x7f800000u)) return nullptr;
+    IrValue* source = MaskedOperand(query->Argument(0)->Resolve(), IrOpcode::BitwiseAnd32, 0x7fffffffu);
+    return source != nullptr ? BitsOf(source) : nullptr;
+}
+
+IrValue* NormalProductNanPredicate(IrValue* query) {
+    IrValue* repaired = NanSource(query);
+    if (repaired == nullptr || repaired->Opcode() != IrOpcode::SelectU32 || repaired->ArgumentCount() != 3u || repaired->Flags<std::uint64_t>() != 0u) return nullptr;
+    IrValue* predicate = repaired->Argument(0)->Resolve();
+    IrValue* source = NanSource(predicate);
+    if (source == nullptr) return nullptr;
+    IrValue* selected = BitsOf(repaired->Argument(1));
+    if (IrValue* quieted = MaskedOperand(selected, IrOpcode::BitwiseOr32, 0x00400000u)) selected = BitsOf(quieted);
+    if (selected != source) return nullptr;
+    IrValue* product = BitsOf(repaired->Argument(2));
+    if (product->Opcode() != IrOpcode::FPMul32 || product->ArgumentCount() != 2u || product->Flags<std::uint64_t>() != 0u) return nullptr;
+    for (std::size_t index = 0u; index < 2u; ++index) {
+        IrValue* factor = product->Argument(index)->Resolve();
+        if (factor->Type() != IrType::F32 || !factor->HasImmediate() || BitsOf(product->Argument(1u - index)) != source) continue;
+        const std::uint32_t exponent = factor->ImmediateU32() & 0x7f800000u;
+        if (exponent != 0u && exponent != 0x7f800000u) return predicate;
+    }
+    return nullptr;
+}
+
 struct Operand {
     const IrValue* value;
     IrType type;
@@ -290,6 +335,12 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
                 continue;
             }
             if (!Recomputable(inst->Opcode()) || inst->HasImmediate() || !inst->HasUses()) continue;
+            if (IrValue* predicate = NormalProductNanPredicate(inst)) {
+                inst->ReplaceAllUsesWith(predicate);
+                replacements.emplace(inst, predicate);
+                ++stats.replacedValues;
+                continue;
+            }
             ValueKey key{inst->Opcode(), inst->Type(), inst->Flags<std::uint64_t>(), inst->Opcode() == IrOpcode::ReadConst ? epoch : 0u};
             key.operandCount = inst->ArgumentCount();
             if (key.operandCount > key.operands.size()) continue;
