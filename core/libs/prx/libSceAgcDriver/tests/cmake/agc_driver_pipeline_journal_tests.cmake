@@ -1,6 +1,7 @@
 target_include_directories(agc_driver_pipeline_journal_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(agc_driver_pipeline_journal_tests PRIVATE ${CMAKE_DL_LIBS})
 if(BUILD_TESTING)
+    set_tests_properties(agc_driver_pipeline_journal PROPERTIES TIMEOUT 240)
     add_test(NAME agc_driver_pipeline_journal_undecodable_module COMMAND agc_driver_pipeline_journal_tests --undecodable-module)
     set_tests_properties(agc_driver_pipeline_journal_undecodable_module PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
