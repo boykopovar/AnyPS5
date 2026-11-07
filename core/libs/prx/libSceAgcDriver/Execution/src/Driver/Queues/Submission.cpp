@@ -135,10 +135,22 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
     submission.commands.clear();
     submission.conditionalEnds.clear();
     std::size_t budget = std::size_t{1} << 26u;
-    copySegment(submission, guest, words, budget);
+    copySegment(submission, guest, words, budget, 0);
 }
 
-bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget) {
+bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth) {
+    require(depth < MaximumSegmentDepth, "command buffer jumps nest too deeply (a jump loop?)");
+    for (;;) {
+        const std::uint32_t* chained = nullptr;
+        std::size_t chainedWords = 0;
+        if (copyLink(submission, guest, words, budget, depth, chained, chainedWords)) return true;
+        if (chained == nullptr) return false;
+        guest = chained;
+        words = chainedWords;
+    }
+}
+
+bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords) {
     require(words <= budget, "command buffer jumps exceed the copy limit (a jump loop?)");
     budget -= words;
     std::vector<std::pair<std::size_t, std::size_t>> guarded;
@@ -174,7 +186,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
             const std::size_t targetWords = guest[cursor + 10] & 0xfffffu;
             if (targetWords != 0) {
                 GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
-                if (copySegment(submission, target, targetWords, budget)) {
+                if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                     require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                     return true;
                 }
@@ -193,7 +205,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                 require(!chain, "predicated command buffer chains are not implemented");
                 const auto start = submission.commands.size();
                 submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
-                require(!copySegment(submission, target, targetWords, budget), "a REWIND inside a predicated command buffer is not implemented");
+                require(!copySegment(submission, target, targetWords, budget, depth + 1), "a REWIND inside a predicated command buffer is not implemented");
                 for (auto inner = start + count; inner < submission.commands.size(); inner += Pm4::PacketWords(submission.commands[inner])) {
                     const auto innerHeader = submission.commands[inner];
                     require(innerHeader != FlipPacketHeader && innerHeader != RenderingWaitPacketHeader, "flips and rendering waits in predicated command buffers are not implemented");
@@ -202,11 +214,15 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                 cursor += count;
                 continue;
             }
-            if (copySegment(submission, target, targetWords, budget)) {
+            if (chain) {
+                chained = target;
+                chainedWords = targetWords;
+                return false;
+            }
+            if (copySegment(submission, target, targetWords, budget, depth + 1)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                 return true;
             }
-            if (chain) return false;
             cursor += count;
             continue;
         }
