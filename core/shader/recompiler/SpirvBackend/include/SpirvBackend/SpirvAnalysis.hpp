@@ -19,6 +19,7 @@ struct SpirvRequirements {
     bool imageGatherExtended = false;
     bool functionLds = false;
     bool ldsLock = false;
+    bool orderedAppend = false;
     bool ldsBufferInt64Atomics = false;
     std::uint32_t functionLdsDwords = 0;
     std::unordered_map<const IrValue*, std::uint32_t> functionLdsAddresses;

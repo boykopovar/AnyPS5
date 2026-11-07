@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
+#include "RuntimeAbi.hpp"
 #include <cstddef>
 #include <vector>
 #include <optional>
@@ -13,6 +14,9 @@
 namespace AgcDriver::Pm4 {
 
 constexpr std::size_t GdsBytes = 0x10000;
+constexpr std::size_t GdsOrderedTurnOffset = GdsBytes;
+constexpr std::size_t GdsOrderedTimeoutsOffset = GdsBytes + sizeof(std::uint32_t);
+constexpr std::size_t GdsBindingBytes = GdsBytes + ShaderRecompiler::RuntimeAbi::GdsMetadataDwords * sizeof(std::uint32_t);
 std::uint64_t GdsAddress();
 void RequestImportableGds(bool requested);
 bool ImportableGdsRequested();

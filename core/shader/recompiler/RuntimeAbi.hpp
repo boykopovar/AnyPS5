@@ -18,6 +18,7 @@ inline constexpr std::uint32_t FirstImageBinding = 1u;
 inline constexpr std::uint32_t FirstComparisonImageBinding = 22u;
 inline constexpr std::uint32_t FirstStorageImageBinding = 29u;
 inline constexpr std::uint32_t ImageBindingCount = 56u;
+inline constexpr std::uint32_t GdsMetadataDwords = 2u;
 
 enum class Binding : std::uint32_t {
     Buffers = 0u,
