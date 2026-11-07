@@ -506,15 +506,15 @@ int APS5_VABI sceAmprCommandBufferDestructor(Apr::CommandBufferObject* buffer) {
 }
 
 void* APS5_VABI sceAmprCommandBufferGetBufferBaseAddress(const Apr::CommandBufferObject* buffer) {
-    return buffer->base;
+    return buffer != nullptr ? buffer->base : nullptr;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetCurrentOffset(const Apr::CommandBufferObject* buffer) {
-    return buffer->offset;
+    return buffer != nullptr ? buffer->offset : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferObject* buffer) {
-    return buffer->numCommands;
+    return buffer != nullptr ? buffer->numCommands : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* buffer) {
@@ -522,7 +522,7 @@ uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* b
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* buffer) {
-    return static_cast<uint32_t>(buffer->type);
+    return buffer != nullptr ? static_cast<uint32_t>(buffer->type) : 0;
 }
 
 int APS5_VABI sceAmprCommandBufferNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords) {
