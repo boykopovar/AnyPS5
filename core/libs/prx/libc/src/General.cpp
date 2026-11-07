@@ -928,6 +928,7 @@ extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
 
 extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
     if (buffer && size == 0) { errno = 22; return nullptr; }
+    if (buffer && size == 1) { errno = 34; return nullptr; }
     try {
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
