@@ -5,23 +5,16 @@
 #include <cstdio>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libSceAvPlayer/include/LogCallback.hpp"
 
 extern "C" {
 
 int APS5_VABI sceAvPlayerPrintf(const char* format, ...) {
     if (!format) return -1;
-#ifdef _WIN32
-    __builtin_sysv_va_list arguments;
-    __builtin_sysv_va_start(arguments, format);
-    const int result = SceAvPlayerWriteLog(format, reinterpret_cast<VaList*>(arguments));
-    __builtin_sysv_va_end(arguments);
-#else
-    std::va_list arguments;
-    va_start(arguments, format);
-    const int result = SceAvPlayerWriteLog(format, reinterpret_cast<VaList*>(arguments));
-    va_end(arguments);
-#endif
+    APS5_VA_BEGIN(format);
+    const int result = SceAvPlayerWriteLog(format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
     return result;
 }
 

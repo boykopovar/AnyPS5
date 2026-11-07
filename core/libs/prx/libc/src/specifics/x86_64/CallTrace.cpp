@@ -1,4 +1,4 @@
-#if defined(_WIN32) || defined(__linux__) || (defined(__APPLE__) && defined(__x86_64__))
+#if !defined(ANYPS5_GUEST_LIFTED) && (defined(_WIN32) || defined(__linux__) || (defined(__APPLE__) && defined(__x86_64__)))
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__APPLE__)

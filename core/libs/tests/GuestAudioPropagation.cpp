@@ -64,6 +64,7 @@ AudioPropagation::Attribute Attribute(const void* value, std::size_t size) {
     return attribute;
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 struct ReportProbe {
     std::uint32_t calls = 0;
     bool fieldsMatch = false;
@@ -165,6 +166,7 @@ void APS5_VABI BlockingReport(const AudioPropagation::ReportInfo*, void* userDat
     probe.entered.store(true, std::memory_order_release);
     while (!probe.release.load(std::memory_order_acquire)) std::this_thread::yield();
 }
+#endif
 
 }
 
@@ -562,6 +564,7 @@ int main() {
 
     Require(sceAudioPropagationSystemLock(0) == AudioPropagation::ErrorInvalidHandle, "system lock invalid handle");
 
+#ifndef ANYPS5_GUEST_LIFTED
     ReportProbe probe{};
     AudioPropagation::ReportRegistration* registration = nullptr;
     Require(sceAudioPropagationReportRegisterHandler(2, CaptureReport, &probe, &registration) == -4, "invalid report category");
@@ -647,6 +650,9 @@ int main() {
     std::uint32_t unreturnedRegistrationCalls = 0;
     Require(sceAudioPropagationReportRegisterHandler(1, CountReport, &unreturnedRegistrationCalls, nullptr) == 0, "registration without output pointer failed");
     Require(sceAudioPropagationReportApi(1, 0, 0, 0, "unreturned-registration", "") == 0 && unreturnedRegistrationCalls == 1, "registration without output pointer was not retained");
+#else
+    RequireThrows<std::runtime_error>([] { sceAudioPropagationReportApi(0, 0, 0, 0, "lifted", ""); }, "a host report call in a lifted build was not rejected");
+#endif
 
     Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
     for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {

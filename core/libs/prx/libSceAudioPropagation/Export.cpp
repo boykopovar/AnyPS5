@@ -182,6 +182,10 @@ void requireNoPropagation(bool none, const char* function) {
 
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+[[noreturn]] void LiftedReportRejectHostArguments();
+#endif
+
 extern "C" {
 
 std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const SystemOptions* options, AudioPropagationSystemMemory* outMemory) {
@@ -515,6 +519,9 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
 int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagationHandle handle, std::int32_t result, std::int32_t operation, const char* function, const char* format, ...) {
     require(category < 2, __func__);
 
+#ifdef ANYPS5_GUEST_LIFTED
+    LiftedReportRejectHostArguments();
+#else
 #ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, format);
@@ -565,6 +572,7 @@ int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagat
     va_end(arguments);
 #endif
     return 0;
+#endif
 }
 
 int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uint32_t count) {
