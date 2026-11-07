@@ -27,7 +27,7 @@ int APS5_VABI hb_icu_script_to_script_nid_postfix();
 int APS5_VABI hb_ot_layout_language_find_feature_nid_postfix();
 int APS5_VABI hb_ot_layout_script_get_language_tags_nid_postfix();
 int APS5_VABI hb_ot_layout_table_get_script_tags_nid_postfix();
-int APS5_VABI hb_ot_tag_to_script_nid_postfix();
+std::uint32_t APS5_VABI hb_ot_tag_to_script_nid_postfix(std::uint32_t tag);
 int APS5_VABI hb_shape_nid_postfix();
 
 }
