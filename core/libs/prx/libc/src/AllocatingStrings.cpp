@@ -31,13 +31,13 @@ GuestWriteHook_nid_no_patch LibcGetGuestWriteHook_nid_no_patch() {
 }
 
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
-    if (!source) { errno = 22; return nullptr; }
+    if (!source && limit != 0) { errno = 22; return nullptr; }
     std::size_t length = 0;
     while (length < limit && source[length] != '\0') ++length;
     try {
         auto* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(length + 1));
         if (!result) { errno = 12; return nullptr; }
-        std::memcpy(result, source, length);
+        if (length > 0) { std::memcpy(result, source, length); }
         result[length] = '\0';
         return result;
     } catch (const std::bad_alloc&) {
