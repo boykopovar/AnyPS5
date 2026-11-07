@@ -84,6 +84,8 @@ void OptParams() {
     using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
                                          sceUltWaitingQueueResourcePoolOptParamInitialize, sceUltUlthreadOptParamInitialize, sceUltReaderWriterLockOptParamInitialize,
+                                         _sceUltSemaphoreOptParamInitialize, _sceUltQueueOptParamInitialize, _sceUltQueueDataResourcePoolOptParamInitialize,
+                                         _sceUltWaitingQueueResourcePoolOptParamInitialize, _sceUltUlthreadOptParamInitialize, _sceUltReaderWriterLockOptParamInitialize,
                                          sceUltConditionVariableOptParamInitialize, _sceUltConditionVariableOptParamInitialize}) {
         alignas(UltOptParam) std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
@@ -236,6 +238,31 @@ void ReaderWriterFinalize() {
     CHECK(other == State);
     CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == State);
     CHECK(sceUltInitialize() == Ok);
+}
+
+void ReaderWriterUnderscored() {
+    Object pool{};
+    Object rwlock{};
+    std::memset(&rwlock, 0x5a, sizeof(rwlock));
+    alignas(UltOptParam) std::uint8_t optBytes[128];
+    auto* optParam = reinterpret_cast<UltOptParam*>(optBytes);
+    std::uint8_t workArea[2048];
+    CHECK(_sceUltReaderWriterLockOptParamInitialize(optParam, 0) == Ok);
+    CHECK(_sceUltReaderWriterLockCreate(nullptr, "underscored", nullptr, optParam, 0) == Null);
+    CHECK(_sceUltReaderWriterLockCreate(&rwlock, "underscored", &pool, optParam, 0) == Invalid);
+    for (const auto byte : rwlock.bytes) CHECK(byte == 0x5a);
+    CHECK(_sceUltWaitingQueueResourcePoolCreate(&pool, "pool", 2, 2, workArea, nullptr) == Ok);
+    CHECK(_sceUltReaderWriterLockCreate(&rwlock, "underscored", &pool, optParam, 0) == Ok);
+    for (const auto byte : rwlock.bytes) CHECK(byte == 0);
+    CHECK(_sceUltReaderWriterLockCreate(&rwlock, "underscored", &pool, optParam, 0) == State);
+    CHECK(sceUltReaderWriterLockLockRead(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockTryLockWrite(&rwlock) == Busy);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Busy);
+    CHECK(sceUltReaderWriterLockUnlockRead(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockLockWrite(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockUnlockWrite(&rwlock) == Ok);
+    CHECK(sceUltReaderWriterLockDestroy(&rwlock) == Ok);
+    CHECK(sceUltWaitingQueueResourcePoolDestroy(&pool) == Ok);
 }
 
 struct alignas(8) UlthreadObject {
@@ -703,6 +730,7 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "rwlock-writer") == 0) ReaderWriterWriter();
     else if (std::strcmp(argv[1], "rwlock-pool") == 0) ReaderWriterPool();
     else if (std::strcmp(argv[1], "rwlock-finalize") == 0) ReaderWriterFinalize();
+    else if (std::strcmp(argv[1], "rwlock-underscored") == 0) ReaderWriterUnderscored();
     else if (std::strcmp(argv[1], "ulthreads") == 0) Ulthreads();
     else if (std::strcmp(argv[1], "get-info") == 0) GetInfoTests();
     else if (std::strcmp(argv[1], "queue-waiters") == 0) QueueWaiters();

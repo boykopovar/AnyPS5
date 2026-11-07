@@ -165,6 +165,7 @@ int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec) {
 }
 
 void APS5_VABI sceNpGetSdkVersion(char* version) {
+    std::memset(version, 0, 8);
     SceKernelSystemSwVersion swVersion{};
     swVersion.size = sizeof(swVersion);
     sceKernelGetSystemSwVersion_nid_postfix(&swVersion);

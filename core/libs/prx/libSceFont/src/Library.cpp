@@ -413,6 +413,7 @@ int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary library, void** buffer
 }
 
 int APS5_VABI sceFontSupportExternalFonts(FontLibrary library, std::uint32_t fontMax, std::uint32_t formats) {
+    if (fontMax > (UINT32_MAX >> 6u)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SupportFonts(library, &FontLibNative::external_fonts_ctx, fontMax, (fontMax << 6) | 0x20u, formats);
 }
 

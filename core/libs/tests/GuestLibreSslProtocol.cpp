@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <initializer_list>
 #include <source_location>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -34,8 +35,8 @@ void Require(bool condition, std::source_location location = std::source_locatio
     }
 }
 
-template<typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
+template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::invalid_argument&) { return; } catch (const std::exception&) {}
     Require(false, location);
 }
 
@@ -199,11 +200,11 @@ void RunReported(SelectProtocol select) {
     unsigned char* output = nullptr;
     unsigned char length = 0;
     const unsigned char list[]{2, 'h', '2'};
-    RequireThrows([&] { select(nullptr, &length, list, 3, list, 3); });
-    RequireThrows([&] { select(&output, nullptr, list, 3, list, 3); });
-    RequireThrows([&] { select(&output, &length, nullptr, 3, list, 3); });
-    RequireThrows([&] { select(&output, &length, list, 3, nullptr, 3); });
-    RequireThrows([&] { select(&output, &length, list, 3, nullptr, 0); });
+    RequireInvalidArgument([&] { select(nullptr, &length, list, 3, list, 3); });
+    RequireInvalidArgument([&] { select(&output, nullptr, list, 3, list, 3); });
+    RequireInvalidArgument([&] { select(&output, &length, nullptr, 3, list, 3); });
+    RequireInvalidArgument([&] { select(&output, &length, list, 3, nullptr, 3); });
+    RequireInvalidArgument([&] { select(&output, &length, list, 3, nullptr, 0); });
     Require(output == nullptr && length == 0);
 }
 

@@ -16,6 +16,15 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -655,11 +664,15 @@ int RunAsPs4Process(const char* program) {
         file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
     }
 #ifdef _WIN32
-    const std::string command = "\"cd /d \"" + directory.string() + "\" && \"" + program + "\" ps4-process\"";
+    static_cast<void>(program);
+    std::wstring executable(32768, L'\0');
+    executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+    const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-process\"";
+    const int status = _wsystem(command.c_str());
 #else
     const std::string command = "cd \"" + directory.string() + "\" && \"" + program + "\" ps4-process";
-#endif
     const int status = std::system(command.c_str());
+#endif
     std::filesystem::remove_all(directory);
     return status;
 }

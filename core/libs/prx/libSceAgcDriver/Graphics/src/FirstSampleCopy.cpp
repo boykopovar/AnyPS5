@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleFloat_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/FirstSampleSint_spv.h"
@@ -199,7 +200,7 @@ void FirstSampleCopy::release() noexcept {
     if (sampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) MemoryAccounting::Free(context, memory);
     pipeline = VK_NULL_HANDLE;
     fragment = vertex = VK_NULL_HANDLE;
     framebuffer = VK_NULL_HANDLE;

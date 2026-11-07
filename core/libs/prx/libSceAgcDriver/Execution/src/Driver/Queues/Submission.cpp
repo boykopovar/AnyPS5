@@ -263,7 +263,7 @@ void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
     changed.notify_all();
 }
 
-void Driver::holdFlipBehindWorker(const Submission& submission) {
+void Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
     if (submission.queue != 0 || onWorkerThread()) return;
     bool candidate = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
@@ -281,11 +281,51 @@ void Driver::holdFlipBehindWorker(const Submission& submission) {
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
     changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
     flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    if (cpuFlip || failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) != 0) return;
+    flipHolders.fetch_add(1, std::memory_order_acq_rel);
+    changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkOpen.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
+    flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    if (failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipWorkOpen.load(std::memory_order_acquire) != 0) return;
+    const auto workSerial = flipWorkSerial.load(std::memory_order_acquire);
+    lock.unlock();
+    waitFlipWork(workSerial);
+}
+
+void Driver::waitFlipWork(std::uint64_t workSerial) {
+    if (workSerial == 0) return;
+    auto localDevice = device.Load();
+    if (localDevice == nullptr) return;
+    if (localDevice->CanWaitUnlocked()) {
+        try {
+            localDevice->WaitRecorded(workSerial);
+        } catch (...) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            localDevice.reset();
+            throw;
+        }
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        localDevice->ReapRecorded(workSerial);
+        localDevice.reset();
+        return;
+    }
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    localDevice->WaitIdle();
+    localDevice.reset();
 }
 
 void Driver::releaseFlipHold() {
     std::lock_guard lock(mutex);
     flipsAhead.fetch_sub(1, std::memory_order_acq_rel);
+    if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
+}
+
+void Driver::finishFlipWork(std::uint64_t workSerial) {
+    std::lock_guard lock(mutex);
+    if (workSerial > flipWorkSerial.load(std::memory_order_relaxed)) flipWorkSerial.store(workSerial, std::memory_order_release);
+    flipWorkOpen.fetch_sub(1, std::memory_order_acq_rel);
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
@@ -470,7 +510,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     readRegisterLists(submission);
     if (APS5_ENABLE_TIMING_LOG) submission.validatedAt = std::chrono::steady_clock::now();
     waitForFlipRoom(submission);
-    holdFlipBehindWorker(submission);
+    holdFlipBehindWorker(submission, cpuFlip);
     AwaitRegistrationPreparation();
     if (LibraryPrebuildsWaiting()) PrioritizeLibraryPrebuilds(BoundGraphicsPrograms(submission));
     if (APS5_ENABLE_TIMING_LOG) submission.roomReadyAt = std::chrono::steady_clock::now();
@@ -498,11 +538,12 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
             Graphics::NoteHostImportFrame();
-            AgcDriverDeliverEopInterrupt(0);
             return;
         }
         submission.shaders = shaders;
         submission.serial = accepted + 1;
+        if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu queue=0x%x dwords=%zu at %p%s\n", TraceMs(), static_cast<unsigned long long>(submission.serial), queue, submission.commands.size(),
+                                static_cast<const void*>(descriptor.addr), cpuFlip ? " (cpu flip)" : "");
 
         submission.received = ++eventSerial;
         const auto now = std::chrono::steady_clock::now();
@@ -518,6 +559,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         if (queue == 0 && !submission.flips.empty()) {
             submission.holdsFlip = true;
             flipsAhead.fetch_add(1, std::memory_order_acq_rel);
+            flipWorkOpen.fetch_add(1, std::memory_order_acq_rel);
         }
         if (!submission.flips.empty()) ++flipSubmissionsOfThread();
         enqueue(std::move(submission));
@@ -559,6 +601,8 @@ void Driver::SuspendPoint() {
     Submission boundary{};
     boundary.serial = accepted + 1;
     boundary.suspend = true;
+    static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu suspend point\n", TraceMs(), static_cast<unsigned long long>(boundary.serial));
 
     boundary.queue = 0;
     boundary.receivedAt = receivedAt;

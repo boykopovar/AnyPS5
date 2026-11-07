@@ -27,6 +27,8 @@ constexpr int HandleNotFound = static_cast<int>(0x8055290Du);
 constexpr int ServicePushEventFilterNotFound = static_cast<int>(0x8055290Eu);
 constexpr int ServicePushEventCallbackNotFound = static_cast<int>(0x8055290Fu);
 constexpr int SignedInUserNotFound = static_cast<int>(0x80552910u);
+constexpr int HttpInvalidId = static_cast<int>(0x80431100u);
+constexpr int HttpInvalidResponse = static_cast<int>(0x80432060u);
 
 constexpr int MethodGet = 0;
 constexpr int MethodPost = 1;
@@ -178,6 +180,49 @@ void TestRequests() {
     Require(sceNpWebApiSendRequest(second, nullptr, 0) == UserContextNotFound, "request of a deleted user context");
     Require(sceNpWebApiDeleteRequest(second) == UserContextNotFound, "delete a request of a deleted user context");
     Require(sceNpWebApiTerminate(context) == 0, "terminate the request library context");
+}
+
+void TestResponses() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for responses");
+    std::int64_t request = 0;
+    std::int64_t aborted = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &request) == 0, "request for responses");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &aborted) == 0, "request to abort");
+    Require(sceNpWebApiSendRequest(request, nullptr, 0) == NotSignedIn, "the request is never sent");
+    Require(sceNpWebApiAbortRequest(aborted) == 0, "abort the second request");
+
+    std::array<char, 8> data{};
+    data.fill('x');
+    Require(sceNpWebApiReadData(request, nullptr, data.size()) == InvalidArgument, "read without a buffer");
+    Require(sceNpWebApiReadData(request, data.data(), 0) == InvalidArgument, "read of zero bytes");
+    Require(sceNpWebApiReadData(-1, nullptr, 0) == InvalidArgument, "the buffer is checked before the request");
+    Require(sceNpWebApiReadData(-1, data.data(), data.size()) == LibContextNotFound, "read request -1");
+    Require(sceNpWebApiReadData(static_cast<std::int64_t>(user + 1) << 32 | 1, data.data(), data.size()) == UserContextNotFound, "read a request of an unknown user context");
+    Require(sceNpWebApiReadData(request + 0x10000, data.data(), data.size()) == RequestNotFound, "read an unknown request");
+    Require(sceNpWebApiReadData(request, data.data(), data.size()) == HttpInvalidId, "read a request that was never sent");
+    Require(sceNpWebApiReadData(aborted, data.data(), data.size()) == Aborted, "read an aborted request");
+    Require(data[0] == 'x' && data[7] == 'x', "a failed read leaves the buffer alone");
+
+    std::array<char, 8> value{};
+    value.fill('x');
+    std::size_t length = 123;
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, nullptr, value.data(), value.size()) == InvalidArgument, "header value without a field name");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", nullptr, value.size()) == InvalidArgument, "header value without a buffer");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", value.data(), 0) == InvalidArgument, "header value with an empty buffer");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, nullptr, &length) == InvalidArgument, "header length without a field name");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, "Content-Type", nullptr) == InvalidArgument, "header length without an output");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(-1, "Content-Type", value.data(), value.size()) == LibContextNotFound, "header value of request -1");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request + 0x10000, "Content-Type", &length) == RequestNotFound, "header length of an unknown request");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", value.data(), value.size()) == HttpInvalidResponse, "header value of a request that was never sent");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, "Content-Type", &length) == HttpInvalidResponse, "header length of a request that was never sent");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(aborted, "Content-Type", &length) == HttpInvalidResponse, "header length of an aborted request");
+    Require(value[0] == 'x' && value[7] == 'x' && length == 123, "a failed header query leaves the outputs alone");
+
+    Require(sceNpWebApiDeleteRequest(request) == 0 && sceNpWebApiDeleteRequest(aborted) == 0, "delete the response requests");
+    Require(sceNpWebApiReadData(request, data.data(), data.size()) == RequestNotFound, "read a deleted request");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the response library context");
 }
 
 void TestPushEventCallbacks() {
@@ -381,6 +426,115 @@ void TestRequestTimeouts() {
     sceNpWebApiCheckTimeout();
 }
 
+void TestMultipartParts() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for multipart parts");
+
+    std::int64_t multipartRequest = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &multipartRequest) == 0, "create multipart request");
+
+    const std::int64_t unknownUser = static_cast<std::int64_t>(user + 1) << 32 | 1;
+
+    int index = 0;
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, nullptr, &index) == InvalidArgument, "null multipart parameter");
+    Require(sceNpWebApiAddMultipartPart(-1, nullptr, &index) == InvalidArgument, "null multipart parameter before lookup");
+    Require(index == 0, "failed add part leaves index unmodified");
+
+    const NpWebApiHttpHeader headers[2] = {{"Header1", "Val1"}, {"Content-Length", "100"}};
+    const NpWebApiMultipartPartParameter validParam{headers, 2, 10};
+
+    Require(sceNpWebApiAddMultipartPart(-1, &validParam, &index) == LibContextNotFound, "add part to request -1");
+    Require(sceNpWebApiAddMultipartPart(unknownUser, &validParam, &index) == UserContextNotFound, "add part to unknown user context");
+    Require(sceNpWebApiAddMultipartPart(multipartRequest + 0x10000, &validParam, &index) == RequestNotFound, "add part to unknown request");
+    const NpWebApiMultipartPartParameter nullHeaders{nullptr, 1, 10};
+    Require(sceNpWebApiAddMultipartPart(-1, &nullHeaders, &index) == LibContextNotFound, "null headers before library lookup");
+    Require(sceNpWebApiAddMultipartPart(unknownUser, &nullHeaders, &index) == UserContextNotFound, "null headers before user lookup");
+    Require(sceNpWebApiAddMultipartPart(multipartRequest + 0x10000, &nullHeaders, &index) == RequestNotFound, "null headers before request lookup");
+
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, &index) == 0, "add first multipart part");
+    Require(index == 1, "first part index is 1");
+
+    int index2 = 0;
+    const NpWebApiMultipartPartParameter paramNoHeaders{nullptr, 0, 20};
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &paramNoHeaders, &index2) == 0, "add second multipart part");
+    Require(index2 == 2, "second part index is 2");
+
+    const NpWebApiMultipartPartParameter paramNoIndex{nullptr, 0, 5};
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &paramNoIndex, nullptr) == 0, "add part with null index pointer");
+
+    Require(sceNpWebApiSendMultipartRequest(multipartRequest, 0, body, sizeof(body)) == InvalidArgument, "partIndex 0 is invalid");
+    Require(sceNpWebApiSendMultipartRequest(multipartRequest, -1, body, sizeof(body)) == InvalidArgument, "partIndex -1 is invalid");
+    Require(sceNpWebApiSendMultipartRequest(-1, 0, body, sizeof(body)) == InvalidArgument, "partIndex 0 checked before lookup");
+    Require(sceNpWebApiSendMultipartRequest(multipartRequest, 1, nullptr, sizeof(body)) == InvalidArgument, "null data is invalid");
+    Require(sceNpWebApiSendMultipartRequest(-1, 1, nullptr, sizeof(body)) == InvalidArgument, "null data checked before lookup");
+    Require(sceNpWebApiSendMultipartRequest(multipartRequest, 1, body, 0) == InvalidArgument, "dataSize 0 is invalid");
+    Require(sceNpWebApiSendMultipartRequest(-1, 1, body, 0) == InvalidArgument, "dataSize 0 checked before lookup");
+
+    Require(sceNpWebApiSendMultipartRequest2(multipartRequest, 0, body, sizeof(body), nullptr) == InvalidArgument, "send2 partIndex 0");
+    Require(sceNpWebApiSendMultipartRequest2(multipartRequest, 1, nullptr, sizeof(body), nullptr) == InvalidArgument, "send2 null data");
+    Require(sceNpWebApiSendMultipartRequest2(multipartRequest, 1, body, 0, nullptr) == InvalidArgument, "send2 dataSize 0");
+
+    Require(sceNpWebApiSendMultipartRequest(-1, 1, body, sizeof(body)) == LibContextNotFound, "send multipart request -1");
+    Require(sceNpWebApiSendMultipartRequest(unknownUser, 1, body, sizeof(body)) == UserContextNotFound, "send multipart unknown user");
+    Require(sceNpWebApiSendMultipartRequest(multipartRequest + 0x10000, 1, body, sizeof(body)) == RequestNotFound, "send multipart unknown request");
+    Require(sceNpWebApiSendMultipartRequest2(-1, 1, body, sizeof(body), nullptr) == LibContextNotFound, "send2 multipart request -1");
+
+    std::int64_t emptyMultipart = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &emptyMultipart) == 0, "create empty multipart request");
+    Require(sceNpWebApiSendMultipartRequest(emptyMultipart, 1, body, sizeof(body)) == InvalidArgument, "partIndex out of range on empty multipart request");
+
+    Require(sceNpWebApiSendMultipartRequest(multipartRequest, 4, body, sizeof(body)) == InvalidArgument, "partIndex out of range on multipart request");
+
+    std::int64_t chunkReq = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &chunkReq) == 0, "create chunked multipart request");
+    int cIndex1 = 0;
+    int cIndex2 = 0;
+    const NpWebApiMultipartPartParameter chunkParam1{nullptr, 0, 10};
+    const NpWebApiMultipartPartParameter chunkParam2{nullptr, 0, 20};
+    Require(sceNpWebApiAddMultipartPart(chunkReq, &chunkParam1, &cIndex1) == 0, "add chunk part 1");
+    Require(sceNpWebApiAddMultipartPart(chunkReq, &chunkParam2, &cIndex2) == 0, "add chunk part 2");
+    Require(cIndex1 == 1 && cIndex2 == 2, "chunk part indices");
+
+    Require(sceNpWebApiSendMultipartRequest(chunkReq, 1, "1234", 4) == 0, "partial send part 1");
+    Require(sceNpWebApiSendMultipartRequest(chunkReq, 1, "567890", 6) == 0, "complete part 1");
+
+    std::array<char, 32> respInfo{};
+    respInfo.fill('z');
+    Require(sceNpWebApiSendMultipartRequest2(chunkReq, 2, "0123456789", 10, respInfo.data()) == 0, "partial send part 2 with send2");
+    Require(respInfo[0] == 'z' && respInfo[31] == 'z', "response information untouched on partial send");
+
+    Require(sceNpWebApiSendMultipartRequest2(chunkReq, 2, "0123456789", 10, respInfo.data()) == NotSignedIn, "final send completes and returns NotSignedIn");
+    Require(respInfo[0] == 'z' && respInfo[31] == 'z', "response information untouched on completed send");
+
+    std::int64_t abortReq = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &abortReq) == 0, "create abort multipart request");
+    int aIndex = 0;
+    const NpWebApiMultipartPartParameter abortParam{nullptr, 0, 10};
+    Require(sceNpWebApiAddMultipartPart(abortReq, &abortParam, &aIndex) == 0, "add abort part");
+    Require(sceNpWebApiSendMultipartRequest(abortReq, 1, "12345", 5) == 0, "partial send before abort");
+    Require(sceNpWebApiAbortRequest(abortReq) == 0, "abort multipart request");
+    Require(sceNpWebApiSendMultipartRequest(abortReq, 1, "67890", 5) == Aborted, "completed aborted multipart request returns Aborted");
+
+    std::int64_t timedReq = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &timedReq) == 0, "create timed multipart request");
+    int tIndex = 0;
+    const NpWebApiMultipartPartParameter timedParam{nullptr, 0, 10};
+    Require(sceNpWebApiAddMultipartPart(timedReq, &timedParam, &tIndex) == 0, "add timed part");
+    Require(sceNpWebApiSetRequestTimeout(timedReq, 1) == 0, "set timeout on multipart request");
+    Require(sceNpWebApiSendMultipartRequest(timedReq, 1, "12345", 5) == 0, "partial send arms timeout timer");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    sceNpWebApiCheckTimeout();
+    Require(sceNpWebApiSendMultipartRequest(timedReq, 1, "67890", 5) == NotSignedIn, "timed out multipart request returns NotSignedIn");
+
+    Require(sceNpWebApiDeleteRequest(multipartRequest) == 0, "delete multipart request");
+    Require(sceNpWebApiDeleteRequest(emptyMultipart) == 0, "delete empty multipart request");
+    Require(sceNpWebApiDeleteRequest(chunkReq) == 0, "delete chunked multipart request");
+    Require(sceNpWebApiDeleteRequest(abortReq) == 0, "delete abort multipart request");
+    Require(sceNpWebApiDeleteRequest(timedReq) == 0, "delete timed multipart request");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
+}
+
 }
 
 int main() {
@@ -389,11 +543,13 @@ int main() {
     TestLibraryContexts();
     TestUserContexts();
     TestRequests();
+    TestResponses();
     TestPushEventCallbacks();
     TestOlderSdks();
     TestHandleOperations();
     TestRequestOptions();
     TestMultipartRequests();
     TestRequestTimeouts();
+    TestMultipartParts();
     return 0;
 }
