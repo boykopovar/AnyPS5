@@ -767,6 +767,166 @@ void TestIntegersAndConstructors() {
     { CString value; _ZN3WTF7CStringC2EPKcm(&value, nullptr, 0); Check(!value.buffer); }
 }
 
+std::u16string Units(const String& value) {
+    std::u16string result;
+    if (!value.impl) return result;
+    for (unsigned i = 0; i < value.impl->length; ++i) {
+        if (value.impl->hashAndFlags & 4) result.push_back(static_cast<const unsigned char*>(value.impl->data)[i]);
+        else result.push_back(static_cast<const char16_t*>(value.impl->data)[i]);
+    }
+    return result;
+}
+
+void TestFoldQuoteMarks() {
+    const auto fold = &_ZN7WebCore14foldQuoteMarksERKN3WTF6StringE;
+    struct Mark { char16_t code; char16_t folded; };
+    const Mark marks[] = {
+        {0x00AB, u'"'}, {0x00BB, u'"'}, {0x05F4, u'"'}, {0x201C, u'"'}, {0x201D, u'"'}, {0x201E, u'"'},
+        {0x201F, u'"'}, {0x2E42, u'"'}, {0x301D, u'"'}, {0x301E, u'"'}, {0x301F, u'"'}, {0xFF02, u'"'},
+        {0x05F3, u'\''}, {0x2018, u'\''}, {0x2019, u'\''}, {0x201A, u'\''}, {0x201B, u'\''}, {0x2039, u'\''},
+        {0x203A, u'\''}, {0x300C, u'\''}, {0x300D, u'\''}, {0x300E, u'\''}, {0x300F, u'\''}, {0xFE41, u'\''},
+        {0xFE42, u'\''}, {0xFE43, u'\''}, {0xFE44, u'\''}, {0xFF07, u'\''}, {0xFF62, u'\''}, {0xFF63, u'\''},
+    };
+    Check(sizeof(marks) / sizeof(marks[0]) == 30);
+    for (const auto& mark : marks) {
+        const char16_t input[] = {u'a', mark.code, u'b'};
+        auto wide = Create16(input, 3);
+        auto folded = fold(&wide);
+        Check(folded.impl != wide.impl);
+        Check(!(folded.impl->hashAndFlags & 4));
+        Check(Units(folded) == std::u16string({u'a', mark.folded, u'b'}));
+        Check(Units(wide) == std::u16string(input, 3));
+        const char16_t single[] = {mark.code};
+        auto lone = Create16(single, 1);
+        Check(Units(fold(&lone)) == std::u16string(1, mark.folded));
+    }
+    const char16_t unchanged[] = {u'"', u'\'', u'a', 0x2017, 0x2020, 0x2038, 0x203B, 0x300B, 0x3010, 0xFE40, 0xFE45, 0xFF01, 0xFF08, 0xFF61, 0xFF64, 0x05F2, 0x05F5, 0x00AA, 0x00BC, 0x4E2D};
+    auto plain = Create16(unchanged, sizeof(unchanged) / sizeof(unchanged[0]));
+    auto plainResult = fold(&plain);
+    Check(plainResult.impl == plain.impl);
+    Check(plain.impl->refCount == 4);
+    const char16_t mixed[] = {0x201C, u'h', u'i', 0x201D, u' ', 0x2018, u'x', 0x2019, 0x4E2D, 0x300C, 0x300D, 0xFF07, 0xFF02};
+    auto mixedString = Create16(mixed, 13);
+    Check(Units(fold(&mixedString)) == std::u16string({u'"', u'h', u'i', u'"', u' ', u'\'', u'x', u'\'', 0x4E2D, u'\'', u'\'', u'\'', u'"'}));
+    const char16_t asciiAfter[] = {0x201C, u'a', 0x201D};
+    auto wideAscii = Create16(asciiAfter, 3);
+    auto wideAsciiResult = fold(&wideAscii);
+    Check(Units(wideAsciiResult) == u"\"a\"");
+    Check(!(wideAsciiResult.impl->hashAndFlags & 4));
+
+    const unsigned char latin[] = {0xAB, 'a', 0xBB, 0xE9, 0xA0};
+    auto narrow = Create8(latin, 5);
+    Check(narrow.impl->hashAndFlags & 4);
+    auto narrowResult = fold(&narrow);
+    Check(narrowResult.impl != narrow.impl);
+    Check(narrowResult.impl->hashAndFlags & 4);
+    Check(Units(narrowResult) == std::u16string({u'"', u'a', u'"', 0xE9, 0xA0}));
+    Check(Units(narrow) == std::u16string({0xAB, u'a', 0xBB, 0xE9, 0xA0}));
+    auto narrowPlain = Create8(U8("it's"), 4);
+    auto narrowPlainResult = fold(&narrowPlain);
+    Check(narrowPlainResult.impl == narrowPlain.impl);
+    Check(narrowPlain.impl->refCount == 4);
+
+    auto empty = Create16(u"", 0);
+    auto emptyResult = fold(&empty);
+    Check(emptyResult.impl == empty.impl);
+    Check(!emptyResult.impl->length);
+    String absent;
+    Check(!fold(&absent).impl);
+    Throws([&] { fold(nullptr); });
+}
+
+void TestDefaultMIMEType() {
+    const auto defaultType = &_ZN7WebCore15defaultMIMETypeEv;
+    const String& first = defaultType();
+    const String& second = defaultType();
+    Check(&first == &second);
+    Check(first.impl);
+    Check(first.impl->length == 24);
+    Check(first.impl->hashAndFlags & 4);
+    Check(!(first.impl->hashAndFlags & 48));
+    Check(Units(first) == u"application/octet-stream");
+    Check(first.impl->refCount & 1);
+    const unsigned refCount = first.impl->refCount;
+    {
+        String copy(first);
+        Check(copy.impl == first.impl);
+        Check(first.impl->refCount == refCount + 2);
+    }
+    Check(first.impl->refCount == refCount);
+    Check(ConcurrentHash(first.impl) == (first.impl->hashAndFlags >> 8));
+    auto fresh = Create8(U8("application/octet-stream"), 24);
+    Check(Equal(first.impl, fresh.impl));
+    Check(EqualZ(first.impl, U8("application/octet-stream")));
+}
+
+void TestRedirectChainAllowsReuse() {
+    const auto allows = &_ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE;
+    using Status = WebCore::RedirectChainCacheStatus::Status;
+    const double now = _ZN3WTF8WallTime3nowEv().m_value;
+    const double infinity = std::numeric_limits<double>::infinity();
+    for (int reuse = 0; reuse < 2; ++reuse) {
+        Check(allows({WallTime{infinity}, Status::NoRedirection}, reuse));
+        Check(allows({WallTime{0.0}, Status::NoRedirection}, reuse));
+        Check(allows({WallTime{std::nan("")}, Status::NoRedirection}, reuse));
+        Check(!allows({WallTime{infinity}, Status::NotCachedRedirection}, reuse));
+        Check(!allows({WallTime{0.0}, Status::NotCachedRedirection}, reuse));
+    }
+    Check(allows({WallTime{infinity}, Status::CachedRedirection}, 0));
+    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{0.0}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{-infinity}, Status::CachedRedirection}, 0));
+    Check(!allows({WallTime{std::nan("")}, Status::CachedRedirection}, 0));
+    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{0.0}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{-infinity}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{std::nan("")}, Status::CachedRedirection}, 1));
+    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 2));
+    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 1));
+    Check(!allows({WallTime{infinity}, static_cast<Status>(3)}, 0));
+    Check(!allows({WallTime{infinity}, static_cast<Status>(255)}, 1));
+}
+
+void TestSharedStringHash() {
+    const auto hash16 = &_ZN7WebCore23computeSharedStringHashEPKDsj;
+    const auto hashString = &_ZN7WebCore23computeSharedStringHashERKN3WTF6StringE;
+    struct Vector { const char* latin1; const char16_t* utf16; unsigned length; unsigned expected; };
+    const Vector vectors[] = {
+        {"", u"", 0, 0x04ec889eu},
+        {"a", u"a", 1, 0xf095343bu},
+        {"ab", u"ab", 2, 0x1b7603e0u},
+        {"abc", u"abc", 3, 0xcc946882u},
+        {"http://example.com/", u"http://example.com/", 19, 0x836f1d81u},
+    };
+    for (const auto& vector : vectors) {
+        Check(hash16(vector.utf16, vector.length) == vector.expected);
+        String narrow;
+        _ZN3WTF6StringC1EPKcj(&narrow, vector.latin1, vector.length);
+        Check(!vector.length || (narrow.impl->hashAndFlags & 4));
+        Check(hashString(&narrow) == vector.expected);
+        String wide;
+        _ZN3WTF6StringC1EPKDsj(&wide, vector.utf16, vector.length);
+        Check(!vector.length || !(wide.impl->hashAndFlags & 4));
+        Check(hashString(&wide) == vector.expected);
+    }
+    const char16_t nonLatin1[] = {0x00e9, 0x4e2d};
+    Check(hash16(nonLatin1, 2) == 0x77f0e865u);
+    String nonLatin1String;
+    _ZN3WTF6StringC1EPKDsj(&nonLatin1String, nonLatin1, 2);
+    Check(hashString(&nonLatin1String) == 0x77f0e865u);
+    const char16_t deletedValue[] = {3163, 53528};
+    Check(hash16(deletedValue, 2) == 0xffffffffu);
+    String deletedString;
+    _ZN3WTF6StringC1EPKDsj(&deletedString, deletedValue, 2);
+    Check(hashString(&deletedString) == 0xffffffffu);
+    String absent;
+    Check(hashString(&absent) == 0x04ec889eu);
+    Check(hash16(nullptr, 0) == 0x04ec889eu);
+    Throws([&] { hash16(nullptr, 1); });
+    Throws([&] { hashString(nullptr); });
+}
+
 void Run() {
     TestStorageAndQueries();
     TestASCIIAndViews();
@@ -775,6 +935,10 @@ void Run() {
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
+    TestFoldQuoteMarks();
+    TestDefaultMIMEType();
+    TestRedirectChainAllowsReuse();
+    TestSharedStringHash();
 }
 
 }  // namespace Wtf2Tests
