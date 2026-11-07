@@ -27,10 +27,6 @@ int APS5_VABI EVP_PKEY_assign_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_bits_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -44,10 +40,6 @@ int APS5_VABI EVP_PKEY_verify_nid_postfix() {
 }
 
 int APS5_VABI EVP_PKEY_verify_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_get_digestbyname_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -85,14 +77,6 @@ int APS5_VABI SSL_CTX_set0_chain_nid_postfix() {
 }
 
 int APS5_VABI SSL_CTX_set_timeout_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_SESSION_get_timeout_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_SESSION_set_time_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -209,10 +193,6 @@ int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
 }
 
 int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI SSL_SESSION_get_protocol_version_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

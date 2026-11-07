@@ -146,7 +146,6 @@ int APS5_VABI sceNpManagerIntSignoutLocalSandboxAdmin();
 int APS5_VABI sceNpPush2SetDataType();
 int APS5_VABI sceNpPushSetNpCommunicationId();
 int APS5_VABI sceNpPushUnsetNpCommunicationId();
-int APS5_VABI sceNpRegisterGamePresenceCallbackA();
 int APS5_VABI sceNpSandboxIntAbortRequest();
 int APS5_VABI sceNpSandboxIntCreateRequest();
 int APS5_VABI sceNpSandboxIntDeleteRequest();

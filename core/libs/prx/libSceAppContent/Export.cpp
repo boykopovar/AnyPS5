@@ -344,7 +344,7 @@ int APS5_VABI sceAppContentDownload2Expand(size_t size) {
     if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
     const auto directory = ResolvePath_nid_no_patch("/download2");
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
-    size_t current = download2QuotaBytes.load();
+    std::uint64_t current = download2QuotaBytes.load();
     while (size > current && !download2QuotaBytes.compare_exchange_weak(current, size)) {}
     return 0;
 }
@@ -355,7 +355,9 @@ int APS5_VABI sceAppContentDownload2Shrink(void) {
 }
 
 APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
-int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(const void* mdid, bool* matches) {
+    (void)mdid;
+    (void)matches;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
