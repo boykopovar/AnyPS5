@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
+#include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
@@ -785,6 +786,60 @@ static void TestError() {
     WKRelease(domain);
 }
 
+template<typename Function>
+static bool ThrowsNavigationData(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestNavigationData() {
+    auto* data = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::NavigationData>(NKWebKit::String::FromUtf8("Page Title"), std::string("https://example.com/final"), std::string("https://example.com/original")));
+    Require(WKGetTypeID(data) == WKNavigationDataGetTypeID());
+    auto* title = WKNavigationDataCopyTitle(data);
+    Require(WKStringIsEqualToUTF8CString(title, "Page Title"));
+    WKRelease(title);
+    auto* url = WKNavigationDataCopyURL(data);
+    auto* urlString = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/original"));
+    WKRelease(urlString);
+    WKRelease(url);
+    auto* destination = WKNavigationDataCopyNavigationDestinationURL(data);
+    auto* destinationString = WKURLCopyString(destination);
+    Require(WKStringIsEqualToUTF8CString(destinationString, "https://example.com/final"));
+    WKRelease(destinationString);
+    WKRelease(destination);
+    WKRelease(data);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::NavigationData>());
+    auto* emptyTitle = WKNavigationDataCopyTitle(empty);
+    Require(WKStringIsEmpty(emptyTitle));
+    WKRelease(emptyTitle);
+    Require(WKNavigationDataCopyURL(empty) == nullptr);
+    Require(WKNavigationDataCopyNavigationDestinationURL(empty) == nullptr);
+    WKRelease(empty);
+
+    auto* emptyURL = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::NavigationData>(nullptr, std::string(), std::string()));
+    auto* blank = WKNavigationDataCopyNavigationDestinationURL(emptyURL);
+    Require(blank != nullptr);
+    auto* blankString = WKURLCopyString(blank);
+    Require(WKStringIsEmpty(blankString));
+    WKRelease(blankString);
+    WKRelease(blank);
+    WKRelease(emptyURL);
+
+    auto* notData = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not navigation data"));
+    Require(ThrowsNavigationData(WKNavigationDataCopyTitle, notData));
+    Require(ThrowsNavigationData(WKNavigationDataCopyURL, notData));
+    Require(ThrowsNavigationData(WKNavigationDataCopyNavigationDestinationURL, notData));
+    Require(ThrowsNavigationData(WKNavigationDataCopyTitle, nullptr));
+    Require(ThrowsNavigationData(WKNavigationDataCopyURL, nullptr));
+    WKRelease(notData);
+}
+
 static void TestHitTestResult() {
     Require(WKHitTestResultGetTypeID() == 63);
     auto hit = NKWebKit::Make<NKWebKit::HitTestResult>();
@@ -1374,6 +1429,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestNavigationData();
     TestHitTestResult();
     TestBackForwardList();
     TestBundleScriptWorld();
