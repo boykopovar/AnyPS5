@@ -110,7 +110,10 @@ class Build:
     def test_commands(self, names):
         found, visited, pending = collections.defaultdict(set), set(), [Path(self.path)]
         while pending:
-            directory = pending.pop().resolve()
+            try:
+                directory = pending.pop().resolve()
+            except RuntimeError:
+                continue
             file = directory / "CTestTestfile.cmake"
             if directory in visited or not file.is_file():
                 continue
@@ -196,7 +199,10 @@ def chunks(names):
 
 
 def load_graph(path):
-    graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    try:
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: test graph is nested too deeply") from error
     if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
         raise ValueError(f"{path}: invalid test graph (expected tests and closures objects)")
     fields = ("registered", "arguments", "sets", "requires", "depends")
@@ -284,20 +290,27 @@ def select(graph, changed, reasons=None):
                 reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]
                 reasons[name] += ["directory: " + directory for directory in dirs
                                   if any(path.startswith(directory) for path in scope | set(test["registered"]))]
-    setups = collections.defaultdict(set)
+    setups, consumers = collections.defaultdict(set), collections.defaultdict(set)
     for name, test in tests.items():
         for fixture in test["sets"]:
             setups[fixture].add(name)
+        for fixture in test["requires"]:
+            consumers[fixture].add(name)
     todo = list(picked)
     while todo:
         name = todo.pop()
         test = tests[name]
-        for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"])):
+        for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"]),
+                                               *(consumers[f] for f in test["sets"])):
             if extra not in tests:
                 continue
             if reasons is not None:
-                fixture = set(test["requires"]) & set(tests[extra]["sets"])
-                kind = "fixture setup for: " if fixture else "dependency of: "
+                if set(test["requires"]) & set(tests[extra]["sets"]):
+                    kind = "fixture setup for: "
+                elif set(test["sets"]) & set(tests[extra]["requires"]):
+                    kind = "fixture consumer of: "
+                else:
+                    kind = "dependency of: "
                 reasons.setdefault(extra, []).append(kind + name)
             if extra not in picked:
                 picked.add(extra)
@@ -348,7 +361,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        try:
+            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f"{selected}: {error}")
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:

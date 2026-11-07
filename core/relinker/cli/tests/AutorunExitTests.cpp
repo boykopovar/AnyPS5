@@ -1,6 +1,8 @@
 #include <Cli.hpp>
 #include <domain/Types.hpp>
 #include <cerrno>
+#include <cstdlib>
+#include <optional>
 #include <chrono>
 #include <csignal>
 #ifndef _WIN32
@@ -18,6 +20,26 @@
 #endif
 
 namespace {
+
+void SetNoPause(const char* value) {
+#ifdef _WIN32
+    if (_putenv_s("ANYPS5_AUTORUN_NO_PAUSE", value ? value : "") != 0) throw std::runtime_error("Cannot set autorun environment");
+#else
+    if ((value ? setenv("ANYPS5_AUTORUN_NO_PAUSE", value, 1) : unsetenv("ANYPS5_AUTORUN_NO_PAUSE")) != 0)
+        throw std::runtime_error("Cannot set autorun environment");
+#endif
+}
+
+class EnvironmentGuard {
+public:
+    EnvironmentGuard() {
+        if (const auto* value = std::getenv("ANYPS5_AUTORUN_NO_PAUSE")) saved = value;
+        SetNoPause(nullptr);
+    }
+    ~EnvironmentGuard() { SetNoPause(saved ? saved->c_str() : nullptr); }
+private:
+    std::optional<std::string> saved;
+};
 
 std::filesystem::path ExecutablePath(const char* argument) {
 #ifdef _WIN32
@@ -55,6 +77,7 @@ int main(int, char* argv[]) {
 #endif
     };
 #endif
+    const EnvironmentGuard environment;
     std::istringstream input("\n\n\n");
     auto* savedInput = std::cin.rdbuf(input.rdbuf());
     int result = 0;
@@ -66,6 +89,28 @@ int main(int, char* argv[]) {
         std::filesystem::create_symlink(executable, child);
         const auto changed = changeTime(executable);
 #endif
+        for (const char* value : {"1", "0", "yes", "", "10", "1 "}) {
+            SetNoPause(value);
+            std::istringstream pending("\nremaining");
+            auto* originalInput = std::cin.rdbuf(pending.rdbuf());
+            std::ostringstream output;
+            auto* originalOutput = std::cout.rdbuf(output.rdbuf());
+            int code;
+            try {
+                code = Cli::Autorun(child.string(), true);
+            } catch (...) {
+                std::cin.rdbuf(originalInput);
+                std::cout.rdbuf(originalOutput);
+                throw;
+            }
+            std::cin.rdbuf(originalInput);
+            std::cout.rdbuf(originalOutput);
+            const bool skipped = std::string(value) == "1";
+            if (code != 42 || (pending.tellg() == 0) != skipped ||
+                (output.str().find("Press Enter") == std::string::npos) != skipped)
+                throw std::runtime_error("Autorun pause option changed the exit code, input position or prompt");
+        }
+        SetNoPause(nullptr);
         std::vector<std::string> suffixes{""};
 #ifndef _WIN32
         suffixes.insert(suffixes.end(), {" $HOME", " $(printf substituted)", " `printf substituted`",

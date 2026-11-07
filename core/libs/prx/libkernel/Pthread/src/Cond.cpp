@@ -6,6 +6,7 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <atomic>
@@ -181,6 +182,12 @@ int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, co
     return waitUntil(std::move(condition), mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
 }
 
+int CondOperations::LoadAttribute(const PthreadCondattr* attr, PthreadCondattr& handle) {
+    if (!attr) return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestCopyIn_nid_no_patch(&handle, attr, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+    return handle ? 0 : SCE_KERNEL_ERROR_EINVAL;
+}
+
 int CondOperations::SetName(PthreadCond* cond, const char* name) {
     if (!name)
         throw std::invalid_argument("Condition variable name is null");
@@ -194,24 +201,28 @@ int CondOperations::SetName(PthreadCond* cond, const char* name) {
 extern "C" {
 
 int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) {
-    if (!attr)
-        throw std::invalid_argument("Condition attribute pointer is null");
-    *attr = new PthreadCondattrPrivate{0};
+    auto created = std::make_unique<PthreadCondattrPrivate>(PthreadCondattrPrivate{0});
+    PthreadCondattr handle = created.get();
+    if (!GuestCopyOut_nid_no_patch(attr, &handle, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+    created.release();
     return 0;
 }
 
 int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    delete *attr;
-    *attr = nullptr;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return error;
+    const PthreadCondattr cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(attr, &cleared, sizeof(cleared))) return SCE_KERNEL_ERROR_EFAULT;
+    delete handle;
     return 0;
 }
 
 int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) {
     constexpr KernelClockid realtime = 0, virtualTime = 1, profiling = 2, monotonic = 4;
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
+    PthreadCondattr handle = nullptr;
+    if (const int error = CondOperations::LoadAttribute(attr, handle)) return error;
     if (clockId != realtime && clockId != virtualTime && clockId != profiling && clockId != monotonic) return SCE_KERNEL_ERROR_EINVAL;
-    (*attr)->_clockid = static_cast<int>(clockId);
+    handle->_clockid = static_cast<int>(clockId);
     return 0;
 }
 
@@ -259,6 +270,8 @@ int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
     const auto resolved = resolveCond(cond);
     if (!resolved || !thread)
         return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestThreadIsLive(thread))
+        return SCE_KERNEL_ERROR_ESRCH;
     if (!IsWaiting(resolved.get(), thread))
         return SCE_KERNEL_ERROR_EPERM;
     resolved->NotifyAll();
