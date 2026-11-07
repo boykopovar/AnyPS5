@@ -359,6 +359,14 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                 ringTemplate->vertexAttributes = stageCapture.heapWords->vertexAttributes;
                 ringTemplate->flattenedSrt = stageCapture.heapWords->flattenedSrt;
                 ringTemplate->bindings = stageCapture.heapWords->bindings;
+                if (const auto& base = stageCapture.heapWords->base; base != nullptr && !base->bindings.empty()) {
+                    const auto& program = stageCapture.compiled->bindings;
+                    ringTemplate->bindings.resize(program.size());
+                    for (std::size_t index = 0; index < program.size(); ++index) {
+                        if (ringTemplate->bindings[index].empty()) ringTemplate->bindings[index] = Graphics::DrawGuestWords(*stageCapture.compiled, stageCapture.heapWords.get(), program[index]);
+                        if (ringTemplate->bindings[index] == program[index].guestDescriptor) ringTemplate->bindings[index].clear();
+                    }
+                }
                 variant->ringTemplate = std::move(ringTemplate);
             }
             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);

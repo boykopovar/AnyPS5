@@ -89,9 +89,12 @@ inline std::vector<ShaderRecompiler::StagePushPlacement> PushDataPlacements(std:
 }
 
 inline const std::vector<std::uint32_t>& DrawGuestWords(const ShaderRecompiler::RecompileResult& program, const ShaderRecompiler::HeapStageWords* heap, const ShaderRecompiler::DescriptorBinding& binding) {
-    if (heap == nullptr || heap->bindings.empty()) return binding.guestDescriptor;
+    if (heap == nullptr) return binding.guestDescriptor;
     const auto index = static_cast<std::size_t>(&binding - program.bindings.data());
-    return index < heap->bindings.size() && !heap->bindings[index].empty() ? heap->bindings[index] : binding.guestDescriptor;
+    if (index < heap->bindings.size() && !heap->bindings[index].empty()) return heap->bindings[index];
+    const auto* base = heap->base.get();
+    const bool shared = binding.role != ShaderRecompiler::DescriptorRole::ShaderData && binding.role != ShaderRecompiler::DescriptorRole::FlattenedSrt;
+    return shared && base != nullptr && index < base->bindings.size() && !base->bindings[index].empty() ? base->bindings[index] : binding.guestDescriptor;
 }
 
 inline const std::vector<std::uint32_t>& DrawGuestWords(const CompiledShader& shader, const ShaderRecompiler::DescriptorBinding& binding) {

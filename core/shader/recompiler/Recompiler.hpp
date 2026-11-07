@@ -514,6 +514,7 @@ struct HeapStageWords {
     std::vector<std::uint32_t> flattenedSrt;
     std::vector<VertexAttribute> vertexAttributes;
     std::vector<std::vector<std::uint32_t>> bindings;
+    std::shared_ptr<const HeapStageWords> base;
     ResultKeyMemo drawKeyMemo;
     bool memoizeKey = true;
 };

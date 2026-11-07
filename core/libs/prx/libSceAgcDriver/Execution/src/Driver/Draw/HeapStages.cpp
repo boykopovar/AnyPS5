@@ -630,6 +630,17 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const
             std::copy_n(words.userData.begin(), std::min(words.userData.size(), binding.guestDescriptor.size()),
                         binding.guestDescriptor.begin());
     }
+    if (words.base != nullptr && !words.base->bindings.empty()) {
+        if (words.base->bindings.size() != result->bindings.size())
+            throw std::runtime_error("a heap stage's ring template bindings differ in number from its program");
+        for (std::size_t index = 0; index < words.base->bindings.size(); ++index) {
+            const auto role = result->bindings[index].role;
+            if (role == ShaderRecompiler::DescriptorRole::ShaderData || role == ShaderRecompiler::DescriptorRole::FlattenedSrt || words.base->bindings[index].empty()) continue;
+            if (words.base->bindings[index].size() != result->bindings[index].guestDescriptor.size())
+                throw std::runtime_error("a heap stage's ring template descriptor words differ in size from its program");
+            result->bindings[index].guestDescriptor = words.base->bindings[index];
+        }
+    }
     if (!words.bindings.empty()) {
         if (words.bindings.size() != result->bindings.size())
             throw std::runtime_error("a heap stage's per-draw bindings differ in number from its template");

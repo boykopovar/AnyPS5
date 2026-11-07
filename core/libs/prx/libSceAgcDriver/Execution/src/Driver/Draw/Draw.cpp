@@ -933,7 +933,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& ringTemplate = *variant.ringTemplate;
         words->vertexAttributes = ringTemplate.vertexAttributes;
         words->flattenedSrt.clear();
-        words->bindings.clear();
+        for (auto& descriptor : words->bindings) descriptor.clear();
+        words->base = nullptr;
         if (!ringTemplate.flattenedSrt.empty()) {
             words->flattenedSrt = ringTemplate.flattenedSrt;
             if (&variant == matched[i].get() && stageData[i].compiled != nullptr) {
@@ -943,16 +944,20 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             }
         }
         if (!ringTemplate.bindings.empty()) {
-            words->bindings = ringTemplate.bindings;
-            require(words->bindings.size() == variant.compiled->bindings.size(), "a ring vertex hit's bindings differ in number from its template");
-            for (std::size_t index = 0; index < words->bindings.size(); ++index) {
-                const auto role = variant.compiled->bindings[index].role;
+            const auto& program = variant.compiled->bindings;
+            require(ringTemplate.bindings.size() == program.size(), "a ring vertex hit's bindings differ in number from its template");
+            words->base = variant.ringTemplate;
+            words->bindings.resize(program.size());
+            for (std::size_t index = 0; index < program.size(); ++index) {
+                const auto& shared = ringTemplate.bindings[index];
+                if (program[index].role != ShaderRecompiler::DescriptorRole::ShaderData || shared.empty()) continue;
                 auto& descriptor = words->bindings[index];
-                if (role == ShaderRecompiler::DescriptorRole::FlattenedSrt) descriptor.clear();
-                if (role != ShaderRecompiler::DescriptorRole::ShaderData || descriptor.empty()) continue;
+                descriptor.assign(shared.begin(), shared.end());
                 std::copy_n(words->userData.begin(), std::min(words->userData.size(), descriptor.size()), descriptor.begin());
-                if (descriptor == variant.compiled->bindings[index].guestDescriptor) descriptor.clear();
+                if (descriptor == program[index].guestDescriptor) descriptor.clear();
             }
+        } else {
+            words->bindings.clear();
         }
         ShaderRecompiler::CompleteHeapDataWords(*variant.compiled, *words);
         if (words->vertexAttributes.empty()) return words;
