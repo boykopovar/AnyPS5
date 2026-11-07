@@ -565,7 +565,7 @@ extern "C" {
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
 unsigned char* APS5_VABI ASN1_STRING_data_nid_postfix(Asn1String* value);
 int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value);
-int APS5_VABI ASN1_STRING_print_nid_postfix(void);
+int APS5_VABI ASN1_STRING_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* value);
 int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String* value);
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value);
 int APS5_VABI ASN1_TIME_print_nid_postfix(void);
@@ -911,7 +911,7 @@ int APS5_VABI d2i_PKCS12_bio_nid_postfix(void);
 int APS5_VABI d2i_PKCS12_fp_nid_postfix(void);
 LibreSslRsa* APS5_VABI d2i_RSA_PUBKEY_nid_postfix(LibreSslRsa** out, const unsigned char** input, long length);
 int APS5_VABI d2i_X509_nid_postfix(void);
-int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(void);
+int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object);
 int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void);
 int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object);
 int APS5_VABI sceLibreSslGetMemoryPoolStats(void);
