@@ -1238,6 +1238,54 @@ void CheckRawGetcwdErrors() {
     Require(unlinkat_nid_postfix(-100, directory.c_str(), 0x800) == 0);
 }
 
+#ifndef _WIN32
+void CheckRawGetcwdPathLimit() {
+    std::array<char, 4096> previous{};
+    Require(getcwd_nid_postfix(previous.data(), previous.size()) == previous.data());
+    const std::string root = "anyps5-getcwd-limit-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(mkdirat_nid_postfix(-100, root.c_str(), 0755) == 0);
+    Require(chdir_nid_postfix(root.c_str()) == 0);
+    std::array<char, 4096> current{};
+    Require(getcwd_nid_postfix(current.data(), current.size()) == current.data());
+    std::size_t length = std::strlen(current.data());
+    const std::string component(200, 'd');
+    std::size_t depth = 0;
+    while (1024 - length > 256) {
+        Require(mkdirat_nid_postfix(-100, component.c_str(), 0755) == 0);
+        Require(chdir_nid_postfix(component.c_str()) == 0);
+        length += component.size() + 1;
+        ++depth;
+    }
+
+    std::array<char, 4096> buffer;
+    for (const std::size_t target : {std::size_t{1023}, std::size_t{1024}}) {
+        const std::string leaf(target - length - 1, target == 1023 ? 'a' : 'b');
+        Require(mkdirat_nid_postfix(-100, leaf.c_str(), 0755) == 0);
+        Require(chdir_nid_postfix(leaf.c_str()) == 0);
+        Require(getcwd_nid_postfix(current.data(), current.size()) == current.data());
+        Require(std::strlen(current.data()) == target);
+        buffer.fill('#');
+        if (target == 1023) {
+            Require(__getcwd_nid_postfix(buffer.data(), buffer.size()) == 0);
+            Require(std::strcmp(buffer.data(), current.data()) == 0 && buffer[1024] == '#');
+        } else {
+            Require(__getcwd_nid_postfix(buffer.data(), buffer.size()) == -1 && Error() == 12);
+            Require(std::all_of(buffer.begin(), buffer.end(), [](char c) { return c == '#'; }));
+            Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 12);
+        }
+        Require(chdir_nid_postfix("..") == 0);
+        Require(unlinkat_nid_postfix(-100, leaf.c_str(), 0x800) == 0);
+    }
+    for (; depth > 0; --depth) {
+        Require(chdir_nid_postfix("..") == 0);
+        Require(unlinkat_nid_postfix(-100, component.c_str(), 0x800) == 0);
+    }
+    Require(chdir_nid_postfix(previous.data()) == 0);
+    Require(unlinkat_nid_postfix(-100, root.c_str(), 0x800) == 0);
+}
+#endif
+
 void CheckRawGetcwd() {
     std::array<char, 4096> expected{};
     Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
@@ -1263,6 +1311,9 @@ int main() {
     Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwdErrors();
+#ifndef _WIN32
+    CheckRawGetcwdPathLimit();
+#endif
     CheckRawGetcwd();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
