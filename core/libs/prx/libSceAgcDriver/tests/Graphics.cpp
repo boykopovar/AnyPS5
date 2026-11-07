@@ -433,6 +433,24 @@ void stateTests() {
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "render-target address or size changed");
     Require(state.viewport.y == 4 && state.viewport.height == -4, "negative viewport height was lost");
     Require(state.color.format == VK_FORMAT_R8G8B8A8_UNORM, "RGBA format changed");
+    Require(!state.rasterizerDiscard, "a four-component position export discarded rasterization");
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    queue.context[0x1c3] = 0;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.rasterizerDiscard, "a disabled position export did not discard rasterization");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a draw without a position export was rejected");
+    queue.context[0x1c3] = 0x44;
+    Require(!AgcDriver::Graphics::DecodeState(queue).rasterizerDiscard, "an auxiliary position export discarded rasterization");
+    queue.context[0x1c3] = 1;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 1");
+    queue.context[0x1c3] = 2;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 2");
+    queue.context[0x1c3] = 3;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 3");
+    queue = makeState();
+    queue.context[0x1c3] = 0;
+    Require(AgcDriver::Graphics::CanonicalPipelineState(AgcDriver::Graphics::DecodeState(queue)).rasterizerDiscard, "the canonical state dropped the rasterizer discard");
     queue.userConfig[0x24b] = 1;
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
@@ -8215,6 +8233,7 @@ struct ModuleShape {
     bool layerOutput = false;
     bool terminateInvocation = false;
     bool omitTerminateExtension = false;
+    bool noPosition = false;
 };
 
 void emit(std::vector<std::uint32_t>& out, spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -8364,7 +8383,7 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
         emit(declarations, spv::OpVariable, {inputPointer, input, spv::StorageClassInput});
         emit(annotations, spv::OpDecorate, {input, spv::DecorationLocation, 0});
     }
-    if (shape.fragment) emit(annotations, spv::OpDecorate, {output, spv::DecorationLocation, 0});
+    if (shape.fragment || shape.noPosition) emit(annotations, spv::OpDecorate, {output, spv::DecorationLocation, 0});
     else emit(annotations, spv::OpDecorate, {output, spv::DecorationBuiltIn, spv::BuiltInPosition});
     if (shape.push) {
         const auto length = id();
@@ -9339,6 +9358,15 @@ void barycentricEmulationTests() {
     expectFailure([&] { ValidateShaders(shaders, state, subgroup, false, false, false, true); }, "triangle primitives");
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     ValidateShaders(shaders, state, subgroup, false, false, false, true);
+    RecompileResult withoutPosition;
+    withoutPosition.spirv = makeModule({.noPosition = true});
+    RecompileResult plainPixel;
+    plainPixel.spirv = makeModule({.fragment = true});
+    const std::array<CompiledShader, 2> withoutPositionShaders{{{ShaderStage::Vertex, &withoutPosition, 0}, {ShaderStage::Fragment, &plainPixel, 0}}};
+    expectFailure([&] { ValidateShaders(withoutPositionShaders, state, subgroup, false, false, false, true); }, "vertex shader does not export position");
+    auto discarded = state;
+    discarded.rasterizerDiscard = true;
+    ValidateShaders(withoutPositionShaders, discarded, subgroup, false, false, false, true);
     const auto plain = compile(interpolates, false);
     const std::array<CompiledShader, 3> plainShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Geometry, &geometry, 0}, {ShaderStage::Fragment, &plain, 0}}};
     expectFailure([&] { ValidateShaders(plainShaders, state, subgroup, false, false, false, true); }, "only for emulated barycentrics");
