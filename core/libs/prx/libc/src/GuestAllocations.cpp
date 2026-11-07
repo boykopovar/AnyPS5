@@ -26,13 +26,9 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
-#else
-#include <link.h>
 #endif
 #include <sys/mman.h>
 #include <unistd.h>
-#endif
-#ifdef __APPLE__
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #endif
 

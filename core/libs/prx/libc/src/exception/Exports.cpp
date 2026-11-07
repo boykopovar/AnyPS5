@@ -13,6 +13,7 @@
 extern "C" [[noreturn]] GCC_HIDDEN_FN void APS5_VABI LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
 
 GCC_LOCAL_ALIAS(_ZSt21__glibcxx_assert_failPKciS0_S0_, LibcRuntimeAssertion);
+#ifndef ANYPS5_GUEST_LIFTED
 GCC_GLOBAL_ALIAS(__cxa_free_exception, __cxa_free_exception_nid_postfix);
 GCC_GLOBAL_ALIAS(_ZSt9terminatev, _ZSt9terminatev_nid_postfix);
 GCC_GLOBAL_ALIAS(__cxa_call_terminate, __cxa_call_terminate_nid_postfix);
@@ -32,6 +33,7 @@ GCC_GLOBAL_ALIAS(_Unwind_Resume, _Unwind_Resume_nid_postfix);
 GCC_GLOBAL_ALIAS(_Unwind_RaiseException, _Unwind_RaiseException_nid_postfix);
 GCC_GLOBAL_ALIAS(_Unwind_Resume_or_Rethrow, _Unwind_Resume_or_Rethrow_nid_postfix);
 GCC_GLOBAL_ALIAS(_Unwind_DeleteException, _Unwind_DeleteException_nid_postfix);
+#endif
 
 #ifdef _WIN32
 extern "C" {

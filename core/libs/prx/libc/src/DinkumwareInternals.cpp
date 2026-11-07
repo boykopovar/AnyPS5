@@ -1,5 +1,7 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cctype>
 #include <cerrno>
@@ -22,9 +24,9 @@ constexpr int InvalidArgument = 22;
 constexpr int DomainError = 33;
 constexpr int RangeError = 34;
 
-constexpr long double LogPolynomial[] = {
-    0x87f45b3375e0c9edp-66L, 0x87a58c55129af2f8p-66L, 0x9d90cfd7547e4ed2p-66L, 0xba2e6ba9488d3d0cp-66L,
-    0xe38e393a60e2888bp-66L, 0x924924920646cc89p-65L, 0xcccccccccd00c2ebp-65L, 0xaaaaaaaaaaaaa334p-64L,
+constexpr LibcDetail::GuestLongDouble LogPolynomial[] = {
+    APS5_GUEST_LONG_DOUBLE(0x87f45b3375e0c9edp-66L, 0x3ffc, 0x87f45b3375e0c9ed), APS5_GUEST_LONG_DOUBLE(0x87a58c55129af2f8p-66L, 0x3ffc, 0x87a58c55129af2f8), APS5_GUEST_LONG_DOUBLE(0x9d90cfd7547e4ed2p-66L, 0x3ffc, 0x9d90cfd7547e4ed2), APS5_GUEST_LONG_DOUBLE(0xba2e6ba9488d3d0cp-66L, 0x3ffc, 0xba2e6ba9488d3d0c),
+    APS5_GUEST_LONG_DOUBLE(0xe38e393a60e2888bp-66L, 0x3ffc, 0xe38e393a60e2888b), APS5_GUEST_LONG_DOUBLE(0x924924920646cc89p-65L, 0x3ffd, 0x924924920646cc89), APS5_GUEST_LONG_DOUBLE(0xcccccccccd00c2ebp-65L, 0x3ffd, 0xcccccccccd00c2eb), APS5_GUEST_LONG_DOUBLE(0xaaaaaaaaaaaaa334p-64L, 0x3ffe, 0xaaaaaaaaaaaaa334),
 };
 
 bool Hexadecimal(const char* text) {
@@ -41,8 +43,11 @@ int HexadecimalDigit(char value) {
 }
 
 template<typename TFloat>
+constexpr unsigned GuestDigits = sizeof(TFloat) <= 8 ? std::numeric_limits<TFloat>::digits : 64;
+
+template<typename TFloat>
 TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
-    constexpr unsigned Precision = std::numeric_limits<TFloat>::digits;
+    constexpr unsigned Precision = GuestDigits<TFloat>;
     static_assert(Precision == 24 || Precision == 53 || Precision == 64);
     constexpr auto Hidden = std::uint64_t{1} << (Precision - 1);
     constexpr int MaximumExponent = 2 * std::numeric_limits<TFloat>::max_exponent - 1;
@@ -57,10 +62,11 @@ TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
         mantissa = (bits & (Hidden - 1)) | Hidden;
         exponent = (bits >> (Precision - 1)) & MaximumExponent;
     } else {
-        static_assert(Precision == 64 && sizeof(TFloat) >= 10 && std::endian::native == std::endian::little);
+        static_assert(sizeof(TFloat) == LibcDetail::GuestLongDoubleBytes && std::endian::native == std::endian::little);
+        const auto image = LibcDetail::GuestLongDoubleImage(value);
         std::uint16_t encoded;
-        std::memcpy(&mantissa, &value, sizeof(mantissa));
-        std::memcpy(&encoded, reinterpret_cast<const unsigned char*>(&value) + 8, sizeof(encoded));
+        std::memcpy(&mantissa, image.data(), sizeof(mantissa));
+        std::memcpy(&encoded, image.data() + 8, sizeof(encoded));
         exponent = encoded & MaximumExponent;
     }
     auto adjusted = exponent + power;
@@ -84,10 +90,11 @@ TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
     } else if constexpr (sizeof(TFloat) == 8) {
         return std::bit_cast<TFloat>((static_cast<std::uint64_t>(adjusted) << (Precision - 1)) | (mantissa & (Hidden - 1)));
     } else {
+        std::array<unsigned char, LibcDetail::GuestLongDoubleBytes> image{};
         const auto encoded = static_cast<std::uint16_t>(adjusted);
-        std::memcpy(&value, &mantissa, sizeof(mantissa));
-        std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &encoded, sizeof(encoded));
-        return value;
+        std::memcpy(image.data(), &mantissa, sizeof(mantissa));
+        std::memcpy(image.data() + 8, &encoded, sizeof(encoded));
+        return LibcDetail::GuestLongDoubleLoad(image.data());
     }
 }
 
@@ -98,7 +105,7 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
     const bool negative = *cursor == '-';
     if (*cursor == '+' || *cursor == '-') ++cursor;
     cursor += 2;
-    constexpr std::size_t Capacity = 7 * ((std::numeric_limits<TFloat>::digits + 27) / 28);
+    constexpr std::size_t Capacity = 7 * ((GuestDigits<TFloat> + 27) / 28);
     static_assert(Capacity * 4 < std::numeric_limits<TFloat>::max_exponent);
     constexpr auto CountLimit = std::numeric_limits<std::int64_t>::max() / 16;
     std::string digits;
@@ -148,7 +155,7 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
         }
     }
     if (end != nullptr) *end = const_cast<char*>(cursor);
-    if (digits.empty()) return std::copysign(static_cast<TFloat>(0), negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
+    if (digits.empty()) return LibcDetail::CopySign(static_cast<TFloat>(0), negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
     exponent += adjustment;
     if (carry == 0) while (digits.back() == '0') { digits.pop_back(); exponent += 4; }
     std::uint64_t high = 0;
@@ -163,7 +170,7 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
         const auto top = static_cast<unsigned>((high << 8u) | (low >> 56u));
         const auto middle = static_cast<unsigned>((low >> 28u) & 0xfffffffu);
         const auto bottom = static_cast<unsigned>(low & 0xfffffffu) + carry;
-        constexpr TFloat Radix = static_cast<TFloat>(0x1p28L);
+        constexpr TFloat Radix = static_cast<TFloat>(0x1p28);
         constexpr unsigned LimbBits = std::numeric_limits<TFloat>::digits / 2;
         TFloat limbs[3]{};
         const auto add = [&](TFloat word) {
@@ -194,7 +201,7 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
         for (int index = 2; index >= 0; --index) if (limbs[index] != 0) { if (value == 0) value = limbs[index]; else value += limbs[index]; }
     }
     if (exponent != 0) value = ScaleHexadecimal(value, exponent);
-    return std::copysign(value, negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
+    return LibcDetail::CopySign(value, negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
 }
 
 template<typename TFloat>
@@ -220,8 +227,8 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
         guestErrno = saved;
         return value;
     }
-    const bool overflowed = std::isinf(value) && guestErrno == RangeError;
-    if (pten != 0 && stop != text && (std::isfinite(value) || overflowed)) {
+    const bool overflowed = LibcDetail::IsInf(value) && guestErrno == RangeError;
+    if (pten != 0 && stop != text && (LibcDetail::IsFinite(value) || overflowed)) {
         if (Hexadecimal(text)) NotImplemented_nid_no_patch(function);
         std::string number(text, static_cast<const char*>(stop));
         long long exponent = 0;
@@ -236,7 +243,7 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
         guestErrno = 0;
         value = parse(number.c_str(), nullptr);
     }
-    if (guestErrno == RangeError && (value == 0 || std::isinf(value))) {
+    if (guestErrno == RangeError && (value == 0 || LibcDetail::IsInf(value))) {
         if (error != nullptr) *error = 1;
     } else if (guestErrno == 0 || guestErrno == RangeError) {
         guestErrno = saved;
@@ -416,8 +423,8 @@ float APS5_VABI _Stofx_nid_postfix(const char* text, char** end, std::int64_t pt
     return ScaledFloat<float>(text, end, pten, error, strtof_nid_postfix, "_Stofx (hexadecimal text with a power-of-ten scale)");
 }
 
-long double APS5_VABI _Stoldx_nid_postfix(const char* text, char** end, std::int64_t pten, int* error) {
-    return ScaledFloat<long double>(text, end, pten, error, strtold_nid_postfix, "_Stoldx (hexadecimal text with a power-of-ten scale)");
+LibcDetail::GuestLongDouble APS5_VABI _Stoldx_nid_postfix(const char* text, char** end, std::int64_t pten, int* error) {
+    return ScaledFloat<LibcDetail::GuestLongDouble>(text, end, pten, error, strtold_nid_postfix, "_Stoldx (hexadecimal text with a power-of-ten scale)");
 }
 
 double APS5_VABI _Stod_nid_postfix(const char* text, char** end, std::int64_t pten) {
@@ -428,7 +435,7 @@ float APS5_VABI _Stof_nid_postfix(const char* text, char** end, std::int64_t pte
     return _Stofx_nid_postfix(text, end, pten, nullptr);
 }
 
-long double APS5_VABI _Stold_nid_postfix(const char* text, char** end, std::int64_t pten) {
+LibcDetail::GuestLongDouble APS5_VABI _Stold_nid_postfix(const char* text, char** end, std::int64_t pten) {
     return _Stoldx_nid_postfix(text, end, pten, nullptr);
 }
 
@@ -677,7 +684,7 @@ float APS5_VABI _FSin_nid_postfix(float x, unsigned int quadrant) {
     return quadrant != 0 ? cosf_nid_postfix(x) : sinf_nid_postfix(x);
 }
 
-long double APS5_VABI _LSin_nid_postfix(long double x, unsigned int quadrant) {
+LibcDetail::GuestLongDouble APS5_VABI _LSin_nid_postfix(LibcDetail::GuestLongDouble x, unsigned int quadrant) {
     return quadrant != 0 ? cosl_nid_postfix(x) : sinl_nid_postfix(x);
 }
 
@@ -707,12 +714,12 @@ float APS5_VABI _FLog_nid_postfix(float x, int base) {
     return base == 0 ? logf_nid_postfix(x) : log2f_nid_postfix(x);
 }
 
-long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
-    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
+LibcDetail::GuestLongDouble APS5_VABI _LLog_nid_postfix(LibcDetail::GuestLongDouble x, int base) {
+    const auto image = LibcDetail::GuestLongDoubleImage(x);
     std::uint64_t mantissa;
     std::uint16_t signExponent;
-    std::memcpy(&mantissa, &x, sizeof(mantissa));
-    std::memcpy(&signExponent, reinterpret_cast<const unsigned char*>(&x) + sizeof(mantissa), sizeof(signExponent));
+    std::memcpy(&mantissa, image.data(), sizeof(mantissa));
+    std::memcpy(&signExponent, image.data() + sizeof(mantissa), sizeof(signExponent));
     const int exponent = signExponent & 0x7fff;
     const bool negative = (signExponent & 0x8000) != 0;
     if (exponent == 0x7fff) {
@@ -720,42 +727,43 @@ long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
     } else if (mantissa == 0) {
         std::feraiseexcept(FE_DIVBYZERO);
         *__error_nid_postfix() = RangeError;
-        return -std::numeric_limits<long double>::infinity();
+        return -std::numeric_limits<LibcDetail::GuestLongDouble>::infinity();
     }
     if (negative) {
         std::feraiseexcept(FE_INVALID);
         *__error_nid_postfix() = DomainError;
-        return std::numeric_limits<long double>::quiet_NaN();
+        return std::numeric_limits<LibcDetail::GuestLongDouble>::quiet_NaN();
     }
     const int shift = std::countl_zero(mantissa);
     int scale = std::max(exponent, 1) - shift - 0x3ffe;
     const std::uint64_t normalized = mantissa << shift;
     const std::uint16_t halfExponent = 0x3ffe;
-    long double fraction = 0;
-    std::memcpy(&fraction, &normalized, sizeof(normalized));
-    std::memcpy(reinterpret_cast<unsigned char*>(&fraction) + sizeof(normalized), &halfExponent, sizeof(halfExponent));
-    if (fraction < 0xb504f333f9de6484p-64L) {
+    std::array<unsigned char, LibcDetail::GuestLongDoubleBytes> fractionImage{};
+    std::memcpy(fractionImage.data(), &normalized, sizeof(normalized));
+    std::memcpy(fractionImage.data() + sizeof(normalized), &halfExponent, sizeof(halfExponent));
+    LibcDetail::GuestLongDouble fraction = LibcDetail::GuestLongDoubleLoad(fractionImage.data());
+    if (fraction < APS5_GUEST_LONG_DOUBLE(0xb504f333f9de6484p-64L, 0x3ffe, 0xb504f333f9de6484)) {
         fraction = fraction + fraction;
         --scale;
     }
-    const long double y = fraction - 1.0L;
-    const long double z = y / (fraction + 1.0L);
-    const long double w = z * z;
-    long double p = LogPolynomial[0];
+    const LibcDetail::GuestLongDouble y = fraction - 1;
+    const LibcDetail::GuestLongDouble z = y / (fraction + 1);
+    const LibcDetail::GuestLongDouble w = z * z;
+    LibcDetail::GuestLongDouble p = LogPolynomial[0];
     for (std::size_t index = 1; index < std::size(LogPolynomial); ++index) p = p * w + LogPolynomial[index];
-    const long double q = z * (y - p * w);
-    const long double e = scale;
-    if (base == 0) return (y - (q + -0xfbe8e7bcd5e4f1dap-87L * e)) + e * 0x1.62e42cp-1f;
-    if (base > 0) return ((0xa937287195355babp-89L * y - (q * 0xde5bd8a937287195p-65L + -0xa13ef3fde623e256p-87L * e)) + y * 0x1.bcb7bp-2f) + e * 0x1.34413p-2f;
-    return ((q * -0xb8aa3b295c17f0bcp-63L + 0xa5705fc2eefa1ffbp-89L * y) + y * 0x1.715476p+0f) + e;
+    const LibcDetail::GuestLongDouble q = z * (y - p * w);
+    const LibcDetail::GuestLongDouble e = scale;
+    if (base == 0) return (y - (q + APS5_GUEST_LONG_DOUBLE(-0xfbe8e7bcd5e4f1dap-87L, 0xbfe7, 0xfbe8e7bcd5e4f1da) * e)) + e * 0x1.62e42cp-1f;
+    if (base > 0) return ((APS5_GUEST_LONG_DOUBLE(0xa937287195355babp-89L, 0x3fe5, 0xa937287195355bab) * y - (q * APS5_GUEST_LONG_DOUBLE(0xde5bd8a937287195p-65L, 0x3ffd, 0xde5bd8a937287195) + APS5_GUEST_LONG_DOUBLE(-0xa13ef3fde623e256p-87L, 0xbfe7, 0xa13ef3fde623e256) * e)) + y * 0x1.bcb7bp-2f) + e * 0x1.34413p-2f;
+    return ((q * APS5_GUEST_LONG_DOUBLE(-0xb8aa3b295c17f0bcp-63L, 0xbfff, 0xb8aa3b295c17f0bc) + APS5_GUEST_LONG_DOUBLE(0xa5705fc2eefa1ffbp-89L, 0x3fe5, 0xa5705fc2eefa1ffb) * y) + y * 0x1.715476p+0f) + e;
 }
 
-long double APS5_VABI _LDivide_nid_postfix(long double x, long double y) {
+LibcDetail::GuestLongDouble APS5_VABI _LDivide_nid_postfix(LibcDetail::GuestLongDouble x, LibcDetail::GuestLongDouble y) {
     return x / y;
 }
 
-long double APS5_VABI _LRecip_nid_postfix(long double x) {
-    return 1.0L / x;
+LibcDetail::GuestLongDouble APS5_VABI _LRecip_nid_postfix(LibcDetail::GuestLongDouble x) {
+    return 1 / x;
 }
 
 }

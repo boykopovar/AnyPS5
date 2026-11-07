@@ -11,6 +11,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libSceAvPlayer/include/LogCallback.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
 
 using namespace AvPlayer;
@@ -47,6 +48,8 @@ int SceAvPlayerWriteLog(const char* format, VaList* arguments) {
     }
 #ifdef _WIN32
     return LibcDetail::PrintWindows(format, arguments);
+#elif defined(ANYPS5_GUEST_LIFTED)
+    return vprintf_nid_postfix(format, arguments);
 #else
     std::va_list copy;
     va_copy(copy, *reinterpret_cast<std::va_list*>(arguments));

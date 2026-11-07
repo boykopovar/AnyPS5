@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -14,14 +15,6 @@ extern "C" {
 extern FileStream* __stdinp_nid_postfix;
 
 }
-
-#ifdef _WIN32
-#define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
-#define APS5_VA_END() __builtin_sysv_va_end(args)
-#else
-#define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
-#define APS5_VA_END() va_end(args)
-#endif
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -117,6 +110,7 @@ static int APS5_VABI ScanWideSized(const char16_t* input, const char16_t* format
     return result;
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 static long APS5_VABI SumThroughCopy(int count, ...) {
     APS5_VA_BEGIN(count);
     unsigned char before[24];
@@ -136,11 +130,14 @@ static long APS5_VABI SumThroughCopy(int count, ...) {
     APS5_VA_END();
     return sum;
 }
+#endif
 
 static void CheckVacopy() {
+#ifndef ANYPS5_GUEST_LIFTED
     long expected = 0;
     for (long index = 1; index <= 9; ++index) expected += index * 100 * index - index * 100;
     Require(SumThroughCopy(9, 100L, 200L, 300L, 400L, 500L, 600L, 700L, 800L, 900L) == expected, "_Vacopy copy reads every argument");
+#endif
     unsigned char overlap[32];
     for (int index = 0; index < 32; ++index) overlap[index] = static_cast<unsigned char>(index);
     _Vacopy_nid_postfix(overlap + 8, overlap);
@@ -158,6 +155,8 @@ static std::string Contents(FileStream& stream) {
 }
 
 int main() {
+    Require(fwide_nid_postfix(&_Stdout_nid_postfix, 0) == 0, "stdout starts unoriented");
+    Require(printf_s_nid_postfix("%s", "") == 0 && fwide_nid_postfix(&_Stdout_nid_postfix, 0) == -1, "printf_s orients stdout for bytes");
     FileStream scanned(TemporaryFile::Open());
     Require(std::fputs("42 answer 7", scanned.GetHandle()) >= 0, "seed the scanned stream");
     std::rewind(scanned.GetHandle());

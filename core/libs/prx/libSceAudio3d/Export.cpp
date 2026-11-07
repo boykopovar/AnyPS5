@@ -2,6 +2,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -250,6 +251,28 @@ int DrainAssociatedAudioOuts() {
     }
 }
 
+void DeliverReport(const Audio3dReport& report) {
+    Audio3dReportSlot slots[AUDIO3D_REPORT_SLOTS];
+    {
+        std::lock_guard lock(g_report_mutex);
+        std::copy(std::begin(g_report_slots[report.type]), std::end(g_report_slots[report.type]), slots);
+    }
+    for (const Audio3dReportSlot& slot : slots) {
+        if (slot.handler != nullptr) slot.handler(&report, slot.user_data);
+    }
+}
+
+#ifdef ANYPS5_GUEST_LIFTED
+constexpr std::uint32_t SysVGeneralRegisterBytes = 6 * 8;
+constexpr std::size_t SysVRegisterSaveBytes = 6 * 8 + 8 * 16;
+
+template <std::size_t Count>
+void DispatchReport(std::uint32_t type, std::uint32_t port_id, std::uint32_t object_id, int result, const char* function, const char* argument_types, std::array<std::uint64_t, Count> values) {
+    alignas(16) std::array<std::uint8_t, SysVRegisterSaveBytes> registers{};
+    const Audio3dReportArguments arguments{SysVGeneralRegisterBytes, SysVGeneralRegisterBytes, values.data(), registers.data()};
+    DeliverReport({sizeof(Audio3dReport), port_id, object_id, type, result, function, argument_types, arguments});
+}
+#else
 void APS5_VABI DispatchReport_nid_no_patch(std::uint32_t type, std::uint32_t port_id, std::uint32_t object_id, int result, const char* function, const char* argument_types, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list arguments;
@@ -261,20 +284,14 @@ void APS5_VABI DispatchReport_nid_no_patch(std::uint32_t type, std::uint32_t por
     static_assert(sizeof(arguments) == sizeof(Audio3dReportArguments));
     Audio3dReport report{sizeof(Audio3dReport), port_id, object_id, type, result, function, argument_types, {}};
     std::memcpy(&report.arguments, arguments, sizeof(report.arguments));
-    Audio3dReportSlot slots[AUDIO3D_REPORT_SLOTS];
-    {
-        std::lock_guard lock(g_report_mutex);
-        std::copy(std::begin(g_report_slots[type]), std::end(g_report_slots[type]), slots);
-    }
-    for (const Audio3dReportSlot& slot : slots) {
-        if (slot.handler != nullptr) slot.handler(&report, slot.user_data);
-    }
+    DeliverReport(report);
 #ifdef _WIN32
     __builtin_sysv_va_end(arguments);
 #else
     va_end(arguments);
 #endif
 }
+#endif
 
 template <typename T>
 std::uint64_t ReportArgument(T value) {
@@ -288,7 +305,11 @@ std::uint64_t ReportArgument(T value) {
 template <typename... Arguments>
 void Report(std::uint32_t port_id, std::uint32_t object_id, int result, const char* function, const char* argument_types, Arguments... arguments) {
     if (g_call_report_handlers.load() == 0) return;
+#ifdef ANYPS5_GUEST_LIFTED
+    DispatchReport(AUDIO3D_REPORT_TYPE_CALL, port_id, object_id, result, function, argument_types, std::array<std::uint64_t, sizeof...(Arguments)>{ReportArgument(arguments)...});
+#else
     DispatchReport_nid_no_patch(AUDIO3D_REPORT_TYPE_CALL, port_id, object_id, result, function, argument_types, ReportArgument(arguments)...);
+#endif
 }
 
 }
