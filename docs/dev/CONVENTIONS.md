@@ -10,7 +10,7 @@
 
 ---
 
-Comments in code can only be added to indicate areas of [technical debt](TechnicalDebt.md) (only by a human), the end of `#endif`, and the end of namespace.
+Comments in code can only be added to indicate areas of [technical debt](TechnicalDebt.md) (only by a human), the end of `#endif`, and the end of namespace. A required upstream licence notice (a copyright line, an SPDX identifier, or standard permission or redistribution text) needs no debt entry; the exemption covers its unbroken run of comment lines, stopping at the first blank line or line of code on either side.
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
 
