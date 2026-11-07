@@ -427,9 +427,7 @@ bool IsURLSchemeRegisteredAsNoAccess(std::u16string_view scheme) {
         if (entry.size() != scheme.size()) continue;
         bool equal = true;
         for (std::size_t i = 0; i < entry.size() && equal; ++i) {
-            char16_t c = scheme[i];
-            if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c - u'A' + u'a');
-            equal = c == static_cast<unsigned char>(entry[i]);
+            equal = scheme[i] == static_cast<unsigned char>(entry[i]);
         }
         if (equal) return true;
     }
