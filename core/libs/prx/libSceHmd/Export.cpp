@@ -148,6 +148,8 @@ std::int32_t APS5_VABI sceHmdInternalMmapIsConnect() {
 }
 
 int APS5_VABI sceHmdInternalGetPUVersion(std::uint32_t* version) {
+    if (!version) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -168,6 +170,8 @@ int APS5_VABI sceHmdInternalSocialScreenSetOutput(std::uint32_t output, const Hm
 }
 
 int APS5_VABI sceHmdInternalGetVirtualDisplayDepth(std::uint8_t* depth) {
+    if (!depth) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -193,6 +197,8 @@ int APS5_VABI sceHmdInternalSetCrashReportCommand(std::uint8_t command) {
 }
 
 int APS5_VABI sceHmdInternalGetDebugTextMode(std::uint8_t* mode) {
+    if (!mode) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -216,11 +222,15 @@ int APS5_VABI sceHmdReprojectionStartWideNear(const HmdReprojectionWideNearParam
 }
 
 int APS5_VABI sceHmdInternalGetPUSerialNumber(char* serialNumber) {
+    if (!serialNumber) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHmdInternalGetDebugSocialScreenMode(std::uint8_t* mode) {
+    if (!mode) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -241,6 +251,8 @@ int APS5_VABI sceHmdInternalMirroringModeSetAspect(const HmdMirroringAspect* asp
 }
 
 int APS5_VABI sceHmdInternalDfuGetStatus(std::uint64_t* status) {
+    if (!status) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -305,6 +317,8 @@ int APS5_VABI sceHmdReprojectionClearUserEventEnd(void) {
 }
 
 int APS5_VABI sceHmdInternalGetIPD(HmdEyeDistances* distances) {
+    if (!distances) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -315,6 +329,8 @@ int APS5_VABI sceHmdInternalSetVRMode(std::int32_t enabled) {
 }
 
 int APS5_VABI sceHmdInternalCrashReportReadDataSize(std::uint32_t* dataSize) {
+    if (!dataSize) return Hmd::ParameterNull;
+    if (!initialized.load()) return Hmd::NotInitialized;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
