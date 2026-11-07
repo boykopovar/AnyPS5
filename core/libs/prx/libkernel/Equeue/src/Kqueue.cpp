@@ -239,7 +239,7 @@ void ResetEdge(KernelEqueueEvent* e) {
 
 void WatchEdges(KernelEqueueEvent& event, bool socket) {
     const int descriptor = static_cast<int>(event.event.ident);
-    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, event.event.filter == EVFILT_WRITE);
+    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, descriptor, event.event.filter == EVFILT_WRITE);
     event.filter.data = watch.get();
     event.filter.waitDescriptor = watch->Descriptor();
     event.filter.owner = std::move(watch);

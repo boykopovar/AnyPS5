@@ -36,6 +36,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include <spirv/unified1/GLSL.std.450.h>
 #include <limits>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <spirv/unified1/spirv.hpp>
@@ -433,6 +434,24 @@ void stateTests() {
     Require(state.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && state.color.bytes == colorMemory.size(), "render-target address or size changed");
     Require(state.viewport.y == 4 && state.viewport.height == -4, "negative viewport height was lost");
     Require(state.color.format == VK_FORMAT_R8G8B8A8_UNORM, "RGBA format changed");
+    Require(!state.rasterizerDiscard, "a four-component position export discarded rasterization");
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    queue.context[0x1c3] = 0;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.rasterizerDiscard, "a disabled position export did not discard rasterization");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a draw without a position export was rejected");
+    queue.context[0x1c3] = 0x44;
+    Require(!AgcDriver::Graphics::DecodeState(queue).rasterizerDiscard, "an auxiliary position export discarded rasterization");
+    queue.context[0x1c3] = 1;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 1");
+    queue.context[0x1c3] = 2;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 2");
+    queue.context[0x1c3] = 3;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "position export format 3");
+    queue = makeState();
+    queue.context[0x1c3] = 0;
+    Require(AgcDriver::Graphics::CanonicalPipelineState(AgcDriver::Graphics::DecodeState(queue)).rasterizerDiscard, "the canonical state dropped the rasterizer discard");
     queue.userConfig[0x24b] = 1;
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
@@ -2988,7 +3007,7 @@ void memoryValueFillTests() {
 }
 
 void depthMaintenanceTests() {
-    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u, 0x4000u}) {
+    for (const auto mode : {0x4u, 0x8u, 0x84u, 0x108u, 0xf88u, 0x1000u}) {
         for (const auto clear : {0u, 1u, 2u, 3u}) {
             auto queue = makeState();
             queue.context[0x000] = mode | clear;
@@ -3006,6 +3025,14 @@ void depthMaintenanceTests() {
         auto queue = makeState();
         queue.context[0x000] = control;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "ordinary depth controls were mistaken for maintenance");
+    }
+    for (const auto reserved : {0x00004000u, 0x80000000u, 0xffffc000u}) {
+        auto queue = makeState();
+        queue.context[0x000] = reserved;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "reserved DB_RENDER_CONTROL bits were mistaken for maintenance");
+        static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+        queue.context[0x000] = reserved | 4u;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a maintenance bit next to reserved bits was not reported");
     }
     for (const auto clear : {0u, 1u, 2u, 3u}) {
         auto queue = makeState();
@@ -8215,6 +8242,7 @@ struct ModuleShape {
     bool layerOutput = false;
     bool terminateInvocation = false;
     bool omitTerminateExtension = false;
+    bool noPosition = false;
 };
 
 void emit(std::vector<std::uint32_t>& out, spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -8364,7 +8392,7 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
         emit(declarations, spv::OpVariable, {inputPointer, input, spv::StorageClassInput});
         emit(annotations, spv::OpDecorate, {input, spv::DecorationLocation, 0});
     }
-    if (shape.fragment) emit(annotations, spv::OpDecorate, {output, spv::DecorationLocation, 0});
+    if (shape.fragment || shape.noPosition) emit(annotations, spv::OpDecorate, {output, spv::DecorationLocation, 0});
     else emit(annotations, spv::OpDecorate, {output, spv::DecorationBuiltIn, spv::BuiltInPosition});
     if (shape.push) {
         const auto length = id();
@@ -9339,6 +9367,15 @@ void barycentricEmulationTests() {
     expectFailure([&] { ValidateShaders(shaders, state, subgroup, false, false, false, true); }, "triangle primitives");
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     ValidateShaders(shaders, state, subgroup, false, false, false, true);
+    RecompileResult withoutPosition;
+    withoutPosition.spirv = makeModule({.noPosition = true});
+    RecompileResult plainPixel;
+    plainPixel.spirv = makeModule({.fragment = true});
+    const std::array<CompiledShader, 2> withoutPositionShaders{{{ShaderStage::Vertex, &withoutPosition, 0}, {ShaderStage::Fragment, &plainPixel, 0}}};
+    expectFailure([&] { ValidateShaders(withoutPositionShaders, state, subgroup, false, false, false, true); }, "vertex shader does not export position");
+    auto discarded = state;
+    discarded.rasterizerDiscard = true;
+    ValidateShaders(withoutPositionShaders, discarded, subgroup, false, false, false, true);
     const auto plain = compile(interpolates, false);
     const std::array<CompiledShader, 3> plainShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Geometry, &geometry, 0}, {ShaderStage::Fragment, &plain, 0}}};
     expectFailure([&] { ValidateShaders(plainShaders, state, subgroup, false, false, false, true); }, "only for emulated barycentrics");
@@ -11617,18 +11654,78 @@ void float11_11_10TargetTests() {
     }
     changed = queue;
     for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
+    changed.context[0x1e0] = 0x60010101u;
+    const auto additive = AgcDriver::Graphics::DecodeState(changed);
+    Require(additive.color.mergeBlend == 0x40000101u && additive.color.partialWriteMask == 0xffffffffu && !additive.blends[0].blendEnable && additive.blends[0].colorWriteMask == 0u, "an additive blend into an 11_11_10 float target did not decode as a blending merge of the whole word");
+    const auto onlyMerge = [](const AgcDriver::Graphics::State& state) {
+        const auto merges = AgcDriver::Graphics::ExportTargetMerges(state);
+        Require(merges.size() == 1u, "an 11_11_10 float blend did not merge into exactly one color target");
+        return merges.front();
+    };
+    const auto additiveMerge = onlyMerge(additive);
+    Require(additiveMerge.mask == 0xffffffffu && additiveMerge.packing == ColorExportPacking::Float11_11_10 && additiveMerge.blendControl == 0x40000101u, "the additive 11_11_10 float blend did not reach the pixel shader's target merge");
+    auto cube = additive;
+    auto& face = cube.colors.at(0);
+    face.arrayAddress = face.surfaceAddress;
+    face.surfaceExtent = {128u, 128u};
+    face.mipCount = 8u;
+    face.mip = 3u;
+    face.arrayLastSlice = 5u;
+    face.arraySlice = 2u;
+    face.layers = 4u;
+    cube.color = face;
+    const auto cubeMerge = onlyMerge(cube);
+    const auto cubeSurface = AgcDriver::Graphics::DecodeTextureResource(cubeMerge.descriptor);
+    Require(cubeMerge.layered && cubeMerge.firstSlice == 2u && cubeMerge.lastSlice == 5u && cubeSurface.dimension == AgcDriver::Graphics::TextureDimension::k2DArray && cubeSurface.baseAddress == face.arrayAddress && cubeSurface.width == 128u && cubeSurface.height == 128u && cubeSurface.mipCount == 8u && cubeSurface.baseLevel == 3u && cubeSurface.lastLevel == 3u && cubeSurface.baseArray == 0u && cubeSurface.depthOrLastArray == 5u && cubeSurface.format == AgcDriver::Graphics::SurfaceForTarget(face).format, "the merge of mip 3 of slices 2..5 of a mipmapped 11_11_10 float array does not address its whole array at that mip");
+    Require(!additiveMerge.layered && additiveMerge.firstSlice == 0u && additiveMerge.lastSlice == 0u, "the merge of a one-layer 11_11_10 float target was marked layered");
+    {
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, cube, mergeCode);
+        merging.context.pixel->targetMerges = {cubeMerge};
+        const std::array<std::uint32_t, 4> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityGeometry};
+        merging.target.supportedCapabilities = capabilities;
+        const ShaderRecompiler::RequestSerializer serializer;
+        Require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == std::vector{cubeMerge}, "the layered 11_11_10 float target merge was lost in serialization");
+        auto flat = merging;
+        flat.context.pixel->targetMerges = {additiveMerge};
+        auto shifted = merging;
+        shifted.context.pixel->targetMerges.front().firstSlice = 0u;
+        std::vector<std::uint64_t> layeredKey, flatKey, shiftedKey;
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(merging, layeredKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(flat, flatKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(shifted, shiftedKey);
+        Require(layeredKey != flatKey && layeredKey != shiftedKey, "the static shader key does not separate a layered merge from a one-layer merge or from another first slice");
+        const auto words = ShaderRecompiler::Recompile(merging).spirv.Copy();
+        bool arrayed = false, layer = false, geometry = false, clamped = false;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+            if (op == spv::OpTypeImage && words[at + 3] == spv::Dim2D && words[at + 5] == 1u && words[at + 7] == 2u) arrayed = true;
+            if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn && words[at + 3] == spv::BuiltInLayer) layer = true;
+            if (op == spv::OpCapability && words[at + 1] == spv::CapabilityGeometry) geometry = true;
+            if (op == spv::OpExtInst && words[at + 4] == GLSLstd450UMin) clamped = true;
+        }
+        Require(arrayed && layer && geometry && clamped && interlockShape(words) == "capability extension ordered begin end ", "a layered 11_11_10 float merge module does not address an arrayed storage image by gl_Layer, clamped to the view's last slice, inside a pixel interlock");
+        auto multisampled = merging;
+        multisampled.context.pixel->targetMerges.front().samples = 2u;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(multisampled)); }, "a color target merge into a multisampled array");
+    }
+    changed.context[0x1e0] = 0x65040504u;
+    Require(AgcDriver::Graphics::DecodeState(changed).color.mergeBlend == 0x40000504u, "a source-over blend into an 11_11_10 float target did not keep its color equation");
     for (const auto replace : {0x40010001u, 0x60010001u, 0x60050001u}) {
         changed.context[0x1e0] = replace;
         const auto replaced = AgcDriver::Graphics::DecodeState(changed);
-        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u && replaced.color.mergeBlend == 0u && replaced.color.partialWriteMask == 0u, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
     }
-    for (const auto blend : {0x60010101u, 0x40010005u}) {
-        changed.context[0x1e0] = blend;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
-    }
+    changed.context[0x1e0] = 0x40000d01u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target with a constant color factor");
+    changed.context[0x1e0] = 0x40000f01u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "dual-source blending into an 11_11_10 float color target");
+    changed.context[0x1e0] = 0x400001a1u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported blend operation 5");
     changed = queue;
     changed.context[0x8e] = 6;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of an 11_11_10 float color target");
+    const auto partial = AgcDriver::Graphics::DecodeState(changed);
+    Require(partial.color.partialWriteMask == 0x001fffffu && partial.color.mergeBlend == 0u, "a green and blue write of an 11_11_10 float target did not merge into the word's low 21 bits");
     changed.context[0x8e] = 7;
     Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Float11_11_10, "an RGB write of an 11_11_10 float target was refused");
     for (const auto format : {5u, 6u}) {
@@ -12568,6 +12665,34 @@ void vertexZeroFillTests() {
     Require(bytes.size() == extent, "a zero-padded vertex fetch changed its size");
     Require(std::all_of(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(valid), [](std::byte value) { return value == std::byte{0x7a}; }), "a vertex fetch did not copy the bytes within the record count");
     Require(std::all_of(bytes.begin() + static_cast<std::ptrdiff_t>(valid), bytes.end(), [](std::byte value) { return value == std::byte{0}; }), "a vertex fetch past the record count did not read as zeros");
+}
+
+std::vector<std::pair<std::uint64_t, std::size_t>> paddedVertexFlushes;
+
+void RecordPaddedVertexFlush(std::uint64_t address, std::size_t bytes) {
+    paddedVertexFlushes.emplace_back(address, bytes);
+}
+
+void vertexZeroFillFlushTests() {
+    using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
+    constexpr std::size_t valid = 24 * 3;
+    constexpr std::size_t fetched = valid + 40;
+    std::vector<std::byte> guest(fetched, std::byte{0x7a});
+    const auto address = reinterpret_cast<std::uint64_t>(guest.data());
+    const auto previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    paddedVertexFlushes.clear();
+    AgcDriver::GuestMemory::SetFlushHook(&RecordPaddedVertexFlush);
+    try {
+        const auto copy = CopyZeroPaddedDrawInput(mockContext(), address, fetched, valid);
+        const auto bytes = copy.buffer->Bytes();
+        Require(std::all_of(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(valid), [](std::byte value) { return value == std::byte{0x7a}; }), "a zero-padded vertex fetch did not copy its valid bytes");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    Require(std::any_of(paddedVertexFlushes.begin(), paddedVertexFlushes.end(), [&](const auto& flush) { return flush.first <= address && flush.first + flush.second >= address + valid; }), "a zero-padded vertex fetch read its valid bytes without flushing pending GPU results over them");
+    Require(std::all_of(paddedVertexFlushes.begin(), paddedVertexFlushes.end(), [&](const auto& flush) { return flush.first + flush.second <= address + valid; }), "a zero-padded vertex fetch flushed pending GPU results over the padding it fills with zeros");
 }
 
 void vertexOverhangTests() {
@@ -13845,6 +13970,7 @@ int main(int argc, char** argv) {
         storeAtLabelTests();
         nullVertexDescriptorTests();
         vertexZeroFillTests();
+        vertexZeroFillFlushTests();
         vertexOverhangTests();
         vertexZeroFillMergeTests();
         parallelCompareTests();
