@@ -162,7 +162,7 @@ static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-1, 0, handle + 1, 9999}) {
-        Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
         Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_HANDLE);
     }
     PadInputState touch;
@@ -1110,6 +1110,9 @@ int main() {
     Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadReadState(0x999, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadState(earlyPad, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(earlyPad) == PAD_OK);
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadInit_nid_postfix() == 0);

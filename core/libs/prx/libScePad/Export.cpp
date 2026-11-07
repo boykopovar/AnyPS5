@@ -372,9 +372,9 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
- if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
- if (!RemoteHandle(handle) && !SpecialHandle(handle) && !Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
  *data = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
 
