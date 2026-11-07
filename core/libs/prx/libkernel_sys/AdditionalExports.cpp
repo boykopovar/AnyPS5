@@ -1704,8 +1704,9 @@ int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    return sceKernelGetProsperoCompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
@@ -1715,8 +1716,9 @@ int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid(int pid, std::int32_t* version) {
+    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return SCE_KERNEL_ERROR_ESRCH;
+    return sceKernelGetPs4CompiledSdkVersion(version);
 }
 
 int APS5_VABI sceKernelGetResidentFmemCount2() {
