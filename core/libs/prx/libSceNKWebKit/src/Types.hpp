@@ -176,4 +176,14 @@ public:
     std::vector<Retained<String>> chosenFiles;
 };
 
+
+class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
+public:
+    Retained<Object> url;
+    Retained<Object> firstPartyForCookies;
+    std::string httpMethod = "GET";
+    Retained<Object> httpBody;
+    double timeoutInterval = 0.0;
+};
+
 }  // namespace NKWebKit

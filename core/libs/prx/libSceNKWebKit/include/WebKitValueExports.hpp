@@ -183,7 +183,13 @@ const void* APS5_VABI WKURLCreateWithBaseURL(const void* baseURLRef, const char*
 const void* APS5_VABI WKURLCreateWithUTF8CString(const char* string);
 std::uint32_t APS5_VABI WKURLGetTypeID();
 bool APS5_VABI WKURLIsEqual(const void* aRef, const void* bRef);
+const void* APS5_VABI WKURLRequestCopyFirstPartyForCookies(const void* urlRequestRef);
+const void* APS5_VABI WKURLRequestCopyHTTPMethod(const void* urlRequestRef);
+const void* APS5_VABI WKURLRequestCopySettingHTTPBody(const void* urlRequestRef, const void* httpBodyRef);
+const void* APS5_VABI WKURLRequestCopyURL(const void* urlRequestRef);
+const void* APS5_VABI WKURLRequestCreateWithWKURL(const void* urlRef);
 std::uint32_t APS5_VABI WKURLRequestGetTypeID();
+void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval);
 const void* APS5_VABI WKURLResponseCopyMIMEType(const void* responseRef);
 const void* APS5_VABI WKURLResponseCopySuggestedFilename(const void* responseRef);
 const void* APS5_VABI WKURLResponseCopyURL(const void* responseRef);

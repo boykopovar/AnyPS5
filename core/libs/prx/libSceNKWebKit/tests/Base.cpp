@@ -38,6 +38,50 @@ static void TestTypeIDs() {
     Require(WKURLGetTypeID() == 22);
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
+
+    WKURLRequestSetDefaultTimeoutInterval(60.0);
+    WKURLRequestSetDefaultTimeoutInterval(-1.0);
+
+    bool threwNullUrl = false;
+    try {
+        WKURLRequestCreateWithWKURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threwNullUrl = true;
+    }
+    Require(threwNullUrl);
+
+    auto* url = WKURLCreateWithUTF8CString("https://example.com/api");
+    auto* req = WKURLRequestCreateWithWKURL(url);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKURLRequestGetTypeID());
+
+    auto* copiedUrl = WKURLRequestCopyURL(req);
+    Require(copiedUrl != nullptr);
+    Require(WKGetTypeID(copiedUrl) == WKURLGetTypeID());
+    auto* urlStr = WKURLCopyString(copiedUrl);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/api"));
+    WKRelease(urlStr);
+    WKRelease(copiedUrl);
+
+    auto* firstParty = WKURLRequestCopyFirstPartyForCookies(req);
+    Require(firstParty == nullptr);
+
+    auto* method = WKURLRequestCopyHTTPMethod(req);
+    Require(method != nullptr);
+    Require(WKStringIsEqualToUTF8CString(method, "GET"));
+    WKRelease(method);
+
+    const std::uint8_t payload[] = { 0x01, 0x02, 0x03 };
+    auto* data = WKDataCreate(payload, sizeof(payload));
+    auto* reqWithBody = WKURLRequestCopySettingHTTPBody(req, data);
+    Require(reqWithBody != nullptr);
+    Require(WKGetTypeID(reqWithBody) == WKURLRequestGetTypeID());
+
+    WKRelease(data);
+    WKRelease(reqWithBody);
+    WKRelease(req);
+    WKRelease(url);
+
     Require(WKUserContentURLPatternGetTypeID() == 25);
     Require(WKBooleanGetTypeID() == 30);
     Require(WKDoubleGetTypeID() == 31);
@@ -629,6 +673,50 @@ static void TestUserContentURLPattern() {
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
+
+    WKURLRequestSetDefaultTimeoutInterval(60.0);
+    WKURLRequestSetDefaultTimeoutInterval(-1.0);
+
+    bool threwNullUrl = false;
+    try {
+        WKURLRequestCreateWithWKURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threwNullUrl = true;
+    }
+    Require(threwNullUrl);
+
+    auto* url = WKURLCreateWithUTF8CString("https://example.com/api");
+    auto* req = WKURLRequestCreateWithWKURL(url);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKURLRequestGetTypeID());
+
+    auto* copiedUrl = WKURLRequestCopyURL(req);
+    Require(copiedUrl != nullptr);
+    Require(WKGetTypeID(copiedUrl) == WKURLGetTypeID());
+    auto* urlStr = WKURLCopyString(copiedUrl);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/api"));
+    WKRelease(urlStr);
+    WKRelease(copiedUrl);
+
+    auto* firstParty = WKURLRequestCopyFirstPartyForCookies(req);
+    Require(firstParty == nullptr);
+
+    auto* method = WKURLRequestCopyHTTPMethod(req);
+    Require(method != nullptr);
+    Require(WKStringIsEqualToUTF8CString(method, "GET"));
+    WKRelease(method);
+
+    const std::uint8_t payload[] = { 0x01, 0x02, 0x03 };
+    auto* data = WKDataCreate(payload, sizeof(payload));
+    auto* reqWithBody = WKURLRequestCopySettingHTTPBody(req, data);
+    Require(reqWithBody != nullptr);
+    Require(WKGetTypeID(reqWithBody) == WKURLRequestGetTypeID());
+
+    WKRelease(data);
+    WKRelease(reqWithBody);
+    WKRelease(req);
+    WKRelease(url);
+
 
     auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
         NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
