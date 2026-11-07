@@ -263,12 +263,11 @@ int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t s
 
 int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size) {
  constexpr int SCE_KERNEL_DMQ_FIND_NEXT = 1;
- if (!info || offset < 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (!info || offset < 0 || flags == 2 || flags == 4 || info_size == 0) return SCE_KERNEL_ERROR_EINVAL;
  struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
- if (info_size < sizeof(DirectMemoryQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
  DirectMemoryQueryInfo q{};
  if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q.start, &q.end, &q.memory_type)) return SCE_KERNEL_ERROR_EACCES;
- if (!GuestCopyOut_nid_no_patch(info, &q, sizeof(q))) return SCE_KERNEL_ERROR_EFAULT;
+ if (!GuestCopyOut_nid_no_patch(info, &q, std::min(info_size, sizeof(q)))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
