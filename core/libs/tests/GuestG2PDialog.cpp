@@ -77,6 +77,7 @@ int main() {
     Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
 
     Require(sceG2PDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == static_cast<int>(0x80B8000Au));
     std::int32_t prefixResult[8] = {-1, -1, -1, -1, 0x5a, 0x5a, 0x5a, 0x5a};
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(prefixResult)) == 0);
     Require(prefixResult[2] == kResultUserCanceled);

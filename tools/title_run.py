@@ -15,12 +15,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
+import pad_input
+import pad_timeline
 import unwrap_self
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
-TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict}
+TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict}
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
+PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
+PAD_AFTER_SECONDS = 5
+
+
+def pad_text(pad, sequence):
+    return pad_timeline.compile_timeline({"version": 1, "events": pad["events"]}, sequence, pad.get("repeat", 1), pad.get("gap_ms", 200))
+
+
+def check_pad(pad):
+    if "events" not in pad or not set(pad) <= PAD_FIELDS:
+        raise ValueError(f"pad must hold events and may hold {', '.join(sorted(PAD_FIELDS - {'events'}))}")
+    pad_timeline.integer(pad.get("after_s", PAD_AFTER_SECONDS), "pad.after_s", 0, 3600)
+    pad_text(pad, 1)
 
 
 def load_titles(path):
@@ -33,6 +48,12 @@ def load_titles(path):
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
             if not isinstance(value, TITLE_FIELDS[key]):
                 raise ValueError(f"{path}: {title_id}: {key} must be {TITLE_FIELDS[key].__name__}")
+            if key == "pad":
+                try:
+                    check_pad(value)
+                except ValueError as error:
+                    raise ValueError(f"{path}: {title_id}: {error}") from None
+                continue
             items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else []
             if not all(isinstance(item, str) for item in items):
                 raise ValueError(f"{path}: {title_id}: {key} must hold strings")
@@ -435,17 +456,24 @@ def collect_frames(work, destination):
     return kept
 
 
-def run_title(executable, work, run_dir, seconds, extra_env):
+def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     run_dir.mkdir(parents=True)
-    inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE")}
+    inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE", "APS5_PAD_INPUT_FILE")}
     env = {**inherited, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
+    pad_file, queued = work / "pad-input.txt", None
+    if pad:
+        pad_file.unlink(missing_ok=True)
+        env["APS5_PAD_INPUT_FILE"] = str(pad_file)
     started = time.monotonic()
     with (run_dir / "stdout.log").open("wb") as stdout, (run_dir / "stderr.log").open("wb") as stderr:
         session = Session([str(executable)], work, env, stdout, stderr, owned=work)
         try:
             while session.alive() and time.monotonic() - started < seconds:
+                if pad and queued is None and time.monotonic() - started >= pad.get("after_s", PAD_AFTER_SECONDS):
+                    pad_timeline.queue_timeline(pad_file, pad_text(pad, pad_input.next_sequence(pad_file)))
+                    queued = round(time.monotonic() - started, 1)
                 session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
             elapsed = round(time.monotonic() - started, 1)
@@ -468,7 +496,7 @@ def run_title(executable, work, run_dir, seconds, extra_env):
     return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
             "warnings": warning_counts(text), "frames": frames, "gpu": summary["gpu"], "driver": summary["driver"],
-            "os": summary["os"], "cpu": cpu.group(1) if cpu else ""}
+            "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
 
 
 def source_root(build):
@@ -555,7 +583,7 @@ def main(argv=None):
                           "first_error": first_error(log) or last_line(log),
                           "warnings": {}, "frames": []}
             else:
-                result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}))
+                result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}), entry.get("pad"))
                 for key in ("os", "gpu", "driver", "cpu"):
                     value = result.pop(key)
                     summary["machine"][key] = summary["machine"][key] or value
