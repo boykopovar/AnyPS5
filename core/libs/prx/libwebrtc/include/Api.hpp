@@ -26,6 +26,7 @@
 #include "prx/libwebrtc/include/CryptoOptions.hpp"
 #include <cstddef>
 #include <cstdint>
+#include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
 
 struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/TaskQueueBase.hpp"
@@ -143,8 +144,8 @@ int APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(voi
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder17set_timestamp_rtpEj_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_msEl_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc10VideoFrame6heightEv_nid_postfix(void);
+int APS5_VABI _ZNK6webrtc10VideoFrame5widthEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);
+int APS5_VABI _ZNK6webrtc10VideoFrame6heightEv_nid_postfix(const WebRtcVideoFrameDimensions* frame);
 int APS5_VABI _ZNK6webrtc10VideoFrame18video_frame_bufferEv_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(void);
