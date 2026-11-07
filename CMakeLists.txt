@@ -256,6 +256,8 @@ if(BUILD_TESTING)
         set_tests_properties(tools_audit_strict_partial PROPERTIES TIMEOUT 20)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        add_test(NAME guest_pointer_audit COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_guest_pointer_audit.py)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME tools_catalog_json COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_catalog_json.py)
@@ -293,6 +295,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
+        add_test(NAME progress_comment_concurrency COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_comment_concurrency.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -413,14 +417,29 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedPathTests)
         add_test(NAME configure_seed_round_trips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
+        add_test(NAME configure_seed_stdout COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedStdoutTests)
+        set_tests_properties(configure_seed_stdout PROPERTIES TIMEOUT 20)
         add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
         add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
         add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IntegrationTests)
+        add_test(NAME vulkan_validation_gate_timeouts COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py TimeoutTests)
+        add_test(NAME vulkan_validation_gate_validation COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ValidationTests)
+        add_test(NAME vulkan_validation_gate_layers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py LayerTests)
+        add_test(NAME vulkan_validation_gate_output COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py OutputTests)
         add_test(NAME vulkan_validation_gate_attribution COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py AttributionTests)
+        add_test(NAME vulkan_validation_gate_setup COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py SetupTests)
+        add_test(NAME vulkan_validation_gate_commands COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py CommandTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
