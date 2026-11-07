@@ -17,7 +17,7 @@ int APS5_VABI libSceCdlgUtilServerUnknown_Pl1B1_plus_pzwLM_nid_no_patch();
 int APS5_VABI libSceCdlgUtilServerUnknown_RiJYtG8H1Yk_nid_no_patch();
 int APS5_VABI libSceCdlgUtilServerUnknown_VMUTkgazl40_nid_no_patch();
 int APS5_VABI libSceCdlgUtilServerUnknown_VrN0lR_plus_BJyc_nid_no_patch();
-int APS5_VABI libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch();
+int APS5_VABI libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch(const void* self);
 int APS5_VABI libSceCdlgUtilServerUnknown_WlSxsADNweU_nid_no_patch();
 int APS5_VABI libSceCdlgUtilServerUnknown_YNi5ipH59bE_nid_no_patch();
 int APS5_VABI libSceCdlgUtilServerUnknown_ZRy0WQp2COs_nid_no_patch();

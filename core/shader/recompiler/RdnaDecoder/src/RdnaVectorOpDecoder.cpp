@@ -1210,6 +1210,14 @@ void validateVop1Sdwa(const RdnaInstruction& instruction, std::uint32_t destinat
     }
 }
 
+RdnaOperand decodeSdwaSource(std::uint32_t code, std::uint32_t programCounter) {
+    const RdnaOperand operand = DecodeRdnaScalarSource(code, programCounter);
+    if (operand.kind == RdnaOperandKind::LiteralConstant) {
+        throw std::invalid_argument("SDWA source operand cannot be a literal constant");
+    }
+    return operand;
+}
+
 void decodeVop1Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t vdst, RdnaInstruction& instruction) {
     if (static_cast<std::size_t>(wordIndex) + 1u >= code.size()) {
         throw std::out_of_range("truncated VOP1 SDWA instruction");
@@ -1232,7 +1240,7 @@ void decodeVop1Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     instruction.destination = usesScalarDestination(instruction.op)
         ? DecodeRdnaScalarDestination(vdst, programCounter)
         : DecodeRdnaVectorGpr(vdst);
-    instruction.source0 = DecodeRdnaScalarSource(src0 + (s0 == 0u ? 256u : 0u), programCounter);
+    instruction.source0 = decodeSdwaSource(src0 + (s0 == 0u ? 256u : 0u), programCounter);
     instruction.destination.sdwaSel = dstSel;
     instruction.destination.sdwaDstUnused = dstUnused;
     instruction.destination.explicitSdwaDst = true;
@@ -1446,8 +1454,8 @@ void decodeVop2Sdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
     validateVop2Sdwa(instruction, opcode, fields);
 
     instruction.destination = DecodeRdnaVectorGpr(vdst);
-    instruction.source0 = DecodeRdnaScalarSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
-    instruction.source1 = DecodeRdnaScalarSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
+    instruction.source0 = decodeSdwaSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
+    instruction.source1 = decodeSdwaSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
     instruction.destination.sdwaSel = fields.dstSel;
     instruction.destination.sdwaDstUnused = fields.dstUnused;
     instruction.destination.explicitSdwaDst = true;
@@ -1642,8 +1650,8 @@ void decodeVopcSdwa(std::uint32_t programCounter, std::span<const std::uint32_t>
         throw std::invalid_argument("VOPC SDWA selector is invalid");
     }
 
-    instruction.source0 = DecodeRdnaScalarSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
-    instruction.source1 = DecodeRdnaScalarSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
+    instruction.source0 = decodeSdwaSource(fields.src0 + (fields.s0 == 0u ? 256u : 0u), programCounter);
+    instruction.source1 = decodeSdwaSource(vsrc1 + (fields.s1 == 0u ? 256u : 0u), programCounter);
     if (isVopcCompareExec(instruction.op)) {
         instruction.destination.kind = RdnaOperandKind::ExecLo;
     } else if (fields.sd == 0u) {
