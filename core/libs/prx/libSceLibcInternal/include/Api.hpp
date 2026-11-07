@@ -4,6 +4,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/LegacySignals.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
@@ -31,6 +32,8 @@ int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+int APS5_VABI __fflush_nid_postfix(FileStream* stream);
+int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
 void APS5_VABI vwarnc_nid_postfix(int code, const char* format, VaList* args);
@@ -45,6 +48,10 @@ const char* APS5_VABI _getprogname_nid_postfix();
 void APS5_VABI setprogname_nid_postfix(const char* name);
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
+void* APS5_VABI sceLibcInternalPmrNewDeleteResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrGetDefaultResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrNullMemoryResource_nid_no_patch() noexcept;
+void* APS5_VABI sceLibcInternalPmrSetDefaultResource_nid_no_patch(void* resource) noexcept;
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
 void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
 int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle);
@@ -92,6 +99,7 @@ int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileAction
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t* processId, const char* path, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment);
 int APS5_VABI posix_spawnp_nid_postfix(std::int32_t* processId, const char* file, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment);
 void APS5_VABI makecontext_nid_postfix(UserUcontext* context, void (APS5_VABI* start)(), int count, ...);
+int APS5_VABI __kernel_rem_pio2_nid_postfix(double* x, double* y, int e0, int nx, int prec);
 
 [[noreturn]] void APS5_VABI verrc_nid_postfix(int status, int code, const char* format, VaList* args);
 [[noreturn]] void APS5_VABI verr_nid_postfix(int status, const char* format, VaList* args);
@@ -114,6 +122,7 @@ bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target)
 char* APS5_VABI _ZNSt10filesystem9_Read_dirERA260_cPvRNS_9file_typeE_nid_postfix(char* target, void* handle, int* type);
 void* APS5_VABI _ZNSt10filesystem9_Open_dirERA260_cPKcRiRNS_9file_typeE_nid_postfix(char* target, const char* path, int* error, int* type);
 int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle);
+void APS5_VABI sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(void* self);
 int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
@@ -121,11 +130,23 @@ int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name);
 int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
+void APS5_VABI sceLibcInternalPlacementDelete_nid_no_patch(void* pointer, void* placement) noexcept;
+void APS5_VABI sceLibcInternalPlacementArrayDelete_nid_no_patch(void* pointer, void* placement) noexcept;
 void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
 void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+char APS5_VABI sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+char APS5_VABI sceLibcInternalNumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+char APS5_VABI sceLibcInternalNumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();

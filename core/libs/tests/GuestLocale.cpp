@@ -22,6 +22,8 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
 extern std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14];
@@ -72,6 +74,16 @@ static void CheckInputFacetObjects() {
     _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
     _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
     for (const auto slot : _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) Require(slot == 0);
+}
+
+static void CheckMessagesFacetIds() {
+    Require(sizeof(_ZNSt8messagesIcE2idE_nid_postfix) == 8 && sizeof(_ZNSt8messagesIwE2idE_nid_postfix) == 8);
+    Require(_ZNSt8messagesIcE2idE_nid_postfix == 0 && _ZNSt8messagesIwE2idE_nid_postfix == 0);
+    _ZNSt8messagesIcE2idE_nid_postfix = 3;
+    _ZNSt8messagesIwE2idE_nid_postfix = 5;
+    Require(_ZNSt8messagesIcE2idE_nid_postfix == 3 && _ZNSt8messagesIwE2idE_nid_postfix == 5);
+    _ZNSt8messagesIcE2idE_nid_postfix = 0;
+    _ZNSt8messagesIwE2idE_nid_postfix = 0;
 }
 
 static void CheckCodecvtWideVtableObject() {
@@ -620,6 +632,16 @@ static void CheckTimeGetWideVtableObject() {
     }
 }
 
+static void CheckMoneyGetVtableObject() {
+    Require(sizeof(_ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kMoneyGetCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -640,6 +662,7 @@ int main() {
     CheckStandardStreams();
     CheckWideCaseTranslation();
     CheckInputFacetObjects();
+    CheckMessagesFacetIds();
     CheckCodecvtWideVtableObject();
     CheckWideNumPutVtableObject();
     CheckFacetGetcat();
@@ -652,6 +675,7 @@ int main() {
     CheckWideCtypeVtableObject();
     CheckCodecvtVtableObject();
     CheckTimePutVtableObject();
+    CheckMoneyGetVtableObject();
     CheckNumpunctVtableObject();
     CheckMessagesVtableObject();
     _Locksyslock_nid_postfix();
