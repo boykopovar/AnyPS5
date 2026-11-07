@@ -53,6 +53,7 @@ struct UsbdState {
     std::unordered_map<libusb_device_handle*, std::uint32_t> claimed;
     std::unordered_set<libusb_config_descriptor*> configs;
     std::unordered_map<UsbdTransfer*, libusb_transfer*> inFlight;
+    std::unordered_map<const UsbdTransfer*, std::int32_t> isoCapacities;
 };
 
 UsbdState& State() {
@@ -74,6 +75,11 @@ std::int32_t ToGuestError(int result) {
     if (result >= 0) return result;
     if (result == LIBUSB_ERROR_OTHER) return SCE_USBD_ERROR_OTHER;
     return static_cast<std::int32_t>(0x80240000u - static_cast<std::uint32_t>(result));
+}
+
+std::int32_t IsoCapacity(const UsbdState& state, const UsbdTransfer* transfer) {
+    const auto found = state.isoCapacities.find(transfer);
+    return found == state.isoCapacities.end() ? 0 : found->second;
 }
 
 bool IsKnownDevice(const UsbdState& state, libusb_device* device) {
@@ -341,6 +347,9 @@ UsbdTransfer* APS5_VABI sceUsbdAllocTransfer(std::int32_t isoPackets) {
     auto* transfer = static_cast<UsbdTransfer*>(std::calloc(1, size));
     if (transfer == nullptr) return nullptr;
     transfer->numIsoPackets = isoPackets;
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    state.isoCapacities[transfer] = isoPackets;
     return transfer;
 }
 
@@ -350,6 +359,7 @@ void APS5_VABI sceUsbdFreeTransfer(UsbdTransfer* transfer) {
         auto& state = State();
         std::lock_guard lock(state.mutex);
         if (state.inFlight.contains(transfer)) throw std::runtime_error(std::string(__func__) + ": transfer is still in flight");
+        state.isoCapacities.erase(transfer);
     }
     std::free(transfer);
 }
@@ -380,6 +390,11 @@ void APS5_VABI sceUsbdFillBulkTransfer(UsbdTransfer* transfer, void* deviceHandl
 
 void APS5_VABI sceUsbdFillIsoTransfer(UsbdTransfer* transfer, void* deviceHandle, std::uint8_t endpoint, std::uint8_t* buffer, std::int32_t length, std::int32_t numIsoPackets, UsbdTransferCallback callback, void* userData, std::uint32_t timeout) {
     if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (numIsoPackets > IsoCapacity(state, transfer)) throw std::runtime_error(std::string(__func__) + ": the iso packet count is larger than the transfer was allocated for");
+    }
     transfer->deviceHandle = deviceHandle;
     transfer->endpoint = endpoint;
     transfer->type = TRANSFER_TYPE_ISOCHRONOUS;
@@ -427,15 +442,27 @@ std::uint8_t* APS5_VABI sceUsbdControlTransferGetSetup(UsbdTransfer* transfer) {
 
 void APS5_VABI sceUsbdSetIsoPacketLengths(UsbdTransfer* transfer, std::uint32_t length) {
     if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (transfer->numIsoPackets > IsoCapacity(state, transfer)) throw std::runtime_error(std::string(__func__) + ": the iso packet count is larger than the transfer was allocated for");
+    }
     for (std::int32_t packet = 0; packet < transfer->numIsoPackets; ++packet) transfer->isoPacketDescriptors[packet].length = length;
 }
 
 std::uint8_t* APS5_VABI sceUsbdGetIsoPacketBuffer(UsbdTransfer* transfer, std::uint32_t packet) {
     if (transfer == nullptr) throw std::runtime_error(std::string(__func__) + ": null transfer");
-    if (transfer->numIsoPackets < 0 || packet >= static_cast<std::uint32_t>(transfer->numIsoPackets) || transfer->buffer == nullptr) return nullptr;
-    std::uint8_t* pointer = transfer->buffer;
-    for (std::uint32_t index = 0; index < packet; ++index) pointer += transfer->isoPacketDescriptors[index].length;
-    return pointer;
+    std::int32_t capacity = 0;
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        capacity = IsoCapacity(state, transfer);
+    }
+    if (transfer->numIsoPackets < 0 || transfer->numIsoPackets > capacity || packet >= static_cast<std::uint32_t>(transfer->numIsoPackets) || transfer->buffer == nullptr) return nullptr;
+    std::uint64_t offset = 0;
+    for (std::uint32_t index = 0; index < packet; ++index) offset += transfer->isoPacketDescriptors[index].length;
+    if (transfer->length < 0 || offset + transfer->isoPacketDescriptors[packet].length > static_cast<std::uint64_t>(transfer->length)) return nullptr;
+    return transfer->buffer + offset;
 }
 
 std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t* transferred, std::uint32_t timeout) {
@@ -618,6 +645,12 @@ std::int32_t APS5_VABI sceUsbdSetConfiguration(void* deviceHandle, std::int32_t 
 
 std::int32_t APS5_VABI sceUsbdSubmitTransfer(UsbdTransfer* transfer) {
     if (transfer == nullptr || transfer->deviceHandle == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    auto& state = State();
+    {
+        std::lock_guard lock(state.mutex);
+        if (transfer->numIsoPackets > IsoCapacity(state, transfer)) return SCE_USBD_ERROR_INVALID_ARG;
+    }
+    if (transfer->length < 0 || (transfer->length > 0 && transfer->buffer == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
     auto* handle = KnownHandle(transfer->deviceHandle, __func__);
     if ((transfer->flags & ~SUPPORTED_TRANSFER_FLAGS) != 0) throw std::runtime_error(std::string(__func__) + ": transfer flags " + std::to_string(transfer->flags) + " are not supported");
     if (transfer->numIsoPackets < 0) return SCE_USBD_ERROR_INVALID_ARG;
@@ -634,7 +667,6 @@ std::int32_t APS5_VABI sceUsbdSubmitTransfer(UsbdTransfer* transfer) {
     host->callback = CompleteTransfer;
     host->num_iso_packets = transfer->numIsoPackets;
     for (int packet = 0; packet < transfer->numIsoPackets; ++packet) host->iso_packet_desc[packet].length = transfer->isoPacketDescriptors[packet].length;
-    auto& state = State();
     {
         std::lock_guard lock(state.mutex);
         if (!state.inFlight.emplace(transfer, host).second) {
