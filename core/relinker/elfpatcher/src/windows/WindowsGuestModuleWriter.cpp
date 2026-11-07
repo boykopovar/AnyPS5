@@ -1,5 +1,6 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
+#include <elfpatcher/windows/WindowsExportBuilder.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
@@ -152,39 +153,27 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         Io::AppendU32(lifecycle.Data, guest.HasInit ? image.GetRva(guest.Init) : 0);
         Io::AppendU32(lifecycle.Data, CheckedRva(guest.InitArray.size()));
         for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
+        if (runtime.DeferredDependencies.size() > Relinker::GuestMaximumDeferredDependencies)
+            throw Domain::RelinkerException("Too many deferred guest dependencies: " + std::to_string(runtime.DeferredDependencies.size()));
+        if (!runtime.DeferredDependencies.empty()) {
+            Io::AppendU32(lifecycle.Data, Relinker::GuestDeferredDependenciesMagic);
+            Io::AppendU32(lifecycle.Data, CheckedRva(runtime.DeferredDependencies.size()));
+            for (const auto& name : runtime.DeferredDependencies) Io::AppendString(lifecycle.Data, name);
+        }
+        if (runtime.DeferredSweep.size() > Relinker::GuestMaximumDeferredDependencies)
+            throw Domain::RelinkerException("Too many deferred guest sweep modules: " + std::to_string(runtime.DeferredSweep.size()));
+        if (!runtime.DeferredSweep.empty()) {
+            Io::AppendU32(lifecycle.Data, Relinker::GuestDeferredSweepMagic);
+            Io::AppendU32(lifecycle.Data, CheckedRva(runtime.DeferredSweep.size()));
+            for (const auto& name : runtime.DeferredSweep) Io::AppendString(lifecycle.Data, name);
+        }
+        if (!runtime.DeferredDependencies.empty() || !runtime.DeferredSweep.empty()) Io::AppendU32(lifecycle.Data, 0);
         if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
         nextRva = AlignRva(nextRva + lifecycle.Data.size());
         sections.push_back(std::move(lifecycle));
     }
     if (exports.size() > 65535) throw Domain::RelinkerException("Too many guest PE exports");
-    PeSection exportSection{".edata", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(40)};
-    auto& data = exportSection.Data;
-    const auto count = CheckedRva(exports.size());
-    const auto functions = data.size();
-    data.resize(data.size() + count * 4);
-    const auto names = data.size();
-    data.resize(data.size() + count * 4);
-    const auto ordinals = data.size();
-    data.resize(data.size() + count * 2);
-    Io::WriteU32(data, 12, CheckedRva(nextRva + data.size()));
-    Io::AppendString(data, guest.OutputName);
-    Io::WriteU32(data, 16, 1);
-    Io::WriteU32(data, 20, count);
-    Io::WriteU32(data, 24, count);
-    Io::WriteU32(data, 28, CheckedRva(nextRva + functions));
-    Io::WriteU32(data, 32, CheckedRva(nextRva + names));
-    Io::WriteU32(data, 36, CheckedRva(nextRva + ordinals));
-    std::size_t index = 0;
-    for (const auto& [name, rva] : exports) {
-        Io::WriteU32(data, functions + index * 4, rva);
-        Io::WriteU32(data, names + index * 4, CheckedRva(nextRva + data.size()));
-        Io::WriteU16(data, ordinals + index * 2, static_cast<std::uint16_t>(index));
-        Io::AppendString(data, name);
-        ++index;
-    }
-    directories[0] = {nextRva, CheckedRva(data.size())};
-    nextRva = AlignRva(nextRva + data.size());
-    sections.push_back(std::move(exportSection));
+    directories[0] = WindowsExportBuilder().Build(exports, guest.OutputName, sections, nextRva);
     if (tlsIndex != 0) {
         auto imports = WindowsImportBuilder().Build(nextRva);
         directories[1] = imports.Directory;

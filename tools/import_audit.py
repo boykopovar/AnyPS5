@@ -253,12 +253,10 @@ def pe_headers(path, data):
     if magic not in PE_DIRECTORY_OFFSET:
         raise AuditError(f"{path}: unsupported PE optional header magic 0x{magic:x}")
     directory = PE_DIRECTORY_OFFSET[magic]
-    if optional_size < directory + 8:
-        raise AuditError(f"{path}: PE optional header of {optional_size} bytes has no export directory")
+    if optional_size < directory:
+        raise AuditError(f"{path}: PE optional header of {optional_size} bytes is smaller than its fixed fields")
     take(data, optional, optional_size, path, "PE optional header")
     count = unpack("<I", data, optional + directory - 4, path, "data directory count")[0]
-    if count == 0:
-        raise AuditError(f"{path}: PE file declares no data directories")
     if count > (optional_size - directory) // 8:
         raise AuditError(f"{path}: PE data directory count {count} exceeds optional header size {optional_size}")
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
@@ -283,7 +281,9 @@ def pe_headers(path, data):
 
 
 def pe_exports(path, data):
-    to_offset, directory, _ = pe_headers(path, data)
+    to_offset, directory, count = pe_headers(path, data)
+    if count == 0:
+        return set()
     rva, size = unpack("<II", data, directory, path, "export data directory")
     if not rva and not size:
         return set()
@@ -1040,6 +1040,7 @@ def main(argv=None):
     parser.add_argument("--strict-stubs", action="store_true",
                         help="also fail when a referenced import resolves to a throwing stub")
     parser.add_argument("--strict-providers", action="store_true", help="fail when a named import is provided only by another library; retains the existing libc and title-module rules")
+    parser.add_argument("--strict-partial", action="store_true", help="also fail when an import has known unsupported input paths")
     args = parser.parse_args(argv)
     try:
         dependency_registries = [needed_registry_path(path) for path in args.registries if path.name.endswith(".registry.json")]
@@ -1085,7 +1086,7 @@ def main(argv=None):
         print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
         return 2
     print(render(summary, records, missing, stops, missing_hosts, located))
-    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
+    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) or (args.strict_partial and summary["unique_by_class"]["partial"]) else 0
 
 
 if __name__ == "__main__":
