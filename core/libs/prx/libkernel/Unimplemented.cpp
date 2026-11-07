@@ -16,6 +16,16 @@ int APS5_VABI physhm_unlink_nid_postfix(void) {
     return 0;
 }
 
+int APS5_VABI rfork_thread_nid_postfix(int flags, void* stack, int (APS5_VABI* function)(void*), void* argument) {
+    NotImplemented_nid_no_patch("rfork_thread");
+    return 0;
+}
+
+int APS5_VABI sceKernelRdup(int pid, int fd) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 APS5_EXPORT("AC1FtjqMCL0", sceKernelUnknown03);
 int APS5_VABI sceKernelUnknown03(void) {
     NotImplemented_nid_no_patch("AC1FtjqMCL0");
