@@ -14,6 +14,7 @@
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64InstructionRewriter.hpp>
 #include <codegen/IInstructionScanner.hpp>
+#include "LoweringExecution.hpp"
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
@@ -1618,6 +1619,16 @@ void linuxStackSynthesis() {
 }
 
 #if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
+bool hostExecutes(const Bytes& instruction, const char* skipped) {
+    if (LoweringExecution::HostExecutes(instruction)) return true;
+    std::cout << "skipped: " << skipped << '\n';
+    return false;
+}
+
+bool hostExecutesAvx(const char* skipped) {
+    return hostExecutes({0xC5, 0xFC, 0x57, 0xC0}, skipped);
+}
+
 std::uint64_t extrqReference(std::uint64_t value, std::uint64_t control) {
     const auto length = static_cast<unsigned>(control & 0x3f);
     const auto index = static_cast<unsigned>((control >> 8) & 0x3f);
@@ -1735,6 +1746,7 @@ bool sameLane(const float expected, const float actual) {
 }
 
 void reciprocalExecution() {
+    const bool avx = hostExecutesAvx("VRSQRTPS and VRCPPS stub execution, the host does not execute AVX");
     const float inputs[][4] = {
         {1.0f, 4.0f, 0.25f, 2.0f},
         {0.0f, -0.0f, INFINITY, -1.0f},
@@ -1743,6 +1755,7 @@ void reciprocalExecution() {
         const std::uint64_t source[2] = {packLanes(lanes, 0), packLanes(lanes, 2)};
         const std::uint64_t destination[2] = {0x1111111111111111ull, 0x2222222222222222ull};
         for (const bool squareRoot : {true, false}) for (const bool vex : {false, true}) {
+            if (vex && !avx) continue;
             const std::uint8_t opcode = squareRoot ? 0x52 : 0x53;
             const Bytes distinct = vex ? Bytes{0xC5, 0xF8, opcode, 0xD5} : Bytes{0x0F, opcode, 0xD5};
             const Bytes same = vex ? Bytes{0xC5, 0xF8, opcode, 0xD2} : Bytes{0x0F, opcode, 0xD2};
@@ -1759,6 +1772,7 @@ void reciprocalExecution() {
             }
         }
     }
+    if (!avx) return;
     const float one[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     const std::uint64_t ones[2] = {packLanes(one, 0), packLanes(one, 2)};
     const auto unit = runRegisterFormStub({0xC5, 0xF8, 0x52, 0xD5}, ones, ones);
@@ -2144,6 +2158,7 @@ void mcommitExecution() {
 }
 
 void wideStoreExecution() {
+    if (!hostExecutesAvx("256-bit store stub execution, the host does not execute AVX")) return;
     const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const Bytes site = {0xC5, 0xFC, 0x11, 0x00};
     const auto match = matcher->Match(site.data(), site.size());
@@ -2178,6 +2193,7 @@ void wideStoreExecution() {
 }
 
 void xsaveoptExecution() {
+    if (!hostExecutesAvx("XSAVEOPT replacement execution, the host does not execute AVX")) return;
     const Bytes site = {0x48, 0x0F, 0xAE, 0x37};
     const auto match = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta)->Match(site.data(), site.size());
     require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "XSAVEOPT64 was not rewritten in place");
@@ -2199,7 +2215,7 @@ void xsaveoptExecution() {
         "sub $128, %%rsp\n\t"
         "call *%[code]\n\t"
         "add $128, %%rsp\n\t"
-        "vpxor %%ymm3, %%ymm3, %%ymm3\n\t"
+        "vxorps %%ymm3, %%ymm3, %%ymm3\n\t"
         "mov $7, %%eax\n\t"
         "xor %%edx, %%edx\n\t"
         "xrstor64 (%%rdi)\n\t"
@@ -2287,6 +2303,7 @@ void rdseedExecution() {
     const auto match = matcher->Match(site.data(), site.size());
     require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "RDSEED replacement was not produced");
     require(match->ReplacementBytes.size() == site.size(), "RDSEED replacement changed the instruction length");
+    if (!hostExecutes(match->ReplacementBytes, "RDSEED replacement execution, the host does not execute RDRAND")) return;
     auto body = match->ReplacementBytes;
     body.push_back(0xC3);
     void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

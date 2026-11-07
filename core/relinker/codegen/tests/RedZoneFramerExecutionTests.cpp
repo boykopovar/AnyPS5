@@ -187,7 +187,12 @@ struct Leaf {
     const char* Name;
     std::vector<std::uint8_t> Code;
     std::uint64_t Expected;
+    bool HostRuns = true;
 };
+
+bool hostHasBmi1() {
+    return __builtin_cpu_supports("bmi") != 0;
+}
 
 const std::vector<std::uint8_t> FramelessPushes{0x53, 0x41, 0x56, 0x41, 0x57};
 const std::vector<std::uint8_t> FramelessPops{0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xc3};
@@ -286,7 +291,7 @@ std::vector<Leaf> widenedLeaves() {
         }, kB},
         {"leaf without pushes whose widened exit carries a VEX andn below rsp", {
             0x48, 0x89, 0x7c, 0x24, 0xf8, 0xc4, 0xe2, 0xf0, 0xf2, 0x44, 0x24, 0xf8, 0xc3,
-        }, ~kC & kA},
+        }, ~kC & kA, hostHasBmi1()},
         {"leaf allocating with a 4-byte sub widened over the spill after it", {
             0x48, 0x83, 0xec, 0x08, 0x48, 0x89, 0x7c, 0x24, 0xf0, 0x31, 0xc0, 0x48, 0x03, 0x44, 0x24, 0xf0,
             0x48, 0x83, 0xc4, 0x08, 0xc3,
@@ -419,6 +424,11 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
     load(image, false);
     std::vector<Run> plain, clobbered;
     for (std::size_t index = 0; index < leaves.size(); ++index) {
+        if (!leaves[index].HostRuns) {
+            plain.push_back({});
+            clobbered.push_back({});
+            continue;
+        }
         plain.push_back(run(image.Starts[index], false));
         clobbered.push_back(run(image.Starts[index], true));
         require(plain.back().Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf returned " + hex(plain.back().Result) + " without the clobber, not " + hex(leaves[index].Expected));
@@ -428,6 +438,10 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
     const auto framing = load(image, true);
     require(framing.Report.Framed == leaves.size(), "only " + std::to_string(framing.Report.Framed) + " of " + std::to_string(leaves.size()) + " leaves were framed");
     for (std::size_t index = 0; index < leaves.size(); ++index) {
+        if (!leaves[index].HostRuns) {
+            std::cout << leaves[index].Name << ": framed but not executed, this CPU cannot execute an instruction in it\n";
+            continue;
+        }
         const auto calm = run(image.Starts[index], false);
         const auto framed = run(image.Starts[index], true);
         require(calm.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(calm.Result) + " without the clobber, not " + hex(leaves[index].Expected));
