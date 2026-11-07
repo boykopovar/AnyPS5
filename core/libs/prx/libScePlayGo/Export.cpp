@@ -302,9 +302,7 @@ int APS5_VABI scePlayGoPrefetch(int handle, const uint16_t* chunk_ids, uint32_t 
 
 int APS5_VABI scePlayGoPrefetchOptionalChunk(int handle, int32_t type, const PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
-    (void)type;
-    (void)option;
-    return 0;
+    return ValidateOptionalChunkRequest(static_cast<uint32_t>(type), option);
 }
 
 int APS5_VABI scePlayGoSetInstallSpeed(int handle, int32_t speed) {
