@@ -629,8 +629,97 @@ int APS5_VABI _ZN3sce3Xml4AttraSERKS1_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml4Util9strResultEi() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI _ZN3sce3Xml4Util9strResultEi(int result) {
+    switch (static_cast<std::uint32_t>(result)) {
+    case 0x00000000u:
+        return "Success";
+    case 0x00850000u:
+        return "GenericMessage";
+    case 0x00850001u:
+        return "XmlParseInProgress";
+    case 0x00850002u:
+        return "XmlParseAborted";
+    case 0x00850003u:
+        return "MultipleInitialized";
+    case 0x80850000u:
+        return "GenericError";
+    case 0x80850001u:
+        return "NoMemory";
+    case 0x80850002u:
+        return "NotInitialized";
+    case 0x80850003u:
+        return "InvalidArgument";
+    case 0x80850004u:
+        return "NotSupported";
+    case 0x80850005u:
+        return "InitializeFailed";
+    case 0x80850006u:
+        return "InvalidBinXml";
+    case 0x80850007u:
+        return "ParserBusy";
+    case 0x80850008u:
+        return "XmlUnexpextedEoF";
+    case 0x80850009u:
+        return "XmlSyntaxError";
+    case 0x8085000au:
+        return "XmlEndTagMismatch";
+    case 0x8085000bu:
+        return "XmlInvalidChar";
+    case 0x8085000cu:
+        return "XmlInvalidDecValue";
+    case 0x8085000du:
+        return "XmlInvalidHexValue";
+    case 0x8085000eu:
+        return "XmlClosingAngleBracketCharNotFound";
+    case 0x8085000fu:
+        return "XmlEqualityCharNotFound";
+    case 0x80850010u:
+        return "XmlSemiColonCharNotFound";
+    case 0x80850011u:
+        return "XmlQuoteCharNotFound";
+    case 0x80850012u:
+        return "XmlEndOfCommentNotFound";
+    case 0x80850013u:
+        return "XmlEndOfCDSectNotFound";
+    case 0x80850014u:
+        return "XmlEndOfDtdNotFound";
+    case 0x80850015u:
+        return "XmlUnknownEncoding";
+    case 0x80850016u:
+        return "XmlHandlerNotSet";
+    case 0x80850017u:
+        return "XmlInvalidPi";
+    case 0x80850018u:
+        return "XmlInvalidDocumentElement";
+    case 0x80850019u:
+        return "XmlDocumentElementNotFound";
+    case 0x8085001au:
+        return "XmlDuplicateAttrName";
+    case 0x80850200u:
+        return "DomError";
+    case 0x80850201u:
+        return "DomNodeNotFound";
+    case 0x80850202u:
+        return "DomReadOnlyError";
+    case 0x80850203u:
+        return "DomMaxUniqueElementError";
+    case 0x80850204u:
+        return "DomMaxUniqueAttrError";
+    case 0x80850205u:
+        return "DomMaxNumOfAttrError";
+    case 0x80850206u:
+        return "DomMaxSizeOfElementNameError";
+    case 0x80850207u:
+        return "DomMaxSizeOfAttrNameError";
+    case 0x80850208u:
+        return "DomMaxSizeOfAttrValueError";
+    case 0x80850209u:
+        return "DomInvalidEnitity";
+    case 0x8085020au:
+        return "DomInvalidNodeType";
+    default:
+        return "Unknown error.";
+    }
 }
 
 void APS5_VABI _ZN3sce3Xml6StringC1EPKc(XmlString* self, const char* buffer) {
