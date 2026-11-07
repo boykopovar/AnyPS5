@@ -113,7 +113,7 @@ std::string Words4(const std::array<std::uint32_t, Words>& values) {
 }
 
 void CheckAdd(AgcDriver::QueueState& queue, const Workgroup& workgroup) {
-    const auto what = workgroup.Name() + " ds_add_rtn_u32 gds with M0 base 0x" + std::to_string(Base);
+    const auto what = workgroup.Name() + " ds_add_rtn_u32 gds with M0 base " + std::to_string(Base);
     std::vector<std::uint32_t> old(Output.begin(), Output.begin() + workgroup.threads);
     std::sort(old.begin(), old.end());
     for (std::uint32_t lane = 0; lane < workgroup.threads; ++lane) {
@@ -128,7 +128,7 @@ void CheckAdd(AgcDriver::QueueState& queue, const Workgroup& workgroup) {
 }
 
 void CheckRead(const Workgroup& workgroup) {
-    const auto what = workgroup.Name() + " ds_read_b32 gds with M0 base 0x" + std::to_string(Base);
+    const auto what = workgroup.Name() + " ds_read_b32 gds with M0 base " + std::to_string(Base);
     for (std::uint32_t lane = 0; lane < workgroup.threads; ++lane) {
         Require(Output[lane] == Starts[2], what + ": lane " + std::to_string(lane) + " read " + std::to_string(Output[lane]) + ", expected " + std::to_string(Starts[2]) + " from M0 base + offset 8");
     }
