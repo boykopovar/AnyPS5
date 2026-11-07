@@ -7,6 +7,10 @@
 
 - [sceSharePlaySetShareScreenStatus](../../../core/libs/prx/libSceSharePlay/Export.cpp) has an unknown signature and behaviour. The parameterless `int` declaration is an import-resolution placeholder, not a confirmed ABI signature, and every call throws through `NotImplemented_nid_no_patch`. Only its name and NID `zOdmo1vWHIc` are established by the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceshareplay-b821361f17.jsonl); not measured on a console.
 
+### Silent stubs
+
+- [sceSharePlayGetCurrentConnectionInfo, sceSharePlayGetCurrentConnectionInfoA](../../../core/libs/prx/libSceSharePlay/Export.cpp) - returning `0x810E0001` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
+
 ### Functional
 
 - [sceSharePlayInitialize and sceSharePlayTerminate](../../../core/libs/prx/libSceSharePlay/Export.cpp) - native heap validation and initialization state are recovered: a null heap ignores the supplied size, a supplied heap requires at least 0x1800 bytes, repeated initialization returns 0x810E0003 and termination before initialization returns 0x810E0004. The host does not allocate the native internal heap, connect to the Share Play service or reproduce its failures.
