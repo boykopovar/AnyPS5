@@ -1524,6 +1524,16 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 }
 
+static void TestAccessibility() {
+    Require(!WKAccessibilityEnhancedAccessibilityEnabled());
+    _ZN7WebCore13AXObjectCache19enableAccessibilityEv();
+    _ZN7WebCore13AXObjectCache20disableAccessibilityEv();
+    _ZN7WebCore13AXObjectCache37setEnhancedUserInterfaceAccessibilityEb(true);
+    Require(WKAccessibilityEnhancedAccessibilityEnabled());
+    _ZN7WebCore13AXObjectCache37setEnhancedUserInterfaceAccessibilityEb(false);
+    Require(!WKAccessibilityEnhancedAccessibilityEnabled());
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1544,6 +1554,7 @@ int main() {
     TestBundleHitTestResult();
     TestDownload();
     TestAXObject();
+    TestAccessibility();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
     TestProtectionSpace();

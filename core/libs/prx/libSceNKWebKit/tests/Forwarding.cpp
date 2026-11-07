@@ -41,7 +41,6 @@ static void ExpectStub(StubForward forward, int line) {
 
 int main() {
     RequireStub(&JSRemoteInspectorDisableAutoStart);
-    RequireStub(&WKAccessibilityEnableEnhancedAccessibility);
     RequireStub(&WKContextGetApplicationCacheManager);
     RequireStub(&WKContextGetKeyValueStorageManager);
     RequireStub(&WKContextGetResourceCacheManager);
@@ -140,6 +139,12 @@ int main() {
     Require(reinterpret_cast<Value>(&WKUserMediaPermissionRequestAudioDeviceUIDs)() != nullptr);
     Require(reinterpret_cast<Value>(&WKUserMediaPermissionRequestVideoDeviceUIDs)() != nullptr);
     Require(WKMutableArrayCreate() != nullptr);
+
+    using EnableEnhanced = void (APS5_VABI *)(bool);
+    reinterpret_cast<EnableEnhanced>(&WKAccessibilityEnableEnhancedAccessibility)(true);
+    Require(WKAccessibilityEnhancedAccessibilityEnabled());
+    reinterpret_cast<EnableEnhanced>(&WKAccessibilityEnableEnhancedAccessibility)(false);
+    Require(!WKAccessibilityEnhancedAccessibilityEnabled());
 
     return 0;
 }
