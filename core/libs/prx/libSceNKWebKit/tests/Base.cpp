@@ -1090,6 +1090,50 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestImage() {
+    Require(WKImageGetTypeID() == 12);
+    NKWebKit::SizeValue sz{640.0, 480.0};
+    auto* img = WKImageCreate(sz, 0);
+    Require(img != nullptr);
+    Require(WKGetTypeID(img) == WKImageGetTypeID());
+    auto outSz = WKImageGetSize(img);
+    Require(outSz.width == 640.0);
+    Require(outSz.height == 480.0);
+    WKRelease(img);
+
+    NKWebKit::SizeValue fracSz{640.7, 480.2};
+    auto* fracImg = WKImageCreate(fracSz, 0);
+    Require(fracImg != nullptr);
+    auto fracOut = WKImageGetSize(fracImg);
+    Require(fracOut.width == 640.0);
+    Require(fracOut.height == 480.0);
+    WKRelease(fracImg);
+
+    bool threw = false;
+    try {
+        WKImageGetSize(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    bool threwNan = false;
+    try {
+        WKImageCreate(NKWebKit::SizeValue{std::numeric_limits<double>::quiet_NaN(), 100.0}, 0);
+    } catch (const std::invalid_argument&) {
+        threwNan = true;
+    }
+    Require(threwNan);
+
+    bool threwOutOfRange = false;
+    try {
+        WKImageCreate(NKWebKit::SizeValue{1e15, 100.0}, 0);
+    } catch (const std::invalid_argument&) {
+        threwOutOfRange = true;
+    }
+    Require(threwOutOfRange);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1110,6 +1154,7 @@ int main() {
     TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
+    TestImage();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
