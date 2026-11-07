@@ -173,6 +173,7 @@ struct RdnaInstruction {
     bool slc = false;
     bool idxen = false;
     bool offen = false;
+    bool lds = false;
     std::uint32_t branchTarget = 0;
     bool exportValidMask = false;
     std::string_view unsupportedReason{};

@@ -816,18 +816,21 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     const auto vaddr = word1 & 0xFFu;
     const auto srsrc = (word1 >> 16u) & 0x1Fu;
     const auto soffsetCode = (word1 >> 24u) & 0xFFu;
+    const bool lds = ((word0 >> 16u) & 1u) != 0u;
     if (const auto cacheOp = cacheControlOpcode(RdnaInstructionFamily::MUBUF, opcode); cacheOp != RdnaOpcode::Invalid) {
+        if (lds) throw std::runtime_error("unsupported MUBUF lds modifier on cache control");
         return cacheControlInstruction(RdnaInstructionFamily::MUBUF, cacheOp, opcode, programCounter, code, wordIndex);
     }
     const auto& info = lookupOpcode(mubufOpcodes, opcode, "MUBUF opcode is not supported");
-    if (((word0 >> 16u) & 1u) != 0u) {
-        throw std::runtime_error("unsupported MUBUF lds modifier");
+    if (lds && (info.opcode != RdnaOpcode::BufferLoadDword || vdata != 0u || (word0 & (1u << 17u)) != 0u || (word1 & ((1u << 23u) | (1u << 21u))) != 0u)) {
+        throw std::runtime_error("unsupported MUBUF lds modifier: requires untyped dword load, zero VDATA, no TFE or reserved bits");
     }
 
     RdnaInstruction instruction{};
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::MUBUF;
     instruction.opcodeId = opcode;
+    instruction.lds = lds;
     instruction.memoryOffset = word0 & 0xFFFu;
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
@@ -837,7 +840,7 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = d16Half(vectorRegister(vdata), instruction.op);
+    instruction.destination = lds ? RdnaOperand{} : d16Half(vectorRegister(vdata), instruction.op);
     instruction.source0 = vectorRegister(vaddr);
     instruction.source1 = scalarDescriptorBase(srsrc * 4u, 4u, "MUBUF resource descriptor register range overflow");
     instruction.source2 = scalarSource(soffsetCode);
