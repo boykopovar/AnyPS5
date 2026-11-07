@@ -91,6 +91,9 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
     if "libSceNKWebKitRequirements.prx" in expected:
         licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
+    if "libfontconfig.prx" in expected:
+        licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
+        licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
