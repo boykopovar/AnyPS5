@@ -39,6 +39,7 @@ class BranchScanTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.chdir(self.tmp.name)
         run("init", "-q")
+        run("config", "core.safecrlf", "false")
         for name in ("a.txt", "b.txt", "c.txt"):
             write(name, "one\ntwo\nthree\n")
         write("core/libs/prx/lib/Existing.cpp", "int Existing() { return 0; }\n")
