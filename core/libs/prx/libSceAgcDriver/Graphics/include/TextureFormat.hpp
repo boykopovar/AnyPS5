@@ -23,6 +23,7 @@ bool IsSrgbTextureFormat(std::uint32_t guestFormat);
 bool IgnoresForcedDegamma(std::uint32_t guestFormat);
 std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32_t elementBytes);
 std::optional<std::uint32_t> FindGuestColorTargetFormat(VkFormat format, std::uint32_t elementBytes);
+VkFormat Uint16ExportAlias(VkFormat format);
 std::uint32_t BytesPerElement(std::uint32_t guestFormat);
 bool IsConvertedTextureFormat(std::uint32_t guestFormat);
 bool IsRepackedTextureFormat(std::uint32_t guestFormat);

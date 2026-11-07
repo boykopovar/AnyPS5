@@ -91,8 +91,6 @@ static_assert(offsetof(SystemInfo, maxSources) == 28);
 static_assert(offsetof(SystemInfo, maxMaterials) == 32);
 static_assert(offsetof(SystemInfo, pathCapacityPerSource) == 36);
 static_assert(offsetof(SystemInfo, propagationSpeed) == 40);
-struct ReportRegistration;
-
 struct ReportArguments {
     std::uint32_t generalOffset;
     std::uint32_t floatingOffset;
@@ -113,6 +111,13 @@ struct ReportInfo {
 };
 
 using ReportHandler = void (APS5_VABI*)(const ReportInfo* report, void* userData);
+
+struct ReportRegistration {
+    ReportHandler handler = nullptr;
+    void* userData = nullptr;
+    std::uint64_t generation = 0;
+    std::size_t activeCalls = 0;
+};
 
 static_assert(sizeof(ReportArguments) == 24);
 static_assert(offsetof(ReportArguments, generalOffset) == 0);

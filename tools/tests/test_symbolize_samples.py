@@ -304,6 +304,29 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "COFF string table"):
                     symbolize_samples.PeModule(path)
 
+    def test_coff_short_names_reject_nonzero_bytes_after_the_terminator(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table = struct.unpack_from("<I", original, 0x4C)[0]
+        for name in (b"f\0X\0\0\0\0\0", b"func\0X\0\0", b"name12\0X"):
+            with self.subTest(name=name):
+                data = bytearray(original)
+                data[table + 2 * 18:table + 2 * 18 + 8] = name
+                path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "COFF short name"):
+                    symbolize_samples.PeModule(path)
+
+    def test_coff_exact_eight_bytes_and_padded_utf8_names_remain_supported(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table = struct.unpack_from("<I", original, 0x4C)[0]
+        for name in ("caf\u00e9abc", "caf\u00e9"):
+            with self.subTest(name=name):
+                data = bytearray(original)
+                data[table + 2 * 18:table + 2 * 18 + 8] = name.encode("utf-8").ljust(8, b"\0")
+                path.write_bytes(data)
+                self.assertEqual(symbolize_samples.PeModule(path).name(0x1010), name)
+
     def test_coff_auxiliary_records_cannot_exceed_the_symbol_count(self):
         path = self.libs / "libSceAgcDriver.prx"
         data = bytearray(path.read_bytes())
@@ -760,6 +783,59 @@ class MappedExportTests(unittest.TestCase):
         module = self.module()
         self.assertEqual(module.name(0x1021), "~first_func")
         self.assertEqual(module.name(0x1061), "~second_func")
+
+    def overlapping_section(self, rva, size=0x10, raw_size=0x10, first=False):
+        struct.pack_into("<H", self.data, 0x46, 3)
+        entry = 0x148 + 80
+        struct.pack_into("<8sIIII", self.data, entry, b".overlap", size, rva, raw_size, 0xA00)
+        struct.pack_into("<I", self.data, entry + 36, 0x40000040)
+        if first:
+            original = bytes(self.data[0x148 + 40:0x148 + 80])
+            self.data[0x148 + 40:0x148 + 80] = self.data[entry:entry + 40]
+            self.data[entry:entry + 40] = original
+
+    def test_overlapping_export_metadata_is_rejected_in_either_section_order(self):
+        original = bytes(self.data)
+        for first in (False, True):
+            for rva in (0x2000, 0x2040, 0x2048, 0x2050, 0x2060):
+                with self.subTest(first=first, rva=rva):
+                    self.data = bytearray(original)
+                    self.overlapping_section(rva, first=first)
+                    with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+                        self.module()
+
+    def test_export_reads_cannot_cross_into_an_overlapping_mapping(self):
+        original = bytes(self.data)
+        for first in (False, True):
+            for rva in (0x2016, 0x2042, 0x204A, 0x2051, 0x2062):
+                with self.subTest(first=first, rva=rva):
+                    self.data = bytearray(original)
+                    self.overlapping_section(rva, first=first)
+                    with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+                        self.module()
+
+    def test_virtual_and_raw_overlap_is_rejected(self):
+        self.overlapping_section(0x2060, raw_size=0)
+        with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+            self.module()
+
+    def test_unrelated_overlap_does_not_discard_valid_exports(self):
+        self.overlapping_section(0x21F0)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_export_name_can_terminate_immediately_before_an_overlap(self):
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        self.overlapping_section(0x206B)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_ambiguous_exports_preserve_frames_with_a_warning(self):
+        self.overlapping_section(0x2060)
+        self.path.write_bytes(self.data)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.path.parent], {}, unverified=True, warn=warnings.append)
+        frame = "mapped.dll+0x1021"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("overlapping PE sections" in warning for warning in warnings))
 
     def test_virtual_tail_name_matches_backed_empty_control(self):
         self.data[0x660] = 0
