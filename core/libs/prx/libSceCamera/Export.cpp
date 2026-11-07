@@ -110,7 +110,14 @@ int APS5_VABI sceCameraAudioGetData(void* data) {
     return data ? 0 : SCE_CAMERA_ERROR_PARAM;
 }
 
-int APS5_VABI sceCameraGetCalibData(void) {
+int APS5_VABI sceCameraGetCalibData(std::int32_t id, void* calibData, void* reserved) {
+    (void)reserved;
+    if (calibData == nullptr) {
+        return SCE_CAMERA_ERROR_PARAM;
+    }
+    if (id != 1 && id != 2) {
+        return 0;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
