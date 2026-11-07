@@ -18,6 +18,7 @@ constexpr int kNotInit = static_cast<int>(0x80EE0001);
 constexpr int kAlreadyInit = static_cast<int>(0x80EE0002);
 constexpr int kInvalidArg = static_cast<int>(0x80EE0003);
 constexpr int kInvalidHandle = static_cast<int>(0x80EE0004);
+constexpr int kMaxCombined = static_cast<int>(0x80EE0005);
 constexpr int kAlreadyOpened = static_cast<int>(0x80EE0007);
 constexpr std::int32_t kUserId = 0x10000000;
 constexpr std::int32_t kFirstHandle = 0x30B0100;
@@ -133,6 +134,11 @@ int main() {
     Require(second == kFirstHandle + kHandleStep);
     Require(sceMoveOpen(kUserId, 0, 0) == kAlreadyOpened);
     Require(sceMoveOpen(kUserId, 0, 1) == kAlreadyOpened);
+    Require(sceMoveOpen(0, 0, 2) == kInvalidArg);
+    Require(sceMoveOpen(-1, 0, 2) == kInvalidArg);
+    Require(sceMoveOpen(kUserId, -1, 2) == kInvalidArg);
+    Require(sceMoveOpen(kUserId, 0, -1) == kInvalidArg);
+    Require(sceMoveOpen(kUserId, 0, 4) == kInvalidArg);
     Require(Throws([] { sceMoveOpen(kUserId + 1, 0, 2); }));
 
     Require(sceMoveGetDeviceInfo(first, nullptr) == kInvalidArg);
@@ -180,5 +186,17 @@ int main() {
     const std::int32_t third = sceMoveOpen(kUserId, 0, 0);
     Require(third == kFirstHandle + 3 * kHandleStep);
     Require(sceMoveClose(third) == kOk);
+
+    std::array<std::int32_t, 8> slots{};
+    int slotIndex = 0;
+    for (int t = 0; t < 2; ++t) {
+        for (int i = 0; i < 4; ++i) {
+            slots[slotIndex++] = sceMoveOpen(kUserId, t, i);
+        }
+    }
+    for (const auto h : slots) Require(h > 0);
+    Require(sceMoveOpen(kUserId, 2, 0) == kMaxCombined);
+    for (const auto h : slots) Require(sceMoveClose(h) == kOk);
+
     Require(sceMoveTerm() == kOk);
 }
