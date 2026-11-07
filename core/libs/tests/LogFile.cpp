@@ -13,6 +13,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include <fcntl.h>
@@ -309,6 +310,17 @@ struct Result {
     int status = -1;
 };
 
+bool StandardErrorIs(const std::string& text, const std::string& expected) {
+    constexpr std::string_view WriteWatchUnavailable = "[memory] write watch unavailable: ";
+    std::size_t begin = 0;
+    if (text.compare(0, WriteWatchUnavailable.size(), WriteWatchUnavailable) == 0) {
+        const std::size_t end = text.find('\n');
+        if (end == std::string::npos) return false;
+        begin = end + 1;
+    }
+    return text.compare(begin, std::string::npos, expected) == 0;
+}
+
 Result Run(const std::string& role, const std::string& variable, bool set = true) {
     Pipe out;
     Pipe err;
@@ -410,7 +422,7 @@ void ChildProcesses() {
     clear();
     Result plain = Run("plain", path.string());
     Require(plain.status == 0, "the child failed");
-    Require(plain.out == "stdout line\n" && plain.err == "stderr line\n", "the terminal output of a child changed");
+    Require(plain.out == "stdout line\n" && StandardErrorIs(plain.err, "stderr line\n"), "the terminal output of a child changed");
     const std::string logged = Slurp(path);
     Require(logged.find("stdout line\n") != std::string::npos && logged.find("stderr line\n") != std::string::npos, "the child's lines are not in the file");
 
@@ -421,19 +433,19 @@ void ChildProcesses() {
 
     clear();
     Result hard = Run("hard", path.string());
-    Require(WIFEXITED(hard.status) && WEXITSTATUS(hard.status) == 3 && hard.err == "written just before the end\n", "the abrupt child differs");
+    Require(WIFEXITED(hard.status) && WEXITSTATUS(hard.status) == 3 && StandardErrorIs(hard.err, "written just before the end\n"), "the abrupt child differs");
     Require(Slurp(path).find("written just before the end\n") != std::string::npos, "a line written before _exit is not in the file");
 
     clear();
     Result crash = Run("crash", path.string());
     Require(WIFEXITED(crash.status) && WEXITSTATUS(crash.status) == 4, "the crashing child differs");
-    Require(crash.err == "line before the crash\nFATAL: simulated crash report\n", "the crash text did not reach the terminal in order");
+    Require(StandardErrorIs(crash.err, "line before the crash\nFATAL: simulated crash report\n"), "the crash text did not reach the terminal in order");
     Require(Slurp(path).find("line before the crash\nFATAL: simulated crash report\n") != std::string::npos, "the crash text did not reach the file in order");
 
     clear();
     Result replaced = Run("exec", path.string());
     Require(replaced.status == 0, "the replacement failed or was killed by a broken pipe");
-    Require(replaced.out == "from the replacement\n" && replaced.err == "line before the exec\nfrom the replacement on stderr\n", "the output around the replacement did not reach the terminal");
+    Require(replaced.out == "from the replacement\n" && StandardErrorIs(replaced.err, "line before the exec\nfrom the replacement on stderr\n"), "the output around the replacement did not reach the terminal");
     const std::string execLog = Slurp(path);
     Require(execLog.find("line before the exec\n") != std::string::npos && execLog.find("from the replacement") == std::string::npos, "the file holds the replacement's output or lacks the earlier line");
 
@@ -444,9 +456,9 @@ void ChildProcesses() {
 
     clear();
     Result unset = Run("plain", "", false);
-    Require(unset.out == "stdout line\n" && unset.err == "stderr line\n" && !std::filesystem::exists(path), "an unset variable changed the output or created a file");
+    Require(unset.out == "stdout line\n" && StandardErrorIs(unset.err, "stderr line\n") && !std::filesystem::exists(path), "an unset variable changed the output or created a file");
     Result emptied = Run("plain", "", true);
-    Require(emptied.out == "stdout line\n" && emptied.err == "stderr line\n", "an empty variable changed the output");
+    Require(emptied.out == "stdout line\n" && StandardErrorIs(emptied.err, "stderr line\n"), "an empty variable changed the output");
 
     if (std::filesystem::exists("/proc/self/task")) {
         const auto count = [&](bool set) {
