@@ -138,14 +138,36 @@ def statements(body):
     return parts
 
 
-def inert_statement(statement, wrappers):
+def inert_parameters(signature):
+    parameters, nesting, default = set(), [], False
+    text = signature.partition("(")[2].rpartition(")")[0]
+    for match in CPP_TOKEN.finditer(text):
+        token = match.group()
+        if token == "," and not nesting:
+            default = False
+        elif token == "=" and not nesting:
+            default = True
+        elif token in ("(", "[", "{", "<") and (not default or token != "<"):
+            nesting.append(token)
+        elif token in (")", "]", "}", ">") and nesting:
+            if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:
+                nesting.pop()
+        elif not default and not any(part in ("[", "{", "<") for part in nesting):
+            if re.fullmatch(r"[A-Za-z_]\w*", token):
+                parameters.add(token)
+    return parameters
+
+
+def inert_statement(statement, wrappers, parameters):
     if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
-        return True
+        returned = re.fullmatch(r"return\s+(\w+)\s*;", statement)
+        return returned is None or returned.group(1) not in parameters
     call = WRAPPER_RETURN.fullmatch(statement)
     return bool(call) and call.group(1) in wrappers
 
 
-def inert_body(body, wrappers):
+def inert_body(body, wrappers, signature):
+    parameters = inert_parameters(signature)
     terminals = 0
     for statement in statements(body):
         statement = statement.strip()
@@ -153,17 +175,17 @@ def inert_body(body, wrappers):
             continue
         if DISCARD.fullmatch(statement):
             continue
-        if terminals or not inert_statement(statement, wrappers):
+        if terminals or not inert_statement(statement, wrappers, parameters):
             return False
         terminals += 1
     return True
 
 
 def inert_wrappers(text):
-    bodies = {m.group(1): text[m.end() - 1:body_end(text, m.end() - 1)] for m in STUB_WRAPPER.finditer(text)}
+    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
     names = set()
     while True:
-        found = {name for name, body in bodies.items() if name not in names and inert_body(body, names)}
+        found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
         if not found:
             return names
         names |= found
@@ -187,7 +209,7 @@ def scan_library(path):
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers) else live).add(name)
+            (inert if inert_body(body, wrappers, match.group()) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
