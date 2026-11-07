@@ -993,6 +993,9 @@ APS5_EXPORT("qGJxcUrNnc4", libreSsl3Forward_SSL_CTX_use_PrivateKey_ASN1_nid_no_p
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_aes_128_ctr_nid_no_patch") "jmp *__imp_EVP_aes_128_ctr_nid_postfix(%rip)\n");
 APS5_EXPORT("qmya3Mw0akk", libreSsl3Forward_EVP_aes_128_ctr_nid_no_patch);
 
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_EVP_chacha20_nid_no_patch") "jmp *__imp_EVP_chacha20_nid_postfix(%rip)\n");
+APS5_EXPORT("3tGgkjBQ82A", libreSsl3Forward_EVP_chacha20_nid_no_patch);
+
 __asm__(APS5_ASM_FUNCTION("libreSsl3Forward_SSL_CTX_set_alpn_select_cb_nid_no_patch") "jmp *__imp_SSL_CTX_set_alpn_select_cb_nid_postfix(%rip)\n");
 APS5_EXPORT("qnoG-P8RCKg", libreSsl3Forward_SSL_CTX_set_alpn_select_cb_nid_no_patch);
 

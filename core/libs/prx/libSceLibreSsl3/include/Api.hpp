@@ -273,7 +273,6 @@ int APS5_VABI AUTHORITY_KEYID_free_nid_postfix();
 int APS5_VABI X509V3_EXT_d2i_nid_postfix();
 int APS5_VABI Unknown_3KZ_minus_L4y1gak_nid_no_patch();
 int APS5_VABI EVP_chacha20_poly1305_nid_postfix();
-int APS5_VABI EVP_chacha20_nid_postfix();
 int APS5_VABI ASN1_INTEGER_set_nid_postfix(Asn1String* integer, std::int64_t value);
 int APS5_VABI RSA_set0_factors_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* p, LibreSsl3Bignum* q);
 int APS5_VABI X509_set_pubkey_nid_postfix();
