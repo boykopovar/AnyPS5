@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -22,6 +23,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
@@ -35,6 +37,7 @@
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include <limits>
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -3186,7 +3189,27 @@ void DepthBoundsBiasTests() {
     expectFailure([&] { polygonMode(0x8u); }, "a point polygon mode whose size limits exclude one pixel");
     queue.context[0x281] = 0xffff0000u;
     queue.context[0x282] = 0x10u;
-    expectFailure([&] { polygonMode(0x128u); }, "a line polygon mode wider or narrower than one pixel");
+    queue.context[0x205] = 0x128u;
+    Require(AgcDriver::Graphics::DecodeState(queue).lineWidth == 2.0f, "a PA_SU_LINE_CNTL width of 16 eighths did not draw two-pixel lines");
+    AgcDriver::Graphics::Context lineContext{};
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 1.0f);
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f); }, "needs the wideLines feature");
+    lineContext.wideLines = true;
+    lineContext.limits.lineWidthRange[0] = 1.0f;
+    lineContext.limits.lineWidthRange[1] = 8.0f;
+    lineContext.limits.lineWidthGranularity = 0.125f;
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f);
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 8.0f);
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 8.125f); }, "is outside the range");
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 0.5f); }, "is outside the range");
+    lineContext.limits.lineWidthGranularity = 0.75f;
+    AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.5f);
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f); }, "is not a whole number of granularity steps");
+    lineContext.limits.lineWidthRange[1] = 1.0f;
+    lineContext.limits.lineWidthGranularity = 0.0f;
+    expectFailure([&] { AgcDriver::Graphics::ValidateLineWidth(lineContext, 2.0f); }, "is outside the range");
+    queue.context[0x282] = 0u;
+    expectFailure([&] { polygonMode(0x128u); }, "a line polygon mode with a zero line width");
     queue.context[0x282] = 8u;
     queue.userConfig[0x242] = 2;
     Require(polygonMode(0x8u) == VK_POLYGON_MODE_FILL, "a line list took the point polygon mode of its triangles");
@@ -3512,6 +3535,34 @@ void metadataPassTests() {
 }
 
 alignas(4096) std::array<std::uint8_t, 4096> cmaskMemory{};
+
+constexpr std::size_t GcnSliceBytes = 64u * 64u * 4u;
+
+void gcnColorSliceTests() {
+    using AgcDriver::Graphics::DecodeColorBuffer;
+    void* block = GuestHeap::GuestHeapAlignForGpu_nid_postfix(256, 3u * GcnSliceBytes);
+    struct Release {
+        void* block;
+        ~Release() { GuestHeap::GuestHeapFree_nid_postfix(block); }
+    } release{block};
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    Require(base < (std::uintptr_t{1} << 40u), "guest heap memory is beyond the 40-bit PS4 GPU address space");
+    auto queue = makeState();
+    queue.context[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    queue.context[0x319] = 64u / 8u - 1u;
+    queue.context[0x31a] = 64u * 64u / 64u - 1u;
+    queue.context[0x31c] = 0x8000u | (10u << 2u);
+    queue.context[0x31d] = 5u;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    struct Restore {
+        ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } restore;
+    for (const std::uint32_t slice : {0u, 2u}) {
+        queue.context[0x31b] = slice | (slice << 13u);
+        const auto target = DecodeColorBuffer(queue.context, 0);
+        Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
+    }
+}
 
 void cmaskTests() {
     using AgcDriver::Graphics::DecodeColorBuffer;
@@ -7933,6 +7984,37 @@ void sampledTextureBudgetTests() {
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
+}
+
+void publishReasonTests() {
+    using AgcDriver::Graphics::PublishReason;
+    using AgcDriver::Graphics::PublishReasonFor;
+    Require(PublishReasonFor("memory access") == PublishReason::Hook, "a CPU memory access is not counted as a hook publish");
+    Require(PublishReasonFor("storage refresh") == PublishReason::Upload, "a storage refresh is not counted as an upload publish");
+    Require(PublishReasonFor("cache eviction") == PublishReason::Other, "an unlisted flush reason is not counted under other");
+    Require(PublishReasonFor(nullptr) == PublishReason::Other, "a flush without a reason is not counted under other");
+}
+
+void unitShadowBudgetTests() {
+    using AgcDriver::Graphics::UnitShadowBudget;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0] = {32 * GiB, 0};
+    memory.memoryHeaps[1] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    Require(UnitShadowBudget(memory, nullptr) == 1024 * MiB, "without VK_EXT_memory_budget the unit shadow does not keep its 1 GiB budget");
+    Require(UnitShadowBudget(memory, &reported) == 1024 * MiB, "a zero budget for the device-local heap did not keep the unit shadow's 1 GiB budget");
+    reported.heapBudget[1] = 6 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 768 * MiB, "a 6 GiB device-local budget does not give the unit shadow an eighth of it");
+    reported.heapBudget[1] = 24 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 1024 * MiB, "a 24 GiB device-local budget raised the unit shadow above 1 GiB");
+    reported.heapBudget[1] = 1 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 128 * MiB, "a 1 GiB device-local budget took the unit shadow below its 128 MiB floor");
+    reported.heapBudget[0] = 64 * GiB;
+    reported.heapBudget[1] = 6 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 768 * MiB, "the unit shadow budget was read from a host heap");
 }
 
 void storageTextureBudgetTests() {
@@ -13689,6 +13771,7 @@ int main(int argc, char** argv) {
         metadataPassTests();
         depthCopyPassTests();
         cmaskTests();
+        gcnColorSliceTests();
         uint16ExportTests();
         uint8x2TargetTests();
         uint8x4TargetTests();
@@ -13747,6 +13830,8 @@ int main(int argc, char** argv) {
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
+        publishReasonTests();
+        unitShadowBudgetTests();
         sampledBudgetReportTests();
         meshArgumentTests();
         meshLimitTests();

@@ -148,6 +148,7 @@ bool HasStencil(VkFormat format);
 void ValidateViewport(const Context& context, const VkViewport& viewport);
 void ValidateDepthBounds(const Context& context, const State& state);
 void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t invocations);
+void ValidateLineWidth(const Context& context, float width);
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders = {});
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders);
 bool ValidateSampleLocations(const Context& context, const State& state);

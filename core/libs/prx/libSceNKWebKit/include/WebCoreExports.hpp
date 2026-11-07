@@ -48,6 +48,7 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix9trans
 void APS5_VABI _ZN7WebCore20TransformationMatrixC1ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
 void APS5_VABI _ZN7WebCore20TransformationMatrixC2ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
 void APS5_VABI _ZN7WebCore27setPresentingApplicationPIDEi(int pid);
+bool APS5_VABI _ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE(WebCore::RedirectChainCacheStatus status, int reuseExpiredRedirection);
 bool APS5_VABI _ZN7WebCore30isStatusCodeCacheableByDefaultEi(int statusCode);
 bool APS5_VABI _ZN7WebCore32isStatusCodePotentiallyCacheableEi(int statusCode);
 WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
