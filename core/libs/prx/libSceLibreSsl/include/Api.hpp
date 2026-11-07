@@ -240,6 +240,8 @@ struct LibreSslX509 {
     std::int32_t references;
 };
 
+using LibreSslPemPasswordCallback = int(APS5_VABI*)(char*, int, int, void*);
+
 struct LibreSslX509StoreContext {
     void* store;
     int currentMethod;
@@ -743,7 +745,8 @@ int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void);
 int APS5_VABI PEM_read_RSAPrivateKey_nid_postfix(void);
 int APS5_VABI PEM_read_X509_nid_postfix(void);
 int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void);
-int APS5_VABI PEM_read_bio_X509_nid_postfix(void);
+LibreSslX509* APS5_VABI PEM_read_bio_X509_nid_postfix(LibreSsl::Bio* bio, LibreSslX509** certificate,
+                                                      LibreSslPemPasswordCallback callback, void* userData);
 int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void);
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void);
 void APS5_VABI PKCS12_PBE_add_nid_postfix(void);
