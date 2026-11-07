@@ -107,8 +107,17 @@ void Values() {
                                  GuestItimerspec{{-1, 0}, {1, 0}}, GuestItimerspec{{0, Second}, {1, 0}}})
         Require(ktimer_settime_nid_postfix(id, 0, &bad, nullptr) == -1 && Error() == Einval);
     const GuestItimerspec valid{{0, 0}, {1, 0}};
-    for (const int badFlags : {-1, 2, 4, ~TimerAbstime})
-        Require(ktimer_settime_nid_postfix(id, badFlags, &valid, nullptr) == -1 && Error() == Einval);
+    for (const int flags : {2, 4, 0x7ffffffe}) {
+        Require(ktimer_settime_nid_postfix(id, flags, &valid, nullptr) == 0);
+        const auto relative = Get(id);
+        Require(Nanoseconds(relative.it_value) > 0 && Nanoseconds(relative.it_value) <= Second);
+    }
+    KernelTimespec now{};
+    Require(clock_gettime_nid_postfix(ClockMonotonic, &now) == 0);
+    const GuestItimerspec future{{0, 0}, {now.tv_sec + 5, now.tv_nsec}};
+    Require(ktimer_settime_nid_postfix(id, -1, &future, nullptr) == 0);
+    const auto absolute = Get(id);
+    Require(Nanoseconds(absolute.it_value) > 4 * Second && Nanoseconds(absolute.it_value) <= 5 * Second);
 
     const GuestItimerspec clear{{-1, 0}, {0, 0}};
     Require(ktimer_settime_nid_postfix(id, 0, &clear, nullptr) == 0);
