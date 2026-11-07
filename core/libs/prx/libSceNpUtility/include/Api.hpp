@@ -97,7 +97,7 @@ int APS5_VABI sceNpTitleMetadataIntAbortRequest();
 int APS5_VABI sceNpTitleMetadataIntCreateRequest();
 int APS5_VABI sceNpTitleMetadataIntDeleteRequest();
 int APS5_VABI sceNpTitleMetadataIntGetInfo();
-int APS5_VABI sceNpTitleMetadataIntGetNpTitleId();
+int APS5_VABI sceNpTitleMetadataIntGetNpTitleId(const char* titleId, std::size_t titleIdLength, char* npTitleId);
 int APS5_VABI sceNpUtilityInit();
 int APS5_VABI sceNpUtilityTerm();
 int APS5_VABI sceNpWordFilterCreateTitleCtxA(int userId);

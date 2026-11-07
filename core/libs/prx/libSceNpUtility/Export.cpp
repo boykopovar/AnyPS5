@@ -39,6 +39,8 @@ static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_ALREADY_INITIALIZED = static_c
 static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055AD02);
 static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055AD06);
 static constexpr int SCE_NP_SERVICE_CHECKER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AD0B);
+static constexpr int SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055AA03);
+static constexpr int SCE_NP_TITLE_METADATA_ERROR_TOO_LONG = static_cast<int>(0x8055AA04);
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
@@ -630,8 +632,14 @@ int APS5_VABI sceNpTitleMetadataIntGetInfo() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpTitleMetadataIntGetNpTitleId() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpTitleMetadataIntGetNpTitleId(const char* titleId, std::size_t titleIdLength, char* npTitleId) {
+    if (!titleId || !npTitleId) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
+    if (titleIdLength > 9) return SCE_NP_TITLE_METADATA_ERROR_TOO_LONG;
+    char buffer[16] = {};
+    if (!GuestCopyIn_nid_no_patch(buffer, titleId, titleIdLength)) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
+    const std::size_t length = strnlen(buffer, sizeof(buffer));
+    std::memcpy(buffer + length, "_00", 4);
+    if (!GuestCopyOut_nid_no_patch(npTitleId, buffer, sizeof(buffer))) return SCE_NP_TITLE_METADATA_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 int APS5_VABI sceNpUtilityInit() {

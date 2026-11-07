@@ -169,6 +169,13 @@ void CheckNpUtilityPayloads() {
     Require(sceNpAppInfoIntAbortRequest() == AppInfoInvalid, "sceNpAppInfoIntAbortRequest", "a destroyed request was found");
     sceNpAppInfoIntFinalize();
     Require(sceNpAppInfoIntCreateRequest(&request) == AppInfoNotInitialized, "sceNpAppInfoIntCreateRequest", "a request was created after finalization");
+    char npTitleId[16] = {};
+    Require(sceNpTitleMetadataIntGetNpTitleId(nullptr, 0, npTitleId) == static_cast<int>(0x8055AA03u), "sceNpTitleMetadataIntGetNpTitleId", "a null title id was taken");
+    Require(sceNpTitleMetadataIntGetNpTitleId("PPSA00000", 9, nullptr) == static_cast<int>(0x8055AA03u), "sceNpTitleMetadataIntGetNpTitleId", "a null output was taken");
+    Require(sceNpTitleMetadataIntGetNpTitleId("PPSA000000", 10, npTitleId) == static_cast<int>(0x8055AA04u), "sceNpTitleMetadataIntGetNpTitleId", "a title id above 9 bytes was taken");
+    Require(sceNpTitleMetadataIntGetNpTitleId("PPSA00000", 9, npTitleId) == 0 && std::strcmp(npTitleId, "PPSA00000_00") == 0, "sceNpTitleMetadataIntGetNpTitleId", "the np title id was not built");
+    const char embeddedTitle[] = {'A', 'B', 0, 'C'};
+    Require(sceNpTitleMetadataIntGetNpTitleId(embeddedTitle, 4, npTitleId) == 0 && std::strcmp(npTitleId, "AB_00") == 0, "sceNpTitleMetadataIntGetNpTitleId", "an embedded terminator was not honoured");
     CheckAppLaunchLink("sceNpAppLaunchLink", sceNpAppLaunchLinkIntInitialize, sceNpAppLaunchLinkIntFinalize, sceNpAppLaunchLinkIntCreateRequest, sceNpAppLaunchLinkIntAbortRequest, sceNpAppLaunchLinkIntDestroyRequest, sceNpAppLaunchLinkIntGetCompatibleTitleIdNum, sceNpAppLaunchLinkIntGetCompatibleTitleIdList, LaunchNotInitialized, LaunchNotFound, LaunchInvalid);
     CheckAppLaunchLink("sceNpAppLaunchLink2", sceNpAppLaunchLink2IntInitialize, sceNpAppLaunchLink2IntFinalize, sceNpAppLaunchLink2IntCreateRequest, sceNpAppLaunchLink2IntAbortRequest, sceNpAppLaunchLink2IntDestroyRequest, sceNpAppLaunchLink2IntGetCompatibleTitleIdNum, sceNpAppLaunchLink2IntGetCompatibleTitleIdList, Launch2NotInitialized, Launch2NotFound, Launch2Invalid);
     Require(sceNpServiceCheckerIntInitialize(0) == 0, "sceNpServiceCheckerIntInitialize", "initialization failed");
