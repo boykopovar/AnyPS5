@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -53,6 +54,17 @@ int main() {
     Require(EVP_MD_block_size_nid_postfix(EVP_sha384_nid_postfix()) == 128);
     Require(EVP_MD_block_size_nid_postfix(EVP_sha512_nid_postfix()) == 128);
     Require(EVP_MD_block_size_nid_postfix(nullptr) == -1);
+
+    unsigned char mac[32];
+    HmacContext* hmac = HMAC_CTX_new_nid_postfix();
+    Require(hmac != nullptr);
+    Require(HMAC_Init_ex_nid_postfix(hmac, "Jefe", 4, EVP_sha256_nid_postfix(), nullptr) == 1);
+    Require(HMAC_Update_nid_postfix(hmac, reinterpret_cast<const unsigned char*>("what do ya want for nothing?"), 28) == 1);
+    std::uint32_t macLength = 0;
+    Require(HMAC_Final_nid_postfix(hmac, mac, &macLength) == 1 && macLength == 32);
+    Require(Hex(mac, 32) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+    HMAC_CTX_free_nid_postfix(hmac);
+    HMAC_CTX_free_nid_postfix(nullptr);
 
     std::puts("libSceLibreSsl3 digest tests passed");
 }
