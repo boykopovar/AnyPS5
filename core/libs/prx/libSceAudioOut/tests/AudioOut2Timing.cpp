@@ -57,6 +57,7 @@ struct Session {
     std::filesystem::path path;
     AudioOut2ContextHandle context = 0;
     AudioOut2PortHandle port = 0;
+    std::vector<std::byte> memory;
     std::vector<float> buffer = std::vector<float>(static_cast<std::size_t>(grain) * 2, 0.0f);
 
     bool low;
@@ -68,7 +69,14 @@ struct Session {
         Require(sceAudioOut2ContextResetParam(&params) == 0);
         params.num_grains = grain;
         params.queue_depth = queueDepth;
-        Require((low ? sceAudioOut2LoContextCreate : sceAudioOut2ContextCreate)(&params, nullptr, 0, &context) == 0);
+        if (low) {
+            std::size_t memorySize = 0;
+            Require(sceAudioOut2LoContextQueryMemory(&params, &memorySize) == 0);
+            memory = std::vector<std::byte>(memorySize);
+            Require(sceAudioOut2LoContextCreate(&params, memory.data(), memory.size(), &context) == 0);
+        } else {
+            Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
+        }
         AudioOut2PortParam port{};
         port.port_type = 0;
         port.data_format = formatStereoFloat;
@@ -339,21 +347,24 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2ContextResetParam(&params) == 0);
     params.num_grains = grain;
     params.queue_depth = queueDepth;
+    constexpr int errorInvalidParam = static_cast<int>(0x80268001);
     const std::size_t sizeSentinel = 0x1234;
     std::size_t size = sizeSentinel;
-    Require(sceAudioOut2LoContextQueryMemory(nullptr, &size) == errorInvalidArgument);
-    Require(sceAudioOut2LoContextQueryMemory(&params, nullptr) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextQueryMemory(nullptr, &size) == errorInvalidParam);
+    Require(sceAudioOut2LoContextQueryMemory(&params, nullptr) == 0);
     Require(size == sizeSentinel);
     Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0);
     std::size_t standardSize = sizeSentinel;
     Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
-    Require(size == standardSize && size != sizeSentinel);
+    Require(size == 0x5b1c && standardSize == 0x10000);
 
     const AudioOut2ContextHandle contextSentinel = 0x5A5A;
     AudioOut2ContextHandle context = contextSentinel;
-    Require(sceAudioOut2LoContextCreate(nullptr, nullptr, 0, &context) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextCreate(nullptr, nullptr, 0, &context) == errorInvalidParam);
     Require(context == contextSentinel);
-    Require(sceAudioOut2LoContextCreate(&params, nullptr, 0, nullptr) == errorInvalidArgument);
+    Require(sceAudioOut2LoContextCreate(&params, nullptr, 0, nullptr) == errorInvalidParam);
+    Require(sceAudioOut2LoContextCreate(&params, nullptr, 0, &context) == errorInvalidParam);
+    Require(context == contextSentinel);
 
     Require(sceAudioOut2LoContextDestroy(0) == errorInvalidHandle);
     Require(sceAudioOut2LoContextAdvance(0) == errorInvalidHandle);
