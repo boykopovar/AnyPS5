@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import contextlib
 import io
@@ -48,6 +49,76 @@ OTHER = [
     "skipped, the device imports shared memory",
     "skipped, the device imports shared memory through host pointersX",
 ]
+
+
+class SkipJsonTests(unittest.TestCase):
+    def test_policy_decisions_match_text_mode(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "result.xml"
+            report.write_text('<testsuite><testcase name="agc_missing"><skipped message="unknown"/></testcase><testcase name="window"><skipped message="no display"/></testcase><testcase name="lost"><skipped message="flaky"/></testcase></testsuite>')
+            for job in ("linux", "windows"):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    status = check_skips.main([str(report), "--job", job, "--json"])
+                data = json.loads(out.getvalue())
+                self.assertEqual(status, 1)
+                decisions = {row["name"]: row["expected"] for row in data["skips"]}
+                self.assertEqual(decisions, {"agc_missing": job == "windows", "window": True, "lost": False})
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(check_skips.main([str(report), "--job", job]), status)
+            for content in ('<testsuite/>', '<testsuite><testcase name="ok"/></testsuite>'):
+                report.write_text(content)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(check_skips.main([str(report), "--json"]), 0)
+                self.assertEqual(json.loads(out.getvalue())["skips"], [])
+            for content in ('broken', '<testsuite><testcase status="disabled"/></testsuite>'):
+                report.write_text(content)
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                    check_skips.main([str(report), "--json"])
+                self.assertEqual(error.exception.code, 2)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_skips.main([str(report), "--json", "--list"])
+
+    def test_duplicate_names_are_rejected_in_text_and_json(self):
+        report_text = '<testsuite>' + ''.join(
+            f'<testcase name="{name}"><skipped message="{reason}"/></testcase>'
+            for name, reason in (("a", "no display"), ("a", "flaky"), ("b", "no display"), ("c", "flaky"), ("c", "flaky"))) + '</testsuite>'
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "duplicates.xml"
+            report.write_text(report_text, encoding="utf-8")
+            for job in ("linux", "windows"):
+                for mode in ([], ["--json"]):
+                    with self.subTest(job=job, mode=mode):
+                        output, errors = io.StringIO(), io.StringIO()
+                        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as caught:
+                            check_skips.main([str(report), "--job", job, *mode])
+                        self.assertEqual(caught.exception.code, 2)
+                        self.assertEqual(output.getvalue(), "")
+                        self.assertIn("testcase 'a' is listed more than once", errors.getvalue())
+
+    def test_current_device_limitations_match_text_and_json(self):
+        cases = (
+            ("cannot create a raw socket", 0, 0),
+            ("the device imports shared memory through host pointers, so no run list was bound", 0, 1),
+            ("flaky", 1, 1),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.xml"
+            for reason, linux, windows in cases:
+                report.write_text(f'<testsuite><testcase name="probe"><skipped message="{reason}"/></testcase></testsuite>', encoding="utf-8")
+                for job, expected in (("linux", linux), ("windows", windows)):
+                    with self.subTest(reason=reason, job=job):
+                        output = io.StringIO()
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(check_skips.main([str(report), "--job", job]), expected)
+                        with contextlib.redirect_stdout(output):
+                            self.assertEqual(check_skips.main([str(report), "--job", job, "--json"]), expected)
+                        self.assertEqual(json.loads(output.getvalue()), {
+                            "job": job, "skips": [{"name": "probe", "output": "skipped, " + reason + "\n\n",
+                                                  "occurrences": 1, "expected": expected == 0}],
+                            "unexpected": ["probe"] if expected else []})
 
 
 class CheckSkipsTests(unittest.TestCase):
@@ -499,6 +570,9 @@ class NotRunTests(unittest.TestCase):
                     self.assertIn("notrun", checked.stderr)
                     self.assertIn("agc_missing", checked.stderr)
                     self.assertNotIn("Traceback", checked.stderr)
+
+
+
 
 
 if __name__ == "__main__":
