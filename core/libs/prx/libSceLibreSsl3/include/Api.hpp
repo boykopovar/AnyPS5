@@ -9,6 +9,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
 #include "prx/libSceLibreSsl3/include/Bio.hpp"
+#include "prx/libSceLibreSsl3/include/EcdsaSig.hpp"
 
 struct LibreSsl3Stack {
     int num;
@@ -379,7 +380,7 @@ int APS5_VABI OBJ_obj2txt_nid_postfix();
 int APS5_VABI SSL_set_quic_transport_params_nid_postfix();
 int APS5_VABI SSL_is_quic_nid_postfix();
 int APS5_VABI X509_get_X509_PUBKEY_nid_postfix();
-int APS5_VABI ECDSA_SIG_get0_nid_postfix();
+void APS5_VABI ECDSA_SIG_get0_nid_postfix(const LibreSsl3EcdsaSig* sig, const void** r, const void** s);
 int APS5_VABI EVP_MD_block_size_nid_postfix();
 
 }
