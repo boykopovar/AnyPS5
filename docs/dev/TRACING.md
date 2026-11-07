@@ -11,14 +11,14 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_APR` | APR file reads, including path, offset, size and destination. |
 | `APS5_TRACE_AUDIOOUT` | Audio output port parameters when a port is opened. |
 | `APS5_TRACE_AUDIOOUT2` | AudioOut2 context and port parameters, attributes, pushes, queue polls and periodic queue summaries. |
-| `APS5_TRACE_CALLS` | On Windows, Linux and macOS, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports (abort only on Linux and macOS) include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
+| `APS5_TRACE_CALLS` | On Windows, Linux and macOS, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
 | `APS5_TRACE_CALLS_FILE` | With `APS5_TRACE_CALLS`, a file rewritten every 10 seconds with every traced import called so far, most called first: number of calls, library and import name. |
 | `APS5_TRACE_EXIT` | Guest `exit` and `_Exit` calls and process-exit backtraces. |
 | `APS5_TRACE_FIBER` | Fiber initialization, switches and returns. |
 | `APS5_TRACE_MEMORY` | Direct-memory allocation, mapping and protection operations. |
 | `APS5_TRACE_PREPARATION_WAIT` | Shader preparation tasks moved to the front of the queue to satisfy a waiting caller. |
 | `APS5_TRACE_SSE4A` | Each emulated SSE4A instruction once per guest instruction address (Windows). |
-| `APS5_TRACE_SYNC` | Event-flag operations and their wait and wake results. |
+| `APS5_TRACE_SYNC` | Event-flag and semaphore operations and their wait and wake results. |
 | `APS5_TRACE_TIMERS` | Timing measurements for the host wait primitives used by the emulator. |
 | `APS5_TRACE_UDS` | Universal Data System events posted to a context, and the trophy title data it cannot find. |
 | `APS5_TRACE_USLEEP` | Every 2,000 guest `usleep` calls, with caller addresses and requested delays. |
@@ -76,3 +76,7 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 ## Shader registers
 
 `APS5_TRACE_SHADER_REGS=all` prints register snapshots for every shader. Set it to a shader code address in hexadecimal to print one shader's registers.
+
+## Running titles repeatably
+
+`python tools/title_run.py --games <directory> [ID ...]` relinks and runs extracted title packages found under `--games` (a directory holding `eboot.bin` and `sce_sys/param.json`) and writes `summary.json` and a fixed-format `summary.md` under `--out` (default `build/title-runs/<commit>-<time>/`). Each title runs `--runs` times (default 2): the first with empty AnyPS5 and Mesa or NVIDIA shader caches, the next ones keeping them. AMD's Windows `VkCache` is not isolated. On Windows the title's windows open behind every other window, without focus and without being minimized, and can be brought forward from the taskbar; elsewhere run it under a virtual display if that matters. A run ends as `relink-failed`, `crashed`, `exited`, `stalled` (no present in the last 20 s, or too few presents for a frame to be dumped), `frame-unreadable` (the last dumped frame is truncated or not a 24- or 32-bit BMP), `blank` (the last frame is one colour) or `rendering`; the first, middle and last dumped frames are kept. A screen that presents only when its view changes stops after a few presents and is reported `stalled` although the title still answers input; pressing a button through `tools/pad_input.py` with `APS5_PAD_INPUT_FILE` set tells it apart from a stuck title. `--compare <summary.json>` lists regressions, improvements and missing titles against an earlier run, limited to the IDs given when there are any. Titles are prepared in `<out>/work/<ID>/`, the same path on every run, so a firewall prompt for a title that opens a port appears once; answering Cancel does not affect the run. An invocation locks `<out>/work/<ID>.lock` for each title it runs before touching anything, and refuses to start while another invocation with the same `--out` holds one of them. Per-title relink flags, run length and environment live in `tools/titles.json`. A title's `pad` entry holds a controller timeline in the [`tools/pad_timeline.py` format](../user/INPUT_MAPPING.md#controller-timelines) (`events`, and optionally `repeat` and `gap_ms`); each run sets `APS5_PAD_INPUT_FILE` to `pad-input.txt` in the work directory and queues the timeline `after_s` seconds after start (default 5), since commands already in the file when the title first reads its controller are ignored. Each run reports `pad_queued_s`, or null when the title ended first. The timeline follows wall time, not frames, so the title's path differs between runs.

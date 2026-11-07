@@ -76,6 +76,9 @@ def package(platform, build, output, version):
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
     licenses = []
+    if "libharfbuzz.prx" in expected:
+        licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
+        licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
@@ -86,10 +89,15 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
     if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
+    if "libSceNKWebKitRequirements.prx" in expected:
+        licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
         files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
+    else:
+        files.append(build / "core/libs/libs/libmimalloc.so")
+    licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
     files.extend(tracy_runtime(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")

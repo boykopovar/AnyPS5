@@ -501,15 +501,22 @@ void EndClosingDescriptor_nid_no_patch(void* closing) {
 #ifdef _WIN32
 static int (*g_openDirectoryDescriptor)(const wchar_t*) = nullptr;
 static void (*g_forgetDirectoryDescriptor)(int) = nullptr;
+static void (*g_duplicateDirectoryDescriptor)(int, int) = nullptr;
 
-void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t*), void (*forget)(int)) {
+void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t*), void (*forget)(int), void (*duplicate)(int, int)) {
     g_openDirectoryDescriptor = open;
     g_forgetDirectoryDescriptor = forget;
+    g_duplicateDirectoryDescriptor = duplicate;
 }
 
 void ForgetDirectoryStream_nid_no_patch(int descriptor) {
     if (!g_forgetDirectoryDescriptor) throw std::runtime_error("ForgetDirectoryStream: libkernel has not registered its directory descriptors");
     g_forgetDirectoryDescriptor(descriptor);
+}
+
+void DuplicateDirectoryStream_nid_no_patch(int from, int to) {
+    if (!g_duplicateDirectoryDescriptor) throw std::runtime_error("DuplicateDirectoryStream: libkernel has not registered its directory descriptors");
+    g_duplicateDirectoryDescriptor(from, to);
 }
 
 static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path, const std::string& = {}) {
@@ -572,8 +579,7 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
         }
 #ifdef _WIN32
         if (std::error_code status; !parsed->writes && std::filesystem::is_directory(path, status)) {
-            if (stream->IsHostStandard()) throw std::runtime_error("freopen: reopening a standard stream onto a directory is not implemented");
-            if (!stream->Reopen(path, parsed->native.c_str(), OpenDirectoryHandle)) {
+            if (!stream->Reopen(path, parsed->native.c_str(), OpenDirectoryHandle, true)) {
                 const int error = errno;
                 if (stream->IsDynamic()) delete stream;
                 errno = error;
@@ -748,12 +754,28 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     return result;
 }
 
+#ifdef _WIN32
+static bool SeekTargetBeforeStart(FILE* native, std::int64_t offset, int origin) {
+    if (offset >= 0) return false;
+    std::int64_t base = 0;
+    if (origin != SEEK_SET) {
+        const int saved = errno;
+        if (origin == SEEK_END && std::fflush(native) != 0) { errno = saved; return false; }
+        base = origin == SEEK_CUR ? _ftelli64(native) : _filelengthi64(_fileno(native));
+        errno = saved;
+        if (base < 0) return false;
+    }
+    return offset < -base;
+}
+#endif
+
 int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int origin) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (origin != SEEK_SET && origin != SEEK_CUR && origin != SEEK_END) { errno = 22; return -1; }
 #ifdef _WIN32
     auto* native = GetNativeStream(stream);
     if (IsPipeStream(native)) { errno = 29; return -1; }
+    if (SeekTargetBeforeStart(native, offset, origin)) { errno = EINVAL; return -1; }
     const int result = _fseeki64(native, offset, origin);
 #else
     static_assert(sizeof(off_t) == 8);
@@ -987,6 +1009,42 @@ void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t co
         else { first = middle + 1; count -= half + 1; }
     }
     return nullptr;
+}
+
+void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count,
+    size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
+    if (!count) throw std::invalid_argument("lfind: null element count");
+    if (*count == 0) return nullptr;
+    if (!key || !base || !compare || size == 0)
+        throw std::invalid_argument("lfind: invalid arguments");
+    if (*count > std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lfind: array size overflow");
+    const auto* bytes = static_cast<const unsigned char*>(base);
+    for (size_t index = 0; index < *count; ++index) {
+        const auto* element = bytes + index * size;
+        if (compare(key, element) == 0) return const_cast<unsigned char*>(element);
+    }
+    return nullptr;
+}
+
+void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
+    size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
+    if (!count) throw std::invalid_argument("lsearch: null element count");
+    if (!key || !base || !compare || size == 0)
+        throw std::invalid_argument("lsearch: invalid arguments");
+    if (*count > std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lsearch: array size overflow");
+    auto* bytes = static_cast<unsigned char*>(base);
+    for (size_t index = 0; index < *count; ++index) {
+        auto* element = bytes + index * size;
+        if (compare(key, element) == 0) return element;
+    }
+    if (*count >= std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lsearch: append capacity overflow");
+    auto* tail = bytes + *count * size;
+    std::memcpy(tail, key, size);
+    ++*count;
+    return tail;
 }
 
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {

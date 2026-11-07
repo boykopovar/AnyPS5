@@ -2842,7 +2842,7 @@ ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator
 
 void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
     if (!self->items || !self->items->head) NotImplemented_nid_no_patch(__func__);
-    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
+    if (self->items->empty()) return;
     auto* link = self->items->head->next;
     self->items->head->next = link->next;
     link->next->previous = self->items->head;

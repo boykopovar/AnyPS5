@@ -36,8 +36,45 @@ static void CheckFseekBounds() {
     file.Close();
 }
 
+static void CheckFailedSeekKeepsPosition() {
+    FileStream file(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("01234567", 1, 8, &file) == 8);
+    rewind_nid_postfix(&file);
+    for (const char expected : {'0', '1', '2', '3'}) Require(fgetc_nid_postfix(&file) == expected);
+    std::int64_t position = -1;
+    Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 4);
+    const std::int64_t negative = -1;
+    errno = 0;
+    Require(fsetpos_nid_postfix(&file, &negative) == -1 && errno == EINVAL);
+    Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 4);
+    Require(fgetc_nid_postfix(&file) == '4');
+    errno = 0;
+    Require(fseeko_nid_postfix(&file, -6, SEEK_CUR) == -1 && errno == EINVAL);
+    Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 5);
+    Require(fgetc_nid_postfix(&file) == '5');
+    errno = 0;
+    Require(fseeko_nid_postfix(&file, -9, SEEK_END) == -1 && errno == EINVAL);
+    Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 6);
+    Require(fgetc_nid_postfix(&file) == '6');
+    file.Close();
+}
+
+static void CheckSeekFromEndAfterBufferedWrite() {
+    FileStream file(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("01234567", 1, 8, &file) == 8);
+    Require(fseeko_nid_postfix(&file, -3, SEEK_END) == 0);
+    Require(ftello_nid_postfix(&file) == 5);
+    Require(fgetc_nid_postfix(&file) == '5');
+    errno = 0;
+    Require(fseeko_nid_postfix(&file, -9, SEEK_END) == -1 && errno == EINVAL);
+    Require(ftello_nid_postfix(&file) == 6);
+    file.Close();
+}
+
 int main() {
     CheckFseekBounds();
+    CheckFailedSeekKeepsPosition();
+    CheckSeekFromEndAfterBufferedWrite();
     FileStream file(TemporaryFile::Open());
     Require(std::fputs("position", file.GetHandle()) >= 0);
     std::int64_t position = -1;
