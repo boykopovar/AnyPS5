@@ -20,6 +20,26 @@ struct StringView {
     bool is8Bit;
 };
 
+enum class HTMLIntegerParsingError : int { NegativeOverflow, PositiveOverflow, Other };
+
+struct HTMLNonNegativeIntegerResult {
+    union {
+        unsigned value;
+        HTMLIntegerParsingError error;
+    };
+    bool hasValue;
+};
+
+static_assert(sizeof(HTMLIntegerParsingError) == 4);
+static_assert(sizeof(HTMLNonNegativeIntegerResult) == 8);
+static_assert(alignof(HTMLNonNegativeIntegerResult) == 4);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, value) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, error) == 0);
+static_assert(offsetof(HTMLNonNegativeIntegerResult, hasValue) == 4);
+static_assert(std::is_trivially_copy_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_move_constructible_v<HTMLNonNegativeIntegerResult>);
+static_assert(std::is_trivially_destructible_v<HTMLNonNegativeIntegerResult>);
+
 struct URL {
     StringImpl* impl;
     unsigned bits;
@@ -57,7 +77,12 @@ struct String {
     String(const String& other) : impl(other.impl) { if (impl) impl->refCount += 2; }
     String(String&& other) noexcept : impl(std::exchange(other.impl, nullptr)) {}
     ~String() { Release(impl); }
+    String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
 };
+
+StringImpl* EmptyStringImpl();
+StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
+String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
 
 struct StringVector {
     String* buffer;

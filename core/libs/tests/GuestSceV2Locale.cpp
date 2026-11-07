@@ -20,6 +20,16 @@ extern unsigned char _ZNSt8__sce_v25wcoutE_nid_postfix[];
 extern unsigned char _ZNSt8__sce_v25wcerrE_nid_postfix[];
 extern unsigned char _ZNSt8__sce_v23cinE_nid_postfix[];
 extern unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[];
+extern unsigned char _ZNSt8__sce_v24clogE_nid_postfix[];
+extern unsigned char _ZNSt8__sce_v25wclogE_nid_postfix[];
+extern unsigned char* _ZNSt8__sce_v28_Ptr_cinE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_coutE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_clogE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v29_Ptr_wcinE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v210_Ptr_wcoutE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v210_Ptr_wcerrE_nid_postfix;
+extern unsigned char* _ZNSt8__sce_v210_Ptr_wclogE_nid_postfix;
 }
 
 void* APS5_VABI TestHeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
@@ -34,6 +44,15 @@ int APS5_VABI TestHeapPosixAlign(void** pointer, std::size_t, std::size_t bytes)
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static int gFacetDeletes = 0;
+
+void APS5_VABI DestroyFacet(GuestLocale::Facet*) {}
+void APS5_VABI DeleteFacet(GuestLocale::Facet*) { ++gFacetDeletes; }
+void APS5_VABI RetainFacet(GuestLocale::Facet* self) { ++self->references; }
+GuestLocale::Facet* APS5_VABI ReleaseFacet(GuestLocale::Facet* self) { return --self->references == 0 ? self : nullptr; }
+
+const GuestLocale::FacetVtable gFacetVtable{DestroyFacet, DeleteFacet, RetainFacet, ReleaseFacet};
 
 static int gEraseCalls = 0;
 static bool gEraseSawStreamNodes = false;
@@ -68,9 +87,22 @@ int main() {
         _ZNSt8__sce_v25wcerrE_nid_postfix,
         _ZNSt8__sce_v23cinE_nid_postfix,
         _ZNSt8__sce_v24wcinE_nid_postfix,
+        _ZNSt8__sce_v24clogE_nid_postfix,
+        _ZNSt8__sce_v25wclogE_nid_postfix,
     };
-    for (std::size_t index = 0; index < 6; ++index) {
+    unsigned char* pointers[] {
+        _ZNSt8__sce_v29_Ptr_coutE_nid_postfix,
+        _ZNSt8__sce_v29_Ptr_cerrE_nid_postfix,
+        _ZNSt8__sce_v210_Ptr_wcoutE_nid_postfix,
+        _ZNSt8__sce_v210_Ptr_wcerrE_nid_postfix,
+        _ZNSt8__sce_v28_Ptr_cinE_nid_postfix,
+        _ZNSt8__sce_v29_Ptr_wcinE_nid_postfix,
+        _ZNSt8__sce_v29_Ptr_clogE_nid_postfix,
+        _ZNSt8__sce_v210_Ptr_wclogE_nid_postfix,
+    };
+    for (std::size_t index = 0; index < 8; ++index) {
         Require(streams[index][0] == 0);
+        Require(pointers[index] == streams[index]);
         for (std::size_t other = 0; other < index; ++other) Require(streams[index] != streams[other]);
     }
 
@@ -87,10 +119,11 @@ int main() {
     Require(copy != nullptr && copy != locale);
     Require(copy->facetCount == locale->facetCount);
 
-    GuestLocale::Facet added{};
+    GuestLocale::Facet added{&gFacetVtable, 0, 0};
     _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(copy, &added, 41);
     Require(copy->facetCount > 41);
     Require(copy->facets[41] == &added);
+    Require(added.references == 1);
 
     alignas(16) unsigned char classicStorage[sizeof(GuestLocale::SceV2IosBase)]{};
     auto* classic = reinterpret_cast<GuestLocale::SceV2IosBase*>(classicStorage);
@@ -145,6 +178,6 @@ int main() {
 
     _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(second);
     Require(second->locale == nullptr);
-    Require(copy->base.references == 0);
-    Require(copy->facets[41] == &added);
+    Require(added.references == 0);
+    Require(gFacetDeletes == 1);
 }
