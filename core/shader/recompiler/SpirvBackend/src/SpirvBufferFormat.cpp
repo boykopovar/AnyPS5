@@ -102,6 +102,7 @@ SpirvFormatComponentType GetFormatComponentType(IrBufferFormat format) {
         case IrBufferFormat::Format16_16_16_16Float:
         case IrBufferFormat::Format32_32_32Float:
         case IrBufferFormat::Format32_32_32_32Float:
+        case IrBufferFormat::FormatX24_8_32Float:
             return SpirvFormatComponentType::Float;
         default:
             throw std::runtime_error("GetFormatComponentType: unsupported buffer format " + std::to_string(static_cast<std::uint32_t>(format)));
@@ -122,6 +123,8 @@ SpirvBufferFormatInfo GetFormatInfo(IrBufferFormat format) {
             return {format, type, 4u, 2u, {4u, 4u, 4u, 4u}, {0u, 4u, 8u, 12u}, true};
         case IrBufferFormat::Format8_24UNorm:
             return {format, type, 1u, 4u, {24u, 0u, 0u, 0u}, {0u, 0u, 0u, 0u}, true};
+        case IrBufferFormat::FormatX24_8_32Float:
+            return {format, type, 1u, 8u, {32u, 0u, 0u, 0u}, {0u, 0u, 0u, 0u}, true};
         case IrBufferFormat::Format8UNorm:
         case IrBufferFormat::Format8SNorm:
         case IrBufferFormat::Format8UScaled:
