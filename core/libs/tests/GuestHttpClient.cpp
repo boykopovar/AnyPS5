@@ -102,6 +102,27 @@ void CheckInputValidation(const std::string& base) {
     Read(client.get(), 30, 19);
 }
 
+void CheckRangeUnits(const std::string& base) {
+    auto invalid = Create();
+    for (const char* route : {"/unit/items/", "/unit/BYTES=/", "/range-number/"}) Check(Aps5HttpClient_Open_nid_postfix(invalid.get(), (base + route + "payload.bin").c_str()) == 0, "invalid Content-Range accepted");
+    bool opened = true;
+    for (const char* unit : {"bytes", "Bytes", "BYTES", "bYtEs"}) {
+        auto client = Create();
+        if (Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/unit/" + unit + "/payload.bin").c_str()) != 1) {
+            std::fprintf(stderr, "Content-Range unit open failed: %s\n", unit);
+            opened = false;
+            continue;
+        }
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "range unit body size differs");
+        Read(client.get(), 0, 32);
+        Check(Aps5HttpClient_Seek_nid_postfix(client.get(), 90000, 0) == 90000, "range unit seek failed");
+        Read(client.get(), 90000, 127);
+        Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 100000, "range unit read changed the body size");
+        std::printf("Content-Range unit open, size and range read passed: %s\n", unit);
+    }
+    Check(opened, "case-insensitive Content-Range unit rejected");
+}
+
 void CheckBodies(const std::string& base) {
     for (const char* route : {"/range/", "/full/", "/full-chunk/", "/full-close/", "/client-redirect/"}) {
         auto client = Create();
@@ -197,6 +218,7 @@ int main(int argc, char** argv) {
         CheckCacheAndReopen(base);
         CheckFailures(base);
         CheckCancellation(base);
+        CheckRangeUnits(base);
         std::puts("Reusable HTTP client body, framing, range, cache, reopen, isolation and cancellation tests passed");
         return 0;
     } catch (const std::exception& error) {
