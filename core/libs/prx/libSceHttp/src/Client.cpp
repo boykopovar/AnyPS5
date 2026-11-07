@@ -62,13 +62,22 @@ std::uint64_t Number(std::string_view text, int base = 10) {
 }
 
 std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
+    if (text.size() != 29 || text[3] != ',' || text[4] != ' ' || text[7] != ' ' || text[11] != ' ' ||
+        text[16] != ' ' || text[19] != ':' || text[22] != ':' || text.substr(25) != " GMT") return {};
+    for (const auto index : {5, 6, 12, 13, 14, 15, 17, 18, 20, 21, 23, 24})
+        if (text[index] < '0' || text[index] > '9') return {};
+    static constexpr std::array<std::string_view, 7> weekdays{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static constexpr std::array<std::string_view, 12> months{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    if (std::find(weekdays.begin(), weekdays.end(), std::string_view(text).substr(0, 3)) == weekdays.end() ||
+        std::find(months.begin(), months.end(), std::string_view(text).substr(8, 3)) == months.end()) return {};
     std::tm time{};
     std::istringstream input(text);
     input.imbue(std::locale::classic());
     input >> std::get_time(&time, "%a, %d %b %Y %H:%M:%S GMT");
     if (input.fail() || input.peek() != std::char_traits<char>::eof()) return {};
     const std::chrono::year_month_day day{std::chrono::year{time.tm_year + 1900}, std::chrono::month{static_cast<unsigned>(time.tm_mon + 1)}, std::chrono::day{static_cast<unsigned>(time.tm_mday)}};
-    if (!day.ok() || time.tm_hour > 23 || time.tm_min > 59 || time.tm_sec > 60) return {};
+    if (!day.ok() || time.tm_year < 0 || time.tm_year > 8099 || time.tm_hour > 23 || time.tm_min > 59 || time.tm_sec > 60 ||
+        std::chrono::weekday{std::chrono::sys_days{day}}.c_encoding() != static_cast<unsigned>(time.tm_wday)) return {};
     return std::chrono::sys_days{day} + std::chrono::hours{time.tm_hour} + std::chrono::minutes{time.tm_min} + std::chrono::seconds{time.tm_sec};
 }
 
@@ -79,6 +88,20 @@ bool StrongEtag(std::string_view text) {
         if (byte != 0x21 && (byte < 0x23 || byte == 0x7f)) return false;
     }
     return true;
+}
+
+std::pair<std::string, std::string> Field(const std::string& text) {
+    const auto colon = text.find(':');
+    if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP field");
+    auto name = Lower(text.substr(0, colon));
+    constexpr std::string_view punctuation = "!#$%&'*+-.^_`|~";
+    for (const unsigned char byte : name)
+        if (!(byte >= 'a' && byte <= 'z') && !(byte >= '0' && byte <= '9') && punctuation.find(byte) == std::string_view::npos)
+            throw HttpFailure("invalid HTTP field name");
+    std::string value(Trim(std::string_view(text).substr(colon + 1)));
+    for (const unsigned char byte : value)
+        if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP field value");
+    return {std::move(name), std::move(value)};
 }
 
 struct Url {
@@ -374,11 +397,7 @@ struct HttpClientState : Aps5HttpClient {
                 for (;;) {
                     const auto field = connection.Line();
                     if (field.empty()) break;
-                    const auto colon = field.find(':');
-                    if (colon == std::string::npos || colon == 0) throw HttpFailure("invalid HTTP header");
-                    const auto name = Lower(field.substr(0, colon));
-                    const std::string value(Trim(std::string_view(field).substr(colon + 1)));
-                    for (const unsigned char byte : value) if ((byte < 0x20 && byte != '\t') || byte == 0x7f) throw HttpFailure("invalid HTTP header value");
+                    const auto [name, value] = Field(field);
                     if (name != "content-range" && name != "content-length" && name != "content-encoding" && name != "transfer-encoding" && name != "location" && name != "etag" && name != "last-modified" && name != "date") continue;
                     const auto [found, inserted] = headers.emplace(name, value);
                     if (!inserted && found->second != value) throw HttpFailure("conflicting HTTP headers");
@@ -395,21 +414,30 @@ struct HttpClientState : Aps5HttpClient {
             if (status != 200 && status != 206) throw HttpFailure("HTTP source request was refused");
             if (headers.contains("content-encoding") && Lower(headers.at("content-encoding")) != "identity") NotImplemented_nid_no_patch("HTTP client encoded HTTP representations");
             if (full && status != 200) throw HttpFailure("HTTP full source request returned partial content");
-            if (initialized) {
-                if ((!etag.empty() && headers.contains("etag") && headers.at("etag") != etag) || (!modified.empty() && headers.contains("last-modified") && headers.at("last-modified") != modified)) throw HttpFailure("HTTP source representation changed");
-                if (status == 200) {
-                    const auto name = StrongEtag(validator) ? "etag" : "last-modified";
-                    if (validator.empty() || !headers.contains(name) || headers.at(name) != validator) throw HttpFailure("HTTP full response does not establish source identity");
-                }
+            if (initialized && ((!etag.empty() && headers.contains("etag") && headers.at("etag") != etag) ||
+                (!modified.empty() && headers.contains("last-modified") && headers.at("last-modified") != modified))) throw HttpFailure("HTTP source representation changed");
+            if (initialized && status == 200) {
+                const bool tag = StrongEtag(validator);
+                const auto name = tag ? "etag" : "last-modified";
+                const bool mayHaveTrailer = tag && headers.contains("transfer-encoding") && Lower(headers.at("transfer-encoding")) == "chunked";
+                if (validator.empty() || (!headers.contains(name) && !mayHaveTrailer)) throw HttpFailure("HTTP full response does not establish source identity");
             }
             std::vector<std::uint8_t> body;
+            std::optional<std::string> trailerEtag;
             if (headers.contains("transfer-encoding")) {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
                 for (;;) {
                     const auto chunk = connection.Line();
                     const auto count = Number(Trim(std::string_view(chunk).substr(0, chunk.find(';'))), 16);
                     if (count == 0) {
-                        while (!connection.Line().empty()) {}
+                        for (;;) {
+                            const auto field = connection.Line();
+                            if (field.empty()) break;
+                            auto [name, value] = Field(field);
+                            if (name != "etag") continue;
+                            if (trailerEtag && *trailerEtag != value) throw HttpFailure("conflicting HTTP trailer ETags");
+                            trailerEtag = std::move(value);
+                        }
                         break;
                     }
                     connection.Append(body, count);
@@ -417,6 +445,19 @@ struct HttpClientState : Aps5HttpClient {
                 }
             } else if (headers.contains("content-length")) connection.Append(body, Number(headers.at("content-length")));
             else connection.UntilClosed(body);
+            auto responseEtag = std::move(trailerEtag);
+            if (headers.contains("etag")) {
+                if (responseEtag && *responseEtag != headers.at("etag")) throw HttpFailure("conflicting HTTP header and trailer ETags");
+                responseEtag = headers.at("etag");
+            }
+            if (initialized) {
+                if (!etag.empty() && responseEtag && *responseEtag != etag) throw HttpFailure("HTTP source representation changed");
+                if (status == 200) {
+                    const bool matches = StrongEtag(validator) ? responseEtag && *responseEtag == validator :
+                        headers.contains("last-modified") && headers.at("last-modified") == validator;
+                    if (validator.empty() || !matches) throw HttpFailure("HTTP full response does not establish source identity");
+                }
+            }
             std::uint64_t total = body.size();
             std::uint64_t first = 0;
             if (status == 206) {
@@ -435,10 +476,10 @@ struct HttpClientState : Aps5HttpClient {
             std::string nextModified = modified;
             std::string nextValidator = validator;
             if (!initialized) {
-                nextEtag = headers.contains("etag") ? headers.at("etag") : "";
+                nextEtag = responseEtag.value_or("");
                 nextModified = headers.contains("last-modified") ? headers.at("last-modified") : "";
                 if (StrongEtag(nextEtag)) nextValidator = nextEtag;
-                else if (!headers.contains("etag") && headers.contains("date")) {
+                else if (!responseEtag && headers.contains("date")) {
                     const auto date = HttpDate(headers.at("date"));
                     const auto last = HttpDate(nextModified);
                     if (date && last && *date - *last >= std::chrono::seconds{60}) nextValidator = nextModified;
