@@ -375,8 +375,11 @@ class CommandTests(FixtureTests):
                 self.assertFalse(marker.exists())
 
     def test_symlink_loops_are_setup_errors(self):
-        (self.root / "first").symlink_to("second")
-        (self.root / "second").symlink_to("first")
+        try:
+            (self.root / "first").symlink_to("second")
+            (self.root / "second").symlink_to("first")
+        except OSError as error:
+            self.skipTest(f"symlinks unavailable: {error}")
         loop, source = self.root / "first", self.source("base")
         for baseline, output in ((source, loop / "evidence"), ((loop, source[1]), self.root / "evidence")):
             with self.subTest(baseline=baseline[0], output=output):
