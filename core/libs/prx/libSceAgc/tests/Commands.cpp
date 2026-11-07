@@ -1142,9 +1142,21 @@ void testEventWrite() {
 void testAcquireMem() {
     Storage storage;
     const auto* base = reinterpret_cast<const volatile void*>(0x1234567890ull);
-    const auto* packet = sceAgcDcbAcquireMem(&storage.buffer, 0, 3, 0x1234u, base, 0x1000, 400);
-    const std::array<std::uint32_t, 8> expected{0xc0065800u, 3, 0x11, 0, 0x12345678u, 0, 10, 0x1234u};
+    const auto* packet = sceAgcDcbAcquireMem(&storage.buffer, 0, 0, 0x1234u, base, 0x1000, 400);
+    const std::array<std::uint32_t, 8> expected{0xc0065800u, 0, 0x11, 0, 0x12345678u, 0, 25, 0x1234u};
     check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.words.begin()), "acquire packet does not round its range outward to 256 bytes");
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 13> polls{{{0, 0}, {1, 0}, {15, 0}, {16, 1}, {39, 2}, {40, 2}, {80, 5}, {160, 10}, {400, 25}, {1000, 62}, {4000, 250}, {100000, 6250}, {1000000, 62500}}};
+    for (const auto& [pollCycles, pollWord] : polls) {
+        Storage measured;
+        sceAgcDcbAcquireMem(&measured.buffer, 0, 0, 0x4380u, base, 0x1000, pollCycles);
+        check(measured.words[6] == pollWord, "acquire poll word is not the poll cycles shifted right by four");
+    }
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 15> controls{{{0, 0}, {1, 1}, {0x80, 0x80}, {0x4000, 0xc000}, {0x4380, 0xc380}, {0x8000, 0x8000}, {0xc380, 0xc380}, {0x1234, 0x1234}, {0x7ffff, 0x7ffff}, {0x4001, 0xc001}, {0x9000, 0x9000}, {0xd000, 0xd000}, {0x4300, 0xc300}, {0x77fff, 0x7ffff}, {0x10000, 0x10000}}};
+    for (const auto& [gcrControl, gcrWord] : controls) {
+        Storage measured;
+        sceAgcDcbAcquireMem(&measured.buffer, 0, 0, gcrControl, base, 0x1000, 0xa0);
+        check(measured.words[7] == gcrWord, "acquire cache control word does not set bit 15 with bit 14");
+    }
     Storage whole;
     sceAgcDcbAcquireMem(&whole.buffer, 0, 0, 0, base, 0xffffffffffffffffull, 0);
     check(whole.words[0] == 0xc0065800u && whole.words[2] == 0 && whole.words[4] == 0 && whole.words[6] == 0, "an unbounded acquire did not cover the whole address space");
@@ -1153,7 +1165,7 @@ void testAcquireMem() {
     check(large.words[2] == 0 && large.words[4] == 0, "an acquire over 1 TiB did not cover the whole address space");
     Storage asynchronous;
     sceAgcAcbAcquireMem(&asynchronous.buffer, 0x55u, base, 0x100, 80);
-    const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 2, 0x55u};
+    const std::array<std::uint32_t, 8> compute{0xc0065800u, 0x80000000u, 2, 0, 0x12345678u, 0, 5, 0x55u};
     check(std::equal(compute.begin(), compute.end(), asynchronous.words.begin()), "the asynchronous compute acquire did not select engine 1 with no CB/DB operation");
     Storage rejected;
     rejected.words.fill(0xa5a5a5a5u);
