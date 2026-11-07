@@ -81,7 +81,9 @@ bool Fits(const SdmaSlot& slot, std::uint32_t dwords) {
 
 int Submit(void* handle, std::uint32_t dwords, bool blocking, const std::function<void(SdmaSlot&)>& emit) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     SdmaSlot& slot = *static_cast<SdmaSlot*>(handle);
+    if (!slot.open) return SdmaErrorInvalidArgument;
     if (!Fits(slot, dwords)) {
         if (!blocking) return SdmaErrorRingFull;
         FlushAll(slot);
@@ -177,6 +179,7 @@ APS5_EXPORT("vPP6vKHY8Tg", sceSdmaPending_001_nid_no_patch);
 
 int APS5_VABI sceSdmaBeginQueueMode(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     auto& slot = *static_cast<SdmaSlot*>(handle);
     FlushAll(slot);
     slot.queueMode = true;
@@ -185,6 +188,7 @@ int APS5_VABI sceSdmaBeginQueueMode(void* handle) {
 
 int APS5_VABI sceSdmaCancelQueue(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     auto& slot = *static_cast<SdmaSlot*>(handle);
     if (!slot.queueMode) return SdmaErrorNotQueueMode;
     if (slot.pendingDwords != RingPending(slot)) NotImplemented_nid_no_patch("sceSdmaCancelQueue: a queue of more than 65535 dwords, which the module rewinds only in part");
@@ -198,6 +202,7 @@ int APS5_VABI sceSdmaCancelQueue(void* handle) {
 
 int APS5_VABI sceSdmaClose(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     *static_cast<SdmaSlot*>(handle) = SdmaSlot{};
     return 0;
 }
@@ -267,6 +272,7 @@ int APS5_VABI sceSdmaCopyWindowTiledNonBlocking(void) {
 
 int APS5_VABI sceSdmaEndQueueMode(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     auto& slot = *static_cast<SdmaSlot*>(handle);
     FlushAll(slot);
     slot.queueMode = false;
@@ -275,6 +281,7 @@ int APS5_VABI sceSdmaEndQueueMode(void* handle) {
 
 int APS5_VABI sceSdmaFenceNonBlocking(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     auto& slot = *static_cast<SdmaSlot*>(handle);
     if (static_cast<std::uint64_t>(RingPending(slot)) + FencePacket + 8 > slot.ringDwords) return SdmaErrorRingFull;
     if (slot.fenceIndex >= FenceSlots - 1) return SdmaErrorRingFull;
@@ -290,6 +297,7 @@ int APS5_VABI sceSdmaFinalize(void) {
 
 int APS5_VABI sceSdmaFlushAll(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     FlushAll(*static_cast<SdmaSlot*>(handle));
     return 0;
 }
@@ -304,6 +312,7 @@ int APS5_VABI sceSdmaInitialize(void) {
 
 int APS5_VABI sceSdmaKickQueue(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     Kick(*static_cast<SdmaSlot*>(handle));
     return 0;
 }
@@ -327,6 +336,7 @@ int APS5_VABI sceSdmaQueryWorkingBufferSize(void) {
 
 int APS5_VABI sceSdmaTryFlush(void* handle) {
     std::lock_guard lock(g_mutex);
+    if (!handle) return SdmaErrorInvalidArgument;
     auto& slot = *static_cast<SdmaSlot*>(handle);
     if (slot.watchedFence == 0) return 0;
     if (slot.fencesExecuted < slot.watchedFence) return SdmaErrorFencePending;
