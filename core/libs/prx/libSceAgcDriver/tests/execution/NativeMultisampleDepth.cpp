@@ -3348,6 +3348,149 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+enum class UniformPublication { Read, Pages, StencilRace, PlaneStore };
+
+void CheckUniformPlanePublication(Context context, std::uint32_t samples, UniformPublication mode) {
+    constexpr VkExtent2D extent{129u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes, true), stencil(stencilBytes, true);
+    const auto one = std::bit_cast<std::uint32_t>(1.0f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &one, 4u);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    const MultisampleTextureLayout depthLayout(TextureTileMode::kZ64KBX, 4u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    const MultisampleTextureLayout stencilLayout(TextureTileMode::kZ64KBX, 1u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> raster;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != VK_NULL_HANDLE && DepthSurfaceAt(target.address), "a uniform-plane D32S8 target without HTILE was not imported");
+    raster = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, true);
+    std::array<std::vector<std::byte>, 2> expected{std::vector<std::byte>(memory.Data(), memory.Data() + depthBytes), std::vector<std::byte>(stencil.Data(), stencil.Data() + stencilBytes)};
+    const std::array addresses{target.address, target.stencilAddress};
+    const auto draw = [&](float base) {
+        NoteDepthSurfaceWrite(context, target);
+        raster->Run(recorder.Commands(), base);
+        for (std::uint32_t y = 0u; y < extent.height; ++y) {
+            for (std::uint32_t x = 0u; x < extent.width; ++x) {
+                for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+                    const float value = base + static_cast<float>(sample + 1u) / 16.0f;
+                    std::memcpy(expected[0].data() + depthLayout.Offset(x, y, 0u, sample), &value, 4u);
+                    expected[1][stencilLayout.Offset(x, y, 0u, sample)] = static_cast<std::byte>(0x20u + sample);
+                }
+            }
+        }
+    };
+    const auto published = [&] {
+        Require(std::equal(expected[0].begin(), expected[0].end(), memory.Data()), "a written D32S8 owner without HTILE did not publish its depth samples and padding");
+        Require(std::equal(expected[1].begin(), expected[1].end(), stencil.Data()), "a written D32S8 owner without HTILE did not publish its stencil samples and padding");
+    };
+    draw(0.25f);
+    std::array<std::byte, 1> probe;
+    const auto stencilSample = static_cast<std::size_t>(stencilLayout.Offset(0u, 0u, 0u, 0u));
+    if (mode == UniformPublication::Read) {
+        AgcDriver::GuestMemory::Read(target.stencilAddress, probe);
+        published();
+        Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view, "a published D32S8 owner without HTILE was not reused");
+        draw(0.5f);
+        AgcDriver::GuestMemory::Read(target.address, probe);
+        published();
+    } else if (mode == UniformPublication::Pages) {
+        for (std::size_t index = 0u; index < addresses.size(); ++index) {
+            auto* guest = reinterpret_cast<std::byte*>(addresses[index] + 4096u);
+            for (std::size_t offset = 0u; offset < 4096u; ++offset) {
+                guest[offset] ^= std::byte{0xff};
+                expected[index][4096u + offset] = guest[offset];
+            }
+        }
+        AgcDriver::GuestMemory::Read(target.address, probe);
+        published();
+        Require(DepthSurfaceAt(target.address), "a D32S8 owner without HTILE that took guest bytes was retired");
+    } else {
+        const bool betweenPlanes = mode == UniformPublication::PlaneStore;
+        bool stored = false;
+        const PublicationHookScope hook([&](DepthPublicationStage stage) {
+            if (stored || stage != (betweenPlanes ? DepthPublicationStage::PlaneCommitted : DepthPublicationStage::GuestCopied)) return;
+            stored = true;
+            *reinterpret_cast<volatile std::byte*>(target.stencilAddress + stencilSample) = std::byte{0x7e};
+        });
+        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "guest writes raced native multisample depth publication");
+        Require(stored && stencil.Data()[stencilSample] == std::byte{0x7e} && DepthSurfaceAt(target.address), "a CPU store to the stencil plane of a D32S8 owner without HTILE was overwritten or its owner retired");
+        if (betweenPlanes) Require(std::equal(expected[0].begin(), expected[0].end(), memory.Data()), "the depth plane of a D32S8 owner without HTILE was not committed before its stencil plane");
+    }
+    std::printf("Native D32S8 without HTILE publication samples=%u mode=%u checked\n", samples, static_cast<std::uint32_t>(mode));
+}
+
+void CheckSingleSampleView(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{200u, 130u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes, true), stencil(stencilBytes, true);
+    const auto one = std::bit_cast<std::uint32_t>(1.0f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &one, 4u);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    const MultisampleTextureLayout depthLayout(TextureTileMode::kZ64KBX, 4u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> raster;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    const auto lookup = [&] { return DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); };
+    GuestTextureResource color{};
+    color.baseAddress = target.address;
+    color.width = extent.width * 2u;
+    color.height = extent.height * 2u;
+    color.mipCount = color.allocatedMipCount = 1u;
+    color.dimension = TextureDimension::k2D;
+    color.tileMode = TextureTileMode::kStandard64KB;
+    color.format = 36u;
+    color.dstSelX = 4u;
+    color.dstSelY = 5u;
+    color.dstSelZ = 6u;
+    color.dstSelW = 7u;
+    const auto colorLookup = [&] { return DepthSurfaceTexture(context, {}, color, VkComponentMapping{}); };
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != VK_NULL_HANDLE && DepthSurfaceAt(target.address), "a uniform-plane D32S8 target without HTILE was not imported");
+    Require(colorLookup() == nullptr && DepthSurfaceAt(target.address), "a single-sample view over an unwritten owner was not left to guest memory");
+    raster = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, true);
+    const auto draw = [&](float base) {
+        NoteDepthSurfaceWrite(context, target);
+        raster->Run(recorder.Commands(), base);
+        recorder.Sync();
+    };
+    draw(0.25f);
+    TargetRefuses([&] { colorLookup(); }, "native multisample depth sampled identity or format mismatch");
+    std::array<std::byte, 1> probe;
+    AgcDriver::GuestMemory::Read(target.stencilAddress, probe);
+    for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+        float published = 0.0f;
+        std::memcpy(&published, memory.Data() + depthLayout.Offset(extent.width - 1u, extent.height - 1u, 0u, sample), 4u);
+        Require(published == 0.25f + static_cast<float>(sample + 1u) / 16.0f, "the owner did not publish its samples before the single-sample view");
+    }
+    Require(colorLookup() == nullptr && DepthSurfaceAt(target.address), "a single-sample view over a published owner was not left to guest memory");
+    const auto texture = lookup();
+    Require(texture != nullptr && texture->View() != VK_NULL_HANDLE, "a multisampled view over a published owner was not sampled from the owner");
+    draw(0.5f);
+    TargetRefuses([&] { colorLookup(); }, "native multisample depth sampled identity or format mismatch");
+    std::printf("Native depth single-sample view samples=%u: guest memory before the first draw and after the publication, refused while host-written\n", samples);
+}
+
 void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{5u, 3u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -3519,6 +3662,30 @@ int main(int argc, char** argv) {
                 std::printf("Native depth queued fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--publication-without-htile") {
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u; };
+            Require(supported(4u), "native depth publication without HTILE requires sampled D32S8 with four samples");
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (supported(samples)) CheckUniformPlanePublication(publishing, samples, UniformPublication::Read);
+            }
+            for (const auto mode : {UniformPublication::Pages, UniformPublication::StencilRace, UniformPublication::PlaneStore}) CheckUniformPlanePublication(publishing, 4u, mode);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--single-sample-view") {
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
+                CheckSingleSampleView(publishing, samples);
+                ++checked;
+            }
+            return checked != 0u ? 0 : VulkanTestSkipped;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--stored-repeat-fill") {
             const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u; };
