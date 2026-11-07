@@ -650,7 +650,7 @@ void* APS5_VABI ENGINE_get_next_nid_postfix(void* engine);
 int APS5_VABI ENGINE_init_nid_postfix(void* engine);
 void APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 void* APS5_VABI ENGINE_load_private_key_nid_postfix(void* engine, const char* keyId, void* uiMethod, void* callbackData);
-int APS5_VABI ENGINE_set_default_nid_postfix(void);
+int APS5_VABI ENGINE_set_default_nid_postfix(void* engine, unsigned int flags);
 void APS5_VABI ERR_clear_error_nid_postfix();
 char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer);
 void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length);
