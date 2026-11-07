@@ -62,7 +62,7 @@ int APS5_VABI sceNpAppLaunchLinkIntInitialize();
 int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo();
 int APS5_VABI sceNpLookupCreateTitleCtxA(int userId);
 int APS5_VABI sceNpLookupNetAbortRequest(std::int32_t requestId);
-int APS5_VABI sceNpLookupNetCensorComment();
+int APS5_VABI sceNpLookupNetCensorComment(std::int32_t requestId, const void* npId, const char* comment, const void* option);
 int APS5_VABI sceNpLookupNetConvertJidToNpId();
 int APS5_VABI sceNpLookupNetConvertNpIdToJid();
 int APS5_VABI sceNpLookupNetCreateRequest(std::int32_t titleCtxId);
@@ -74,7 +74,7 @@ int APS5_VABI sceNpLookupNetInitWithFunctionPointer(const void* param, const voi
 int APS5_VABI sceNpLookupNetInitWithMemoryPool(const void* param, const void* pool);
 int APS5_VABI sceNpLookupNetIsInit(std::int32_t* out);
 int APS5_VABI sceNpLookupNetNpId(std::int32_t requestId, const void* onlineId, void* npId, const void* option);
-int APS5_VABI sceNpLookupNetSanitizeComment();
+int APS5_VABI sceNpLookupNetSanitizeComment(std::int32_t requestId, const void* npId, const char* comment, char* sanitizedComment, const void* option);
 int APS5_VABI sceNpLookupNetSetTimeout(std::int32_t id, std::int32_t resolveRetry, std::int32_t resolveTimeout, std::int32_t connectTimeout, std::int32_t sendTimeout, std::int32_t receiveTimeout);
 int APS5_VABI sceNpLookupNetTerm(void);
 int APS5_VABI sceNpServiceChecker2IntAbortRequest(int requestId);
