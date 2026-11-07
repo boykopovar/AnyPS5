@@ -1288,7 +1288,7 @@ public:
 
     void SizeUnits(std::uint64_t planeBytes) {
         static const bool whole = std::getenv("APS5_DEPTH_PLANE_WHOLE_STORE") != nullptr;
-        const std::uint64_t bytes = !whole && target.address % 65536u == 0 ? std::uint64_t{65536} : std::max<std::uint64_t>(planeBytes, 1u);
+        const std::uint64_t bytes = !whole && !target.gcnTileMode.has_value() && target.address % 65536u == 0 ? std::uint64_t{65536} : std::max<std::uint64_t>(planeBytes, 1u);
         const auto count = static_cast<std::size_t>(std::max<std::uint64_t>((planeBytes + bytes - 1u) / bytes, 1u));
         if (unitBytes == bytes && staleUnits.size() == count) return;
         unitBytes = bytes;
@@ -1420,6 +1420,23 @@ public:
             ClearStale();
             copyPlane(mirrorPlane, mirror, false, false, true);
         }
+        written = ++depthWrites;
+    }
+
+    void LoadFromMemory(const GuestTextureResource& resource) {
+        std::uint64_t generation = 0;
+        static_cast<void>(WrittenUnits(resource, generation));
+        ClearStale();
+        {
+            struct Syncing {
+                bool& flag;
+                ~Syncing() { flag = false; }
+            } guard{syncing};
+            syncing = true;
+            static_cast<void>(Mirror(resource));
+        }
+        unitGeneration.assign(unitGeneration.size(), generation);
+        copyPlane(mirrorPlane, mirrorPlane.storage, false, false, true);
         written = ++depthWrites;
     }
 
@@ -2218,8 +2235,12 @@ std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, std::
     return *storages;
 }
 
-bool sameSurface(const DepthTarget& a, const DepthTarget& b) {
+bool sameStorage(const DepthTarget& a, const DepthTarget& b) {
     return a.address == b.address && a.stencilAddress == b.stencilAddress && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && a.samples == b.samples && (a.samples == 1u || (a.htileAddress == b.htileAddress && a.htileStencil == b.htileStencil && a.depthSwizzle == b.depthSwizzle && a.pipeBankXor == b.pipeBankXor && a.firstSlice == b.firstSlice && a.lastSlice == b.lastSlice && a.iterate256 == b.iterate256 && a.htilePipeAligned == b.htilePipeAligned && a.htileVrsEncoding == b.htileVrsEncoding && a.htileDepthOnly == b.htileDepthOnly));
+}
+
+bool sameSurface(const DepthTarget& a, const DepthTarget& b) {
+    return sameStorage(a, b) && a.gcnTileMode == b.gcnTileMode;
 }
 
 std::recursive_mutex& surfacesMutex() {
@@ -2816,7 +2837,7 @@ void pruneUnmappedPlanes(const std::vector<UnmappedPlane>& marked) {
 }
 
 bool mirrorable(const DepthTarget& target) {
-    return (target.format == VK_FORMAT_D32_SFLOAT || target.format == VK_FORMAT_D32_SFLOAT_S8_UINT) && target.samples == 1 && target.depthSwizzle == XorSwizzleMode(TextureTileMode::kZ64KBX);
+    return (target.format == VK_FORMAT_D32_SFLOAT || target.format == VK_FORMAT_D32_SFLOAT_S8_UINT) && target.samples == 1 && (target.gcnTileMode.has_value() || target.depthSwizzle == XorSwizzleMode(TextureTileMode::kZ64KBX));
 }
 
 GuestTextureResource mirrorResource(const DepthTarget& target) {
@@ -2826,7 +2847,8 @@ GuestTextureResource mirrorResource(const DepthTarget& target) {
     resource.height = target.extent.height;
     resource.mipCount = 1;
     resource.allocatedMipCount = 1;
-    resource.tileMode = TextureTileMode::kZ64KBX;
+    resource.tileMode = target.gcnTileMode.value_or(TextureTileMode::kZ64KBX);
+    resource.gcnPitch = target.gcnTileMode.has_value() ? target.extent.width : 0u;
     resource.dimension = TextureDimension::k2D;
     resource.format = 22;
     resource.dstSelX = 4;
@@ -3106,6 +3128,14 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         }
     }
     const bool created = surface == nullptr;
+    bool retiled = false;
+    if (mirrorable(target)) {
+        for (const auto& candidate : surfaces()) {
+            if (!candidate->active->load(std::memory_order_acquire) || candidate->context.device != context.device || candidate->retired || candidate->target.gcnTileMode == target.gcnTileMode || !mirrorable(candidate->target) || !sameStorage(candidate->target, target)) continue;
+            retireStoringStale(*candidate);
+            retiled = true;
+        }
+    }
     GuestAllocations::Lease creationLease;
     if (created) {
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
@@ -3156,7 +3186,8 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
     }
     if (!created) surface->NoteHtileClear(htileCleared);
-    if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
+    if (created && retiled && !cleared && (htileCleared & VK_IMAGE_ASPECT_DEPTH_BIT) == 0) surface->LoadFromMemory(mirrorResource(target));
+    else if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
     if (surface->StencilMirrorable()) surface->SyncStencilFromMemory(stencilResource(target));
     surface->TakeStencilStorage();
     surface->ApplyFastClear();

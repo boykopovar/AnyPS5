@@ -143,6 +143,10 @@ std::uint64_t descriptorBase(std::span<const std::uint32_t> words) {
 
 }
 
+TextureTileMode GcnTileMode(std::uint32_t index) {
+    return resolveGcnTileMode(index);
+}
+
 std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const std::uint32_t> words) {
     const auto baseAddress = descriptorBaseAddress(words);
     if (baseAddress == 0) return std::nullopt;

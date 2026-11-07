@@ -146,6 +146,8 @@ constexpr TextureTileMode GcnMicroTileMode(TextureTileMode mode) {
 
 float EffectiveMinLod(const GuestTextureResource& resource);
 
+TextureTileMode GcnTileMode(std::uint32_t index);
+
 bool IsNullTextureResource(std::span<const std::uint32_t> words);
 std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const std::uint32_t> words);
 bool IsNullSampledTextureResource(std::span<const std::uint32_t> words);
