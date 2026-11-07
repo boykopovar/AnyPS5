@@ -2,8 +2,8 @@
 
 ### Silent stubs
 
-- [sceVoiceQoSReadPacket](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - network voice packet streaming is not implemented: it returns 0 and writes size 0 (indicating no packet is available). Aliens: Fireteam Elite (PPSA03393) calls it on its startup path (`0x76D14C`-`0x76D16E`) and stops with `not implemented` if it throws
-- [sceVoiceQoSWritePacket](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - network voice packet streaming is not implemented: it returns 0 leaving `*size` untouched (treating all input bytes as accepted). Aliens: Fireteam Elite (PPSA03393) sets `*size` to the packet size before `WritePacket` (`0x76CEB9`-`0x76CEC4`), compares `*size` against that input size upon return (`0x76CF07`-`0x76CF10`) to verify all bytes were accepted, and stops with `not implemented` if it throws
+- [sceVoiceQoSReadPacket](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - network voice packet streaming is not implemented: it returns `SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID` for a null buffer or size or an unknown connection id, and otherwise returns 0 and writes size 0 (indicating no packet is available). Aliens: Fireteam Elite (PPSA03393) calls it on its startup path (`0x76D14C`-`0x76D16E`) and stops with `not implemented` if it throws
+- [sceVoiceQoSWritePacket](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - network voice packet streaming is not implemented: it returns `SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID` for a null buffer or size or an unknown connection id, and otherwise returns 0 leaving `*size` untouched (treating all input bytes as accepted). Aliens: Fireteam Elite (PPSA03393) sets `*size` to the packet size before `WritePacket` (`0x76CEB9`-`0x76CEC4`), compares `*size` against that input size upon return (`0x76CF07`-`0x76CF10`) to verify all bytes were accepted, and stops with `not implemented` if it throws
 
 ### Unknown function info
 
