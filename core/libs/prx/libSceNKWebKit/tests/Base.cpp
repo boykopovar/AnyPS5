@@ -1090,6 +1090,78 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestOpenPanelParameters() {
+    Require(WKOpenPanelParametersGetTypeID() == 79);
+    auto params = NKWebKit::Make<NKWebKit::OpenPanelParameters>();
+    params->acceptedFileExtensions = {u"png", u"jpg"};
+    params->acceptedMIMETypes = {u"image/png"};
+    params->allowedMIMETypes = {u"image/*"};
+    params->selectedFileNames = {u"photo.png"};
+    params->allowsDirectories = true;
+    params->allowsMultipleFiles = true;
+
+    const void* ref = NKWebKit::ToRef(params);
+    Require(WKOpenPanelParametersGetAllowsDirectories(ref));
+    Require(WKOpenPanelParametersGetAllowsMultipleFiles(ref));
+
+    auto* extArray = WKOpenPanelParametersCopyAcceptedFileExtensions(ref);
+    Require(extArray != nullptr);
+    Require(WKGetTypeID(extArray) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(extArray) == 2);
+    auto* ext0 = WKArrayGetItemAtIndex(extArray, 0);
+    Require(WKStringIsEqualToUTF8CString(ext0, "png"));
+    WKRelease(extArray);
+
+    auto* mimeArray = WKOpenPanelParametersCopyAcceptedMIMETypes(ref);
+    Require(mimeArray != nullptr);
+    Require(WKArrayGetSize(mimeArray) == 1);
+    auto* mime0 = WKArrayGetItemAtIndex(mimeArray, 0);
+    Require(WKStringIsEqualToUTF8CString(mime0, "image/png"));
+    WKRelease(mimeArray);
+
+    auto* allowedArray = WKOpenPanelParametersCopyAllowedMIMETypes(ref);
+    Require(allowedArray != nullptr);
+    Require(WKArrayGetSize(allowedArray) == 1);
+    auto* allowed0 = WKArrayGetItemAtIndex(allowedArray, 0);
+    Require(WKStringIsEqualToUTF8CString(allowed0, "image/*"));
+    WKRelease(allowedArray);
+
+    auto* filesArray = WKOpenPanelParametersCopySelectedFileNames(ref);
+    Require(filesArray != nullptr);
+    Require(WKArrayGetSize(filesArray) == 1);
+    auto* file0 = WKArrayGetItemAtIndex(filesArray, 0);
+    Require(WKStringIsEqualToUTF8CString(file0, "photo.png"));
+    WKRelease(filesArray);
+
+    auto empty = NKWebKit::Make<NKWebKit::OpenPanelParameters>();
+    const void* emptyRef = NKWebKit::ToRef(empty);
+    Require(!WKOpenPanelParametersGetAllowsDirectories(emptyRef));
+    Require(!WKOpenPanelParametersGetAllowsMultipleFiles(emptyRef));
+    auto* emptyExts = WKOpenPanelParametersCopyAcceptedFileExtensions(emptyRef);
+    Require(emptyExts != nullptr);
+    Require(WKArrayGetSize(emptyExts) == 0);
+    WKRelease(emptyExts);
+    WKRelease(emptyRef);
+
+    bool threw = false;
+    try {
+        WKOpenPanelParametersGetAllowsDirectories(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKOpenPanelParametersCopyAcceptedFileExtensions(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1110,6 +1182,7 @@ int main() {
     TestAXObject();
     TestPopupMenuItem();
     TestOpenPanelResultListener();
+    TestOpenPanelParameters();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
