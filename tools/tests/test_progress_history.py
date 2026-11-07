@@ -27,7 +27,7 @@ def commit(root, day, message, body, time="12:00:00Z"):
     (root / OPCODES).parent.mkdir(parents=True, exist_ok=True)
     (root / OPCODES).write_text("enum class RdnaOpcode : int {\n    SEndpgm,\n};\n", encoding="utf-8")
     env = {**os.environ, "GIT_AUTHOR_DATE": f"{day}T{time}", "GIT_COMMITTER_DATE": f"{day}T{time}"}
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "core.safecrlf=false", "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message],
                    check=True, env=env)
 

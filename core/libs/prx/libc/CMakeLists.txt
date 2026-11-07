@@ -130,6 +130,7 @@ endif()
 target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/General.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PreciseWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchive.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CreationMask.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FailureReport.cpp
@@ -172,6 +173,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StreamPurge.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedStreamInit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MemoryResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
@@ -437,6 +439,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sce_v2_filesystem PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_exp_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exp.cpp)
+    target_include_directories(guest_sce_v2_exp_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_exp_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_exp_tests)
+    add_test(NAME guest_sce_v2_exp COMMAND guest_sce_v2_exp_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_exp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test_executable(guest_sce_v2_filesystem_calls_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FilesystemCalls.cpp)
     target_include_directories(guest_sce_v2_filesystem_calls_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -446,6 +457,15 @@ if(BUILD_TESTING)
     set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_pmsw_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Pmsw.cpp)
+    target_include_directories(guest_sce_v2_pmsw_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_pmsw_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_pmsw_tests)
+    add_test(NAME guest_sce_v2_pmsw COMMAND guest_sce_v2_pmsw_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_pmsw PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -966,6 +986,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_random_device_seed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_stream_init_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2StreamInit.cpp)
+    target_include_directories(guest_sce_v2_stream_init_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_stream_init_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_stream_init_tests)
+    add_test(NAME guest_sce_v2_stream_init COMMAND guest_sce_v2_stream_init_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_stream_init PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_memcpy_protected_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemcpyProtected.cpp)
     target_include_directories(guest_memcpy_protected_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_memcpy_protected_tests PRIVATE libc)
@@ -974,6 +1003,15 @@ if(BUILD_TESTING)
     set_tests_properties(guest_memcpy_protected PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_memcpy_protected PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_float_constants_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FloatConstants.cpp)
+    target_include_directories(guest_sce_v2_float_constants_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_float_constants_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_float_constants_tests)
+    add_test(NAME guest_sce_v2_float_constants COMMAND guest_sce_v2_float_constants_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_float_constants PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_count_ones_tests ${LIBS_INCLUDE_DIR}/tests/GuestCountOnes.cpp)
@@ -1340,6 +1378,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_dinkumware_internals COMMAND guest_dinkumware_internals_tests)
     if(WIN32)
         set_tests_properties(guest_dinkumware_internals PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_sce_v2_string_to_integer_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2StringToInteger.cpp)
+    target_include_directories(guest_sce_v2_string_to_integer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_string_to_integer_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_string_to_integer_tests)
+    add_test(NAME guest_sce_v2_string_to_integer COMMAND guest_sce_v2_string_to_integer_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_string_to_integer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_device_name_tests ${LIBS_INCLUDE_DIR}/tests/GuestDeviceName.cpp)

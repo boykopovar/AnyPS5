@@ -552,6 +552,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix() { LibcException::ThrowPlain(_ZTVSt10bad_typeid_nid_postfix); }
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix() { LibcException::ThrowPlain(_ZTVSt20bad_array_new_length_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject*) { LibcException::ThrowPlain(_ZTVSt20bad_array_new_length_nid_postfix); }
+[[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt8bad_cast_nid_postfix(const LibcException::ExceptionObject*) { LibcException::ThrowPlain(_ZTVSt8bad_cast_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt9bad_alloc_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12out_of_range_nid_postfix, message); }
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12length_error_nid_postfix, message); }
@@ -580,6 +581,10 @@ static const char* APS5_VABI BadOptionalAccessWhat_nid_no_patch(const ExceptionO
 static const char* APS5_VABI BadWeakPtrWhat_nid_no_patch(const ExceptionObject*) { return "bad_weak_ptr"; }
 static const char* APS5_VABI BadVariantAccessWhat_nid_no_patch(const ExceptionObject*) { return "bad variant access"; }
 static const char* APS5_VABI BadFunctionCallWhat_nid_no_patch(const ExceptionObject*) { return "bad function call"; }
+static const char* APS5_VABI BadAnyCastWhat_nid_no_patch(const ExceptionObject*) { return "Bad any_cast"; }
+static const char* APS5_VABI FutureErrorWhat_nid_no_patch(const ExceptionObject* self) {
+    return FutureErrorMessage(reinterpret_cast<const SystemErrorObject*>(self)->code.reserved);
+}
 }
 
 extern "C" {
@@ -608,6 +613,9 @@ const TypeRecord BadOptionalAccessType {SingleTypeVtable + 2, "NSt8__sce_v219bad
 const TypeRecord BadWeakPtrType {SingleTypeVtable + 2, "NSt8__sce_v212bad_weak_ptrE", &_ZTISt9exception_nid_postfix};
 const TypeRecord BadVariantAccessType {SingleTypeVtable + 2, "NSt8__sce_v218bad_variant_accessE", &_ZTISt9exception_nid_postfix};
 const TypeRecord BadFunctionCallType {SingleTypeVtable + 2, "NSt8__sce_v217bad_function_callE", &_ZTISt9exception_nid_postfix};
+const TypeRecord BadAnyCastType {SingleTypeVtable + 2, "NSt8__sce_v212bad_any_castE", &_ZTISt8bad_cast_nid_postfix};
+const TypeRecord FormatErrorType {SingleTypeVtable + 2, "NSt8__sce_v212format_errorE", &RuntimeErrorType};
+const TypeRecord FutureErrorType {SingleTypeVtable + 2, "NSt8__sce_v212future_errorE", &LogicErrorType};
 const ExceptionVtable LengthError = MessageTable(LengthErrorType);
 const ExceptionVtable OutOfRange = MessageTable(OutOfRangeType);
 const ExceptionVtable InvalidArgument = MessageTable(InvalidArgumentType);
@@ -620,6 +628,9 @@ const ExceptionVtable BadOptionalAccess = PlainTable(BadOptionalAccessType, BadO
 const ExceptionVtable BadWeakPtr = PlainTable(BadWeakPtrType, BadWeakPtrWhat_nid_no_patch);
 const ExceptionVtable BadVariantAccess = PlainTable(BadVariantAccessType, BadVariantAccessWhat_nid_no_patch);
 const ExceptionVtable BadFunctionCall = PlainTable(BadFunctionCallType, BadFunctionCallWhat_nid_no_patch);
+const ExceptionVtable BadAnyCast = PlainTable(BadAnyCastType, BadAnyCastWhat_nid_no_patch);
+const ExceptionVtable FormatError = MessageTable(FormatErrorType);
+const ExceptionVtable FutureError {0, &FutureErrorType, GuestDestroyMessage_nid_no_patch, GuestDeleteMessage_nid_no_patch, FutureErrorWhat_nid_no_patch};
 
 [[noreturn]] void ThrowCopy(const ExceptionObject* source, const ExceptionVtable& table) {
     auto* object = static_cast<ExceptionObject*>(__cxa_allocate_exception_nid_postfix(sizeof(ExceptionObject)));
@@ -658,6 +669,9 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_18bad_variant_accessE_nid_postfix(const LibcException::ExceptionObject*) { LibcException::ThrowPlain(LibcException::SceV2::BadVariantAccess); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix(const LibcException::ExceptionObject* error) { LibcException::SceV2::ThrowCopy(error, LibcException::SceV2::RangeError); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix(const LibcException::SystemErrorObject* error) { LibcException::SceV2::ThrowSystemCopy(error, LibcException::SceV2::SystemError); }
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12bad_any_castE_nid_postfix(const LibcException::ExceptionObject*) { LibcException::ThrowPlain(LibcException::SceV2::BadAnyCast); }
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12format_errorE_nid_postfix(const LibcException::ExceptionObject* error) { LibcException::SceV2::ThrowCopy(error, LibcException::SceV2::FormatError); }
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12future_errorE_nid_postfix(const LibcException::SystemErrorObject* error) { LibcException::SceV2::ThrowSystemCopy(error, LibcException::SceV2::FutureError); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix(const LibcException::SystemErrorObject* failure) { LibcException::SceV2::ThrowSystemCopy(failure, LibcException::SceV2::IosFailure); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code) { LibcException::ThrowCppError(code, LibcException::SceV2::SystemError, true); }
 
@@ -756,13 +770,14 @@ void APS5_VABI _ZNSt12future_errorD1Ev_nid_postfix(LibcException::FutureErrorObj
 
 namespace LibcException {
 struct FilesystemErrorObject {
-    ExceptionObject base;
-    unsigned char reserved[0x20];
+    SystemErrorObject base;
+    unsigned char reserved[0x10];
     ErrorCode code;
     GuestLocale::String path1;
     GuestLocale::String path2;
 };
-static_assert(sizeof(FilesystemErrorObject) == 0x90 && offsetof(FilesystemErrorObject, code) == 0x30);
+static_assert(sizeof(FilesystemErrorObject) == 0x90 && offsetof(FilesystemErrorObject, base.code) == 16);
+static_assert(offsetof(FilesystemErrorObject, code) == 0x30);
 static_assert(offsetof(FilesystemErrorObject, path1) == 0x40 && offsetof(FilesystemErrorObject, path2) == 0x68);
 
 GuestLocale::String CopyGuestString(const GuestLocale::String* source) {
@@ -801,8 +816,10 @@ static void APS5_VABI GuestDeleteFilesystemError_nid_no_patch(ExceptionObject* o
 static void APS5_VABI DestroyThrownFilesystemError_nid_no_patch(void* object) { DestroyFilesystemError(static_cast<ExceptionObject*>(object)); }
 const TypeRecord FilesystemErrorType {SingleTypeVtable + 2, "NSt10filesystem16filesystem_errorE", &_ZTISt12system_error_nid_postfix};
 const ExceptionVtable FilesystemError {0, &FilesystemErrorType, GuestDestroyFilesystemError_nid_no_patch, GuestDeleteFilesystemError_nid_no_patch, GuestMessageWhat_nid_no_patch};
+const TypeRecord SceV2FilesystemErrorType {SingleTypeVtable + 2, "NSt8__sce_v210filesystem16filesystem_errorE", &SceV2::SystemErrorType};
+const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestDestroyFilesystemError_nid_no_patch, GuestDeleteFilesystemError_nid_no_patch, GuestMessageWhat_nid_no_patch};
 
-[[noreturn]] void ThrowFilesystemError(const char* message, const GuestLocale::String* path, ErrorCode code) {
+[[noreturn]] void ThrowFilesystemError(const ExceptionVtable& table, const char* message, const GuestLocale::String* path, ErrorCode code) {
     if (!message) throw std::invalid_argument("_Xfilesystem_error: null message");
     if (!code.category) throw std::invalid_argument("_Xfilesystem_error: null error category");
     std::string what = message;
@@ -810,21 +827,29 @@ const ExceptionVtable FilesystemError {0, &FilesystemErrorType, GuestDestroyFile
     what += ErrorCodeMessage(code);
     auto* object = static_cast<FilesystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(FilesystemErrorObject)));
     *object = {};
-    Construct(&object->base, FilesystemError, what.c_str());
+    Construct(&object->base.base, table, what.c_str());
+    object->base.code = code;
     object->code = code;
     object->path1 = CopyGuestString(path);
     object->path2 = CopyGuestString(nullptr);
-    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(FilesystemError.type)),
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyThrownFilesystemError_nid_no_patch));
 }
 }
 
 extern "C" {
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix(const char* message, LibcException::ErrorCode code) {
-    LibcException::ThrowFilesystemError(message, nullptr, code);
+    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, nullptr, code);
 }
 [[noreturn]] void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code) {
     if (!path) throw std::invalid_argument("_Xfilesystem_error: null path");
-    LibcException::ThrowFilesystemError(message, path, code);
+    LibcException::ThrowFilesystemError(LibcException::FilesystemError, message, path, code);
+}
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(const char* message, LibcException::ErrorCode code) {
+    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, nullptr, code);
+}
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code) {
+    if (!path) throw std::invalid_argument("_Xfilesystem_error: null path");
+    LibcException::ThrowFilesystemError(LibcException::SceV2FilesystemError, message, path, code);
 }
 }
