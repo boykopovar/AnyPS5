@@ -863,6 +863,20 @@ private:
         });
     }
 
+    static bool PointerWordUser(const IrValue& user) {
+        std::vector<const IrValue*> pending{&user};
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back();
+            pending.pop_back();
+            if (!seen.insert(value).second) continue;
+            if (value->Opcode() == IrOpcode::GetAddressResource && value->ArgumentCount() == 2u) continue;
+            if (!value->IsPhi() || value->Uses().empty()) return false;
+            for (const IrValue* use : value->Uses()) pending.push_back(use);
+        }
+        return true;
+    }
+
     bool RereadableVsharp(const IrValue& handle, const TableColumnPlan& parent) const {
         if (handle.ArgumentCount() != parent.reads.size()) return false;
         for (std::uint32_t dword = 0; dword < handle.ArgumentCount(); dword++) {
@@ -995,7 +1009,7 @@ private:
             if (otherUsers && !rereadable) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    if (user->Opcode() != IrOpcode::GetBufferResource) return false;
+                    if (user->Opcode() != IrOpcode::GetBufferResource) return rereadable && PointerWordUser(*user);
                     if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
                     return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable);
                 });
