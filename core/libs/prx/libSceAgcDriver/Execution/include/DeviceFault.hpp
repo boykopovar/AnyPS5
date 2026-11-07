@@ -419,8 +419,7 @@ inline const char* DeviceFaultStageName(std::uint32_t stage) noexcept {
 }
 
 struct DeviceFaultResidencyProbe {
-    bool everBound = false;
-    bool spaceKnown = false;
+    bool boundNow = false;
     bool importInFlight = false;
     bool writeWatchRefused = false;
     bool evicted = false;
@@ -462,9 +461,11 @@ inline std::vector<std::string> DeviceFaultResidencyLines(std::uint64_t va, std:
             lines.emplace_back(line);
             return lines;
         }
+        bool snapshotFound = false;
         bool covered = false;
         if (snapshots != nullptr && submitSerial != 0) {
             if (const auto found = snapshots->Find(submitSerial)) {
+                snapshotFound = true;
                 if (found->ranges != nullptr) {
                     for (const auto& range : *found->ranges) {
                         if (range.begin <= va && va < range.end) {
@@ -475,7 +476,7 @@ inline std::vector<std::string> DeviceFaultResidencyLines(std::uint64_t va, std:
                 }
             }
         }
-        if (!probe.everBound && !covered && probe.spaceKnown) {
+        if (snapshotFound && !covered && !probe.boundNow) {
             std::snprintf(line, sizeof(line), "[device-fault] residency 0x%llx never bound", static_cast<unsigned long long>(va));
             lines.emplace_back(line);
             return lines;

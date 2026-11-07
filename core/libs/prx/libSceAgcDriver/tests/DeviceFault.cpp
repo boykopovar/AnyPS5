@@ -118,10 +118,10 @@ void ClaimBracketTokenWithArgs(AgcDriver::FaultTokenRing& ring, AgcDriver::Fault
     std::atomic_ref<AgcDriver::FaultToken>(slot->token).store(token, std::memory_order_release);
 }
 
-AgcDriver::DeviceFaultResidencyProbe ResidencyNeverBoundForTest(std::uint64_t va) {
+AgcDriver::DeviceFaultResidencyProbe ResidencyProbeUnboundNow(std::uint64_t va) {
+    static_cast<void>(va);
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.spaceKnown = true;
-    probe.everBound = (va == 0xabcdull);
+    probe.boundNow = false;
     return probe;
 }
 
@@ -616,8 +616,7 @@ void ResidencyNeverBound() {
     AgcDriver::SubmissionSnapshots snapshots;
     snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.spaceKnown = true;
-    probe.everBound = false;
+    probe.boundNow = false;
     const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 7, &snapshots, probe);
     Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x50000 never bound", "a never-bound address missed its verdict");
 }
@@ -626,15 +625,14 @@ void ResidencyNoHistory() {
     AgcDriver::SubmissionSnapshots snapshots;
     snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.spaceKnown = false;
-    probe.everBound = false;
-    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 7, &snapshots, probe);
+    probe.boundNow = false;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 0, &snapshots, probe);
     Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x50000 unknown", "an address without history claimed never bound");
 }
 
 void ResidencyEvictedWithSerial() {
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.everBound = true;
+    probe.boundNow = true;
     probe.evicted = true;
     probe.evictedAtSerial = 7;
     const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
@@ -643,7 +641,7 @@ void ResidencyEvictedWithSerial() {
 
 void ResidencyEvictedFallback() {
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.everBound = true;
+    probe.boundNow = true;
     probe.evicted = true;
     probe.evictedAtSerial = 0;
     const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
@@ -652,7 +650,7 @@ void ResidencyEvictedFallback() {
 
 void ResidencyImportInFlight() {
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.everBound = true;
+    probe.boundNow = true;
     probe.importInFlight = true;
     const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
     Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x12000 import in flight", "an import in flight missed its verdict");
@@ -660,7 +658,7 @@ void ResidencyImportInFlight() {
 
 void ResidencyWriteWatchRefused() {
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.everBound = true;
+    probe.boundNow = true;
     probe.writeWatchRefused = true;
     const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
     Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x12000 write-watch refused", "a write-watch refusal missed its verdict");
@@ -670,7 +668,7 @@ void ResidencyUnknown() {
     AgcDriver::SubmissionSnapshots snapshots;
     snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
     AgcDriver::DeviceFaultResidencyProbe probe{};
-    probe.everBound = true;
+    probe.boundNow = true;
     const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 7, &snapshots, probe);
     Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x50000 unknown", "an unknown address missed its verdict");
 }
@@ -691,14 +689,24 @@ void ReportResidencyIntegration() {
         if (line == "[device-fault] residency 0xabcd unknown") second = true;
     }
     Require(first && second, "a residency report missed one verdict per fault address");
-    const auto routed = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring, ResidencyNeverBoundForTest);
+    const auto routed = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring, ResidencyProbeUnboundNow);
     bool routedFirst = false;
     bool routedSecond = false;
     for (const auto& line : routed) {
-        if (line == "[device-fault] residency 0x1234000 never bound") routedFirst = true;
+        if (line == "[device-fault] residency 0x1234000 unknown") routedFirst = true;
         if (line == "[device-fault] residency 0xabcd unknown") routedSecond = true;
     }
-    Require(routedFirst && routedSecond, "a routed residency report missed its per-address verdicts");
+    Require(routedFirst && routedSecond, "a snapshot-less residency report missed its unknown verdicts");
+    AgcDriver::SubmissionSnapshots boundSnapshots;
+    boundSnapshots.NoteSubmit(9, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    const auto found = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 9, &boundSnapshots, bracket, ring, ResidencyProbeUnboundNow);
+    bool foundFirst = false;
+    bool foundSecond = false;
+    for (const auto& line : found) {
+        if (line == "[device-fault] residency 0x1234000 never bound") foundFirst = true;
+        if (line == "[device-fault] residency 0xabcd never bound") foundSecond = true;
+    }
+    Require(foundFirst && foundSecond, "a found-but-uncovering snapshot missed its never-bound verdicts");
     faultDataAddressCount = 2;
 }
 

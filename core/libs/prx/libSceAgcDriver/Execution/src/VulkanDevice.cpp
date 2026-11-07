@@ -2574,9 +2574,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                             AgcDriver::DeviceFaultResidencyProbe probe{};
                             try {
                                 if (const auto space = Graphics::GuestBufferMemory::TrySnapshotAddressSpace(); space.has_value() && space->second != nullptr) {
-                                    probe.spaceKnown = true;
                                     for (const auto& range : *space->second) {
-                                        if (range.begin <= va && va < range.end) { probe.everBound = true; break; }
+                                        if (range.begin <= va && va < range.end) { probe.boundNow = true; break; }
                                     }
                                 }
                             } catch (...) {
