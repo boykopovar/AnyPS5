@@ -54,6 +54,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [JSON serialisation](../../../core/libs/prx/libSceNKWebKit/src/WtfJson.cpp) (libSceNKWebKit) - the `writeJSON` virtual slot of `WTF::JSONImpl::Value` and of `ArrayBase` throws through `NotImplemented_nid_no_patch`, like the exported `writeJSON` handlers: serialising a value needs WTF's `StringBuilder` and its double-conversion number formatting, which are not implemented.
 - [Filter operations](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - the `WebCore::FilterOperation` subclasses (Default, Blur, DropShadow, InvertLightness, BasicColorMatrix, BasicComponentTransfer) stay stubs: their objects are dispatched through the module's own vtables, which this library does not provide.
 - [Shared string hash](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `WebCore::computeSharedStringHash` follows the pinned [StringHash.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringHash.h#L220-L227), where `AlreadyHashed::avoidDeletedValue` ORs the sign bit in, so a raw hash of `0xFFFFFFFF` stays `0xFFFFFFFF`; current WebKit `main` XORs it and returns `0x7FFFFFFF`. Which of the two the console module uses is unverified.
+- [WebCore::HTTPHeaderField](../../../core/libs/prx/libSceNKWebKit/src/HTTPHeaderField.cpp) (libSceNKWebKit) - the 16-byte layout in [HTTPHeaderFieldAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/HTTPHeaderFieldAbi.hpp) (two `WTF::String`, name then value) follows [HTTPHeaderField.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/HTTPHeaderField.h) and is unverified against the PS5 module. The 9 exports follow that header; the private constructor taking two `WTF::String&&` stores them as given, because the trimming and RFC 7230 validation of [HTTPHeaderField.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/HTTPHeaderField.cpp) belong to `HTTPHeaderField::create`, which is not in the inventory. A null object or string pointer throws.
 
 ### Known export names; ABI prototypes unverified
 
@@ -67,7 +68,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6532 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6523 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -2556,13 +2557,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore15HTMLLinkElement14setCrossOriginERKN3WTF10AtomStringE` | `H8KVeCoTFeQ` |
 | `_ZN7WebCore15HTMLLinkElement5setAsERKN3WTF10AtomStringE` | `G6ftGG8w5Ik` |
 | `_ZN7WebCore15HTMLLinkElement7relListEv` | `GnimSlf3jqg` |
-| `_ZN7WebCore15HTTPHeaderFieldC1EON3WTF6StringES3_` | `RSEWnJoasFU` |
-| `_ZN7WebCore15HTTPHeaderFieldC1ERKS0_` | `aGTNhHZfOvY` |
-| `_ZN7WebCore15HTTPHeaderFieldC2EON3WTF6StringES3_` | `TB+cYQ89RiM` |
-| `_ZN7WebCore15HTTPHeaderFieldC2ERKS0_` | `iY9c5nf+LCQ` |
-| `_ZN7WebCore15HTTPHeaderFieldD1Ev` | `1gZ4CtaI+r4` |
-| `_ZN7WebCore15HTTPHeaderFieldD2Ev` | `BgJaal3eOJg` |
-| `_ZN7WebCore15HTTPHeaderFieldaSERKS0_` | `UFzKxNIuPO8` |
 | `_ZN7WebCore15HitTestLocationC1ERKS0_` | `WaA+akXnqK4` |
 | `_ZN7WebCore15HitTestLocationC1Ev` | `FtC9uKqXDjg` |
 | `_ZN7WebCore15HitTestLocationC2ERKS0_` | `oliwAKLVWgM` |
@@ -5638,8 +5632,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore15HTMLLinkElement11crossOriginEv` | `eoUoCaaDpCA` |
 | `_ZNK7WebCore15HTMLLinkElement2asEv` | `-xHVS4PppCM` |
 | `_ZNK7WebCore15HTMLLinkElement3relEv` | `71FWawHH1NU` |
-| `_ZNK7WebCore15HTTPHeaderField4nameEv` | `IzC+la5Js9c` |
-| `_ZNK7WebCore15HTTPHeaderField5valueEv` | `Ludc0ycnXxQ` |
 | `_ZNK7WebCore15JSDOMWindowBase17printErrorMessageERKN3WTF6StringE` | `d7nXqiztOaU` |
 | `_ZNK7WebCore15JSDOMWindowBase22scriptExecutionContextEv` | `SHmLauSB1MU` |
 | `_ZNK7WebCore15JSDOMWindowBase5proxyEv` | `fqsYz9A6rOA` |
