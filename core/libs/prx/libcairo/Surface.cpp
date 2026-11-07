@@ -304,3 +304,7 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
 }
 
 }
+
+CairoSurface* CairoSurfaceError(int status) {
+    return ErrorSurface(status);
+}
