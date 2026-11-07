@@ -3,6 +3,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 
 extern "C" {
 
@@ -17,7 +18,11 @@ int APS5_VABI sceSdecDestroySw2() {
 }
 
 void APS5_VABI sceSdecGetVersionSw2(std::uint32_t* version) {
-    if (version != nullptr) *version = 0x13590001u;
+    if (version == nullptr) return;
+    const std::uint32_t value = 0x13590001u;
+    const auto preserved = errno;
+    GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
+    errno = preserved;
 }
 
 int APS5_VABI sceSdecQueryMemorySw2() {
