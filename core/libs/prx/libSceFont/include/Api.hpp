@@ -365,7 +365,7 @@ int APS5_VABI sceFontGraphicsDrawupFillRadialGradient(FontGraphicsFrame* graphic
 int APS5_VABI sceFontGraphicsAdjustGradientSpread();
 int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithLayout();
 int APS5_VABI sceFontGraphicsCanvasGetPreprocess();
-int APS5_VABI sceFontGraphicsReportError();
+int APS5_VABI sceFontGraphicsReportError(int error);
 int APS5_VABI sceFontGraphicsDrawRectangleShape();
 int APS5_VABI sceFontGraphicsProcessSetSyncPolicy();
 int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithMapping();
