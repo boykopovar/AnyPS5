@@ -2733,6 +2733,14 @@ std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1
     return HostVectorSize(self, __func__);
 }
 
+std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEE4sizeEv(const void* self) {
+    return HostVectorSize(self, __func__);
+}
+
+std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEE4sizeEv(const void* self) {
+    return HostVectorSize(self, __func__);
+}
+
 CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
     iterator->referenceCount = 0;
     iterator->element = IntrusiveVectorElements(self, false, __func__);
@@ -5649,6 +5657,17 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7M
     return 0;
 }
 
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv(const void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(const void* self, void* response) {
+    (void)self;
+    (void)response;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE21setOnFinishedCallbackEPFvliSB_PvEPFvliSF_ESF_() {
     return 0;
 }
@@ -5911,6 +5930,14 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119Additi
     ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
 }
 
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, ReferenceCountOffset, __func__);
+}
+
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V119RequestInGameRosterEEC1Ev(IntrusivePtr* self) {
     *self = {};
 }
@@ -6131,6 +6158,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_7Matches2V119CreateMatchResponseEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() {
     return TransactionNotStarted;
 }
+
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS1_17TitleCloudStorage2V17DataApi26SetDataInfoResponseHeadersEEEE5startEPNS2_10LibContextE() {
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
