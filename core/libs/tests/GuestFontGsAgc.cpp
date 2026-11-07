@@ -54,6 +54,7 @@ struct TestDrawupPool {
     std::uint32_t entryCount;
     std::uint32_t used;
     std::uint32_t maximum;
+    std::uint8_t* limit;
     TestDrawupEntry entries[1];
 };
 
