@@ -4,7 +4,7 @@
 #include <unordered_set>
 
 #include "prx/libc/include/Api.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
 extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char* funcName);
