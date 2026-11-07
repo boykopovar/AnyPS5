@@ -143,6 +143,12 @@ void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).certStore;
 }
 
+int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path) {
+    Context(ctx, __func__);
+    if (file || path) NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {
     LibreSslCtx& context = Context(ctx, __func__);
     if (!context.internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
