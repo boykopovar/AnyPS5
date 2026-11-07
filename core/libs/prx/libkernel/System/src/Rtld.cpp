@@ -20,7 +20,7 @@
 #ifdef __APPLE__
 #include <mach-o/loader.h>
 #else
-#include <link.h>
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #endif
 #endif
 
@@ -35,6 +35,29 @@ std::array<void*, 10> rtldHeapApi{};
 std::mutex threadAtexitMutex;
 std::multimap<const void*, void*> threadAtexitReferences;
 
+#ifdef ANYPS5_GUEST_LIFTED
+struct GuestImageSearch {
+    std::uintptr_t address;
+    const void* image;
+};
+
+int findGuestImage(dl_phdr_info* image, std::size_t, void* data) {
+    auto& search = *static_cast<GuestImageSearch*>(data);
+    const void* first = nullptr;
+    bool contains = false;
+    for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
+        const auto& header = image->dlpi_phdr[i];
+        if (header.p_type != PT_LOAD) continue;
+        const std::uintptr_t start = image->dlpi_addr + header.p_vaddr;
+        if (!first) first = reinterpret_cast<const void*>(start);
+        contains = contains || (search.address >= start && search.address - start < header.p_memsz);
+    }
+    if (!contains) return 0;
+    search.image = first;
+    return 1;
+}
+#endif
+
 const void* imageContaining(const void* address, bool reference, void*& handle, const char* caller) {
     handle = nullptr;
 #ifdef _WIN32
@@ -43,6 +66,10 @@ const void* imageContaining(const void* address, bool reference, void*& handle, 
     if (!GetModuleHandleExW(flags, reinterpret_cast<LPCWSTR>(address), &module)) return nullptr;
     if (reference) handle = module;
     return module;
+#elif defined(ANYPS5_GUEST_LIFTED)
+    GuestImageSearch search{reinterpret_cast<std::uintptr_t>(address), nullptr};
+    dl_iterate_phdr(findGuestImage, &search);
+    return search.image;
 #elif defined(__APPLE__)
     Dl_info info{};
     if (!dladdr(address, &info) || !info.dli_fbase) return nullptr;

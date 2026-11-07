@@ -1,4 +1,7 @@
 add_library(libSceAudioPropagation SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
+if(ANYPS5_GUEST_LIFTED)
+    target_sources(libSceAudioPropagation PRIVATE LiftedReport.cpp)
+endif()
 target_include_directories(libSceAudioPropagation PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAudioPropagation)
 

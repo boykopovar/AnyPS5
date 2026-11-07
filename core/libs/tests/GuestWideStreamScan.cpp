@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -14,14 +15,6 @@ extern "C" {
 extern FileStream* __stdinp_nid_postfix;
 
 }
-
-#ifdef _WIN32
-#define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
-#define APS5_VA_END() __builtin_sysv_va_end(args)
-#else
-#define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
-#define APS5_VA_END() va_end(args)
-#endif
 
 static void Require(bool value, const char* what) {
     if (value) return;

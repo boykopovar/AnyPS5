@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <stdexcept>
@@ -29,7 +31,7 @@
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #else
-#include <link.h>
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #ifdef __linux__
 #include <unistd.h>
 #endif
@@ -51,18 +53,50 @@ void Error(const char* message) {
     LoaderError() = message;
     pendingError = true;
 }
+void ReportLoadFailure(const std::filesystem::path& path, const std::string& message) {
+    Error(message.c_str());
+    static std::mutex reportedLock;
+    static std::set<std::filesystem::path> reported;
+    std::lock_guard lock(reportedLock);
+    if (reported.insert(path).second) std::fprintf(stderr, "[module] %s\n", message.c_str());
+}
 void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
     std::error_code status;
     const auto message = resolved == source && std::filesystem::is_regular_file(source, status)
         ? "dlopen: " + source.string() + " was not relinked: no " + source.filename().string() + ".guest.prx was found (" + reason +
             "); relink its directory with the relinker's --module-dir <dir> option"
         : "dlopen: cannot load " + resolved.string() + " (" + reason + ")";
-    Error(message.c_str());
-    static std::mutex reportedLock;
-    static std::set<std::filesystem::path> reported;
-    std::lock_guard lock(reportedLock);
-    if (reported.insert(resolved).second) std::fprintf(stderr, "[module] %s\n", message.c_str());
+    ReportLoadFailure(resolved, message);
 }
+#ifdef ANYPS5_GUEST_LIFTED
+std::optional<std::uint64_t> LiftedImage(const std::filesystem::path& resolved) {
+    const auto path = resolved.string();
+    if (const auto image = GuestCpuFindImage_nid_no_patch(path.c_str())) return image;
+    if (const auto image = GuestCpuFindImage_nid_no_patch((path + ".guest.prx").c_str())) return image;
+    return std::nullopt;
+}
+constexpr std::uint64_t LiftedExecutable = 1;
+struct LiftedImageSearch {
+    std::uint64_t remaining;
+    void* address;
+};
+int FindLiftedImageAddress(dl_phdr_info* image, std::size_t, void* data) {
+    auto& search = *static_cast<LiftedImageSearch*>(data);
+    if (--search.remaining != 0) return 0;
+    for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
+        if (image->dlpi_phdr[i].p_type != PT_LOAD) continue;
+        search.address = reinterpret_cast<void*>(image->dlpi_addr + image->dlpi_phdr[i].p_vaddr);
+        break;
+    }
+    return 1;
+}
+void* LiftedImageAddress(std::uint64_t image) {
+    LiftedImageSearch search{image, nullptr};
+    dl_iterate_phdr(FindLiftedImageAddress, &search);
+    if (!search.address) throw std::runtime_error("dlopen: lifted image " + std::to_string(image) + " has no loadable segment");
+    return search.address;
+}
+#endif
 #ifdef _WIN32
 HMODULE LoadWithoutErrorDialog(const std::filesystem::path& path) {
     const auto mode = GetThreadErrorMode();
@@ -76,6 +110,9 @@ HMODULE LoadWithoutErrorDialog(const std::filesystem::path& path) {
 #endif
 struct Module {
     void* native = nullptr;
+#ifdef ANYPS5_GUEST_LIFTED
+    std::optional<std::uint64_t> image;
+#endif
     bool owned = true;
     bool global = false;
 #ifdef _WIN32
@@ -101,13 +138,20 @@ std::map<std::uintptr_t, std::shared_ptr<Module>> modules;
 std::uintptr_t nextHandle = 0x20000000;
 std::map<const void*, std::uintptr_t> imageIds;
 void* Symbol(Module& module, const char* name) {
+#ifdef ANYPS5_GUEST_LIFTED
+    if (module.image) return reinterpret_cast<void*>(GuestCpuImageSymbol_nid_no_patch(*module.image, name));
+#endif
 #ifdef _WIN32
     return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(module.native), name));
 #else
     return ::dlsym(module.native, name);
 #endif
 }
-#ifdef __APPLE__
+#ifdef ANYPS5_GUEST_LIFTED
+void* DefaultScopeSymbol(const char* symbolName) {
+    return reinterpret_cast<void*>(GuestCpuImageSymbol_nid_no_patch(0, symbolName));
+}
+#elif defined(__APPLE__)
 bool FromGuestModule(void* address) {
     Dl_info info{};
     if (address == nullptr || !::dladdr(address, &info) || info.dli_fname == nullptr || info.dli_fbase == nullptr) return false;
@@ -199,28 +243,10 @@ void* FindSymbol(Module& module, const char* name) {
     return Symbol(module, (nid + guestSuffix).c_str());
 #endif
 }
-}
-
-extern "C" {
-char* APS5_VABI dlerror_nid_postfix() {
-    if (!pendingError) return nullptr;
-    pendingError = false;
-    return LoaderError().data();
-}
 #ifdef __linux__
-static void InitializeLinuxGuestModule(void* native) {
-    auto* table = static_cast<std::uint64_t*>(::dlsym(native, "__aps5_guest_lifecycle_nid_no_patch"));
-    if (!table) return;
-    link_map* requested = nullptr;
-    link_map* owner = nullptr;
-    Dl_info info{};
-    if (::dlinfo(native, RTLD_DI_LINKMAP, &requested) != 0 || requested == nullptr ||
-        !::dladdr1(table, &info, reinterpret_cast<void**>(&owner), RTLD_DL_LINKMAP) || owner == nullptr)
-        throw std::runtime_error("dlopen: cannot identify guest lifecycle metadata owner");
-    if (owner != requested) return;
+template <typename Start, typename Initialize>
+void RunGuestLifecycle(std::uint64_t* table, Start start, Initialize initialize) {
     if (table[0] != 0x415053354c494658ull) throw std::runtime_error("dlopen: unsupported guest lifecycle metadata");
-    using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
-    using Initializer = void (APS5_VABI *)(int, char**, char**);
     static std::mutex initializedLock;
     static std::condition_variable initializedChanged;
     const auto thread = static_cast<std::uint64_t>(::gettid());
@@ -236,10 +262,10 @@ static void InitializeLinuxGuestModule(void* native) {
     lock.unlock();
     try {
         const auto pending = *static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
-        const int result = table[2] == 0 ? 0 : reinterpret_cast<Entry>(table[2])(pending.args, pending.argp, nullptr);
+        const int result = table[2] == 0 ? 0 : start(table[2], pending);
         for (std::uint64_t index = 0; index < table[4]; ++index) {
-            const auto initializer = *reinterpret_cast<Initializer*>(table[8 + index]);
-            if (initializer) initializer(0, nullptr, nullptr);
+            const auto initializer = *reinterpret_cast<const std::uint64_t*>(table[8 + index]);
+            if (initializer) initialize(initializer);
         }
         __aps5_set_module_init_result_nid_no_patch(result);
         lock.lock();
@@ -256,6 +282,46 @@ static void InitializeLinuxGuestModule(void* native) {
         throw;
     }
 }
+#endif
+}
+
+extern "C" {
+char* APS5_VABI dlerror_nid_postfix() {
+    if (!pendingError) return nullptr;
+    pendingError = false;
+    return LoaderError().data();
+}
+#ifdef __linux__
+#ifdef ANYPS5_GUEST_LIFTED
+static void InitializeLiftedGuestModule(const std::uint64_t image) {
+    auto* table = reinterpret_cast<std::uint64_t*>(GuestCpuImageSymbol_nid_no_patch(image, "__aps5_guest_lifecycle_nid_no_patch"));
+    if (!table) return;
+    RunGuestLifecycle(
+        table,
+        [](const std::uint64_t entry, const PendingModuleArgs& pending) {
+            return static_cast<int>(GuestCpuCall_nid_no_patch(entry, pending.args, reinterpret_cast<std::uint64_t>(pending.argp), 0));
+        },
+        [](const std::uint64_t initializer) { GuestCpuCall_nid_no_patch(initializer, 0, 0, 0); });
+}
+#else
+static void InitializeLinuxGuestModule(void* native) {
+    auto* table = static_cast<std::uint64_t*>(::dlsym(native, "__aps5_guest_lifecycle_nid_no_patch"));
+    if (!table) return;
+    link_map* requested = nullptr;
+    link_map* owner = nullptr;
+    Dl_info info{};
+    if (::dlinfo(native, RTLD_DI_LINKMAP, &requested) != 0 || requested == nullptr ||
+        !::dladdr1(table, &info, reinterpret_cast<void**>(&owner), RTLD_DL_LINKMAP) || owner == nullptr)
+        throw std::runtime_error("dlopen: cannot identify guest lifecycle metadata owner");
+    if (owner != requested) return;
+    using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
+    using Initializer = void (APS5_VABI *)(int, char**, char**);
+    RunGuestLifecycle(
+        table,
+        [](const std::uint64_t entry, const PendingModuleArgs& pending) { return reinterpret_cast<Entry>(entry)(pending.args, pending.argp, nullptr); },
+        [](const std::uint64_t initializer) { reinterpret_cast<Initializer>(initializer)(0, nullptr, nullptr); });
+}
+#endif
 #endif
 #ifdef _WIN32
 static std::mutex initializedLock;
@@ -467,6 +533,14 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 #else
         const auto source = path ? ResolvePath_nid_no_patch(path) : std::filesystem::path{};
         const auto resolved = path ? RelinkedModulePath_nid_no_patch(source) : std::filesystem::path{};
+#ifdef ANYPS5_GUEST_LIFTED
+        module->image = path ? LiftedImage(resolved) : std::optional<std::uint64_t>(0);
+        if (module->image) {
+            module->owned = false;
+            module->native = LiftedImageAddress(path ? *module->image : LiftedExecutable);
+            if (path) InitializeLiftedGuestModule(*module->image);
+        } else {
+#endif
 #ifdef __APPLE__
         const int nativeFlags = ((flags & 3) == 1 ? RTLD_LAZY : RTLD_NOW) | RTLD_GLOBAL;
 #else
@@ -475,14 +549,21 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 #endif
         module->native = ::dlopen(path ? resolved.c_str() : nullptr, nativeFlags);
         if (!module->native) {
+#ifdef ANYPS5_GUEST_LIFTED
+            ReportLoadFailure(source, "dlopen: " + source.string() + " is neither part of the lifted program nor a native library (" + ::dlerror() + ")");
+#else
             if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
+#endif
             return nullptr;
         }
-#ifdef __linux__
+#if defined(__linux__) && !defined(ANYPS5_GUEST_LIFTED)
         if (path) InitializeLinuxGuestModule(module->native);
 #endif
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(ANYPS5_GUEST_LIFTED)
         FindImage(*module, path == nullptr);
+#endif
+#ifdef ANYPS5_GUEST_LIFTED
+        }
 #endif
 #endif
         std::lock_guard lock(modulesMutex);

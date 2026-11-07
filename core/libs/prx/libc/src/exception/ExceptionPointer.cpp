@@ -1,7 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <exception>
 
-#ifndef _LIBCPP_VERSION
+#if !defined(_LIBCPP_VERSION) && !defined(ANYPS5_GUEST_LIFTED)
 #include <future>
 
 extern "C" {
@@ -138,6 +138,12 @@ GuestExceptionPointer APS5_VABI _ZSt17current_exceptionv_nid_postfix() noexcept 
 
     LibcException::Terminate();
 }
+
+#ifndef _LIBCPP_VERSION
+void APS5_VABI _ZNSt13__future_base12_Result_baseD2Ev_nid_postfix(std::__future_base::_Result_base* self) noexcept {
+    _ZNSt15__exception_ptr13exception_ptr10_M_releaseEv_nid_postfix(reinterpret_cast<GuestExceptionPointer*>(&self->_M_error));
+}
+#endif
 }
 
 #endif

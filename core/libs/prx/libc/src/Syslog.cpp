@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -135,19 +136,9 @@ void APS5_VABI vsyslog_nid_postfix(int priority, const char* format, VaList* arg
 }
 
 void APS5_VABI syslog_nid_postfix(int priority, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     vsyslog_nid_postfix(priority, format, reinterpret_cast<VaList*>(args));
 
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
 }
 }

@@ -8,13 +8,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#ifdef __EMSCRIPTEN__
-#include "prx/libc/include/General.hpp"
-#else
+#if !defined(__EMSCRIPTEN__) && !defined(ANYPS5_GUEST_LIFTED)
 #include <immintrin.h>
 #endif
 
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) || defined(ANYPS5_GUEST_LIFTED)
 extern "C" {
 
 int APS5_VABI getcontext_nid_postfix(UserUcontext* context) {
@@ -30,6 +28,11 @@ int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
 int APS5_VABI swapcontext_nid_postfix(UserUcontext* saved, const UserUcontext* next) {
     static_cast<void>(saved);
     static_cast<void>(next);
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int SigreturnContext_nid_no_patch(const UserUcontext* context) {
+    static_cast<void>(context);
     NotImplemented_nid_no_patch(__func__);
 }
 

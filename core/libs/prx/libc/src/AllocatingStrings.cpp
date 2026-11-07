@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -51,19 +52,9 @@ char* APS5_VABI strdup_nid_postfix(const char* source) {
 }
 
 int APS5_VABI asprintf_nid_postfix(char** destination, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vasprintf_nid_postfix(destination, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
@@ -112,19 +103,9 @@ int APS5_VABI vdprintf_nid_postfix(int descriptor, const char* format, VaList* a
 }
 
 int APS5_VABI dprintf_nid_postfix(int descriptor, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
