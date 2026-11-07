@@ -17,6 +17,8 @@ int main() {
     Require(FT_Trace_Get_Name_nid_no_patch(-1) == nullptr, "FT_Trace_Get_Name returns null for negative index");
     Require(FT_Trace_Get_Name_nid_no_patch(0) == nullptr, "FT_Trace_Get_Name returns null for zero index");
     Require(FT_Trace_Get_Name_nid_no_patch(128) == nullptr, "FT_Trace_Get_Name returns null for positive index");
+    Require(sceFreeTypeOtLibrarySetLcdFilter_nid_no_patch() == 7, "VW4GD-TaIUc returns 7");
+    Require(sceFreeTypeOtLibrarySetLcdFilterWeights_nid_no_patch() == 7, "GiuNQjoj4fs returns 7");
     std::puts("Guest FreeType OpenType constant tests passed");
     return 0;
 }
