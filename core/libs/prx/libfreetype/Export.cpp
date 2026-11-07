@@ -14,11 +14,6 @@ APS5_EXPORT("iuebdW9Mi0U", libfreetypeSetDefaultProperties_nid_no_patch);
 
 extern "C" {
 
-int APS5_VABI freetypeLegacyGetBDFProperty_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("4kVFLShKGkQ", freetypeLegacyGetBDFProperty_nid_no_patch);
-
 int APS5_VABI freetypeLegacyBitmapBlend_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -39,15 +34,6 @@ int APS5_VABI freetypeLegacyStreamOpenBzip2_nid_no_patch() {
 }
 APS5_EXPORT("JuHk-xDmRmI", freetypeLegacyStreamOpenBzip2_nid_no_patch);
 
-int APS5_VABI freetypeLegacyGetBDFCharsetID_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("KVRW5HPnbgU", freetypeLegacyGetBDFCharsetID_nid_no_patch);
-
-int APS5_VABI freetypeLegacyGetSfntLangTag_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("MDsMjUGulyY", freetypeLegacyGetSfntLangTag_nid_no_patch);
 
 int APS5_VABI freetypeLegacyErrorString_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -63,10 +49,5 @@ int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("sZq9oSwMGSs", freetypeLegacyNewGlyph_nid_no_patch);
-
-int APS5_VABI freetypeLegacyGetWinFNTHeader_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("suWwpZzQl00", freetypeLegacyGetWinFNTHeader_nid_no_patch);
 
 }

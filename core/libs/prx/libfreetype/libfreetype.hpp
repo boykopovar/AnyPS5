@@ -6,4 +6,5 @@
 #include "prx/libfreetype/include/MultipleMasters.hpp"
 #include "prx/libfreetype/include/FaceSettings.hpp"
 #include "prx/libfreetype/include/Color.hpp"
+#include "prx/libfreetype/include/FontMetadata.hpp"
 #include "prx/libfreetype/include/LibraryHelpers.hpp"
