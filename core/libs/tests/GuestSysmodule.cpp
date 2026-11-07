@@ -475,4 +475,5 @@ int main() {
     Require(sceSysmoduleUnloadModule(kAudioPropagationModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kAudioPropagationModuleId) == kModuleUnloaded);
     Require(sceSysmoduleGetModuleHandleInternal(kAudioPropagationModuleId, &audioPropagationHandle) == kModuleUnloaded);
+    Require(sceSysmoduleIsCameraPreloaded() == 0);
 }
