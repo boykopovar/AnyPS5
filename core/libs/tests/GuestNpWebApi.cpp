@@ -251,6 +251,14 @@ void TestPushEventCallbacks() {
     Require(sceNpWebApiRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "a push event filter is not a service filter");
     Require(sceNpWebApiUnregisterServicePushEventCallback(user, 1) == ServicePushEventCallbackNotFound, "no service callback exists");
 
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "int service callback without a function");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user + 1, 1, PushEventCallback(), &argument) == UserContextNotFound, "int service callback of an unknown user context");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "int service callback with a push event filter");
+
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user, 1, nullptr, &argument) == InvalidArgument, "int service callback A without a function");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user + 1, 1, PushEventCallback(), &argument) == UserContextNotFound, "int service callback A of an unknown user context");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user, filter, PushEventCallback(), &argument) == ServicePushEventFilterNotFound, "int service callback A with a push event filter");
+
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the callback library contexts");
 }
 
@@ -284,6 +292,16 @@ void TestOlderSdks() {
     Require(sceNpWebApiUnregisterPushEventCallback(user, unchecked) == 0, "unregister the push event callback without a function");
     Require(sceNpWebApiRegisterServicePushEventCallback(user + 1, 1, nullptr, &argument) == UserContextNotFound, "the user context is checked before the service callback function before SDK 1.00");
     Require(sceNpWebApiRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "service callback without a function before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user + 1, 1, nullptr, &argument) == InvalidArgument, "the int service callback function is checked before the user context before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user + 1, 1, nullptr, &argument) == InvalidArgument, "the int service callback A function is checked before the user context before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallback(user, 1, nullptr, &argument) == InvalidArgument, "int service callback without a function before SDK 1.00");
+    Require(sceNpWebApiIntRegisterServicePushEventCallbackA(user, 1, nullptr, &argument) == InvalidArgument, "int service callback A without a function before SDK 1.00");
+    const int intOld = sceNpWebApiIntRegisterServicePushEventCallback(user, 1, PushEventCallback(), &argument);
+    Require(intOld > 0, "int service callback before SDK 1.00");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, intOld) == 0, "unregister the int service callback before SDK 1.00");
+    const int intOldA = sceNpWebApiIntRegisterServicePushEventCallbackA(user, 1, PushEventCallback(), &argument);
+    Require(intOldA > 0 && intOldA != intOld, "int service callback A before SDK 1.00");
+    Require(sceNpWebApiUnregisterServicePushEventCallback(user, intOldA) == 0, "unregister the int service callback A before SDK 1.00");
 
     SetSdkVersion(0x04508001);
     Require(sceNpWebApiTerminate(context) == 0, "terminate the older SDK library context");
