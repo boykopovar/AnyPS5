@@ -56,7 +56,7 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
         const auto header = commands[cursor];
         if (Pm4::FillerPacket(header)) { ++cursor; continue; }
         if ((header & 0xc0000000u) != 0xc0000000u) {
-            char what[96];
+            char what[128];
             std::snprintf(what, sizeof(what), "unsupported PM4 packet type: header 0x%08x at DWORD %zu of %zu", header, cursor, commands.size());
 
             dumpPackets(commands, guest);

@@ -4,6 +4,7 @@
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
 #include <atomic>
@@ -12,6 +13,10 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <thread>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
 
 namespace {
 
@@ -59,6 +64,24 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     return created;
 }
 
+std::atomic<std::uint64_t> g_mutexYields{0};
+
+template<typename TNative>
+bool spinAcquire(PthreadMutex mutex, TNative& native) {
+    static const bool multiprocessor = std::thread::hardware_concurrency() > 1;
+    const int spins = multiprocessor ? mutex->_spinloops.load(std::memory_order_relaxed) : 0;
+    return MutexOperations::SpinAcquire(spins, mutex->_yieldloops.load(std::memory_order_relaxed), [&] {
+        return mutex->_owner.load(std::memory_order_relaxed) == std::thread::id{} && native.try_lock();
+    }, [] {
+#if defined(__x86_64__) || defined(_M_X64)
+        _mm_pause();
+#endif
+    }, [] {
+        g_mutexYields.fetch_add(1, std::memory_order_relaxed);
+        std::this_thread::yield();
+    });
+}
+
 template<typename TAcquire>
 int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool tryOnly) {
     if (!mutex)
@@ -74,18 +97,29 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     }
     if (owned && mutex->_count == std::numeric_limits<int>::max())
         throw std::overflow_error("Recursive mutex lock count overflow");
+    const auto take = [&](auto& native) {
+        return (!tryOnly && !owned && spinAcquire(mutex, native)) || acquire(native);
+    };
     if (mutex->_type == MutexType::Recursive) {
-        if (!acquire(mutex->_rmtx))
+        if (!take(mutex->_rmtx))
             return unavailable;
         ++mutex->_count;
     } else {
-        if (!acquire(mutex->_mtx))
+        if (!take(mutex->_mtx))
             return unavailable;
     }
     mutex->_owner.store(thread, std::memory_order_release);
     return 0;
 }
 
+}
+
+bool MutexOperations::SpinAcquire(PthreadMutex mutex, std::timed_mutex& native) {
+    return spinAcquire(mutex, native);
+}
+
+bool MutexOperations::SpinAcquire(PthreadMutex mutex, std::recursive_timed_mutex& native) {
+    return spinAcquire(mutex, native);
 }
 
 bool MutexOperations::IsOwned(const PthreadMutex* mutex) {
@@ -168,8 +202,11 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
     if (attr && *attr && ((*attr)->type < MutexType::ErrorCheck || (*attr)->type > MutexType::Adaptive))
         return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
-    if (attr && *attr)
+    if (attr && *attr) {
         replacement->SetType((*attr)->type);
+        replacement->_protocol = (*attr)->protocol;
+        replacement->_ceiling = (*attr)->ceiling;
+    }
     std::lock_guard lock(InitializationMutex());
     std::atomic_ref<PthreadMutex>(*mutex).store(replacement.release(), std::memory_order_release);
     return 0;
@@ -248,12 +285,17 @@ int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) {
 }
 
 int APS5_VABI scePthreadMutexGetspinloops(PthreadMutex* mutex, int* count) {
+    if (mutex) {
+        PthreadMutex probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveMutex(mutex, true);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
-    if (!count)
-        throw std::invalid_argument("Spin loop count pointer is null");
-    *count = current->_spinloops;
+    const int value = current->_spinloops;
+    if (!GuestCopyOut_nid_no_patch(count, &value, sizeof(value)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -266,12 +308,17 @@ int APS5_VABI scePthreadMutexSetspinloops(PthreadMutex* mutex, int count) {
 }
 
 int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count) {
+    if (mutex) {
+        PthreadMutex probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveMutex(mutex, true);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
-    if (!count)
-        throw std::invalid_argument("Yield loop count pointer is null");
-    *count = current->_yieldloops;
+    const int value = current->_yieldloops;
+    if (!GuestCopyOut_nid_no_patch(count, &value, sizeof(value)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -281,6 +328,10 @@ int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
         return SCE_KERNEL_ERROR_EINVAL;
     current->_yieldloops = count;
     return 0;
+}
+
+std::uint64_t MutexYieldsForTest_nid_no_patch() {
+    return g_mutexYields.load(std::memory_order_relaxed);
 }
 
 int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {

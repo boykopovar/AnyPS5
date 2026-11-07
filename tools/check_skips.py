@@ -5,11 +5,15 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|no display|no usable Vulkan device|host imports are unavailable)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
+
+HOST_LIMITATION = re.compile(r"^skipping: (not enough free disk space for a file|cannot allocate a buffer) of more than 2 GiB", re.IGNORECASE | re.MULTILINE)
 
 NO_DISPLAY = re.compile(r"skipped,.*no display", re.IGNORECASE)
 
 NO_VULKAN_DEVICE = re.compile(r"skipped,.*no usable Vulkan device", re.IGNORECASE)
+
+NO_RAW_SOCKET = re.compile(r"skipped,.*cannot create a raw socket", re.IGNORECASE)
 
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
 CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
@@ -38,17 +42,21 @@ def skips(path, require_tests=False):
     if root.tag not in ("testsuite", "testsuites"):
         raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
     found = False
+    seen = set()
     for case in root.iter("testcase"):
         found = True
-        skipped = case.find("skipped")
-        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
-        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
-            raise ValueError(f"{path}: testcase {case.get('name')!r} is {case.get('status')} and was not run")
-        if skipped is None:
-            continue
         name = case.get("name")
         if not name:
             raise ValueError(f"{path}: skipped testcase has no name")
+        if name in seen:
+            raise ValueError(f"{path}: testcase {name!r} is listed more than once")
+        seen.add(name)
+        skipped = case.find("skipped")
+        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
+        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
+            raise ValueError(f"{path}: testcase {name!r} is {case.get('status')} and was not run")
+        if skipped is None:
+            continue
         output = ["skipped, " + reason.strip() for reason in (skipped.get("message", ""), skipped.text or "")
                   if reason.strip() and not CTEST_SKIP_STATUS.fullmatch(reason.strip())]
         output += [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
@@ -80,11 +88,11 @@ def main(argv=None):
             print(f"{name}: {reason}")
         return 0
     if args.job == "windows":
-        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE)) and not high_refresh_limitation(output)]
-        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device or a display without a 120 Hz mode"
+        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE, NO_RAW_SOCKET)) and not high_refresh_limitation(output)]
+        expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device, a display without a 120 Hz mode or no permission to create a raw socket"
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
-        expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window or a display without a 120 Hz mode"
+        expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window, a display without a 120 Hz mode or no permission to create a raw socket"
     if args.json:
         grouped = {}
         for name, output in found:

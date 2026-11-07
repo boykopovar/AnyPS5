@@ -51,7 +51,9 @@ FIRST_REGION = 0x400
 MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
 MAX_OUTPUT_FACTOR = 4
 MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
+PT_NULL = 0
 PT_LOAD = 1
+PT_DYNAMIC = 2
 PT_NOTE = 4
 PT_PHDR = 6
 ENTROPY_LIMIT = 7.5
@@ -137,11 +139,11 @@ def parse_elf(data):
         offset = inner + program_offset + index * 56
         kind, flags, file_offset, vaddr, _, file_size, memory_size, alignment = struct.unpack_from(
             "<IIQQQQQQ", data, offset)
+        if kind != PT_NULL and alignment and alignment & (alignment - 1):
+            raise Refused("segment %d alignment is not a power of two" % index)
         if kind in (PT_LOAD, PT_TLS):
             if file_size > memory_size:
                 raise Refused("segment %d file size exceeds memory size" % index)
-            if alignment and alignment & (alignment - 1):
-                raise Refused("segment %d alignment is not a power of two" % index)
         if kind == PT_TLS:
             if alignment > 8192:
                 raise Refused("segment %d TLS alignment exceeds 8192" % index)
@@ -158,6 +160,9 @@ def parse_elf(data):
 
 
 def place_segments(data, headers, records):
+    for header in headers:
+        if header["type"] == PT_NULL:
+            header.update(flags=0, offset=0, vaddr=0, size=0, memory=0, align=0, source=0)
     loads = [header for header in headers if header["type"] == PT_LOAD]
     used = set()
     placed = set()
@@ -217,7 +222,7 @@ def place_segments(data, headers, records):
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
-        if header["vaddr"] != 0 or header["type"] == PT_PHDR:
+        if header["vaddr"] != 0 or header["type"] in (PT_PHDR, PT_DYNAMIC, PT_TLS):
             host = load_for(header["vaddr"], header["size"])
             if host is None:
                 if header["size"] == 0:

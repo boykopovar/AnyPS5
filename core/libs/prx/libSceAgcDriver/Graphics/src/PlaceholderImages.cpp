@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <string>
@@ -41,7 +42,7 @@ PlaceholderImages::PlaceholderImages(const Context& context) : context(context) 
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &image.memory), "vkAllocateMemory placeholder");
+            Check(MemoryAccounting::Allocate(context, allocation, "placeholder image", &image.memory), "vkAllocateMemory placeholder");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image.image, image.memory, 0), "vkBindImageMemory placeholder");
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             viewInfo.image = image.image;
@@ -96,7 +97,7 @@ void PlaceholderImages::release() noexcept {
     for (auto& image : images) {
         if (image.view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, image.view, nullptr);
         if (image.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image.image, nullptr);
-        if (image.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, image.memory, nullptr);
+        if (image.memory) MemoryAccounting::Free(context, image.memory);
         image = {};
     }
 }

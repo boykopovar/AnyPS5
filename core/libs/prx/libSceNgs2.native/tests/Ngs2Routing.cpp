@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 #include <vector>
 
 static Ngs2CustomSubmixerRackOption RackOption(std::uint32_t count, std::uint32_t channels = 2) {
@@ -79,14 +80,17 @@ static uintptr_t Input(uintptr_t system, const std::vector<std::int16_t>& pcm, s
     return voice;
 }
 
-static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain) {
+static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain, bool startup = false, const std::vector<float>& scale = {}) {
     Require(sceNgs2SystemSetGrainSamples(system, grain) == SCE_NGS2_OK);
     std::vector<std::vector<float>> samples(expected.size(), std::vector<float>(grain * channels, 9.0f));
     std::vector<Ngs2RenderBufferInfo> info;
     for (auto& output : samples) info.push_back({output.data(), output.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels});
     Require(sceNgs2SystemRender(system, info.data(), static_cast<std::uint32_t>(info.size())) == SCE_NGS2_OK);
     for (std::size_t port = 0; port < expected.size(); port++) {
-        for (const auto sample : samples[port]) Require(std::fabs(sample - expected[port]) <= 0.000001f);
+        for (std::size_t i = 0; i < samples[port].size(); ++i) {
+            const float value = startup && i / channels < 3 ? 0.0f : expected[port] * (scale.empty() ? 1.0f : scale[i % channels]);
+            Require(std::fabs(samples[port][i] - value) <= 0.000001f);
+        }
     }
 }
 
@@ -105,7 +109,7 @@ static void TestNoModules(std::uint32_t count, std::vector<float> expected) {
         input1 = Input(system, pcm1);
         Route(input1, 0, custom, 1);
     }
-    Render(system, expected);
+    Render(system, expected, 2, Grain, true);
     if (count > 1) {
         Route(input1, 0, custom, 0);
         expected[count - 1] = -0.5f;
@@ -153,7 +157,7 @@ static void TestGainRouting() {
             input1 = Input(system, pcm1);
             Route(input1, 0, custom, 1);
         }
-        Render(system, test.expected);
+        Render(system, test.expected, 2, Grain, true);
         Render(system, test.expected, 2, 64);
         Route(input0, 0, 0);
         if (input1 != 0) Route(input1, 0, 0);
@@ -188,13 +192,29 @@ static void TestUnityCopy() {
     }
     Require(sceNgs2SystemRender(system, info.data(), info.size()) == SCE_NGS2_OK);
     for (const auto& output : outputs) {
-        for (std::uint32_t i = 0; i < Grain; i++) Require(output[i * 2] == 0.25f && output[i * 2 + 1] == -0.5f);
+        for (std::uint32_t i = 0; i < Grain; i++) Require(output[i * 2] == (i < 3 ? 0.0f : 0.25f) && output[i * 2 + 1] == (i < 3 ? 0.0f : -0.5f));
     }
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool Ps4Library = true;
+#else
+static constexpr bool Ps4Library = false;
+#endif
+
+static std::vector<float> MasteringScale(std::uint32_t channels) {
+    if (Ps4Library) return {};
+    constexpr float half = std::numbers::sqrt2_v<float> / 2.0f;
+    if (channels == 3) return {1.0f + half, 1.0f + half, 0.0f};
+    if (channels == 5) return {1.0f, 1.0f, 1.0f, 0.0f, 1.0f};
+    if (channels == 7) return {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, half};
+    return {};
+}
+
 static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto system = CreateSystem();
+    const auto scale = MasteringScale(channels);
     auto option = RackOption(4, channels);
     AddGain(option, 0, 3);
     const auto rack = CustomRack(system, option);
@@ -211,13 +231,49 @@ static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto input1 = Input(system, pcm1, channels);
     Route(input0, 0, first, 0, channels);
     Route(input1, 0, second, 0, channels);
-    Render(system, {0.5f, 0.75f}, channels);
+    Render(system, {0.5f, 0.75f}, channels, Grain, true, scale);
     Route(input0, 0, 0, 0, channels);
-    Render(system, {0.0f, 0.75f}, channels);
+    Render(system, {0.0f, 0.75f}, channels, Grain, false, scale);
     SetGain(first, 4.0f);
-    Render(system, {0.0f, 0.75f}, channels);
+    Render(system, {0.0f, 0.75f}, channels, Grain, false, scale);
     Route(input0, 0, first, 0, channels);
-    Render(system, {1.0f, 0.75f}, channels);
+    Render(system, {1.0f, 0.75f}, channels, Grain, false, scale);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestSubmixerKeyInput() {
+    const auto system = CreateSystem();
+    Ngs2SubmixerRackOption option{};
+    option.rack_option.size = sizeof(option);
+    option.rack_option.max_grain_samples = 512;
+    option.rack_option.max_voices = 1;
+    option.rack_option.max_matrices = 1;
+    option.rack_option.max_ports = 1;
+    option.max_channels = 2;
+    option.max_envelope_points = 1;
+    option.max_inputs = 2;
+    option.num_peak_meter_blocks = 1;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &info, &rack) == SCE_NGS2_OK);
+    uintptr_t submixer = 0;
+    Require(sceNgs2RackGetVoiceHandle(rack, 0, &submixer) == SCE_NGS2_OK);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+    Output(system, submixer, 0, 0);
+    const std::vector<std::int16_t> pcm0(Grain * 2 * 16, 8192);
+    const std::vector<std::int16_t> pcm1(Grain * 2 * 16, -24576);
+    const auto input0 = Input(system, pcm0);
+    const auto input1 = Input(system, pcm1);
+    Route(input0, 0, submixer);
+    Route(input1, 0, submixer, 1);
+    Render(system, {0.25f}, 2, Grain, true);
+    Route(input1, 0, submixer, 0);
+    Render(system, {-0.5f});
+    Route(input1, 0, submixer, 1);
+    Render(system, {0.25f});
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -227,6 +283,7 @@ int main() {
     TestNoModules(3, {0.0f, -0.75f, 0.25f});
     TestNoModules(4, {0.0f, 0.0f, -0.75f, 0.25f});
     TestGainRouting();
+    TestSubmixerKeyInput();
     TestUnityCopy();
     for (std::uint32_t channels = 1; channels <= 8; channels++) TestIndependentVoicesAndSilentRamp(channels);
     return 0;

@@ -1,3 +1,4 @@
+#define NGS2_TEST_GRAIN 64
 #include "Ngs2Test.hpp"
 
 #include <array>
@@ -46,24 +47,28 @@ static void TestGenerator() {
     Patch(voice, master);
     Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
     auto output = Render(system, 8);
-    Require(state.calls == 1 && state.flags == 1);
+    Require(state.calls == 1 && state.flags == 3);
     for (std::size_t i = 0; i < output.size(); ++i) Require(output[i] == 0.125f * (i % 8 + 1));
     Render(system, 8);
     Require(state.calls == 2 && state.flags == 0);
     Event(voice, SCE_NGS2_VOICE_EVENT_PAUSE);
-    for (float sample : Render(system, 8)) Require(sample == 0.0f);
-    Require(state.calls == 2);
+    const auto paused = Render(system, 8);
+    for (unsigned i = 0; i < Grain; ++i) for (unsigned channel = 0; channel < 8; ++channel) {
+        const float gain = i < Grain - 64 ? 1.0f : static_cast<float>(Grain - i) / 64.0f;
+        Require(paused[i * 8 + channel] == 0.125f * (channel + 1) * gain);
+    }
+    Require(state.calls == 3 && state.flags == 0);
     Event(voice, SCE_NGS2_VOICE_EVENT_RESUME);
     Render(system, 8);
-    Require(state.calls == 3 && state.flags == 0);
+    Require(state.calls == 4 && state.flags == 0);
     Event(voice, SCE_NGS2_VOICE_EVENT_STOP_IMM);
     for (float sample : Render(system, 8)) Require(sample == 0.0f);
     Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
     Render(system, 8);
-    Require(state.calls == 4 && state.flags == 1);
+    Require(state.calls == 5 && state.flags == 3);
     Control(voice, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX, Ngs2SubmixerVoiceUserFxParam{});
     for (float sample : Render(system, 8)) Require(sample == 0.0f);
-    Require(state.calls == 4);
+    Require(state.calls == 5);
     Install(voice, state);
     state.result = -5;
     bool rejected = false;
@@ -71,12 +76,12 @@ static void TestGenerator() {
     Require(rejected);
     state.result = 0;
     Render(system, 8);
-    Require(state.calls == 6 && state.flags == 1);
+    Require(state.calls == 7 && state.flags == 2);
     Control(voice, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 8, 0});
     Patch(voice, master);
     Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
     for (float sample : Render(system, 8)) Require(sample == 0.0f);
-    Require(state.calls == 6);
+    Require(state.calls == 7);
     Require(sceNgs2SystemDestroy(system, nullptr) == 0);
 }
 
@@ -103,11 +108,11 @@ static void TestEffectAndIndependentVoices() {
     Patch(sampler, first);
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
     const auto mixed = Render(system, 2);
-    for (std::size_t i = 0; i < mixed.size(); ++i) Require(mixed[i] == (i % 2 == 0 ? 0.375f : 0.125f));
-    Require(firstState.calls == 1 && secondState.calls == 1 && Flags(sampler) == 0);
+    for (std::size_t i = 0; i < mixed.size(); ++i) Require(mixed[i] == (i < 6 ? (i % 2 == 0 ? 0.125f : 0.25f) : (i % 2 == 0 ? 0.375f : 0.125f)));
+    Require(firstState.calls == 1 && secondState.calls == 1 && Flags(sampler) == (SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_PLAYING));
     const auto tail = Render(system, 2);
-    for (std::size_t i = 0; i < tail.size(); ++i) Require(tail[i] == (i % 2 == 0 ? 0.125f : 0.25f));
-    Require(firstState.calls == 2 && secondState.calls == 2);
+    for (std::size_t i = 0; i < tail.size(); ++i) Require(tail[i] == (i < 6 ? (i % 2 == 0 ? 0.375f : 0.125f) : (i % 2 == 0 ? 0.125f : 0.25f)));
+    Require(firstState.calls == 2 && secondState.calls == 2 && Flags(sampler) == 0);
     Require(sceNgs2SystemDestroy(system, nullptr) == 0);
 }
 

@@ -15,7 +15,10 @@ set_target_properties(guest_arena_tests PROPERTIES
     CXX_EXTENSIONS OFF
     RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
 
-foreach(mode available unmappable host gap commit)
+foreach(mode available unmappable host gap commit watch-protection watch-faults watch-failure)
     add_test(NAME guest_arena_${mode} COMMAND guest_arena_tests ${mode})
     set_tests_properties(guest_arena_${mode} PROPERTIES TIMEOUT 30)
 endforeach()
+
+add_test(NAME guest_arena_commit_watch_disabled COMMAND guest_arena_tests commit)
+set_tests_properties(guest_arena_commit_watch_disabled PROPERTIES TIMEOUT 30 ENVIRONMENT "APS5_NO_WRITE_WATCH=1")

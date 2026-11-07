@@ -14,6 +14,7 @@ const ShaderVertexInputInfo& VertexInfo(const SpirvEmitterState& state);
 const ShaderPixelInputInfo& PixelInfo(const SpirvEmitterState& state);
 const ShaderWorkgroupInputInfo* ShaderWorkgroupInput(const SpirvEmitterState& state);
 std::array<std::uint32_t, 3> WorkgroupLocalSize(const SpirvEmitterState& state, const ShaderWorkgroupInputInfo& workgroup);
+std::uint32_t MeshWindowInvocations(const SpirvEmitterState& state);
 const RdnaImageDimensionInfo& RdnaImageDimensionInfoFor(RdnaImageDimension dimension);
 std::uint32_t TypeVoid(SpirvEmitterState& state);
 std::uint32_t TypeBool(SpirvEmitterState& state);
@@ -116,6 +117,13 @@ bool LdsInDeviceMemory(const SpirvEmitterState& state);
 std::uint32_t LdsMemorySemantics(const SpirvEmitterState& state);
 std::uint32_t LdsMemoryBarrierScope(const SpirvEmitterState& state);
 void EmitLdsBufferBase(SpirvEmitterState& state);
+bool ScratchPoolActive(const SpirvEmitterState& state);
+std::uint32_t ScratchPoolSlotDwords(const SpirvEmitterState& state);
+void DefineScratchPool(SpirvEmitterState& state);
+void EmitScratchPoolAcquire(SpirvEmitterState& state);
+std::uint32_t EmitScratchPoolElementPointer(SpirvEmitterState& state, std::uint32_t index);
+void EmitReturnReleasingScratch(SpirvEmitterState& state);
+void VerifyScratchPoolReturns(const SpirvEmitterState& state, const std::vector<std::uint32_t>& words);
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
 std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index);
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem);
@@ -157,6 +165,7 @@ std::uint32_t EmitF16BitsToF32Decoded(SpirvEmitterState& state, std::uint32_t bi
 void EmitProgram(SpirvEmitterState& state);
 void DefineGetBdaPointer(SpirvEmitterState& state);
 void DefineDot2F32F16Function(SpirvEmitterState& state);
+void DefineIntegerFloat64Functions(SpirvEmitterState& state);
 void DefineReciprocalCorrectionFunction(SpirvEmitterState& state);
 void EmitLabel(SpirvEmitterState& state, std::uint32_t label);
 std::uint32_t Unary(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t type, std::uint32_t value);
@@ -247,6 +256,12 @@ std::uint32_t EmitValueIfElse(SpirvEmitterState& state, std::uint32_t condition,
 
 template<typename TFunction>
 std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer, ResourceKind kind, std::uint32_t type, TFunction&& function) {
+    if (kind == ResourceKind::Scratch && ScratchPoolActive(state)) {
+        const auto previous = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, type, previous, pointer);
+        state.module.AddFunction(spv::OpStore, pointer, function(previous));
+        return previous;
+    }
     const auto scope = kind == ResourceKind::Lds ? spv::ScopeWorkgroup : spv::ScopeDevice;
     const auto memory = [&]() -> std::uint32_t {
         switch (kind) {

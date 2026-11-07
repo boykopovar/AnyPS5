@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
@@ -67,8 +68,30 @@ static void CheckSetName() {
     Require(name[0] == '\0');
 }
 
+static void* APS5_VABI ReportFpuControl(void* out) {
+    asm volatile("fnstcw %0" : "=m"(*static_cast<std::uint16_t*>(out)));
+    return nullptr;
+}
+
+static void CheckFpuControl() {
+    std::uint16_t creator = 0;
+    asm volatile("fnstcw %0" : "=m"(creator));
+    const std::uint16_t doublePrecision = 0x027f;
+    asm volatile("fldcw %0" : : "m"(doublePrecision));
+    std::uint16_t started = 0;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, ReportFpuControl, &started, "fpu") == 0);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    std::uint16_t creatorAfter = 0;
+    asm volatile("fnstcw %0" : "=m"(creatorAfter));
+    asm volatile("fldcw %0" : : "m"(creator));
+    Require(started == 0x037f);
+    Require(creatorAfter == doublePrecision);
+}
+
 int main() {
     CheckDefaultStackSize();
     CheckSetName();
+    CheckFpuControl();
     return 0;
 }

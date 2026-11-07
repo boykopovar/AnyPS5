@@ -61,3 +61,8 @@ extern "C" void __aps5_set_module_init_result_nid_no_patch(int result) {
     std::snprintf(line, sizeof(line), "result=%d\n", result);
     Write(line);
 }
+
+extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
+    entry(arguments);
+    Fail("The guest entry point returned");
+}

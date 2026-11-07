@@ -1,4 +1,5 @@
 add_library(libSceJsc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_sources(libSceJsc PRIVATE LegacyExports.cpp)
 target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJsc)
 

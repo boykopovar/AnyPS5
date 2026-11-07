@@ -482,6 +482,8 @@ bool canReachBefore(const ControlFlowGraph& graph, std::uint32_t start, std::uin
 }
 
 bool reachesWithinIteration(const ControlFlowGraph& graph, const NaturalLoop& loop, std::uint32_t start, std::uint32_t target) {
+    if (start == target) return true;
+    if (start == loop.continueBlock || start == loop.mergeBlock) return false;
     std::vector<std::uint32_t> pending = {start};
     std::vector<bool> visited(graph.blocks.size(), false);
     while (!pending.empty()) {

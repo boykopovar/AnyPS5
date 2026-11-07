@@ -218,6 +218,12 @@ using NetEventCallback = std::uint64_t (APS5_VABI*)(std::uint32_t interfaceId, s
 
 extern "C" {
 
+extern const std::uint8_t sce_net_in6addr_loopback_nid_postfix[16];
+extern const std::uint8_t sce_net_in6addr_nodelocal_allnodes_nid_postfix[16];
+extern const std::uint8_t sce_net_in6addr_linklocal_allrouters_nid_postfix[16];
+extern const std::uint32_t sce_net_dummy_nid_postfix;
+
+
 int* APS5_VABI sceNetErrnoLoc(void);
 int APS5_VABI sceNetShowNetstat(void);
 int APS5_VABI sceNetInit_nid_postfix(void);
