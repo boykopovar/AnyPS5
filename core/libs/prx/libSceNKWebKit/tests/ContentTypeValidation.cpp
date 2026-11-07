@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <exception>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -10,7 +11,7 @@ namespace {
 unsigned checks = 0;
 unsigned failures = 0;
 
-void Check(const NKWebKit::WtfAbi::String& input, NKWebKit::ContentTypeMode mode, bool expected, unsigned row, bool wide) {
+void Check(const NKWebKit::WtfAbi::String& input, WebCore::Mode mode, bool expected, unsigned row, bool wide) {
     ++checks;
     try {
         bool actual = _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE(input, mode);
@@ -20,6 +21,22 @@ void Check(const NKWebKit::WtfAbi::String& input, NKWebKit::ContentTypeMode mode
         std::fprintf(stderr, "row %u: %s\n", row, error.what());
     }
     ++failures;
+}
+
+void CheckNullStorage(WebCore::Mode mode) {
+    ++checks;
+    NKWebKit::WtfAbi::StringImpl impl{2, 4, nullptr, 4};
+    NKWebKit::WtfAbi::String input(&impl);
+    try {
+        _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE(input, mode);
+        std::fprintf(stderr, "null storage, mode %d: no exception\n", static_cast<int>(mode));
+        ++failures;
+    } catch (const std::invalid_argument&) {
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "null storage, mode %d: %s\n", static_cast<int>(mode), error.what());
+        ++failures;
+    }
+    input.impl = nullptr;
 }
 
 }  // namespace
@@ -71,8 +88,8 @@ int main() {
             for (auto c : test.text) narrow.push_back(static_cast<char>(c));
             NKWebKit::WtfAbi::StringImpl impl{2, static_cast<unsigned>(test.text.size()), wide ? static_cast<const void*>(test.text.data()) : narrow.data(), wide ? 0u : 4u};
             NKWebKit::WtfAbi::String input(&impl);
-            Check(input, NKWebKit::ContentTypeMode::Rfc2045, test.rfc, row, wide);
-            Check(input, NKWebKit::ContentTypeMode::MimeSniff, test.sniff, row, wide);
+            Check(input, WebCore::Mode::Rfc2045, test.rfc, row, wide);
+            Check(input, WebCore::Mode::MimeSniff, test.sniff, row, wide);
             input.impl = nullptr;
         }
     }
@@ -80,13 +97,15 @@ int main() {
             Case{u"text/plain;a=\"\u03a9\"", true, true}, Case{u"text/plain;a=\"\u0122", true, true}}) {
         NKWebKit::WtfAbi::StringImpl impl{2, static_cast<unsigned>(test.text.size()), test.text.data(), 0};
         NKWebKit::WtfAbi::String input(&impl);
-        Check(input, NKWebKit::ContentTypeMode::Rfc2045, test.rfc, 100, true);
-        Check(input, NKWebKit::ContentTypeMode::MimeSniff, test.sniff, 100, true);
+        Check(input, WebCore::Mode::Rfc2045, test.rfc, 100, true);
+        Check(input, WebCore::Mode::MimeSniff, test.sniff, 100, true);
         input.impl = nullptr;
     }
     NKWebKit::WtfAbi::String null;
-    Check(null, NKWebKit::ContentTypeMode::Rfc2045, false, 0, false);
-    Check(null, NKWebKit::ContentTypeMode::MimeSniff, false, 0, false);
+    Check(null, WebCore::Mode::Rfc2045, false, 0, false);
+    Check(null, WebCore::Mode::MimeSniff, false, 0, false);
+    CheckNullStorage(WebCore::Mode::Rfc2045);
+    CheckNullStorage(WebCore::Mode::MimeSniff);
     std::printf("%u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;
 }

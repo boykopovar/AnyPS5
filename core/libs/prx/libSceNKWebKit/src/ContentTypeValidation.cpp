@@ -29,14 +29,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "prx/libSceNKWebKit/include/WtfExports.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 
+#include <stdexcept>
 #include <string_view>
 
 namespace {
 
-using NKWebKit::ContentTypeMode;
+using WebCore::Mode;
 
 bool IsHTTPSpace(char16_t c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
@@ -52,8 +52,8 @@ bool IsHTTPTokenCharacter(char16_t c) {
         || (c && std::u16string_view(u"!#$%&'*+-.^_`|~").find(c) != std::u16string_view::npos);
 }
 
-template<typename Character> bool Parse(std::basic_string_view<Character> input, ContentTypeMode mode) {
-    bool rfc = mode == ContentTypeMode::Rfc2045;
+template<typename Character> bool Parse(std::basic_string_view<Character> input, Mode mode) {
+    bool rfc = mode == Mode::Rfc2045;
     if (!rfc) {
         while (!input.empty() && IsHTTPSpace(input.front())) input.remove_prefix(1);
         while (!input.empty() && IsHTTPSpace(input.back())) input.remove_suffix(1);
@@ -78,9 +78,9 @@ template<typename Character> bool Parse(std::basic_string_view<Character> input,
         return true;
     };
     auto validRange = [&](std::size_t start) {
-        if (mode == ContentTypeMode::MimeSniff && start == index) return false;
+        if (mode == Mode::MimeSniff && start == index) return false;
         for (; start < index; ++start) {
-            if (mode == ContentTypeMode::MimeSniff ? !IsHTTPTokenCharacter(input[start]) : !IsTokenCharacter(input[start])) return false;
+            if (mode == Mode::MimeSniff ? !IsHTTPTokenCharacter(input[start]) : !IsTokenCharacter(input[start])) return false;
         }
         return true;
     };
@@ -91,7 +91,7 @@ template<typename Character> bool Parse(std::basic_string_view<Character> input,
     if (!token([](auto c) { return c != '/'; }) || !validRange(start)) return false;
     if (index >= input.size() || input[index++] != '/') return false;
     start = index;
-    if (!token([](auto c) { return c != ';'; }, mode == ContentTypeMode::MimeSniff) || !validRange(start)) return false;
+    if (!token([](auto c) { return c != ';'; }, mode == Mode::MimeSniff) || !validRange(start)) return false;
     auto semicolon = input.find(';', contentStart);
     if (semicolon == input.npos) return true;
     index = semicolon + 1;
@@ -108,7 +108,7 @@ template<typename Character> bool Parse(std::basic_string_view<Character> input,
         }
         bool value = false;
         if (index < input.size() && input[index] == '"') {
-            if (mode == ContentTypeMode::MimeSniff) {
+            if (mode == Mode::MimeSniff) {
                 ++index;
                 while (index < input.size()) {
                     auto c = input[index++];
@@ -131,9 +131,9 @@ template<typename Character> bool Parse(std::basic_string_view<Character> input,
                     if (value && input[index - 1] == '"') ++index;
                 }
             }
-        } else value = token([](auto c) { return c != ';'; }, mode == ContentTypeMode::MimeSniff);
+        } else value = token([](auto c) { return c != ';'; }, mode == Mode::MimeSniff);
         if (!value) {
-            if (mode == ContentTypeMode::MimeSniff) continue;
+            if (mode == Mode::MimeSniff) continue;
             return false;
         }
         if (rfc && index < input.size() && input[index++] != ';') return false;
@@ -145,9 +145,9 @@ template<typename Character> bool Parse(std::basic_string_view<Character> input,
 }  // namespace
 
 extern "C" bool APS5_VABI _ZN7WebCore18isValidContentTypeERKN3WTF6StringENS_4ModeE(
-    const NKWebKit::WtfAbi::String& input, NKWebKit::ContentTypeMode mode) {
+    const NKWebKit::WtfAbi::String& input, Mode mode) {
     if (!input.impl || !input.impl->length) return false;
-    if (!input.impl->data) NotImplemented_nid_no_patch(__func__);
+    if (!input.impl->data) throw std::invalid_argument("null WTF::StringImpl characters");
     if (input.impl->hashAndFlags & 4)
         return Parse(std::u8string_view(static_cast<const char8_t*>(input.impl->data), input.impl->length), mode);
     return Parse(std::u16string_view(static_cast<const char16_t*>(input.impl->data), input.impl->length), mode);
