@@ -80,6 +80,25 @@ int SupportFonts(FontLibrary library, void* FontLibNative::*slot, std::uint32_t 
 
 }
 
+namespace Font {
+
+int SupportSystemUpdation(FontLibNative* library, std::uint32_t version) {
+    constexpr std::uint32_t SYSTEM_UPDATION_VERSION = 0x20230801u;
+    if (!library || library->magic != LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    std::uint32_t previous = 0;
+    if (!AcquireLibraryLock(library, previous)) return SCE_FONT_ERROR_INVALID_LIBRARY;
+    const auto finish = [&](int rc) {
+        ReleaseLibraryLock(library, previous);
+        return rc;
+    };
+    if (version != SYSTEM_UPDATION_VERSION) return finish(SCE_FONT_ERROR_INVALID_PARAMETER);
+    auto* const updation = reinterpret_cast<std::uint8_t*>(library) + 3;
+    *updation = static_cast<std::uint8_t>(*updation | 0x2);
+    return finish(SCE_FONT_OK);
+}
+
+}
+
 #pragma GCC visibility push(default)
 
 extern "C" {

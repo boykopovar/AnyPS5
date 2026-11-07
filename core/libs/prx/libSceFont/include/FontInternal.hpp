@@ -75,6 +75,8 @@ std::uint32_t AcquireWordLock(std::uint32_t& word);
 FontHandleNative* GetNativeFont(FontHandle handle);
 bool AcquireLibraryLock(FontLibNative* library, std::uint32_t& previous);
 void ReleaseLibraryLock(FontLibNative* library, std::uint32_t previous);
+int SupportSystemUpdation(FontLibNative* library, std::uint32_t version);
+int SupportGlyphs(const void* support);
 bool AcquireFontLock(FontHandleNative* font, std::uint32_t& previous);
 void ReleaseFontLock(FontHandleNative* font, std::uint32_t previous);
 bool AcquireCachedStyleLock(FontHandleNative* font, std::uint32_t& previous);

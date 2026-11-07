@@ -6,7 +6,10 @@
 
 struct FontFtAliases;
 
-struct FontFtGlyphSelection;
+struct FontFtGlyphSelection {
+    std::uint32_t tag;
+    std::uint32_t glyph_tag;
+};
 
 extern "C" {
 

@@ -195,6 +195,11 @@ struct FontGlyphOpaque {
 
 using FontGlyph = FontGlyphOpaque*;
 
+struct FontGlyphSupport {
+    std::uint32_t tag;
+    std::uint32_t glyph_tag;
+};
+
 struct FontResultStage {
     std::uint8_t* p_00;
     std::uint32_t u32_08;

@@ -18,7 +18,9 @@ constexpr std::uint16_t LIBRARY_MAGIC = 0x0F01;
 constexpr std::uint16_t HANDLE_MAGIC = 0x0F02;
 constexpr std::uint16_t GLYPH_MAGIC = 0x0F03;
 constexpr std::uint16_t RENDERER_MAGIC = 0x0F07;
+constexpr std::uint16_t OUTLINE_VERTEXES_MAGIC = 0x0F08;
 constexpr std::uint16_t STYLE_FRAME_MAGIC = 0x0F09;
+constexpr std::uint32_t GLYPH_SUPPORT_TAG = 0x0F1F;
 
 constexpr std::uint32_t LOCK_BIT = 0x80000000u;
 constexpr std::uint32_t OPEN_BIT = 0x40000000u;
