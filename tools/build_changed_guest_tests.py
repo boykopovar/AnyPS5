@@ -92,9 +92,11 @@ def test_owner(command, targets_by_name):
     else:
         candidates += [part for part in command[1:] if not part.startswith("-") and Path(part).suffix.casefold() == ".exe"]
     for part in candidates:
-        stem = Path(part).stem.casefold()
-        if stem in targets_by_name:
-            return targets_by_name[stem]
+        name = Path(part).name.casefold()
+        if name.endswith(".exe"):
+            name = name[:-4]
+        if name in targets_by_name:
+            return targets_by_name[name]
     return None
 
 

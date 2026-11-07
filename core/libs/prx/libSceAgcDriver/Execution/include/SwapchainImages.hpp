@@ -7,6 +7,8 @@
 
 namespace AgcDriver {
 
+inline constexpr std::uint64_t SwapchainAcquireTimeoutNs = 1000000;
+
 inline std::uint32_t SwapchainImageCount(const VkSurfaceCapabilitiesKHR& surface) {
     const std::uint32_t count = std::max(surface.minImageCount, 3u);
     return surface.maxImageCount != 0 ? std::min(count, surface.maxImageCount) : count;
