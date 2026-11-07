@@ -433,6 +433,16 @@ if(BUILD_TESTING)
             set_tests_properties(guest_sce_v2_num_put_char PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        add_test_executable(guest_sce_v2_num_put_wide_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2NumPutWide.cpp)
+        target_include_directories(guest_sce_v2_num_put_wide_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_sce_v2_num_put_wide_tests PRIVATE libc)
+        configure_windows_unwind(guest_sce_v2_num_put_wide_tests)
+        add_test(NAME guest_sce_v2_num_put_wide COMMAND guest_sce_v2_num_put_wide_tests)
+        set_tests_properties(guest_sce_v2_num_put_wide PROPERTIES TIMEOUT 10)
+        if(WIN32)
+            set_tests_properties(guest_sce_v2_num_put_wide PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
         add_test_executable(guest_filesystem_error_tests
             ${LIBS_INCLUDE_DIR}/tests/GuestFilesystemError.cpp
             ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
