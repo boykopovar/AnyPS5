@@ -6,7 +6,7 @@
 
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
-- [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
+- [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Five additional exports copy owned CA and certificate bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). `tls_config_set_cert_mem` copies the bytes but does not derive the public key hash or parse the certificate as [tls_keypair.c](https://github.com/openbsd/src/blob/master/lib/libtls/tls_keypair.c) does, so malformed certificates are accepted and the error string stays null. TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_ciphers` still throws; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
 
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
@@ -65,14 +65,13 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 140 still-unimplemented callable exports: 130 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 139 still-unimplemented callable exports: 129 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fifteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_KEY_set_asn1_flag` | `++b0FizBrJk` |
 | `BIO_set_init` | `+STC2BUY9vY` |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
-| `tls_config_set_cert_mem` | `+bQfpiUHRVk` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
 | `BIO_meth_free` | `13BHMSblVyY` |
 | `tls_handshake` | `27Fuliv3Om8` |
