@@ -1095,6 +1095,43 @@ static void TestBundleScriptWorld() {
     Require(threw);
 }
 
+static void TestBundleDOMWindowExtension() {
+    Require(WKBundleDOMWindowExtensionGetTypeID() == 118);
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    auto world = NKWebKit::Make<NKWebKit::BundleScriptWorld>();
+    world->name = NKWebKit::String::FromUtf8("CustomExtensionWorld");
+
+    auto* ext = WKBundleDOMWindowExtensionCreate(frame.Get(), world.Get());
+    Require(ext != nullptr);
+    Require(WKGetTypeID(ext) == WKBundleDOMWindowExtensionGetTypeID());
+    Require(WKBundleDOMWindowExtensionGetFrame(ext) == frame.Get());
+    Require(WKBundleDOMWindowExtensionGetScriptWorld(ext) == world.Get());
+    WKRelease(ext);
+
+    auto* emptyExt = WKBundleDOMWindowExtensionCreate(nullptr, nullptr);
+    Require(emptyExt != nullptr);
+    Require(WKGetTypeID(emptyExt) == WKBundleDOMWindowExtensionGetTypeID());
+    Require(WKBundleDOMWindowExtensionGetFrame(emptyExt) == nullptr);
+    Require(WKBundleDOMWindowExtensionGetScriptWorld(emptyExt) == nullptr);
+    WKRelease(emptyExt);
+
+    bool threw = false;
+    try {
+        WKBundleDOMWindowExtensionGetFrame(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKBundleDOMWindowExtensionGetScriptWorld(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1541,6 +1578,7 @@ int main() {
     TestHitTestResult();
     TestBackForwardList();
     TestBundleScriptWorld();
+    TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestDownload();
     TestAXObject();
