@@ -35,6 +35,7 @@ inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
 inline constexpr std::uint32_t MeshLayerBase = 8237u;
 inline constexpr std::uint32_t MeshLayerCount = 8238u;
+inline constexpr std::uint32_t DepthBoundsOffset = 8239u;
 inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
