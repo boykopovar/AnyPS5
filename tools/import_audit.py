@@ -74,7 +74,15 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: sectionless ELF needs little-endian ELF64 program headers")
     take(data, program_offset, program_count * program_size, path, "program header table")
     segments = [unpack("<IIQQQQQQ", data, program_offset + index * program_size, path, f"program header {index}") for index in range(program_count)]
-    loads = [segment for segment in segments if segment[0] == 1]
+    loads = []
+    for segment in segments:
+        if segment[0] == 1:
+            _, _, offset, _, _, file_size, mem_size, _ = segment
+            if file_size > mem_size:
+                raise AuditError(f"{path}: load segment file size {file_size} exceeds memory size {mem_size}")
+            if file_size:
+                take(data, offset, file_size, path, "load segment")
+            loads.append(segment)
 
     def file_offset(address, size, what):
         for segment in loads:
@@ -666,33 +674,47 @@ def source_stub_classes(source):
     stubs = {}
     partial = set()
     shared = {}
+    done_by_library = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
         for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
-        if "shared_sources" in group:
-            shared[library.name] = group["shared_sources"]
+        shared[library.name] = progress.shared_source_owners(library)
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
+        done_by_library[library.name] = done
         conditional = conditional_stubs(library) if group["todo_names"] else set()
         for name in group["todo_names"]:
             for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
                 if name in conditional:
                     partial.add((library.name + ".prx", nid))
-    for library, owner in shared.items():
-        chain = [library]
-        while owner in shared:
-            if owner in chain:
-                raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [owner])}")
-            chain.append(owner)
-            owner = shared[owner]
-        for (provider, nid), name in list(stubs.items()):
-            if provider == owner + ".prx":
-                stubs[(library + ".prx", nid)] = name
-                if (provider, nid) in partial:
-                    partial.add((library + ".prx", nid))
+    resolved = set()
+
+    def inherit(library, chain):
+        if library in chain:
+            raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [library])}")
+        if library in resolved:
+            return
+        for owner in shared[library]:
+            inherit(owner, chain + [library])
+            done_by_library[library].update(done_by_library[owner])
+            for (provider, nid), name in list(stubs.items()):
+                if provider == owner + ".prx":
+                    key = (library + ".prx", nid)
+                    stubs.setdefault(key, name)
+                    if (provider, nid) in partial:
+                        partial.add(key)
+        resolved.add(library)
+
+    for library in shared:
+        inherit(library, [])
+    for library, done in done_by_library.items():
+        for nid in done:
+            key = (library + ".prx", nid)
+            stubs.pop(key, None)
+            partial.discard(key)
     return stubs, partial
 
 
@@ -792,6 +814,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
                         return normalized
                     if len(candidates) == 1:
                         return next(iter(candidates))
+                    if normalized in libraries:
+                        return normalized
             if name.casefold().endswith(".prx"):
                 normalized = name[:-4] + ".prx"
                 candidates = windows_names.get(normalized.casefold(), ())
