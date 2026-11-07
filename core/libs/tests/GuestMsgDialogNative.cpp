@@ -76,6 +76,7 @@ void CancelAndFallbacks() {
     Require(sceMsgDialogOpen(&system) == 0 && sceMsgDialogGetStatus() == kStatusFinished && Session() != ModalDialogState::Showing);
     result = MsgDialogResult{};
     Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == kButtonIdOk);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull);
 
     ModalDialogSetPresenter_nid_postfix(false);
     UserMessage focusNo{MsgDialog::ButtonTypeYesNoFocusNo, 0, "Delete?"};
@@ -215,11 +216,15 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogUpdateStatus() == 0);
     Require(sceMsgDialogGetStatus() == 0);
+    Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
 
     Require(sceMsgDialogInitialize() == 0);
     Require(sceMsgDialogInitialize() == kErrAlreadyInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetResult(&result) == kErrNotFinished);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrNotFinished);
     Require(sceMsgDialogGetResult(nullptr) == kErrArgNull);
     Require(sceMsgDialogOpen(nullptr) == kErrArgNull);
     Require(sceMsgDialogUpdateStatus() == kStatusInitialized);

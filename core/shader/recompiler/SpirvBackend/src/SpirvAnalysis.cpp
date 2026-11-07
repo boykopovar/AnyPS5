@@ -334,14 +334,33 @@ std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const
     return addresses;
 }
 
+bool IsSplittableBufferAtomic64(const IrValue* inst) {
+    switch (inst->Opcode()) {
+    case IrOpcode::BufferAtomicOr64:
+    case IrOpcode::BufferAtomicAnd64:
+    case IrOpcode::BufferAtomicXor64:
+        return !inst->HasUses();
+    default:
+        return false;
+    }
+}
+
 SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
     bool storageWrites = false;
     SpirvRequirements requirements {};
+    std::optional<IrOpcode> splitOpcode;
     for (const IrBlock* block : program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
+                if (!IsSplittableBufferAtomic64(inst)) {
+                    requirements.bufferInt64AtomicsExact = true;
+                } else if (!splitOpcode) {
+                    splitOpcode = inst->Opcode();
+                } else if (*splitOpcode != inst->Opcode()) {
+                    requirements.bufferInt64AtomicsExact = true;
+                }
             }
             if (IsImageAtomic64Opcode(inst->Opcode())) {
                 requirements.imageInt64Atomics = true;
@@ -402,6 +421,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 const auto kind = program.Resources().memoryInfo.at(index).kind;
                 if (kind != ResourceKind::Lds && kind != ResourceKind::Gds) {
                     throw std::runtime_error("shared operation has invalid resource kind");
+                }
+                if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64 && kind == ResourceKind::Gds) {
+                    requirements.gdsInt64Atomics = true;
                 }
                 if (program.Resources().stage != IrShaderStage::Compute && program.Resources().stage != IrShaderStage::Mesh && kind == ResourceKind::Lds) {
                     requirements.functionLds = true;

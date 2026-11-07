@@ -28,6 +28,21 @@ const void* Find(const void* first, const void* last, TValue value) {
 constexpr std::uintptr_t UnsizedBlock = 32;
 
 template<typename TValue>
+const void* FindLast(const void* first, const void* last, TValue value) {
+    if (first == last) return last;
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (!first || !last || endAddress < beginAddress || (endAddress - beginAddress) % sizeof(TValue) != 0) NotImplemented_nid_no_patch(__func__);
+    const auto* begin = static_cast<const unsigned char*>(first);
+    auto* current = static_cast<const unsigned char*>(last);
+    while (current != begin) {
+        current -= sizeof(TValue);
+        if (Read<TValue>(current) == value) return current;
+    }
+    return last;
+}
+
+template<typename TValue>
 const void* FindUnsized(const void* first, TValue value) {
     auto* start = static_cast<const unsigned char*>(first);
     auto* block = start - (reinterpret_cast<std::uintptr_t>(start) & (UnsizedBlock - 1));
@@ -112,6 +127,10 @@ const void* APS5_VABI __std_find_trivial_1_nid_postfix(const void* first, const 
 const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value) { return Find(first, last, value); }
 const void* APS5_VABI __std_find_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value) { return Find(first, last, value); }
 const void* APS5_VABI __std_find_trivial_8_nid_postfix(const void* first, const void* last, std::uint64_t value) { return Find(first, last, value); }
+const void* APS5_VABI __std_find_last_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value) { return FindLast(first, last, value); }
+const void* APS5_VABI __std_find_last_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value) { return FindLast(first, last, value); }
+const void* APS5_VABI __std_find_last_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value) { return FindLast(first, last, value); }
+const void* APS5_VABI __std_find_last_trivial_8_nid_postfix(const void* first, const void* last, std::uint64_t value) { return FindLast(first, last, value); }
 const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void* first, std::uint8_t value) { return FindUnsized(first, value); }
 const void* APS5_VABI __std_find_trivial_unsized_2_nid_postfix(const void* first, std::uint16_t value) { return FindUnsized(first, value); }
 const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void* first, std::uint32_t value) { return FindUnsized(first, value); }

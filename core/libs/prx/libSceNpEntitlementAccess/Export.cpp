@@ -4,10 +4,13 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -79,6 +82,41 @@ const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
     return owned;
 }
 
+std::string PrintableLabel(const std::string& label) {
+    std::string printable;
+    for (const unsigned char byte : label) {
+        if (byte >= 0x20 && byte < 0x7f && byte != '\\') {
+            printable += static_cast<char>(byte);
+            continue;
+        }
+        char escaped[5];
+        std::snprintf(escaped, sizeof(escaped), "\\x%02x", byte);
+        printable += escaped;
+    }
+    return printable;
+}
+
+std::string EntitlementsName() {
+    if (const auto* configured = ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return EntitlementsPath().string();
+    return "anyps5-entitlements.ini";
+}
+
+void ReportUnlisted(const std::string& label) {
+    constexpr std::size_t reportLimit = 64;
+    static std::mutex reportMutex;
+    static std::set<std::string> reported;
+    static bool capped = false;
+    std::lock_guard lock(reportMutex);
+    if (reported.contains(label)) return;
+    if (reported.size() < reportLimit) {
+        reported.insert(label);
+        std::fprintf(stderr, "[entitlements] the title asked for the add-on %s, which %s does not list, so it is reported as not installed\n", PrintableLabel(label).c_str(), EntitlementsName().c_str());
+    } else if (!capped) {
+        capped = true;
+        std::fprintf(stderr, "[entitlements] the title asked for more than %zu add-ons that %s does not list; further ones are reported as not installed without a line\n", reportLimit, EntitlementsName().c_str());
+    }
+}
+
 }
 
 extern "C" {
@@ -92,6 +130,7 @@ int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(uint32_t service_l
             return 0;
         }
     }
+    ReportUnlisted(std::string(entitlement_label->data, strnlen(entitlement_label->data, sizeof(entitlement_label->data))));
     return SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND;
 }
 

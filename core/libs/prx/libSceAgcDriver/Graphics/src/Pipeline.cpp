@@ -21,6 +21,7 @@
 #include <list>
 #include <mutex>
 #include <spirv/unified1/spirv.hpp>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
@@ -67,6 +68,12 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
     std::vector<VkPipelineExecutablePropertiesKHR> properties(count, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
     Check(getProperties(context.device, &pipelineInfo, &count, properties.data()), "vkGetPipelineExecutablePropertiesKHR");
     properties.resize(count);
+    std::string report;
+    const auto append = [&report](const char* format, auto... values) {
+        std::array<char, 1024> line{};
+        std::snprintf(line.data(), line.size(), format, values...);
+        report += line.data();
+    };
     for (std::uint32_t index = 0; index < properties.size(); ++index) {
         VkPipelineExecutableInfoKHR executable{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
         executable.pipeline = pipeline;
@@ -77,28 +84,27 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
         Check(getStatistics(context.device, &executable, &count, statistics.data()), "vkGetPipelineExecutableStatisticsKHR");
         statistics.resize(count);
         const auto& property = properties[index];
-        std::fprintf(stderr, "[pipeline-stats] executable=%u stages=0x%x subgroup=%u name=%s\n", index, property.stages, property.subgroupSize, property.name);
+        append("[pipeline-stats] executable=%u stages=0x%x subgroup=%u name=%s\n", index, property.stages, property.subgroupSize, property.name);
         for (const auto& statistic : statistics) {
-            std::fprintf(stderr, "[pipeline-stats] executable=%u %s=", index, statistic.name);
             switch (statistic.format) {
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
-                std::fprintf(stderr, "%s", statistic.value.b32 ? "true" : "false");
+                append("[pipeline-stats] executable=%u %s=%s (%s)\n", index, statistic.name, statistic.value.b32 ? "true" : "false", statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
-                std::fprintf(stderr, "%lld", static_cast<long long>(statistic.value.i64));
+                append("[pipeline-stats] executable=%u %s=%lld (%s)\n", index, statistic.name, static_cast<long long>(statistic.value.i64), statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
-                std::fprintf(stderr, "%llu", static_cast<unsigned long long>(statistic.value.u64));
+                append("[pipeline-stats] executable=%u %s=%llu (%s)\n", index, statistic.name, static_cast<unsigned long long>(statistic.value.u64), statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
-                std::fprintf(stderr, "%.17g", statistic.value.f64);
+                append("[pipeline-stats] executable=%u %s=%.17g (%s)\n", index, statistic.name, statistic.value.f64, statistic.description);
                 break;
             default:
                 throw std::runtime_error("unsupported pipeline statistic format");
             }
-            std::fprintf(stderr, " (%s)\n", statistic.description);
         }
     }
+    std::fputs(report.c_str(), stderr);
 }
 
 bool HasStencil(VkFormat format) {
@@ -233,7 +239,6 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
     const bool meshPrimitives = state.stages.path == ShaderPath::Geometry && state.stages.mesh;
     Require(!state.stages.tessellation && (meshPrimitives || (state.stages.path == ShaderPath::Vertex && !state.stages.mesh)), "last provoking vertex is unsupported for generated primitive pipelines");
-    Require(!meshPrimitives || state.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for triangle fans assembled for a geometry program");
     Require(state.rectList || state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for this primitive topology");
     for (const auto& shader : shaders) {
         if (shader.stage != ShaderRecompiler::ShaderStage::Fragment) continue;
@@ -258,6 +263,18 @@ void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConf
     Require(mesh.maxPrimitives <= limits.maxMeshOutputPrimitives, "mesh output primitives " + std::to_string(mesh.maxPrimitives) + " exceed the device limit " + std::to_string(limits.maxMeshOutputPrimitives));
     const auto sharedBytes = static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4;
     Require(sharedBytes <= limits.maxMeshSharedMemorySize, "mesh LDS " + std::to_string(sharedBytes) + " bytes exceeds the device shared memory limit " + std::to_string(limits.maxMeshSharedMemorySize));
+}
+
+void ValidateLineWidth(const Context& context, float width) {
+    if (width == 1.0f) return;
+    Require(context.wideLines, "a line polygon mode wider or narrower than one pixel needs the wideLines feature");
+    const auto low = context.limits.lineWidthRange[0];
+    const auto high = context.limits.lineWidthRange[1];
+    const auto granularity = context.limits.lineWidthGranularity;
+    const auto describe = [&] { return "line width " + std::to_string(width) + " against lineWidthRange [" + std::to_string(low) + ", " + std::to_string(high) + "] and lineWidthGranularity " + std::to_string(granularity); };
+    Require(width >= low && width <= high, "a line polygon mode needs a width the device supports: " + describe() + " is outside the range");
+    const auto steps = granularity > 0.0f ? (width - low) / granularity : 0.0f;
+    Require(granularity > 0.0f ? std::abs(steps - std::round(steps)) <= 1.0e-3f : width == low, "a line polygon mode needs a width the device supports: " + describe() + " is not a whole number of granularity steps from the range's low end");
 }
 
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
@@ -340,6 +357,8 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, identity.low);
         appendKey(key, identity.high);
         appendKey(key, shader.pushConstantOffset);
+        appendKey(key, state.meshLayerBase);
+        appendKey(key, state.meshLayerCount);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             for (const auto& binding : shader.program->bindings) {
@@ -369,6 +388,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     appendKey(keys.vertexInput, state.primitiveRestart);
     appendKey(keys.preRasterization, state.provokingVertexMode);
     appendKey(keys.preRasterization, state.polygonMode);
+    appendKey(keys.preRasterization, state.lineWidth);
     appendKey(keys.preRasterization, state.negativeOneToOne);
     appendKey(keys.preRasterization, state.depthClamp && context.depthClamp);
     appendKey(keys.preRasterization, state.conservativeRasterization);
@@ -509,7 +529,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             stages[i].module = _modules[i];
             stages[i].pName = "main";
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
-            specializations.emplace_back(shader);
+            specializations.emplace_back(shader, state.meshLayerBase, state.meshLayerCount);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
@@ -630,6 +650,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         Require(state.polygonMode == VK_POLYGON_MODE_FILL || context.fillModeNonSolid, "a point or line polygon mode needs the fillModeNonSolid feature");
         Require(state.polygonMode != VK_POLYGON_MODE_POINT || context.maintenance5, "a point polygon mode needs VK_KHR_maintenance5 for its one-pixel point size");
+        ValidateLineWidth(context, state.lineWidth);
         raster.polygonMode = state.polygonMode;
         raster.rasterizerDiscardEnable = state.rasterizerDiscard ? VK_TRUE : VK_FALSE;
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
@@ -637,7 +658,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
         raster.frontFace = state.frontFace;
         raster.depthBiasEnable = depthBias;
-        raster.lineWidth = 1;
+        raster.lineWidth = state.lineWidth;
         VkPipelineRasterizationConservativeStateCreateInfoEXT conservative{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT};
         conservative.conservativeRasterizationMode = state.conservativeRasterization;
         if (state.conservativeRasterization != VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT) raster.pNext = &conservative;
@@ -1016,6 +1037,8 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         // Where the stage's push constants sit in the block (AssemblePushConstants).
         append(key, shader.pushConstantOffset);
     }
+    append(key, state.meshLayerBase);
+    append(key, state.meshLayerCount);
     append(key, PushConstantStages(shaders));
     append(key, input.bindings.size());
     for (const auto& binding : input.bindings) {
@@ -1040,6 +1063,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.primitiveRestart);
     append(key, state.cullMode);
     append(key, state.polygonMode);
+    append(key, state.lineWidth);
     append(key, state.frontFace);
     append(key, state.provokingVertexMode);
     append(key, state.negativeOneToOne);
