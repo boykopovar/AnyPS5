@@ -237,8 +237,8 @@ void* APS5_VABI _ZNSt8__sce_v210filesystem9_Open_dirERA260_cPKcRiRNS0_9file_type
 char* APS5_VABI _ZNSt8__sce_v210filesystem9_Read_dirERA260_cPvRNS0_9file_typeE_nid_postfix(char* target, void* handle, int* type);
 int APS5_VABI _ZNSt8__sce_v210filesystem10_Close_dirEPv_nid_postfix(void* handle);
 bool APS5_VABI _ZNSt8__sce_v210filesystem12_Current_getERA260_c_nid_postfix(char* target);
-void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix();
-void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix();
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(const char* message, LibcException::ErrorCode code);
+[[noreturn]] void APS5_VABI _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(const char* message, const GuestLocale::String* path, LibcException::ErrorCode code);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
 int APS5_VABI _ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix(const char* path, int* perms);
 std::uint64_t APS5_VABI _ZNSt8__sce_v210filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
@@ -1668,6 +1668,15 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v218_Xinvalid_argumentEPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix(const char* message);
+extern std::int32_t _ZNSt8__sce_v26_Winit9_Init_cntE_nid_postfix;
+extern std::int32_t _ZNSt8__sce_v28ios_base4Init9_Init_cntE_nid_postfix;
+void APS5_VABI _ZNSt8__sce_v26_WinitC1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v26_WinitC2Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v26_WinitD1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v26_WinitD2Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v28ios_base4Init10_Init_ctorEPS1__nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v28ios_base4Init10_Init_dtorEPS1__nid_postfix(void* self);
+std::int32_t* APS5_VABI _ZNSt8__sce_v28ios_base4Init14_Init_cnt_funcEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
 std::uint64_t APS5_VABI _ZNSt8__sce_v27_MP_GetEPy_nid_postfix(std::uint64_t* u);
 void APS5_VABI _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(std::uint64_t* u, std::uint64_t value);
