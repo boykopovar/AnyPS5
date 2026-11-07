@@ -2317,6 +2317,10 @@ std::uint32_t DepthCopyPixelUserWords(bool multisampled) {
     return multisampled ? 9u : 8u;
 }
 
+bool DriverOwnedProgram(std::uint64_t codeAddress) {
+    return codeAddress == NullPixelProgramAddress() || codeAddress == DepthCopyPixelProgramAddress(false) || codeAddress == DepthCopyPixelProgramAddress(true);
+}
+
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
     BindTitleThread();
     PerformanceContext timingContext(FrameTiming::Preparation());

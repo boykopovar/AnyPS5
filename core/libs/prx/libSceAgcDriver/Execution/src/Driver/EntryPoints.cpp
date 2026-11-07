@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <mutex>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
@@ -128,6 +129,15 @@ extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     LibcAwaitExit_nid_postfix();
 }
 
+extern "C" std::uint32_t AgcDriverInstructionWords_nid_postfix(std::span<const std::uint32_t> code, std::uint32_t index) {
+    try {
+        return ShaderRecompiler::DecodeRdnaInstruction(index * 4u, code, index).wordCount;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[agc] instruction at word %u of a fused front half cannot be decoded: %s\n", index, error.what());
+        return 0;
+    }
+}
+
 extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
     AgcDriver::SuspendPoint();
 } catch (const ProcessShutdown&) {
@@ -149,6 +159,10 @@ extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait*
     const auto count = std::min(capacity, awaited.size());
     std::copy_n(awaited.begin(), count, waits);
     return count;
+}
+
+extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
 }
 
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed) {
