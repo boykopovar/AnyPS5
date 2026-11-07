@@ -141,6 +141,7 @@ void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
 void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
+void KqueueSignalSent(int guest);
 extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
 int ReserveKqueueDescriptor();
 void RegisterKqueueDescriptor(int descriptor, KernelEqueueRef queue);

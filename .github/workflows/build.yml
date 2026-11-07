@@ -143,7 +143,7 @@ jobs:
                 edgeWatch: edits('edge-watch') || touches('core/libs/tests/edge_watch/', 'core/libs/tests/EdgeWatch.cpp',
                   'core/libs/prx/libkernel/Equeue/src/EdgeWatch.cpp', 'core/libs/prx/libkernel/Equeue/include/EdgeWatch.hpp', libc),
                 mingwHostTests: edits('eligibility') || edits('windows') || touches(
-                  'core/CMakeLists.txt', 'core/libs/', 'cmake/', '3rdparty/', '.gitmodules', 'tools/build_mingw_host_only_tests.py',
+                  'core/libs/', 'cmake/', '3rdparty/', '.gitmodules', 'tools/build_mingw_host_only_tests.py',
                   'tools/build_changed_guest_tests.py', 'tools/configure_seed.py', 'tools/select_tests.py',
                   'tools/tests/test_build_changed_guest_tests.py', 'tools/tests/test_mingw_host_only_test_targets.py', 'CMakeLists.txt'
                 ),
@@ -296,6 +296,7 @@ jobs:
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+      WINLIBS_SHA256: cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815
     defaults:
       run:
         shell: bash
@@ -329,6 +330,7 @@ jobs:
       - if: runner.os == 'Windows' && steps.toolchain.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - if: runner.os == 'Windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
@@ -599,6 +601,7 @@ jobs:
     env:
       WINLIBS_RELEASE: 15.2.0posix-14.0.0-ucrt-r7
       WINLIBS_ZIP: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+      WINLIBS_SHA256: cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815
     defaults:
       run:
         shell: bash
@@ -660,6 +663,7 @@ jobs:
       - if: steps.toolchain.outputs.cache-hit != 'true'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
+          echo "$WINLIBS_SHA256  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
       - uses: hendrikmuhs/ccache-action@v1.2.24

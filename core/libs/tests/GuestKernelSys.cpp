@@ -956,55 +956,46 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
 }
 
 void CheckSettimeofday() {
+    constexpr int Fault = 14;
+    constexpr int Permission = 1;
     KernelTimezone zone{-1, -1};
-    Require(settimeofday_nid_postfix(nullptr, nullptr) == 0);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimezone west{60, 1};
-    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
-    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
-    Require(settimeofday_nid_postfix(unreadableTime, &west) == -1 && Error() == 14);
-    Require(settimeofday_nid_postfix(unreadableTime, unreadableZone) == -1 && Error() == 14);
-    Require(settimeofday_nid_postfix(nullptr, unreadableZone) == -1 && Error() == 14);
-    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}}) {
-        Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == 22);
-        Require(settimeofday_nid_postfix(&invalid, unreadableZone) == -1 && Error() == 14);
-    }
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimeval valid{1000000000, 0};
-    Require(settimeofday_nid_postfix(&valid, unreadableZone) == -1 && Error() == 14);
-    bool rejected = false;
-    try {
-        settimeofday_nid_postfix(&valid, &west);
-    } catch (const std::runtime_error& error) {
-        rejected = std::strstr(error.what(), "settimeofday: setting the time to 1000000000.000000") != nullptr;
+    Require(settimeofday_nid_postfix(nullptr, nullptr) == -1 && Error() == Permission);
+    for (const std::uintptr_t bad : {std::uintptr_t{1}, std::uintptr_t{0x10}}) {
+        const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(bad);
+        const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(bad);
+        Require(settimeofday_nid_postfix(unreadableTime, &west) == -1 && Error() == Fault);
+        Require(settimeofday_nid_postfix(unreadableTime, unreadableZone) == -1 && Error() == Fault);
+        Require(settimeofday_nid_postfix(nullptr, unreadableZone) == -1 && Error() == Fault);
+        Require(settimeofday_nid_postfix(&valid, unreadableZone) == -1 && Error() == Fault);
+        for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+            Require(settimeofday_nid_postfix(&invalid, unreadableZone) == -1 && Error() == Fault);
     }
-    Require(rejected);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(settimeofday_nid_postfix(nullptr, &west) == 0);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}}) {
+        Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == Permission);
+        Require(settimeofday_nid_postfix(&invalid, nullptr) == -1 && Error() == Permission);
+    }
+    Require(settimeofday_nid_postfix(&valid, &west) == -1 && Error() == Permission);
+    Require(settimeofday_nid_postfix(&valid, nullptr) == -1 && Error() == Permission);
+    Require(settimeofday_nid_postfix(nullptr, &west) == -1 && Error() == Permission);
     KernelTimeval now{};
-    Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1 && now.tv_sec > 0);
-    const KernelTimezone zero{0, 0};
-    Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0 && now.tv_sec > 0 && now.tv_sec != valid.tv_sec);
 }
 
 void CheckSceKernelSettimeofday() {
     constexpr int KernelFault = static_cast<int>(0x8002000Eu);
-    constexpr int KernelInvalid = static_cast<int>(0x80020016u);
+    constexpr int KernelPermission = static_cast<int>(0x80020001u);
     KernelTimezone zone{-1, -1};
-    Require(sceKernelSettimeofday(nullptr, nullptr) == 0);
     const KernelTimezone west{60, 1};
-    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
-    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
-    Require(sceKernelSettimeofday(unreadableTime, &west) == KernelFault);
-    Require(sceKernelSettimeofday(nullptr, unreadableZone) == KernelFault);
+    const KernelTimeval valid{1000000000, 0};
+    Require(sceKernelSettimeofday(nullptr, nullptr) == KernelPermission);
+    Require(sceKernelSettimeofday(reinterpret_cast<const KernelTimeval*>(1), &west) == KernelFault);
+    Require(sceKernelSettimeofday(nullptr, reinterpret_cast<const KernelTimezone*>(1)) == KernelFault);
     for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
-        Require(sceKernelSettimeofday(&invalid, &west) == KernelInvalid);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
-    Require(sceKernelSettimeofday(nullptr, &west) == 0);
-    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1);
-    const KernelTimezone zero{0, 0};
-    Require(sceKernelSettimeofday(nullptr, &zero) == 0);
+        Require(sceKernelSettimeofday(&invalid, &west) == KernelPermission);
+    Require(sceKernelSettimeofday(&valid, &west) == KernelPermission);
+    Require(sceKernelSettimeofday(nullptr, &west) == KernelPermission);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 

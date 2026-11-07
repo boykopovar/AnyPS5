@@ -1659,6 +1659,10 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
+std::uint64_t APS5_VABI _ZNSt8__sce_v27_MP_GetEPy_nid_postfix(std::uint64_t* u);
+void APS5_VABI _ZNSt8__sce_v27_MP_AddEPyy_nid_postfix(std::uint64_t* u, std::uint64_t value);
+void APS5_VABI _ZNSt8__sce_v27_MP_MulEPyyy_nid_postfix(std::uint64_t* w, std::uint64_t left, std::uint64_t right);
+void APS5_VABI _ZNSt8__sce_v27_MP_RemEPyy_nid_postfix(std::uint64_t* u, std::uint64_t value);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix(const LibcException::ExceptionObject*);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12bad_weak_ptrE_nid_postfix(const LibcException::ExceptionObject*);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_18bad_variant_accessE_nid_postfix(const LibcException::ExceptionObject*);
