@@ -71,10 +71,6 @@ int APS5_VABI __std_minmax_1u_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __truncdfhf2_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_minmax_4i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

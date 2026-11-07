@@ -21,7 +21,6 @@ int APS5_VABI __std_min_element_f_nid_postfix();
 int APS5_VABI __std_minmax_f_nid_postfix();
 int APS5_VABI __std_min_f_nid_postfix();
 int APS5_VABI __std_minmax_1u_nid_postfix();
-int APS5_VABI __truncdfhf2_nid_postfix();
 int APS5_VABI __std_minmax_4i_nid_postfix();
 int APS5_VABI __std_atomic_wait_get_deadline_nid_postfix();
 int APS5_VABI __std_max_2i_nid_postfix();
