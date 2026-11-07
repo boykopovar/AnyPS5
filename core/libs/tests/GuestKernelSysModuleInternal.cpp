@@ -116,6 +116,13 @@ static void CheckGetcwd() {
     Require(__getcwd_nid_postfix(buffer, sizeof(buffer)) == 0);
     Require(buffer[0] == '/');
     Require(std::strlen(buffer) < sizeof(buffer));
+    const std::size_t required = std::strlen(buffer) + 1;
+    std::vector<char> exact(required);
+    Require(__getcwd_nid_postfix(exact.data(), exact.size()) == 0);
+    Require(std::strcmp(exact.data(), buffer) == 0);
+    std::vector<char> shortBuffer(required - 1);
+    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1);
+    Require(*__error_nid_postfix() == ERANGE);
     Require(__getcwd_nid_postfix(nullptr, sizeof(buffer)) == -1);
     Require(*__error_nid_postfix() == EFAULT);
     char small[1] = {};
