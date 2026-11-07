@@ -1391,6 +1391,62 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
     std::printf("Native D32S8 publication samples=%u write=%u depthOnly=%u unmap=%u clear=%u checked\n", samples, static_cast<std::uint32_t>(write), depthOnly, static_cast<std::uint32_t>(unmap), static_cast<std::uint32_t>(clear));
 }
 
+void CheckDepthOnlyPublication(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{129u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes, true), metadata(65536u, true);
+    std::memset(memory.Data(), 0xa5, depthBytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    target.iterate256 = samples != 8u;
+    target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    const MultisampleTextureLayout depthLayout(TextureTileMode::kZ64KBX, 4u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> raster;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    const auto published = [&](float base) {
+        std::vector<std::byte> depth(depthBytes), htile(metadataBytes);
+        AgcDriver::GuestMemory::Read(target.address, depth);
+        AgcDriver::GuestMemory::Read(target.htileAddress, htile);
+        Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view, "a published native D32 owner was retired by its own publication");
+        std::vector<std::byte> expected(depthBytes, std::byte{0xa5});
+        for (std::uint32_t y = 0u; y < extent.height; ++y) {
+            for (std::uint32_t x = 0u; x < extent.width; ++x) {
+                for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+                    const float value = base + static_cast<float>(sample + 1u) / 16.0f;
+                    std::memcpy(expected.data() + depthLayout.Offset(x, y, 0u, sample), &value, 4u);
+                }
+            }
+        }
+        Require(depth == expected, "native D32 publication did not store every depth sample or changed padding");
+        for (std::size_t offset = 0u; offset < metadataBytes; offset += 4u) {
+            std::uint32_t word;
+            std::memcpy(&word, htile.data() + offset, 4u);
+            Require(word == 0xfffc000fu, "native D32 publication did not store expanded depth-only HTILE");
+        }
+    };
+    NoteDepthSurfaceWrite(context, target);
+    raster = std::make_unique<DepthRaster>(context, target, view);
+    raster->Run(recorder.Commands(), 0.25f);
+    recorder.Sync();
+    published(0.25f);
+    NoteDepthSurfaceWrite(context, target);
+    raster->Run(recorder.Commands(), 0.5f);
+    recorder.Sync();
+    published(0.5f);
+    std::printf("Native D32 publication samples=%u checked\n", samples);
+}
+
 std::array<std::uint32_t, 8> StencilSampleWords(const DepthTarget& target) {
     auto words = DepthSampleWords(target);
     const auto base = (target.stencilAddress | target.pipeBankXor) >> 8u;
@@ -3489,6 +3545,9 @@ int main(int argc, char** argv) {
             CheckDepthPublication(publishing, 4u, PublicationWrite::Completion, true);
             for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) CheckDepthOnlyPublication(publishing, samples);
+            }
             return 0;
         }
         CheckDrawFeedback();
