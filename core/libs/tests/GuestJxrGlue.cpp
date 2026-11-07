@@ -1,8 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceJxr/include/Api.hpp"
+#include "prx/libSceJxr/include/GuidExports.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
+#include <vector>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -11,6 +15,7 @@
 #include <stdexcept>
 
 extern "C" const void* GetPixelFormatFromHash(unsigned char hash);
+extern "C" std::size_t JxrTranscodeFixtureOverlapOffset();
 
 namespace {
 
@@ -22,6 +27,129 @@ std::size_t lastSize = 0;
 void* lastFreed = nullptr;
 int frees = 0;
 bool failCalloc = false;
+JxrGuestGuid transcodeFormat{};
+std::vector<int> transcodeOrder;
+std::int64_t copyResult = 0;
+std::int64_t writeResult = 0;
+std::int64_t transcodeResult = 0;
+std::int64_t sourceFormatResult = 0;
+std::int64_t targetFormatResult = 0;
+std::size_t copiedStride = 0;
+std::uint32_t writtenLines = 0;
+std::uint32_t writtenStride = 0;
+bool sawTranscodeParameters = false;
+void* expectedDecoder = nullptr;
+std::byte* encoderForMutation = nullptr;
+bool mutateWriteCallback = false;
+void Require(bool value);
+template <typename Function>
+std::uintptr_t FunctionAddress(Function function);
+std::int64_t APS5_VABI WritePixelsAfterMutation(void*, std::uint32_t, std::uint8_t*, std::uint32_t);
+
+std::int64_t APS5_VABI GetSourcePixelFormat(void*, JxrGuestGuid* format) {
+    transcodeOrder.push_back(1);
+    *format = transcodeFormat;
+    return sourceFormatResult;
+}
+
+std::int64_t APS5_VABI GetPixelFormat(void*, JxrGuestGuid* format) {
+    transcodeOrder.push_back(2);
+    *format = transcodeFormat;
+    return targetFormatResult;
+}
+
+std::int64_t APS5_VABI CopyPixels(void*, const void*, std::uint8_t* output, std::uint32_t stride) {
+    transcodeOrder.push_back(3);
+    copiedStride = stride;
+    std::memset(output, 0x5a, stride * 2);
+    if (mutateWriteCallback) {
+        const auto callback = FunctionAddress(&WritePixelsAfterMutation);
+        std::memcpy(encoderForMutation + 56, &callback, sizeof(callback));
+    }
+    return copyResult;
+}
+
+std::int64_t APS5_VABI WritePixels(void*, std::uint32_t lines, std::uint8_t* pixels, std::uint32_t stride) {
+    transcodeOrder.push_back(4);
+    writtenLines = lines;
+    writtenStride = stride;
+    for (std::size_t index = 0; index < static_cast<std::size_t>(lines) * stride; ++index)
+        Require(pixels[index] == 0x5a);
+    return writeResult;
+}
+
+std::int64_t APS5_VABI WritePixelsAfterMutation(void*, std::uint32_t lines, std::uint8_t* pixels, std::uint32_t stride) {
+    transcodeOrder.push_back(6);
+    writtenLines = lines;
+    writtenStride = stride;
+    for (std::size_t index = 0; index < static_cast<std::size_t>(lines) * stride; ++index)
+        Require(pixels[index] == 0x5a);
+    return 38;
+}
+
+struct TestTranscodingParam {
+    std::size_t leftX;
+    std::size_t width;
+    std::size_t topY;
+    std::size_t height;
+    std::int32_t bitstreamFormat;
+    std::uint8_t alphaMode;
+    std::uint8_t padding[3];
+    std::int32_t subband;
+    std::int32_t orientation;
+    std::int32_t ignoreOverlap;
+};
+
+static_assert(sizeof(TestTranscodingParam) == 56);
+
+std::int64_t APS5_VABI TranscodePixels(void*, void* decoder, void* parameter) {
+    transcodeOrder.push_back(5);
+    const auto* value = static_cast<const TestTranscodingParam*>(parameter);
+    sawTranscodeParameters = decoder == expectedDecoder && value->leftX == 11 && value->topY == 13 &&
+                             value->width == 17 && value->height == 19 && value->orientation == 3 &&
+                             value->alphaMode == 2 && value->bitstreamFormat == 4 && value->subband == 5 &&
+                             value->ignoreOverlap == 0x13579;
+    return transcodeResult;
+}
+
+template <typename T>
+void Store(std::byte* target, std::size_t offset, const T& value) {
+    std::memcpy(target + offset, &value, sizeof(value));
+}
+
+template <typename Function>
+std::uintptr_t FunctionAddress(Function function) {
+    return reinterpret_cast<std::uintptr_t>(function);
+}
+
+void PrepareTranscode(std::vector<std::byte>& encoder, std::vector<std::byte>& converter,
+                      std::vector<std::byte>& decoder, std::array<std::byte, 16>& rectangle, bool wmp) {
+    std::fill(encoder.begin(), encoder.end(), std::byte{0});
+    std::fill(converter.begin(), converter.end(), std::byte{0});
+    std::fill(decoder.begin(), decoder.end(), std::byte{0});
+    rectangle.fill(std::byte{0});
+    Store(encoder.data(), 136, transcodeFormat);
+    Store(encoder.data(), 152, std::uint32_t{3});
+    Store(encoder.data(), 520, static_cast<std::int32_t>(wmp));
+    Store(encoder.data(), 56, FunctionAddress(&WritePixels));
+    Store(encoder.data(), 96, FunctionAddress(&TranscodePixels));
+    Store(converter.data(), 16, FunctionAddress(&GetPixelFormat));
+    Store(converter.data(), 24, FunctionAddress(&GetSourcePixelFormat));
+    Store(converter.data(), 48, FunctionAddress(&CopyPixels));
+    Store(converter.data(), 72, reinterpret_cast<std::uintptr_t>(decoder.data()));
+    const std::int32_t dimensions[4] = {0, 0, 4, 2};
+    std::memcpy(rectangle.data(), dimensions, sizeof(dimensions));
+    Store(decoder.data(), 288, std::size_t{11});
+    Store(decoder.data(), 296, std::size_t{17});
+    Store(decoder.data(), 304, std::size_t{13});
+    Store(decoder.data(), 312, std::size_t{19});
+    Store(decoder.data(), 344, std::int32_t{3});
+    Store(decoder.data(), 388, std::int32_t{4});
+    Store(decoder.data(), 400, std::uint8_t{2});
+    Store(decoder.data(), 404, std::int32_t{5});
+    Store(decoder.data(), JxrTranscodeFixtureOverlapOffset(), std::int32_t{0x13579});
+    expectedDecoder = decoder.data();
+}
 
 void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free(void* pointer) {
@@ -188,6 +316,86 @@ void TestAlignedAllocation() {
     });
 }
 
+void TestTranscodeBuffered() {
+    std::vector<std::byte> encoder(262144);
+    std::vector<std::byte> converter(262144);
+    std::vector<std::byte> decoder(262144);
+    std::array<std::byte, 16> rectangle{};
+    transcodeFormat = JxrGuest_GUID_PKPixelFormat8bppGray_nid_no_patch;
+    PrepareTranscode(encoder, converter, decoder, rectangle, false);
+    transcodeOrder.clear();
+    copyResult = 0;
+    writeResult = 37;
+    sourceFormatResult = -121;
+    Require(PKImageEncode_Transcode_nid_postfix(nullptr, converter.data(), nullptr) == -121);
+    Require((transcodeOrder == std::vector<int>{1}));
+
+    transcodeOrder.clear();
+    sourceFormatResult = 0;
+    targetFormatResult = -122;
+    Require(PKImageEncode_Transcode_nid_postfix(nullptr, converter.data(), nullptr) == -122);
+    Require((transcodeOrder == std::vector<int>{1, 2}));
+
+    transcodeOrder.clear();
+    targetFormatResult = 0;
+    const auto freesBefore = frees;
+    Require(PKImageEncode_Transcode_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == 37);
+    Require((transcodeOrder == std::vector<int>{1, 2, 3, 4}));
+    Require(copiedStride == 4 && writtenStride == 4 && writtenLines == 2);
+    Require(frees == freesBefore + 1 && lastFreed != nullptr);
+
+    transcodeOrder.clear();
+    encoderForMutation = encoder.data();
+    mutateWriteCallback = true;
+    Require(PKImageEncode_Transcode_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == 38);
+    Require((transcodeOrder == std::vector<int>{1, 2, 3, 6}));
+    Require(frees == freesBefore + 2);
+    mutateWriteCallback = false;
+    encoderForMutation = nullptr;
+
+    transcodeOrder.clear();
+    copyResult = -123;
+    Require(PKImageEncode_Transcode_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == -123);
+    Require((transcodeOrder == std::vector<int>{1, 2, 3}));
+    Require(frees == freesBefore + 3);
+
+    auto incompatible = JxrGuest_GUID_PKPixelFormatBlackWhite_nid_no_patch;
+    Store(encoder.data(), 136, incompatible);
+    transcodeOrder.clear();
+    const auto mismatchFrees = frees;
+    Require(PKImageEncode_Transcode_nid_postfix(encoder.data(), converter.data(), nullptr) == -106);
+    Require((transcodeOrder == std::vector<int>{1, 2}));
+    Require(frees == mismatchFrees);
+    const std::array<std::pair<JxrGuestGuid, std::uint32_t>, 3> formats{{
+        {JxrGuest_GUID_PKPixelFormatBlackWhite_nid_no_patch, 1},
+        {JxrGuest_GUID_PKPixelFormat12bppYCC420_nid_no_patch, 12},
+        {JxrGuest_GUID_PKPixelFormat16bppYCC422_nid_no_patch, 8}}};
+    for (const auto& [format, expectedStride] : formats) {
+        transcodeFormat = format;
+        PrepareTranscode(encoder, converter, decoder, rectangle, false);
+        copyResult = 0;
+        writeResult = 0;
+        Require(PKImageEncode_Transcode_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == 0);
+        Require(copiedStride == expectedStride && writtenStride == expectedStride);
+    }
+
+}
+
+void TestTranscodeWmp() {
+    std::vector<std::byte> encoder(262144);
+    std::vector<std::byte> converter(262144);
+    std::vector<std::byte> decoder(262144);
+    std::array<std::byte, 16> rectangle{};
+    transcodeFormat = JxrGuest_GUID_PKPixelFormat8bppGray_nid_no_patch;
+    PrepareTranscode(encoder, converter, decoder, rectangle, true);
+    transcodeOrder.clear();
+    transcodeResult = 41;
+    sawTranscodeParameters = false;
+    Require(PKImageEncode_Transcode_nid_postfix(encoder.data(), converter.data(), rectangle.data()) == 41);
+    Require((transcodeOrder == std::vector<int>{1, 2, 5}));
+    Require(sawTranscodeParameters);
+}
+
 }
 
 int main() {
@@ -195,6 +403,8 @@ int main() {
     TestPixelFormatHash();
     TestImageIids();
     TestAlignedAllocation();
+    TestTranscodeBuffered();
+    TestTranscodeWmp();
     Require(IDPEmpty_nid_postfix(nullptr) == 0);
     int codec = 0;
     Require(IDPEmpty_nid_postfix(&codec) == 0 && codec == 0);
