@@ -225,6 +225,93 @@ static const char* GenericErrorMessage(int value) {
     return nullptr;
 }
 
+static const char* SceV2SyserrorMessage(int value) {
+    static constexpr CppError entries[] {
+        {0, "success"},
+        {47, "address family not supported"},
+        {48, "address in use"},
+        {49, "address not available"},
+        {56, "already connected"},
+        {7, "argument list too long"},
+        {33, "argument out of domain"},
+        {14, "bad address"},
+        {9, "bad file descriptor"},
+        {89, "bad message"},
+        {32, "broken pipe"},
+        {53, "connection aborted"},
+        {37, "connection already in progress"},
+        {61, "connection refused"},
+        {54, "connection reset"},
+        {18, "cross device link"},
+        {39, "destination address required"},
+        {16, "device or resource busy"},
+        {66, "directory not empty"},
+        {8, "executable format error"},
+        {17, "file exists"},
+        {27, "file too large"},
+        {63, "filename too long"},
+        {78, "function not supported"},
+        {65, "host unreachable"},
+        {82, "identifier removed"},
+        {86, "illegal byte sequence"},
+        {25, "inappropriate io control operation"},
+        {4, "interrupted"},
+        {22, "invalid argument"},
+        {29, "invalid seek"},
+        {5, "io error"},
+        {21, "is a directory"},
+        {40, "message size"},
+        {50, "network down"},
+        {52, "network reset"},
+        {51, "network unreachable"},
+        {55, "no buffer space"},
+        {10, "no child process"},
+        {91, "no link"},
+        {77, "no lock available"},
+        {1040, "no message available"},
+        {83, "no message"},
+        {42, "no protocol option"},
+        {28, "no space on device"},
+        {1050, "no stream resources"},
+        {6, "no such device or address"},
+        {19, "no such device"},
+        {2, "no such file or directory"},
+        {3, "no such process"},
+        {20, "not a directory"},
+        {38, "not a socket"},
+        {1051, "not a stream"},
+        {57, "not connected"},
+        {12, "not enough memory"},
+        {45, "not supported"},
+        {85, "operation canceled"},
+        {36, "operation in progress"},
+        {1, "operation not permitted"},
+        {45, "operation not supported"},
+        {35, "operation would block"},
+        {108, "owner dead"},
+        {13, "permission denied"},
+        {92, "protocol error"},
+        {43, "protocol not supported"},
+        {30, "read only file system"},
+        {11, "resource deadlock would occur"},
+        {35, "resource unavailable try again"},
+        {34, "result out of range"},
+        {107, "state not recoverable"},
+        {1074, "stream timeout"},
+        {26, "text file busy"},
+        {60, "timed out"},
+        {23, "too many files open in system"},
+        {24, "too many files open"},
+        {31, "too many links"},
+        {62, "too many symbolic link levels"},
+        {84, "value too large"},
+        {41, "wrong protocol type"}
+    };
+    for (const auto& entry : entries)
+        if (entry.value == value) return entry.message;
+    return nullptr;
+}
+
 const TypeRecord ErrorCategoryType {ClassTypeVtable + 2, "St14error_category", nullptr};
 const TypeRecord GenericCategoryType {SingleTypeVtable + 2, "St23_Generic_error_category", &ErrorCategoryType};
 const TypeRecord SystemCategoryType {SingleTypeVtable + 2, "St22_System_error_category", &ErrorCategoryType};
@@ -663,9 +750,11 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix() { return _Xtime_get_ticks_nid_postfix(); }
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value) {
-    if (value == 0) return "success";
-    const char* message = LibcException::GenericErrorMessage(value);
+    const char* message = LibcException::SceV2SyserrorMessage(value);
     return message ? message : "unknown error";
+}
+const char* APS5_VABI _ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(int value) {
+    return LibcException::SceV2SyserrorMessage(value);
 }
 LibcException::ClassTypeRecord _ZTISt14error_category_nid_postfix {LibcException::ClassTypeVtable + 2, "St14error_category"};
 LibcException::TypeRecord _ZTISt22_Future_error_category_nid_postfix {LibcException::SingleTypeVtable + 2, "St22_Future_error_category", &LibcException::GenericCategoryType};
