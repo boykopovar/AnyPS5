@@ -1,5 +1,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <chrono>
@@ -7,6 +12,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#ifndef _WIN32
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include <cerrno>
+#include <csignal>
+#include <pthread.h>
+#include <thread>
+#endif
 
 struct Timeval {
     std::int64_t seconds;
@@ -51,7 +63,101 @@ static bool Reads(int descriptor, int option, std::int64_t seconds, std::int64_t
         time.seconds == seconds && time.microseconds == microseconds;
 }
 
+#ifndef _WIN32
+static volatile std::sig_atomic_t nativeInterrupted = 0;
+
+static void RecordNativeInterrupt(int) {
+    nativeInterrupted = 1;
+}
+
+static void RetainedTimeoutWithInterrupts() {
+    int descriptors[2]{};
+    Require(socketpair_nid_postfix(1, 1, 0, descriptors) == 0);
+    Require(Set(descriptors[0], ReceiveTimeout, 0, 60000) == 0);
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    Require(KernelLookupSocketNative_nid_no_patch(descriptors[0], &owner, &native));
+    auto* transport = static_cast<KernelSocketPoll::NativeOwner*>(owner.get());
+    Require(transport != nullptr && transport->transfer != nullptr);
+    Require(close_nid_postfix(descriptors[0]) == 0);
+    struct sigaction action{};
+    action.sa_handler = RecordNativeInterrupt;
+    Require(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGUSR1, &action, nullptr) == 0);
+    sigset_t signal;
+    Require(sigemptyset(&signal) == 0 && sigaddset(&signal, SIGUSR1) == 0);
+    Require(pthread_sigmask(SIG_UNBLOCK, &signal, nullptr) == 0);
+    const auto thread = pthread_self();
+    std::jthread interrupts([thread](std::stop_token stop) {
+        for (int index = 0; index < 300 && !stop.stop_requested(); ++index) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            pthread_kill(thread, SIGUSR1);
+        }
+    });
+    char byte = 'x';
+    const auto started = Clock::now();
+    const int result = transport->transfer(transport, false, &byte, 1);
+    const int error = errno;
+    const auto elapsed = Clock::now() - started;
+    interrupts.request_stop();
+    interrupts.join();
+    Require(nativeInterrupted != 0 && result == -1 && error == EAGAIN && byte == 'x');
+    Require(elapsed >= std::chrono::milliseconds(59));
+    Require(elapsed < std::chrono::seconds(1));
+    Require(close_nid_postfix(descriptors[1]) == 0);
+}
+#endif
+
+#ifdef _WIN32
+struct ReuseReader {
+    int descriptor;
+    std::atomic<int> phase{-1};
+};
+
+static void* APS5_VABI ReadTwice(void* opaque) {
+    auto& reader = *static_cast<ReuseReader*>(opaque);
+    for (int attempt = 0; attempt != 2; ++attempt) {
+        reader.phase.store(attempt);
+        char byte = '?';
+        Require(recv_nid_postfix(reader.descriptor, &byte, 1, 0) == 1 && byte == 'x');
+    }
+    return nullptr;
+}
+
+static void TransferWakerReuse() {
+    const auto before = GuestSocketWakerCreationsForTest_nid_no_patch();
+    const int descriptor = socket_nid_postfix(2, 2, 0);
+    const int peer = socket_nid_postfix(2, 2, 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(descriptor >= 0 && peer >= 0 && bind_nid_postfix(descriptor, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(descriptor, address.data(), &size) == 0);
+    ReuseReader reader{descriptor};
+    Pthread thread{};
+    Require(scePthreadCreate(&thread, nullptr, ReadTwice, &reader, "waker-reuse") == 0);
+    for (int attempt = 0; attempt != 2; ++attempt) {
+        const auto deadline = Clock::now() + std::chrono::seconds(2);
+        for (;;) {
+            bool waiting;
+            {
+                std::lock_guard lock(thread->cancelLock);
+                waiting = reader.phase.load() == attempt && thread->cancelIo != nullptr;
+            }
+            if (waiting) break;
+            Require(Clock::now() < deadline);
+            std::this_thread::yield();
+        }
+        Require(GuestSocketWakerCreationsForTest_nid_no_patch() == before + 1);
+        Require(sendto_nid_postfix(peer, "x", 1, 0, address.data(), address.size()) == 1);
+    }
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(close_nid_postfix(peer) == 0 && close_nid_postfix(descriptor) == 0);
+}
+#endif
+
 int main() {
+#ifdef _WIN32
+    TransferWakerReuse();
+#endif
     const int datagram = socket_nid_postfix(2, 2, 0);
     std::array<std::uint8_t, 16> own{16, 2, 0, 0, 127, 0, 0, 1};
     Require(datagram >= 0 && bind_nid_postfix(datagram, own.data(), own.size()) == 0);
@@ -129,5 +235,8 @@ int main() {
 
     Require(close_nid_postfix(server) == 0 && close_nid_postfix(client) == 0);
     Require(close_nid_postfix(listener) == 0 && close_nid_postfix(datagram) == 0);
+#ifndef _WIN32
+    RetainedTimeoutWithInterrupts();
+#endif
     return 0;
 }
