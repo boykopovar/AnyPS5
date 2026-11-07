@@ -460,7 +460,7 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, st
     (void)peerPort;
     std::lock_guard lock(matching2Mutex);
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
-    if (!connStatus) NotImplemented_nid_no_patch(__func__);
+    if (!connStatus) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (const int error = CheckContext(ctxId)) return error;
     *connStatus = SCE_NP_SIGNALING_CONN_STATUS_INACTIVE;
     return 0;
