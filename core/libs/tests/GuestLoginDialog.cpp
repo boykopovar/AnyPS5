@@ -1,7 +1,9 @@
 #include "prx/libSceLoginDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <thread>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 
 namespace {
@@ -16,6 +18,28 @@ constexpr int kErrAlreadyInitialized = static_cast<int>(0x81340002);
 constexpr int kErrNotFinished = static_cast<int>(0x81340005);
 constexpr int kErrArgNull = static_cast<int>(0x81340003);
 constexpr int kResultUserCanceled = 1;
+constexpr int kRaceRounds = 200000;
+
+template <typename Finish>
+void RequireTerminateWins(Finish finish) {
+    std::atomic<int> round{0};
+    std::atomic<int> done{0};
+    std::thread terminator([&] {
+        for (int i = 1; i <= kRaceRounds; ++i) {
+            while (round.load() != i) std::this_thread::yield();
+            sceLoginDialogTerminate();
+            done.fetch_add(1);
+        }
+    });
+    for (int i = 1; i <= kRaceRounds; ++i) {
+        Require(sceLoginDialogInitialize() == 0);
+        round.store(i);
+        finish();
+        while (done.load() != i) std::this_thread::yield();
+        Require(sceLoginDialogGetStatus() == kStatusNone);
+    }
+    terminator.join();
+}
 
 }
 
@@ -107,4 +131,7 @@ int main() {
     Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
     Require(sceLoginDialogGetStatus() == kStatusNone);
     Require(sceLoginDialogUpdateStatus() == kStatusNone);
+
+    RequireTerminateWins([&] { sceLoginDialogOpen(&param); });
+    RequireTerminateWins([] { sceLoginDialogClose(); });
 }

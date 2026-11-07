@@ -1,7 +1,8 @@
-add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyParam.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjCmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Extensions.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp)
+add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509PubkeyParam.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjCmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Extensions.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Validity.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Object.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyComponents.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl libc)
 configure_windows_unwind(libSceLibreSsl3)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Ssl.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509.cpp)
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Stack.cpp)
@@ -11,10 +12,34 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Verif
 if(WIN32)
     target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ParentExports.cpp)
 endif()
-target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyGetters.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyGetters.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyLifecycle.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LibTls.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestNames.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_libtls_settings_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTlsSettings.cpp)
+    target_include_directories(guest_libressl3_libtls_settings_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_libtls_settings_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_libtls_settings_tests)
+    add_test(NAME guest_libressl3_libtls_settings COMMAND guest_libressl3_libtls_settings_tests)
+    set_tests_properties(guest_libressl3_libtls_settings PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_libtls_settings PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
+    add_test_executable(guest_libressl3_libtls_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTls.cpp)
+    target_include_directories(guest_libressl3_libtls_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_libtls_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_libtls_tests)
+    add_test(NAME guest_libressl3_libtls COMMAND guest_libressl3_libtls_tests)
+    set_tests_properties(guest_libressl3_libtls PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_libtls PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
     add_test_executable(guest_libressl3_time_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Time.cpp)
     target_include_directories(guest_libressl3_time_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl3_time_tests PRIVATE libSceLibreSsl3)
@@ -23,6 +48,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_time PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_libressl3_time PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+    add_test_executable(guest_libressl3_digest_names_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DigestNames.cpp)
+    target_include_directories(guest_libressl3_digest_names_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_digest_names_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc mbedcrypto)
+    configure_windows_unwind(guest_libressl3_digest_names_tests)
+    add_test(NAME guest_libressl3_digest_names COMMAND guest_libressl3_digest_names_tests)
+    set_tests_properties(guest_libressl3_digest_names PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_digest_names PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
     add_test_executable(guest_libressl3_pkey_getters_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyGetters.cpp)
@@ -60,6 +95,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_rsa_getters PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
+    add_test_executable(guest_libressl3_asn1_object_tests src/Asn1Object.cpp tests/Asn1Object.cpp)
+    target_include_directories(guest_libressl3_asn1_object_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_asn1_object_tests PRIVATE libc)
+    configure_windows_unwind(guest_libressl3_asn1_object_tests)
+    add_test(NAME guest_libressl3_asn1_object COMMAND guest_libressl3_asn1_object_tests)
+    set_tests_properties(guest_libressl3_asn1_object PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_asn1_object PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_crypto_memcmp_tests ${LIBS_INCLUDE_DIR}/tests/GuestCryptoMemcmp.cpp)
     target_include_directories(guest_crypto_memcmp_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_crypto_memcmp_tests PRIVATE libSceLibreSsl3)
@@ -127,8 +173,24 @@ if(BUILD_TESTING)
     target_include_directories(guest_libressl3_key_reference_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl3_key_reference_tests PRIVATE libSceLibreSsl3 libSceLibreSsl mbedcrypto)
     configure_windows_unwind(guest_libressl3_key_reference_tests)
+    add_test(NAME guest_libressl3_pkey_bits COMMAND guest_libressl3_key_reference_tests bits)
+    set_tests_properties(guest_libressl3_pkey_bits PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_pkey_bits PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
     add_test(NAME guest_libressl3_key_reference COMMAND guest_libressl3_key_reference_tests)
     set_tests_properties(guest_libressl3_key_reference PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_libressl3_ssl_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3Ssl.cpp)
+    target_include_directories(guest_libressl3_ssl_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ssl_tests PRIVATE libSceLibreSsl3 libSceLibreSsl)
+    configure_windows_unwind(guest_libressl3_ssl_tests)
+    add_test(NAME guest_libressl3_ssl COMMAND guest_libressl3_ssl_tests)
+    set_tests_properties(guest_libressl3_ssl PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ssl PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
     add_test_executable(guest_libressl3_evp_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3Evp.cpp)
     target_include_directories(guest_libressl3_evp_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl3_evp_tests PRIVATE libSceLibreSsl3 libc)
@@ -167,6 +229,36 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_x509_extensions PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+
+    add_test_executable(guest_libressl3_key_components_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3KeyComponents.cpp)
+    target_include_directories(guest_libressl3_key_components_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_key_components_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_key_components_tests)
+    add_test(NAME guest_libressl3_key_components COMMAND guest_libressl3_key_components_tests)
+    set_tests_properties(guest_libressl3_key_components PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_key_components PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(libressl3_import_binding_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ImportBinding.cpp)
+        add_dependencies(libressl3_import_binding_tests libs)
+        target_link_libraries(libressl3_import_binding_tests PRIVATE ${CMAKE_DL_LIBS})
+        add_test(NAME libressl3_import_binding COMMAND libressl3_import_binding_tests ${PATCHED_DIR})
+        set_tests_properties(libressl3_import_binding PROPERTIES TIMEOUT 20)
+    endif()
+
+    add_test_executable(guest_libressl3_x509_validity_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3X509Validity.cpp)
+    target_include_directories(guest_libressl3_x509_validity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_validity_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_x509_validity_tests)
+    add_test(NAME guest_libressl3_x509_validity COMMAND guest_libressl3_x509_validity_tests)
+    set_tests_properties(guest_libressl3_x509_validity PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_validity PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
 endif()
 
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLUDE_DIR}/prx/libSceLibreSsl/src/Evp.cpp")
@@ -178,17 +270,101 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
     add_dependencies(guest_libressl3_mixed_evp_consumer libSceLibreSsl3)
     add_test_executable(guest_libressl3_mixed_evp_loader ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3MixedLoader.cpp)
     target_link_libraries(guest_libressl3_mixed_evp_loader PRIVATE ${CMAKE_DL_LIBS})
-    add_dependencies(guest_libressl3_mixed_evp_loader guest_libressl3_mixed_evp_consumer libc libkernel libSceLibcInternal nid_patcher)
+    add_dependencies(guest_libressl3_mixed_evp_loader guest_libressl3_mixed_evp_consumer libc libkernel libSceLibcInternal libSceLibreSsl libSceNet libSceNetCtl nid_patcher)
     add_test(NAME guest_libressl3_mixed_evp COMMAND ${CMAKE_COMMAND}
         -DCONSUMER=$<TARGET_FILE:guest_libressl3_mixed_evp_consumer>
         -DPATCHER=$<TARGET_FILE:nid_patcher>
         -DLIBC=$<TARGET_FILE:libc>
         -DKERNEL=$<TARGET_FILE:libkernel>
         -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
+        -DNETCTL=$<TARGET_FILE:libSceNetCtl>
+        -DNET=$<TARGET_FILE:libSceNet>
         -DLEGACY=$<TARGET_FILE:libSceLibreSsl>
         -DSSL3=$<TARGET_FILE:libSceLibreSsl3>
         -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/mixed-evp
         -P ${LIBS_INCLUDE_DIR}/tests/LibreSsl3MixedEvp.cmake
         -- $<TARGET_FILE:guest_libressl3_mixed_evp_loader>)
     set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SessionMetadata.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_session_metadata_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SessionMetadata.cpp)
+    target_include_directories(guest_libressl3_session_metadata_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_session_metadata_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_session_metadata_tests)
+    add_test(NAME guest_libressl3_session_metadata COMMAND guest_libressl3_session_metadata_tests)
+    set_tests_properties(guest_libressl3_session_metadata PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_session_metadata PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/TlsProtocols.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_tls_protocols_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/TlsProtocols.cpp)
+    target_include_directories(guest_libressl3_tls_protocols_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_tls_protocols_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_tls_protocols_tests)
+    add_test(NAME guest_libressl3_tls_protocols COMMAND guest_libressl3_tls_protocols_tests)
+    set_tests_properties(guest_libressl3_tls_protocols PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_tls_protocols PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RsaSetters.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_rsa_setters_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/RsaSetters.cpp)
+    target_include_directories(guest_libressl3_rsa_setters_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_rsa_setters_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_rsa_setters_tests)
+    add_test(NAME guest_libressl3_rsa_setters COMMAND guest_libressl3_rsa_setters_tests)
+    set_tests_properties(guest_libressl3_rsa_setters PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_rsa_setters PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PkeyQueries.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_pkey_queries_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyQueries.cpp)
+    target_include_directories(guest_libressl3_pkey_queries_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_pkey_queries_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_pkey_queries_tests)
+    add_test(NAME guest_libressl3_pkey_queries COMMAND guest_libressl3_pkey_queries_tests)
+    set_tests_properties(guest_libressl3_pkey_queries PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_pkey_queries PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(pkeyLifecycleDirectory ${CMAKE_CURRENT_BINARY_DIR}/pkey-lifecycle-libs)
+    add_custom_target(libressl3_pkey_lifecycle_modules
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${pkeyLifecycleDirectory}
+        COMMAND $<TARGET_FILE:nid_patcher> --write-export-list $<TARGET_FILE:libc> ${pkeyLifecycleDirectory}/libc.exports
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libc> ${pkeyLifecycleDirectory}/libc.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libc ${pkeyLifecycleDirectory}/libc.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libkernel> ${pkeyLifecycleDirectory}/libkernel.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libkernel --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libkernel.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceNetCtl> ${pkeyLifecycleDirectory}/libSceNetCtl.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceNetCtl --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceNetCtl.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceNet> ${pkeyLifecycleDirectory}/libSceNet.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceNet --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceNet.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceLibreSsl> ${pkeyLifecycleDirectory}/libSceLibreSsl.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceLibreSsl --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceLibreSsl.prx
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libSceLibreSsl3> ${pkeyLifecycleDirectory}/libSceLibreSsl3.prx
+        COMMAND $<TARGET_FILE:nid_patcher> libSceLibreSsl3 --preserve-export-list ${pkeyLifecycleDirectory}/libc.exports ${pkeyLifecycleDirectory}/libSceLibreSsl3.prx
+        DEPENDS nid_patcher libc libkernel libSceNetCtl libSceNet libSceLibreSsl libSceLibreSsl3
+        VERBATIM)
+    add_test_executable(guest_libressl3_pkey_lifecycle_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyLifecycle.cpp)
+    add_dependencies(guest_libressl3_pkey_lifecycle_tests libressl3_pkey_lifecycle_modules)
+    target_link_libraries(guest_libressl3_pkey_lifecycle_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME guest_libressl3_pkey_lifecycle COMMAND guest_libressl3_pkey_lifecycle_tests ${pkeyLifecycleDirectory})
+    set_tests_properties(guest_libressl3_pkey_lifecycle PROPERTIES TIMEOUT 20)
 endif()
