@@ -140,11 +140,13 @@ public:
     static DrawFinisher& Get();
     static bool Enabled();
     static bool OnFinisherThread();
+    static unsigned Finishers();
     static bool Busy() { return outstanding.load(std::memory_order_acquire) != 0; }
     void Enqueue(Job job);
     void Enqueue(Job job, Pending held);
     void Drain();
     void Settle();
+    void Stop();
     void ReleaseRan();
 
 private:
@@ -160,6 +162,7 @@ private:
     std::exception_ptr failure;
     bool running = false;
     bool sleeping = false;
+    bool closing = false;
     std::thread thread;
 };
 
