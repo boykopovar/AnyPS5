@@ -136,6 +136,7 @@ struct AudioOut2Context {
 };
 
 AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);
+void AudioOut2DestroyAllContexts();
 
 // Mixes every port of the context that carries PCM data into out (stereo float, frames frames), summing
 // onto the zeroed buffer. Returns the number of ports mixed.
