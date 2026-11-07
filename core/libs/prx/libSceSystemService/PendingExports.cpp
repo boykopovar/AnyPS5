@@ -1797,8 +1797,7 @@ int APS5_VABI sceSystemServiceGetTitleWorkaroundInfo(SystemServiceTitleWorkaroun
 }
 
 int APS5_VABI sceSystemServiceGetUIStatus(std::uint64_t* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilGetUIStatus(status);
 }
 
 int APS5_VABI sceSystemServiceGetVersionNumberOfCameraCalibrationData() {
@@ -1817,8 +1816,7 @@ int APS5_VABI sceSystemServiceInvokeAppLaunchLink(const char* uri) {
 }
 
 bool APS5_VABI sceSystemServiceIsBgmCpuBudgetAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilIsBgmCpuBudgetAvailable();
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcess(std::int32_t appId, std::int32_t processId) {
@@ -1869,8 +1867,7 @@ int APS5_VABI sceSystemServiceLoadExecVideoServiceWebApp() {
 }
 
 int APS5_VABI sceSystemServiceNavigateToAnotherApp(std::uint32_t target) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilNavigateToAnotherApp(target);
 }
 
 int APS5_VABI sceSystemServiceNavigateToGoBack() {
@@ -1884,8 +1881,7 @@ int APS5_VABI sceSystemServiceNavigateToGoBackWithValue(const char* value) {
 }
 
 int APS5_VABI sceSystemServiceNavigateToGoHome(std::uint32_t target) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceShellCoreUtilNavigateToGoHome(target);
 }
 
 int APS5_VABI sceSystemServiceNotifyBgmCoreTermination() {
@@ -1948,8 +1944,7 @@ int APS5_VABI sceSystemServiceSaveVideoToken(std::int32_t userId, const char* to
 }
 
 int APS5_VABI sceSystemServiceSetControllerFocusPermission(std::uint8_t permission) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilSetControllerFocusPermission(permission);
 }
 
 int APS5_VABI sceSystemServiceSetOutOfVrPlayAreaFlag(std::uint8_t flag) {
