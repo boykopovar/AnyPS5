@@ -66,6 +66,7 @@ bool isLaneLocal(IrOpcode opcode) {
         case IrOpcode::PackFloat2x16Rtz:
         case IrOpcode::FPAdd16x2:
         case IrOpcode::FPMul16x2:
+        case IrOpcode::FPFma16x2:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:

@@ -28,6 +28,7 @@
 #include <shared_mutex>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -226,6 +227,7 @@ struct DepthSamplingState {
     std::string refusal;
     std::optional<std::uint8_t> aliasStencil;
     std::optional<MultisampleColorAlias> unprovenStencil;
+    std::optional<MultisampleColorAlias> depthAlias;
 
     void Refuse(const char* reason) {
         if (refusal.empty()) refusal = reason;
@@ -234,6 +236,21 @@ struct DepthSamplingState {
 
 constexpr const char* stencilAliasRefusal = "native multisample stencil plane aliases a multisampled colour target whose samples are only on the host";
 constexpr const char* depthAliasRefusal = "native multisample depth or HTILE aliases a multisampled colour target whose samples are only on the host";
+
+std::optional<MultisampleColorAlias> soleDepthAlias(const GuestMemory::UnchangedQuery& plane, std::uint32_t samples) {
+    const auto aliases = MultisampleColorTargetsOver(plane.address, plane.bytes);
+    if (aliases.size() != 1u || aliases.front().samples != samples || aliases.front().active == nullptr) return std::nullopt;
+    return aliases.front();
+}
+
+bool sameDepthAlias(const MultisampleColorAlias& recorded, const GuestMemory::UnchangedQuery& plane) {
+    const auto aliases = MultisampleColorTargetsOver(plane.address, plane.bytes);
+    if (aliases.size() != 1u) return false;
+    const auto& current = aliases.front();
+    const auto sameValue = recorded.value.has_value() == current.value.has_value() && (!recorded.value || std::memcmp(&*recorded.value, &*current.value, sizeof(VkClearColorValue)) == 0);
+    const bool refilled = recorded.newest == MultisampleColorContent::Clear && current.newest == MultisampleColorContent::Fill && current.fills > recorded.fills && current.fills - recorded.fills == current.sameRun && current.filledBytes >= current.bytes;
+    return current.active == recorded.active && current.contents == recorded.contents && (current.newest == recorded.newest || refilled) && (current.fills == recorded.fills || refilled) && sameValue;
+}
 
 std::optional<std::uint8_t> aliasedStencil(const MultisampleColorAlias& alias, const GuestMemory::UnchangedQuery& plane, std::uint32_t samples) {
     const bool r8 = alias.format == VK_FORMAT_R8_UNORM || alias.format == VK_FORMAT_R8_UINT;
@@ -373,6 +390,13 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         const auto& range = state.initial[index];
         const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
         if (!alias) continue;
+        if (index == 0u) {
+            if (const auto sole = soleDepthAlias(range, target.samples)) {
+                reportAlias(*sole, range, "depth");
+                state.depthAlias = sole;
+                continue;
+            }
+        }
         const auto value = index == 2u && stencilPlane ? aliasedStencil(*alias, range, target.samples) : std::nullopt;
         if (!value) {
             reportAlias(*alias, range, index == 2u ? "stencil plane" : index == 1u ? "HTILE" : "depth");
@@ -644,6 +668,7 @@ public:
             GuestMemory::CollectWritesUncached(range.address, range.bytes);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
             if (!alias || (index == 2u && sampling.unprovenStencil && stencilClearGeneration == 0u)) continue;
+            if (index == 0u && sampling.depthAlias && sameDepthAlias(*sampling.depthAlias, range)) continue;
             const auto value = index == 2u && separatePlane ? aliasedStencil(*alias, range, target.samples) : std::nullopt;
             const bool kept = value.has_value() && (stencilClearGeneration != 0u ? *value == *stencilClearValue : value == sampling.aliasStencil);
             const bool stencilRange = index == 2u || (index == 1u && uniformPlaneTarget(target));
@@ -1126,6 +1151,26 @@ public:
         return false;
     }
 
+    void TakeStencilStorage() {
+        if (target.samples != 1 || target.stencilAddress == 0) return;
+        const auto writes = StorageTexture::EightBitWrites();
+        if (writes == stencilWritesSeen) return;
+        stencilWritesSeen = writes;
+        const auto bytes = DepthSliceBytes(target.extent, 1u);
+        auto storage = StorageTexture::FindPending(target.stencilAddress, bytes);
+        if (storage == nullptr || storage == stencilMirror.storage || storage->Device() != context.device) return;
+        const auto& described = storage->Descriptor();
+        const auto format = ResolveTextureFormat(described.format);
+        if (described.baseAddress != target.stencilAddress || described.width != target.extent.width || described.height != target.extent.height || (format != VK_FORMAT_R8_UINT && format != VK_FORMAT_R8_UNORM)) return;
+        if (stencilTaken.lock() == storage && stencilTakenVersion == storage->Version()) return;
+        storage->Refresh();
+        copyPlane(stencilPlane, storage, true, false, Recorder::Active() == nullptr);
+        stencilTaken = storage;
+        stencilTakenVersion = storage->Version();
+        written = ++depthWrites;
+        NoteHostWrite();
+    }
+
     void TakeStorage() {
         if (target.samples != 1 || hostFormat != target.format) return;
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
@@ -1449,6 +1494,7 @@ public:
     std::optional<std::uint32_t> clearPattern;
     std::uint64_t clearFillNote = 0u;
     std::uint64_t clearFillFloor = 0u;
+    std::uint64_t clearStoreStamp = 0u;
     bool clearStored = false;
     std::uint64_t stencilClearGeneration = 0u;
     std::optional<std::uint8_t> stencilClearValue;
@@ -1544,6 +1590,9 @@ private:
     std::shared_ptr<FirstSampleTextures> firstSample;
     PlaneStorage depthPlane;
     PlaneStorage stencilPlane;
+    std::weak_ptr<StorageTexture> stencilTaken;
+    std::uint64_t stencilTakenVersion = 0;
+    std::uint64_t stencilWritesSeen = 0;
     std::uint64_t depthMemory = 0;
     std::uint64_t stencilMemory = 0;
     StencilCopy stencilCopy;
@@ -1565,16 +1614,11 @@ private:
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage sampled depth shadow");
-            VkMemoryRequirements requirements{};
-            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            allocation.allocationSize = requirements.size;
-            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(MemoryAccounting::Allocate(context, allocation, "sampled depth shadow", &memory), "vkAllocateMemory sampled depth shadow");
-            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory sampled depth shadow");
-            sampleShadow = std::make_shared<OwnedImage>(context, image, memory);
+            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
             image = VK_NULL_HANDLE;
-            memory = VK_NULL_HANDLE;
+            owned->Allocate(context, info, "vkAllocateMemory sampled depth shadow");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, owned->image, owned->allocation.Memory(), owned->allocation.Offset()), "vkBindImageMemory sampled depth shadow");
+            sampleShadow = std::move(owned);
             auto* recorder = RecorderFor(context);
             if (recorder != nullptr) recorder->Keep(sampleShadow);
             std::unique_ptr<CommandBatch> batch;
@@ -1866,15 +1910,10 @@ public:
         try {
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage depth plane copy");
             owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-            VkMemoryRequirements requirements{};
-            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            allocation.allocationSize = requirements.size;
-            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory depth plane copy");
-            memory = owned->memory;
-            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory depth plane copy");
-            imageBytes = requirements.size;
+            owned->Allocate(context, info, "vkAllocateMemory depth plane copy");
+            memory = owned->allocation.Memory();
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, owned->allocation.Offset()), "vkBindImageMemory depth plane copy");
+            imageBytes = owned->memoryBytes;
         } catch (...) {
             release();
             throw;
@@ -2295,16 +2334,20 @@ DepthSurface* drawnDepth = nullptr;
 std::atomic<std::uint64_t> surfacesSerial{0};
 std::atomic<std::uint64_t> surfacesReleased{0};
 
+void retire(DepthSurface& surface);
+
 void releaseRetired(const Context& context) {
     auto* recorder = Recorder::Active();
     if (recorder != nullptr && recorder->Device() != context.device) return;
     auto& list = surfaces();
     for (auto it = list.begin(); it != list.end();) {
-        const auto& surface = **it;
-        if (!surface.retired || surface.context.device != context.device || surface.target.samples != 1u || surface.SampledElsewhere()) {
+        auto& surface = **it;
+        const bool nativeReleased = surface.target.samples != 1u && !surface.active->load(std::memory_order_acquire) && !surface.hostWritten->load(std::memory_order_acquire);
+        if ((!surface.retired && !nativeReleased) || surface.context.device != context.device || (surface.target.samples != 1u && !nativeReleased) || surface.SampledElsewhere()) {
             ++it;
             continue;
         }
+        if (!surface.retired) retire(surface);
         if (drawnDepth == &surface) drawnDepth = nullptr;
         std::shared_ptr<DepthSurface> released = std::move(*it);
         it = list.erase(it);
@@ -2976,6 +3019,15 @@ bool HasResidentDepthGuards_nid_no_patch() {
     return anyDepthGuard().load(std::memory_order_acquire);
 }
 
+bool ResidentDepthGuardOverlaps_nid_no_patch(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0u || !anyDepthGuard().load(std::memory_order_acquire)) return false;
+    Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth overlap range overflows");
+    std::shared_lock lock(depthGuardMutex());
+    return std::ranges::any_of(depthGuards(), [&](const DepthGuard& range) {
+        return range.active->load(std::memory_order_acquire) && address < range.address + range.bytes && range.address < address + bytes;
+    });
+}
+
 void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
     if (bytes == 0u) return;
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth release range overflows");
@@ -3115,6 +3167,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
     if (!created) surface->NoteHtileClear(htileCleared);
     if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
     if (surface->StencilMirrorable()) surface->SyncStencilFromMemory(stencilResource(target));
+    surface->TakeStencilStorage();
     surface->ApplyFastClear();
     if (stencilTested && surface->samplingActive) surface->RequireStencilProven();
     if (drawnDepth != nullptr && drawnDepth != surface) drawnDepth->written = ++depthWrites;
@@ -3537,6 +3590,14 @@ void ClearDepthSurfaces(VkDevice device) {
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
+std::optional<VkExtent2D> ActiveDepthExtent(VkDevice device, std::uint64_t address) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (surface->active->load(std::memory_order_acquire) && surface->context.device == device && !surface->retired && surface->target.address == address && surface->target.samples == 1u) return surface->target.extent;
+    }
+    return std::nullopt;
+}
+
 std::size_t DepthPlaneCopyCount() {
     return planeCopies().size();
 }
@@ -3709,6 +3770,17 @@ std::optional<float> DepthFillValue(std::uint32_t pattern, bool d16) {
     return value;
 }
 
+namespace {
+
+std::optional<float> planeFillDepth(const DepthTarget& target, std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    if (target.samples != 1u || HtileFillCovers(target.htileAddress, target.extent, address, bytes)) return std::nullopt;
+    const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+    if (!PlaneFillCovers(target.address, DepthSliceBytes(target.extent, d16 ? 2u : 4u), address, bytes)) return std::nullopt;
+    return DepthFillValue(pattern, d16);
+}
+
+}
+
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
@@ -3747,13 +3819,20 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             else {
                 const auto* recorder = RecorderFor(surface->context);
                 const auto refill = surface->clearGeneration != 0u && surface->clearPattern == pattern && surface->clearFillNote == 0u && recorder != nullptr ? fillNoteAfter(*recorder, metadata, surface->clearFillFloor, pattern) : 0u;
+                const auto sameStored = [&] {
+                    if (surface->clearGeneration == 0u || surface->clearPattern != pattern) return false;
+                    std::vector<std::uint32_t> words(metadata.bytes / sizeof(std::uint32_t));
+                    std::memcpy(words.data(), reinterpret_cast<const void*>(metadata.address), metadata.bytes);
+                    return std::all_of(words.begin(), words.end(), [&](std::uint32_t word) { return word == pattern; }) && GuestMemory::NewestStamp(metadata.address, metadata.bytes) > surface->clearStoreStamp;
+                };
                 if (surface->clearPending || (surface->clearGeneration != 0u && !surface->clearPattern.has_value())) surface->sampling.Refuse("native multisample depth metadata fill over a pending HTILE clear dispatch is not implemented");
-                else if (surface->clearGeneration != 0u && refill == 0u) surface->sampling.Refuse("overlapping native multisample depth clear transitions are not implemented");
+                else if (surface->clearGeneration != 0u && refill == 0u && !sameStored()) surface->sampling.Refuse("overlapping native multisample depth clear transitions are not implemented");
                 else if (refill != 0u) surface->clearFillNote = refill;
                 else {
                     surface->clearGeneration = GuestMemory::CollectWritesUncached(metadata.address, metadata.bytes);
                     surface->clearAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
                     surface->clearPattern = pattern;
+                    surface->clearStoreStamp = GuestMemory::NewestStamp(metadata.address, metadata.bytes);
                     surface->clearFillNote = recorder != nullptr ? recorder->LastWriteNote(address, bytes) : 0u;
                     surface->clearFillFloor = recorder != nullptr ? recorder->NewestWriteNote(metadata.address, metadata.bytes) : 0u;
                     surface->clearStored = GuestMemory::StoredAllSince_nid_no_patch(metadata.address, metadata.bytes, metadata.generation);
@@ -3769,14 +3848,37 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
             continue;
         }
         if (target.samples != 1) continue;
-        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-        if (PlaneFillCovers(target.address, DepthSliceBytes(target.extent, d16 ? 2u : 4u), address, bytes)) {
-            if (const auto depth = DepthFillValue(pattern, d16)) surface->NotePlaneFill(VK_IMAGE_ASPECT_DEPTH_BIT, *depth, 0);
-        }
+        if (const auto depth = planeFillDepth(target, address, bytes, pattern)) surface->NotePlaneFill(VK_IMAGE_ASPECT_DEPTH_BIT, *depth, 0);
         if (PlaneFillCovers(target.stencilAddress, DepthSliceBytes(target.extent, 1u), address, bytes)) {
             if (const auto stencil = StencilFillValue(pattern)) surface->NotePlaneFill(VK_IMAGE_ASPECT_STENCIL_BIT, 0.0f, *stencil);
         }
     }
+}
+
+std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    if (bytes == 0 || !overlapsStalePlane(address, address + bytes)) return 0;
+    std::lock_guard lock(surfacesMutex());
+    std::size_t discarded = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
+    for (const auto& surface : surfaces()) {
+        if (surface->stencilStale) remaining.push_back(staleStencilRange(*surface));
+        if (!surface->AnyStale()) continue;
+        const auto& target = surface->target;
+        const auto plane = stalePlaneRange(*surface);
+        const auto depth = surface->active->load(std::memory_order_acquire) ? planeFillDepth(target, address, bytes, pattern) : std::nullopt;
+        if (!surface->syncing && depth.has_value() && PlaneFillCovers(plane.first, plane.second - plane.first, address, bytes)) {
+            surface->ClearStale();
+            surface->NotePlaneFill(VK_IMAGE_ASPECT_DEPTH_BIT, *depth, 0);
+            ++discarded;
+        }
+        if (surface->AnyStale()) remaining.push_back(plane);
+    }
+    if (discarded == 0) return 0;
+    auto& planes = stalePlanes();
+    std::lock_guard staleLock(planes.mutex);
+    planes.ranges = std::move(remaining);
+    publishStaleHull(planes);
+    return discarded;
 }
 
 void NoteDepthRenderControl(const DepthRenderControl& draw) {

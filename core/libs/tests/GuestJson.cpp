@@ -284,14 +284,8 @@ static void ObjectsAndArrays() {
     _ZN3sce4Json5Array9pop_frontEv(&copy);
 
     Require(_ZNK3sce4Json5Array5emptyEv(&copy));
-    bool threw = false;
-    try {
-        _ZN3sce4Json5Array9pop_frontEv(&copy);
-
-    } catch (const std::out_of_range&) {
-        threw = true;
-    }
-    Require(threw && _ZNK3sce4Json5Array5emptyEv(&copy));
+    _ZN3sce4Json5Array9pop_frontEv(&copy);
+    Require(_ZNK3sce4Json5Array5emptyEv(&copy) && _ZNK3sce4Json5Array4sizeEv(&copy) == 0);
     _ZN3sce4Json5Array8iteratorD1Ev(&arrayIt);
     _ZN3sce4Json5Array8iteratorD1Ev(&arrayEnd);
     _ZN3sce4Json5ArrayD1Ev(&copy);
