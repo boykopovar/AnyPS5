@@ -177,6 +177,7 @@ def relocation_overlap(relinker, work):
                 assert result.returncode == 0, (kind, result.stdout, result.stderr)
 
     image = bytearray(importing())
+    struct.pack_into("<I", image, 64 + 4, 7)
     struct.pack_into("<qQ", image, DYNAMIC + 5 * 16, 8, 24)
     address = 0x4d00
     struct.pack_into("<QQq", image, 0x4700, address, 8, 0x4000)
