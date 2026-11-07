@@ -269,6 +269,22 @@ static void UnlockThroughStats(int context, Unlocks& unlocks) {
             Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(player, "steps", steps) == 0, "steps was not set");
         });
     };
+    Post(uds, "STEPS", [](NpUniversalDataSystemEventPropertyObject* properties) {
+        Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "player.steps", 5) == 0, "a literal dotted key was not set");
+    });
+    Require(!Trophy(context, 5).unlocked && Trophy(context, 5).progress.value == 2,
+            "a literal dotted key updated a nested statistic or unlocked its trophy");
+    for (const bool literalFirst : {false, true}) {
+        Post(uds, "STEPS", [literalFirst](NpUniversalDataSystemEventPropertyObject* properties) {
+            if (literalFirst) Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "player.steps", 5) == 0, "a literal dotted key was not set first");
+            NpUniversalDataSystemEventPropertyObject* player = nullptr;
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetObject(properties, "player", nullptr, &player) == 0, "player was not set");
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(player, "steps", 3) == 0, "nested steps were not set");
+            if (!literalFirst) Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "player.steps", 5) == 0, "a literal dotted key was not set last");
+        });
+        Require(!Trophy(context, 5).unlocked && Trophy(context, 5).progress.value == 3,
+                "a literal dotted key overrode the nested statistic");
+    }
     stepped(4);
     const auto partway = Trophy(context, 5);
     Require(!partway.unlocked && partway.progress.type == 1 && partway.progress.value == 4 && !Trophy(context, 0).unlocked, "the progressive trophy does not report its progress");
