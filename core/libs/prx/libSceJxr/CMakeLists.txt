@@ -51,7 +51,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_jxr_lookup_patched PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
+    add_library(jxr_bitio_pointers_fixture STATIC ${LIBS_INCLUDE_DIR}/tests/JxrBitIoPointersFixture.c)
+    configure_jxr_native(jxr_bitio_pointers_fixture)
+
     add_test_executable(guest_jxr_tests ${LIBS_INCLUDE_DIR}/tests/GuestJxr.cpp)
+    target_link_libraries(guest_jxr_tests PRIVATE jxr_bitio_pointers_fixture)
     target_include_directories(guest_jxr_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_jxr_tests PRIVATE libSceJxr libc)
     configure_windows_unwind(guest_jxr_tests)
