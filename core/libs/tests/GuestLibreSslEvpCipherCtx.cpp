@@ -1126,6 +1126,19 @@ static void TestEvpCleanup() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+static void TestChaCha20Rfc8439() {
+    const auto* cipher = reinterpret_cast<const Cipher*>(EVP_chacha20_nid_postfix());
+    const auto key = Hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    const auto iv = Hex("01000000000000000000004a00000000");
+    const auto plain = Hex("4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642062652069742e");
+    const auto encrypted = Hex("6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d");
+    Require(EvpCipher(cipher) == EVP_chacha20_nid_postfix());
+    RequireDescriptor(cipher, 937, key.size(), 16, 0x30, 132);
+    Require(cipher->cleanup == nullptr && cipher->control == nullptr);
+    RequireThreeForms(cipher, key, iv, plain, encrypted);
+}
+
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1145,6 +1158,7 @@ int main() {
     TestAesCbc();
     TestAesCfb8();
     TestAesCtr();
+    TestChaCha20Rfc8439();
     TestAesGcmVectors();
     TestAesGcmControl();
     TestAesGcmTls();
