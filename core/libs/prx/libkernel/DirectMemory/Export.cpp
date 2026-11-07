@@ -1,5 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -302,6 +304,7 @@ int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int fl
 
 int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
+ if (static_cast<unsigned>(flags) >= 0x1000000u || (alignment & ((alignment - 1) | 0x3fff)) != 0 || std::bit_width(std::max<size_t>(alignment, 0x4000)) - 1 > 30) return SCE_KERNEL_ERROR_EINVAL;
  (void)type;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
