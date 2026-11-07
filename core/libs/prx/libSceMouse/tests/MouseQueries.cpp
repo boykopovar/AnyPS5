@@ -60,6 +60,10 @@ int main() {
     Require(setConfig(1, config.data()) == NotInitialized, "ExtensionSetConfig answered before sceMouseInit");
     Require(setCursor(1, 0) == NotInitialized && getCursor(1, buffer.data()) == NotInitialized, "the cursor calls answered before sceMouseInit");
     Require(scale(&position, 1920) == NotInitialized && position == 100, "ExtensionScalePosition scaled before sceMouseInit");
+    Require(sceMouseDisconnectAll() == NotInitialized, "DisconnectAll answered before sceMouseInit");
+    Require(sceMouseVirtualDeviceAddDevice() == NotInitialized, "VirtualDeviceAddDevice answered before sceMouseInit");
+    Require(sceMouseVirtualDeviceDeleteDevice() == NotInitialized, "VirtualDeviceDeleteDevice answered before sceMouseInit");
+    Require(sceMouseVirtualDeviceGetCursor() == NotInitialized, "VirtualDeviceGetCursor answered before sceMouseInit");
 
     Require(sceMouseInit() == Ok, "sceMouseInit failed");
     Require(getHandle(1, 0, 0) == NoHandle, "GetHandle found a handle before sceMouseOpen");
@@ -90,6 +94,8 @@ int main() {
 
     Require(setHandType(handle, 2) == InvalidArg, "SetHandType took a type above 1");
     Require(setPointerSpeed(handle, 9) == InvalidArg, "SetPointerSpeed took a speed above 8");
+    Require(setHandType(handle + 1, 0) == InvalidHandle, "SetHandType took an unopened handle");
+    Require(setPointerSpeed(handle + 1, 0) == InvalidHandle, "SetPointerSpeed took an unopened handle");
     Require(getDeviceInfo(0, nullptr) == InvalidArg, "GetDeviceInfo took a null output");
 
     Require(extensionRead(handle, buffer.data(), 0x20, 1) == InvalidArg, "ExtensionRead took a record size other than 0x30");
