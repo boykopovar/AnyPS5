@@ -20,6 +20,13 @@ const Bytes kConstantStub = {
     0xC3,
 };
 
+const Bytes kPathconfStub = {
+    0x48, 0xC7, 0xC0, 0xBF, 0x00, 0x00, 0x00,
+    0x49, 0x89, 0xCA,
+    0x0F, 0x05,
+    0xC3,
+};
+
 const Bytes kUnsignedStub = {
     0xB8, 0x39, 0x00, 0x00, 0x00,
     0x0F, 0x05,
@@ -203,6 +210,8 @@ void RequireSdkStubsAreTrapped(const std::string& binary) {
     const auto numberedOffset = code.size() - 3u;
     code.insert(code.end(), kSdkGenericStub.begin(), kSdkGenericStub.end());
     const auto genericOffset = kConstantStub.size() + kSdkGenericStub.size() - 3u;
+    code.insert(code.end(), kPathconfStub.begin(), kPathconfStub.end());
+    const auto pathconfOffset = kConstantStub.size() + kSdkGenericStub.size() + kPathconfStub.size() - 3u;
     const TempDirectory directory;
     const auto input = directory.Path() / "input.elf";
     const auto output = directory.Path() / "output.elf";
@@ -214,6 +223,19 @@ void RequireSdkStubsAreTrapped(const std::string& binary) {
             "Relinker did not replace the numbered SDK syscall with UD2");
     require(Read<std::uint16_t>(relinked, kCodeOffset + genericOffset) == 0x0B0Fu,
             "Relinker did not replace the generic SDK syscall with UD2");
+    require(Read<std::uint16_t>(relinked, kCodeOffset + pathconfOffset) == 0x0B0Fu,
+            "Relinker did not replace the unimported pathconf SDK syscall with UD2 under trap mode");
+}
+
+void RequireUnimportedPathconfStubFails(const std::string& binary) {
+    const TempDirectory directory;
+    const auto input = directory.Path() / "input.elf";
+    const auto output = directory.Path() / "output.elf";
+    WriteFile(input, MakeExecutable(kPathconfStub));
+    const auto run = RunRelinker(binary, {"--skip-sce-module", input.string(), output.string()}, directory.Path() / "relinker.log");
+    require(run.ExitCode != 0, "Relinker accepted unimported pathconf stub without trap mode:\n" + run.Output);
+    require(run.Output.find("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import") != std::string::npos,
+            "Relinker did not report missing pathconf import:\n" + run.Output);
 }
 
 void RequireUnknownSyscallsStillFail(const std::string& binary) {
@@ -262,6 +284,7 @@ int main(const int argc, char** argv) {
         RequireNoNumber(binary, kPrefixedClobberedStub, "prefixed stub whose intervening instruction writes rax");
 
         RequireSdkStubsAreTrapped(binary);
+        RequireUnimportedPathconfStubFails(binary);
         RequireUnknownSyscallsStillFail(binary);
 
         std::cout << "syscall scanner tests passed\n";
