@@ -4,8 +4,10 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceFont/include/FontGraphics.hpp"
+#include "prx/libSceFont/include/FontInternal.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFont/include/FontWords.hpp"
+#include <cstring>
 
 static_assert(sizeof(FontGraphicsRegion) == 32);
 static_assert(offsetof(FontGraphicsRegion, x) == 0);
@@ -16,6 +18,10 @@ static_assert(offsetof(FontGraphicsRegion, flags) == 16);
 static_assert(offsetof(FontGraphicsRegion, tag) == 20);
 static_assert(offsetof(FontGraphicsRegion, outerRadius) == 24);
 static_assert(offsetof(FontGraphicsRegion, innerRadius) == 28);
+
+static_assert(sizeof(FontGlyphSupport) == 8);
+static_assert(offsetof(FontGlyphSupport, tag) == 0);
+static_assert(offsetof(FontGlyphSupport, glyph_tag) == 4);
 
 static_assert(sizeof(FontGraphicsFillMethod) == 32);
 static_assert(offsetof(FontGraphicsFillMethod, mode) == 0);
@@ -350,8 +356,7 @@ void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callb
 }
 
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::SupportGlyphs(support);
 }
 
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter) {
@@ -398,8 +403,8 @@ int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsOb
     return Font::GraphicsAppendGradientSegment(graphicsObject, gradient, position, color);
 }
 
-int APS5_VABI sceFontSupportSystemUpdation() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontSupportSystemUpdation(FontLibrary library, std::uint32_t version) {
+    return Font::SupportSystemUpdation(static_cast<Font::FontLibNative*>(library), version);
 }
 
 int APS5_VABI sceFontGraphicsCanvasRenewal() {
@@ -534,8 +539,21 @@ int APS5_VABI sceFontGraphicsProcessRenderSequence() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontOutlineVertexesInterfaceInit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontOutlineVertexesInterfaceInit(void* iface, const void* p1, const void* p2, std::uint64_t count) {
+    if (!iface) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* const bytes = static_cast<std::uint8_t*>(iface);
+    std::memset(bytes, 0, sizeof(std::uint64_t));
+    std::memset(bytes + 0x20, 0, 0x10);
+    if (!p1 || count - 1u >= 3u) {
+        std::memset(bytes + 0x08, 0, 0x18);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    const std::uint16_t tag = Font::OUTLINE_VERTEXES_MAGIC;
+    std::memcpy(bytes, &tag, sizeof(tag));
+    std::memcpy(bytes + 0x08, &p1, sizeof(p1));
+    std::memcpy(bytes + 0x10, &p2, sizeof(p2));
+    std::memcpy(bytes + 0x18, &count, sizeof(count));
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGraphicsSurfaceSetTargetView() {

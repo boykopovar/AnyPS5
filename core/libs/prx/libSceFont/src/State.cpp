@@ -23,6 +23,8 @@ std::mutex faceMutex;
 std::unordered_map<FontHandle, std::unique_ptr<Font::FontState>> fontStates;
 std::mutex glyphMutex;
 std::unordered_set<FontGlyph> generatedGlyphs;
+std::mutex glyphSupportMutex;
+const void* glyphSupportSlots[2] = {};
 
 FT_Library HostFreeTypeLibrary() {
     static const FT_Library library = [] {
@@ -179,6 +181,22 @@ Font::FontCtxEntry* Font::AcquireFontCtxEntry(void* ctx, std::uint32_t index, st
     *outLockWord = AcquireWordLock(*EntryLockWord(entry, modeLow)) | LOCK_BIT;
     *outObject = static_cast<FontObj*>(*EntryObjectSlot(entry, modeLow));
     return entry;
+}
+
+int Font::SupportGlyphs(const void* support) {
+    if (!support) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    const auto* const words = static_cast<const std::uint32_t*>(support);
+    if (words[0] != GLYPH_SUPPORT_TAG) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (words[1] != GLYPH_MAGIC) return SCE_FONT_ERROR_FATAL;
+    std::lock_guard<std::mutex> guard(glyphSupportMutex);
+    for (const void*& slot : glyphSupportSlots) {
+        if (slot == support) return SCE_FONT_OK;
+        if (slot == nullptr) {
+            slot = support;
+            return SCE_FONT_OK;
+        }
+    }
+    return SCE_FONT_OK;
 }
 
 void Font::ReleaseFontCtxEntryLock(FontCtxEntry* entry, std::uint32_t modeLow, std::uint32_t lockWord) {

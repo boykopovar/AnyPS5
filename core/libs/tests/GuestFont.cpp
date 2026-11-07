@@ -625,6 +625,61 @@ int main() {
     }
     Require(foreignDriverRejected && foreignLibrary.lock_word == 5);
 
+    Font::FontLibNative notUpdatable{};
+    const auto* const libraryBytes = reinterpret_cast<const std::uint8_t*>(nativeLibrary);
+    Require(sceFontSupportSystemUpdation(nullptr, 0x20230801u) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontSupportSystemUpdation(reinterpret_cast<FontLibrary>(&notUpdatable), 0x20230801u) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontSupportSystemUpdation(library, 0x20230802u) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(nativeLibrary->lock_word == savedLock && (libraryBytes[3] & 0x2) == 0);
+    Require(sceFontSupportSystemUpdation(library, 0x20230801u) == SCE_FONT_OK);
+    Require(nativeLibrary->lock_word == savedLock && (libraryBytes[3] & 0x2) != 0);
+    Require(sceFontSupportSystemUpdation(library, 0u) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(nativeLibrary->lock_word == savedLock && (libraryBytes[3] & 0x2) != 0);
+
+    alignas(8) std::uint8_t outlineInterface[0x30];
+    const void* const outlineVertexes = outlineInterface + 0x30;
+    const void* const outlineData = outlineInterface + 0x28;
+    Require(sceFontOutlineVertexesInterfaceInit(nullptr, outlineVertexes, outlineData, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (const std::uint64_t rejected : {0ull, 4ull, 5ull, 0xffffffffffffffffull}) {
+        std::memset(outlineInterface, 0xaa, sizeof(outlineInterface));
+        Require(sceFontOutlineVertexesInterfaceInit(outlineInterface, outlineVertexes, outlineData, rejected) == SCE_FONT_ERROR_INVALID_PARAMETER);
+        for (const auto byte : outlineInterface) Require(byte == 0);
+    }
+    std::memset(outlineInterface, 0xaa, sizeof(outlineInterface));
+    Require(sceFontOutlineVertexesInterfaceInit(outlineInterface, nullptr, outlineData, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (const auto byte : outlineInterface) Require(byte == 0);
+    for (const std::uint64_t accepted : {1ull, 2ull, 3ull}) {
+        std::memset(outlineInterface, 0xaa, sizeof(outlineInterface));
+        Require(sceFontOutlineVertexesInterfaceInit(outlineInterface, outlineVertexes, outlineData, accepted) == SCE_FONT_OK);
+        std::uint16_t tag = 0;
+        std::uint64_t storedCount = 0;
+        std::memcpy(&tag, outlineInterface, sizeof(tag));
+        std::memcpy(&storedCount, outlineInterface + 0x18, sizeof(storedCount));
+        Require(tag == 0x0F08);
+        for (std::size_t offset = 2; offset < 8; ++offset) Require(outlineInterface[offset] == 0);
+        Require(*reinterpret_cast<const void* const*>(outlineInterface + 0x08) == outlineVertexes);
+        Require(*reinterpret_cast<const void* const*>(outlineInterface + 0x10) == outlineData);
+        Require(storedCount == accepted);
+        Require(*reinterpret_cast<const std::uint64_t*>(outlineInterface + 0x20) == 0);
+        Require(*reinterpret_cast<const std::uint64_t*>(outlineInterface + 0x28) == 0);
+    }
+
+    Require(sceFontSelectGlyphsFt(1) == nullptr && sceFontSelectGlyphsFt(-1) == nullptr);
+    const auto* const glyphSelection = sceFontSelectGlyphsFt(0);
+    Require(glyphSelection != nullptr && glyphSelection->tag == 0x0F1Fu && glyphSelection->glyph_tag == 0x0F03u);
+    const auto* const glyphTable = reinterpret_cast<const FontGlyphSupport*>(glyphSelection);
+    Require(sceFontSupportGlyphs(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontGlyphSupport wrongTag{0x0F1Eu, 0x0F03u};
+    Require(sceFontSupportGlyphs(&wrongTag) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontGlyphSupport wrongGlyphTag{0x0F1Fu, 0x0F02u};
+    Require(sceFontSupportGlyphs(&wrongGlyphTag) == SCE_FONT_ERROR_FATAL);
+    Require(sceFontSupportGlyphs(glyphTable) == SCE_FONT_OK);
+    Require(sceFontSupportGlyphs(glyphTable) == SCE_FONT_OK);
+    FontGlyphSupport secondTable{0x0F1Fu, 0x0F03u};
+    Require(sceFontSupportGlyphs(&secondTable) == SCE_FONT_OK);
+    FontGlyphSupport overflowTable{0x0F1Fu, 0x0F03u};
+    Require(sceFontSupportGlyphs(&overflowTable) == SCE_FONT_OK);
+
     std::uint32_t subPixelCount = 1;
     Require(sceFontGetPixelResolution(library, &subPixelCount) == SCE_FONT_OK && subPixelCount == 64);
     Require(sceFontGetPixelResolution(library, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
