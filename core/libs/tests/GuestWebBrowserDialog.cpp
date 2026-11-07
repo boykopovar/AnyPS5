@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -114,6 +115,9 @@ int main() {
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
 
     Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    errno = 71;
+    Require(sceWebBrowserDialogGetResult(reinterpret_cast<WebBrowserDialogResult*>(0x10)) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(errno == 71);
     Require(sceWebBrowserDialogGetResult(&result) == 0);
     Require(result.result == COMMON_DIALOG_RESULT_USER_CANCELED);
 
