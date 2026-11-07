@@ -65,12 +65,18 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     else if (operation == IrOpcode::LogicalXor) operation = IrOpcode::BitwiseXor32;
     const bool writeFirst = SaveexecWritesDestinationFirst() && !writeResult;
     const bool execSource = sourceAt(inst, 0u).kind == RdnaOperandKind::ExecLo;
+    const bool pixel = program.Resources().stage == IrShaderStage::Pixel;
     if (write64) {
         const std::array<IrU32, 2> oldExec{IrU32(ir.GetExecLo()), IrU32(ir.GetExecHi())};
+        const IrU1 oldLane(ir.GetExec());
         const std::array<IrU32, 2> savedExec{hostExecWord(0u), hostExecWord(1u)};
-        if (writeFirst) writeU32Pair(inst.destination, savedExec);
+        const auto writeSaved = [&](const std::array<IrU32, 2>& words, IrU1 lane) {
+            writeU32Pair(inst.destination, words);
+            if (pixel) writeMaskLanes(inst.destination, lane, IrU1(ir.ConstantBool(true)));
+        };
+        if (writeFirst) writeSaved(savedExec, oldLane);
         const std::array<IrU32, 2> source = execSource ? oldExec : readU32Pair(sourceAt(inst, 0u));
-        if (!writeFirst && !writeResult) writeU32Pair(inst.destination, savedExec);
+        if (!writeFirst && !writeResult) writeSaved(savedExec, oldLane);
         IrValue& lowExecOperand = negateExec ? ir.BitwiseNot(oldExec[0].Value()) : oldExec[0].Value();
         IrValue& lowSourceOperand = negateSource ? ir.BitwiseNot(source[0].Value()) : source[0].Value();
         IrValue& highExecOperand = negateExec ? ir.BitwiseNot(oldExec[1].Value()) : oldExec[1].Value();
@@ -81,10 +87,11 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         const IrU32 newExecHi(negateResult ? ir.BitwiseNot(highCombined) : highCombined);
         ir.SetExecLo(newExecLo.Value());
         ir.SetExecHi(newExecHi.Value());
-        if (writeResult) writeU32Pair(inst.destination, {hostExecWord(0u), hostExecWord(1u)});
+        const IrU1 newLane = threadBit({newExecLo, newExecHi});
+        if (writeResult) writeSaved({hostExecWord(0u), hostExecWord(1u)}, newLane);
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
+        ir.SetExec(newLane.Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
@@ -93,11 +100,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     const bool lanes = program.WaveSize() == 32u && (execSource || maskLanesExact(sourceAt(inst, 0u)));
     const auto writeSaved = [&](IrU32 word, IrU1 lane) {
         writeRawU32(inst.destination, word);
-        if (lanes && inst.destination.kind == RdnaOperandKind::ScalarRegister) {
-            const auto reg = static_cast<ScalarReg>(inst.destination.reg);
-            ir.SetThreadBitScalarReg(reg, lane.Value());
-            ir.SetScalarMaskTag(reg, ir.ConstantBool(true));
-        }
+        if (pixel || (lanes && inst.destination.kind == RdnaOperandKind::ScalarRegister)) writeMaskLanes(inst.destination, lane, IrU1(ir.ConstantBool(true)));
     };
     if (writeFirst) writeSaved(savedExec, oldLane);
     const IrU32 source = execSource ? oldExec : readU32(sourceAt(inst, 0u));
@@ -332,8 +335,16 @@ void TranslationContext::movB32(const RdnaInstruction& inst, bool applyFloatModi
 }
 
 void TranslationContext::sMovB64(const RdnaInstruction& inst) {
-    const std::array<IrU32, 2> value = readU32Pair(sourceAt(inst, 0u));
+    const RdnaOperand& source = sourceAt(inst, 0u);
+    const std::array<IrU32, 2> value = readU32Pair(source);
+    if (program.Resources().stage != IrShaderStage::Pixel || !maskLanesExact(source)) {
+        writeU32Pair(inst.destination, value);
+        return;
+    }
+    const IrU1 lane = readMask(source);
+    const IrU1 valid = readMaskValid(source);
     writeU32Pair(inst.destination, value);
+    writeMaskLanes(inst.destination, lane, valid);
 }
 
 void TranslationContext::sWqm(const RdnaInstruction& inst, bool wide) {
