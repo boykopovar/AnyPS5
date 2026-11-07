@@ -27,6 +27,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace AgcDriver {
 
@@ -41,6 +42,7 @@ namespace {
 using namespace AgcDriver::Graphics;
 
 constexpr std::uint32_t Side = 64;
+constexpr std::uint32_t Wide = 128;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t AllocationBytes = 2 * BlockBytes;
 
@@ -163,6 +165,92 @@ void CheckCachedImage(AgcDriver::VulkanDevice& device, bool sampled, bool draw) 
     Require(revalidate(), "retiring the multisample targets did not restore image reuse");
 }
 
+ColorTarget FourSampleTarget(std::uint64_t address) {
+    ColorTarget target{};
+    target.address = address;
+    target.surfaceAddress = address;
+    target.extent = {Side, Side};
+    target.surfaceExtent = target.extent;
+    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
+    target.elementBytes = 4;
+    target.bytes = Side * Side * 4u;
+    target.samples = 4;
+    return target;
+}
+
+void CheckOverwrittenTarget(AgcDriver::VulkanDevice& device, bool read, std::uint32_t side, bool sampledToo) {
+    std::printf("checking a %s %ux%u storage image%s over a multisample target\n", read ? "read and written" : "written", side, side, sampledToo ? " beside a sampled read" : "");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    GuestBlock block;
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() {
+            ClearMultisampleTargets(device);
+            ClearCachedTextures(device);
+        }
+    } cleanup{context.device};
+    const auto address = block.Address();
+    const auto words = [&](std::uint32_t extent) {
+        return std::vector<std::uint32_t>{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (20u << 20u) | (((extent - 1u) & 3u) << 30u), ((extent - 1u) >> 2u) | ((extent - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    };
+    ShaderRecompiler::RecompileResult program;
+    if (sampledToo) {
+        ShaderRecompiler::DescriptorBinding sampled{};
+        sampled.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+        sampled.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding + PlaceholderDimensionsPerClass + 2u;
+        sampled.count = 1;
+        sampled.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        sampled.imageWritten = {false};
+        sampled.imageSamplers = {0u};
+        sampled.guestDescriptor = words(Side);
+        program.bindings.push_back(sampled);
+    }
+    ShaderRecompiler::DescriptorBinding storage{};
+    storage.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    storage.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    storage.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    storage.count = 1;
+    storage.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    storage.imageWritten = {true};
+    storage.imageRead = {read};
+    storage.imageSamplers = {0u};
+    storage.guestDescriptor = words(side);
+    program.bindings.push_back(storage);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto resources = std::make_unique<ShaderResources>(context, shader);
+    Require(resources->Reusable(), "the storage image resources are not reusable");
+    if (!sampledToo) Require(resources->Revalidate(shader), "the unchanged storage image resources failed their initial proof");
+    const auto target = FourSampleTarget(address);
+    const auto guarded = [&] {
+        try {
+            RequireNoMultisampleColorTarget(address, BlockBytes, "a test read");
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    const auto place = [&] {
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the overwritten multisample target has no view");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+        Require(guarded(), "the multisample target does not guard its memory");
+    };
+    place();
+    if (read || side != Wide || sampledToo) {
+        RequireColorGuard([&] { resources->Revalidate(shader); }, "a cached storage image accepted a multisampled color target it does not only overwrite");
+        RequireColorGuard([&] { ShaderResources rebuilt(context, shader); }, "a fresh storage image accepted a multisampled color target it does not only overwrite");
+        Require(guarded(), "a refused storage image retired the multisample target");
+        return;
+    }
+    Require(resources->Revalidate(shader), "a cached storage image that overwrites a multisample target failed its proof");
+    Require(!guarded(), "a cached storage image that overwrites a multisample target did not retire it");
+    place();
+    ShaderResources rebuilt(context, shader);
+    Require(!guarded(), "a fresh storage image that overwrites a multisample target did not retire it");
+}
+
 void CheckMultisampleTable(AgcDriver::VulkanDevice& device) {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -238,6 +326,9 @@ int main() {
         for (const bool draw : {false, true}) {
             for (const bool sampled : {false, true}) CheckCachedImage(*device, sampled, draw);
         }
+        for (const bool read : {false, true}) CheckOverwrittenTarget(*device, read, Wide, false);
+        CheckOverwrittenTarget(*device, false, Side, false);
+        CheckOverwrittenTarget(*device, false, Wide, true);
         CheckMultisampleTable(*device);
         std::puts("cached image multisample guard tests passed");
         return 0;
