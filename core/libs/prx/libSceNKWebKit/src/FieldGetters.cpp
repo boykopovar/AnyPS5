@@ -17,41 +17,14 @@ void* APS5_VABI _ZNK3JSC17DebuggerCallFrame8positionEv(const void* self) {
 }
 
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem13documentStateEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x48;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem14alternateTitleEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x30;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem14scrollPositionEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x38;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem17originalURLStringEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x10;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem5titleEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x28;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem6targetEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x20;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem8childrenEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x60;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem8referrerEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x18;
-}
 
-void* APS5_VABI _ZNK7WebCore11HistoryItem9urlStringEv(const void* self) {
-    return const_cast<char*>(static_cast<const char*>(self)) + 0x8;
-}
 
 void* APS5_VABI _ZNK7WebCore18TextureMapperLayer8childrenEv(const void* self) {
     return const_cast<char*>(static_cast<const char*>(self)) + 0x10;
@@ -153,9 +126,6 @@ std::uint64_t APS5_VABI _ZN7WebCore11CachedFrame23cachedFramePlatformDataEv(cons
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x48);
 }
 
-std::uint64_t APS5_VABI _ZN7WebCore11HistoryItem8formDataEv(const void* self) {
-    return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x90);
-}
 
 std::uint64_t APS5_VABI _ZN7WebCore14JSVoidCallback12callbackDataEv(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x18);
