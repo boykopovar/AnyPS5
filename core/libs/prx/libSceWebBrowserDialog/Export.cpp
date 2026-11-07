@@ -1,7 +1,9 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceWebBrowserDialog/include/InventoryExports.hpp"
 #include "prx/libSceWebBrowserDialog/include/Api.hpp"
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -78,17 +80,33 @@ int APS5_VABI sceWebBrowserDialogClose(void) {
 
 int APS5_VABI sceWebBrowserDialogGetResult(WebBrowserDialogResult* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (std::any_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
-    if (result->extended != nullptr) {
-        const auto& extended = *result->extended;
-        if (extended.size != sizeof(extended)) return COMMON_DIALOG_ERROR_PARAMETER;
-        if (std::any_of(std::begin(extended.reserved0), std::end(extended.reserved0), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
-        if (std::any_of(std::begin(extended.reserved1), std::end(extended.reserved1), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
+    WebBrowserDialogResult inResult{};
+    const int savedErrno = errno;
+    const bool readResult = GuestCopyIn_nid_no_patch(&inResult, result, sizeof(inResult));
+    errno = savedErrno;
+    if (!readResult) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (std::any_of(std::begin(inResult.reserved), std::end(inResult.reserved), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
+    WebBrowserDialogExtendedResult inExtended{};
+    if (inResult.extended != nullptr) {
+        const bool readExtended = GuestCopyIn_nid_no_patch(&inExtended, inResult.extended, sizeof(inExtended));
+        errno = savedErrno;
+        if (!readExtended) return COMMON_DIALOG_ERROR_ARG_NULL;
+        if (inExtended.size != sizeof(inExtended)) return COMMON_DIALOG_ERROR_PARAMETER;
+        if (std::any_of(std::begin(inExtended.reserved0), std::end(inExtended.reserved0), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
+        if (std::any_of(std::begin(inExtended.reserved1), std::end(inExtended.reserved1), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
     }
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    if (inResult.extended != nullptr) {
+        const bool copiedExtended = GuestCopyOut_nid_no_patch(inResult.extended, &inExtended, sizeof(inExtended));
+        errno = savedErrno;
+        if (!copiedExtended) return COMMON_DIALOG_ERROR_ARG_NULL;
+    }
+    const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const bool copiedResult = GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult));
+    errno = savedErrno;
+    if (!copiedResult) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
