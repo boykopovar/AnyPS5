@@ -319,10 +319,6 @@ int APS5_VABI sceVideoOutSetVrrMaster() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSubmitChangeBufferAttribute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceVideoOutSysAddSetModeEvent2() {
     NotImplemented_nid_no_patch(__func__);
 }

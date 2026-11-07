@@ -546,7 +546,7 @@ void verifyResultMemoBudgetMasked() {
     const auto first = ResultMemoBytes();
     require(!compileResultMemoPixel(2u), "result memo budget masked: a new snapshot hit the memo");
     const auto second = ResultMemoBytes() - first;
-    require(second != 0u && second < first, std::string("result memo budget masked: the masked table's entry was not counted (first result " + std::to_string(first) + " bytes, patched result " + std::to_string(second) + ")").c_str());
+    require(second == 0u, std::string("result memo budget masked: a patched result was inserted into the memo (" + std::to_string(second) + " bytes)").c_str());
     SetResultMemoBudget(1u);
     require(ResultMemoBytes() == 0u, std::string("result memo budget masked: a trim to one byte left " + std::to_string(ResultMemoBytes()) + " bytes").c_str());
     SetResultMemoBudget(0u);
