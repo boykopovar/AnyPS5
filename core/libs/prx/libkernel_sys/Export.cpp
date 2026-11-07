@@ -1298,7 +1298,8 @@ int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* wo
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
-    if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
+    if (pid == 0 || pid == 1) return static_cast<int>(0x80020002);
+    if (pid != getpid_nid_postfix() && pid != -1) return static_cast<int>(0x80020003);
     return 0;
 }
 
