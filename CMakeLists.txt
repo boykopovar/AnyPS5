@@ -14,6 +14,11 @@ function(add_test_executable target)
         target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit>)
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
     endif()
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${target}> $<TARGET_RUNTIME_DLLS:${target}>
+            COMMAND_EXPAND_LISTS)
+    endif()
 endfunction()
 
 function(configure_host_test_executable target)
