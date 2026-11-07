@@ -42,6 +42,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -120,8 +121,8 @@ struct ResponseSpec {
 class Server {
 public:
     explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
-        std::vector<std::string> responseCookies = {})
-        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)) {
+        std::vector<std::string> responseCookies = {}, bool clientMayClose = false)
+        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)), clientMayClose(clientMayClose) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -192,6 +193,7 @@ private:
     const std::string location;
     const int redirectStatus;
     const std::vector<std::string> responseCookies;
+    const bool clientMayClose;
     std::mutex responseMutex;
     ResponseSpec responseSpec;
     unsigned accepted = 0;
@@ -427,7 +429,8 @@ private:
             for (std::size_t sent = 0; sent < bytes.size();) {
                 const auto* data = reinterpret_cast<const unsigned char*>(bytes.data() + sent);
                 const int count = ssl ? mbedtls_ssl_write(ssl, data, bytes.size() - sent) : mbedtls_net_send(&client, data, bytes.size() - sent);
-                Require(count > 0, "HTTP1 response write");
+                Require(count > 0 || clientMayClose, "HTTP1 response write");
+                if (count <= 0) return;
                 sent += static_cast<std::size_t>(count);
             }
         };
@@ -680,7 +683,7 @@ void CookieBoxDelete(int ssl, Mode mode = Mode::CookieFlood) {
     std::vector<std::string> responseCookies;
     if (mode != Mode::CookieFlood)
         for (int index = 0; index < 1500; ++index) responseCookies.push_back("item" + std::to_string(index) + "=value; Path=/");
-    Server server(mode, "/another", 302, std::move(responseCookies));
+    Server server(mode, "/another", 302, std::move(responseCookies), true);
     Client client(ssl, 4, 0, mode == Mode::CookieFlood ? 3 : 2);
     const std::string url = server.Url("127.0.0.1");
     const int box = sceHttp2CreateCookieBox(0x10000);
@@ -943,9 +946,9 @@ void SslCallbacks(int trusted) {
 }
 
 void Http1Transport(int ssl) {
-    for (const auto mode : {Mode::Http10, Mode::Http11, Mode::Http11Chunked, Mode::Http11Close, Mode::Http1Plain}) {
+    const std::pair<Mode, int> cases[] = {{Mode::Http10, 1}, {Mode::Http11, 2}, {Mode::Http11Chunked, 2}, {Mode::Http11Close, 2}, {Mode::Http1Plain, 2}, {Mode::Http1Plain, 3}};
+    for (const auto& [mode, version] : cases) {
         Server server(mode);
-        const int version = mode == Mode::Http10 ? 1 : 2;
         Client client(ssl, 1, 0, version);
         const std::string upload = "upload bytes";
         Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "retained", 0) == 0, "HTTP1 inherited header");
