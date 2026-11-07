@@ -48,6 +48,14 @@ void CheckDeviceIdConversion() {
     Require(sceMbusConvertToMbusDeviceId(1, 0, nullptr) == unconvertibleClass, "refusal without an output");
 }
 
+void CheckInit() {
+    Require(sceMbusInit() == 0, "the first initialization failed");
+    Require(sceMbusInit() == 0, "a second initialization failed");
+    Require(sceMbusTerm() == 0, "termination failed");
+    Require(sceMbusInit() == 0, "an initialization after termination failed");
+    Require(sceMbusTerm() == 0, "a second termination failed");
+}
+
 }
 
 int main() {
@@ -68,6 +76,7 @@ int main() {
     for (const auto byte : callbackBytes) Require(byte == 0x5a, "zero-size callback initialization changed memory");
 
     CheckDeviceIdConversion();
+    CheckInit();
     DeviceServiceInitParam param{};
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "invalid parameter size accepted");
