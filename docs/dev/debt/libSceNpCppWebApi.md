@@ -2,6 +2,7 @@
 
 ### Functional
 
+- [sce::Np::CppWebApi::Common::IntrusivePtr body of ParameterToSubmitTicket](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - host-side fallback, not console behaviour: `InitializeParameterWithBody` returns `ParameterBodyMissing` (0x80553512) for a null body pointer and leaves the parameter uninitialized. The console module dereferences a null body in `ParameterToSubmitTicket::initialize` (NID `4TiZy24yFoQ`) without a check, so a null body faults there. The host check only prevents a host crash; `guest_np_cpp_web_api_matchmaking` pins the host behaviour, not a console result.
 - [Matches factory output release](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) - releasing the last reference of an occupied output with a null deleter still throws through the shared `IntrusivePtr` release path. The bundled modules instead use the stored `LibContext` allocator and model destructor in that case; the host allocator remains in use, and that fallback is unimplemented.
 
 ### Silent stubs
