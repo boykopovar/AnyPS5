@@ -1990,6 +1990,14 @@ void DisabledColorTests() {
     queue.context[0x002] = 3;
     const auto thirdSlice = AgcDriver::Graphics::DecodeState(queue);
     Require(thirdSlice.depth && thirdSlice.depth->firstSlice == 3 && thirdSlice.depth->address == depthOnly.depth->address + 3u * AgcDriver::Graphics::DepthSliceBytes(depthOnly.depth->extent, 4u), "a depth view of slice 3 lost its slice or its Z offset");
+    Require(thirdSlice.depth->layers == 1u && thirdSlice.renderLayers == 1u, "a depth view of one slice became layered");
+    queue.context[0x002] = 5u << 13u;
+    queue.context[0x207] = 1u << 18u;
+    const auto cube = AgcDriver::Graphics::DecodeState(queue);
+    Require(!cube.hasColorTarget && cube.depth && cube.depth->layers == 6u && cube.depth->address == depthOnly.depth->address && cube.renderLayers == 6u && cube.layerExports == (1u << 18u), "a depth-only layered draw into a depth view of slices 0 to 5 did not render six layers");
+    queue.context[0x207] = 0;
+    const auto unlayeredCube = AgcDriver::Graphics::DecodeState(queue);
+    Require(unlayeredCube.depth && unlayeredCube.depth->layers == 1u && unlayeredCube.renderLayers == 1u && unlayeredCube.layerExports == 0u, "a depth view of six slices without a layer export became layered");
     queue.context[0x002] = 1u << 26u;
     const auto singleLevelMip = AgcDriver::Graphics::DecodeState(queue);
     Require(singleLevelMip.depth && singleLevelMip.depth->address == depthOnly.depth->address && singleLevelMip.depth->extent.width == depthOnly.depth->extent.width && singleLevelMip.depth->extent.height == depthOnly.depth->extent.height, "a depth view mip on a single-level surface did not select its first level");
@@ -2741,6 +2749,32 @@ void DepthStencilTests() {
     queue.context[0x207] = 1u << 18u;
     const auto layeredSingle = AgcDriver::Graphics::DecodeState(queue);
     Require(layeredSingle.color.address == firstSlice.color.address && layeredSingle.color.arrayAddress == firstSlice.color.address && layeredSingle.color.arrayLastSlice == 1u && layeredSingle.color.layers == 2u && layeredSingle.renderLayers == 2u, "a layered draw into slices 0 to 1 of a surface of one slice did not render them as a two-slice array");
+    {
+        auto layeredDepth = queue;
+        layeredDepth.context[0x200] = 0x36;
+        layeredDepth.context[0x000] = 0;
+        layeredDepth.context[0x010] = 0x80000181;
+        layeredDepth.context[0x011] = 0x20000180;
+        layeredDepth.context[0x012] = 0x100;
+        layeredDepth.context[0x014] = 0x100;
+        layeredDepth.context[0x007] = 0x003f003f;
+        layeredDepth.context[0x00a] = 0;
+        layeredDepth.context[0x00b] = std::bit_cast<std::uint32_t>(1.0f);
+        layeredDepth.context[0x002] = 1u << 13u;
+        const auto withDepth = AgcDriver::Graphics::DecodeState(layeredDepth);
+        Require(withDepth.depth && withDepth.depth->layers == 2u && withDepth.depth->firstSlice == 0u && withDepth.depth->address == 0x10000u && withDepth.renderLayers == 2u && withDepth.color.layers == 2u, "a layered draw into two color slices with a depth view of slices 0 to 1 did not render two depth layers");
+        layeredDepth.context[0x002] = 1u | (2u << 13u);
+        const auto shifted = AgcDriver::Graphics::DecodeState(layeredDepth);
+        Require(shifted.depth && shifted.depth->layers == 2u && shifted.depth->firstSlice == 1u && shifted.depth->address == 0x10000u + AgcDriver::Graphics::DepthSliceBytes(shifted.depth->extent, 2u), "a layered draw with a depth view of slices 1 to 2 did not start its depth layers at slice 1");
+        for (const auto view : {0u, 2u << 13u, 2u | (2u << 13u)}) {
+            layeredDepth.context[0x002] = view;
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(layeredDepth); }, "depth view of another slice count than its color views");
+        }
+        layeredDepth.context[0x002] = 1u << 13u;
+        layeredDepth.context[0x207] = 0;
+        const auto unlayered = AgcDriver::Graphics::DecodeState(layeredDepth);
+        Require(unlayered.depth && unlayered.depth->layers == 1u && unlayered.renderLayers == 1u, "a depth view of two slices without a layer export became layered");
+    }
     queue.context[0x207] = 0;
     const auto sliced = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
     queue.context[0x318] = static_cast<std::uint32_t>(sliced >> 8u);
