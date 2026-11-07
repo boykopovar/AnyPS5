@@ -11,6 +11,7 @@
 #include <exception>
 #include <limits>
 #include <span>
+#include <string>
 #include <utility>
 #include <stdexcept>
 #include <vector>
@@ -179,6 +180,40 @@ void Integers() {
     Require(ASN1_INTEGER_get_nid_postfix(&value) == -1, "overlength leading zeros are not trimmed");
 }
 
+std::string Printed(const Asn1String& value, int expected = 1) {
+    LibreSsl::Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr, "a memory BIO");
+    Require(ASN1_STRING_print_nid_postfix(bio, &value) == expected, "ASN1_STRING_print result");
+    char* data = nullptr;
+    const auto length = BIO_ctrl_nid_postfix(bio, 3, 0, &data);
+    std::string text(data, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return text;
+}
+
+void Print() {
+    unsigned char mixed[] = {'h', 'i', '\n', '\r', '\t', 0, 0x7e, 0x7f, 0x80, 0xff, ' '};
+    Asn1String value{sizeof(mixed), 4, mixed, 0};
+    Require(Printed(value) == std::string("hi\n\r..~... "), "only printable ASCII, LF and CR are kept");
+    std::string letters;
+    for (int index = 0; index < 200; ++index) letters += static_cast<char>('a' + index % 26);
+    value = {200, 22, reinterpret_cast<unsigned char*>(letters.data()), 0};
+    Require(Printed(value) == letters, "output longer than the 80-byte chunk is complete");
+    value = {0, 4, nullptr, 0};
+    Require(Printed(value).empty(), "an empty string prints nothing");
+    value.length = -1;
+    Require(Printed(value).empty(), "a negative length prints nothing");
+    Require(ASN1_STRING_print_nid_postfix(nullptr, nullptr) == 0, "a null string prints nothing");
+    value = {2, 4, mixed, 0};
+    Require(ASN1_STRING_print_nid_postfix(nullptr, &value) == 0, "a failed write returns 0");
+    LibreSsl::Bio* readOnly = BIO_new_mem_buf_nid_postfix("x", 1);
+    Require(readOnly && ASN1_STRING_print_nid_postfix(readOnly, &value) == 0, "a read-only BIO returns 0");
+    BIO_free_nid_postfix(readOnly);
+    ERR_clear_error_nid_postfix();
+    value.data = nullptr;
+    RequireInvalidArgument([&] { ASN1_STRING_print_nid_postfix(nullptr, &value); }, "null data with a positive length");
+}
+
 void Strings() {
     constexpr unsigned char latin[] = {0, 0x41, 0x7f, 0x80, 0xa3, 0xff};
     constexpr unsigned char latinUtf8[] = {0, 0x41, 0x7f, 0xc2, 0x80, 0xc2, 0xa3, 0xc3, 0xbf};
@@ -293,6 +328,7 @@ int main(int argc, char**) {
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Accessors();
+    Print();
     Integers();
     Strings();
     MalformedStrings();
