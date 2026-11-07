@@ -1183,6 +1183,10 @@ private:
         if (memoized && !column.address && records.size != 0u && runtime.stampWrites != nullptr) {
             const auto span = std::min<std::uint64_t>(records.size, static_cast<std::uint64_t>(column.addend) + column.offset + static_cast<std::uint64_t>(records.keys) * column.stride + column.dwordCount * 4u);
             stamp = runtime.stampWrites(runtime.userContext, records.base, span);
+        } else if (memoized && column.address && runtime.stampWrites != nullptr) {
+            const auto& memos = ColumnMemos();
+            const auto found = std::find_if(memos.begin(), memos.end(), [&](const ColumnMemo& entry) { return entry.key == key; });
+            if (found != memos.end() && found->read->low < found->read->high) stamp = runtime.stampWrites(runtime.userContext, found->read->low, found->read->high - found->read->low);
         }
         if (memoized && Reuse(key, column, records, true)) return;
         unread();
