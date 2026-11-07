@@ -61,7 +61,7 @@ def reports(path):
 
 def load_known(path, sanitizers):
     known, seen = {}, set()
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         if not line.strip():
             continue
         location = f"{path}:{number}"

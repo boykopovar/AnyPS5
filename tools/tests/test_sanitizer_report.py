@@ -170,6 +170,14 @@ class SanitizerReportTests(unittest.TestCase):
                          {"fiber": "stack switch", "both": "shared   reason"})
         self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {"racy": "interceptor gap"})
 
+    def test_utf8_bom_does_not_change_the_first_known_test_name(self):
+        known = self.write("\ufefffiber address stack switch\n", "known.txt")
+        self.assertEqual(sanitizer_report.load_known(known, ["address"]), {"fiber": "stack switch"})
+        self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {})
+        junit = self.write(suite(case("fiber", "fail", '<failure message=""/>')))
+        self.assertEqual(self.run_main(junit, "--known", known, "--sanitizer", "address")[0], 0)
+        self.assertEqual(self.run_main(junit, "--known", known, "--sanitizer", "thread")[0], 1)
+
     def test_known_failures_move_to_their_own_table_and_keep_the_run_passing(self):
         found = {"fiber": "failed", "new_bug": "failed", "ok": "passed"}
         text, failing = sanitizer_report.summarize("ASan", found, {"fiber": "guest stack | switch"})
