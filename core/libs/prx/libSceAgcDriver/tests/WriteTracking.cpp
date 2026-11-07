@@ -1411,6 +1411,25 @@ bool FailFreshCollect(std::uintptr_t address, std::size_t bytes, void (*)(void*,
     return false;
 }
 
+#ifdef _WIN32
+std::uint64_t failedCollectInterleavingAddress = 0;
+std::uint64_t failedCollectInterleavingOrder = 0;
+std::uint64_t failedCollectInterleavingProof = 0;
+bool failedCollectInterleavingCalled = false;
+bool failedCollectInterleavingFailed = false;
+
+void MarkDuringFailedCollectUnwatch(std::uint64_t address, std::size_t bytes) {
+    failedCollectInterleavingCalled = true;
+    SetUnwatchHook(nullptr);
+    try {
+        Unwatch(address, bytes);
+        failedCollectInterleavingProof = MarkPossiblyWritten(failedCollectInterleavingAddress, 4, failedCollectInterleavingOrder);
+    } catch (...) {
+        failedCollectInterleavingFailed = true;
+    }
+}
+#endif
+
 void CheckFailedCollectUnwatch() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -2343,6 +2362,64 @@ void CheckGenerationWrap() {
     Require(changed[0] == BlockUnchanged && changed[2] == BlockWritten && cpu[0] == 0 && cpu[2] == 1, "per-block changes after 2^32 were misreported");
 }
 
+void CheckMarkPossiblyWrittenOrder() {
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(2 * Block));
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    Require(CollectWrites(base, 2 * Block) != 0, "the mark-order fixture was not collected");
+
+    std::uint64_t emptyOrder = 1;
+    Require(MarkPossiblyWritten(base, 0, emptyOrder) == 0 && emptyOrder == 0, "an empty possible write returned a tracker order");
+    std::uint64_t trackedOrder = 0;
+    const auto trackedProof = MarkPossiblyWritten(base + 8, 4, trackedOrder);
+    Require(trackedProof != 0 && trackedOrder == trackedProof, "a tracked possible write did not return its stamped order");
+    const auto later = MarkWritten(base + Block + 8, 4);
+    Require(later > trackedOrder && trackedOrder == trackedProof, "a later generation increment changed the captured mark order");
+
+    Unwatch(base, Block);
+    Require(MarkPossiblyWritten(base + 16, 4) == 0, "the two-argument possible write trusted an untracked range");
+    const auto beforeUntracked = TrackerGeneration();
+    std::uint64_t untrackedOrder = 0;
+    Require(MarkPossiblyWritten(base + 16, 4, untrackedOrder) == 0, "the ordered possible write trusted an untracked range");
+    Require(untrackedOrder > beforeUntracked && untrackedOrder == TrackerGeneration(), "an untracked possible write did not return its atomic tracker order");
+
+    constexpr std::size_t MarkCount = 128;
+    std::array<std::uint64_t, MarkCount> proofs{};
+    std::array<std::uint64_t, MarkCount> orders{};
+    std::atomic<bool> start{false};
+    std::thread marker([&] {
+        while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+        for (std::size_t i = 0; i < MarkCount; ++i) proofs[i] = MarkPossiblyWritten(base + Block + 16, 4, orders[i]);
+    });
+    std::thread advancing([&] {
+        while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+        for (std::size_t i = 0; i < MarkCount; ++i) MarkWritten(base + Block + 64, 4);
+    });
+    start.store(true, std::memory_order_release);
+    marker.join();
+    advancing.join();
+    for (std::size_t i = 0; i < MarkCount; ++i) Require(proofs[i] != 0 && proofs[i] == orders[i], "a concurrent generation increment changed a possible-write order");
+
+#ifdef _WIN32
+    std::array<std::uint8_t, 4> interleavingBuffer{};
+    failedCollectInterleavingAddress = reinterpret_cast<std::uint64_t>(interleavingBuffer.data());
+    failedCollectInterleavingOrder = 0;
+    failedCollectInterleavingProof = 1;
+    failedCollectInterleavingCalled = false;
+    failedCollectInterleavingFailed = false;
+    SetFreshCollectHook(&FailFreshCollect);
+    SetUnwatchHook(&MarkDuringFailedCollectUnwatch);
+    std::uint64_t failedCollectOrder = 0;
+    const auto failedCollectProof = MarkPossiblyWritten(base + Block + 8, 4, failedCollectOrder);
+    SetFreshCollectHook(nullptr);
+    SetUnwatchHook(nullptr);
+    Require(failedCollectProof == 0 && failedCollectBegin == base + Block && failedCollectEnd == base + 2 * Block, "the failed fresh collect did not reach the intended watched block");
+    Require(failedCollectInterleavingCalled && !failedCollectInterleavingFailed, "the failed fresh collect did not allow the intervening mark to complete");
+    Require(failedCollectInterleavingProof == 0, "the intervening mark unexpectedly produced a proof");
+    Require(failedCollectOrder > failedCollectInterleavingOrder, "a failed fresh collect reused the intervening writer's mark order");
+#endif
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -2357,6 +2434,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--generation-wrap") {
             CheckGenerationWrap();
             std::cout << "generation wrap test passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--mark-order") {
+            CheckMarkPossiblyWrittenOrder();
+            std::cout << "mark order test passed\n";
             return 0;
         }
 #ifdef _WIN32
