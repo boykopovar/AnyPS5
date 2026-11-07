@@ -41,6 +41,9 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t Block = 0x10000;
 constexpr std::size_t SurfaceBytes = 4 * Block;
 constexpr std::size_t SettledImportBytes = 64 * Block;
+constexpr std::size_t Runs = SettledImportBytes / SurfaceBytes - 1;
+constexpr std::size_t Slots = 2 * (Runs + 1);
+constexpr std::size_t ReservedBytes = Slots * SurfaceBytes;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Stored = 0x12345678u;
 constexpr std::uint32_t Filled = 0x9abcdef0u;
@@ -116,24 +119,49 @@ void Fill(std::vector<std::uint32_t>& words, const std::uint32_t* texels, const 
     Dispatch(words, FillCode, 64, (static_cast<std::uint32_t>(userData.size()) << 1u) | 0x80u, userData, static_cast<std::uint32_t>(SurfaceBytes / 1024u));
 }
 
-class Surface {
+class Reservation {
 public:
-    Surface() {
+    Reservation() {
 #ifdef _WIN32
-        region = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, Block));
-        if (region != nullptr) GuestArena::GuestArenaCommit_nid_postfix(region, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
+        base = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(ReservedBytes, ReservedBytes));
 #else
-        void* mapped = mmap(nullptr, SurfaceBytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, 2 * ReservedBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-            const auto aligned = (begin + Block - 1) & ~std::uintptr_t{Block - 1};
+            const auto aligned = (begin + ReservedBytes - 1) & ~std::uintptr_t{ReservedBytes - 1};
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned != begin + Block) munmap(reinterpret_cast<void*>(aligned + SurfaceBytes), begin + Block - aligned);
-            region = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(region, SurfaceBytes);
+            munmap(reinterpret_cast<void*>(aligned + ReservedBytes), begin + ReservedBytes - aligned);
+            base = reinterpret_cast<std::uint8_t*>(aligned);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, ReservedBytes);
         }
 #endif
-        Require(region != nullptr, "direct write completion: cannot allocate the guest surface");
+        Require(base != nullptr, "direct write completion: cannot reserve the guest surfaces");
+    }
+
+    ~Reservation() {
+#ifdef _WIN32
+        GuestArena::GuestArenaRelease_nid_postfix(base, ReservedBytes);
+#else
+        munmap(base, ReservedBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(base, ReservedBytes);
+#endif
+    }
+
+    Reservation(const Reservation&) = delete;
+    Reservation& operator=(const Reservation&) = delete;
+
+    std::uint8_t* Slot(std::size_t index) const { return base + index * SurfaceBytes; }
+
+private:
+    std::uint8_t* base = nullptr;
+};
+
+class Surface {
+public:
+    explicit Surface(std::uint8_t* slot) : region(slot) {
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(region, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
+#endif
         texels = reinterpret_cast<std::uint32_t*>(region);
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
         GuestAllocations::Mutation().Add(region, SurfaceBytes, true, true, true);
@@ -143,10 +171,6 @@ public:
         GuestAllocations::Mutation().Remove(region);
 #ifdef _WIN32
         GuestArena::GuestArenaReset_nid_postfix(region, SurfaceBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(region, SurfaceBytes);
-#else
-        munmap(region, SurfaceBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(region, SurfaceBytes);
 #endif
     }
 
@@ -224,14 +248,14 @@ int main() {
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
+        const Reservation reservation;
         {
-            Surface probe;
+            Surface probe(reservation.Slot(0));
             Require(AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(probe.Texels()))).guestBytes == SurfaceBytes, "direct write completion: unexpected surface size");
         }
         {
-            constexpr std::size_t Runs = SettledImportBytes / SurfaceBytes - 1;
             std::vector<std::unique_ptr<Surface>> surfaces;
-            for (std::size_t index = 0; index <= 2 * Runs + 1; ++index) surfaces.push_back(std::make_unique<Surface>());
+            for (std::size_t index = 0; index < Slots; ++index) surfaces.push_back(std::make_unique<Surface>(reservation.Slot(index)));
             static_cast<void>(StoreAfterFill(*surfaces[0], false));
             std::size_t kept = 0;
             std::size_t dropped = 0;
