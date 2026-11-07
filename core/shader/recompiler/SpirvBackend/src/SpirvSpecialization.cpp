@@ -629,6 +629,9 @@ private:
     }
 
     bool prune() {
+        const bool maximallyReconverges = std::any_of(instructions.begin(), instructions.end(), [](const auto& instruction) {
+            return !instruction.empty() && Opcode(instruction) == spv::OpExecutionMode && instruction.size() >= 3u && instruction[2] == spv::ExecutionModeMaximallyReconvergesKHR;
+        });
         IdTable<std::vector<std::size_t>> blocks;
         blocks.Reset(bound);
         std::vector<std::uint32_t> entries;
@@ -701,7 +704,7 @@ private:
                     if (!retainMerge) instruction.clear();
                 }
                 const auto replacement = !retainMerge ? Make(spv::OpBranch, {target}) : op == spv::OpSwitch ? Make(spv::OpSwitch, {terminal.at(1), target}) :
-                    header.at(1) >= 0x00010600u ? terminal : Make(spv::OpBranchConditional, {terminal.at(1), target, target});
+                    header.at(1) >= 0x00010600u || maximallyReconverges ? terminal : Make(spv::OpBranchConditional, {terminal.at(1), target, target});
                 if (terminal != replacement) {
                     terminal = replacement;
                     changed = true;
