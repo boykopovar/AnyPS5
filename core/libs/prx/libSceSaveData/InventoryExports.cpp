@@ -75,3 +75,31 @@ int APS5_VABI libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch() {
 APS5_EXPORT("yBM2vzabhEA", libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch);
 
 }
+
+extern "C" {
+
+int APS5_VABI sceSaveDataGetRequiredBlocksForCdlg() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceSaveDataUnknown_KOSXhQAd7Co_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KOSXhQAd7Co", libSceSaveDataUnknown_KOSXhQAd7Co_nid_no_patch);
+
+int APS5_VABI libSceSaveDataUnknown_VSIY1inHm0U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("VSIY1inHm0U", libSceSaveDataUnknown_VSIY1inHm0U_nid_no_patch);
+
+int APS5_VABI libSceSaveDataUnknown_dBdQn_minus_whUig_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dBdQn-whUig", libSceSaveDataUnknown_dBdQn_minus_whUig_nid_no_patch);
+
+int APS5_VABI libSceSaveDataUnknown_ohfDGZ8EKis_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ohfDGZ8EKis", libSceSaveDataUnknown_ohfDGZ8EKis_nid_no_patch);
+
+}

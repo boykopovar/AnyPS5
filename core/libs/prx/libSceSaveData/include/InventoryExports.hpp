@@ -18,5 +18,10 @@ int APS5_VABI libSceSaveDataUnknown_fIu_minus_ckf3n_minus_o_nid_no_patch();
 int APS5_VABI libSceSaveDataUnknown_g1roz3Ux_plus_3I_nid_no_patch();
 int APS5_VABI libSceSaveDataUnknown_q8KxzjSpPVw_nid_no_patch();
 int APS5_VABI libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch();
+int APS5_VABI libSceSaveDataUnknown_KOSXhQAd7Co_nid_no_patch();
+int APS5_VABI libSceSaveDataUnknown_VSIY1inHm0U_nid_no_patch();
+int APS5_VABI libSceSaveDataUnknown_dBdQn_minus_whUig_nid_no_patch();
+int APS5_VABI libSceSaveDataUnknown_ohfDGZ8EKis_nid_no_patch();
+int APS5_VABI sceSaveDataGetRequiredBlocksForCdlg();
 
 }
