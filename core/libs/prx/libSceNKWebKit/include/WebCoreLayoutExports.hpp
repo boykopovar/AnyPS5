@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/include/RegionExports.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include <cstddef>
@@ -21,33 +22,6 @@ struct GridPosition {
     NKWebKit::WtfAbi::String m_namedGridLine;
 };
 
-enum class LengthType : std::uint8_t {
-    Auto,
-    Relative,
-    Percent,
-    Fixed,
-    Intrinsic,
-    MinIntrinsic,
-    MinContent,
-    MaxContent,
-    FillAvailable,
-    FitContent,
-    Calculated,
-    Content,
-    Undefined
-};
-
-struct Length {
-    union {
-        int m_intValue;
-        float m_floatValue;
-        unsigned m_calculationValueHandle;
-    };
-    LengthType m_type;
-    bool m_hasQuirk;
-    bool m_isFloat;
-};
-
 struct FloatQuadVector {
     const FloatQuad* m_buffer;
     unsigned m_capacity;
@@ -57,7 +31,6 @@ struct FloatQuadVector {
 static_assert(sizeof(GridPosition) == 16);
 static_assert(offsetof(GridPosition, m_integerPosition) == 4);
 static_assert(offsetof(GridPosition, m_namedGridLine) == 8);
-static_assert(sizeof(Length) == 8);
 static_assert(offsetof(Length, m_type) == 4);
 static_assert(offsetof(Length, m_hasQuirk) == 5);
 static_assert(offsetof(Length, m_isFloat) == 6);
