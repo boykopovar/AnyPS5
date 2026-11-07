@@ -234,3 +234,5 @@ All 33 named declarations were matched by recomputing candidate spellings agains
 | `sceNpSandboxIntGetStreamingSandboxSecret` | `n1tgdduEHu8` |
 | `sceNpAsmClientExtTerminate` | `yODgcWKSa8Q` |
 | `sceNpPush2SetDataType` | `4CkpTzOLZKQ` |
+
+- [sceNpAsmInitialize, sceNpAsmTerminate, sceNpAsmAbort, sceNpAsmCreateConnection, sceNpAsmDeleteConnection, sceNpAsmCreateRequest, sceNpAsmDeleteRequest, sceNpAsmClientInitialize, sceNpAsmClientTerminate and sceNpAsmClientSetNpTitleId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the 11.00 wrappers show two independent init flags: Asm returns `0x8055A201`/`02` and the client `0x8055A281`/`82`/`83`, with a null parameter or connection rejected by `0x8055A203`. The host stores the flags, keeps pointer sets for connections and requests, and copies the title id (first terminator, up to 16 bytes). The connection registration, request payloads, title-token service and the `sceNpAsmClient*` resource contexts are not modelled. Not measured on a PS5.
