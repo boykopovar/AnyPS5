@@ -3,7 +3,9 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -14,10 +16,18 @@ constexpr std::int32_t MaxExecution = 10;
 constexpr int ErrorInvalidState = static_cast<int>(0x809D3002u);
 constexpr int ErrorBusy = static_cast<int>(0x809D3003u);
 constexpr int ErrorNotInitialized = static_cast<int>(0x809D3004u);
+constexpr int ErrorInvalidArgument = static_cast<int>(0x809D3016u);
 constexpr int ErrorExecutionMax = static_cast<int>(0x809D3018u);
 std::atomic<bool> g_initialized{false};
 std::mutex g_sessionMutex;
 std::set<std::int32_t> g_sessions;
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, process + 16, sizeof(version));
+    return version;
+}
 
 void RequireSession(const char* function, std::int32_t expId) {
     if (!g_initialized.load()) throw std::logic_error(std::string(function) + ": not initialized");
@@ -45,7 +55,9 @@ int APS5_VABI sceContentExportFinish(std::int32_t expId) {
 
 int APS5_VABI sceContentExportFromData(std::int32_t expId, const ContentExportParam* param, std::size_t contentLength, ContentExportDataCallback callback, void* userData, char* path, std::size_t pathBufferLength) {
     std::lock_guard lock(g_sessionMutex);
-    RequireSession(__func__, expId);
+    if (!g_initialized.load() && CompiledSdkVersion() >= 0x4000000) return ErrorNotInitialized;
+    if (static_cast<std::uint32_t>(expId) > 9 || param == nullptr || callback == nullptr) return ErrorInvalidArgument;
+    if (!g_sessions.contains(expId)) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
