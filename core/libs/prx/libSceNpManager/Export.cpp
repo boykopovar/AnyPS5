@@ -557,9 +557,9 @@ int APS5_VABI sceNpManagerIntGetAccountIdSdk(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetAccountLanguage(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountLanguage(int userId, const void* accountId, void* language) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !accountId || !language) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetAccountLanguageA(int reqId, int userId, void* language) {
     (void)reqId;
@@ -603,9 +603,10 @@ int APS5_VABI sceNpManagerIntGetClientCredentialAccessToken(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetCommunicationRestrictionStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetCommunicationRestrictionStatus(int userId, int unknown, void* status) {
+    (void)userId;
+    if (unknown == -1 || !status) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetGameAccessToken(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -727,13 +728,14 @@ int APS5_VABI sceNpManagerIntGetVshClientId(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntIsSubAccount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntIsSubAccount(int userId, void* isSubAccount) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !isSubAccount) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntIsTemporarySignout(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntIsTemporarySignout(int userId, void* isTemporarySignout) {
+    (void)userId;
+    if (!isTemporarySignout) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 bool APS5_VABI sceNpManagerIntIsUnregisteredClientError(int error) {
     return static_cast<std::uint32_t>(error) == 0x82e0104d;

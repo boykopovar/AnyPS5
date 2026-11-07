@@ -230,3 +230,5 @@ All 33 named declarations were matched by recomputing candidate spellings agains
 | `sceNpSandboxIntGetStreamingSandboxSecret` | `n1tgdduEHu8` |
 | `sceNpAsmClientExtTerminate` | `yODgcWKSa8Q` |
 | `sceNpPush2SetDataType` | `4CkpTzOLZKQ` |
+
+- [sceNpManagerIntGetAccountLanguage, sceNpManagerIntGetCommunicationRestrictionStatus, sceNpManagerIntIsSubAccount and sceNpManagerIntIsTemporarySignout](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the 11.00 wrappers check the manager, the `-1` user or second argument and the output pointers (`0x80550003`); when the manager exists they call the service. The host returns `SIGNED_OUT` without writing the output, following the existing offline getters; the manager's `0x80550002` initialization error and the service payloads are not modelled. Not measured on a PS5.
