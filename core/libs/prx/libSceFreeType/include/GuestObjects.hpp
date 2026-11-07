@@ -6,6 +6,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <vector>
@@ -16,6 +17,7 @@ struct GuestFace;
 
 struct GuestLibrary {
     FT_Library host = nullptr;
+    std::uint32_t references = 1;
     std::list<std::unique_ptr<GuestFace>> faces;
 };
 
