@@ -2,6 +2,7 @@
 
 ### Silent stubs
 
+- [scePlayGoDialogGetResult](../../../core/libs/prx/libScePlayGoDialog/Export.cpp) - returning `0x80B8000D` for an unwritable result pointer is a host-safety fallback with console behavior unmeasured.
 - [scePlayGoDialogGetStatus and scePlayGoDialogUpdateStatus](../../../core/libs/prx/libScePlayGoDialog/Export.cpp) return dialog state values without updating host dialog presentation or download status.
 
 ### Unknown function info
