@@ -34,6 +34,9 @@ constexpr std::uint64_t FirstOctetInvalid = RsaError | 133;
 constexpr std::uint64_t LastOctetInvalid = RsaError | 134;
 constexpr std::uint64_t SlenRecoveryFailed = RsaError | 135;
 constexpr std::uint64_t SlenCheckFailed = RsaError | 136;
+constexpr std::uint64_t EvpError = 0x6fffull << 12;
+constexpr std::uint64_t EvpMessageDigestIsNull = EvpError | 159;
+constexpr std::uint64_t EvpTooLarge = EvpError | 164;
 
 enum Digest { DigestMd5, DigestSha256, DigestSha384, DigestSha512, DigestNone };
 enum AddKind { AddExact, AddRefused, AddSalted, AddThrows };
@@ -500,12 +503,6 @@ static bool QueueHoldsOneRsaError() {
     return (first & ~std::uint64_t(0xfff)) == RsaError && (first & 0xfff) && !second;
 }
 
-static bool QueueHoldsNoRsaError() {
-    bool clean = true;
-    for (std::uint64_t error = ERR_get_error_nid_postfix(); error; error = ERR_get_error_nid_postfix()) clean = clean && (error >> 24) != (RsaError >> 24);
-    return clean;
-}
-
 template<typename TCall> static void RequireQueue(TCall call, int expected, std::uint64_t error, std::source_location location = std::source_location::current()) {
     ERR_clear_error_nid_postfix();
     const int result = call();
@@ -604,7 +601,7 @@ static void TestAddVectors() {
             const auto expected = Hex(vector.bytes);
             ERR_clear_error_nid_postfix();
             Require(Add(key, out, mHash, digest, vector.saltLength) == (vector.kind == AddExact) && std::equal(expected.begin(), expected.end(), out.begin()) && Untouched(out, expected.size()));
-            Require(!digest ? QueueHoldsNoRsaError() : vector.kind == AddExact ? QueueHolds(0) : QueueHoldsOneRsaError());
+            Require(!digest ? QueueHolds(EvpMessageDigestIsNull) : vector.kind == AddExact ? QueueHolds(0) : QueueHoldsOneRsaError());
             break;
         }
         case AddSalted: {
@@ -720,8 +717,8 @@ static void TestOrdering() {
     const auto mHash = Pattern(64, 3);
     const auto* digest = EVP_sha256_nid_postfix();
     ERR_clear_error_nid_postfix();
-    Require(RSA_padding_add_PKCS1_PSS_nid_postfix(nullptr, nullptr, nullptr, nullptr, -1) == 0 && QueueHoldsNoRsaError());
-    Require(RSA_verify_PKCS1_PSS_nid_postfix(nullptr, nullptr, nullptr, nullptr, -1) == 0 && QueueHoldsNoRsaError());
+    Require(RSA_padding_add_PKCS1_PSS_nid_postfix(nullptr, nullptr, nullptr, nullptr, -1) == 0 && QueueHolds(EvpMessageDigestIsNull));
+    Require(RSA_verify_PKCS1_PSS_nid_postfix(nullptr, nullptr, nullptr, nullptr, -1) == 0 && QueueHolds(EvpMessageDigestIsNull));
     for (int saltLength : {-3, INT_MIN}) {
         Require(RSA_padding_add_PKCS1_PSS_nid_postfix(nullptr, nullptr, mHash.data(), digest, saltLength) == 0);
         Require(RSA_verify_PKCS1_PSS_nid_postfix(nullptr, mHash.data(), digest, nullptr, saltLength) == 0);
@@ -837,7 +834,7 @@ static void TestThrows() {
     RequireQueue([&] { return RSA_padding_add_PKCS1_PSS_nid_postfix(key.rsa, nullptr, mHash.data(), &failing, 0); }, 0, 0);
     custom.mdSize = 65;
     ERR_clear_error_nid_postfix();
-    Require(Add(key, out, mHash, &custom, 0) == 0 && QueueHoldsNoRsaError() && Verify(key, mHash, &custom, em, -2) == 0 && QueueHoldsNoRsaError());
+    Require(Add(key, out, mHash, &custom, 0) == 0 && QueueHolds(EvpTooLarge) && Verify(key, mHash, &custom, em, -2) == 0 && QueueHolds(EvpTooLarge));
     custom.mdSize = INT_MAX;
     RequireThrows([&] { Add(key, out, mHash, &custom, -1); });
     TestKey one(1);
