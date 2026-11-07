@@ -1,0 +1,15 @@
+add_library(libSceAvPlayerStreaming SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAvPlayerStreaming PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAvPlayerStreaming)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_av_player_streaming_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvPlayerStreaming.cpp)
+    target_include_directories(guest_av_player_streaming_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_av_player_streaming_tests PRIVATE libSceAvPlayerStreaming libc)
+    configure_windows_unwind(guest_av_player_streaming_tests)
+    add_test(NAME guest_av_player_streaming COMMAND guest_av_player_streaming_tests)
+    if(WIN32)
+        set_tests_properties(guest_av_player_streaming PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayerStreaming>")
+    endif()
+endif()
