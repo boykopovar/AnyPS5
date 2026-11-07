@@ -88,7 +88,7 @@ void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint64_
     for (const auto& wait : waits) {
         if (!wait.landed && wait.count == packet.size() && std::equal(packet.begin(), packet.end(), wait.words.begin())) return;
     }
-    dropPendingWaits(AwaitedAddress(packet));
+    dropPendingWaits(AwaitedAddress(packet), false);
     PendingWait wait{};
     std::copy(packet.begin(), packet.end(), wait.words.begin());
     wait.count = packet.size();
@@ -96,10 +96,13 @@ void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint64_
     waits.push_back(wait);
 }
 
-void Driver::dropPendingWaits(std::uint64_t awaited) {
+void Driver::dropPendingWaits(std::uint64_t awaited, bool satisfiedOnly) {
     auto& waits = pendingWaits();
     if (waits.empty()) return;
-    std::erase_if(waits, [awaited](const PendingWait& wait) { return AwaitedAddress(std::span<const std::uint32_t>(wait.words).first(wait.count)) == awaited; });
+    std::erase_if(waits, [awaited, satisfiedOnly](const PendingWait& wait) {
+        const auto packet = std::span<const std::uint32_t>(wait.words).first(wait.count);
+        return AwaitedAddress(packet) == awaited && (!satisfiedOnly || Pm4::WaitSatisfiedUnchecked(packet));
+    });
 }
 
 void Driver::NotePendingWaitForTest(std::span<const std::uint32_t> packet) {
@@ -179,7 +182,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         return false;
     };
     const auto passedByMemory = [&] {
-        if (queue == 0 && !requireMemory) dropPendingWaits(awaited);
+        if (queue == 0 && !requireMemory) dropPendingWaits(awaited, true);
     };
     const auto storedByOwnLabel = [&] {
         std::uint32_t writer = queue;

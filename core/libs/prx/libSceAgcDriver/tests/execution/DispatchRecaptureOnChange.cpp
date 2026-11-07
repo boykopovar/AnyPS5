@@ -114,6 +114,14 @@ void Dispatch(const GuestBlock& table, const GuestBlock& output) {
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(output.Words()), BufferBytes);
 }
 
+void SubmitWait(const GuestBlock& block, std::uint32_t reference) {
+    const auto label = reinterpret_cast<std::uintptr_t>(block.Words() + LabelWord);
+    std::vector<std::uint32_t> commands{0xc0053c00u, 0x13u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), reference, 0xffffffffu, 10u};
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Expect(sceAgcDriverSubmitDcb(&packet) == 0, "the wait submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 std::uint32_t Lane(const GuestBlock& output, std::uint32_t lane) {
     return output.Words()[lane];
 }
@@ -147,6 +155,15 @@ void ExpectCompared(const GuestBlock& table, const GuestBlock& output, std::uint
     Dispatch(table, output);
     const auto counts = Since(before);
     std::printf("%s: lane 0 stored 0x%x, %llu capture check(s) run, %llu packet(s) prepared again\n", what.c_str(), Lane(output, 0), static_cast<unsigned long long>(counts.checks), static_cast<unsigned long long>(counts.retries));
+    Expect(counts.checks == 1, what + ": the dispatch ran " + std::to_string(counts.checks) + " capture checks, not one");
+    Expect(counts.retries == 0, what + ": a dispatch whose captured memory did not change was prepared again");
+}
+
+void ExpectStillCompared(const GuestBlock& table, const GuestBlock& output, const std::string& what) {
+    const auto before = CaptureCounts();
+    Dispatch(table, output);
+    const auto counts = Since(before);
+    std::printf("%s: lane 0 stored 0x%x, %llu capture check(s) run, %llu skipped\n", what.c_str(), Lane(output, 0), static_cast<unsigned long long>(counts.checks), static_cast<unsigned long long>(counts.skipped));
     Expect(counts.checks == 1, what + ": the dispatch ran " + std::to_string(counts.checks) + " capture checks, not one");
     Expect(counts.retries == 0, what + ": a dispatch whose captured memory did not change was prepared again");
 }
@@ -211,6 +228,15 @@ int main() {
         table.Words()[LabelWord] = 2;
         ExpectSkipped(table, output, "the same dispatch after memory satisfied the later wait, which replaced the earlier one");
         ExpectOutput(output, 0x2000u, "the dispatch after the later wait was satisfied");
+
+        table.Words()[LabelWord] = 0;
+        ExpectCompared(table, output, 2, "a dispatch behind a wait for 2 on a label holding 0");
+        table.Words()[LabelWord] = 1;
+        SubmitWait(table, 1);
+        ExpectStillCompared(table, output, "a dispatch after memory satisfied a graphics wait for 1 on that label but not the noted wait for 2");
+        ExpectOutput(output, 0x2000u, "the dispatch behind the wait for 2 memory has not satisfied");
+        table.Words()[LabelWord] = 2;
+        ExpectSkipped(table, output, "the same dispatch after memory satisfied the wait for 2");
 
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
         AgcDriverShutdown_nid_postfix();
