@@ -332,10 +332,17 @@ double PerDraw(std::uint64_t many, std::uint64_t none, std::size_t draws) {
 
 using Builder = std::vector<std::uint32_t> (*)(std::size_t);
 
+struct Ceiling {
+    double allocations;
+    double bytes;
+};
+
 struct Shape {
     const char* name;
     Builder build;
     bool dispatch;
+    Ceiling plain;
+    Ceiling pipelined;
 };
 
 double ReportAllocations(const Shape& shape, std::size_t draws) {
@@ -364,14 +371,15 @@ double ReportAllocations(const Shape& shape, std::size_t draws) {
         std::printf("  site %s: %.3f per draw, %.1f bytes per draw\n", Location(site.caller).c_str(), sitePerDraw, PerDraw(site.bytes, baseBytes, draws));
     }
     const auto perDrawBytes = PerDraw(many.bytes, base.bytes, draws);
-    const auto maximum = std::getenv("APS5_DRAW_ALLOCATIONS_MAX");
-    if (maximum != nullptr && std::getenv("APS5_DRAW_ALLOCATIONS_NO_LIMIT") == nullptr) {
-        const auto limit = std::strtod(maximum, nullptr);
+    const auto& ceiling = std::getenv("APS5_DRAW_PIPELINE") != nullptr ? shape.pipelined : shape.plain;
+    if (std::getenv("APS5_DRAW_ALLOCATIONS_NO_LIMIT") == nullptr) {
+        const auto maximum = std::getenv("APS5_DRAW_ALLOCATIONS_MAX");
+        const auto limit = maximum != nullptr ? std::strtod(maximum, nullptr) : ceiling.allocations;
         Require(perDraw <= limit, std::string("draw allocations [") + shape.name + "]: " + std::to_string(perDraw) + " allocations per warmed draw, more than the limit " + std::to_string(limit));
     }
     const auto maximumBytes = std::getenv("APS5_DRAW_ALLOCATIONS_MAX_BYTES");
-    if (maximumBytes != nullptr) {
-        const auto limit = std::strtod(maximumBytes, nullptr);
+    if (maximumBytes != nullptr || std::getenv("APS5_DRAW_ALLOCATIONS_NO_LIMIT") == nullptr) {
+        const auto limit = maximumBytes != nullptr ? std::strtod(maximumBytes, nullptr) : ceiling.bytes;
         Require(perDrawBytes <= limit, std::string("draw allocations [") + shape.name + "]: " + std::to_string(perDrawBytes) + " requested bytes per warmed draw, more than the limit " + std::to_string(limit));
     }
     return perDraw;
@@ -417,10 +425,10 @@ int main() {
         Table = &table;
         Output = &output;
         const std::array<Shape, 4> shapes{{
-            {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false},
-            {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false},
-            {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false},
-            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true},
+            {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false, {45.0, 8100.0}, {48.5, 8200.0}},
+            {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false, {47.5, 8300.0}, {50.5, 8450.0}},
+            {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false, {47.5, 10250.0}, {50.5, 10450.0}},
+            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {13.5, 1150.0}, {16.0, 1500.0}},
         }};
         const auto draws = static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") != nullptr ? std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") : "256")));
         const auto only = std::getenv("APS5_DRAW_ALLOCATIONS_SHAPE");
