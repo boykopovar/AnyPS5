@@ -1,4 +1,5 @@
 #include "prx/libSceJpegDec/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
@@ -163,6 +164,9 @@ int main() {
     Require(sceJpegDecCreate(&fullParam, memory.data(), static_cast<std::uint32_t>(fullMemorySize), &handle) == 0);
     Require(handle != nullptr && reinterpret_cast<std::uintptr_t>(handle) % 32 == 0);
     Require(sceJpegDecCreate(&param, memory.data(), 0, nullptr) == invalidSize);
+    errno = 71;
+    Require(sceJpegDecCreate(&fullParam, memory.data(), static_cast<std::uint32_t>(fullMemorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
     Require(sceJpegDecDelete(nullptr) == invalidHandle);
     Require(sceJpegDecDelete(reinterpret_cast<void*>(0x20)) == invalidHandle);
     Require(sceJpegDecDelete(handle) == 0);
