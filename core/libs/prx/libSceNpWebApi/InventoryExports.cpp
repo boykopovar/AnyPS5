@@ -2,6 +2,20 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
+#include <cstddef>
+#include <cstdint>
+
+namespace {
+
+template <typename TValue>
+TValue ReadAt(const void* object, std::size_t offset, const char* function) {
+    TValue value{};
+    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::byte*>(object) + offset, sizeof(value))) NotImplemented_nid_no_patch(function);
+    return value;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI libSceNpWebApiUnknown__plus_aMuhoVidDY_nid_no_patch() {
@@ -159,8 +173,8 @@ int APS5_VABI libSceNpWebApiUnknown_nrDh9GesOyk_nid_no_patch() {
 }
 APS5_EXPORT("nrDh9GesOyk", libSceNpWebApiUnknown_nrDh9GesOyk_nid_no_patch);
 
-int APS5_VABI libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(const void* object) {
+    return ReadAt<std::int64_t>(object, 0x20, __func__) != -1;
 }
 APS5_EXPORT("ojGP5vur+qM", libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch);
 
@@ -189,8 +203,8 @@ int APS5_VABI libSceNpWebApiUnknown_wXXTksptCEo_nid_no_patch() {
 }
 APS5_EXPORT("wXXTksptCEo", libSceNpWebApiUnknown_wXXTksptCEo_nid_no_patch);
 
-int APS5_VABI libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(const void* object) {
+    return ReadAt<std::int32_t>(object, 0xc, __func__) != -1;
 }
 APS5_EXPORT("zQE2rxZdLy8", libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch);
 
