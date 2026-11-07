@@ -249,6 +249,24 @@ int main() {
     Require(sceConvertKeycodeGetCharacter(33, 0x4000300, 30, &character) == 0 && character == 0x200F);
     Require(sceConvertKeycodeGetCharacter(28, 0, 31, &character) == 0 && character == u'y');
     Require(sceConvertKeycodeGetCharacter(29, 0, 39, &character) == 0 && character == u'z');
+    Require(sceConvertKeycodeGetCharacter(4, 0, 23, &character) == 0 && character == u'a');
+    Require(sceConvertKeycodeGetCharacter(4, 0x10000000, 23, &character) == 0 && character == 0xFF41);
+    Require(sceConvertKeycodeGetCharacter(4, 0x4000000, 23, &character) == 0 && character == 0x3061);
+    Require(sceConvertKeycodeGetCharacter(4, 0xC000000, 23, &character) == 0 && character == 0xFF81);
+    Require(sceConvertKeycodeGetCharacter(4, 0x1C000000, 23, &character) == 0 && character == 0x30C1);
+    Require(sceConvertKeycodeGetCharacter(4, 0x4000000, 26, &character) == 0 && character == 0x3107);
+    Require(sceConvertKeycodeGetCharacter(4, 0x10000000, 26, &character) == 0 && character == 0xFF41);
+    for (const std::uint32_t type : {29u, 39u}) {
+        Require(sceConvertKeycodeGetCharacter(4, 0, type, &character) == 0 && character == u'a');
+        Require(sceConvertKeycodeGetCharacter(4, 0x4000000, type, &character) == 0 && character == 0x65E5);
+        Require(sceConvertKeycodeGetCharacter(5, 0x4000000, type, &character) == 0 && character == 0x6708);
+    }
+    Require(sceConvertKeycodeGetCharacter(52, 0x20000, 3, &character) == 0 && character == 196);
+    Require(sceConvertKeycodeGetCharacter(52, 0x20200, 3, &character) == 0 && character == 192);
+    Require(sceConvertKeycodeGetCharacter(51, 0x20000, 3, &character) == 0 && character == 214);
+    Require(sceConvertKeycodeGetCharacter(51, 0x20200, 3, &character) == 0 && character == 201);
+    Require(sceConvertKeycodeGetCharacter(99, 0, 4, &character) == 0 && character == 0);
+    Require(sceConvertKeycodeGetCharacter(99, 0x10000, 4, &character) == 0 && character == u'.');
     for (std::uint32_t layout = 1; layout <= 30; ++layout) {
         for (std::uint16_t key : {83, 224, 225, 226, 227, 228, 229, 230, 231}) {
             Require(sceConvertKeycodeGetCharacter(key, 0xFFFFFFFFu, layout, &character) == 0 && character == 0);
