@@ -9,7 +9,7 @@ using namespace FreeType;
 extern "C" {
 
 int APS5_VABI FT_Request_Size_nid_postfix(GuestFaceRec* face, const GuestSizeRequestRec* request) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner || !owner->host->size || !request) return FT_Request_Size(owner ? owner->host : nullptr, nullptr);
     if (request->width < 0 || request->height < 0 || request->type >= FT_SIZE_REQUEST_TYPE_MAX) return FT_Err_Invalid_Argument;
     if (request->width > std::numeric_limits<FT_Long>::max() || request->height > std::numeric_limits<FT_Long>::max()) {

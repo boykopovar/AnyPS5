@@ -14,7 +14,7 @@ namespace {
 
 FT_CharMap HostCharmap(const GuestCharMapRec* charmap) {
     if (!charmap || !charmap->face) return nullptr;
-    const GuestFace* owner = FaceOf(static_cast<const GuestFaceRec*>(charmap->face));
+    const GuestFace* owner = FaceOf_nid_no_patch(static_cast<const GuestFaceRec*>(charmap->face));
     if (owner && owner->host) {
         for (std::size_t index = 0; index < owner->charmapPointers.size(); ++index) {
             if (owner->charmapPointers[index] == charmap) return owner->host->charmaps[index];

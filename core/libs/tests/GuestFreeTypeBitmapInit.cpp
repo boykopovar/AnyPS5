@@ -37,7 +37,7 @@ int main() {
     GuestFace face;
     face.library = &library;
     Require(FT_New_Memory_Face(library.host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &face.host) == 0);
-    SyncFace(face);
+    SyncFace_nid_no_patch(face);
     face.host->glyph->bitmap.rows = 9;
     face.host->glyph->bitmap.width = 17;
     face.slot.bitmap.rows = 9;

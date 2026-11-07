@@ -24,7 +24,7 @@ bool FastQueryLoadsGlyph(FT_Face face, std::int32_t flags) {
 }
 
 int GetAdvances(GuestFaceRec* face, std::uint32_t start, std::uint32_t count, std::int32_t flags, std::int64_t* advances, bool single) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner) return FT_Err_Invalid_Face_Handle;
     if (!advances) return FT_Err_Invalid_Argument;
     const auto numGlyphs = static_cast<std::uint32_t>(owner->host->num_glyphs);

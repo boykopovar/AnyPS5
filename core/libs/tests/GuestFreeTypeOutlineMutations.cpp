@@ -122,7 +122,7 @@ static void RenderModifiedOutline() {
         Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &native) == 0);
         Require(FT_Set_Pixel_Sizes(guest.host, 18, 18) == 0 && FT_Set_Pixel_Sizes(native, 18, 18) == 0);
         Require(FT_Load_Glyph(guest.host, 1, FT_LOAD_DEFAULT) == 0 && FT_Load_Glyph(native, 1, FT_LOAD_DEFAULT) == 0);
-        SyncFace(guest);
+        SyncFace_nid_no_patch(guest);
         FT_Outline_Reverse_nid_postfix(&guest.slot.outline);
         FT_Outline_Translate_nid_postfix(&guest.slot.outline, 77, -129);
 

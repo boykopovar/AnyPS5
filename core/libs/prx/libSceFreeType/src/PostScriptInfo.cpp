@@ -9,7 +9,7 @@ using namespace FreeType;
 extern "C" {
 
 int APS5_VABI FT_Get_PS_Font_Info_nid_postfix(GuestFaceRec* face, GuestPSFontInfo* info) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     PS_FontInfoRec native{};
     const int error = FT_Get_PS_Font_Info(owner ? owner->host : nullptr, info ? &native : nullptr);
     if (error != 0) return error;
@@ -26,7 +26,7 @@ int APS5_VABI FT_Get_PS_Font_Info_nid_postfix(GuestFaceRec* face, GuestPSFontInf
 }
 
 int APS5_VABI FT_Has_PS_Glyph_Names_nid_postfix(GuestFaceRec* face) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Has_PS_Glyph_Names(owner ? owner->host : nullptr);
 }
 

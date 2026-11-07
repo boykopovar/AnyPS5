@@ -179,7 +179,7 @@ static void TestGlyphSlot(GuestLibrary* library, FT_Library oracle) {
     Require(FT_New_Memory_Face(library->host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &face.host) == 0);
     FT_Face nativeFace = nullptr;
     Require(FT_New_Memory_Face(oracle, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &nativeFace) == 0);
-    SyncFace(face);
+    SyncFace_nid_no_patch(face);
     unsigned char pixels[]{7, 31, 65, 127, 255, 17, 61, 101, 189, 239};
     const FT_Bitmap source{2, 5, 5, pixels, 256, FT_PIXEL_MODE_GRAY, 0, nullptr};
     const GuestBitmap guestSource = Guest(source);
@@ -218,7 +218,7 @@ static void TestReusedStorage(GuestLibrary* library) {
     face->library = library;
     Require(FT_New_Memory_Face(library->host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &face->host) == 0);
     FT_Face native = face->host;
-    SyncFace(*face);
+    SyncFace_nid_no_patch(*face);
     void* address = &face->slot.bitmap;
     face->~GuestFace();
     auto* bitmap = new (address) GuestBitmap{};

@@ -5,15 +5,15 @@
 
 namespace FreeType {
 
-GuestFace* FaceOf(const GuestFaceRec* face) {
+GuestFace* FaceOf_nid_no_patch(const GuestFaceRec* face) {
     return face ? static_cast<GuestFace*>(face->internal) : nullptr;
 }
 
-GuestFace* FaceOf(const GuestGlyphSlotRec* slot) {
+GuestFace* FaceOfSlot_nid_no_patch(const GuestGlyphSlotRec* slot) {
     return slot ? static_cast<GuestFace*>(slot->internal) : nullptr;
 }
 
-void SyncFace(GuestFace& face) {
+void SyncFace_nid_no_patch(GuestFace& face) {
     RegisterBitmap_nid_no_patch(face);
     const FT_Face host = face.host;
     auto& rec = face.rec;
@@ -57,7 +57,7 @@ void SyncFace(GuestFace& face) {
     SyncSlot(face);
 }
 
-void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host) {
+extern "C" void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host) {
     rec.face = &face.rec;
     rec.internal = host;
     if (!host) {
@@ -68,7 +68,7 @@ void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size hos
     rec.metrics = {metrics.x_ppem, metrics.y_ppem, metrics.x_scale, metrics.y_scale, metrics.ascender, metrics.descender, metrics.height, metrics.max_advance};
 }
 
-void SyncSizePointer_nid_no_patch(GuestFace& face) {
+extern "C" void SyncSizePointer_nid_no_patch(GuestFace& face) {
     const FT_Size active = face.host->size;
     if (!active) {
         face.rec.size = nullptr;
