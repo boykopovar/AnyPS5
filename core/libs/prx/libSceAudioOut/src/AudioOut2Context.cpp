@@ -26,7 +26,7 @@
 using Clock = std::chrono::steady_clock;
 
 static constexpr std::size_t CONTEXT_MEMORY = 0x10000;
-static constexpr std::uint32_t DEFAULT_MAX_PORTS = 16;
+static constexpr std::uint32_t DEFAULT_MAX_PORTS = 8;
 // Pushes, polls and advances traced individually before the trace falls back to the per-second summary.
 static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 // Grains the device waits for before it starts playing (and again whenever it ran dry), so the

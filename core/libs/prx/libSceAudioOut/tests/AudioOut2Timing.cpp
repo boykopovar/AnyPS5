@@ -356,7 +356,7 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0);
     std::size_t standardSize = sizeSentinel;
     Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
-    Require(size == 0xb61c && standardSize == 0x10000);
+    Require(size == 0x5b1c && standardSize == 0x10000);
 
     const AudioOut2ContextHandle contextSentinel = 0x5A5A;
     AudioOut2ContextHandle context = contextSentinel;

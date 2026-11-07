@@ -32,6 +32,7 @@ constexpr AudioOut2PortHandle portSentinel = 0x6B6B;
 AudioOut2ContextHandle CreateContext() {
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    Require(params.max_ports == 8 && params.queue_depth == 1 && params.num_grains == 256 && params.max_object_ports == 0 && params.guarantee_object_ports == 0, "a context parameter default did not match the console");
     AudioOut2ContextHandle context = 0;
     Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0 && context != 0, "a context was not created");
     return context;
@@ -103,16 +104,16 @@ void FirmwareExSignatures() {
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
     std::size_t size = 0;
-    Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0 && size == 0xb61c, "the low-latency memory query returned the wrong size");
+    Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0 && size == 0x5b1c, "the low-latency memory query returned the wrong size");
     size = 0;
-    Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, &size) == 0 && size == 0xb61c, "the extended memory query returned the wrong size");
+    Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, &size) == 0 && size == 0x5b1c, "the extended memory query returned the wrong size");
     Require(sceAudioOut2LoContextQueryMemory(nullptr, &size) == errorInvalidParam, "a null-parameter memory query was not refused");
     params.max_object_ports = 0x81;
     Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, &size) == errorInvalidParam, "an oversized object port count was accepted");
     params.max_object_ports = 0;
     params.max_ports = 0x21;
     Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, &size) == errorInvalidParam, "an oversized port count was accepted");
-    params.max_ports = 16;
+    params.max_ports = 8;
     params.num_grains = 0x180;
     Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, &size) == errorInvalidGrains, "a misaligned grain count was accepted");
     params.num_grains = 0x80;
