@@ -1,0 +1,15 @@
+add_library(libScePsm SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePsm PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePsm)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_psm_constant_returns_tests ${LIBS_INCLUDE_DIR}/tests/GuestPsmConstantReturns.cpp)
+    target_include_directories(guest_psm_constant_returns_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_psm_constant_returns_tests PRIVATE libScePsm libc)
+    configure_windows_unwind(guest_psm_constant_returns_tests)
+    add_test(NAME guest_psm_constant_returns COMMAND guest_psm_constant_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_psm_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePsm>")
+    endif()
+endif()
