@@ -42,7 +42,8 @@ class SubprocessEncodingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             identity = ("-c", "user.name=fixture", "-c", "user.email=fixture@example.com")
             subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
-            subprocess.run(["git", "-C", directory, *identity, "commit", "-q", "--allow-empty", "-m", SUBJECT], check=True)
+            subprocess.run(["git", "-C", directory, *identity, "commit", "-q", "--allow-empty", "-F", "-"],
+                           input=SUBJECT.encode("utf-8"), check=True)
             environment = {**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
             for module in ("title_run", "vulkan_validation_gate"):
                 code = (f"import sys; sys.path.insert(0, sys.argv[1]); import {module} as tool; "
