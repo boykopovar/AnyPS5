@@ -42,6 +42,13 @@ class TimelinePreviewTests(unittest.TestCase):
         self.assertEqual([list(map(int, line.split())) for line in compiled.splitlines()[1:]],
                          [[event["at_ms"], event["hold_ms"], event["buttons"]] for event in result["events"]])
 
+    def test_stick_positions_are_previewed(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 300, "buttons": [], "left_stick": [255, 128]},
+                                             {"at_ms": 400, "hold_ms": 100, "buttons": ["cross"]}]}
+        result = preview_pad_timeline.preview(document)
+        self.assertEqual(result["events"][0], {"at_ms": 0, "hold_ms": 300, "buttons": 0, "left_stick": [255, 128], "right_stick": [128, 128]})
+        self.assertEqual(result["events"][1], {"at_ms": 400, "hold_ms": 100, "buttons": pad_timeline.BUTTONS["cross"]})
+
     def test_cli_previews_without_creating_or_changing_command_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

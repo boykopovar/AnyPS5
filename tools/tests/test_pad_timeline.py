@@ -31,6 +31,24 @@ class TimelineTests(unittest.TestCase):
         self.document["events"][0]["buttons"] = ["cross", "touch-left", "touch-right"]
         self.assertIn("200 100 6307840", pad_timeline.compile_timeline(self.document, 1))
 
+    def test_sticks_are_written_after_the_buttons(self):
+        self.document["events"][0]["left_stick"] = [255, 0]
+        self.document["events"][1]["right_stick"] = [10, 245]
+        text = pad_timeline.compile_timeline(self.document, 7)
+        self.assertEqual(text, "APS5_PAD_TIMELINE 1 7 2\n200 100 18432 255 0 128 128\n500 200 64 128 128 10 245\n")
+
+    def test_stick_positions_are_validated(self):
+        for position in [None, [], [128], [128, 128, 128], [256, 128], [-1, 128], [True, 128], [128.0, 128], "128,128"]:
+            with self.subTest(position=position):
+                self.document["events"][0]["left_stick"] = position
+                with self.assertRaises(ValueError):
+                    pad_timeline.compile_timeline(self.document, 1)
+
+    def test_unknown_event_fields_are_rejected(self):
+        self.document["events"][0]["stick"] = [128, 128]
+        with self.assertRaises(ValueError):
+            pad_timeline.compile_timeline(self.document, 1)
+
     def test_empty_buttons_release(self):
         self.document["events"][0]["buttons"] = []
         self.assertIn("200 100 0", pad_timeline.compile_timeline(self.document, 1))

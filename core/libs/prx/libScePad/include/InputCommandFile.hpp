@@ -114,8 +114,10 @@ private:
                 if (eventText.find('-') != std::string::npos) return {};
                 fields.clear();
                 fields.str(eventText);
-                std::uint64_t start = 0, duration = 0, buttons = 0;
-                if (!(fields >> start >> duration >> buttons) || fields >> extra) return {};
+                std::uint64_t row[7]{};
+                const int columns = parseRow(eventText, row);
+                if (columns != 3 && columns != 7) return {};
+                const std::uint64_t start = row[0], duration = row[1], buttons = row[2];
                 if ((buttons & ~(0x10fffeull | TouchLeftBit | TouchRightBit)) != 0 || duration == 0 || duration > 5000 ||
                     start < previousEnd || start > 3600000 - duration) return {};
                 previousEnd = start + duration;
@@ -123,6 +125,11 @@ private:
                 input.buttons = static_cast<std::uint32_t>(buttons & 0x10fffeull);
                 input.touchLeft = (buttons & TouchLeftBit) != 0;
                 input.touchRight = (buttons & TouchRightBit) != 0;
+                for (int column = 3; column < columns; ++column) {
+                    if (row[column] > 255) return {};
+                    input.sticks[column - 3] = static_cast<std::uint8_t>(row[column]);
+                }
+                input.hasSticks = columns == 7;
                 command.events.push_back({start * 1000, previousEnd * 1000, input});
             }
             file >> std::ws;
@@ -172,6 +179,25 @@ private:
         input.hasSticks = count == 7;
         command.events.push_back({0, values[2] * 1000, input});
         return command;
+    }
+
+    static int parseRow(std::string_view text, std::uint64_t (&row)[7]) {
+        const auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; };
+        int columns = 0;
+        std::size_t index = 0;
+        while (index < text.size()) {
+            if (space(text[index])) {
+                ++index;
+                continue;
+            }
+            const std::size_t first = index;
+            if (text[index] == '+') ++index;
+            while (index < text.size() && text[index] >= '0' && text[index] <= '9') ++index;
+            if (index < text.size() && !space(text[index]) && text[index] != '+') return -1;
+            if (columns == 7 || !parseUnsigned(text.substr(first, index - first), row[columns])) return -1;
+            ++columns;
+        }
+        return columns;
     }
 
     static bool parseUnsigned(std::string_view token, std::uint64_t& value) {

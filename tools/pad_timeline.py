@@ -30,8 +30,8 @@ def compile_timeline(document, sequence, repeat=1, gap_ms=200):
     previous_end = 0
     for index, event in enumerate(source):
         prefix = f"events[{index}]"
-        if not isinstance(event, dict) or set(event) != {"at_ms", "hold_ms", "buttons"}:
-            raise ValueError(f"{prefix} must contain at_ms, hold_ms and buttons")
+        if not isinstance(event, dict) or not {"at_ms", "hold_ms", "buttons"} <= set(event) <= {"at_ms", "hold_ms", "buttons", "left_stick", "right_stick"}:
+            raise ValueError(f"{prefix} must contain at_ms, hold_ms and buttons, and may contain left_stick and right_stick")
         start = integer(event["at_ms"], f"{prefix}.at_ms", 0, 3600000)
         duration = integer(event["hold_ms"], f"{prefix}.hold_ms", 1, 5000)
         if start < previous_end or start + duration > 3600000:
@@ -46,14 +46,21 @@ def compile_timeline(document, sequence, repeat=1, gap_ms=200):
         buttons = 0
         for name in names:
             buttons |= BUTTONS[name]
-        events.append((start, duration, buttons))
+        axes = ""
+        if "left_stick" in event or "right_stick" in event:
+            for stick in ("left_stick", "right_stick"):
+                position = event.get(stick, [128, 128])
+                if not isinstance(position, list) or len(position) != 2:
+                    raise ValueError(f"{prefix}.{stick} must be [x, y]")
+                axes += "".join(f" {integer(axis, f'{prefix}.{stick}', 0, 255)}" for axis in position)
+        events.append((start, duration, buttons, axes))
         previous_end = start + duration
     period = previous_end + gap_ms
     if (repeat - 1) * period + previous_end > 3600000:
         raise ValueError("repeated timeline exceeds one hour")
     rows = [f"APS5_PAD_TIMELINE 1 {sequence} {len(events) * repeat}"]
     for iteration in range(repeat):
-        rows.extend(f"{start + iteration * period} {duration} {buttons}" for start, duration, buttons in events)
+        rows.extend(f"{start + iteration * period} {duration} {buttons}{axes}" for start, duration, buttons, axes in events)
     return "\n".join(rows) + "\n"
 
 
