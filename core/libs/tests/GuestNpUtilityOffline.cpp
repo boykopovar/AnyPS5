@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 namespace {
 
@@ -13,6 +16,7 @@ constexpr int Aborted = static_cast<int>(0x80550707u);
 constexpr int InsufficientArgument = static_cast<int>(0x8055070Cu);
 constexpr int InvalidId = static_cast<int>(0x8055070Eu);
 constexpr int InvalidType = static_cast<int>(0x80550711u);
+constexpr int LookupSynchronousRequest = static_cast<int>(0x80550307u);
 constexpr int PollFinished = 0;
 constexpr int PollRunning = 1;
 constexpr int WordFilterTitleCtxBase = 0x01000000;
@@ -116,13 +120,205 @@ void CheckWordFilter() {
     Require(sceNpLookupDeleteTitleCtx(context) == InvalidId, "sceNpLookupDeleteTitleCtx", "a word filter context was found among the lookup contexts");
 }
 
+void CheckServiceChecker2() {
+    constexpr int AlreadyInitialized = static_cast<int>(0x8055B301u);
+    constexpr int NotInitialized = static_cast<int>(0x8055B302u);
+    constexpr int RequestNotFound = static_cast<int>(0x8055B304u);
+    constexpr int CheckerInvalidArgument = static_cast<int>(0x8055B305u);
+    int request = 0;
+    Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created before initialization");
+    Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "initialization failed");
+    Require(sceNpServiceChecker2IntInitialize() == AlreadyInitialized, "sceNpServiceChecker2IntInitialize", "a second initialization was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "a null output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(&request) == 0 && request == 1, "sceNpServiceChecker2IntCreateRequest", "the first request is not id 1");
+    std::uint32_t availability = 0xA5A5A5A5;
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request, nullptr, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null NpId was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request, selfNpId, nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null output was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request + 100, selfNpId, &availability) == RequestNotFound, "sceNpServiceChecker2IntGetServiceAvailability", "an unknown request was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request, selfNpId, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailability", "the lookup did not return SIGNED_OUT");
+    Require(availability == 0xA5A5A5A5, "sceNpServiceChecker2IntGetServiceAvailability", "an availability was written");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request, -1, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailabilityA", "user -1 was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request, 1, nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailabilityA", "a null output was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request + 100, 1, &availability) == RequestNotFound, "sceNpServiceChecker2IntGetServiceAvailabilityA", "an unknown request was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request, 1, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailabilityA", "the lookup did not return SIGNED_OUT");
+    Require(availability == 0xA5A5A5A5, "sceNpServiceChecker2IntGetServiceAvailabilityA", "an availability was written");
+    int second = 0;
+    Require(sceNpServiceChecker2IntCreateRequest(&second) == 0 && second == 2, "sceNpServiceChecker2IntCreateRequest", "the second request is not id 2");
+    Require(sceNpServiceChecker2IntDestroyRequest(second) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying the request failed");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(second, selfNpId, &availability) == RequestNotFound, "sceNpServiceChecker2IntDestroyRequest", "a destroyed request was found");
+    Require(sceNpServiceChecker2IntAbortRequest(request) == 0, "sceNpServiceChecker2IntAbortRequest", "aborting the request failed");
+    Require(sceNpServiceChecker2IntAbortRequest(request + 100) == RequestNotFound, "sceNpServiceChecker2IntAbortRequest", "an unknown abort request was accepted");
+    Require(sceNpServiceChecker2IntDestroyRequest(request + 100) == 0, "sceNpServiceChecker2IntDestroyRequest", "the destroy wrapper rejected an unknown request");
+    const std::uint32_t serviceTypes[1] = {0x5};
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 0) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 0 was not set");
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 1) == 0, "sceNpServiceChecker2IntIsSetServiceType", "bit 1 was set");
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 2) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 2 was not set");
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
+    Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
+    Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
+    Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "reinitialization failed");
+    int boundaryId = 0;
+    for (std::uint32_t index = 0; index < 0x1000; ++index) {
+        Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == 0, "sceNpServiceChecker2IntCreateRequest", "a request below the host limit was refused");
+    }
+    const int lastId = boundaryId;
+    Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == TooManyObjects, "sceNpServiceChecker2IntCreateRequest", "the host request limit was not enforced");
+    Require(boundaryId == lastId, "sceNpServiceChecker2IntCreateRequest", "the request output changed on refusal");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(lastId, selfNpId, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailability", "an existing request was lost at the host limit");
+    Require(sceNpServiceChecker2IntDestroyRequest(lastId) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying a request at the host limit failed");
+    for (std::uint32_t index = 0; index < 0x2000; ++index) {
+        Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == 0, "sceNpServiceChecker2IntCreateRequest", "the host limit counted destroyed requests");
+        Require(sceNpServiceChecker2IntDestroyRequest(boundaryId) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying a recycled request failed");
+    }
+    Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization after the host limit failed");
+    Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
+}
+
+void CheckBandwidthTestInitStart() {
+    Require(sceNpBandwidthTestInitStart() == SignedOut, "sceNpBandwidthTestInitStart", "starting a test while signed out did not return SIGNED_OUT");
+    Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartDownload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartDownload");
+    Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartUpload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartUpload");
+}
+
+void CheckBandwidthTestShutdownWithDetailedInfo() {
+    constexpr int npInvalidArgument = static_cast<int>(0x80550003u);
+    Require(sceNpBandwidthTestShutdownWithDetailedInfo() == npInvalidArgument, "sceNpBandwidthTestShutdownWithDetailedInfo", "shutting down a test that never started did not return INVALID_ARGUMENT");
+    Require(sceNpBandwidthTestShutdownWithDetailedInfo() == sceNpBandwidthTestShutdown(0, nullptr), "sceNpBandwidthTestShutdownWithDetailedInfo", "the answer differs from sceNpBandwidthTestShutdown");
+    Require(sceNpBandwidthTestAbort(0) == npInvalidArgument, "sceNpBandwidthTestAbort", "aborting a test that never started did not return INVALID_ARGUMENT");
+    int status = -1;
+    Require(sceNpBandwidthTestGetStatus(0, &status) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "the status of a test that never started did not return INVALID_ARGUMENT");
+    Require(status == 0, "sceNpBandwidthTestGetStatus", "the status of a test that never started was not cleared to 0");
+    Require(sceNpBandwidthTestGetStatus(0, nullptr) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "a null status did not return INVALID_ARGUMENT");
+}
+
+}
+
+int WaitInThread(const char* name, int (APS5_VABI *wait)(int, int*), int reqId, int* result, void (*finish)(int)) {
+    int status = 7;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> returned{false};
+    std::thread waiter([&] {
+        entered = true;
+        status = wait(reqId, result);
+        returned = true;
+    });
+    while (!entered) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(!returned, name, "the wait returned before the request finished");
+    finish(reqId);
+    waiter.join();
+    return status;
+}
+
+void StartLookup(int reqId) {
+    NpOnlineId onlineId{};
+    std::strcpy(onlineId.data, "player_2");
+    sceNpLookupNpId(reqId, &onlineId, npId, nullptr);
+}
+
+void AbortLookup(int reqId) {
+    sceNpLookupAbortRequest(reqId);
+}
+
+void DeleteLookup(int reqId) {
+    sceNpLookupDeleteRequest(reqId);
+}
+
+void CheckLookupAsync() {
+    const int context = sceNpLookupCreateTitleCtx(selfNpId);
+    Require(sceNpLookupCreateAsyncRequest(context, nullptr) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a null parameter was taken");
+    Require(sceNpLookupCreateAsyncRequest(context, wrongAsyncParam) == InvalidArgument, "sceNpLookupCreateAsyncRequest", "a parameter size other than 0x18 was taken");
+    Require(sceNpLookupCreateAsyncRequest(context + 100, asyncParam) == InvalidId, "sceNpLookupCreateAsyncRequest", "an unknown context was taken");
+
+    Require(sceNpLookupSetTimeout(context, -1, 0, 0, 0, 0) == InvalidArgument, "sceNpLookupSetTimeout", "a negative retry count was taken");
+    Require(sceNpLookupSetTimeout(context, 0, 0, 0, 0, 0) == InvalidArgument, "sceNpLookupSetTimeout", "settings without any effect were taken");
+    Require(sceNpLookupSetTimeout(context, 0, 999999, 0, 0, 0) == InvalidArgument, "sceNpLookupSetTimeout", "a resolve timeout under 1 s was taken");
+    Require(sceNpLookupSetTimeout(context, 0, 0, 9999999, 0, 0) == InvalidArgument, "sceNpLookupSetTimeout", "a connect timeout under 10 s was taken");
+    Require(sceNpLookupSetTimeout(context, 0, 0, 0, 9999999, 0) == InvalidArgument, "sceNpLookupSetTimeout", "a send timeout under 10 s was taken");
+    Require(sceNpLookupSetTimeout(context, 0, 0, 0, 0, 9999999) == InvalidArgument, "sceNpLookupSetTimeout", "a receive timeout under 10 s was taken");
+    Require(sceNpLookupSetTimeout(context + 100, 1, 0, 0, 0, 0) == InvalidId, "sceNpLookupSetTimeout", "an unknown id was taken");
+    Require(sceNpLookupSetTimeout(context, 1, 0, 0, 0, 0) == 0, "sceNpLookupSetTimeout", "a context timeout was refused");
+
+    const int async = sceNpLookupCreateAsyncRequest(context, asyncParam);
+    Require(async > 0, "sceNpLookupCreateAsyncRequest", "creating an asynchronous request failed");
+    Require(sceNpLookupSetTimeout(async, 0, 1000000, 10000000, 10000000, 10000000) == 0, "sceNpLookupSetTimeout", "a request timeout was refused");
+    int result = 7;
+    Require(sceNpLookupPollAsync(async + 100, &result) == InvalidId, "sceNpLookupPollAsync", "an unknown request was taken");
+    Require(sceNpLookupPollAsync(async, nullptr) == InvalidArgument, "sceNpLookupPollAsync", "a null result was taken");
+    Require(sceNpLookupPollAsync(async + 100, nullptr) == InvalidArgument, "sceNpLookupPollAsync", "an unknown request was checked before a null result");
+    Require(sceNpLookupWaitAsync(async, nullptr) == InvalidArgument, "sceNpLookupWaitAsync", "a null result was taken");
+    Require(sceNpLookupPollAsync(async, &result) == PollRunning && result == 7, "sceNpLookupPollAsync", "an unstarted request was not running");
+    Require(WaitInThread("sceNpLookupWaitAsync", sceNpLookupWaitAsync, async, &result, StartLookup) == 0 && result == SignedOut, "sceNpLookupWaitAsync", "waiting did not end with SIGNED_OUT when the lookup started");
+    Require(sceNpLookupPollAsync(async, nullptr) == InvalidArgument, "sceNpLookupPollAsync", "a null result was taken on a finished request");
+    result = 7;
+    Require(sceNpLookupPollAsync(async, &result) == PollFinished && result == SignedOut, "sceNpLookupPollAsync", "the request did not finish with SIGNED_OUT");
+
+    const int sync = sceNpLookupCreateRequest(context);
+    StartLookup(sync);
+    result = 7;
+    Require(sceNpLookupWaitAsync(sync, &result) == LookupSynchronousRequest && result == 7, "sceNpLookupWaitAsync", "a synchronous request was not refused with 0x80550307");
+    Require(sceNpLookupPollAsync(sync, &result) == LookupSynchronousRequest && result == 7, "sceNpLookupPollAsync", "a synchronous request was not refused with 0x80550307");
+
+    const int aborted = sceNpLookupCreateAsyncRequest(context, asyncParam);
+    Require(sceNpLookupAbortRequest(aborted + 100) == InvalidId, "sceNpLookupAbortRequest", "an unknown request was taken");
+    Require(WaitInThread("sceNpLookupWaitAsync", sceNpLookupWaitAsync, aborted, &result, AbortLookup) == 0 && result == Aborted, "sceNpLookupAbortRequest", "waiting did not end with ABORTED");
+    Require(sceNpLookupNpId(aborted, nullptr, npId, nullptr) == InsufficientArgument, "sceNpLookupNpId", "arguments were not checked before the abort");
+
+    const int deleted = sceNpLookupCreateAsyncRequest(context, asyncParam);
+    Require(WaitInThread("sceNpLookupWaitAsync", sceNpLookupWaitAsync, deleted, &result, DeleteLookup) == InvalidId, "sceNpLookupWaitAsync", "waiting on a deleted request did not return INVALID_ID");
+    Require(sceNpLookupWaitAsync(deleted, &result) == InvalidId, "sceNpLookupWaitAsync", "an unknown request was taken");
+    sceNpLookupDeleteTitleCtx(context);
+}
+
+void CheckWordFilterAsync() {
+    const int context = sceNpWordFilterCreateTitleCtx(selfNpId);
+    Require(sceNpWordFilterSetTimeout(context, 0, 0, 0, 0, 0) == InvalidArgument, "sceNpWordFilterSetTimeout", "settings without any effect were taken");
+    Require(sceNpWordFilterSetTimeout(context, 0, 0, 0, 0, 9999999) == InvalidArgument, "sceNpWordFilterSetTimeout", "a receive timeout under 10 s was taken");
+    Require(sceNpWordFilterSetTimeout(context, 1, 0, 0, 0, 0) == 0, "sceNpWordFilterSetTimeout", "a context timeout was refused");
+    Require(sceNpWordFilterSetTimeout(1, 1, 0, 0, 0, 0) == InvalidId, "sceNpWordFilterSetTimeout", "a lookup id was taken");
+    const int sync = sceNpWordFilterCreateRequest(context);
+    const int async = sceNpWordFilterCreateAsyncRequest(context, asyncParam);
+    Require(sceNpWordFilterSetTimeout(async, 2, 1000000, 0, 0, 0) == 0, "sceNpWordFilterSetTimeout", "a request timeout was refused");
+    int result = 7;
+    Require(sceNpWordFilterWaitAsync(async, nullptr) == InvalidArgument, "sceNpWordFilterWaitAsync", "a null result was taken");
+    Require(sceNpWordFilterWaitAsync(sync, &result) == InvalidId, "sceNpWordFilterWaitAsync", "a synchronous request was taken");
+    Require(sceNpWordFilterWaitAsync(async + 100, &result) == InvalidId, "sceNpWordFilterWaitAsync", "an unknown request was taken");
+    Require(sceNpWordFilterCensorComment(async, "word", nullptr) == 0, "sceNpWordFilterCensorComment", "the asynchronous request did not start");
+    Require(sceNpWordFilterWaitAsync(async, &result) == 0 && result == SignedOut, "sceNpWordFilterWaitAsync", "the request did not finish with SIGNED_OUT");
+    sceNpWordFilterDeleteTitleCtx(context);
+}
+
+void CheckTitleContextsA() {
+    int lookups[32];
+    int created = 0;
+    while (created < 32) {
+        const int context = sceNpLookupCreateTitleCtxA(created == 0 ? -1 : 1);
+        if (context == TooManyObjects) break;
+        Require(context > 0 && context < WordFilterTitleCtxBase, "sceNpLookupCreateTitleCtxA", "a lookup context id was not returned");
+        lookups[created++] = context;
+    }
+    Require(created > 0, "sceNpLookupCreateTitleCtxA", "no context was created");
+    Require(sceNpLookupCreateTitleCtxA(1) == TooManyObjects, "sceNpLookupCreateTitleCtxA", "the 32-context limit was not applied");
+    Require(sceNpLookupCreateTitleCtx(selfNpId) == TooManyObjects, "sceNpLookupCreateTitleCtxA", "the A contexts do not share the lookup limit");
+    for (int index = 0; index < created; ++index) Require(sceNpLookupDeleteTitleCtx(lookups[index]) == 0, "sceNpLookupCreateTitleCtxA", "an A context could not be deleted");
+
+    const int filter = sceNpWordFilterCreateTitleCtxA(-1);
+    Require(filter > WordFilterTitleCtxBase, "sceNpWordFilterCreateTitleCtxA", "a word filter context id was not returned");
+    Require(sceNpLookupDeleteTitleCtx(filter) == InvalidId, "sceNpWordFilterCreateTitleCtxA", "the context was created among the lookup contexts");
+    Require(sceNpWordFilterDeleteTitleCtx(filter) == 0, "sceNpWordFilterCreateTitleCtxA", "the context could not be deleted");
 }
 
 int main() {
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
+    CheckBandwidthTestInitStart();
+    CheckBandwidthTestShutdownWithDetailedInfo();
+    CheckServiceChecker2();
     CheckLookup();
     CheckWordFilter();
+    CheckLookupAsync();
+    CheckWordFilterAsync();
+    CheckTitleContextsA();
     if (failures != 0) return 1;
     std::puts("NpUtility offline tests passed");
     return 0;

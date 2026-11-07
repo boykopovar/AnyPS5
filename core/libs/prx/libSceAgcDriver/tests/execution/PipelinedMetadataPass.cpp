@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -120,14 +121,16 @@ void expectEliminated(const std::string& what) {
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
-    _putenv_s("APS5_PIPELINE_DMA", "1");
     _putenv_s("APS5_DRAW_PIPELINE", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
-    setenv("APS5_PIPELINE_DMA", "1", 1);
     setenv("APS5_DRAW_PIPELINE", "1", 1);
 #endif
     try {
+        {
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+        }
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(Surface.data(), Surface.size_bytes(), true, true, true);

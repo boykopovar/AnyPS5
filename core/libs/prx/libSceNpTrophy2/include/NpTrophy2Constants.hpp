@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCENPTROPHY2_NPTROPHY2CONSTANTS_HPP
 #define CORE_LIBS_PRX_LIBSCENPTROPHY2_NPTROPHY2CONSTANTS_HPP
 
+#include <cstddef>
 #include <cstdint>
 
 static constexpr int SCE_NP_TROPHY2_OK = 0;

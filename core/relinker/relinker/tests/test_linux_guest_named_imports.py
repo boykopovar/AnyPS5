@@ -22,6 +22,11 @@ from test_windows_import_modules import consumer
 PROVIDER = "int provided(void) __asm__(\"\\\"%s\\\"\");\nint provided(void) { return 22; }\n"
 
 
+def padded(image):
+    image[9:16] = bytes(range(1, 8))
+    return image
+
+
 def guest_with_needed(symbols, needed):
     image = guest_module(symbols)
     size, = struct.unpack_from("<Q", image, 0x618)
@@ -58,7 +63,7 @@ def provider(work, name, symbol):
 
 def run_consumer(relinker, host, case, library):
     (case / "sce_module").mkdir(parents=True)
-    (case / "sce_module" / "consumer.prx").write_bytes(page_aligned(consumer("available.sprx", symbol="shared")))
+    (case / "sce_module" / "consumer.prx").write_bytes(padded(page_aligned(consumer("available.sprx", symbol="shared"))))
     image = main_fixture()
     code = bytes.fromhex("b83c000000bf2a0000000f05")
     image[0x4000:0x4000 + len(code)] = code
@@ -90,7 +95,7 @@ def main():
 
         guest = relink(relinker, work / "guest", executable("libkernel_web.sprx", "shared"), {
             "user.sprx": guest_with_needed([("shared", True), ("BBBBBBBBBBB", False), ("CCCCCCCCCCC#C#C", False)], "libkernel_web.sprx"),
-            "plain.prx": guest_module([("DDDDDDDDDDD", False)]),
+            "plain.prx": padded(guest_module([("DDDDDDDDDDD", False)])),
         })
         assert imported_symbols(guest.read_bytes()) == {"shared#guest"}, imported_symbols(guest.read_bytes())
         modules = guest.parent / "app0" / "sce_module"
@@ -98,6 +103,8 @@ def main():
         assert symbols == ["shared#guest", nid("BBBBBBBBBBB"), "CCCCCCCCCCC"], symbols
         symbols = module_symbols((modules / "plain.prx.guest.prx").read_bytes())
         assert symbols == ["DDDDDDDDDDD"], symbols
+        header = (modules / "plain.prx.guest.prx").read_bytes()[:16]
+        assert header[7:16] == bytes(9), header.hex()
 
         dependencies = relink(relinker, work / "dependencies", executable("available.prx"), {
             "user.prx": module_with_needed((b"libSceLibcInternal.sprx", b"libkernel_web.sprx"), (0, 1)),

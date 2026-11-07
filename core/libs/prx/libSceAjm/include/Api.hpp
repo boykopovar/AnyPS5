@@ -4,8 +4,8 @@
 
 extern "C" {
 
-int APS5_VABI sceAjmBatchJobControlBufferRa();
-int APS5_VABI sceAjmBatchJobRunSplitBufferRa();
-int APS5_VABI sceAjmBatchStartBuffer();
+int APS5_VABI sceAjmGetFailedInstance_nid_disambig1();
+int APS5_VABI sceAjmInstanceGetSize_nid_disambig1();
+int APS5_VABI sceAjmTelemetryGetLog_nid_disambig1();
 
 }

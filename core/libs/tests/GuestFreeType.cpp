@@ -1,6 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
-#include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <ft2build.h>
@@ -9,6 +9,10 @@
 #include FT_OUTLINE_H
 #include FT_TRIGONOMETRY_H
 #include FT_CID_H
+#include FT_SIZES_H
+#include FT_SYSTEM_H
+#include FT_MODULE_H
+#include FT_DRIVER_H
 
 #include <algorithm>
 #include <array>
@@ -132,6 +136,7 @@ static void FaceMatches(const GuestFaceRec* face, FT_Face host, const FreeType::
 }
 
 static unsigned orientationCases = 0;
+static constexpr bool wideNativeOrientation = FREETYPE_MAJOR > 2 || (FREETYPE_MAJOR == 2 && FREETYPE_MINOR >= 15);
 
 static void CheckOrientationCase(std::vector<GuestVector> points, std::vector<std::uint16_t> contours,
                                  int expected, bool compareNative = true) {
@@ -154,7 +159,23 @@ static void CheckOrientationCase(std::vector<GuestVector> points, std::vector<st
         std::vector<FT_Vector> nativePoints;
         for (const auto& point : points) nativePoints.push_back({static_cast<FT_Pos>(point.x), static_cast<FT_Pos>(point.y)});
         FT_Outline native{outline.n_contours, outline.n_points, nativePoints.data(), tags.data(), contours.data(), outline.flags};
-        Require(FT_Outline_Get_Orientation(&native) == expected);
+        int nativeExpected = expected;
+        if constexpr (wideNativeOrientation) {
+            std::int64_t area = 0;
+            std::size_t first = 0;
+            for (const auto last : contours) {
+                auto previous = points[last];
+                for (std::size_t index = first; index <= last; ++index) {
+                    const auto current = points[index];
+                    area += previous.x * current.y - current.x * previous.y;
+                    previous = current;
+                }
+                first = last + 1;
+            }
+            nativeExpected = points.empty() ? FT_ORIENTATION_TRUETYPE : area > 0 ? FT_ORIENTATION_POSTSCRIPT :
+                             area < 0 ? FT_ORIENTATION_TRUETYPE : FT_ORIENTATION_NONE;
+        }
+        Require(FT_Outline_Get_Orientation(&native) == nativeExpected);
     }
 }
 
@@ -187,7 +208,7 @@ static void CheckOutlineOrientation() {
                                   {0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
         unsigned short contours[]{3, 7};
         FT_Outline native{2, 8, nativePoints, nullptr, contours, 0};
-        Require(FT_Outline_Get_Orientation(&native) == FT_ORIENTATION_TRUETYPE);
+        Require(FT_Outline_Get_Orientation(&native) == (wideNativeOrientation ? FT_ORIENTATION_POSTSCRIPT : FT_ORIENTATION_TRUETYPE));
     }
     std::vector<GuestVector> maximum(65535);
     const GuestVector square[]{{0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
@@ -502,6 +523,15 @@ static int APS5_VABI NullUserMove(const GuestVector*, void* user) {
     return -17;
 }
 
+static std::uint64_t decompositionDigest = 14695981039346656037ull;
+
+static void RecordDecomposition(const DecomposeEvents& events, int result) {
+    const auto add = [](std::uint64_t value) { decompositionDigest = (decompositionDigest ^ value) * 1099511628211ull; };
+    add(static_cast<std::uint32_t>(result));
+    add(events.calls.size());
+    for (const auto& call : events.calls) for (const auto value : call) add(static_cast<std::uint64_t>(value));
+}
+
 static std::size_t CompareDecomposition(std::vector<GuestVector> points, std::vector<unsigned char> tags,
                                         std::vector<unsigned short> contours, int shift, std::int64_t delta,
                                         std::size_t stopAt = static_cast<std::size_t>(-1), int stopResult = 0) {
@@ -510,18 +540,23 @@ static std::size_t CompareDecomposition(std::vector<GuestVector> points, std::ve
     GuestOutline outline{static_cast<std::uint16_t>(contours.size()), static_cast<std::uint16_t>(points.size()), points.data(), tags.data(), contours.data(), 0};
     FT_Outline native{outline.n_contours, outline.n_points, nativePoints.data(), tags.data(), contours.data(), 0};
     DecomposeEvents actual;
-    DecomposeEvents expected;
-    actual.stopAt = expected.stopAt = stopAt;
-    actual.result = expected.result = stopResult;
+    actual.stopAt = stopAt;
+    actual.result = stopResult;
     const GuestOutlineFuncs functions{GuestMove, GuestLine, GuestConic, GuestCubic, shift, delta};
-    const FT_Outline_Funcs nativeFunctions{NativeMove, NativeLine, NativeConic, NativeCubic, shift, static_cast<FT_Pos>(delta)};
     const int result = FT_Outline_Decompose_nid_postfix(&outline, &functions, &actual);
-    Require(result == FT_Outline_Decompose(&native, &nativeFunctions, &expected));
-    Require(actual.calls == expected.calls);
+    if (std::all_of(tags.begin(), tags.end(), [](unsigned char tag) { return (tag & 3) <= 1; })) {
+        DecomposeEvents expected;
+        expected.stopAt = stopAt;
+        expected.result = stopResult;
+        const FT_Outline_Funcs nativeFunctions{NativeMove, NativeLine, NativeConic, NativeCubic, shift, static_cast<FT_Pos>(delta)};
+        Require(result == FT_Outline_Decompose(&native, &nativeFunctions, &expected));
+        Require(actual.calls == expected.calls);
+    }
+    RecordDecomposition(actual, result);
     for (std::size_t index = 0; index < points.size(); ++index) {
         Require(points[index].x == nativePoints[index].x && points[index].y == nativePoints[index].y);
     }
-    if (stopAt < expected.calls.size()) Require(result == stopResult && actual.calls.size() == stopAt + 1);
+    if (stopAt < actual.calls.size()) Require(result == stopResult && actual.calls.size() == stopAt + 1);
     return actual.calls.size();
 }
 
@@ -570,6 +605,9 @@ static void OutlineDecomposition() {
     Require(FT_Outline_Decompose_nid_postfix(&empty, nullptr, nullptr) == FT_Err_Invalid_Argument);
     const GuestOutlineFuncs unused{nullptr, nullptr, nullptr, nullptr, -1, INT64_MIN};
     Require(FT_Outline_Decompose_nid_postfix(&empty, &unused, nullptr) == 0);
+    constexpr std::array<std::uint64_t, 6> referenceDigests{
+        9337771517416358513ull, 2659011010632787664ull, 15537612554675745923ull,
+        8353793238930575903ull, 13429685399718963483ull, 5403894036230531287ull};
     int scenarios = 0;
     std::size_t calls = 0;
     for (unsigned count = 1; count <= 6; ++count) {
@@ -586,6 +624,7 @@ static void OutlineDecomposition() {
                 }
             }
         }
+        Require(decompositionDigest == referenceDigests[count - 1]);
     }
     const std::vector<GuestVector> curve{{-17, 3}, {7, -5}, {29, 31}, {43, -11}, {59, 37}, {73, -13}, {89, 41}, {101, -17}};
     for (const auto& tags : std::vector<std::vector<unsigned char>>{{1, 0, 0, 1, 2, 2, 1, 0}, {1, 2, 2, 1, 0, 1, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0}}) {
@@ -600,6 +639,7 @@ static void OutlineDecomposition() {
             }
         }
     }
+    Require(decompositionDigest == 9491977043923692988ull);
     {
         GuestVector points[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
         FT_Vector nativePoints[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
@@ -700,11 +740,12 @@ static void OutlineDecomposition() {
         }
     }
     Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(oracle) == 0);
-    std::printf("FreeType outline decomposition: %d native comparisons, %zu callbacks, %d rendered glyphs, wide coordinates and callback mutation\n", scenarios, calls, rendered);
+    std::printf("FreeType outline decomposition: %d FreeType 2.13.3 reference scenarios, %zu callbacks, %d rendered glyphs, wide coordinates and callback mutation\n", scenarios, calls, rendered);
 }
 
 struct Finalizers {
     std::vector<int> calls;
+    bool reenter = false;
 };
 
 static std::vector<unsigned char> CidMetadataFont(bool keyed, const std::string& registry, const std::string& ordering,
@@ -822,6 +863,58 @@ static void CheckCidQueries(GuestFaceRec* face, FT_Face native, int kind, unsign
     }
 }
 
+static std::vector<unsigned char> CidSubroutineFont(unsigned dictionaries, bool shared) {
+    constexpr std::uint32_t subroutineSize = 16384;
+    const unsigned maps = shared ? 1 : dictionaries;
+    const std::uint32_t glyphStart = 10 + maps * (8 + subroutineSize);
+    std::string header = "%!PS-Adobe-3.0 Resource-CIDFont\n/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincidfont\n"
+        "/CIDFontName /BoundedCID def\n/CIDFontType 0 def\n/CIDFontVersion 1 def\n"
+        "/CIDSystemInfo 3 dict dup begin /Registry (Adobe) def /Ordering (Identity) def /Supplement 0 def end def\n"
+        "/FontBBox [0 0 1000 1000] def\n/FontMatrix [0.001 0 0 0.001 0 0] def\n"
+        "/CIDCount 1 def\n/FDBytes 1 def\n/GDBytes 4 def\n/CIDMapOffset 0 def\n/FDArray " + std::to_string(dictionaries) + " array\n";
+    for (unsigned index = 0; index < dictionaries; ++index) {
+        const auto offset = 10 + (shared ? 0 : index) * (8 + subroutineSize);
+        header += "%ADOBeginFontDict\ndup " + std::to_string(index) + " 10 dict dup begin\n/FontType 1 def\n"
+            "/FontMatrix [0.001 0 0 0.001 0 0] def\n/Private 8 dict dup begin\n/lenIV -1 def\n"
+            "/SubrMapOffset " + std::to_string(offset) + " def\n/SDBytes 4 def\n/SubrCount 1 def\nend def\nend put\n%ADOEndFontDict\n";
+    }
+    header += "def\n(Binary) " + std::to_string(glyphStart + 1) + " StartData\n";
+    std::vector<unsigned char> font(header.begin(), header.end());
+    font.push_back(0);
+    Put32(font, glyphStart);
+    font.push_back(0);
+    Put32(font, glyphStart + 1);
+    for (unsigned index = 0; index < maps; ++index) {
+        const auto start = 18 + index * (8 + subroutineSize);
+        Put32(font, start);
+        Put32(font, start + subroutineSize);
+        font.push_back(11);
+        font.insert(font.end(), subroutineSize - 1, 0);
+    }
+    font.push_back(14);
+    return font;
+}
+
+static void CheckCidSubroutineBudget() {
+    GuestLibrary* library = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0);
+    for (const auto [dictionaries, shared] : {std::pair{1u, true}, {4u, true}, {8u, true}, {8u, false}}) {
+        const auto font = CidSubroutineFont(dictionaries, shared);
+        Require(font.size() < 150000);
+        GuestFaceRec* face = nullptr;
+        const auto error = FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face);
+        if (shared && dictionaries == 8) {
+            Require(error == FT_Err_Invalid_File_Format && face == nullptr);
+        } else {
+            Require(error == 0 && face != nullptr);
+            Require(FT_Load_Glyph_nid_postfix(face, 0, FT_LOAD_NO_SCALE) == 0);
+            Require(FT_Done_Face_nid_postfix(face) == 0);
+        }
+    }
+    Require(FT_Done_FreeType_nid_postfix(library) == 0);
+    std::puts("FreeType CID subroutines: excessive overlap refused; bounded overlap and disjoint dictionaries passed");
+}
+
 static void CheckCidMetadata() {
     CheckCidQueries(nullptr, nullptr, -2, 0, 0, nullptr, nullptr);
     struct Fixture { std::vector<unsigned char> bytes; int kind; unsigned cid; int supplement; const char* registry; const char* ordering; unsigned renderGlyph; };
@@ -876,7 +969,13 @@ static void NativeSizeFinalizer(void* object) {
 static void NativeFaceFinalizer(void* object) {
     auto* face = static_cast<FT_Face>(object);
     Require(face->glyph == nullptr && face->size == nullptr);
-    static_cast<Finalizers*>(face->generic.data)->calls.push_back(3);
+    auto* events = static_cast<Finalizers*>(face->generic.data);
+    events->calls.push_back(3);
+    if (events->reenter) {
+        Require(FT_Reference_Face(face) == 0 && FT_Reference_Face(face) == 0);
+        Require(FT_Done_Face(face) == 0);
+        Require(face->glyph == nullptr && face->size == nullptr);
+    }
 }
 
 static void APS5_VABI GuestSlotFinalizer(void* object) {
@@ -894,7 +993,109 @@ static void APS5_VABI GuestSizeFinalizer(void* object) {
 static void APS5_VABI GuestFaceFinalizer(void* object) {
     auto* face = static_cast<GuestFaceRec*>(object);
     Require(face->glyph == nullptr && face->size == nullptr);
-    static_cast<Finalizers*>(face->generic.data)->calls.push_back(3);
+    auto* events = static_cast<Finalizers*>(face->generic.data);
+    events->calls.push_back(3);
+    if (events->reenter) {
+        const auto* library = static_cast<const GuestFace*>(face->internal)->library;
+        Require(FT_Reference_Face_nid_postfix(face) == 0 && FT_Reference_Face_nid_postfix(face) == 0);
+        Require(FT_Done_Face_nid_postfix(face) == 0 && library->faces.size() == 1);
+        Require(face->glyph == nullptr && face->size == nullptr);
+    }
+}
+
+static std::string BitmapStrikeFont(int width, int height, int descent) {
+    std::string font = "STARTFONT 2.1\nFONT -anyps5-strike-medium-r-normal--" + std::to_string(height) + "-0-72-72-c-0-iso10646-1\n";
+    font += "SIZE " + std::to_string(height) + " 72 72\nFONTBOUNDINGBOX " + std::to_string(width) + " " + std::to_string(height) + " 0 -" + std::to_string(descent);
+    font += "\nSTARTPROPERTIES 4\nFONT_ASCENT " + std::to_string(height - descent) + "\nFONT_DESCENT " + std::to_string(descent);
+    font += "\nCHARSET_REGISTRY \"ISO10646\"\nCHARSET_ENCODING \"1\"\nENDPROPERTIES\nCHARS 1\nSTARTCHAR A\nENCODING 65\nSWIDTH 1000 0\nDWIDTH ";
+    font += std::to_string(width) + " 0\nBBX " + std::to_string(width) + " " + std::to_string(height) + " 0 -" + std::to_string(descent) + "\nBITMAP\n";
+    for (int y = 0; y < height; ++y) {
+        for (int byte = 0; byte < (width + 7) / 8; ++byte) {
+            unsigned value = 0;
+            for (int bit = 0; bit < 8; ++bit) {
+                const int x = byte * 8 + bit;
+                if (x < width && (x == 0 || y == height - 1 || (x + y) % 3 == 0)) value |= 0x80u >> bit;
+            }
+            font += "0123456789ABCDEF"[value >> 4];
+            font += "0123456789ABCDEF"[value & 15];
+        }
+        font += '\n';
+    }
+    return font + "ENDCHAR\nENDFONT\n";
+}
+
+static void CheckStrikeSelection(GuestLibrary* library, FT_Library nativeLibrary, GuestFaceRec* scalable, FT_Face nativeScalable) {
+    const auto sizeMatches = [](const GuestSizeRec* size, FT_Size host) {
+        const auto& actual = size->metrics;
+        const auto& expected = host->metrics;
+        Require(actual.x_ppem == expected.x_ppem && actual.y_ppem == expected.y_ppem);
+        Require(actual.x_scale == expected.x_scale && actual.y_scale == expected.y_scale);
+        Require(actual.ascender == expected.ascender && actual.descender == expected.descender);
+        Require(actual.height == expected.height && actual.max_advance == expected.max_advance);
+    };
+    constexpr std::array<std::int32_t, 5> invalidIndices{-1, 1, 2, std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()};
+    int requests = 0;
+    int rendered = 0;
+    for (const auto index : invalidIndices) {
+        const auto nullError = FT_Select_Size(nullptr, index);
+        Require(nullError != 0 && FT_Select_Size_nid_postfix(nullptr, index) == nullError);
+        ++requests;
+    }
+    for (const auto index : {0, -1, std::numeric_limits<std::int32_t>::max()}) {
+        const auto error = FT_Select_Size(nativeScalable, index);
+        Require(error == FT_Err_Invalid_Face_Handle && FT_Select_Size_nid_postfix(scalable, index) == error);
+        sizeMatches(scalable->size, nativeScalable->size);
+        ++requests;
+    }
+    for (const auto& dimensions : {std::array{5, 7, 2}, std::array{11, 13, 3}}) {
+        const auto [width, height, descent] = dimensions;
+        const std::string font = BitmapStrikeFont(width, height, descent);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(font.data());
+        GuestFaceRec* face = nullptr;
+        FT_Face native = nullptr;
+        Require(FT_New_Memory_Face_nid_postfix(library, bytes, static_cast<std::int64_t>(font.size()), 0, &face) == 0);
+        Require(FT_New_Memory_Face(nativeLibrary, bytes, static_cast<FT_Long>(font.size()), 0, &native) == 0);
+        Require(FT_HAS_FIXED_SIZES(native) && !FT_IS_SCALABLE(native) && face->num_fixed_sizes == 1);
+        const GuestBitmapSize* strikes = face->available_sizes;
+        const auto& expectedStrike = native->available_sizes[0];
+        Require(strikes[0].width == expectedStrike.width && strikes[0].height == expectedStrike.height && strikes[0].size == expectedStrike.size);
+        Require(strikes[0].x_ppem == expectedStrike.x_ppem && strikes[0].y_ppem == expectedStrike.y_ppem);
+        GuestSizeRec* size = face->size;
+        int marker = 0;
+        size->generic.data = &marker;
+        sizeMatches(size, native->size);
+        Require(size->metrics.y_ppem == 0);
+        const std::array<std::int32_t, 9> indices{-1, 1, invalidIndices[3], invalidIndices[4], 0, 2, 0, -1, 0};
+        for (const auto index : indices) {
+            face->glyph->advance.x = 0x123456789ABCll;
+            face->bbox.xMin = -0x123456789ABCll;
+            const auto error = FT_Select_Size(native, index);
+            Require((index == 0) == (error == 0));
+            Require(FT_Select_Size_nid_postfix(face, index) == error);
+            ++requests;
+            sizeMatches(size, native->size);
+            Require(face->size == size && size->face == face && size->generic.data == &marker && face->available_sizes == strikes);
+            Require(face->glyph->advance.x == 0x123456789ABCll && face->bbox.xMin == -0x123456789ABCll);
+            if (error != 0) continue;
+            Require(size->metrics.y_ppem == height && size->metrics.ascender == (height - descent) * 64 && size->metrics.descender == -descent * 64);
+            for (const auto flags : std::array<std::int32_t, 3>{FT_LOAD_DEFAULT, FT_LOAD_RENDER, FT_LOAD_RENDER | FT_LOAD_MONOCHROME}) {
+                Require(FT_Load_Char_nid_postfix(face, 'A', flags) == 0 && FT_Load_Char(native, 'A', flags) == 0);
+                SlotMatches(face->glyph, native->glyph);
+                const auto& bitmap = face->glyph->bitmap;
+                Require(face->glyph->format == FT_GLYPH_FORMAT_BITMAP && bitmap.pixel_mode == FT_PIXEL_MODE_MONO);
+                Require(bitmap.width == width && bitmap.rows == height && bitmap.pitch > 0 && face->glyph->bitmap_top == height - descent);
+                for (int y = 0; y < height; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        const bool pixel = (bitmap.buffer[y * bitmap.pitch + x / 8] & (0x80u >> (x % 8))) != 0;
+                        Require(pixel == (x == 0 || y == height - 1 || (x + y) % 3 == 0));
+                    }
+                }
+                ++rendered;
+            }
+        }
+        Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
+    }
+    std::printf("FT_Select_Size: %d native request comparisons, %d bitmap glyph comparisons\n", requests, rendered);
 }
 
 static void SetFinalizers(FT_Face face, Finalizers& events) {
@@ -1148,7 +1349,359 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
     std::printf("FT_Set_Transform: %zu native glyph and bitmap comparisons\n", comparisons);
 }
 
+static void SizeMatches(const GuestSizeRec* size, FT_Size native) {
+    Require(size != nullptr && native != nullptr);
+    const auto& a = size->metrics;
+    const auto& b = native->metrics;
+    Require(a.x_ppem == b.x_ppem && a.y_ppem == b.y_ppem && a.x_scale == b.x_scale && a.y_scale == b.y_scale);
+    Require(a.ascender == b.ascender && a.descender == b.descender && a.height == b.height && a.max_advance == b.max_advance);
+}
+
+static bool OwnsSize(const GuestFace& face, const GuestSizeRec* size) {
+    if (size == &face.size) return true;
+    for (const auto& entry : face.sizes) {
+        if (size == &entry.rec) return true;
+    }
+    return false;
+}
+
+struct SizeEvents {
+    std::vector<void*> sizes;
+    std::vector<std::array<int, 4>> calls;
+
+    int Index(void* size) const {
+        if (!size) return -1;
+        for (std::size_t index = 0; index < sizes.size(); ++index) {
+            if (sizes[index] == size) return static_cast<int>(index);
+        }
+        Require(false);
+        return -2;
+    }
+};
+
+static void NativeMultipleSizeFinalizer(void* object) {
+    auto* size = static_cast<FT_Size>(object);
+    auto& events = *static_cast<SizeEvents*>(size->generic.data);
+    events.calls.push_back({events.Index(size), events.Index(size->face->size), size->metrics.y_ppem, size->face->glyph == nullptr});
+}
+
+static void APS5_VABI GuestMultipleSizeFinalizer(void* object) {
+    auto* size = static_cast<GuestSizeRec*>(object);
+    auto* face = static_cast<GuestFaceRec*>(size->face);
+    const auto& owner = *static_cast<GuestFace*>(face->internal);
+    Require(OwnsSize(owner, size));
+    if (face->size) Require(OwnsSize(owner, face->size));
+    SizeMatches(size, static_cast<FT_Size>(size->internal));
+    auto& events = *static_cast<SizeEvents*>(size->generic.data);
+    events.calls.push_back({events.Index(size), events.Index(face->size), size->metrics.y_ppem, face->glyph == nullptr});
+}
+
+static void NativeMultipleSizeFaceFinalizer(void* object) {
+    auto* face = static_cast<FT_Face>(object);
+    Require(face->glyph == nullptr && face->size == nullptr);
+    static_cast<SizeEvents*>(face->generic.data)->calls.push_back({100, -1, 0, 1});
+}
+
+static void APS5_VABI GuestMultipleSizeFaceFinalizer(void* object) {
+    auto* face = static_cast<GuestFaceRec*>(object);
+    Require(face->glyph == nullptr && face->size == nullptr);
+    static_cast<SizeEvents*>(face->generic.data)->calls.push_back({100, -1, 0, 1});
+}
+
+static FT_Alloc_Func SizeOriginalAlloc = nullptr;
+static int SizeAllocationsBeforeFailure = 0;
+
+static void* SizeFailingAlloc(FT_Memory memory, long bytes) {
+    if (SizeAllocationsBeforeFailure-- == 0) return nullptr;
+    return SizeOriginalAlloc(memory, bytes);
+}
+
+static void SizeObjects(const std::vector<unsigned char>& font) {
+    Require(FT_New_Size_nid_postfix(nullptr, nullptr) == FT_New_Size(nullptr, nullptr));
+    Require(FT_Done_Size_nid_postfix(nullptr) == FT_Done_Size(nullptr));
+    Require(FT_Activate_Size_nid_postfix(nullptr) == FT_Activate_Size(nullptr));
+    GuestSizeRec sentinel{};
+    GuestSizeRec* untouched = &sentinel;
+    Require(FT_New_Size_nid_postfix(nullptr, &untouched) == FT_Err_Invalid_Face_Handle && untouched == &sentinel);
+    FT_FaceRec driverless{};
+    GuestFace invalidOwner;
+    invalidOwner.host = &driverless;
+    invalidOwner.rec.internal = &invalidOwner;
+    FT_Size nativeUntouched = reinterpret_cast<FT_Size>(&sentinel);
+    Require(FT_New_Size(&driverless, &nativeUntouched) == FT_Err_Invalid_Driver_Handle);
+    Require(FT_New_Size_nid_postfix(&invalidOwner.rec, &untouched) == FT_Err_Invalid_Driver_Handle && untouched == &sentinel);
+    Require(FT_New_Size_nid_postfix(&invalidOwner.rec, nullptr) == FT_New_Size(&driverless, nullptr));
+
+    FT_SizeRec driverlessSize{};
+    GuestSizeRec invalidSize{};
+    invalidSize.internal = &driverlessSize;
+    Require(FT_Done_Size_nid_postfix(&invalidSize) == FT_Done_Size(&driverlessSize));
+    Require(FT_Activate_Size_nid_postfix(&invalidSize) == FT_Activate_Size(&driverlessSize));
+    driverlessSize.face = &driverless;
+    Require(FT_Done_Size_nid_postfix(&invalidSize) == FT_Done_Size(&driverlessSize));
+    Require(FT_Activate_Size_nid_postfix(&invalidSize) == FT_Activate_Size(&driverlessSize));
+    static_assert(sizeof(GuestSizeMetrics) == 56 && sizeof(GuestSizeRec) == 88);
+
+    int scenarios = 0;
+    int rendered = 0;
+    int failures = 0;
+    for (const int faceIndex : {0, -1}) {
+        for (const int count : {0, 1, 5, 41}) {
+            for (const int cleanup : {0, 1, 2}) {
+                GuestLibrary* library = nullptr;
+                FT_Library oracle = nullptr;
+                Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&oracle) == 0);
+                GuestFaceRec* face = nullptr;
+                FT_Face native = nullptr;
+                Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), faceIndex, &face) == 0);
+                Require(FT_New_Memory_Face(oracle, font.data(), static_cast<FT_Long>(font.size()), faceIndex, &native) == 0);
+                SizeEvents actual;
+                SizeEvents expected;
+                face->generic = {&actual, GuestMultipleSizeFaceFinalizer};
+                native->generic = {&expected, NativeMultipleSizeFaceFinalizer};
+                std::vector<GuestSizeRec*> sizes;
+                std::vector<FT_Size> originals;
+                auto remember = [&](GuestSizeRec* size, FT_Size original) {
+                    Require(size->face == face && original->face == native);
+                    actual.sizes.push_back(size);
+                    expected.sizes.push_back(original);
+                    size->generic = {&actual, GuestMultipleSizeFinalizer};
+                    original->generic = {&expected, NativeMultipleSizeFinalizer};
+                    sizes.push_back(size);
+                    originals.push_back(original);
+                    SizeMatches(size, original);
+                };
+                if (native->size) remember(face->size, native->size);
+                Require(FT_New_Size_nid_postfix(face, nullptr) == FT_New_Size(native, nullptr));
+                for (int index = 0; index < count; ++index) {
+                    GuestSizeRec* before = face->size;
+                    FT_Size previous = native->size;
+                    GuestSizeRec* created = nullptr;
+                    FT_Size original = nullptr;
+                    Require(FT_New_Size_nid_postfix(face, &created) == FT_New_Size(native, &original));
+                    Require(created != nullptr && original != nullptr && face->size == before && native->size == previous);
+                    remember(created, original);
+                }
+                if (count == 5) {
+                    Require(FT_New_Size_nid_postfix(face, &face->size) == FT_New_Size(native, &native->size));
+                    remember(face->size, native->size);
+                }
+                for (std::size_t index = 0; index < sizes.size(); ++index) {
+                    Require(FT_Activate_Size_nid_postfix(sizes[index]) == 0 && FT_Activate_Size(originals[index]) == 0);
+                    Require(face->size == sizes[index] && native->size == originals[index]);
+                    Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, 12 + index) == FT_Set_Pixel_Sizes(native, 0, 12 + index));
+                    SizeMatches(sizes[index], originals[index]);
+                }
+                for (std::size_t turn = 0; turn < sizes.size() * 3; ++turn) {
+                    const std::size_t index = (turn * 17 + 3) % sizes.size();
+                    Require(FT_Activate_Size_nid_postfix(sizes[index]) == FT_Activate_Size(originals[index]));
+                    Require(face->size == sizes[index]);
+                    for (std::size_t other = 0; other < sizes.size(); ++other) SizeMatches(sizes[other], originals[other]);
+                    if (!native->glyph) continue;
+                    Require(FT_Load_Char_nid_postfix(face, 'A', FT_LOAD_NO_HINTING) == FT_Load_Char(native, 'A', FT_LOAD_NO_HINTING));
+                    for (unsigned point = 0; point < face->glyph->outline.n_points; ++point) face->glyph->outline.points[point].x += 64;
+                    FT_Outline_Translate(&native->glyph->outline, 64, 0);
+                    Require(FT_Activate_Size_nid_postfix(sizes[index]) == FT_Activate_Size(originals[index]));
+                    Require(FT_Render_Glyph_nid_postfix(face->glyph, FT_RENDER_MODE_NORMAL) == FT_Render_Glyph(native->glyph, FT_RENDER_MODE_NORMAL));
+                    SlotMatches(face->glyph, native->glyph);
+                    ++rendered;
+                }
+                if (cleanup == 0) {
+                    while (!sizes.empty()) {
+                        const std::size_t index = sizes.size() % 2 == 0 ? 0 : sizes.size() - 1;
+                        const int removed = actual.Index(sizes[index]);
+                        Require(FT_Done_Size_nid_postfix(sizes[index]) == FT_Done_Size(originals[index]));
+                        actual.sizes[removed] = nullptr;
+                        expected.sizes[removed] = nullptr;
+                        sizes.erase(sizes.begin() + index);
+                        originals.erase(originals.begin() + index);
+                        Require(actual.Index(face->size) == expected.Index(native->size) && actual.calls == expected.calls);
+                    }
+                    Require(face->size == nullptr && native->size == nullptr);
+                    Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, 24) == FT_Set_Pixel_Sizes(native, 0, 24));
+                    Require(FT_New_Size_nid_postfix(face, &face->size) == FT_New_Size(native, &native->size));
+                    Require(face->size != nullptr && native->size != nullptr);
+                    remember(face->size, native->size);
+                    Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, 24) == FT_Set_Pixel_Sizes(native, 0, 24));
+                    for (const bool alias : {false, true}) {
+                        for (const int allocation : {0, 1, 2}) {
+                            auto* owner = static_cast<GuestFace*>(face->internal);
+                            FT_Memory memory = owner->host->memory;
+                            SizeOriginalAlloc = memory->alloc;
+                            SizeAllocationsBeforeFailure = allocation;
+                            memory->alloc = SizeFailingAlloc;
+                            GuestSizeRec* output = &sentinel;
+                            const int error = FT_New_Size_nid_postfix(face, alias ? &face->size : &output);
+                            memory->alloc = SizeOriginalAlloc;
+                            Require(error == FT_Err_Out_Of_Memory && owner->sizes.size() == 1);
+                            FT_Memory nativeMemory = native->memory;
+                            SizeOriginalAlloc = nativeMemory->alloc;
+                            SizeAllocationsBeforeFailure = allocation;
+                            nativeMemory->alloc = SizeFailingAlloc;
+                            FT_Size nativeOutput = reinterpret_cast<FT_Size>(&sentinel);
+                            const int nativeError = FT_New_Size(native, alias ? &native->size : &nativeOutput);
+                            nativeMemory->alloc = SizeOriginalAlloc;
+                            Require(error == nativeError);
+                            Require(alias ? face->size == nullptr && native->size == nullptr : output == nullptr && nativeOutput == nullptr);
+                            Require(actual.Index(face->size) == expected.Index(native->size));
+                            Require(actual.calls == expected.calls);
+                            ++failures;
+                        }
+                    }
+                }
+                if (cleanup == 1) {
+                    Require(FT_Reference_Face_nid_postfix(face) == 0 && FT_Reference_Face(native) == 0);
+                    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
+                    Require(actual.calls.empty() && expected.calls.empty());
+                }
+                if (cleanup == 2 && count == 5) {
+                    Require(sizes.size() > 2);
+                    Require(FT_Activate_Size_nid_postfix(sizes[1]) == FT_Activate_Size(originals[1]));
+                    Require(face->size == sizes[1] && native->size == originals[1]);
+                }
+                if (cleanup != 2) Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
+                Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(oracle) == 0);
+                Require(actual.calls == expected.calls && !actual.calls.empty() && actual.calls.back()[0] == 100);
+                if (cleanup == 2 && count == 5) {
+                    Require(actual.calls.size() > 3 && actual.calls[0][1] == 1 && actual.calls[1][0] == 1);
+                    for (std::size_t index = 2; index + 1 < actual.calls.size(); ++index) Require(actual.calls[index][1] == 1);
+                }
+                ++scenarios;
+            }
+        }
+    }
+    std::printf("FreeType size objects: %d lifecycles, %d rendered glyphs, %d allocation failures compared with native\n", scenarios, rendered, failures);
+}
+
+static void CheckGlyphToScriptMap() {
+    const auto font = SquareGlyphFont('A', 700);
+    GuestLibrary* library = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
+    struct GuestMap { GuestFaceRec* face; std::uint16_t* map; };
+    GuestMap guest{face, nullptr};
+    FT_Prop_GlyphToScriptMap expected{nativeFace, nullptr};
+    const int nativeResult = FT_Property_Get(nativeLibrary, "autofitter", "glyph-to-script-map", &expected);
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", &guest) == nativeResult);
+    Require(nativeResult == 0 && guest.face == face && guest.map && expected.map);
+    Require(std::equal(guest.map, guest.map + face->num_glyphs, expected.map));
+    std::array<unsigned char, sizeof(GuestMap) + 1> storage{};
+    GuestMap unaligned{face, nullptr};
+    std::memcpy(storage.data() + 1, &unaligned, sizeof(unaligned));
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", storage.data() + 1) == 0);
+    std::memcpy(&unaligned, storage.data() + 1, sizeof(unaligned));
+    Require(unaligned.face == face && unaligned.map == guest.map);
+    Require(FT_Property_Set_nid_postfix(library, "autofitter", "glyph-to-script-map", &guest) ==
+        FT_Property_Set(nativeLibrary, "autofitter", "glyph-to-script-map", &expected));
+    GuestMap invalid{nullptr, reinterpret_cast<std::uint16_t*>(1)};
+    FT_Prop_GlyphToScriptMap nativeInvalid{nullptr, reinterpret_cast<FT_UShort*>(1)};
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", &invalid) ==
+        FT_Property_Get(nativeLibrary, "autofitter", "glyph-to-script-map", &nativeInvalid));
+    Require(invalid.map == reinterpret_cast<std::uint16_t*>(1));
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(nativeFace) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+}
+
 int main() {
+    CheckGlyphToScriptMap();
+    SizeObjects(SquareGlyphFont('A', 700));
+    {
+        const auto referenceFont = SquareGlyphFont('A', 700);
+        GuestLibrary* referenceLibrary = nullptr;
+        FT_Library oracle = nullptr;
+        Require(FT_Init_FreeType_nid_postfix(&referenceLibrary) == 0 && FT_Init_FreeType(&oracle) == 0);
+        auto* owners = referenceLibrary;
+        Require(FT_Reference_Face_nid_postfix(nullptr) == FT_Reference_Face(nullptr));
+        int references = 0;
+        int retained = 0;
+        int finalized = 0;
+        for (const unsigned depth : {1u, 2u, 3u, 17u}) {
+            GuestFaceRec* shared = nullptr;
+            FT_Face native = nullptr;
+            Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), 0, &shared) == 0);
+            Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), 0, &native) == 0);
+            Finalizers guestEvents;
+            Finalizers nativeEvents;
+            guestEvents.reenter = nativeEvents.reenter = depth == 3;
+            SetFinalizers(shared, guestEvents);
+            SetFinalizers(native, nativeEvents);
+            for (unsigned index = 1; index < depth; ++index) {
+                Require(FT_Reference_Face_nid_postfix(shared) == FT_Reference_Face(native));
+                ++references;
+            }
+            for (unsigned index = 1; index < depth; ++index) {
+                Require(FT_Done_Face(native) == 0 && FT_Done_Face_nid_postfix(shared) == 0);
+                Require(owners->faces.size() == 1 && guestEvents.calls.empty() && nativeEvents.calls.empty());
+                Require(FT_Get_Char_Index_nid_postfix(shared, 'A') == FT_Get_Char_Index(native, 'A'));
+                Require(FT_Set_Pixel_Sizes_nid_postfix(shared, 0, 16 + index) == 0 && FT_Set_Pixel_Sizes(native, 0, 16 + index) == 0);
+                Require(FT_Load_Char_nid_postfix(shared, 'A', FT_LOAD_RENDER) == 0 && FT_Load_Char(native, 'A', FT_LOAD_RENDER) == 0);
+                SlotMatches(shared->glyph, native->glyph);
+                ++retained;
+            }
+            Require(FT_Done_Face(native) == 0 && FT_Done_Face_nid_postfix(shared) == 0);
+            if (guestEvents.reenter) {
+                references += 2;
+                ++retained;
+            }
+            Require(owners->faces.empty() && guestEvents.calls == nativeEvents.calls && guestEvents.calls == std::vector<int>({1, 2, 3}));
+            ++finalized;
+        }
+        GuestFaceRec* plain = nullptr;
+        FT_Face nativePlain = nullptr;
+        Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), 0, &plain) == 0);
+        Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), 0, &nativePlain) == 0);
+        Require(FT_Reference_Face_nid_postfix(plain) == FT_Reference_Face(nativePlain));
+        ++references;
+        Require(FT_Done_Face(nativePlain) == 0 && FT_Done_Face_nid_postfix(plain) == 0 && owners->faces.size() == 1);
+        ++retained;
+        Require(FT_Done_Face(nativePlain) == 0 && FT_Done_Face_nid_postfix(plain) == 0 && owners->faces.empty());
+        ++finalized;
+        GuestFaceRec* probe = nullptr;
+        FT_Face nativeProbe = nullptr;
+        Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), -1, &probe) == 0);
+        Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), -1, &nativeProbe) == 0);
+        Finalizers probeEvents;
+        Finalizers nativeProbeEvents;
+        probe->generic = {&probeEvents, GuestFaceFinalizer};
+        nativeProbe->generic = {&nativeProbeEvents, NativeFaceFinalizer};
+        Require(probe->glyph == nullptr && probe->size == nullptr);
+        Require(FT_Reference_Face_nid_postfix(probe) == FT_Reference_Face(nativeProbe));
+        ++references;
+        Require(FT_Done_Face(nativeProbe) == 0 && FT_Done_Face_nid_postfix(probe) == 0 && owners->faces.size() == 1);
+        ++retained;
+        Require(probeEvents.calls.empty() && nativeProbeEvents.calls.empty());
+        Require(FT_Done_Face(nativeProbe) == 0 && FT_Done_Face_nid_postfix(probe) == 0);
+        Require(owners->faces.empty() && probeEvents.calls == nativeProbeEvents.calls && probeEvents.calls == std::vector<int>({3}));
+        ++finalized;
+        std::array<Finalizers, 2> shutdownEvents;
+        std::array<Finalizers, 2> nativeShutdownEvents;
+        std::array<GuestFaceRec*, 2> shutdown{};
+        std::array<FT_Face, 2> nativeShutdown{};
+        for (unsigned index = 0; index < shutdown.size(); ++index) {
+            Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), 0, &shutdown[index]) == 0);
+            Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), 0, &nativeShutdown[index]) == 0);
+            SetFinalizers(shutdown[index], shutdownEvents[index]);
+            SetFinalizers(nativeShutdown[index], nativeShutdownEvents[index]);
+            for (unsigned reference = 0; reference < 3 - index; ++reference) {
+                Require(FT_Reference_Face_nid_postfix(shutdown[index]) == FT_Reference_Face(nativeShutdown[index]));
+                ++references;
+            }
+            Require(FT_Done_Face(nativeShutdown[index]) == 0 && FT_Done_Face_nid_postfix(shutdown[index]) == 0);
+            Require(owners->faces.size() == index + 1 && shutdownEvents[index].calls.empty());
+            ++retained;
+        }
+        Require(FT_Done_FreeType(oracle) == 0 && FT_Done_FreeType_nid_postfix(referenceLibrary) == 0);
+        for (unsigned index = 0; index < shutdown.size(); ++index) {
+            Require(shutdownEvents[index].calls == nativeShutdownEvents[index].calls && shutdownEvents[index].calls == std::vector<int>({1, 2, 3}));
+            ++finalized;
+        }
+        Require(references == 28 && retained == 24 && finalized == 8);
+        std::printf("FreeType face references: %d retains, %d non-final releases, %d finalized faces compared with native\n", references, retained, finalized);
+    }
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_guest_freetype-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root / "app0");
     CheckGasp();
@@ -1162,6 +1715,7 @@ int main() {
     }
     const auto previous = std::filesystem::current_path();
     CheckCidMetadata();
+    CheckCidSubroutineBudget();
     std::filesystem::current_path(root);
     CheckOutlineOrientation();
 
@@ -1190,7 +1744,22 @@ int main() {
     GuestFaceRec* masked = nullptr;
     Require(FT_New_Face_nid_postfix(library, "/app0/font.ttf", 0x180000000ll, &masked) == 0 && masked != nullptr && masked->face_index == 0);
     Require(FT_New_Face_nid_postfix(library, "/app0/font.ttf", 0, &face) == 0 && face != nullptr && face != masked);
+    {
+        FT_Face nativeFile = nullptr;
+        Require(FT_New_Face(hostLibrary, "app0/font.ttf", 0, &nativeFile) == 0);
+        const auto* bytes = FaceOf(face)->bytes.data();
+        Require(FaceOf(face)->bytes.size() == font.size() && std::memcmp(bytes, font.data(), font.size()) == 0);
+        Require(FT_Reference_Face_nid_postfix(face) == FT_Reference_Face(nativeFile));
+        Require(FT_Done_Face(nativeFile) == 0 && FT_Done_Face_nid_postfix(face) == 0);
+        Require(static_cast<GuestLibrary*>(library)->faces.size() == 2);
+        Require(FaceOf(face)->bytes.data() == bytes && std::memcmp(bytes, font.data(), font.size()) == 0);
+        Require(FT_Get_Char_Index_nid_postfix(face, 'A') == FT_Get_Char_Index(nativeFile, 'A'));
+        Require(FT_Done_Face(nativeFile) == 0);
+        std::puts("File-backed face reference: owned font bytes survive a non-final release");
+    }
     FaceMatches(face, host, library);
+
+    CheckStrikeSelection(library, hostLibrary, face, host);
 
     const auto fontSize = static_cast<std::int64_t>(font.size());
     GuestFaceRec* memoryFace = nullptr;

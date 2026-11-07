@@ -217,6 +217,7 @@ void RequireCaretSteps(const std::vector<Recorded>& events, uint32_t direction, 
 void CheckValidation() {
     Buffers buffers;
     Require(sceImeOpen_nid_postfix(nullptr, nullptr) == InvalidAddress, "null param");
+    Require(sceImeUpdate(nullptr) == NotOpened, "null handler with nothing open");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
         change(param);
@@ -277,7 +278,7 @@ void CheckEditing() {
     std::memcpy(buffers.text, u"ab", sizeof(u"ab"));
     Param param = MakeParam(buffers, 8);
     Require(!ImeCapturesKeyboard_nid_postfix(), "keyboard captured before open");
-    Require(sceImeUpdate(Record) == 0 && g_events.empty(), "update before open");
+    Require(sceImeUpdate(Record) == NotOpened && g_events.empty(), "update before open");
     Require(sceImeOpen_nid_postfix(&param, nullptr) == 0, "open");
     Require(sceImeOpen_nid_postfix(&param, nullptr) == Busy, "second open");
     Require(ImeCapturesKeyboard_nid_postfix(), "keyboard not captured");

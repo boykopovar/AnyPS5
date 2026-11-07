@@ -155,12 +155,12 @@ def main():
             assert struct.unpack_from('<QQ', data, slot) == (meta['vmaddr'] + 0x20, 4)
         for name, symbols, tls, error in (
                 ('duplicate', SYMBOLS + (SYMBOLS[0],), False, 'Duplicate Mach-O export'),
-                ('unmapped', (('Unmapped', 0x12, 0, 1, 0x100000, 6),), False, 'not contained in PT_LOAD'),
+                ('unmapped', (('Unmapped', 0x12, 0, 1, 0x100000, 6),), False, 'does not fit inside an executable PT_LOAD segment'),
                 ('tls-outside', (('Tls', 0x16, 0, 1, 16, 1),), True, 'exceeds PT_TLS'),
                 ('tls-size', (('Tls', 0x16, 0, 1, 4, 13),), True, 'exceeds PT_TLS'),
-                ('tls-missing', tls_symbols, False, 'has no TLS block'),
-                ('reserved', (('Common', 0x11, 0, 0xFFF2, 0, 4),), False, 'Unsupported macOS executable export section'),
-                ('attributes', (('Indirect', 0x1A, 0, 1, 0x210, 6),), False, 'Unsupported macOS executable export attributes')):
+                ('tls-missing', tls_symbols, False, 'has no PT_TLS segment'),
+                ('reserved', (('Common', 0x11, 0, 0xFFF2, 0, 4),), False, 'Unsupported executable export section'),
+                ('attributes', (('Indirect', 0x1A, 0, 1, 0x210, 6),), False, 'Unsupported executable export attributes: Indirect')):
             run, output = convert(relinker, work, name, executable(symbols, tls))
             assert run.returncode == 2 and error in run.stderr, (name, run.returncode, run.stderr)
             assert not output.exists(), name

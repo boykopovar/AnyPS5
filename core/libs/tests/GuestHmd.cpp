@@ -1,5 +1,6 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
+#include "prx/libSceHmd/include/Api.hpp"
 
 #include <array>
 #include <cstddef>
@@ -41,6 +42,7 @@ void CheckDisconnected() {
     Require(sceHmdInternalGetDeviceStatus(&status) == 0, "status query failed");
     Require(status == Hmd::DeviceStatus::NotDetected, "headset reported connected");
     Require(sceHmdInternalGetDeviceStatus(nullptr) == Hmd::ParameterNull, "null status");
+    Require(sceHmdInternalGetDeviceStatus(reinterpret_cast<Hmd::DeviceStatus*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull, "unwritable status");
     Require(sceHmdInternalMmapIsConnect() == 0, "connection reported present");
     Require(!sceHmdInternalIsGameVr2d(), "game reported in VR2D without a headset");
     Require(!sceHmdInternalIsMiniAppVr2d(), "mini app reported in VR2D without a headset");
@@ -50,7 +52,9 @@ void CheckDisconnected() {
 
 void CheckBufferQueries() {
     Require(sceHmdDistortionGetWorkMemoryAlign() == 0x400, "distortion work memory alignment");
+    Require(sceHmdGetDistortionWorkMemoryAlign() == 0x400, "distortion work memory alignment query");
     Require(sceHmdDistortionGetWorkMemorySize() == 0x20000, "distortion work memory size");
+    Require(sceHmdGetDistortionWorkMemorySize() == 0x20000, "distortion work memory size query");
     Require(sceHmdReprojectionQueryGarlicBuffAlign() == 0x100, "reprojection garlic buffer alignment");
     Require(sceHmdReprojectionQueryGarlicBuffSize() == 0x100000, "reprojection garlic buffer size");
     Require(sceHmdReprojectionQueryOnionBuffAlign() == 0x100, "reprojection onion buffer alignment");
@@ -68,7 +72,8 @@ void CheckHandleQueries(std::int32_t expected) {
     std::memset(sensor, 0x5a, sizeof(sensor));
     for (const auto handle : {0, -1, 1, 0x0f000000}) {
         Require(sceHmdGetFieldOfView(handle, nullptr) == Hmd::ParameterNull, "null field of view accepted");
-        Require(sceHmdGetFieldOfView(handle, reinterpret_cast<HmdFieldOfView*>(fieldOfView)) == expected, "field of view without a headset");
+        Require(sceHmdGetFieldOfView(handle, reinterpret_cast<HmdFieldOfView*>(fieldOfView)) == (handle != 0 ? Hmd::InvalidHandle : expected),
+                "field of view without a headset");
         Require(sceHmdGet2DEyeOffset(handle, reinterpret_cast<HmdEyeOffset*>(left), reinterpret_cast<HmdEyeOffset*>(right)) == expected, "eye offset without a headset");
         Require(sceHmdGet2DEyeOffset(handle, nullptr, nullptr) == expected, "eye offset with null outputs");
         Require(sceHmdGetInertialSensorData(handle, reinterpret_cast<HmdInertialSensorData*>(sensor), 1) == expected, "sensor data without a headset");
@@ -176,13 +181,18 @@ int main() {
     Require(sceHmdGetDeviceInformation(&info) == Hmd::NotInitialized, "query before initialize");
     Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "failed query modified output");
     CheckHandleQueries(Hmd::NotInitialized);
+    for (const auto handle : {-1, 1, 0x0f000000}) {
+        Require(sceHmdGetDeviceInformationByHandle(handle, &info) == Hmd::InvalidHandle, "handle query before initialize accepted an invalid handle");
+        Require(sceHmdGetDeviceInformationByHandle(handle, nullptr) == Hmd::InvalidHandle, "null handle query before initialize checked the output first");
+    }
+    Require(sceHmdGetDeviceInformationByHandle(0, nullptr) == Hmd::ParameterNull, "null handle query before initialize");
+    Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized, "handle query before initialize");
+    Require(std::memcmp(&info, &untouched, sizeof(info)) == 0, "a refused handle query modified its output");
     SetCompiledSdkVersion(LastSdkBeforeStartupState);
     CheckCommandQueries(true);
     SetCompiledSdkVersion(FirstSdkWithStartupState);
     CheckCommandQueries(false);
     CheckAssyError(Hmd::NotInitialized);
-    Require(sceHmdGetDeviceInformationByHandle(0, &info) == Hmd::NotInitialized,
-            "handle query before initialize");
     Require(sceHmdInitialize(nullptr) == Hmd::ParameterNull, "null initialize");
     Require(sceHmdInitialize315(nullptr) == Hmd::ParameterNull, "null initialize315");
     param.reserved0 = &param;
@@ -202,6 +212,7 @@ int main() {
         expected.userId = -1;
         Require(std::memcmp(&info, &expected, sizeof(info)) == 0, "incorrect absent-device output");
         Require(sceHmdGetDeviceInformation(nullptr) == Hmd::ParameterNull, "null device query");
+        Require(sceHmdGetDeviceInformation(reinterpret_cast<Hmd::DeviceInformation*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull, "unwritable device query");
 
         Require(sceHmdOpen(-1, 0, 0, nullptr) == Hmd::ParameterInvalid, "invalid user");
         Require(sceHmdOpen(0xff, 0, 0, nullptr) == Hmd::ParameterInvalid, "system user");

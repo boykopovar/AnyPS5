@@ -56,7 +56,8 @@ def main():
         source = Path(directory) / "input.elf"
         source.write_bytes(fixture())
         for name, options, expected in (("default", [], b"$ORIGIN/libs"),
-                                        ("custom", ["--rpath", "/opt/anyps5/lib"], b"/opt/anyps5/lib")):
+                                        ("custom", ["--rpath", "/opt/anyps5/lib"], b"/opt/anyps5/lib"),
+                                        ("list", ["--rpath", "/opt/anyps5/lib:$ORIGIN/libs"], b"/opt/anyps5/lib:$ORIGIN/libs")):
             output = Path(directory) / (name + ".elf")
             result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
                                     capture_output=True, text=True, timeout=20)
@@ -70,6 +71,15 @@ def main():
                 raise AssertionError((name, "DT_RUNPATH is outside DT_STRSZ", run_path, tags[DT_STRSZ]))
             if dynstr_section_size(elf) != tags[DT_STRSZ]:
                 raise AssertionError((name, ".dynstr size differs from DT_STRSZ", dynstr_section_size(elf), tags[DT_STRSZ]))
+        for index, run_path in enumerate(("", ":$ORIGIN/libs", "$ORIGIN/libs:", "/opt/a::/opt/b")):
+            for target in ([], ["--lazy-binding"]):
+                output = Path(directory) / f"empty-{index}-{len(target)}.elf"
+                result = subprocess.run([str(relinker), "--skip-sce-module", *target, "--rpath", run_path, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                if result.returncode != 2 or "Empty Linux run path component" not in result.stderr:
+                    raise AssertionError((run_path, target, result.returncode, result.stdout, result.stderr))
+                if output.exists():
+                    raise AssertionError((run_path, target, "an empty run path component created an output"))
     print("Linux dynamic string tests passed")
 
 

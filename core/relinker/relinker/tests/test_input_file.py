@@ -21,7 +21,7 @@ def main():
             output = work / (name + ".out")
             registry = work / (name + ".registry.json")
             result = subprocess.run([str(relinker), "--skip-sce-module", "--registry", *flags, str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
             assert result.returncode == 2 and error in result.stderr and "bad_alloc" not in result.stderr, (name, flags, result)
             assert not output.exists() and not registry.exists(), (name, flags, result)
 

@@ -54,5 +54,20 @@ int main() {
     std::size_t repeats = 0;
     for (std::size_t index = 1; index < Draws; ++index) repeats += words[index] == words[index - 1];
     Require(repeats < 16);
+    Require(arc4random_uniform_nid_postfix(0) == 0);
+    Require(arc4random_uniform_nid_postfix(1) == 0);
+    for (std::size_t index = 0; index < 1000; ++index) {
+        Require(arc4random_uniform_nid_postfix(7) < 7);
+    }
+    std::array<std::size_t, 10> uniformCounts{};
+    for (std::size_t index = 0; index < 20000; ++index) {
+        const auto value = arc4random_uniform_nid_postfix(10);
+        Require(value < 10);
+        ++uniformCounts[value];
+    }
+    for (const auto count : uniformCounts) Require(count > 1500 && count < 2500);
+    for (std::size_t index = 0; index < 100; ++index) {
+        Require(arc4random_uniform_nid_postfix(0x80000000u) < 0x80000000u);
+    }
     return 0;
 }

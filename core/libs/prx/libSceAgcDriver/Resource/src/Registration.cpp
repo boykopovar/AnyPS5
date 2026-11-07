@@ -6,7 +6,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-// Resource registration feeds GPU debugging tools, none of which are attached; the game treats this code as benign.
 static constexpr int SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE = static_cast<int>(0x8A6C9018);
 static constexpr uint32_t RESOURCE_REGISTRATION_MAX_NAME_LENGTH = 0xfc;
 static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_INVALID_ID = static_cast<int>(0x8A6C0033);

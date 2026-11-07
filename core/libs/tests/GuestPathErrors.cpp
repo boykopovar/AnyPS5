@@ -56,6 +56,13 @@ void OpenAndUnlink() {
     Check(sceKernelOpen(LongName.c_str(), SCE_KERNEL_O_RDONLY, 0) == SceEnametoolong);
     Check(sceKernelOpen((LongName + "/inside").c_str(), SCE_KERNEL_O_RDONLY, 0) == SceEnametoolong);
     Check(sceKernelOpen(LongName.c_str(), SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0644) == SceEnametoolong);
+    Check(sceKernelOpen("missing-create/", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0644) == SCE_KERNEL_ERROR_ENOENT);
+    Check(PosixFails(open_nid_postfix("missing-create/", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0644), 2));
+    Check(sceKernelOpen("missing-create-exclusive/", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0644) == SCE_KERNEL_ERROR_ENOENT);
+    Check(PosixFails(open_nid_postfix("missing-create-exclusive/", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0644), 2));
+    Check(!std::filesystem::exists("missing-create") && !std::filesystem::exists("missing-create-exclusive"));
+    Check(sceKernelOpen("loop/", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0644) == SceEloop);
+    Check(PosixFails(open_nid_postfix("loop/", SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0644), GuestEloop));
     Check(PosixFails(open_nid_postfix("loop", SCE_KERNEL_O_RDONLY, 0), GuestEloop));
     Check(PosixFails(open_nid_postfix(LongName.c_str(), SCE_KERNEL_O_RDONLY, 0), GuestEnametoolong));
     Check(sceKernelUnlink(LongName.c_str()) == SceEnametoolong);

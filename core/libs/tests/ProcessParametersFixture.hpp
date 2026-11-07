@@ -13,6 +13,9 @@
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include <sys/mman.h>
 #include <unistd.h>
+#elif defined(__APPLE__)
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include <array>
 #endif
 
 namespace ProcessParametersFixture {
@@ -20,6 +23,8 @@ namespace {
 
 #ifdef _WIN32
 [[gnu::section(".proctst"), gnu::used]] alignas(4) std::uint32_t metadata[2]{};
+#elif defined(__APPLE__)
+[[gnu::section("__APS5DATA,__meta"), gnu::used]] alignas(8) std::array<std::byte, 0x60 + 2 * sizeof(Elf64_Phdr)> metadata{};
 #endif
 
 bool Install(std::byte* process, std::size_t size) {
@@ -80,6 +85,24 @@ bool Install(std::byte* process, std::size_t size) {
         return 1;
     }, &request);
     return request.installed;
+#elif defined(__APPLE__)
+    const std::uint64_t version = 2;
+    const std::uint64_t loadBias = 0;
+    const std::uint64_t count = 2;
+    std::memcpy(metadata.data(), &version, sizeof(version));
+    std::memcpy(metadata.data() + 0x08, &loadBias, sizeof(loadBias));
+    std::memcpy(metadata.data() + 0x58, &count, sizeof(count));
+    Elf64_Phdr headers[2]{};
+    headers[0].p_type = PT_LOAD;
+    headers[1].p_type = 0x61000001;
+    for (auto& header : headers) {
+        header.p_vaddr = reinterpret_cast<std::uintptr_t>(process);
+        header.p_paddr = header.p_vaddr;
+        header.p_filesz = size;
+        header.p_memsz = size;
+    }
+    std::memcpy(metadata.data() + 0x60, headers, sizeof(headers));
+    return true;
 #else
     return false;
 #endif

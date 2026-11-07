@@ -1,6 +1,10 @@
-add_library(libSceUsbStorage SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceUsbStorage SHARED EXCLUDE_FROM_ALL Export.cpp src/HostVolumes.cpp)
 target_include_directories(libSceUsbStorage PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceUsbStorage PRIVATE libc)
+if(WIN32)
+    target_sources(libSceUsbStorage PRIVATE src/HostVolumesWindows.cpp)
+    target_link_libraries(libSceUsbStorage PRIVATE setupapi cfgmgr32)
+endif()
 configure_windows_unwind(libSceUsbStorage)
 
 if(BUILD_TESTING)

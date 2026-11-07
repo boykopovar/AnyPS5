@@ -209,7 +209,8 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
-    const auto& words = Recompile(request).spirv.Words();
+    const auto result = Recompile(request);
+    const auto& words = result.spirv.Words();
     return {words.begin(), words.end()};
 }
 
@@ -399,6 +400,28 @@ int main() {
         auto& readMerge = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
         b.keep(readMerge);
         return b.eliminate() == 1u && !readOtherwise.HasUses() && readHead.UseCount() == 2u && AllUsed({&readHead, &readThenAfterStore, &readMerge});
+    });
+
+    passed &= run("a loop without a clobber reuses its dominating ReadConst", [] {
+        Builder b;
+        IrBlock& header = b.newBlock();
+        IrBlock& body = b.newBlock();
+        IrBlock& exit = b.newBlock();
+        b.block->AddBranch(&header);
+        header.AddBranch(&body);
+        header.AddBranch(&exit);
+        body.AddBranch(&header);
+        auto& srt = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+        auto& beforeLoop = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(beforeLoop);
+        std::vector<IrValue*> reads;
+        for (auto* block : {&header, &body, &exit}) {
+            b.block = block;
+            auto& read = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+            b.keep(read);
+            reads.push_back(&read);
+        }
+        return b.eliminate() == 3u && beforeLoop.UseCount() == 4u && std::ranges::none_of(reads, [](const auto* read) { return read->HasUses(); });
     });
 
     passed &= run("a store on a loop backedge prevents reusing a pre-loop ReadConst in the loop header", [] {

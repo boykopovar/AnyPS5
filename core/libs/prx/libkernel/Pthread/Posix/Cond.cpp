@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libc/include/General.hpp"
 #include "Common.hpp"
 #include <cstdint>
 #include <stdexcept>
@@ -28,28 +29,38 @@ int APS5_VABI pthread_cond_destroy_nid_postfix(PthreadCond* cond) {
 }
 
 int APS5_VABI pthread_cond_broadcast_nid_postfix(PthreadCond* cond) {
+    if (!cond) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondBroadcast(cond));
 }
 
 int APS5_VABI pthread_cond_init_nid_postfix(PthreadCond* cond, const PthreadCondattr* attr) {
+    if (!cond) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondInit(cond, attr, nullptr));
 }
 
 int APS5_VABI pthread_cond_signal_nid_postfix(PthreadCond* cond) {
+    if (!cond) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondSignal(cond));
 }
 
 int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    if (!abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
+    if (!cond || !mutex || !abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return PosixThread::GUEST_EINVAL;
     return toPosix(CondOperations::AbsoluteTimedwait(cond, mutex, abstime));
 }
 
 int APS5_VABI pthread_cond_reltimedwait_np_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
+    if (!cond || !mutex) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondTimedwait(cond, mutex, usec));
 }
 
 int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex) {
+    if (!cond || !mutex) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondWait(cond, mutex));
+}
+
+int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char* name) {
+    if (!cond) return PosixThread::GUEST_EINVAL;
+    return toPosix(CondOperations::SetName(cond, name));
 }
 
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr) {
@@ -67,6 +78,13 @@ int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, Kerne
     return toPosix(scePthreadCondattrSetclock(attr, clock_id));
 }
 
+int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
+    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    if (!clockId) throw std::invalid_argument("pthread_condattr_getclock: null clock id");
+    *clockId = (*attr)->_clockid;
+    return 0;
+}
+
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     if (pshared != POSIX_PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
@@ -82,6 +100,7 @@ int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* att
 }
 
 int APS5_VABI pthread_cond_signalto_np_nid_postfix(PthreadCond* cond, Pthread thread) {
+    if (!cond || !thread) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondSignalto(cond, thread));
 }
 

@@ -61,6 +61,7 @@ void CheckArguments() {
     Require(Run(0, 5, 16, {u'a'}).code == kInvalidParam, "type 5");
     Require(Run(0, 0xff, 16, {u'a'}).code == kInvalidParam, "type 0xff");
     Require(Run(0, 0x104, 16, {u'a'}).code == kInvalidParam, "type 0x104");
+    Require(Run(0, 0x200, 16, {u'a'}).code == kInvalidParam, "type 0x200");
 }
 
 void CheckSimpleTypes() {

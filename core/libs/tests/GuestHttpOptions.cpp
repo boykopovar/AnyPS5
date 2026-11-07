@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <stdexcept>
 
 namespace {
 
@@ -166,6 +167,34 @@ void CheckTermEndsOptions() {
     Require(sceHttpTerm_nid_postfix(next) == 0, "sceHttpTerm failed");
 }
 
+bool RefusesNull(int context, int* netPoolId, int* sslContextId) {
+    try {
+        sceHttpGetRegisteredCtxIds(context, netPoolId, sslContextId);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckRegisteredCtxIds() {
+    int netPoolId = -1;
+    int sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered before sceHttpInit");
+    const int first = sceHttpInit_nid_postfix(3, 7, 0x10000);
+    const int second = sceHttpInit_nid_postfix(5, 9, 0x20000);
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == 0 && netPoolId == 3 && sslContextId == 7, "the ids given to the first sceHttpInit were not reported");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == 0 && netPoolId == 5 && sslContextId == 9, "the ids given to the second sceHttpInit were not reported");
+    Require(RefusesNull(second, nullptr, &sslContextId) && RefusesNull(second, &netPoolId, nullptr), "a null output was taken");
+    netPoolId = -1;
+    sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == InvalidId, "sceHttpGetRegisteredCtxIds took an unknown id");
+    Require(sceHttpTerm_nid_postfix(first) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == InvalidId, "a terminated context still reported its ids");
+    Require(netPoolId == -1 && sslContextId == -1, "a refused query wrote its outputs");
+    Require(sceHttpTerm_nid_postfix(second) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered after the last sceHttpTerm");
+}
+
 void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
@@ -206,6 +235,7 @@ int main() {
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
     CheckTermEndsOptions();
+    CheckRegisteredCtxIds();
     std::puts("HTTP option tests passed");
     return 0;
 }
