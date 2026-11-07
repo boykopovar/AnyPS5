@@ -20,6 +20,7 @@
 
 ### Functional
 
+- [ASN.1 value mutation and octet-string lifetime](../../../core/libs/prx/libSceLibreSsl3/src/Asn1Values.cpp) - `ASN1_STRING_set`, `ASN1_INTEGER_set`, `ASN1_OCTET_STRING_cmp` and `ASN1_OCTET_STRING_free` follow the LP64 contracts of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1), using the existing 24-byte `Asn1String` and application heap. Console layouts, validation order and allocator/error equivalence are unverified. Integer allocation uses one eight-byte application-heap allocation rather than LibreSSL's CBB allocation chain. A null object that upstream dereferences, negative owned-data lengths, comparison arithmetic overflow and string input overlapping the owned data or its terminator byte that replacement releases throw instead of invoking undefined behavior. Closes when: compared with the console.
 - [ASN.1 integer decoding](../../../core/libs/prx/libSceLibreSsl3/src/IntegerDecoder.cpp) - nothing is checked on a console, and the console's application-heap ABI is unverified. Rejections, allocation failures, their error codes and the old output follow [13.42 native-PC evidence](https://github.com/boykopovar/AnyPS5/pull/10948#issuecomment-6412137728) from a recording allocator. Nonnegative null input faults natively and throws here. A negative length in the old output throws rather than erasing out of bounds, as the parent library does. Error combinations the evidence does not cover and content over `INT_MAX` bytes follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1). Closes when: compared with the console.
 - [CRYPTO_memcmp](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) follows the public [LibreSSL signature and equality contract](https://man.openbsd.org/CRYPTO_memcmp.3), without PS5 verification. The exact nonzero result for unequal buffers is unspecified by that contract. Content-independent execution of its volatile byte reads still depends on the compiler; inspect optimized code when changing toolchains. Closes when: measured on a PS5 and the supported toolchains' generated code is checked.
 - [ASN1_OBJECT_free](../../../core/libs/prx/libSceLibreSsl3/src/Asn1Object.cpp) - the structure layout and ownership flags follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/asn1_local.h) and its [free routine](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_object.c); nothing is checked on the console. Dynamic names and OID data use the guest heap, and dynamic OID data is erased before it is freed. A negative data length with non-null dynamic data throws rather than passing an oversized length to the erase operation.
@@ -65,7 +66,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 131 still-unimplemented callable exports: 121 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 127 still-unimplemented callable exports: 117 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -80,7 +81,6 @@
 | `unknown` | `3KZ-L4y1gak` |
 | `EVP_chacha20_poly1305` | `3m4CmAyOXwQ` |
 | `EVP_chacha20` | `3tGgkjBQ82A` |
-| `ASN1_INTEGER_set` | `3v2Omd4sqcU` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
@@ -112,7 +112,6 @@
 | `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
 | `RSAPublicKey_dup` | `JSqFTYGaWhU` |
 | `AES_unwrap_key` | `JvoQz7GYOMo` |
-| `ASN1_OCTET_STRING_cmp` | `Jzebx477Q3M` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
 | `HMAC_CTX_new` | `LcxutSyn11o` |
@@ -157,7 +156,6 @@
 | `d2i_X509_CRL` | `fVos2kAqfMI` |
 | `tls_write` | `fZJr2OF+KGw` |
 | `X509_ALGOR_get0` | `fdvZNUHm-dE` |
-| `ASN1_STRING_set` | `gavhu7SX2FI` |
 | `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
 | `EVP_PKEY_assign` | `gp5dGS14-pI` |
 | `OPENSSL_init_ssl` | `hGiyDq-l4AE` |
@@ -188,7 +186,6 @@
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
-| `ASN1_OCTET_STRING_free` | `vo-cv5gnPUA` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `ASN1_TYPE_free` | `whL1IRBxFZA` |
