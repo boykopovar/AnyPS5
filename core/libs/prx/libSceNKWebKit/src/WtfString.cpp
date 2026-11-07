@@ -23,6 +23,48 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/*
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved
+ * Copyright (C) Research In Motion Limited 2009. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHash.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
+/*
+ * Copyright (C) 2005-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010 Patrick Gansterer <paroga@paroga.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ * Derived from Source/WTF/wtf/text/StringHasher.h@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+ */
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
@@ -256,6 +298,10 @@ unsigned Hash(StringView view, bool masked = true) {
     StringHasher hasher;
     for (unsigned i = 0; i < view.length; ++i) hasher.addCharacter(Unit(view, i));
     return hasher.hash(masked);
+}
+
+unsigned AvoidDeletedHashValue(unsigned hash) {
+    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
 }
 
 StringImpl* EmptyImpl() {
@@ -1288,6 +1334,14 @@ String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self,
     if (view.length <= length) return String(Retain(url.impl));
     const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
     return ConcatViews(parts, 3);
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length) {
+    return AvoidDeletedHashValue(Hash({characters, length, false}, false));
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const String* string) {
+    return AvoidDeletedHashValue(Hash(View(Checked(string).impl), false));
 }
 
 String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const String* input) {
