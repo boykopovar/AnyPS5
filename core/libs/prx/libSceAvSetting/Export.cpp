@@ -739,7 +739,7 @@ int APS5_VABI libSceAvSettingUnknown_GYAho0we28c_nid_no_patch() {
 APS5_EXPORT("GYAho0we28c", libSceAvSettingUnknown_GYAho0we28c_nid_no_patch);
 
 int APS5_VABI libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>(0x802A00FF);
 }
 APS5_EXPORT("Iv3zoMND6xU", libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch);
 
@@ -788,8 +788,10 @@ int APS5_VABI libSceAvSettingUnknown_ftQASJeHi6M_nid_no_patch() {
 }
 APS5_EXPORT("ftQASJeHi6M", libSceAvSettingUnknown_ftQASJeHi6M_nid_no_patch);
 
-int APS5_VABI libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch(const void* videoOutMode) {
+    std::uint32_t modeFlags = 0;
+    if (!ReadAvSettingField(videoOutMode, 0x30, modeFlags)) NotImplemented_nid_no_patch(__func__);
+    return static_cast<int>((modeFlags >> 8) & 1);
 }
 APS5_EXPORT("kvYuLJa0CyU", libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch);
 

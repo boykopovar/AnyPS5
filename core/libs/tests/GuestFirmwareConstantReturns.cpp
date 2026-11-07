@@ -22,6 +22,7 @@ void CheckAvSetting() {
     constexpr int AvSettingError = static_cast<int>(0x802A00FF);
     Require(sceAvSettingSetDisplayBlackLevel() == AvSettingError);
     Require(sceAvSettingTerm() == AvSettingError);
+    Require(libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch() == AvSettingError);
 }
 
 void CheckAvSettingCallbackFuncsInit(void (APS5_VABI* initialize)(void*), std::size_t size) {
