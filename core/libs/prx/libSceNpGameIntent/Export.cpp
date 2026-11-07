@@ -66,7 +66,9 @@ int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* inte
 }
 
 int APS5_VABI sceNpGameIntentInitialize(const void* initParam) {
-	(void)initParam;
+	if (initParam == nullptr) {
+		return NpGameIntentErrorInvalidArgument;
+	}
 	NpGameIntentInitialized() = true;
 	return 0;
 }
