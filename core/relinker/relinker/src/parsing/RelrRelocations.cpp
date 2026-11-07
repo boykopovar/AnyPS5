@@ -25,7 +25,7 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
     const auto size = value(DT_RELRSZ, "DT_RELRSZ");
     const auto stride = value(DT_RELRENT, "DT_RELRENT");
     if (!address && !size && !stride) return {};
-    if (!address || !size || !stride)
+    if (!address || *address == 0 || !size || !stride)
         throw Domain::RelinkerException("Incomplete DT_RELR metadata");
     if (*stride != 8)
         throw Domain::RelinkerException("Invalid DT_RELRENT: expected 8 bytes");
