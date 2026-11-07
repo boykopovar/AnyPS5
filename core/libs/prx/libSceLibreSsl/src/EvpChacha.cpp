@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 
 namespace {
@@ -87,6 +89,44 @@ void Crypt(ChaChaState& state, unsigned char* out, const unsigned char* in, std:
         }
         offset += count;
     }
+}
+
+ChaChaState& StateOf(LibreSslEvpCipherCtx* ctx, const char* function) {
+    if (!ctx->cipherData) throw std::invalid_argument(std::string(function) + ": context without cipher data");
+    return *static_cast<ChaChaState*>(ctx->cipherData);
+}
+
+int APS5_VABI ChaChaInit(LibreSslEvpCipherCtx* ctx, const unsigned char* key, const unsigned char* iv, int) {
+    auto& state = StateOf(ctx, "chacha20_init");
+    if (key) KeySetup(state, key);
+    if (iv) IvSetup(state, iv);
+    return 1;
+}
+
+int APS5_VABI ChaChaCipher(LibreSslEvpCipherCtx* ctx, unsigned char* out, const unsigned char* in, std::size_t length) {
+    auto& state = StateOf(ctx, "chacha20_cipher");
+    if (length && (!in || !out)) throw std::invalid_argument("chacha20_cipher: null input or output");
+    Crypt(state, out, in, length);
+    return 1;
+}
+
+constexpr LibreSslEvpCipher ChaCha20 {
+    .nid = 937,
+    .blockSize = 1,
+    .keyLength = 32,
+    .ivLength = 16,
+    .flags = CipherModeStream | CipherFlagCustomIv | CipherFlagAlwaysCallInit,
+    .init = ChaChaInit,
+    .doCipher = ChaChaCipher,
+    .contextSize = static_cast<int>(sizeof(ChaChaState)),
+};
+
+}
+
+extern "C" {
+
+const LibreSslEvpCipher* APS5_VABI EVP_chacha20_nid_postfix(void) {
+    return &ChaCha20;
 }
 
 }
