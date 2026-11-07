@@ -762,7 +762,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             prebuilt = true;
             return;
         }
-        const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
+        const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches || state.rectList) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
         if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
