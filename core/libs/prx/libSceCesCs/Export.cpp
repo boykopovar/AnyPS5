@@ -2078,6 +2078,18 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1258(void) {
     return singleByteProfile(SingleByte::Cp1258);
 }
 
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1253(void) {
+    return singleByteProfile(SingleByte::Cp1253);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1255(void) {
+    return singleByteProfile(SingleByte::Cp1255);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1257(void) {
+    return singleByteProfile(SingleByte::Cp1257);
+}
+
 const uint8_t* APS5_VABI sceCesRefersUcsProfileAscii(void) {
     return singleByteProfile(SingleByte::Ascii);
 }

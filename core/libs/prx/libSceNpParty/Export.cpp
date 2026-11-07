@@ -126,8 +126,8 @@ int APS5_VABI sceNpPartyJoin(void) {
 }
 
 int APS5_VABI sceNpPartyLeave(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
 
 int APS5_VABI sceNpPartyRegisterHandlerA(const void* handlers, void*) {
