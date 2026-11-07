@@ -1,6 +1,7 @@
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -128,12 +129,15 @@ IrValue* TranslationContext::makeImageAddress(const RdnaInstruction& inst, const
     std::array<IrValue*, 13> components{};
     IrValue& zero = ir.Constant(0u);
     components.fill(&zero);
-    const std::uint32_t count = GetRdnaImageAddressDwordCount(inst.imageSampleFlags, inst.imageAddressComponents);
+    std::uint32_t count = GetRdnaImageAddressDwordCount(inst.imageSampleFlags, inst.imageAddressComponents);
     if (count > components.size()) {
         throw std::runtime_error("image address component count exceeds the maximum supported");
     }
     const std::uint32_t nsaComponents = std::min(inst.imageNsaDwordCount * 4u, MaxRdnaImageNsaAddressComponents);
     const RdnaOperand plainBase = plainOperand(base);
+    if (GcnGuestShaders() && nsaComponents == 0u && plainBase.kind == RdnaOperandKind::VectorRegister) {
+        count = std::min({count + 3u, static_cast<std::uint32_t>(components.size()), 256u - plainBase.reg});
+    }
     for (std::uint32_t index = 0; index < count; ++index) {
         if (index != 0u && index - 1u < nsaComponents) {
             components[index] = &ir.GetVectorReg(static_cast<VectorReg>(inst.imageNsaVectorRegisters[index - 1u]));

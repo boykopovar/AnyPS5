@@ -195,6 +195,7 @@ bool IsVectorAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VCvtF16F32:
         case RdnaOpcode::VRcpF32:
         case RdnaOpcode::VRsqF32:
+        case RdnaOpcode::VRsqClampF32:
         case RdnaOpcode::VSqrtF32:
         case RdnaOpcode::VExpF32:
         case RdnaOpcode::VLogF32:
