@@ -3,8 +3,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <immintrin.h>
 #include <limits>
+
+#ifndef ANYPS5_GUEST_LIFTED
+#include <immintrin.h>
+#endif
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -103,6 +106,18 @@ double Signed(std::uint32_t value) {
     return static_cast<double>(static_cast<std::int32_t>(value));
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+
+double SquareRoot(double x) {
+    return std::sqrt(x);
+}
+
+double Fused(double a, double b, double c) {
+    return std::fma(a, b, c);
+}
+
+#else
+
 double SquareRoot(double x) {
     return _mm_cvtsd_f64(_mm_sqrt_sd(_mm_setzero_pd(), _mm_set_sd(x)));
 }
@@ -119,6 +134,8 @@ const bool HardwareFma = [] {
 double Fused(double a, double b, double c) {
     return HardwareFma ? HardwareFused(a, b, c) : std::fma(a, b, c);
 }
+
+#endif
 
 template <std::size_t Count>
 double Horner(double z, const double (&coefficients)[Count]) {

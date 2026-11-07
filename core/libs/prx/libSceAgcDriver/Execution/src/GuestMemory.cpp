@@ -17,11 +17,13 @@
 #include <atomic>
 #include <algorithm>
 #include <bit>
+#if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
 #else
 #include <cpuid.h>
+#endif
 #endif
 #include <functional>
 #include <cstdio>
@@ -3073,12 +3075,15 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
     }
 }
 
+#if defined(__x86_64__) || defined(_M_X64)
 static std::uint32_t changedByteCount(__m128i same) {
     const auto sums = _mm_sad_epu8(_mm_and_si128(same, _mm_set1_epi8(1)), _mm_setzero_si128());
     return 16u - static_cast<std::uint32_t>(_mm_cvtsi128_si32(_mm_add_epi32(sums, _mm_unpackhi_epi64(sums, sums))));
 }
+#endif
 
 std::uint32_t ChangedByteStoreLimit() {
+#if defined(__x86_64__) || defined(_M_X64)
     static const auto limit = [] {
 #if defined(_MSC_VER) && !defined(__clang__)
         int registers[4]{};
@@ -3091,13 +3096,16 @@ std::uint32_t ChangedByteStoreLimit() {
         return ebx == 0x68747541u && edx == 0x69746e65u && ecx == 0x444d4163u ? 16u : 4u;
     }();
     return limit;
+#else
+    return 16u;
+#endif
 }
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
     WriteChanged(address, current, original, ChangedByteStoreLimit());
 }
 
-static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit, bool keepGuest) {
+static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, [[maybe_unused]] std::uint32_t byteStoreLimit, bool keepGuest) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return;
@@ -3113,8 +3121,9 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
         CheckRange(destination, size, 1, true);
         std::size_t firstChanged = size;
         std::size_t lastChanged = 0;
-        bool masked = false;
         std::size_t at = 0;
+#if defined(__x86_64__) || defined(_M_X64)
+        bool masked = false;
         for (; at + 16 <= size; at += 16) {
             const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(current.data() + at));
             const auto uploaded = _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at));
@@ -3137,6 +3146,7 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
             lastChanged = std::max(lastChanged, at + 32 - static_cast<std::size_t>(std::countl_zero(changed)));
         }
         if (masked) _mm_sfence();
+#endif
         for (; at < size; ++at) {
             if (current[at] == original[at] || (keepGuest && destination[at] != original[at])) continue;
             destination[at] = current[at];
