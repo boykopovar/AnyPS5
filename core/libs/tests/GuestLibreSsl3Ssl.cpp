@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -218,6 +219,31 @@ void CheckVersion(std::int32_t type, std::vector<unsigned char> bytes, std::int6
     Require(result.value == value && result.error == error && result.following == 0, message, location);
 }
 
+void CheckIsQuic() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    const auto withMethod = Bytes(guarded);
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "connection with a QUIC method");
+    Require(Same(guarded, withMethod), "QUIC query changed the connection");
+    guarded.object.quicMethod = nullptr;
+    const auto withoutMethod = Bytes(guarded);
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "connection without a QUIC method");
+    Require(Same(guarded, withoutMethod), "QUIC query changed the connection");
+    guarded.object.quicMethod = nullptr;
+    guarded.object.method = nullptr;
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 0, "the TLS method is not the QUIC method");
+    guarded.object.method = reinterpret_cast<const LibreSsl3SslMethod*>(&guarded);
+    guarded.object.quicMethod = &guarded;
+    Require(SSL_is_quic_nid_postfix(&guarded.object) == 1, "any QUIC method");
+    bool threw = false;
+    try {
+        SSL_is_quic_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null connection");
+}
+
 void CheckX509Version() {
     const auto absent = ReadVersion(nullptr);
     Require(absent.value == 0 && absent.error == 0, "absent version");
@@ -264,6 +290,7 @@ int main() {
     CheckVersionBounds();
     CheckClientRandom();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
+    CheckIsQuic();
     CheckX509Version();
     return 0;
 }
