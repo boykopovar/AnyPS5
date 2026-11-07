@@ -235,11 +235,51 @@ void CheckRuns() {
 }
 }
 
+void CheckForgetStamps() {
+    constexpr std::size_t bytes = 4 * Unit;
+    auto* block = static_cast<std::byte*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(block != nullptr, "cannot allocate forget-stamp fixture");
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto first = ForgetSerial();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, Unit, true, true, false);
+    }
+    Require(ForgetStamp(address, Unit) > first, "a registry change after the first forget serial was read did not stamp its range");
+    Require(ForgetStamp(address + 2 * Unit, Unit) <= first, "a registry change stamped a range it did not touch");
+    const auto renewed = ForgetSerial();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RequireUnpinned(block, Unit);
+    }
+    Require(ForgetStamp(address, Unit) > renewed, "a mutation that renewed the backing of a range did not stamp it");
+    Require(ForgetStamp(address + 2 * Unit, Unit) <= renewed, "renewing the backing of a range stamped another");
+    const auto image = reinterpret_cast<std::uint64_t>(GetModuleHandleW(nullptr));
+    const auto registered = ForgetSerial();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterMainImage();
+    }
+    Require(ForgetStamp(image, Unit) > registered, "registering the main image did not stamp it");
+    const auto again = ForgetSerial();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RegisterMainImage();
+    }
+    Require(ForgetStamp(image, Unit) <= again, "registering an image that was already registered stamped it again");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    Require(VirtualFree(block, 0, MEM_RELEASE) != 0, "cannot release forget-stamp fixture");
+}
+
 int main(int argc, char** argv) {
     try {
         Require(GuestArena::GuestArenaAvailable_nid_postfix(), "page-state fixture needs the guest arena");
         if (argc == 2 && std::string_view(argv[1]) == "--metadata") CheckMetadata();
         else if (argc == 2 && std::string_view(argv[1]) == "--runs") CheckRuns();
+        else if (argc == 2 && std::string_view(argv[1]) == "--forget-stamps") CheckForgetStamps();
         else CheckBoundaries();
         return 0;
     } catch (const std::exception& error) {

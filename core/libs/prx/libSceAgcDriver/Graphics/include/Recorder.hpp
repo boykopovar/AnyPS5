@@ -133,7 +133,7 @@ public:
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
     std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr);
     static constexpr std::size_t ContainingSnapshotProbes = 16;
-    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
+    void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t forgetSerial, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
     static constexpr std::size_t DrawUploadChunk = std::size_t{1} << 20u;
     struct UploadSlice {
         std::shared_ptr<Buffer> buffer;
@@ -144,7 +144,7 @@ public:
     static constexpr std::size_t IndexRangeEntries = 16384;
     static constexpr std::size_t KeptIndexRangeIndices = 4096;
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest);
-    void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest);
+    void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t forgetSerial, std::optional<std::uint32_t> highest);
     void OnComplete(std::function<void()> action);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
@@ -935,7 +935,7 @@ private:
     using DrawSnapshotKey = std::tuple<std::uint64_t, SnapshotUse, std::size_t>;
     struct DrawSnapshot {
         std::uint64_t generation;
-        std::uint64_t registryGeneration;
+        std::uint64_t forgetSerial;
         std::list<DrawSnapshotKey>::iterator recent;
         std::shared_ptr<Buffer> buffer;
         std::uint32_t derived;
@@ -958,7 +958,7 @@ private:
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     struct IndexRange {
         std::uint64_t generation;
-        std::uint64_t registryGeneration;
+        std::uint64_t forgetSerial;
         std::list<DrawSnapshotKey>::iterator recent;
         std::optional<std::uint32_t> highest;
     };

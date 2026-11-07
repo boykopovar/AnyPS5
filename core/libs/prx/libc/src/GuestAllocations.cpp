@@ -185,6 +185,9 @@ void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     const auto ended = generation.fetch_add(1, std::memory_order_release) + 1;
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
+        for (const auto& range : state->unpinned) {
+            if (std::find(state->changed.begin(), state->changed.end(), range) == state->changed.end()) callback(range.first, range.second);
+        }
     }
     if (!state->gpuMapped.empty()) gpuMapObserverCalls.fetch_add(1);
     const auto observer = state->gpuMapped.empty() ? nullptr : gpuMapObserver.load();
@@ -240,9 +243,9 @@ void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t, s
 
 #ifdef _WIN32
 namespace {
-void registerImage(const void* image) {
+std::size_t registerImage(const void* image) {
     auto& state = registry();
-    if (state.registeredImages.contains(reinterpret_cast<std::uintptr_t>(image))) return;
+    if (state.registeredImages.contains(reinterpret_cast<std::uintptr_t>(image))) return 0;
     auto replacement = state.ranges;
     auto cursor = reinterpret_cast<std::uintptr_t>(image);
     bool registered = false;
@@ -272,21 +275,22 @@ void registerImage(const void* image) {
     require(registered, "guest image has no committed pages");
     state.ranges.swap(replacement);
     state.registeredImages.emplace(reinterpret_cast<std::uintptr_t>(image), cursor);
+    return cursor - reinterpret_cast<std::uintptr_t>(image);
 }
 }
 
-void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
+void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     const auto image = GetModuleHandleW(nullptr);
     require(image != nullptr, "cannot locate the main guest image");
-    registerImage(image);
+    recordChange(mutation, image, registerImage(image));
     state.mainImageRegistered = true;
 }
 
-void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
+void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image) {
     require(image != nullptr, "cannot register a guest image without a base");
-    registerImage(image);
+    recordChange(mutation, image, registerImage(image));
 }
 
 #else
@@ -378,7 +382,7 @@ std::uintptr_t registerImagePages(const ImagePages& collected) {
 }
 }
 
-void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
+void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     ImagePages collected{.main = true, .pageSize = static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE))};
@@ -388,11 +392,12 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
     dl_iterate_phdr(collectImagePages, &collected);
 #endif
     require(!collected.pages.empty(), "main guest image has no loadable segments");
-    registerImagePages(collected);
+    const auto begin = collected.pages.begin()->first;
+    recordChange(mutation, reinterpret_cast<const void*>(begin), registerImagePages(collected) - begin);
     state.mainImageRegistered = true;
 }
 
-void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
+void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image) {
     require(image != nullptr, "cannot register a guest image without a base");
     auto& state = registry();
     const auto base = reinterpret_cast<std::uintptr_t>(image);
@@ -406,7 +411,9 @@ void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
     require(collected.found, "cannot locate a guest image");
     require(!collected.pages.empty(), "guest image has no loadable segments");
     require(collected.pages.begin()->first == base, "guest image does not start at its base");
-    state.registeredImages.emplace(base, registerImagePages(collected));
+    const auto end = registerImagePages(collected);
+    state.registeredImages.emplace(base, end);
+    recordChange(mutation, image, end - base);
 }
 #endif
 

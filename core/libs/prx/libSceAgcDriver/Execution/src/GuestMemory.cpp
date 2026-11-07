@@ -686,10 +686,8 @@ void PageStates::initialize() {
             imageCached = image.allocate();
         }
 #endif
-        if (arenaCached || imageCached) {
-            GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
-            GuestArena::GuestArenaSetAccessObserver_nid_postfix(&ForgetInaccessiblePages);
-        }
+        GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
+        if (arenaCached || imageCached) GuestArena::GuestArenaSetAccessObserver_nid_postfix(&ForgetInaccessiblePages);
     });
     ready.store(true, std::memory_order_release);
 }
@@ -964,6 +962,7 @@ bool Accessible(const void* pointer, std::size_t bytes, bool writable) {
 }
 
 std::uint64_t ForgetSerial() {
+    Pages().initialize();
     return forgetSerial.load(std::memory_order_acquire);
 }
 
