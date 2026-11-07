@@ -73,7 +73,7 @@ def main(argv=None):
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")
     output = parser.add_mutually_exclusive_group()
-    output.add_argument("--json", action="store_true", help="emit grouped skip reasons and occurrence-based policy decisions as JSON")
+    output.add_argument("--json", action="store_true", help="emit skip reasons and policy decisions as JSON")
     output.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
     parser.add_argument("--require-tests", action="store_true", help="fail if the report contains no testcases")
     args = parser.parse_args(argv)
