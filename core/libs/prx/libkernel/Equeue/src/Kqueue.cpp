@@ -53,6 +53,7 @@ constexpr std::int16_t EVFILT_AIO = -3;
 constexpr std::int16_t EVFILT_PROC = -5;
 constexpr std::int16_t EVFILT_SIGNAL = -6;
 constexpr std::int16_t EVFILT_PROCDESC = -8;
+constexpr std::int16_t EVFILT_FS = -9;
 constexpr std::int16_t EVFILT_LIO = -10;
 constexpr std::int16_t EVFILT_SENDFILE = -12;
 constexpr std::uint32_t NOTE_EXIT = 0x80000000;
@@ -389,6 +390,17 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     return GuestErrno(queue->AddEvent(event));
 }
 
+int AddFsKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
+    event.event.fflags = 0;
+    event.event.data = 0;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
 bool DefinedProcessChange(const KernelEqueueRef& queue, const KernelEvent& change) {
     if (queue->HasEvent(change.ident, change.filter)) {
         return (change.flags & EV_DELETE) != 0 || (change.fflags & ~NOTE_EXIT) == 0;
@@ -568,7 +580,7 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
         if (!DefinedProcessChange(queue, change)) {
             NotImplemented_nid_no_patch("kevent: EVFILT_PROC on another process or with notes other than NOTE_EXIT");
         }
-    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER && change.filter != EVFILT_SIGNAL) {
+    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER && change.filter != EVFILT_FS && change.filter != EVFILT_SIGNAL) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
@@ -586,6 +598,8 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
             error = AddTimerKnote(queue, change, flags);
         } else if (change.filter == EVFILT_USER) {
             error = AddUserKnote(queue, change, flags);
+        } else if (change.filter == EVFILT_FS) {
+            error = AddFsKnote(queue, change, flags);
         } else if (change.filter == EVFILT_SIGNAL) {
             error = AddSignalKnote(queue, change, flags);
         } else if (change.filter == EVFILT_PROC) {

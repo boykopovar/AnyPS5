@@ -7,6 +7,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 namespace {
 
@@ -401,8 +402,7 @@ int APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC
 }
 
 int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return scePthreadGetthreadid();
 }
 
 int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void) {
@@ -1247,11 +1247,6 @@ int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(voi
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10AudioState6ConfigC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1282,32 +1277,12 @@ int APS5_VABI _ZN6webrtc15AudioSendStream6Config13SendCodecSpecD1Ev_nid_postfix(
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1703,11 +1678,6 @@ int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("Jq-CaqgT024", libwebrtcUnknown57);
 int APS5_VABI libwebrtcUnknown57(void) {
     NotImplemented_nid_no_patch("Jq-CaqgT024");
@@ -1717,11 +1687,6 @@ int APS5_VABI libwebrtcUnknown57(void) {
 APS5_EXPORT("HLZgnt-VWOg", libwebrtcUnknown58);
 int APS5_VABI libwebrtcUnknown58(void) {
     NotImplemented_nid_no_patch("HLZgnt-VWOg");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc23AudioNetworkAdaptorImpl6ConfigD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
