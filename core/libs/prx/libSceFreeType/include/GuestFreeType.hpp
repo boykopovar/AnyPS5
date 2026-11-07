@@ -9,6 +9,29 @@
 namespace FreeType {
 
 struct GuestLibrary;
+struct GuestMemoryRec;
+
+struct GuestStreamRec;
+
+using GuestStreamIoFunc = std::uint64_t (APS5_VABI *)(GuestStreamRec*, std::uint64_t, std::uint8_t*, std::uint64_t);
+using GuestStreamCloseFunc = void (APS5_VABI *)(GuestStreamRec*);
+
+struct GuestStreamRec {
+    std::uint8_t* base;
+    std::uint64_t size;
+    std::uint64_t pos;
+    void* descriptor;
+    void* pathname;
+    GuestStreamIoFunc read;
+    GuestStreamCloseFunc close;
+    GuestMemoryRec* memory;
+    std::uint8_t* cursor;
+    std::uint8_t* limit;
+};
+
+static_assert(sizeof(GuestStreamRec) == 80 && offsetof(GuestStreamRec, size) == 8 && offsetof(GuestStreamRec, pos) == 16);
+static_assert(offsetof(GuestStreamRec, read) == 40 && offsetof(GuestStreamRec, close) == 48 && offsetof(GuestStreamRec, memory) == 56);
+static_assert(offsetof(GuestStreamRec, cursor) == 64 && offsetof(GuestStreamRec, limit) == 72);
 
 struct GuestGeneric {
     void* data;
