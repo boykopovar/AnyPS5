@@ -19,10 +19,22 @@ void CheckInitValidation() {
     Require(sceMoveTrackerInit(nullptr, 0, 8, 8) == kErrInvalidArg);
 }
 
+void CheckArgumentValidation() {
+    Require(sceMoveTrackerCalibrateYaw(0, nullptr) == kErrInvalidArg);
+    Require(sceMoveTrackerCameraUpdate(nullptr) == kErrInvalidArg);
+    Require(sceMoveTrackerCaptureInit(nullptr, 10, 10, "path", 0) == kErrInvalidArg);
+    Require(sceMoveTrackerCaptureInit(reinterpret_cast<void*>(0x1), 10, 10, nullptr, 0) == kErrInvalidArg);
+    Require(sceMoveTrackerControllersUpdate(nullptr) == kErrInvalidArg);
+    Require(sceMoveTrackerGetState(0, 0, nullptr) == kErrInvalidArg);
+    Require(sceMoveTrackerPlayGetImages(nullptr) == kErrInvalidArg);
+    Require(sceMoveTrackerPlayGetStates(nullptr, nullptr) == kErrInvalidArg);
+}
+
 }
 
 int main() {
     CheckInitValidation();
+    CheckArgumentValidation();
     std::array<std::uint32_t, 2> total{kFill, kFill};
     std::array<std::uint32_t, 2> processing{kFill, kFill};
 
