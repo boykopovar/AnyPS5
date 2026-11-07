@@ -2,6 +2,27 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cstddef>
+#include <cstring>
+
+namespace {
+
+constexpr std::size_t Pbkdf2MaxDigest = 64;
+
+int Pbkdf2Mac(const EvpMd* digest, const void* key, int keyLength, const unsigned char* data, std::size_t dataLength, const unsigned char* suffix, std::size_t suffixLength, unsigned char* out) {
+    HmacContext context;
+    HMAC_CTX_init_nid_postfix(&context);
+    std::uint32_t length = 0;
+    const int ok = HMAC_Init_ex_nid_postfix(&context, key, keyLength, digest, nullptr)
+        && HMAC_Update_nid_postfix(&context, data, dataLength)
+        && HMAC_Update_nid_postfix(&context, suffix, suffixLength)
+        && HMAC_Final_nid_postfix(&context, out, &length);
+    HMAC_CTX_cleanup_nid_postfix(&context);
+    return ok && length == static_cast<std::uint32_t>(EVP_MD_size_nid_postfix(digest));
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
@@ -544,8 +565,40 @@ int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix(const char* pass, int passlen, const unsigned char* salt, int saltlen, int iter, const EvpMd* digest, int keylen, unsigned char* out) {
+    if (static_cast<const void*>(digest) == static_cast<const void*>(EVP_sha1_nid_postfix()) || static_cast<const void*>(digest) == static_cast<const void*>(EVP_sha224_nid_postfix())) return 0;
+    const int digestLength = EVP_MD_size_nid_postfix(digest);
+    if (digestLength <= 0 || static_cast<std::size_t>(digestLength) > Pbkdf2MaxDigest) return 0;
+    if (!pass) passlen = 0;
+    else if (passlen == -1) passlen = static_cast<int>(std::strlen(pass));
+    if (passlen < 0 || saltlen < 0 || keylen < 0 || (!out && keylen > 0)) return 0;
+    static const unsigned char none[1] {};
+    const unsigned char* saltData = salt ? salt : none;
+    const void* key = pass ? static_cast<const void*>(pass) : static_cast<const void*>(none);
+    const auto mdLength = static_cast<std::size_t>(digestLength);
+    unsigned char block[Pbkdf2MaxDigest];
+    unsigned char term[Pbkdf2MaxDigest];
+    unsigned char* cursor = out;
+    int remaining = keylen;
+    std::uint32_t index = 1;
+    while (remaining > 0) {
+        const auto chunk = static_cast<std::size_t>(remaining) < mdLength ? static_cast<std::size_t>(remaining) : mdLength;
+        const unsigned char counter[4] {
+            static_cast<unsigned char>(index >> 24), static_cast<unsigned char>(index >> 16),
+            static_cast<unsigned char>(index >> 8), static_cast<unsigned char>(index),
+        };
+        if (!Pbkdf2Mac(digest, key, passlen, saltData, static_cast<std::size_t>(saltlen), counter, sizeof(counter), block)) return 0;
+        std::memcpy(cursor, block, chunk);
+        for (int round = 1; round < iter; ++round) {
+            if (!Pbkdf2Mac(digest, key, passlen, block, mdLength, block, 0, term)) return 0;
+            std::memcpy(block, term, mdLength);
+            for (std::size_t k = 0; k < chunk; ++k) cursor[k] ^= block[k];
+        }
+        remaining -= static_cast<int>(chunk);
+        cursor += chunk;
+        ++index;
+    }
+    return 1;
 }
 
 int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix() {
