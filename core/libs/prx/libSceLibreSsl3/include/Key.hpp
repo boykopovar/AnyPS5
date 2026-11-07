@@ -78,6 +78,25 @@ struct LibreSsl3SslCtx {
     std::uint16_t maxProtoVersion;
 };
 
+struct LibreSsl3Bio {
+    const void* method;
+    void* callback;
+    void* callbackEx;
+    char* callbackArgument;
+    std::int32_t initialized;
+    std::int32_t shutdown;
+    std::int32_t flags;
+    std::int32_t retryReason;
+    std::int32_t number;
+    void* data;
+    LibreSsl3Bio* nextBio;
+    LibreSsl3Bio* previousBio;
+    std::int32_t references;
+    std::uint64_t bytesRead;
+    std::uint64_t bytesWritten;
+    void* exData;
+};
+
 static_assert(sizeof(LibreSsl3EvpPkey) == 32);
 static_assert(offsetof(LibreSsl3EvpPkey, references) == 4);
 static_assert(sizeof(LibreSsl3EcKey) == 64);
@@ -95,3 +114,5 @@ static_assert(offsetof(LibreSsl3Rsa, q) == 56);
 static_assert(offsetof(LibreSsl3Rsa, dmp1) == 64);
 static_assert(offsetof(LibreSsl3Rsa, dmq1) == 72);
 static_assert(offsetof(LibreSsl3Rsa, iqmp) == 80);
+static_assert(sizeof(LibreSsl3Bio) == 112);
+static_assert(offsetof(LibreSsl3Bio, references) == 80);
