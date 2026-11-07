@@ -5199,7 +5199,6 @@ int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE();
 int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv();
 int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE();
-int APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE();
 int APS5_VABI _ZNK3WTF6String28convertToLowercaseWithLocaleERKNS_10AtomStringE();
 int APS5_VABI _ZNK3WTF6String28convertToUppercaseWithLocaleERKNS_10AtomStringE();
 int APS5_VABI _ZNK3WTF6String31convertToLowercaseWithoutLocaleEv();
