@@ -222,9 +222,33 @@ static void Equality() {
     FcPatternDestroy(second);
 }
 
+static void FontSets() {
+    auto* pattern = FcPatternCreate();
+    auto* set = FcFontSetCreate();
+    CHECK(pattern && set);
+    CHECK(FcPatternAddInteger(pattern, "weight", 80));
+    CHECK(FcFontSetAdd(set, pattern));
+    CHECK(set->nfont == 1);
+    CHECK(set->fonts[0] != pattern);
+    CHECK(FcPatternEqual(set->fonts[0], pattern));
+    CHECK(FcPatternDel(pattern, "weight"));
+    CHECK(FcPatternAddInteger(pattern, "weight", 200));
+    CHECK(FcFontSetAdd(set, pattern));
+    CHECK(set->nfont == 2);
+    CHECK(set->fonts[1] != pattern && set->fonts[1] != set->fonts[0]);
+    FcPatternDestroy(pattern);
+    int weight = 0;
+    CHECK(FcPatternGetInteger(set->fonts[0], "weight", 0, &weight) == FcResultMatch);
+    CHECK(weight == 80);
+    CHECK(FcPatternGetInteger(set->fonts[1], "weight", 0, &weight) == FcResultMatch);
+    CHECK(weight == 200);
+    FcFontSetDestroy(set);
+}
+
 int main() {
     Languages();
     Patterns();
     IntegerGetters();
     Equality();
+    FontSets();
 }

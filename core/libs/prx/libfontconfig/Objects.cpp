@@ -23,7 +23,6 @@
  */
 
 #include "prx/libfontconfig/include/InventoryExports.hpp"
-#include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libc/include/General.hpp"
 #include "FontconfigData.hpp"
 
