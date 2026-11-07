@@ -1,6 +1,7 @@
 # libSceLibreSsl3 technical debt
 
 - [OBJ_cmp](../../../core/libs/prx/libSceLibreSsl3/src/ObjCmp.cpp) (libSceLibreSsl3) - PS5 behavior and the library's LibreSSL version are not verified. The 40-byte LP64 `ASN1_OBJECT` layout and the comparison (length difference first, then the first differing byte as a difference of unsigned values) follow the public [LibreSSL source](https://github.com/libressl/openbsd/blob/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto/objects/obj_lib.c); the magnitude of a byte mismatch is the byte difference rather than whatever the console's `memcmp` returns. Null objects, null data with a nonzero length and negative lengths throw. LibreSSL subtracts unequal lengths before reading data, so unequal negative lengths do not necessarily fault; only equal negative lengths reach its byte comparison.
+- [EVP_MD_block_size](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) (libSceLibreSsl3) - no console measurement. The result follows LibreSSL 2.5.4 [evp_lib.c](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp_lib.c).
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
@@ -183,7 +184,6 @@
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
 | `X509_get0_pubkey` | `xj7cFYOV4+Y` |
 | `SSL_is_quic` | `xpB+BNkO2Z0` |
-| `EVP_MD_block_size` | `zCa75KLWWn4` |
 
 - The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
 
