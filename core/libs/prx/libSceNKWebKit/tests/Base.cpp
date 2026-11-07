@@ -75,11 +75,11 @@ static void TestSecurityOrigin() {
     for (const Case& value : {
         Case{"http", "example.com", 8080, 8080, "http://example.com:8080", "http_example.com_8080"},
         Case{"http", "host_name", 0, 0, "http://host_name", "http_host_name_0"},
-        Case{"http", "example.com", 80, 0, "http://example.com", "http_example.com_0"},
-        Case{"https", "example.com", 443, 0, "https://example.com", "https_example.com_0"},
-        Case{"ftp", "example.com", 21, 0, "ftp://example.com", "ftp_example.com_0"},
-        Case{"ws", "example.com", 80, 0, "ws://example.com", "ws_example.com_0"},
-        Case{"wss", "example.com", 443, 0, "wss://example.com", "wss_example.com_0"},
+        Case{"http", "example.com", 80, 80, "http://example.com:80", "http_example.com_80"},
+        Case{"https", "example.com", 443, 443, "https://example.com:443", "https_example.com_443"},
+        Case{"ftp", "example.com", 21, 21, "ftp://example.com:21", "ftp_example.com_21"},
+        Case{"ws", "example.com", 80, 80, "ws://example.com:80", "ws_example.com_80"},
+        Case{"wss", "example.com", 443, 443, "wss://example.com:443", "wss_example.com_443"},
         Case{"https", "example.com", 80, 80, "https://example.com:80", "https_example.com_80"},
         Case{"http", "example.com", 443, 443, "http://example.com:443", "http_example.com_443"},
         Case{"HTTP", "example.com", 80, 80, "HTTP://example.com:80", "HTTP_example.com_80"},
@@ -143,6 +143,7 @@ static void TestSecurityOrigin() {
         DbCase{"http_a%20b_80", "a%20b", 0, "http_a%2520b_0"},
         DbCase{"http_A b_5", "A b", 5, "http_A%20b_5"},
         DbCase{"http_h_65535", "h", 65535, "http_h_65535"},
+        DbCase{"http_[::1]_8080", "[::1]", 8080, "http_[%3A%3A1]_8080"},
         DbCase{"FILE_h_9", "h", 9, "file__0"}
     }) {
         const auto* idStr = WKStringCreateWithUTF8CString(db.input);
@@ -177,24 +178,9 @@ static void TestSecurityOrigin() {
         StringCase{"http://example.com:8080/path", "http", "example.com", 8080, "http://example.com:8080", "http_example.com_8080"},
         StringCase{"https://example.com/", "https", "example.com", 0, "https://example.com", "https_example.com_0"},
         StringCase{"http://user:pass@example.com:9000", "http", "example.com", 9000, "http://example.com:9000", "http_example.com_9000"},
-        StringCase{"file:///home/user/test.html", "file", "", 0, "file://", "file__0"},
-        StringCase{"custom://host", "", "", 0, "null", "__0"},
-        StringCase{"file://localhost/etc/hosts", "file", "", 0, "file://", "file__0"},
-        StringCase{"FILE://host:99999/x", "", "", 0, "null", "__0"},
-        StringCase{"invalid-string", "", "", 0, "null", "__0"},
-        StringCase{"", "", "", 0, "null", "__0"},
-        StringCase{"file://server/share", "file", "server", 0, "file://", "file__0"},
-        StringCase{"FILE://SERVER/share", "file", "server", 0, "file://", "file__0"},
-        StringCase{"file://[::1]/x", "file", "[::1]", 0, "file://", "file__0"},
-        StringCase{"file://localhost", "file", "", 0, "file://", "file__0"},
-        StringCase{"file://user@server/x", "", "", 0, "null", "__0"},
-        StringCase{"file://server:80/x", "", "", 0, "null", "__0"},
-        StringCase{"file://server:/x", "", "", 0, "null", "__0"},
-        StringCase{"file://[::1]:80/x", "", "", 0, "null", "__0"},
-        StringCase{"wss://", "", "", 0, "null", "__0"},
-        StringCase{"ws://:80", "", "", 0, "null", "__0"},
-        StringCase{"mailto://host", "", "", 0, "null", "__0"},
+        StringCase{"http://a@b@example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
         StringCase{"http://example.com:80/", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://example.com:00080", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
         StringCase{"https://example.com:443", "https", "example.com", 0, "https://example.com", "https_example.com_0"},
         StringCase{"ftp://example.com:21", "ftp", "example.com", 0, "ftp://example.com", "ftp_example.com_0"},
         StringCase{"ws://example.com:80", "ws", "example.com", 0, "ws://example.com", "ws_example.com_0"},
@@ -202,27 +188,61 @@ static void TestSecurityOrigin() {
         StringCase{"http://example.com:443", "http", "example.com", 443, "http://example.com:443", "http_example.com_443"},
         StringCase{"HTTP://EXAMPLE.com:80", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
         StringCase{"http://example.com:0/", "http", "example.com", 0, "http://example.com:0", "http_example.com_0"},
-        StringCase{"custom://host:0", "", "", 0, "null", "__0"},
         StringCase{"http://example.com:/p", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
-        StringCase{"http://[::1]:8080/", "http", "[::1]", 8080, "http://[::1]:8080", "http_[%3A%3A1]_8080"},
-        StringCase{"http://[::1]/", "http", "[::1]", 0, "http://[::1]", "http_[%3A%3A1]_0"},
-        StringCase{"ws://", "", "", 0, "null", "__0"},
-        StringCase{"http://", "", "", 0, "null", "__0"},
-        StringCase{"https:///path", "", "", 0, "null", "__0"},
-        StringCase{"ftp://", "", "", 0, "null", "__0"},
-        StringCase{"http://user@:80", "", "", 0, "null", "__0"},
-        StringCase{"HTTP://", "", "", 0, "null", "__0"},
-        StringCase{"http://example.com:99999", "", "", 0, "null", "__0"},
-        StringCase{"http://example.com:65536", "", "", 0, "null", "__0"},
-        StringCase{"http://example.com:abc", "", "", 0, "null", "__0"},
-        StringCase{"http://example.com:80abc", "", "", 0, "null", "__0"},
-        StringCase{"http://[::1", "", "", 0, "null", "__0"},
-        StringCase{"http://[::1]x", "", "", 0, "null", "__0"},
-        StringCase{"://host", "", "", 0, "null", "__0"},
-        StringCase{"1http://host", "", "", 0, "null", "__0"},
-        StringCase{"ht tp://host", "", "", 0, "null", "__0"},
-        StringCase{"example.com:80", "", "", 0, "null", "__0"},
-        StringCase{"http:/example.com", "", "", 0, "null", "__0"}
+        StringCase{"http://example.com./p", "http", "example.com.", 0, "http://example.com.", "http_example.com._0"},
+        StringCase{"http://example.1a/", "http", "example.1a", 0, "http://example.1a", "http_example.1a_0"},
+        StringCase{"http://under_score.example/", "http", "under_score.example", 0, "http://under_score.example", "http_under_score.example_0"},
+        StringCase{"http:/example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http:example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http:////example.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http:\\\\example.com\\path", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"http://evil.example\\@good.example", "http", "evil.example", 0, "http://evil.example", "http_evil.example_0"},
+        StringCase{"https:///path", "https", "path", 0, "https://path", "https_path_0"},
+        StringCase{"  http://example.com  ", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"ht\ttp://exa\nmple.com", "http", "example.com", 0, "http://example.com", "http_example.com_0"},
+        StringCase{"file:///home/user/test.html", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://localhost/etc/hosts", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://localhost", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://server/share", "file", "server", 0, "file://", "file__0"},
+        StringCase{"FILE://SERVER/share", "file", "server", 0, "file://", "file__0"},
+        StringCase{"file:/x", "file", "", 0, "file://", "file__0"},
+        StringCase{"file:x", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://C:/x", "file", "", 0, "file://", "file__0"},
+        StringCase{"file://c|/x", "file", "", 0, "file://", "file__0"},
+        StringCase{"", "", "", 0, "", "__0"},
+        StringCase{"   ", "", "", 0, "", "__0"},
+        StringCase{"invalid-string", "", "", 0, "", "__0"},
+        StringCase{"example.com:80", "", "", 0, "", "__0"},
+        StringCase{"://host", "", "", 0, "", "__0"},
+        StringCase{"1http://host", "", "", 0, "", "__0"},
+        StringCase{"ht tp://host", "", "", 0, "", "__0"},
+        StringCase{"custom://host", "", "", 0, "", "__0"},
+        StringCase{"custom://host:0", "", "", 0, "", "__0"},
+        StringCase{"mailto:someone@example.com", "", "", 0, "", "__0"},
+        StringCase{"data:text/plain,x", "", "", 0, "", "__0"},
+        StringCase{"javascript:alert(1)", "", "", 0, "", "__0"},
+        StringCase{"about:blank", "", "", 0, "", "__0"},
+        StringCase{"http://", "", "", 0, "", "__0"},
+        StringCase{"ftp://", "", "", 0, "", "__0"},
+        StringCase{"ws://", "", "", 0, "", "__0"},
+        StringCase{"wss://", "", "", 0, "", "__0"},
+        StringCase{"HTTP://", "", "", 0, "", "__0"},
+        StringCase{"ws://:80", "", "", 0, "", "__0"},
+        StringCase{"http://user@:80", "", "", 0, "", "__0"},
+        StringCase{"http://@", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:99999", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:65536", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:abc", "", "", 0, "", "__0"},
+        StringCase{"http://example.com:80abc", "", "", 0, "", "__0"},
+        StringCase{"http://a:b:c", "", "", 0, "", "__0"},
+        StringCase{"http://exa mple.com", "", "", 0, "", "__0"},
+        StringCase{"http://a<b.example", "", "", 0, "", "__0"},
+        StringCase{"http://a^b.example", "", "", 0, "", "__0"},
+        StringCase{"http://a|b.example", "", "", 0, "", "__0"},
+        StringCase{"file://user@server/x", "", "", 0, "", "__0"},
+        StringCase{"file://server:80/x", "", "", 0, "", "__0"},
+        StringCase{"file://server:/x", "", "", 0, "", "__0"},
+        StringCase{"file://a<b/x", "", "", 0, "", "__0"}
     }) {
         const auto* inStr = WKStringCreateWithUTF8CString(sc.input);
         const auto* fromStr = WKSecurityOriginCreateFromString(inStr);
@@ -236,12 +256,23 @@ static void TestSecurityOrigin() {
         CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromStr), sc.expectedDbId);
         WKRelease(fromStr);
     }
+    for (const char* input : {"http://[::1]/", "http://[::1]:8080/", "file://[::1]/x", "http://caf\xC3\xA9.example/", "http://a%20b.example/", "http://%41.example/", "http://xn--nxasmq6b.example/", "http://sub.XN--abc.example/", "http://127.0.0.1/", "http://0x7f.1/", "http://1.2.3.4./", "http://192.168.1/", "http://example.0x/", "blob:https://example.com/uuid", "BLOB:foo"}) {
+        const auto* inStr = WKStringCreateWithUTF8CString(input);
+        bool threw = false;
+        try {
+            WKSecurityOriginCreateFromString(inStr);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        WKRelease(inStr);
+        Require(threw);
+    }
     const auto* fromNull = WKSecurityOriginCreateFromString(nullString.Get());
     Require(fromNull != nullptr);
     Require(WKSecurityOriginGetPort(fromNull) == 0);
     CheckOriginString(WKSecurityOriginCopyProtocol(fromNull), "");
     CheckOriginString(WKSecurityOriginCopyHost(fromNull), "");
-    CheckOriginString(WKSecurityOriginCopyToString(fromNull), "null");
+    CheckOriginString(WKSecurityOriginCopyToString(fromNull), "");
     CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromNull), "__0");
     WKRelease(fromNull);
 }

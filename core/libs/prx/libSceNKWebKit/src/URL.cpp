@@ -328,10 +328,97 @@ std::optional<std::uint16_t> WithoutDefaultPort(const std::u16string& protocol, 
     return port;
 }
 
+void ConvertToASCIILowercase(std::u16string& text) {
+    for (auto& c : text) {
+        if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c - u'A' + u'a');
+    }
+}
+
+bool IsForbiddenHostCodePoint(char16_t c) {
+    if (c <= 0x20 || c == 0x7F) return true;
+    switch (c) {
+    case u'#': case u'%': case u'/': case u':': case u'<': case u'>': case u'?': case u'@':
+    case u'[': case u'\\': case u']': case u'^': case u'|':
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsASCIIAlpha(char16_t c) {
+    return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z');
+}
+
+bool IsASCIIDigit(char16_t c) {
+    return c >= u'0' && c <= u'9';
+}
+
+bool IsASCIIHexDigit(char16_t c) {
+    return IsASCIIDigit(c) || (c >= u'a' && c <= u'f') || (c >= u'A' && c <= u'F');
+}
+
+std::u16string CleanOriginInput(const std::u16string& input) {
+    std::size_t begin = 0;
+    std::size_t end = input.size();
+    while (begin < end && input[begin] <= 0x20) ++begin;
+    while (end > begin && input[end - 1] <= 0x20) --end;
+    std::u16string output;
+    output.reserve(end - begin);
+    for (std::size_t i = begin; i < end; ++i) {
+        if (input[i] != u'\t' && input[i] != u'\n' && input[i] != u'\r') output.push_back(input[i]);
+    }
+    return output;
+}
+
+bool EndsInANumber(const std::u16string& host) {
+    std::size_t end = host.size();
+    if (end && host[end - 1] == u'.') --end;
+    const auto labelStart = host.rfind(u'.', end ? end - 1 : 0);
+    const std::size_t begin = (labelStart == std::u16string::npos || labelStart >= end) ? 0 : labelStart + 1;
+    const std::u16string_view label = std::u16string_view(host).substr(begin, end - begin);
+    if (label.empty()) return false;
+    bool allDigits = true;
+    for (const char16_t c : label) allDigits = allDigits && IsASCIIDigit(c);
+    if (allDigits) return true;
+    if (label.size() >= 2 && label[0] == u'0' && (label[1] == u'x' || label[1] == u'X')) {
+        bool allHex = true;
+        for (const char16_t c : label.substr(2)) allHex = allHex && IsASCIIHexDigit(c);
+        return allHex;
+    }
+    return false;
+}
+
+bool HasPunycodeLabel(const std::u16string& host) {
+    std::size_t start = 0;
+    while (start <= host.size()) {
+        const auto dot = host.find(u'.', start);
+        const auto stop = dot == std::u16string::npos ? host.size() : dot;
+        if (stop - start >= 4 && host.compare(start, 4, u"xn--") == 0) return true;
+        if (dot == std::u16string::npos) break;
+        start = dot + 1;
+    }
+    return false;
+}
+
+bool ProcessOriginHost(std::u16string& host) {
+    if (host.starts_with(u"[")) throw std::runtime_error("WKSecurityOriginCreateFromString: IPv6 host serialization is not implemented");
+    for (const char16_t c : host) {
+        if (c == u'%') throw std::runtime_error("WKSecurityOriginCreateFromString: percent-decoding of hosts is not implemented");
+        if (c > 0x7F) throw std::runtime_error("WKSecurityOriginCreateFromString: IDNA host conversion is not implemented");
+    }
+    ConvertToASCIILowercase(host);
+    for (const char16_t c : host) {
+        if (IsForbiddenHostCodePoint(c)) return false;
+    }
+    if (HasPunycodeLabel(host)) throw std::runtime_error("WKSecurityOriginCreateFromString: IDNA validation of hosts is not implemented");
+    if (EndsInANumber(host)) throw std::runtime_error("WKSecurityOriginCreateFromString: IPv4 host parsing is not implemented");
+    return true;
+}
+
 class SecurityOrigin final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::SecurityOrigin> {
 public:
     SecurityOrigin(const NKWebKit::String& protocol, const NKWebKit::String& host, std::optional<std::uint16_t> port)
-        : protocol(protocol.characters), host(host.characters), port(WithoutDefaultPort(protocol.characters, port)),
+        : protocol(protocol.characters), host(host.characters), port(port),
           protocolNull(protocol.null), hostNull(host.null) {}
     SecurityOrigin(std::u16string protocol, std::u16string host, std::optional<std::uint16_t> port)
         : protocol(std::move(protocol)), host(std::move(host)), port(WithoutDefaultPort(this->protocol, port)) {}
@@ -341,7 +428,6 @@ public:
     std::optional<std::uint16_t> port;
     bool protocolNull = false;
     bool hostNull = false;
-    bool opaque = false;
 };
 
 const void* CopyOriginString(std::u16string text) {
@@ -349,20 +435,12 @@ const void* CopyOriginString(std::u16string text) {
 }
 
 const void* CreateOpaqueOrigin() {
-    auto origin = NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt);
-    origin->opaque = true;
-    return NKWebKit::ToRef(std::move(origin));
+    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
 }
 
 std::u16string PortString(std::uint16_t port) {
     const auto text = std::to_string(port);
     return {text.begin(), text.end()};
-}
-
-void ConvertToASCIILowercase(std::u16string& text) {
-    for (auto& c : text) {
-        if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c - u'A' + u'a');
-    }
 }
 
 bool EqualsLettersIgnoringASCIICase(const std::u16string& text, std::u16string_view lowercaseLiteral) {
@@ -443,54 +521,48 @@ const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* h
 
 const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
     const auto* str = NKWebKit::Cast<NKWebKit::String>(string, __func__);
-    if (str->null || str->characters.empty()) return CreateOpaqueOrigin();
-    const auto& text = str->characters;
-    const auto schemeEnd = text.find(u"://");
+    if (str->null) return CreateOpaqueOrigin();
+    const auto text = CleanOriginInput(str->characters);
+    const auto schemeEnd = text.find(u':');
     if (schemeEnd == std::u16string::npos) return CreateOpaqueOrigin();
     auto protocol = text.substr(0, schemeEnd);
     if (!IsValidScheme(protocol)) return CreateOpaqueOrigin();
     ConvertToASCIILowercase(protocol);
+    if (protocol == u"blob") throw std::runtime_error("WKSecurityOriginCreateFromString: blob URL origins are not implemented");
     const bool isFile = protocol == u"file";
     const bool isSpecial = isFile || protocol == u"http" || protocol == u"https" || protocol == u"ftp" || protocol == u"ws" || protocol == u"wss";
     if (!isSpecial) return CreateOpaqueOrigin();
-    const auto hostStart = schemeEnd + 3;
-    const auto pathStart = text.find_first_of(u"/?#", hostStart);
-    auto authority = (pathStart != std::u16string::npos) ? text.substr(hostStart, pathStart - hostStart) : text.substr(hostStart);
-    const auto atPos = authority.rfind(u'@');
-    if (atPos != std::u16string::npos) {
-        if (isFile) return CreateOpaqueOrigin();
-        authority = authority.substr(atPos + 1);
+
+    const auto isSlash = [](char16_t c) { return c == u'/' || c == u'\\'; };
+    const std::u16string rest = text.substr(schemeEnd + 1);
+    std::size_t authorityStart = 0;
+    if (isFile) {
+        authorityStart = (rest.size() >= 2 && isSlash(rest[0]) && isSlash(rest[1])) ? 2 : rest.size();
+    } else {
+        while (authorityStart < rest.size() && isSlash(rest[authorityStart])) ++authorityStart;
     }
+    const auto authorityEnd = rest.find_first_of(u"/\\?#", authorityStart);
+    auto authority = rest.substr(authorityStart, authorityEnd == std::u16string::npos ? std::u16string::npos : authorityEnd - authorityStart);
 
     std::u16string host;
-    std::u16string portText;
-    bool hasPortSeparator = false;
-    if (authority.starts_with(u"[")) {
-        const auto bracketEnd = authority.find(u']');
-        if (bracketEnd == std::u16string::npos) return CreateOpaqueOrigin();
-        host = authority.substr(0, bracketEnd + 1);
-        const auto rest = authority.substr(bracketEnd + 1);
-        if (!rest.empty()) {
-            if (rest.front() != u':') return CreateOpaqueOrigin();
-            hasPortSeparator = true;
-            portText = rest.substr(1);
+    std::optional<std::uint16_t> port;
+    if (isFile) {
+        const bool driveLetter = authority.size() == 2 && IsASCIIAlpha(authority[0]) && (authority[1] == u':' || authority[1] == u'|');
+        if (!authority.empty() && !driveLetter) {
+            host = authority;
+            if (!ProcessOriginHost(host)) return CreateOpaqueOrigin();
+            if (host == u"localhost") host.clear();
         }
     } else {
-        const auto colon = authority.rfind(u':');
+        const auto atPos = authority.rfind(u'@');
+        if (atPos != std::u16string::npos) authority = authority.substr(atPos + 1);
+        if (authority.starts_with(u"[")) throw std::runtime_error("WKSecurityOriginCreateFromString: IPv6 host serialization is not implemented");
+        const auto colon = authority.find(u':');
         host = authority.substr(0, colon);
-        if (colon != std::u16string::npos) {
-            hasPortSeparator = true;
-            portText = authority.substr(colon + 1);
-        }
-    }
-    std::optional<std::uint16_t> port;
-    if (!ParseAuthorityPort(portText, port)) return CreateOpaqueOrigin();
-    ConvertToASCIILowercase(host);
-    if (isFile) {
-        if (hasPortSeparator) return CreateOpaqueOrigin();
-        if (host == u"localhost") host.clear();
-    } else if (host.empty()) {
-        return CreateOpaqueOrigin();
+        const std::u16string portText = colon == std::u16string::npos ? std::u16string() : authority.substr(colon + 1);
+        if (!ParseAuthorityPort(portText, port)) return CreateOpaqueOrigin();
+        if (host.empty()) return CreateOpaqueOrigin();
+        if (!ProcessOriginHost(host)) return CreateOpaqueOrigin();
     }
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
 }
@@ -535,7 +607,6 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* origin) {
 
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* origin) {
     const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
-    if (value->opaque) return CopyOriginString(u"null");
     if (value->protocol == u"file") return CopyOriginString(u"file://");
     if (value->protocol.empty() && value->host.empty()) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>());
     auto text = value->protocol + u"://" + value->host;
