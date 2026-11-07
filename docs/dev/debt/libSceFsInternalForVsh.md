@@ -2,15 +2,16 @@
 
 ### Silent stubs
 
-- [sceFsErriCtl and sceFsErriGetState](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) return 0x8002002d without managing error reporting control or state.
+- [sceFsErriCtl and sceFsErriGetState](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) return 0x8002002d without managing error reporting control or state; return values are covered by unit tests in [GuestFsInternalForVsh.cpp](../../../core/libs/tests/GuestFsInternalForVsh.cpp).
 
 ### Unknown function info
 
 - [sceBdSchedCancelBackgroundCopyRequest, sceBdSchedCancelPrioritizedBackgroundCopyRequest, sceBdSchedConfigure, sceBdSchedConfigure2, sceBdSchedDeconfigure, sceBdSchedGetBackgroundCopyRequest, sceBdSchedGetExtentMap, sceBdSchedGetPrioritizedBackgroundCopyRequest, sceBdSchedGetState, sceBdSchedSetBackgroundCopyRequest, sceBdSchedSetDiscIdentity, sceBdSchedSetPrioritizedBackgroundCopyRequest, sceBdSchedStartGame, sceBdSchedStartRipping, sceBdSchedStopScheduling, sceFsBfsCheckCleanFlag, sceFsBindApplication, sceFsBindPackages, sceFsCheckFormat, sceFsCheckSingleUser, sceFsCreateExfatPartition, sceFsCreatePfsSaveDataImage, sceFsCreatePfsTrophyDataImage, sceFsCreatePprPfsTrophyDataImage, sceFsDeviceAlignedPread, sceFsDeviceAlignedPwrite, sceFsDevpfsA53IocGetBuildMetadataStatus, sceFsDevpfsCancelWaitEvent, sceFsDevpfsCreateForVSH, sceFsDevpfsDeleteForVSH, sceFsDevpfsDeregisterEvent, sceFsDevpfsEventComplete, sceFsDevpfsEventResponseComplete, sceFsDevpfsFetchMetaEntry, sceFsDevpfsFsck, sceFsDevpfsInitFetchMetaEntryCtx, sceFsDevpfsMountForFSMP, sceFsDevpfsRegisterEvent, sceFsDevpfsWaitEvent, sceFsDrfsRegisterSocket, sceFsDrfsResumeSocket, sceFsExfatMkfsExternalHdd, sceFsExfatfsMkfs, sceFsExtUSBSchedDestroy, sceFsExtUSBSchedInsert, sceFsExtUSBSchedInsertForHDD, sceFsExternalStorageDeconfigure, sceFsExternalStorageGetRawDevice, sceFsExternalStorageInitialize, sceFsExternalStorageVerifyMetadata, sceFsGetAttribute, sceFsGetClusterStatistics, sceFsGetDeviceSectorsize, sceFsGetFsMetadata, sceFsGetFsMetadataWithProgress, sceFsGetSmrInfo, sceFsGschedCtl, sceFsISSchedConfigCurrentThread, sceFsISSchedConfigDescriptor, sceFsISSchedConfigThread, sceFsISSchedMapStat, sceFsISSchedResultToPriority, sceFsISSchedResultToSlot, sceFsISSchedStatCurrentThread, sceFsISSchedStatDescriptor, sceFsISSchedStatThread, sceFsISSchedUnmapStat, sceFsInitCreatePfsSaveDataOpt, sceFsInitCreatePfsTrophyDataOpt, sceFsInitMountDownloadDataOpt, sceFsInitMountGamePkgOpt, sceFsInitMountLwfsCompatOpt, sceFsInitMountLwfsOpt, sceFsInitMountPprPkgOpt, sceFsInitMountSaveDataOpt, sceFsInitMountTrophyDataOpt, sceFsInitUmountDownloadDataOpt, sceFsInitUmountGamePkgOpt, sceFsInitUmountLwfsCompatOpt, sceFsInitUmountLwfsOpt, sceFsInitUmountPprPkgOpt, sceFsInitUmountSaveDataOpt, sceFsInitUmountTrophyDataOpt, sceFsInitWorkspaceFileMetadataParam, sceFsLvdAttach, sceFsLvdAttach2, sceFsLvdAttachPartiallyCryptedDownloadData, sceFsLvdAttachSingleDefaultImage, sceFsLvdAttachSingleImage, sceFsLvdDetach, sceFsLvdDisableLayer, sceFsLvdEnableLayer, sceFsLvdSetDiscIdentity, sceFsLvdWaitResumed, sceFsMlfsMount, sceFsMlfsMountWithFlags, sceFsMlfsUmount, sceFsMountDownloadData, sceFsMountGamePkg, sceFsMountLwfs, sceFsMountLwfsCompat, sceFsMountPartiallyCryptedDownloadData, sceFsMountPprPkg, sceFsMountSaveData, sceFsMountTrophyData, sceFsNsfsAddOverlayToNamespace, sceFsNsfsMountWithFlags, sceFsNsfsSetGlobalExclude, sceFsNsfsUmount, sceFsPartitionTrim, sceFsReserveCluster, sceFsSetAttribute, sceFsSetClusterCacheSize, sceFsSetFileReservedTotal, sceFsSetSystemReserveSize, sceFsSetWorkspaceFileHash, sceFsStatWorkspace, sceFsSysStorageGetStatus, sceFsTransactionCancel, sceFsTransactionSaveDataInitMountOpt, sceFsTransactionSaveDataMount, sceFsTransactionStart, sceFsTrophyImageError, sceFsUfsAllocateAdditionalContents, sceFsUfsAllocateAligned, sceFsUfsAllocateDownloadData, sceFsUfsAllocateGameImage, sceFsUfsAllocatePatchImage, sceFsUfsAllocateSaveData, sceFsUfsAllocateTrophyData, sceFsUfsCheckCleanFlag, sceFsUfsCheckFixedCylinderGroupSize, sceFsUfsCollectTelemetry, sceFsUfsCollectTelemetry2, sceFsUfsDirectWrite, sceFsUfsEstimateZoneCapacityForUser, sceFsUfsExtendFile, sceFsUfsFsck, sceFsUfsFsckWithMM, sceFsUfsGetExtentMap, sceFsUfsGrowLwfs, sceFsUfsGrowfs, sceFsUfsHideBlocksFromUser, sceFsUfsInitalizeSparseFile, sceFsUfsLargewriteFsck, sceFsUfsLargewriteFsckWithMM, sceFsUfsMkLwfs, sceFsUfsMkfs, sceFsUfsMkfsForExternalHDD, sceFsUfsMkfsForSystem, sceFsUfsMkfsWithFixedCylinderGroupSize, sceFsUfsReallocateSparseFile, sceFsUfsRecryptBlocks, sceFsUfsRecryptGetState, sceFsUfsRecryptIsUnfinished, sceFsUfsRecryptSyncMetadata, sceFsUfsSeekHoleInFile, sceFsUfsStopOperation, sceFsUmountDownloadData, sceFsUmountGamePkg, sceFsUmountLwfs, sceFsUmountLwfsCompat, sceFsUmountSaveData, sceFsUmountTrophyData, sceFsUmountWorkspace, sceFsUnbindApplication, sceFsUnbindPackages, sceFsWsCreate, sceFsWsDelete, sceFsWsFetchFileMetadata, sceFsWsFsck, sceFsWsGetStatus, sceFsWsMount and sceFsWsUmount](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) (libSceFsInternalForVsh) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceFsInternalForVsh.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [`0XlyVxRNeIw`, `W8CmA+wZ9+w` and `lxyJjALNmp4`](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) (libSceFsInternalForVsh) - names and signatures are unknown; each returns 0, as its firmware 13.42 body (`xor %eax,%eax; ret` at `0x1ddd0`, `0x1dde0` and `0x35c80`) does. The no-parameter `int` declarations claim only the 32-bit return value. Read from disassembly, not measured on a console.
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) - 163 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceFsInternalForVsh/Export.cpp) - 160 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
@@ -105,7 +106,6 @@
 | `Unknown` | `+gVdjPejLwc` |
 | `Unknown` | `-HW6neCER+A` |
 | `Unknown` | `0JhonchgIa8` |
-| `Unknown` | `0XlyVxRNeIw` |
 | `Unknown` | `1lLh9mukbz0` |
 | `Unknown` | `2UgTmJt2dsc` |
 | `Unknown` | `3TFUof4RLWM` |
@@ -140,7 +140,6 @@
 | `Unknown` | `SyNglOzKCV8` |
 | `Unknown` | `T3LiDkpiS7s` |
 | `Unknown` | `UD35isX9168` |
-| `Unknown` | `W8CmA+wZ9+w` |
 | `Unknown` | `WwEWgYYuAmo` |
 | `Unknown` | `XwPXO+lxKy0` |
 | `Unknown` | `Y-AXyBKGn8I` |
@@ -164,7 +163,6 @@
 | `Unknown` | `juY2ugdopus` |
 | `Unknown` | `k-WaWvM74jI` |
 | `Unknown` | `lZ+oSeAyI8Q` |
-| `Unknown` | `lxyJjALNmp4` |
 | `Unknown` | `mvNIgoNVeWA` |
 | `Unknown` | `nIMoeyl3SRY` |
 | `Unknown` | `noVGZAYgjI8` |
