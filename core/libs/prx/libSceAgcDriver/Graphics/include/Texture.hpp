@@ -734,6 +734,7 @@ private:
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
+    bool storesWhole() const;
     void appendStoredLayers(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
     bool singlePass();
