@@ -25,12 +25,21 @@ int main() {
     }
     WebRtcVad_Free_nid_postfix(nullptr);
     Require(WebRtcVad_Init_nid_postfix(nullptr) == -1);
-    Require(WebRtcVad_set_mode_nid_postfix(nullptr, 0) == -1);
+    for (int mode : {-1, 0, 1, 2, 3, 4})
+        Require(WebRtcVad_set_mode_nid_postfix(nullptr, mode) == -1);
     Require(WebRtcVad_Process_nid_postfix(nullptr, 8000, silence.data(), 80) == -1);
+    Require(WebRtcVad_Process_nid_postfix(nullptr, 16000, silence.data(), 160) == -1);
+    Require(WebRtcVad_Process_nid_postfix(nullptr, 32000, silence.data(), 320) == -1);
+    Require(WebRtcVad_Process_nid_postfix(nullptr, 48000, silence.data(), 480) == -1);
+    Require(WebRtcVad_Process_nid_postfix(nullptr, 0, nullptr, 0) == -1);
     auto* handle = WebRtcVad_Create_nid_postfix();
     Require(handle != nullptr);
-    Require(WebRtcVad_set_mode_nid_postfix(handle, 0) == -1);
+    for (int mode : {-1, 0, 1, 2, 3, 4})
+        Require(WebRtcVad_set_mode_nid_postfix(handle, mode) == -1);
     Require(WebRtcVad_Process_nid_postfix(handle, 8000, silence.data(), 80) == -1);
+    Require(WebRtcVad_Process_nid_postfix(handle, 16000, silence.data(), 160) == -1);
+    Require(WebRtcVad_Process_nid_postfix(handle, 32000, silence.data(), 320) == -1);
+    Require(WebRtcVad_Process_nid_postfix(handle, 48000, silence.data(), 480) == -1);
     Require(WebRtcVad_Init_nid_postfix(handle) == 0);
     for (int mode : {-1, 4, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()})
         Require(WebRtcVad_set_mode_nid_postfix(handle, mode) == -1);
