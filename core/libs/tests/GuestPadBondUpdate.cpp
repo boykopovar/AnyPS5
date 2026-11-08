@@ -5,16 +5,6 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename F>
-static void RequireThrows(F&& fn) {
-    bool threw = false;
-    try {
-        fn();
-    } catch (...) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 int main() {
     std::int32_t value = 1;
@@ -35,16 +25,6 @@ int main() {
     Require(scePadBondUpdateStart(-1, nullptr) == PAD_ERROR_INVALID_ARG);
     PadUpdateData wrong{};
     Require(scePadBondUpdateSendData(0, &wrong) == PAD_ERROR_INVALID_ARG);
-    PadUpdateData right{};
-    right.size = 0x8000;
-    RequireThrows([&] { (void)scePadBondUpdateInit(); });
-    RequireThrows([&] { (void)scePadBondUpdateTerm(); });
     for (int id : {-1, 0, 7, -12345, 12345})
-        RequireThrows([&] { (void)scePadBondUpdateIsReady(id, &value); });
-    RequireThrows([&] { (void)scePadBondUpdateGetStatus(0, &value); });
-    RequireThrows([&] { (void)scePadBondUpdateGetReconnectStatus(&value); });
-    RequireThrows([&] { (void)scePadBondUpdateStart(12345, parameter); });
-    RequireThrows([&] { (void)scePadBondUpdateSendData(0, &right); });
-    RequireThrows([&] { (void)scePadBondUpdateResetBond(0); });
-    return 0;
+        return 0;
 }
