@@ -47,9 +47,25 @@ static void CheckRoundTrip() {
     }
 }
 
+static void CheckAddRemove() {
+    Debug::NidBreakpointTable table;
+    std::uint64_t a = 0;
+    std::uint64_t b = 0;
+    Check(Debug::ParseNid("4J2sUJmuHZQ", a));
+    Check(Debug::ParseNid("hcuQgD53UxM", b));
+    Check(!table.Remove(a));
+    Check(table.Add(a));
+    Check(table.Add(b));
+    Check(table.Remove(a));
+    Check(!table.Remove(a));
+    Check(table.Remove(b));
+    Check(!table.Remove(b));
+}
+
 int main() {
     CheckParseKnownValues();
     CheckParseRejectsMalformed();
     CheckRoundTrip();
+    CheckAddRemove();
     return 0;
 }
