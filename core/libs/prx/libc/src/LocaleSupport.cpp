@@ -1051,6 +1051,7 @@ template<typename Text> struct SceV2InputIterator {
 };
 
 static_assert(sizeof(SceV2InputIterator<char>) == 0x10);
+static_assert(offsetof(SceV2InputIterator<char16_t>, value) == 0xa && sizeof(SceV2InputIterator<char16_t>) == 0x10);
 
 template<typename Text> struct SceV2NumGetVtable {
     GuestLocale::FacetVtable facet;
@@ -1092,7 +1093,6 @@ template<typename Text> const SceV2NumGetVtable<Text> g_sceV2NumGetVtable{
     SceV2NumGetUnsignedLong_nid_no_patch<Text>, SceV2NumGetLongLong_nid_no_patch<Text>, SceV2NumGetUnsignedLongLong_nid_no_patch<Text>,
     {SceV2NumGetFloatingSlots<Text>()[0], SceV2NumGetFloatingSlots<Text>()[1], SceV2NumGetFloatingSlots<Text>()[2]},
     SceV2NumGetPointer_nid_no_patch<Text>};
-constexpr auto g_sceV2NumGetWideVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 constexpr auto g_sceV2NumGetUshortVtable = MakeSceV2FacetVtable<11, g_sceV2NumGetFamily>();
 template<typename Text> struct SceV2NumPutVtable {
     GuestLocale::FacetVtable facet;
@@ -1877,7 +1877,7 @@ SceV2FacetKind g_sceV2MoneypunctCharIntl{&_ZNSt8__sce_v210moneypunctIcLb1EE2idE_
 SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<char>), &g_sceV2TimeGetCharVtable.facet, InitializeSceV2TimeGetFacet, nullptr};
 SceV2FacetKind g_sceV2TimePutChar{&_ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutCharVtable.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeWide{&_ZNSt8__sce_v25ctypeIwE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeWideVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
-SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumPutWide{&_ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumpunctWide{&_ZNSt8__sce_v28numpunctIwE2idE_nid_postfix, sizeof(GuestLocale::WideNumpunctFacet), &g_sceV2NumpunctWideVtable.facet, InitializeSceV2WideNumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CollateWide{&_ZNSt8__sce_v27collateIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
