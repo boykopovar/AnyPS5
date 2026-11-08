@@ -436,6 +436,7 @@ int main() {
     StaysOffByDefault();
     InvalidSettingsLogOneLineAndStayOff();
     StartsWhenConfigured();
+    RecognisesMulticastGroups();
     MatchesLimitedAndInterfaceBroadcasts();
     RoundTripsFrames();
     RefusesMalformedFrames();
