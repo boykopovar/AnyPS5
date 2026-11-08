@@ -625,16 +625,17 @@ int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
 }
 
 int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
- return sceSystemServiceGetAppTitleId(appId, titleId);
+ CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
- return sceSystemServiceGetAppId(titleId);
+ return RunningAppId("sceLncUtilGetAppId", titleId);
 }
 
 int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
  if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- static_cast<void>(sceSystemServiceGetAppId(titleId));
+ static_cast<void>(RunningAppId("sceLncUtilIsAppLaunched", titleId));
  *launched = true;
  return SYSTEM_SERVICE_OK;
 }
