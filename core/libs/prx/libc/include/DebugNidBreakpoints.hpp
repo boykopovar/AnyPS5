@@ -23,6 +23,7 @@ public:
     AddResult Add(std::uint64_t nid);
     bool Remove(std::uint64_t nid);
     std::size_t Size() const;
+    bool Empty() const;
     std::uint64_t DuplicateCount() const;
 
 private:
