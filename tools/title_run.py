@@ -26,6 +26,8 @@ FILE_ROOTS = ("app0", "data", "download0")
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
+REPORT_FILE = "anyps5-report.json"
+SHADER_COUNTS = ("compiled", "failed", "cacheHits")
 
 
 def pad_text(pad, sequence):
@@ -134,6 +136,28 @@ def read_summary(path):
     last = lines[-1] if lines else {}
     return {"presents": presents, "fps": round(presents / seconds, 1) if seconds else 0.0,
             "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", "")}
+
+
+def section(document, name):
+    value = document.get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def read_report(path):
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict) or document.get("format") != "anyps5-report":
+        return None
+    coverage, run, shaders = section(document, "coverage"), section(document, "run"), section(document, "shaders")
+    missing, truncated = section(document, "missing"), section(document, "truncated")
+    functions, unsupported = missing.get("functions"), shaders.get("unsupported")
+    return {"averageFps": run.get("averageFps"),
+            "shaders": {name: shaders.get(name) for name in SHADER_COUNTS} if coverage.get("shaders") else None,
+            "missing": functions if coverage.get("missing") and isinstance(functions, list) else None,
+            "unsupported": unsupported if coverage.get("unsupported") and isinstance(unsupported, list) else None,
+            "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
 
 
 def frame_is_uniform(path, tolerance=8):
