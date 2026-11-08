@@ -18,6 +18,7 @@ namespace log_file {
 namespace {
 
 constexpr const char VariableName[] = "ANYPS5_LOG_FILE";
+constexpr const char MaxBytesName[] = "ANYPS5_LOG_MAX_BYTES";
 constexpr const char WriteFailure[] = "[log] ANYPS5_LOG_FILE: the file can no longer be written; it stops here and the terminal output goes on\n";
 
 std::atomic<Session*> g_session{nullptr};
@@ -172,6 +173,28 @@ void Tee::SignalWrite(int standard, const char* text, std::size_t length) {
 
 bool Tee::FileFailed() const {
     return _fileFailed.load(std::memory_order_relaxed);
+}
+
+bool ParseMaxBytes(const char* text, std::uint64_t& value, std::string& error) {
+    constexpr std::uint64_t Smallest = 64u << 10;
+    constexpr std::uint64_t Largest = std::uint64_t{1} << 40;
+    value = 0;
+    error.clear();
+    if (text == nullptr || *text == '\0') return true;
+    std::uint64_t parsed = 0;
+    for (const char* digit = text; *digit != '\0'; ++digit) {
+        if (*digit < '0' || *digit > '9' || parsed > (UINT64_MAX - 9) / 10) {
+            error = std::string(MaxBytesName) + ": \"" + text + "\" is not a byte count";
+            return false;
+        }
+        parsed = parsed * 10 + static_cast<std::uint64_t>(*digit - '0');
+    }
+    if (parsed != 0 && (parsed < Smallest || parsed > Largest)) {
+        error = std::string(MaxBytesName) + ": " + text + " is outside 65536 to 1099511627776 bytes; use 0 to turn the limit off";
+        return false;
+    }
+    value = parsed;
+    return true;
 }
 
 std::unique_ptr<Session> StartFromValue(const char* value, Factory& factory, std::string& error) {
