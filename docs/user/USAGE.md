@@ -65,6 +65,8 @@ The executable, registry, Windows import diagnostics, icon and desktop entry out
 
 On Linux and macOS, replacing a regular output file requires write access to its directory. A failed temporary-file creation or replacement reports an error instead of writing over the previous file in place.
 
+On Windows, the relinker writes regular, unencrypted outputs to a temporary file before replacing the destination. A write, flush or close failure preserves the previous output. Replacing a regular file requires write access to the destination and permission to create and replace files in its directory. If a replacement error prevents restoring the original name, the error reports the path where the previous output is retained.
+
 ## Options
 
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.

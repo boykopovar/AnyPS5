@@ -4,10 +4,12 @@
 #include <filesystem>
 #include <fstream>
 #include <system_error>
-#ifndef _WIN32
-#include <cerrno>
 #include <random>
 #include <string_view>
+#ifdef _WIN32
+#include "WindowsFileOutput.hpp"
+#else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -93,7 +95,10 @@ bool replaceFile(std::filesystem::path target, const std::string& path, const ch
 
 void writeOutput(const std::string& path, const std::ios::openmode mode, const char* data, const std::size_t size) {
     const auto target = NativePath(path);
-#ifndef _WIN32
+#ifdef _WIN32
+    if (Detail::ReplaceWindowsFile(target, path, mode, data, size))
+        return;
+#else
     if (replaceFile(target, path, data, size))
         return;
 #endif
