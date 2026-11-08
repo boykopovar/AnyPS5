@@ -18,8 +18,12 @@ class NidBreakpointTable {
 public:
     static constexpr std::size_t kCapacity = 256;
 
-    bool Add(std::uint64_t nid);
+    enum class AddResult { Added, Duplicate, Full };
+
+    AddResult Add(std::uint64_t nid);
     bool Remove(std::uint64_t nid);
+    std::size_t Size() const;
+    std::uint64_t DuplicateCount() const;
 
 private:
     std::size_t IndexOf(std::uint64_t nid) const;
@@ -27,6 +31,7 @@ private:
     mutable std::mutex mutex_;
     std::array<std::atomic<std::uint64_t>, kCapacity> nids_{};
     std::atomic<std::size_t> count_{0};
+    std::uint64_t duplicates_ = 0;
 };
 
 NidBreakpointTable& NidBreakpoints();
