@@ -1,5 +1,6 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #ifdef __APPLE__
@@ -67,6 +68,9 @@ int main() {
 
     Require(sceContentSearchTerm() == ErrorNotInitialized);
     Require(sceContentSearchInit(nullptr) == ErrorInvalidArgument);
+    errno = 71;
+    Require(sceContentSearchInit(reinterpret_cast<const ContentSearchInitParam*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
     for (std::size_t memorySize : {std::size_t{0}, std::size_t{1}, std::size_t{16383}, param.memory_size - 1}) {
         ContentSearchInitParam invalidParam{memorySize};
         Require(sceContentSearchInit(&invalidParam) == ErrorInvalidArgument);
@@ -98,6 +102,9 @@ int main() {
     Require(count == -1 && updateId == -1);
     updateId = -1;
     Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == 0 && updateId == 0);
+    errno = 71;
+    Require(sceContentSearchGetApplicationLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
     count = -1;
     updateId = -1;
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == 0);
