@@ -249,6 +249,19 @@ void MaxBytesValues() {
     }
 }
 
+void KeepValues() {
+    unsigned value = 9;
+    std::string error;
+    Require(ParseKeep(nullptr, value, error) && value == 3 && error.empty(), "an unset count is not the default of 3");
+    Require(ParseKeep("", value, error) && value == 3, "an empty count is not the default");
+    Require(ParseKeep("0", value, error) && value == 0, "zero files was refused");
+    Require(ParseKeep("100", value, error) && value == 100, "the largest count was refused");
+    for (const char* text : {"-1", "101", "1000000000000", "x", "3 "}) {
+        error.clear();
+        Require(!ParseKeep(text, value, error) && error.find("ANYPS5_LOG_KEEP") != std::string::npos, text);
+    }
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -688,6 +701,7 @@ int main(int argc, char** argv) {
     AppendKeepsEarlierRuns();
     FilePrimitives();
     MaxBytesValues();
+    KeepValues();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();
