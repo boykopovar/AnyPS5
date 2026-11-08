@@ -137,3 +137,5 @@ set_target_properties(icu_i18n PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIB
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_i18n INTERFACE LINKER:--exclude-libs,libicu_i18n.a)
 endif()
+
+include(${CMAKE_CURRENT_LIST_DIR}/IcuData.cmake)
