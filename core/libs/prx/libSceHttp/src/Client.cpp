@@ -72,6 +72,15 @@ std::optional<std::chrono::sys_seconds> HttpDate(const std::string& text) {
     return std::chrono::sys_days{day} + std::chrono::hours{time.tm_hour} + std::chrono::minutes{time.tm_min} + std::chrono::seconds{time.tm_sec};
 }
 
+bool StrongEtag(std::string_view text) {
+    if (text.size() < 2 || text.front() != '"' || text.back() != '"') return false;
+    for (std::size_t index = 1; index + 1 < text.size(); ++index) {
+        const auto byte = static_cast<unsigned char>(text[index]);
+        if (byte != 0x21 && (byte < 0x23 || byte == 0x7f)) return false;
+    }
+    return true;
+}
+
 struct Url {
     std::string authority;
     std::string host;
@@ -346,12 +355,15 @@ struct HttpClientState : Aps5HttpClient {
 
     void Fetch(std::uint64_t start, std::uint64_t length) {
         CheckStopped();
+        auto requestUrl = url;
+        bool full = false;
         std::set<std::string> visited;
         for (;;) {
-            if (!visited.insert(url).second) throw HttpFailure("HTTP redirect loop");
-            const auto parsed = Parse(url);
+            if (!visited.insert(requestUrl).second) throw HttpFailure("HTTP redirect loop");
+            const auto parsed = Parse(requestUrl);
             Connection connection(parsed, stopped);
-            connection.Send("GET " + parsed.target + " HTTP/1.1\r\nHost: " + parsed.authority + "\r\nRange: bytes=" + std::to_string(start) + "-" + std::to_string(start + length - 1) + (validator.empty() ? "" : "\r\nIf-Range: " + validator) + "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
+            const auto range = full ? std::string() : "\r\nRange: bytes=" + std::to_string(start) + "-" + std::to_string(start + length - 1) + (validator.empty() ? "" : "\r\nIf-Range: " + validator);
+            connection.Send("GET " + parsed.target + " HTTP/1.1\r\nHost: " + parsed.authority + range + "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
             std::map<std::string, std::string> headers;
             int status;
             for (;;) {
@@ -376,12 +388,21 @@ struct HttpClientState : Aps5HttpClient {
             }
             if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
                 if (!headers.contains("location")) throw HttpFailure("HTTP redirect has no location");
-                url = Redirect(parsed, headers.at("location"));
+                if (initialized) throw HttpFailure("HTTP source redirected after opening");
+                requestUrl = Redirect(parsed, headers.at("location"));
                 continue;
             }
             const bool empty = status == 416 && headers.contains("content-range") && headers.at("content-range") == "bytes */0";
             if (status != 200 && status != 206 && !empty) throw HttpFailure("HTTP source request was refused");
             if (headers.contains("content-encoding") && Lower(headers.at("content-encoding")) != "identity") NotImplemented_nid_no_patch("HTTP client encoded HTTP representations");
+            if (full && status != 200) throw HttpFailure("HTTP full source request returned partial content");
+            if (initialized) {
+                if ((!etag.empty() && headers.contains("etag") && headers.at("etag") != etag) || (!modified.empty() && headers.contains("last-modified") && headers.at("last-modified") != modified)) throw HttpFailure("HTTP source representation changed");
+                if (status == 200) {
+                    const auto name = StrongEtag(validator) ? "etag" : "last-modified";
+                    if (validator.empty() || !headers.contains(name) || headers.at(name) != validator) throw HttpFailure("HTTP full response does not establish source identity");
+                }
+            }
             std::vector<std::uint8_t> body;
             if (headers.contains("transfer-encoding")) {
                 if (Lower(headers.at("transfer-encoding")) != "chunked") NotImplemented_nid_no_patch("HTTP client HTTP transfer coding");
@@ -412,18 +433,29 @@ struct HttpClientState : Aps5HttpClient {
                 if (first != start || last < first || last >= total || last - first + 1 != body.size() || body.size() > length) throw HttpFailure("HTTP range response does not match request");
             }
             if (total > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || (initialized && total != size)) throw HttpFailure("HTTP source size changed or is not representable");
-            if (initialized && ((!etag.empty() && headers.contains("etag") && headers.at("etag") != etag) || (!modified.empty() && headers.contains("last-modified") && headers.at("last-modified") != modified))) throw HttpFailure("HTTP source representation changed");
+            std::string nextEtag = etag;
+            std::string nextModified = modified;
+            std::string nextValidator = validator;
             if (!initialized) {
-                if (headers.contains("etag")) etag = headers.at("etag");
-                if (headers.contains("last-modified")) modified = headers.at("last-modified");
-                if (etag.starts_with('"') && etag.ends_with('"')) validator = etag;
-                else if (etag.empty() && headers.contains("date")) {
+                nextEtag = headers.contains("etag") ? headers.at("etag") : "";
+                nextModified = headers.contains("last-modified") ? headers.at("last-modified") : "";
+                if (StrongEtag(nextEtag)) nextValidator = nextEtag;
+                else if (!headers.contains("etag") && headers.contains("date")) {
                     const auto date = HttpDate(headers.at("date"));
-                    const auto last = HttpDate(modified);
-                    if (date && last && *date - *last >= std::chrono::seconds{60}) validator = modified;
+                    const auto last = HttpDate(nextModified);
+                    if (date && last && *date - *last >= std::chrono::seconds{60}) nextValidator = nextModified;
+                }
+                if (status == 206 && body.size() != total && nextValidator.empty()) {
+                    full = true;
+                    visited.clear();
+                    continue;
                 }
             }
             CheckStopped();
+            url = std::move(requestUrl);
+            etag = std::move(nextEtag);
+            modified = std::move(nextModified);
+            validator = std::move(nextValidator);
             cache = std::move(body);
             cacheStart = first;
             size = total;
