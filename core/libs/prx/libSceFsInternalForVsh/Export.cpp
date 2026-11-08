@@ -2,6 +2,7 @@
 #include "prx/libSceFsInternalForVsh/include/InventoryExports.hpp"
 #include "prx/libSceFsInternalForVsh/include/Api.hpp"
 #include <cstdint>
+#include <cstring>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -1097,20 +1098,26 @@ int APS5_VABI sceFsInitCreatePprPfsSaveDataOpt() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsInitCreateWorkspaceOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitCreateWorkspaceOpt(void* opt) {
+    const std::uint32_t zero = 0;
+    std::memcpy(opt, &zero, sizeof(zero));
+    return 0;
 }
 
-int APS5_VABI sceFsInitDeleteWorkspaceOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitDeleteWorkspaceOpt(void* opt) {
+    const std::uint32_t zero = 0;
+    std::memcpy(opt, &zero, sizeof(zero));
+    return 0;
 }
 
 int APS5_VABI sceFsInitMountWorkspaceOpt() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsInitUmountWorkspaceOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitUmountWorkspaceOpt(void* opt) {
+    const std::uint32_t zero = 0;
+    std::memcpy(opt, &zero, sizeof(zero));
+    return 0;
 }
 
 int APS5_VABI sceFsIsActiveBankSystemEx() {
