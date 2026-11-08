@@ -216,6 +216,10 @@ bool IsOwnFrame(const Frame& frame, std::uint32_t instance) {
     return frame.Instance == instance;
 }
 
+bool IsMulticast(std::uint32_t destination) {
+    return (destination & 0xF0000000u) == 0xE0000000u;
+}
+
 bool IsBroadcast(std::uint32_t destination, const std::vector<Ipv4Interface>& interfaces) {
     if (destination == 0xFFFFFFFFu) return true;
     for (const auto& entry : interfaces) {
