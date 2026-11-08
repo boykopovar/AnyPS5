@@ -66,6 +66,7 @@ struct InputBinding {
     InputControl control;
     PadButton button = PadButton::None;
     int wheelDirection = 0;
+    int wheelTilt = 0;
 };
 
 }

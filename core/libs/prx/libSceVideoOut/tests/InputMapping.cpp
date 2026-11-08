@@ -392,6 +392,25 @@ void stickModifier() {
     require(rejects("StickModifierScale = 0.5\nStickModifierScale = 0.6\n"), "a stick modifier scale given twice is rejected");
 }
 
+void wheelTilt() {
+    const auto tiltBindings = [](const Pad::InputConfiguration& configuration, Pad::PadButton button, int tilt) {
+        return std::count_if(configuration.bindings.begin(), configuration.bindings.end(), [button, tilt](const Pad::InputBinding& binding) {
+            return binding.control == Pad::InputControl::Button && binding.button == button && binding.wheelTilt == tilt && binding.wheelDirection == 0 &&
+                binding.key == SDL_SCANCODE_UNKNOWN && binding.mouseButton == Pad::MouseButton::None;
+        });
+    };
+    useConfig("Cross = KEY:F\n");
+    auto configuration = Pad::LoadInputMapping();
+    require(std::none_of(configuration.bindings.begin(), configuration.bindings.end(), [](const Pad::InputBinding& binding) { return binding.wheelTilt != 0; }), "no action tilts the wheel by default");
+    useConfig("Left = WHEEL:Left\nRight = WHEEL:right\nRight = WHEEL:RIGHT\nCross = WHEEL:Left\n");
+    configuration = Pad::LoadInputMapping();
+    require(tiltBindings(configuration, Pad::PadButton::Left, -1) == 1, "WHEEL:Left tilts the wheel left");
+    require(tiltBindings(configuration, Pad::PadButton::Right, 1) == 1, "WHEEL:Right tilts the wheel right once despite a repeated line");
+    require(tiltBindings(configuration, Pad::PadButton::Cross, -1) == 1, "a wheel tilt maps to any pad button");
+    require(rejects("LeftStickLeft = WHEEL:Left\n"), "a wheel tilt cannot move a stick");
+    require(rejects("Up = WHEEL:Sideways\n"), "an unknown wheel direction is rejected");
+}
+
 void keyboardRamp() {
     useConfig("Cross = KEY:F\n");
     require(Pad::LoadInputMapping().settings.keyboardRampMs == 0.0, "the keyboard ramp defaults to 0");
@@ -520,6 +539,7 @@ int main() try {
     settingsDefault();
     settingsParse();
     settingsReject();
+    wheelTilt();
     performanceOverlayBinding();
     screenshotBinding();
     padStatusBinding();

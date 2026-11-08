@@ -167,12 +167,12 @@ test('mouse values and action restrictions match the current INI format', () => 
 
 test('wheel directions only map to pad buttons', () => {
     for (const action of actions) {
-        for (const value of ['Up', 'Down']) {
+        for (const value of ['Up', 'Down', 'Left', 'Right']) {
             assert.equal(validate([binding(action, 'WHEEL', value)]).errors.length === 0, padButtons.has(action));
         }
         assert.deepEqual(typesForAction(action).includes('WHEEL'), padButtons.has(action));
     }
-    assert.ok(validate([binding('Cross', 'WHEEL', 'Left')]).errors.length);
+    assert.ok(validate([binding('Cross', 'WHEEL', 'Sideways')]).errors.length);
 });
 
 test('new utility actions import and round trip without accepting unsupported sources', () => {

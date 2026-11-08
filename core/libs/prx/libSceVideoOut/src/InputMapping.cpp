@@ -144,7 +144,9 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         const auto direction = upper(value);
         if (direction == "UP") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 1};
         if (direction == "DOWN") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, -1};
-        throw std::runtime_error("mouse wheel direction must be UP or DOWN");
+        if (direction == "RIGHT") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, 1};
+        if (direction == "LEFT") return {SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, action.control, action.button, 0, -1};
+        throw std::runtime_error("mouse wheel direction must be UP, DOWN, LEFT or RIGHT");
     }
     throw std::runtime_error("source type must be KEY, MOUSE or WHEEL");
 }
@@ -331,7 +333,7 @@ void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem
             const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const Pad::InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
-                    existing.wheelDirection == binding.wheelDirection;
+                    existing.wheelDirection == binding.wheelDirection && existing.wheelTilt == binding.wheelTilt;
             });
             if (!duplicate) bindings.push_back(binding);
         } catch (const std::runtime_error& error) {
