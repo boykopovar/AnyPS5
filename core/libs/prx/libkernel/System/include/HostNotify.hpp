@@ -8,6 +8,12 @@
 
 enum class HostNotifyMode : std::uint8_t { Off, On };
 
+class IHostNotifySink {
+public:
+    virtual ~IHostNotifySink() = default;
+    virtual void Notify(std::string_view title, std::string_view text) = 0;
+};
+
 std::optional<HostNotifyMode> ParseHostNotifyMode(const char* text);
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text);
 
