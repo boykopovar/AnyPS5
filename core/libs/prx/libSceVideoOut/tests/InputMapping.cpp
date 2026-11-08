@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -528,6 +529,55 @@ void snapshotSwap() {
     require(store.Snapshot()->bindings.size() == 0 && store.Snapshot()->settings.mouseSensitivity == 3.0, "the published configuration is stored whole");
 }
 
+bool applyText(Pad::InputConfiguration& configuration, const std::string& text, std::string& message) {
+    std::istringstream stream(text);
+    try {
+        Pad::ApplyInputMapping(configuration, stream, "test.ini");
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+        return false;
+    }
+    return true;
+}
+
+Pad::InputConfiguration defaultConfiguration() {
+    return Pad::InputConfiguration{{Pad::InputMapping.begin(), Pad::InputMapping.end()}, {}};
+}
+
+void parserValidText() {
+    auto configuration = defaultConfiguration();
+    std::string message;
+    require(applyText(configuration, "Cross = KEY:F\nMouseSensitivity = 2\n", message), "a valid text is accepted");
+    require(crossOnKey(configuration, SDL_SCANCODE_F) && configuration.settings.mouseSensitivity == 2.0, "a valid text is applied");
+    require(applyText(configuration, "", message) && crossOnKey(configuration, SDL_SCANCODE_F), "an empty text keeps the configuration");
+}
+
+void parserInvalidText() {
+    const std::array<std::string, 4> bad{"Cross KEY:F\n", "NoSuchAction = KEY:F\n", "Cross = KEY:NoSuchKey\n", "MouseSensitivity = fast\n"};
+    for (const auto& text : bad) {
+        auto configuration = defaultConfiguration();
+        std::string message;
+        require(!applyText(configuration, text, message), "an invalid text is rejected");
+        require(message.find("test.ini:1") != std::string::npos, "an invalid line names the source and the line");
+    }
+    auto configuration = defaultConfiguration();
+    std::string message;
+    require(!applyText(configuration, "Cross = KEY:F\nMouseCurve = 9\n", message), "an invalid second line is rejected");
+    require(message.find("test.ini:2") != std::string::npos, "the second line is named");
+}
+
+void parserPartialText() {
+    auto configuration = defaultConfiguration();
+    std::string message;
+    require(!applyText(configuration, "Cross = KEY:F\nCircle = KEY:", message), "a text cut inside a source is rejected");
+    require(message.find("test.ini:2") != std::string::npos, "the cut line is named");
+    require(!applyText(configuration, "Cross = KEY:F\nCircle", message), "a text cut before the equals sign is rejected");
+    require(message.find("test.ini:2") != std::string::npos, "a line without a separator is named");
+    auto copy = defaultConfiguration();
+    require(!applyText(copy, "MouseSensitivity = 4\nCross = KEY:", message), "a truncated text is rejected");
+    require(copy.settings.mouseSensitivity == 4.0, "a failed text leaves the lines before the error applied, so callers parse into a copy and swap only on success");
+}
+
 }
 
 int main() try {
@@ -562,6 +612,9 @@ int main() try {
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();
     snapshotSwap();
+    parserValidText();
+    parserInvalidText();
+    parserPartialText();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;
