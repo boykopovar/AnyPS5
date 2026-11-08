@@ -493,6 +493,16 @@ GPU results in storage images and render targets stay on the GPU until something
 
 A title's own CPU reads of that memory are not seen, so a title that waits for a GPU label and then reads the results reads stale memory. `APS5_STORE_AT_LABEL=1` stores every pending result before each label the GPU writes (`RELEASE_MEM`, `WRITE_DATA`, `DMA_DATA`), at the cost of a write-back of every pending image per label. Any other value stops the title at its first label.
 
+### Upscaling
+
+The window shows the title's display buffer scaled to fit with bilinear filtering. Set `ANYPS5_UPSCALE=fsr` to scale it with AMD FidelityFX Super Resolution 1.0 instead. When the fitted image is larger than the display buffer on either axis, for example a 1920x1080 display buffer in a 2560x1440 or 3840x2160 window, EASU upscales it and RCAS sharpens the result. EASU is designed for up to twice the display buffer's size on each axis: larger factors, such as a 1280x720 buffer in a 3840x2160 window, still work but look softer. When it is the same size or smaller, FSR stays off for that frame, which is presented exactly as without `ANYPS5_UPSCALE`: RCAS alone would cost frame rate there without adding detail.
+
+`ANYPS5_FSR_SHARPNESS` sets the RCAS sharpness in stops, from `0.0` (sharpest) to `2.0` (weakest); the default is `0.2`. It has no effect without `ANYPS5_UPSCALE=fsr`. RCAS runs only on frames FSR upscales, and there it always sharpens: `2.0` is its weakest setting, not off. Its approximate reciprocal also darkens flat areas by a fixed fraction of their value: 0.17% at the default `0.2` (a flat 0.5 becomes 0.4992), 0.32% at `0.0` and 0.07% at `2.0`. That is at most one 8-bit level for SDR, and at most three 10-bit code values for HDR10.
+
+FSR works on SDR and HDR10 output alike, on the values the display receives: sRGB-encoded for SDR, PQ code values for HDR10. Sharpening never takes them out of the signal range. While EASU runs, each presentation in flight keeps two more images, one of the display buffer's size and one of the fitted image's size, and each frame takes two full-window passes.
+
+An empty value of either variable is the same as an unset one. The start fails on any other value of `ANYPS5_UPSCALE` than `fsr`, and on an `ANYPS5_FSR_SHARPNESS` that is not a number from 0.0 to 2.0.
+
 ### Benchmark reports
 
 To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. The first interval includes shader compilation; compare later intervals. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
@@ -600,7 +610,7 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 - If the file can no longer be written, for example because the disk is full, the executable prints one line saying so and goes on with the terminal output only.
 - While the variable is set the executable runs two extra threads and holds the standard streams in two pipes. A child process the title starts keeps its output in the same pipes, so output it writes after the title exits is lost, and on Linux and macOS the `SIGPIPE` of that write ends it unless it ignores the signal. When the title replaces itself with another executable through `sceSystemServiceLoadExec`, the real streams are handed over first.
 - With no console, for example a Windows executable started without one, only the file receives the log.
-- On Windows the redirection of the standard handles and the crash report path were written from the code and compiled for MinGW, but not run: an unexpected behaviour there is worth a bug report that says so.
+- On Windows the file was checked with a console, with the output redirected to a file or read through a pipe, and with no console, and the crash report path and the handover to a replacement executable are run by the tests.
 
 ### Controller status panel
 
@@ -633,6 +643,8 @@ The report lists the other threads of the process, up to 128 of them (a line say
 Each GPU queue keeps its last 16 command buffer submissions: when each was submitted, its serial, size and guest address, and a copy of its first 512 dwords after indirect buffers are inlined. `APS5_PM4_RING=<n>` keeps the last `n` instead, from 0 to 4096; 0 keeps none, and any other value stops the title at its first submission. The rings are printed to stderr, one line per submission and one per decoded packet, when the Windows crash report runs: an unhandled exception, `abort()`, an invalid CRT parameter or the timed dump of `APS5_HANG_DUMP_SECS`.
 
 With `APS5_STALL_WATCHDOG_SECS=<n>`, a queue that has waited `n` seconds without progress in a `WAIT_REG_MEM`, a `REWIND` or behind queue 0 prints the rings once for that wait, and the title keeps running. A `WAIT_REG_MEM` progresses while any other packet runs or completes, as for `APS5_GPU_WAIT_TIMEOUT_MS`. `n` is from 0 to 86400 and 0, the default, disables the watchdog; any other value stops the title at its first submission, as for `APS5_PM4_RING`. While the rings are printed for a queue held behind queue 0, new submissions and the other queues wait.
+
+With `ANYPS5_STALL_PROMPT=1` as well, the first time a watched wait expires the host shows a message box: `Wait` keeps the title running, and `Quit` ends it with exit code 124 after the rings are printed. After `Wait`, the box comes back one period later, at most three times for the same wait; the rings are printed once per wait in any case. Only one box is open at a time, and a wait that finds it open is asked after that box is answered. If no message box can be shown, the rings are printed and the title keeps running. Unset or `0`, the default, shows no box; any other value than `0` or `1` stops the title at its first submission. Without the prompt the watchdog never ends a title: it prints the rings once for each wait and the title keeps running.
 
 ## Exit codes
 
