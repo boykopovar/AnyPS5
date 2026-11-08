@@ -149,6 +149,32 @@ Settings ReadSettings(const char* listen, const char* peers) {
     return settings;
 }
 
+std::vector<std::uint8_t> EncodeFrame(const Frame& frame) {
+    if (frame.DestinationPort == 0) throw std::invalid_argument("LAN relay: destination port is 0");
+    if (frame.Payload.size() > MaxFramePayload) throw std::length_error("LAN relay: payload is too large");
+    std::vector<std::uint8_t> datagram;
+    datagram.reserve(FrameHeaderSize + frame.Payload.size());
+    datagram.push_back(FrameVersion);
+    WriteU32(datagram, frame.Instance);
+    WriteU16(datagram, frame.SourcePort);
+    WriteU16(datagram, frame.DestinationPort);
+    WriteU16(datagram, static_cast<std::uint16_t>(frame.Payload.size()));
+    datagram.insert(datagram.end(), frame.Payload.begin(), frame.Payload.end());
+    return datagram;
+}
+
+std::optional<Frame> DecodeFrame(const std::vector<std::uint8_t>& datagram) {
+    if (datagram.size() < FrameHeaderSize || datagram[0] != FrameVersion) return std::nullopt;
+    Frame frame;
+    frame.Instance = ReadU32(datagram, 1);
+    frame.SourcePort = ReadU16(datagram, 5);
+    frame.DestinationPort = ReadU16(datagram, 7);
+    const std::size_t length = ReadU16(datagram, 9);
+    if (frame.DestinationPort == 0 || datagram.size() != FrameHeaderSize + length) return std::nullopt;
+    frame.Payload.assign(datagram.begin() + FrameHeaderSize, datagram.end());
+    return frame;
+}
+
 Relay::~Relay() {
     Close();
 }
