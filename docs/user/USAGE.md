@@ -330,6 +330,10 @@ The setting covers the rumble motors, the impulse-trigger rumble of controllers 
 
 This is a host-side comfort setting, not console behaviour: it is applied by AnyPS5 between the game and your controller, it is read once at start, and there is no hotkey or overlay entry for it. It is not a model of any console setting.
 
+### Vibration while the window has no focus
+
+By default the controller stops vibrating while the AnyPS5 window has no focus, and vibrates again with the next pulse when the focus returns. Set `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` to keep vibration on while the window is in the background. Only the vibration motors are affected: the light bar and the controller's state are not changed, and identify pulses still work while the window has focus. Any value other than `0` or `1` stops the game at start with an error naming the variable.
+
 ### Controller connection and user 0
 
 By default port 0 stays connected and the first user stays logged in even when the only controller is removed, so the game keeps reading the last state and never learns the pad is gone. Set `ANYPS5_PAD_PORT0_STATE=controller` to make the game see the controller instead:
