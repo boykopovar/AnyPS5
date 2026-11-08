@@ -57,3 +57,7 @@ void HostVolumeConfigureFromEnvironment_nid_no_patch() {
 std::uint32_t HostVolumeGain_nid_no_patch() {
     return publishedGain.load(std::memory_order_acquire);
 }
+
+bool HostVolumeFocused_nid_no_patch() {
+    return publishedFocus.load(std::memory_order_acquire);
+}
