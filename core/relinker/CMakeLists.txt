@@ -1061,6 +1061,36 @@ if(BUILD_TESTING)
     add_test(NAME unwind_record_bounds COMMAND unwind_record_bounds_tests)
     set_tests_properties(unwind_record_bounds PROPERTIES TIMEOUT 20)
 
+    add_test_executable(guest_relinker_ehframe_fde_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestRelinkerEhFrameFde.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(guest_relinker_ehframe_fde_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME guest_relinker_ehframe_fde COMMAND guest_relinker_ehframe_fde_tests)
+    set_tests_properties(guest_relinker_ehframe_fde PROPERTIES TIMEOUT 20)
+
+    add_test_executable(guest_relinker_ehframe_aug_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestRelinkerEhFrameAug.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_include_directories(guest_relinker_ehframe_aug_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME guest_relinker_ehframe_aug COMMAND guest_relinker_ehframe_aug_tests)
+    set_tests_properties(guest_relinker_ehframe_aug PROPERTIES TIMEOUT 20)
+
     add_test_executable(windows_icon_resource_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsIconResourceTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsIconResourceBuilder.cpp
