@@ -738,7 +738,10 @@ void Driver::noteWaitBlocked(std::uint32_t queue, std::uint64_t awaited, bool bl
     slot.address.store(blocked ? awaited : 0, std::memory_order_release);
     if (blocked) {
         if (runningWorkers.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            idleEpoch.fetch_add(1, std::memory_order_release);
+            {
+                std::lock_guard lock(mutex);
+                idleEpoch.fetch_add(1, std::memory_order_release);
+            }
             changed.notify_all();
         }
     } else runningWorkers.fetch_add(1, std::memory_order_acq_rel);
