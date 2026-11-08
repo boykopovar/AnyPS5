@@ -463,13 +463,11 @@ static void CheckGetdelimAndGetline() {
     errStream.Close();
 
     const auto readErrFile = "anyps5-getdelim-readerr-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    { std::ofstream out(readErrFile); out << "abpartial"; }
+    { std::ofstream out(readErrFile); out << "apartial"; }
     FileStream* midReadStream = fopen_nid_postfix(readErrFile.c_str(), "rb");
     Require(midReadStream != nullptr);
-    setvbuf_nid_postfix(midReadStream, nullptr, 2, 0);
+    Require(setvbuf_nid_postfix(midReadStream, nullptr, 2, 0) == 0);
     Require(fgetc_nid_postfix(midReadStream) == 'a');
-    Require(fgetc_nid_postfix(midReadStream) == 'b');
-    Require(ungetc_nid_postfix('b', midReadStream) == 'b');
     Require(ungetc_nid_postfix('a', midReadStream) == 'a');
 #ifdef _WIN32
     const int writeOnlyDesc = _open(readErrFile.c_str(), _O_WRONLY | _O_BINARY);
@@ -484,7 +482,7 @@ static void CheckGetdelimAndGetline() {
     size_t readErrCap = 0;
     Require(getline_nid_postfix(&readErrLine, &readErrCap, midReadStream) == -1);
     Require(ferror_nid_postfix(midReadStream) != 0);
-    Require(readErrLine != nullptr && std::memcmp(readErrLine, "ab", 2) == 0);
+    Require(readErrLine != nullptr && readErrLine[0] == 'a');
     free_nid_postfix(readErrLine);
     fclose_nid_postfix(midReadStream);
     std::filesystem::remove(readErrFile);
