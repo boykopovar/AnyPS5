@@ -90,6 +90,7 @@ private:
 
 std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log);
 bool WithActiveRelay(const std::function<void(Relay&)>& action);
+bool HostIpv4AddressOfIndex(std::uint32_t index, std::uint32_t& networkAddress);
 void ForwardLanSend(std::uintptr_t native, const sockaddr* destination, const void* buffer, std::size_t length);
 
 }
