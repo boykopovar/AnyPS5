@@ -90,7 +90,7 @@ struct DispatchEntry {
 };
 
 struct EntryCounters {
-    std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
+    std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, queuedStores = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
 
     std::uint64_t runsValidated = 0, runsInserted = 0, retriesEqual = 0, retriesMoved = 0;
     double validateUs = 0;
@@ -114,7 +114,7 @@ struct DataMask {
     std::vector<std::pair<std::uint32_t, std::uint32_t>>* live;
 };
 
-enum class EntryOutcome { Equal, EqualData, Differing, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved };
+enum class EntryOutcome { Equal, EqualData, Differing, QueuedStores, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved };
 
 bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled);
 
