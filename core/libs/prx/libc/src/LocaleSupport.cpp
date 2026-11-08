@@ -1372,8 +1372,18 @@ constexpr auto g_sceV2MessagesUshortVtable = MakeSceV2FacetVtable<3, g_sceV2Mess
 constexpr auto g_sceV2MoneyGetCharVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
 constexpr auto g_sceV2MoneyGetWideVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
 constexpr auto g_sceV2MoneyGetUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
-constexpr auto g_sceV2MoneyPutCharVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
-constexpr auto g_sceV2MoneyPutWideVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
+template<typename Text> struct SceV2MoneyPutVtable {
+    GuestLocale::FacetVtable facet;
+    GuestLocale::OutputIterator (APS5_VABI *putLongDouble)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, long double value);
+    GuestLocale::OutputIterator (APS5_VABI *putDigits)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, const SceV2BasicString<Text>* digits);
+};
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutLongDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, long double value);
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutDigits_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, const SceV2BasicString<Text>* digits);
+
+template<typename Text> const SceV2MoneyPutVtable<Text> g_sceV2MoneyPutVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2MoneyPutLongDouble_nid_no_patch<Text>, SceV2MoneyPutDigits_nid_no_patch<Text>};
 constexpr auto g_sceV2MoneyPutUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
 constexpr auto g_sceV2MoneypunctUshortVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
 constexpr auto g_sceV2MoneypunctUshortIntlVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
@@ -2103,7 +2113,7 @@ SceV2FacetKind g_sceV2CodecvtChar{&_ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_
 SceV2FacetKind g_sceV2CollateChar{&_ZNSt8__sce_v27collateIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MessagesChar{&_ZNSt8__sce_v28messagesIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneyGetChar{&_ZNSt8__sce_v29money_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MoneyPutChar{&_ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyPutChar{&_ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneypunctChar{&_ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<false>, nullptr};
 SceV2FacetKind g_sceV2MoneypunctCharIntl{&_ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<true>, nullptr};
 SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<char>), &g_sceV2TimeGetCharVtable.facet, InitializeSceV2TimeGetFacet, nullptr};
@@ -2115,7 +2125,7 @@ SceV2FacetKind g_sceV2NumpunctWide{&_ZNSt8__sce_v28numpunctIwE2idE_nid_postfix, 
 SceV2FacetKind g_sceV2CollateWide{&_ZNSt8__sce_v27collateIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MessagesWide{&_ZNSt8__sce_v28messagesIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneyGetWide{&_ZNSt8__sce_v29money_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MoneyPutWide{&_ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MoneyPutWide{&_ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneypunctWide{&_ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<false>, nullptr};
 SceV2FacetKind g_sceV2MoneypunctWideIntl{&_ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<true>, nullptr};
 SceV2FacetKind g_sceV2TimeGetWide{&_ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetWideVtable.facet, InitializeSceV2WideTimeGetFacet, nullptr};
@@ -2441,6 +2451,145 @@ template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutLongDou
 template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2NumPutPointer_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const void* value) {
     char digits[64];
     return PutSceV2IntegerDigits(out, stream, fill, digits, sprintf_s_nid_postfix(digits, sizeof(digits), "%p", value));
+}
+
+template<typename Text> using SceV2MoneypunctText = std::conditional_t<std::is_same_v<Text, char>, char, std::uint16_t>;
+
+template<typename Text> SceV2FacetKind& SceV2MoneypunctKind(bool international) {
+    if constexpr (std::is_same_v<Text, char>) return international ? g_sceV2MoneypunctCharIntl : g_sceV2MoneypunctChar;
+    else return international ? g_sceV2MoneypunctWideIntl : g_sceV2MoneypunctWide;
+}
+
+template<typename Text> void PutSceV2Characters(GuestLocale::OutputIterator& out, const Text* characters, std::size_t count) {
+    for (std::size_t index = 0; index < count; ++index) PutSceV2Character(out, characters[index]);
+}
+
+template<typename Text> void RepeatSceV2Character(GuestLocale::OutputIterator& out, Text character, std::size_t count) {
+    for (; count != 0; --count) PutSceV2Character(out, character);
+}
+
+constexpr char SceV2MoneySymbol = '$';
+constexpr char SceV2MoneySign = '+';
+constexpr char SceV2MoneyValue = 'v';
+constexpr char SceV2MoneyNone = 'x';
+constexpr char SceV2MoneySpace = ' ';
+
+template<typename Text> GuestLocale::OutputIterator PutSceV2Money(GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, bool negative, std::basic_string<Text> value, Text zero) {
+    using PunctText = SceV2MoneypunctText<Text>;
+    const GuestLocale::Facet* facet = UseSceV2Facet(SceV2MoneypunctKind<Text>(international), *stream->locale);
+    const auto& punct = *reinterpret_cast<const SceV2MoneypunctVtable<PunctText>*>(facet->vtable);
+    const auto* fields = reinterpret_cast<const SceV2MoneypunctFacet<PunctText>*>(facet);
+    const std::string grouping = TakeSceV2String(punct.grouping, facet);
+    const int signedDigits = punct.fractionDigits(fields);
+    const std::size_t fractionDigits = signedDigits < 0 ? 0u - static_cast<std::uint32_t>(signedDigits) : static_cast<std::uint32_t>(signedDigits);
+    const auto validGroup = [](char group) { return static_cast<unsigned char>(group - 1) < CHAR_MAX - 1; };
+    if (value.size() <= fractionDigits) {
+        value.insert(0, fractionDigits - value.size() + 1, zero);
+    } else if (validGroup(grouping[0])) {
+        const Text separator = static_cast<Text>(punct.thousandsSep(fields));
+        const char* group = grouping.c_str();
+        std::size_t offset = value.size() - fractionDigits;
+        while (validGroup(*group) && static_cast<unsigned char>(*group) < offset) {
+            offset -= static_cast<unsigned char>(*group);
+            value.insert(offset, 1, separator);
+            if (static_cast<signed char>(group[1]) > 0) ++group;
+        }
+    }
+    const std::uint32_t pattern = negative ? punct.negativeFormat(fields) : punct.positiveFormat(fields);
+    const std::basic_string<Text> sign = TakeSceV2String(negative ? punct.negativeSign : punct.positiveSign, facet);
+    std::basic_string<Text> symbol;
+    if ((stream->flags & SceV2IosShowBase) != 0) symbol = TakeSceV2String(punct.currencySymbol, facet);
+    char field[4];
+    std::memcpy(field, &pattern, sizeof(field));
+    const std::size_t valueWidth = value.size() + (signedDigits != 0 ? 1 : 0) + (value.size() <= fractionDigits ? fractionDigits - value.size() + 1 : 0);
+    bool internalFill = false;
+    std::size_t length = 0;
+    for (std::size_t index = 0; index < 4; ++index) {
+        switch (field[index]) {
+            case SceV2MoneySymbol: length += symbol.size(); break;
+            case SceV2MoneySign: length += sign.size(); break;
+            case SceV2MoneyValue: length += valueWidth; break;
+            case SceV2MoneySpace: ++length; [[fallthrough]];
+            case SceV2MoneyNone: if (index != 3) internalFill = true; break;
+            default: break;
+        }
+    }
+    const std::int64_t width = stream->width;
+    std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= length ? 0 : static_cast<std::size_t>(width) - length;
+    const std::int32_t adjust = stream->flags & SceV2IosAdjustField;
+    if (adjust != SceV2IosLeft && (adjust != SceV2IosInternal || !internalFill)) {
+        RepeatSceV2Character(out, fill, fillCount);
+        fillCount = 0;
+    }
+    for (std::size_t index = 0; index < 4; ++index) {
+        switch (field[index]) {
+            case SceV2MoneySymbol: PutSceV2Characters(out, symbol.data(), symbol.size()); break;
+            case SceV2MoneySign: if (!sign.empty()) PutSceV2Character(out, sign[0]); break;
+            case SceV2MoneyValue:
+                if (signedDigits == 0) {
+                    PutSceV2Characters(out, value.data(), value.size());
+                } else if (value.size() <= fractionDigits) {
+                    PutSceV2Character(out, zero);
+                    PutSceV2Character(out, static_cast<Text>(punct.decimalPoint(fields)));
+                    RepeatSceV2Character(out, zero, fractionDigits - value.size());
+                    PutSceV2Characters(out, value.data(), value.size());
+                } else {
+                    PutSceV2Characters(out, value.data(), value.size() - fractionDigits);
+                    PutSceV2Character(out, static_cast<Text>(punct.decimalPoint(fields)));
+                    PutSceV2Characters(out, value.data() + value.size() - fractionDigits, fractionDigits);
+                }
+                break;
+            case SceV2MoneySpace: PutSceV2Character(out, fill); [[fallthrough]];
+            case SceV2MoneyNone:
+                if (adjust == SceV2IosInternal) {
+                    RepeatSceV2Character(out, fill, fillCount);
+                    fillCount = 0;
+                }
+                break;
+            default: break;
+        }
+    }
+    if (sign.size() > 1) PutSceV2Characters(out, sign.data() + 1, sign.size() - 1);
+    stream->width = 0;
+    RepeatSceV2Character(out, fill, fillCount);
+    return out;
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutLongDouble_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, long double value) {
+    const bool negative = 0 > value;
+    long double magnitude = -value > value ? -value : value;
+    std::size_t exponent = 0;
+    while (magnitude >= static_cast<long double>(1e35) && exponent < 5000) {
+        magnitude /= 1e10f;
+        exponent += 10;
+    }
+    char digits[40];
+    const int count = sprintf_s_nid_postfix(digits, sizeof(digits), "%.0Lf", magnitude);
+    if (count < 0) return out;
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    const auto& virtuals = *reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable);
+    const Text zero = virtuals.widen(ctype, '0');
+    std::basic_string<Text> text(static_cast<std::size_t>(count), Text{});
+    virtuals.widenRange(ctype, digits, digits + count, text.data());
+    text.append(exponent, zero);
+    return PutSceV2Money(out, international, stream, fill, negative, std::move(text), zero);
+}
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2MoneyPutDigits_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, bool international, GuestLocale::SceV2IosBase* stream, Text fill, const SceV2BasicString<Text>* digits) {
+    static constexpr char Source[] = "0123456789-";
+    constexpr std::size_t MinusAtom = 10;
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    Text atoms[sizeof(Source)];
+    reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->widenRange(ctype, Source, Source + sizeof(Source), atoms);
+    const Text* data = digits->capacity > SceV2BasicString<Text>::InlineCapacity ? digits->pointer : digits->buffer;
+    const std::size_t size = digits->size;
+    const bool negative = size != 0 && data[0] == atoms[MinusAtom];
+    const std::size_t start = negative ? 1 : 0;
+    std::size_t end = start;
+    while (end < size && std::find(atoms, atoms + MinusAtom + 1, data[end]) - atoms < static_cast<std::ptrdiff_t>(MinusAtom)) ++end;
+    std::basic_string<Text> value(data + start, end - start);
+    if (value.empty()) value.push_back(atoms[0]);
+    return PutSceV2Money(out, international, stream, fill, negative, std::move(value), atoms[0]);
 }
 
 constexpr char g_sceV2IntegerAtoms[] = "0123456789ABCDEFabcdef-+Xx";
