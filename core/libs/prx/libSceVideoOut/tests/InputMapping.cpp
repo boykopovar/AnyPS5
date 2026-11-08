@@ -578,6 +578,18 @@ void parserPartialText() {
     require(copy.settings.mouseSensitivity == 4.0, "a failed text leaves the lines before the error applied, so callers parse into a copy and swap only on success");
 }
 
+void reloadInputMappingAction() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::ReloadInputMapping);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F1, "F1 is the only default ReloadInputMapping key");
+    useConfig("ReloadInputMapping = KEY:F3\nreloadinputmapping = key:f2\n");
+    const auto moved = keysFor(Pad::InputControl::ReloadInputMapping);
+    require(moved.size() == 2 && hasKey(moved, SDL_SCANCODE_F3) && hasKey(moved, SDL_SCANCODE_F2) && !hasKey(moved, SDL_SCANCODE_F1), "a ReloadInputMapping line replaces F1 and keeps alternates");
+    require(rejects("ReloadInputMapping = MOUSE:Left\n"), "ReloadInputMapping refuses a mouse button");
+    require(rejects("ReloadInputMapping = WHEEL:Up\n"), "ReloadInputMapping refuses the mouse wheel");
+    require(rejects("ReloadInputMapping = PAD:L1\n"), "ReloadInputMapping refuses a pad source until chords are supported");
+}
+
 }
 
 int main() try {
@@ -615,6 +627,7 @@ int main() try {
     parserValidText();
     parserInvalidText();
     parserPartialText();
+    reloadInputMappingAction();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;
