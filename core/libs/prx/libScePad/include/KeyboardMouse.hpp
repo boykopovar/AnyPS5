@@ -68,6 +68,7 @@ public:
     using Clock = std::chrono::steady_clock;
 
     explicit KeyboardMouse(InputConfiguration configuration);
+    void Replace(InputConfiguration next);
     InputRequests HandleEvent(const SDL_Event& event, Clock::time_point now);
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
