@@ -69,6 +69,7 @@ namespace RunReport {
 namespace {
 
 constexpr const char* ReportName = "anyps5-report.json";
+constexpr const char* RecipeName = "anyps5-recipe.json";
 
 const char* KindName(Kind kind) {
     switch (kind) {
@@ -1716,6 +1717,14 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
         if (exit == Exit::Clean) RefreshGame(true);
         try {
             const auto text = Serialize(Snapshot(exit, std::move(stop), exitCode), host);
+            Recipe recipe;
+            recipe.generated = FormatUtc(std::chrono::system_clock::now());
+            recipe.runId = settings.runId;
+            recipe.build = settings.build;
+            recipe.arguments = settings.arguments;
+            recipe.environment = settings.environment;
+            recipe.configFiles = settings.configFiles;
+            const auto recipeText = SerializeRecipe(recipe, host);
             std::string error;
             bool written = false;
             for (const auto& directory : candidates) {
@@ -1731,6 +1740,10 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 if (WriteAtomically(target, text, settings.runId.substr(0, 8), error)) {
                     reportPath = target;
                     written = true;
+                    std::string recipeError;
+                    if (!WriteAtomically(directory / RecipeName, recipeText, settings.runId.substr(0, 8), recipeError)) {
+                        std::fprintf(stderr, "[run-report] could not write %s: %s\n", RecipeName, recipeError.c_str());
+                    }
                     break;
                 }
             }
