@@ -1,6 +1,6 @@
 # Environment variables
 
-The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetting`, `MaskFromEnvironment`, `EnvInt`, `GetEnvironmentVariableA`, `GetEnvironmentVariableW` and `_wgetenv` with a wide literal, `configured`, `PipelineSwitch`, `environmentCount`, `EnvironmentNumber` and `addWideString` (the wide names the Windows entry stub reads). This table lists every `APS5_*` and `ANYPS5_*` name it reads, its kind, the value used when it is unset and what it does, one table per library. Regenerate the names with `python3 tools/env_reference.py --table`; the Conventions check fails when a name the code reads has no row here, or a row's name is no longer read.
+The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetting`, `MaskFromEnvironment`, `EnvInt`, `GetEnvironmentVariableA`, `GetEnvironmentVariableW` and `_wgetenv` with a wide literal, `configured`, `PipelineSwitch`, `environmentCount`, `EnvironmentNumber`, `MebibytesFromEnvironment` and `addWideString` (the wide names the Windows entry stub reads). This table lists every `APS5_*` and `ANYPS5_*` name it reads, its kind, the value used when it is unset and what it does, one table per library. Regenerate the names with `python3 tools/env_reference.py --table`; the Conventions check fails when a name the code reads has no row here, or a row's name is no longer read.
 
 ### core/libs
 
@@ -87,6 +87,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_FPS_LIMIT` | string | `core/libs/prx/libSceAgcDriver/Execution/include/FrameLimit.hpp` | 0 | the most frames per second the window presents, from 0.5 to 1000000 with at most three decimals; 0, empty or unset is no limit, and any other value is refused |
+| `ANYPS5_FSR_SHARPNESS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0.2 | RCAS sharpness in stops under `ANYPS5_UPSCALE=fsr`, from 0.0 (sharpest) to 2.0 (weakest); a value outside that range or not a number is refused |
 | `ANYPS5_GPU` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | restricts physical device selection to device names containing this case-insensitive substring |
 | `ANYPS5_HOST_REPORT` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | prints the host report to stderr once when the presenting device is chosen: 1 prints it; 0, empty or unset prints nothing, and any other value stops the start with an error naming the variable |
 | `ANYPS5_OVERLAY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | 0 | the performance overlay's page at start: 1 the overlay, 2 its detailed page; 0 or unset hides it, and any other value is refused |
@@ -98,6 +99,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_REQUIRE_VULKAN` | presence | `core/libs/prx/libSceAgcDriver/tests/BdaDevice.cpp` |  | fails a test instead of skipping when no usable Vulkan device is present |
 | `ANYPS5_SCREENSHOTS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/Screenshot.cpp` |  | directory the screenshot key saves its PNG files to, defaulting to anyps5-screenshots beside the executable |
 | `ANYPS5_TEST_HOST_IMPORT_ALIGNMENT` | integer | `core/libs/prx/libSceAgcDriver/tests/Recorder.cpp` |  | stands in for the device's minimum host import alignment in every recorder test when the device has `VK_EXT_external_memory_host`: `0` makes host imports unavailable to them, and a nonzero value must be a multiple of the device's own |
+| `ANYPS5_UPSCALE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | fsr scales the presentation with FSR 1 (EASU and RCAS) when the window is larger than the display buffer; unset or empty keeps the bilinear scaler, and any other value is refused |
 | `APS5_AB` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` |  | `<seconds>:<switch>[+<switch>...]`: alternates phase A (switches as the environment sets them) and phase B (the listed runtime switches toggled) at flip packets, each phase at least `<seconds>` long; prints `[ab]` lines; a name that is not a runtime switch fails the first flip |
 | `APS5_AB_SETTLE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` | 2 | seconds into a phase after which APS5_AB prints the phase's `settled` line; shorter than the phase |
 | `APS5_AB_START` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` | 0 | flip packet count (from 1) at which APS5_AB starts, or `<n>s` for seconds after the first flip |
@@ -375,6 +377,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_SITE_SAMPLING` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | disables per-site sampling of write evidence |
 | `APS5_NO_SNAPSHOT_CHECK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | skips the live compare that proves a captured snapshot still equals the guest bytes |
 | `APS5_NO_SORTED_SNAPSHOT_LOOKUP` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | scans the snapshot's regions in AddSnapshot instead of searching them |
+| `APS5_NO_SPACE_PATCH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | rebuilds the cached address space after an import change instead of patching its in-place regions to the current imports |
 | `APS5_NO_SPACE_STAMP_ONCE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | stamps every direct import of a cached address space on each hit instead of once per space |
 | `APS5_NO_SPANNED_WAVE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps single-wave wave64 compute programs at two guest lanes per invocation instead of spanning two full 32-lane subgroups |
 | `APS5_NO_SPARSE_HEAP_MIRROR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | disables sparse heap mirrors, mirroring only whole heap ranges |
@@ -458,6 +461,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_STAGING_POOL_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/BufferPool.cpp` |  | size in MiB of the device-local staging buffer pool; `0` disables the device tier |
 | `APS5_STALE_EVICT` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | also evicts a proved-present dead image's pending layers on an access |
 | `APS5_STALL_WATCHDOG_SECS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/SubmissionRing.cpp` | 0 | seconds a queue may go without progress before the submission rings are dumped; 0 disables the watchdog, at most 86400 |
+| `ANYPS5_STALL_PROMPT` | string | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/SubmissionRing.cpp` | 0 | with `APS5_STALL_WATCHDOG_SECS`, `1` asks in a host message box, when a watched wait expires, whether to keep the title running (Wait) or end it (Quit, exit code 124); after Wait it asks again one period later, at most three times per wait; `0` keeps the single dump; any other value stops the title at its first submission |
 | `APS5_STORAGE_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 2048 | most surfaces the storage-image cache keeps; beyond it the least recently used is evicted; `0` turns the limit off, and unset keeps 2048 |
 | `APS5_STORE_AT_FLIP` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | stores every pending storage-image result at each display flip; only `1` is accepted |
 | `APS5_STORE_AT_LABEL` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | flushes every pending storage-image result when a label is written on the GPU; only `1` is accepted |
@@ -528,6 +532,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_DRAW_DATA_HITS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | recomputes a draw data hit and aborts on a disagreement |
 | `APS5_VERIFY_DRAW_ENTRIES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | re-decodes every draw-cache hit through the full path and checks it |
 | `APS5_VERIFY_DRAW_PIPELINE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | with `APS5_DRAW_PIPELINE` set, runs the full check instead of every 64th reused epoch proof on each thread and prints `[epoch-proofs]` counts |
+| `APS5_VERIFY_DRAW_PLAN` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | builds a draw's plan (validation, fragment outputs, pipeline stages, vertex input layout and resource key) a second time after the draw's record-time work and requires it to equal the plan the draw used |
 | `APS5_VERIFY_DRAW_RECIPE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | re-decodes a draw recipe instead of using the cache and checks the result |
 | `APS5_VERIFY_DRAW_SNAPSHOTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | re-reads a reused draw snapshot and counts the ones that differ |
 | `APS5_VERIFY_KNOWN_VALUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | serves known values through the hook too and counts mismatches |
@@ -605,7 +610,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `APS5_NET_DISCONNECTED` | presence | `core/libs/prx/libSceNetCtl/Export.cpp` |  | libSceNetCtl and the libSceNet route, DNS-server and interface queries report no connection; sockets are not affected |
+| `APS5_NET_DISCONNECTED` | presence | `core/libs/prx/libSceNetCtl/Export.cpp` |  | libSceNetCtl and the libSceNet route, DNS-server and interface queries report no connection; libSceHttp2 sends (`sceHttp2SendRequest`, and `sceHttp2SendRequestAsync` through its completion) fail with network error 0x80431063 without connecting; sockets are not affected |
 
 ### libScePad
 
@@ -694,6 +699,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_INSTANCE_LOCK` | string | `core/libs/prx/libkernel/System/src/InstanceLockStartup.cpp` |  | `on` keeps a second copy of a title from starting in a directory where one runs, by locking `.anyps5-instance.lock` there for the process lifetime; unset, empty and `off` lock nothing; any other value stops start-up with an error naming the variable |
 | `ANYPS5_LOADEXEC_ARGV_SKIP` | string | `core/libs/prx/libkernel/System/src/Process.cpp` |  | on Windows, set to `1` to drop the first process argument and clear the variable |
 | `APS5_COARSE_TIMED_WAITS` | presence | `core/libs/prx/libkernel/Time/TimedWait.cpp` |  | on Windows, rounds timed waits up to the scheduler tick |
 | `APS5_DIRECT_MEMORY_FROM_FLEXIBLE` | presence | `core/libs/prx/libkernel/DirectMemory/Export.cpp` |  | reports 12736 MiB less the configured flexible-memory size as the direct-memory size, and stops direct-memory allocation there, instead of 13824 MiB |
