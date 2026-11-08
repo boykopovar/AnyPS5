@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -90,6 +91,8 @@ static void SetsMulticastInterfaceByIndex() {
 }
 
 int main() {
+    std::array<void*, 10> api{};
+    ApplicationHeapRegister_nid_no_patch(api.data());
     const int peer = socket_nid_postfix(2, 2, 0);
     const Address peerAddress = Endpoint(127, 0, 0, 1, PeerPort);
     Require(peer >= 0 && bind_nid_postfix(peer, peerAddress.data(), peerAddress.size()) == 0, "the LAN peer binds its port");
