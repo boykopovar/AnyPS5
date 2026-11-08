@@ -45,7 +45,16 @@ void APS5_VABI Free(void* pointer) {
     std::free(pointer);
 }
 
-void* APS5_VABI Reallocate(void*, std::size_t) { throw std::logic_error("unexpected reallocation"); }
+void* APS5_VABI Reallocate(void* pointer, std::size_t bytes) {
+    if (!pointer) return Allocate(bytes);
+    ++allocationCalls;
+    if (failureCountdown > 0 && --failureCountdown == 0) return nullptr;
+    if (!bytes) {
+        Free(pointer);
+        return nullptr;
+    }
+    return std::realloc(pointer, bytes);
+}
 void* APS5_VABI Calloc(std::size_t, std::size_t) { throw std::logic_error("unexpected calloc"); }
 void* APS5_VABI Align(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
 void* APS5_VABI Realign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
