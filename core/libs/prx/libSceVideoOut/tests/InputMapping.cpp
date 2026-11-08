@@ -590,6 +590,17 @@ void reloadInputMappingAction() {
     require(rejects("ReloadInputMapping = PAD:L1\n"), "ReloadInputMapping refuses a pad source until chords are supported");
 }
 
+void reloadErrorNamesLine() {
+    useConfig("Cross = KEY:F\nMouseCurve = 9\n");
+    auto configuration = defaultConfiguration();
+    std::string error;
+    require(!Pad::TryLoadInputMapping("", configuration, error), "a reload of an invalid file fails");
+    require(error.find("anyps5-input.ini:2") != std::string::npos && error.find("mouse curve") != std::string::npos, "a reload error names the file, the line and the reason");
+    require(crossOnKey(configuration, SDL_SCANCODE_RETURN) && configuration.settings.mouseCurve == 1.0, "a failed reload does not touch the target configuration");
+    useConfig("Cross = KEY:F\n");
+    require(Pad::TryLoadInputMapping("", configuration, error) && crossOnKey(configuration, SDL_SCANCODE_F), "a valid file reloads");
+}
+
 }
 
 int main() try {
@@ -628,6 +639,7 @@ int main() try {
     parserInvalidText();
     parserPartialText();
     reloadInputMappingAction();
+    reloadErrorNamesLine();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;
