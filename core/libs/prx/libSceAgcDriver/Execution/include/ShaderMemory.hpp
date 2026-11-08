@@ -63,6 +63,7 @@ public:
     ~ShaderMemory();
     static constexpr std::size_t KeepBytes = 256;
     bool KeepTable(std::uint64_t address);
+    static std::uint64_t TablesKept();
     ShaderMemory(const ShaderMemory&) = delete;
     ShaderMemory& operator=(const ShaderMemory&) = delete;
     // Returns what the capture resolved (plan, snapshot, specialization) for
