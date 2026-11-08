@@ -39,14 +39,16 @@ Asn1String Current(std::time_t stamp, std::array<char, 16>& storage) {
     return {15, 24, reinterpret_cast<unsigned char*>(storage.data()), 0};
 }
 
-void Check(std::string_view text, int type, int expected) {
+void Check(std::string_view text, int type, int expected,
+           std::source_location location = std::source_location::current()) {
     Asn1String time = Time(text, type);
-    Require(X509_cmp_current_time_nid_postfix(&time) == expected);
+    Require(X509_cmp_current_time_nid_postfix(&time) == expected, location);
 }
 
-void CheckNotZero(std::string_view text, int type) {
+void CheckNotZero(std::string_view text, int type,
+                  std::source_location location = std::source_location::current()) {
     Asn1String time = Time(text, type);
-    Require(X509_cmp_current_time_nid_postfix(&time) != 0);
+    Require(X509_cmp_current_time_nid_postfix(&time) != 0, location);
 }
 
 }
@@ -80,7 +82,11 @@ int main() {
     Check("700101000000Z", 23, -1);
     Check("000231000000Z", 23, -1);
     Check("000431000000Z", 23, -1);
-    CheckNotZero("260231000000Z", 23);
+    Check("260231000000Z", 23, -1);
+    Check("20491231235959Z", 24, 0);
+    CheckNotZero("491231235959Z", 23);
+    Check("20500101000000Z", 24, 1);
+    Check("20500101000000Z", 23, 0);
 
     for (const auto text : {"", "200001010000Z", "20000101000000", "20000101000000z",
              "200001010000000Z", "20000001000000Z", "20001301000000Z", "20000100000000Z",
