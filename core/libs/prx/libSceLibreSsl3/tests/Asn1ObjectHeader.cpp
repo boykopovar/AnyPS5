@@ -22,9 +22,9 @@ std::vector<unsigned char> WithLength(std::size_t length) {
     return data;
 }
 
-void Expect(const std::vector<unsigned char>& data, long max, int result, long length, int tag, int objectClass, std::size_t offset) {
+void Expect(const std::vector<unsigned char>& data, std::int64_t max, int result, std::int64_t length, int tag, int objectClass, std::size_t offset) {
     const unsigned char* cursor = data.data();
-    long parsedLength = -1;
+    std::int64_t parsedLength = -1;
     int parsedTag = -1;
     int parsedClass = -1;
     Require(ASN1_get_object_nid_postfix(&cursor, &parsedLength, &parsedTag, &parsedClass, max) == result);
@@ -69,11 +69,28 @@ void Errors() {
     Require(ERR_get_error_nid_postfix() == 0x0dfff07b);
 
     const unsigned char* cursor = nullptr;
-    long length = -1;
+    std::int64_t length = -1;
     int tag = -1;
     int objectClass = -1;
     Require(ASN1_get_object_nid_postfix(&cursor, &length, &tag, &objectClass, 0) == 0x80);
     Require(ERR_get_error_nid_postfix() == 0x0dfff07b);
+
+    const unsigned char fiveByteLength[] = {0x04, 0x85, 0x00, 0x00, 0x00, 0x00, 0x05, 1, 2, 3, 4, 5};
+    cursor = fiveByteLength;
+    length = -1;
+    tag = -1;
+    objectClass = -1;
+    Require(ASN1_get_object_nid_postfix(&cursor, &length, &tag, &objectClass, 12) == 0);
+    Require(length == 5 && tag == 4 && objectClass == 0 && cursor == fiveByteLength + 7);
+
+    const unsigned char longLength[] = {0x04, 0x85, 0x01, 0x00, 0x00, 0x00, 0x00};
+    cursor = longLength;
+    length = 0x5A5A5A5A5A5A5A5A;
+    tag = -1;
+    objectClass = -1;
+    Require(ASN1_get_object_nid_postfix(&cursor, &length, &tag, &objectClass, 7) == 0x80);
+    Require(length == 0x100000000LL && tag == 4 && objectClass == 0 && cursor == longLength + 7);
+    Require(ERR_get_error_nid_postfix() == 0x0dfff09b);
 
     const std::vector<unsigned char> empty{0x02};
     bool threw = false;

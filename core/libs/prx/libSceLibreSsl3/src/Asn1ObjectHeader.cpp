@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include <climits>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -18,9 +19,9 @@ void PutError(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
 }
 
-bool GetLength(const unsigned char** cursor, int* indefinite, long* length, long max) {
+bool GetLength(const unsigned char** cursor, int* indefinite, std::int64_t* length, std::int64_t max) {
     const unsigned char* pointer = *cursor;
-    unsigned long result = 0;
+    std::uint64_t result = 0;
     if (max-- < 1) return false;
     if (*pointer == 0x80) {
         *indefinite = 1;
@@ -29,12 +30,12 @@ bool GetLength(const unsigned char** cursor, int* indefinite, long* length, long
         *indefinite = 0;
         unsigned int count = *pointer & 0x7f;
         if (*(pointer++) & 0x80) {
-            if (max < static_cast<long>(count)) return false;
+            if (max < static_cast<std::int64_t>(count)) return false;
             while (count && *pointer == 0) {
                 ++pointer;
                 --count;
             }
-            if (count > sizeof(long)) return false;
+            if (count > 8) return false;
             while (count-- > 0) {
                 result <<= 8;
                 result |= *(pointer++);
@@ -43,9 +44,9 @@ bool GetLength(const unsigned char** cursor, int* indefinite, long* length, long
             result = count;
         }
     }
-    if (result > static_cast<unsigned long>(LONG_MAX)) return false;
+    if (result > static_cast<std::uint64_t>(INT64_MAX)) return false;
     *cursor = pointer;
-    *length = static_cast<long>(result);
+    *length = static_cast<std::int64_t>(result);
     return true;
 }
 
@@ -53,12 +54,12 @@ bool GetLength(const unsigned char** cursor, int* indefinite, long* length, long
 
 extern "C" {
 
-int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pp, long* plength, int* ptag, int* pclass, long omax) {
+int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pp, std::int64_t* plength, int* ptag, int* pclass, std::int64_t omax) {
     if (!pp || !plength || !ptag || !pclass) throw std::invalid_argument(std::string(__func__) + ": null output");
     if (omax < 0) throw std::invalid_argument(std::string(__func__) + ": negative input length");
     const unsigned char* pointer = *pp;
     if (omax > 0 && !pointer) throw std::invalid_argument(std::string(__func__) + ": null input");
-    long max = omax;
+    std::int64_t max = omax;
     if (!max) {
         PutError(HeaderTooLong);
         return 0x80;
@@ -72,7 +73,7 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pp, long* plengt
             PutError(HeaderTooLong);
             return 0x80;
         }
-        long value = 0;
+        std::int64_t value = 0;
         while (*pointer & 0x80) {
             value <<= 7;
             value |= *(pointer++) & 0x7f;
@@ -110,7 +111,7 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pp, long* plengt
         PutError(HeaderTooLong);
         return 0x80;
     }
-    if (*plength > omax - (pointer - *pp)) {
+    if (*plength > omax - static_cast<std::int64_t>(pointer - *pp)) {
         PutError(TooLong);
         result |= 0x80;
     }
