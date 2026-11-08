@@ -208,6 +208,32 @@ void TestTimestamps() {
     Require(decoder.info.ptsHigh == None && decoder.info.ptsLow == None);
 }
 
+void TestInternalApiValidation() {
+    Decoder decoder;
+    AudiodecCpuMemory empty{0x18, nullptr, 0};
+    Require(sceAudiodecCpuInternalQueryMemSize(nullptr, &decoder.memory, LpcmBd) == Error(9));
+    Require(sceAudiodecCpuInternalQueryMemSize(&decoder.ctrl, nullptr, LpcmBd) == Error(0xe));
+    AudiodecCpuMemory badSize{0x10, decoder.work.data(), 0};
+    Require(sceAudiodecCpuInternalQueryMemSize(&decoder.ctrl, &badSize, LpcmBd) == Error(8));
+    Require(sceAudiodecCpuInternalQueryMemSize(&decoder.ctrl, &empty, 0x1009) == Error(1));
+
+    Require(sceAudiodecCpuInternalInitDecoder(nullptr, &decoder.memory, LpcmBd) == Error(9));
+    Require(sceAudiodecCpuInternalInitDecoder(&decoder.ctrl, nullptr, LpcmBd) == Error(0xe));
+    Require(sceAudiodecCpuInternalInitDecoder(&decoder.ctrl, &badSize, LpcmBd) == Error(8));
+    Require(sceAudiodecCpuInternalInitDecoder(&decoder.ctrl, &empty, LpcmBd) == Error(0x11));
+    Require(sceAudiodecCpuInternalInitDecoder(&decoder.ctrl, &decoder.memory, 0x100a) == Error(1));
+
+    Require(sceAudiodecCpuInternalClearContext(nullptr, LpcmBd) == Error(2));
+    Require(sceAudiodecCpuInternalClearContext(&empty, LpcmBd) == Error(0x11));
+    Require(sceAudiodecCpuInternalClearContext(&badSize, LpcmBd) == Error(8));
+    Require(sceAudiodecCpuInternalClearContext(&decoder.memory, 0x1009) == Error(1));
+
+    Require(sceAudiodecCpuInternalDecode(nullptr, &decoder.memory, LpcmBd) == Error(9));
+    Require(sceAudiodecCpuInternalDecode(&decoder.ctrl, nullptr, LpcmBd) == Error(0xe));
+    Require(sceAudiodecCpuInternalDecode(&decoder.ctrl, &badSize, LpcmBd) == Error(8));
+    Require(sceAudiodecCpuInternalDecode(&decoder.ctrl, &decoder.memory, 0x1009) == Error(1));
+}
+
 }
 
 int main() {
@@ -216,5 +242,6 @@ int main() {
     TestDecodeArguments();
     TestDecodeSamples();
     TestTimestamps();
+    TestInternalApiValidation();
     return 0;
 }
