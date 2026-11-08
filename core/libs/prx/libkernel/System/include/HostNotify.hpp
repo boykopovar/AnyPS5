@@ -37,6 +37,8 @@ HostNotifyBackend SelectHostNotifyBackend(std::string_view pathList, const HostN
 
 using HostNotifySpawn = std::function<bool(const HostNotifyArgv&)>;
 
+bool SpawnHostNotifyCommand(const HostNotifyArgv& argv);
+
 class DetachedHostNotifySink final : public IHostNotifySink {
 public:
     DetachedHostNotifySink(HostNotifyBackend backend, HostNotifySpawn spawn);

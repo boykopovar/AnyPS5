@@ -2,11 +2,22 @@
 
 #include <cstdint>
 #include <memory>
+#include <cerrno>
 #include <cstdio>
 #include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char** environ;
+#endif
 
 namespace {
 
@@ -161,6 +172,31 @@ std::unique_ptr<IHostNotifySink> MakeHostNotifySink(HostNotifyMode mode, HostNot
     if (mode == HostNotifyMode::Off || backend == HostNotifyBackend::None) return nullptr;
     return std::make_unique<DetachedHostNotifySink>(backend, std::move(spawn));
 }
+
+#ifndef _WIN32
+bool SpawnHostNotifyCommand(const HostNotifyArgv& argv) {
+    if (argv.empty()) return false;
+    std::vector<char*> arguments;
+    arguments.reserve(argv.size() + 1);
+    for (const auto& argument : argv) arguments.push_back(const_cast<char*>(argument.c_str()));
+    arguments.push_back(nullptr);
+
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) return false;
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    pid_t pid = 0;
+    const int started = posix_spawnp(&pid, arguments[0], &actions, nullptr, arguments.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (started != 0) return false;
+
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
 
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;

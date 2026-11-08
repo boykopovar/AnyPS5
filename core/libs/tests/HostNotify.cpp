@@ -225,7 +225,19 @@ void UnsetVariableIsOffAndAStrayNoticeDoesNotSpawn() {
     Require(calls.load() == 0, "the default spawned a notifier");
 }
 
+#ifndef _WIN32
+void SpawnReportsTheExitStatusOfTheCommand() {
+    Require(SpawnHostNotifyCommand({"true"}), "a successful command was reported as failed");
+    Require(!SpawnHostNotifyCommand({"false"}), "a failing command was reported as shown");
+    Require(!SpawnHostNotifyCommand({"anyps5-no-such-notifier"}), "a missing command was reported as shown");
+    Require(!SpawnHostNotifyCommand({}), "an empty argv was reported as shown");
+}
+#endif
+
 int main() {
+#ifndef _WIN32
+    SpawnReportsTheExitStatusOfTheCommand();
+#endif
     OffOrNoBackendMakesNoSinkAndNeverSpawns();
     UnsetVariableIsOffAndAStrayNoticeDoesNotSpawn();
     NotifyDoesNotWaitForASleepingBackend();
