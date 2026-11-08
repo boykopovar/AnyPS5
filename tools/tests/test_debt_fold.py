@@ -62,6 +62,17 @@ class FoldTests(unittest.TestCase):
                                                         f"- [sceExampleG]({LINK}) (libSceExample) - unknown signature",
                                                         f"- [`sceExamplePending`]({inventory}) - NID `abc`"])
 
+    def test_add_keeps_the_blank_line_between_entries_of_a_spaced_file(self):
+        self.write(DEBT, f"# libSceExample technical debt\n\n### Silent stubs\n\n- [sceExampleA]({LINK}) (libSceExample) - returns 0\n\n"
+                         f"### Unknown function info\n\n- [sceExampleC]({LINK}) (libSceExample) - unknown signature\n")
+        self.fragment("a", f"# libSceExample\n\n## add Silent stubs\n\n- [sceExampleD]({LINK}) (libSceExample) - returns 0\n"
+                           f"- [sceExampleE]({LINK}) (libSceExample) - returns 1\n")
+        self.assertEqual(self.run_fold()[0], 0)
+        self.assertEqual(self.debt().split("\n")[4:11], [f"- [sceExampleA]({LINK}) (libSceExample) - returns 0", "",
+                                                         f"- [sceExampleD]({LINK}) (libSceExample) - returns 0", "",
+                                                         f"- [sceExampleE]({LINK}) (libSceExample) - returns 1", "",
+                                                         "### Unknown function info"])
+
     def test_add_creates_a_missing_section(self):
         self.fragment("a", f"# libSceExample\n\n## add Pending exports\n\n- [sceExampleF]({LINK}) (libSceExample) - throws\n")
         self.run_fold()

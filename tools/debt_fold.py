@@ -82,9 +82,24 @@ def target(entry):
     return match[1] if match else None
 
 
+def spaced(found):
+    items = [(begin, end) for begin, end, entry in found if entry.startswith("- ")]
+    return not any(later[0] == earlier[1] for earlier, later in zip(items, items[1:]))
+
+
+def space(lines):
+    result = []
+    for line in lines:
+        if line.startswith("- ") and result and result[-1].strip():
+            result.append("")
+        result.append(line)
+    return result
+
+
 def apply(text, operation):
     found, lines = spans(text)
     if operation.kind == "add":
+        gap = not operation.body.startswith("| ") and spaced(found)
         heading = f"### {operation.target}"
         if heading not in lines:
             lines = lines + ([""] if lines and lines[-1].strip() else []) + [heading, ""]
@@ -93,11 +108,10 @@ def apply(text, operation):
         stop = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("#")), len(lines))
         row = operation.body.startswith("| ")
         inside = [(begin, end, entry) for begin, end, entry in found if start < begin < stop and entry.startswith("| ") == row]
-        spaced = len(inside) > 1 and inside[-1][0] > inside[-2][1]
         same = [span for span in inside if target(span[2]) and target(span[2]) == target(operation.body)]
         at = (same or inside)[-1][1] if inside else start + 1
-        new = operation.body.split("\n")
-        if not inside or spaced:
+        new = space(operation.body.split("\n")) if gap else operation.body.split("\n")
+        if not inside or gap:
             new = [""] + new
         return "\n".join(lines[:at] + new + lines[at:])
     begin, end = find(text, operation)
