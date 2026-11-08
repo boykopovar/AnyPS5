@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+#include <cstddef>
+
 extern "C" {
 
 int APS5_VABI libSceNKWebKitLegacyUnknown__plus__plus_v_plus_KlCLFK8_nid_no_patch();
@@ -224,7 +226,7 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient11createFrameERKN3WTF6StringERN
 int APS5_VABI _ZN7WebCore13GraphicsLayer8addChildEON3WTF3RefIS0_NS1_13DumbPtrTraitsIS0_EEEE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_4kECg3pDbnI_nid_no_patch();
 int APS5_VABI _ZN7WebCore11MediaPlayer33copyVideoTextureToPlatformTextureEPNS_23GraphicsContextGLOpenGLEjjijjjbb();
-int APS5_VABI _ZN7WebCore17LibWebRTCProviderdlEPv();
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderdlEPv(void* ptr);
 int APS5_VABI _ZN7WebCore25WebSocketChannelInspector36didReceiveWebSocketHandshakeResponseEPNS_8DocumentERKNS_16ResourceResponseE();
 int APS5_VABI _ZN7WebCore19serializationForCSSERKNS_9DisplayP3IfEE();
 int APS5_VABI _ZN7WebCore8JSPath2DC2EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_6Path2DENS6_13DumbPtrTraitsIS8_EEEE();
@@ -648,7 +650,7 @@ int APS5_VABI _ZN7WebCore15PasteboardImageC1Ev();
 int APS5_VABI _ZN7WebCore11JSDOMMatrix6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_9DOMMatrixENS6_13DumbPtrTraitsIS8_EEEE();
 int APS5_VABI _ZN7WebCore14SocketProviderC1Ev();
 int APS5_VABI _ZN7WebCore11DisplayList6RotateD1Ev();
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEmPv();
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEmPv(std::size_t size, void* location);
 int APS5_VABI _ZN7WebCore19sleepDisablerClientEv();
 int APS5_VABI libSceNKWebKitLegacyUnknown_FwZmL9nLii0_nid_no_patch();
 int APS5_VABI _ZN7WebCore11DisplayList4ClipD2Ev();
@@ -1116,7 +1118,7 @@ int APS5_VABI _ZN7WebCore22HTMLPlugInImageElement29setIsPrimarySnapshottedPlugIn
 int APS5_VABI _ZN7WebCore17HTMLCanvasElement26setTracksDisplayListReplayEb();
 int APS5_VABI _ZN7WebCore8Document10setFgColorERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore9FrameView35convertFromContainingViewToRendererEPKNS_13RenderElementERKNS_7IntRectE();
-int APS5_VABI _ZN7WebCore17LibWebRTCProviderdaEPv();
+void APS5_VABI _ZN7WebCore17LibWebRTCProviderdaEPv(void* ptr);
 int APS5_VABI _ZN7WebCore11DisplayList7ClipOutD1Ev();
 int APS5_VABI libSceNKWebKitLegacyUnknown_S6vKxYoIrBU_nid_no_patch();
 int APS5_VABI _ZN7WebCore17FrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv();
@@ -1177,7 +1179,7 @@ int APS5_VABI _ZN7WebCore11DisplayList14DrawTiledImageD1Ev();
 int APS5_VABI _ZN7WebCore5Frame14frameForWidgetERKNS_6WidgetE();
 int APS5_VABI _ZN7WebCore18TextureMapperLayer9applyMaskERKNS_25TextureMapperPaintOptionsE();
 int APS5_VABI _ZN7WebCore20DecodeOrderSampleMap30reverseFindSampleWithDecodeKeyERKSt4pairIN3WTF9MediaTimeES3_E();
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEm();
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEm(std::size_t size);
 int APS5_VABI _ZN7WebCore22SkewTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore13GraphicsLayer5clearERN3WTF6RefPtrIS0_NS1_13DumbPtrTraitsIS0_EEEE();
 int APS5_VABI _ZN7WebCore14LoaderStrategy53intermediateLoadInformationFromResourceLoadIdentifierEm();
@@ -1712,7 +1714,7 @@ int APS5_VABI _ZNK7WebCore8Position25leadingWhitespacePositionENS_9EAffinityEb()
 int APS5_VABI _ZN7WebCore21JSCSSStyleDeclaration6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_19CSSStyleDeclarationENS6_13DumbPtrTraitsIS8_EEEE();
 int APS5_VABI _ZN7WebCore19JSDOMMatrixReadOnlyC1EPN3JSC9StructureERNS_17JSDOMGlobalObjectEON3WTF3RefINS_17DOMMatrixReadOnlyENS6_13DumbPtrTraitsIS8_EEEE();
 int APS5_VABI _ZN7WebCore11MediaPlayer8bufferedEv();
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEm();
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernaEm(std::size_t size);
 int APS5_VABI WKBundleSetAllowUniversalAccessFromFileURLs();
 int APS5_VABI _ZN7WebCore11DisplayList11FillEllipseD2Ev();
 int APS5_VABI _ZNK7WebCore12SharedBuffer21combineIntoOneSegmentEv();
@@ -1997,7 +1999,7 @@ int APS5_VABI WKBundleSetAuthorAndUserStylesEnabled();
 int APS5_VABI libSceNKWebKitLegacyUnknown_pRLVmpQe1b4_nid_no_patch();
 int APS5_VABI _ZN7WebCore8Gradient12addColorStopEONS0_9ColorStopE();
 int APS5_VABI _ZN7WebCore14ResourceHandle25loadResourceSynchronouslyEPNS_17NetworkingContextERKNS_15ResourceRequestENS_23StoredCredentialsPolicyERNS_13ResourceErrorERNS_16ResourceResponseERN3WTF6VectorIcLm0ENSB_15CrashOnOverflowELm16ENSB_10FastMallocEEE();
-int APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEmPv();
+void* APS5_VABI _ZN7WebCore17LibWebRTCProvidernwEmPv(std::size_t size, void* location);
 int APS5_VABI _ZN7WebCore11DisplayList12PutImageDataD1Ev();
 int APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE();
 int APS5_VABI _ZN7WebCore22DefaultFilterOperationC1ENS_15FilterOperation13OperationTypeE();
