@@ -470,3 +470,18 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME guest_libressl3_pkey_lifecycle COMMAND guest_libressl3_pkey_lifecycle_tests ${pkeyLifecycleDirectory})
     set_tests_properties(guest_libressl3_pkey_lifecycle PROPERTIES TIMEOUT 20)
 endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509GmtimeAdj.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509_gmtime_adj_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509GmtimeAdj.cpp)
+    target_include_directories(guest_libressl3_x509_gmtime_adj_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_gmtime_adj_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_x509_gmtime_adj_tests)
+    add_test(NAME guest_libressl3_x509_gmtime_adj COMMAND guest_libressl3_x509_gmtime_adj_tests)
+    set_tests_properties(guest_libressl3_x509_gmtime_adj PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_gmtime_adj PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
