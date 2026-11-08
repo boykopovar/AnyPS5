@@ -12145,6 +12145,24 @@ void verifyTableKeep() {
     tableWritePending = false;
 
     fill();
+    static bool wordwiseTableWrite = false;
+    wordwiseTableWrite = false;
+    {
+        const auto wordwiseQuery = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+            using Pending = AgcDriver::ShaderMemory::PendingWrite;
+            if (bytes > AgcDriver::ShaderMemory::KeepBytes) return Pending::Sync;
+            return wordwiseTableWrite && address < srtAddress + 256u && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+        };
+        AgcDriver::ShaderMemory memory({}, wordwiseQuery, nullptr, nullptr, wordwiseQuery);
+        require(memory.KeepTable(srtAddress), "table keep: a table on a page read word by word was not kept");
+        wordwiseTableWrite = true;
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        wordwiseTableWrite = false;
+        require(holds(capture, oldT) && !holds(capture, newT), "table keep: a kept word on a page read word by word was read from memory after a GPU write was recorded over the table");
+    }
+
+    fill();
     {
         const std::array<MemoryRegion, 1> registered{{{srtAddress, std::as_bytes(std::span(srt).first(16))}}};
         AgcDriver::ShaderMemory memory(registered, nullptr, nullptr, nullptr, pendingSpan);
