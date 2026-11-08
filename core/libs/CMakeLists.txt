@@ -888,6 +888,12 @@ if(BUILD_TESTING)
     target_link_libraries(guest_vr_tracker_devices_tests PRIVATE libSceVrTracker libc)
     configure_windows_unwind(guest_vr_tracker_devices_tests)
     add_test(NAME guest_vr_tracker_devices COMMAND guest_vr_tracker_devices_tests)
+
+    add_test_executable(guest_relinker_rela_addend_tests tests/GuestRelinkerRelaAddend.cpp)
+    target_include_directories(guest_relinker_rela_addend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_relinker_rela_addend_tests PRIVATE libc)
+    configure_windows_unwind(guest_relinker_rela_addend_tests)
+    add_test(NAME guest_relinker_rela_addend COMMAND guest_relinker_rela_addend_tests)
     if(WIN32)
         set_tests_properties(guest_vr_tracker_devices PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVrTracker>")
