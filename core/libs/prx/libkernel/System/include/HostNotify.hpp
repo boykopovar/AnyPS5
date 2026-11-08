@@ -9,6 +9,8 @@
 
 enum class HostNotifyMode : std::uint8_t { Off, On };
 
+enum class HostNotifyBackend : std::uint8_t { None, NotifySend, Osascript, PowerShell };
+
 class IHostNotifySink {
 public:
     virtual ~IHostNotifySink() = default;
@@ -24,5 +26,6 @@ HostNotifyArgv LinuxNotifyArgv(std::string_view title, std::string_view text);
 HostNotifyArgv MacNotifyArgv(std::string_view title, std::string_view text);
 std::string HostNotifyBase64(std::string_view bytes);
 HostNotifyArgv WindowsNotifyArgv(std::string_view title, std::string_view text);
+HostNotifyArgv HostNotifyArgvFor(HostNotifyBackend backend, std::string_view title, std::string_view text);
 
 #endif

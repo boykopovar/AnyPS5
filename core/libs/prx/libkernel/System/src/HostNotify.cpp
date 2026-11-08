@@ -77,6 +77,20 @@ HostNotifyArgv WindowsNotifyArgv(std::string_view title, std::string_view text) 
     return {"powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", HostNotifyBase64(utf16)};
 }
 
+HostNotifyArgv HostNotifyArgvFor(HostNotifyBackend backend, std::string_view title, std::string_view text) {
+    switch (backend) {
+    case HostNotifyBackend::NotifySend:
+        return LinuxNotifyArgv(title, text);
+    case HostNotifyBackend::Osascript:
+        return MacNotifyArgv(title, text);
+    case HostNotifyBackend::PowerShell:
+        return WindowsNotifyArgv(title, text);
+    case HostNotifyBackend::None:
+        break;
+    }
+    return {};
+}
+
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;
     HostNotifyLog("ANYPS5_HOST_NOTIFY must be 0 or 1, not '" + std::string(text) + "'; host notifications stay off");

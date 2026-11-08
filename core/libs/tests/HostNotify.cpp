@@ -117,7 +117,15 @@ void WindowsArgvCarriesTextOnlyAsBase64() {
     Require(script.find(HostNotifyBase64(text)) != std::string::npos, "the text is not carried as base64 in the script");
 }
 
+void ArgvForBackendMatchesItsBuilder() {
+    Require(HostNotifyArgvFor(HostNotifyBackend::NotifySend, "AnyPS5", "x") == LinuxNotifyArgv("AnyPS5", "x"), "notify-send does not use the Linux argv");
+    Require(HostNotifyArgvFor(HostNotifyBackend::Osascript, "AnyPS5", "x") == MacNotifyArgv("AnyPS5", "x"), "osascript does not use the macOS argv");
+    Require(HostNotifyArgvFor(HostNotifyBackend::PowerShell, "AnyPS5", "x") == WindowsNotifyArgv("AnyPS5", "x"), "PowerShell does not use the Windows argv");
+    Require(HostNotifyArgvFor(HostNotifyBackend::None, "AnyPS5", "x").empty(), "no backend still builds an argv");
+}
+
 int main() {
+    ArgvForBackendMatchesItsBuilder();
     WindowsArgvCarriesTextOnlyAsBase64();
     Base64MatchesRfc4648Vectors();
     SinkReceivesTitleAndTextAsGiven();
