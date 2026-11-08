@@ -297,6 +297,16 @@ static void StartsWhenConfigured() {
     Require(relay != nullptr && relay->IsOpen() && relay->Port() != 0, "a listen address starts the relay");
 }
 
+static void MatchesLimitedAndInterfaceBroadcasts() {
+    const std::vector<LanRelay::Ipv4Interface> lan{{0xC0A80114u, 0xFFFFFF00u}};
+    Require(LanRelay::IsBroadcast(0xFFFFFFFFu, {}), "255.255.255.255 is a broadcast without any interface");
+    Require(LanRelay::IsBroadcast(0xC0A801FFu, lan), "192.168.1.255 is the broadcast of 192.168.1.20/24");
+    Require(!LanRelay::IsBroadcast(0xC0A80101u, lan), "192.168.1.1 is not a broadcast");
+    Require(!LanRelay::IsBroadcast(0xC0A80200u, lan), "192.168.2.0 is outside the interface subnet");
+    Require(!LanRelay::IsBroadcast(0xC0A801FFu, {}), "a subnet broadcast needs its interface");
+    Require(!LanRelay::IsBroadcast(0x0A000005u, {{0x0A000005u, 0xFFFFFFFFu}}), "a host route address is not a broadcast");
+}
+
 static void RoundTripsFrames() {
     LanRelay::Frame frame;
     frame.Instance = 0x01020304;
