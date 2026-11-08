@@ -251,13 +251,44 @@ def shader_count(run, name):
     return (report_field(run, "shaders") or {}).get(name)
 
 
+def tally(entries, keys, count):
+    totals = {}
+    for entry in entries:
+        key = json.dumps([entry.get(name) for name in keys])
+        totals[key] = totals.get(key, 0) + entry.get(count, 0)
+    return totals
+
+
+def diff_entries(before, now, keys, count):
+    if before is None or now is None:
+        return None
+    left, right = tally(before, keys, count), tally(now, keys, count)
+
+    def fields(key, **values):
+        return {**dict(zip(keys, json.loads(key))), **values}
+
+    return {"onlyBefore": [fields(key, **{count: left[key]}) for key in sorted(left) if key not in right],
+            "onlyNow": [fields(key, **{count: right[key]}) for key in sorted(right) if key not in left],
+            "both": [fields(key, before=left[key], now=right[key]) for key in sorted(left) if key in right]}
+
+
+def missing_functions(run):
+    return report_field(run, "missing")
+
+
+def truncated_functions(run):
+    return (report_field(run, "truncated") or {}).get("functions")
+
+
 def compare_runs(summary, previous):
     compared = {}
     for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
         before, now = last_run(previous["titles"][title_id]), last_run(summary["titles"][title_id])
         compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
                               "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
-                              "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS}}
+                              "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
+                              "missingFunctions": diff_entries(missing_functions(before), missing_functions(now), ("library", "name"), "calls"),
+                              "missingFunctionsTruncated": pair(truncated_functions(before), truncated_functions(now))}
     return compared
 
 
