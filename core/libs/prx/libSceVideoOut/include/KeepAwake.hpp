@@ -1,0 +1,6 @@
+#ifndef CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_KEEPAWAKE_HPP
+#define CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_KEEPAWAKE_HPP
+
+bool KeepAwakeEnabledFromValue(const char* value);
+
+#endif
