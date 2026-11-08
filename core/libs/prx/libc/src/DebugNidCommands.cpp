@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <string>
 
 namespace {
@@ -154,6 +155,24 @@ void RunCommandSession(std::FILE* input, std::FILE* output, NidBreakpointTable& 
     }
     std::fprintf(output, "end of commands, continuing %llu\n", static_cast<unsigned long long>(stop.id));
     registry.Continue(stop.id);
+}
+
+NidStopRegistry::Session CommandFileSession() {
+    return [](NidBreakpointTable& table, NidStopRegistry& registry, const NidStopRegistry::Stop& stop) {
+        const char* path = std::getenv("ANYPS5_DEBUG_CMD");
+        if (path == nullptr || *path == '\0') {
+            registry.Continue(stop.id);
+            return;
+        }
+        std::FILE* input = std::fopen(path, "r");
+        if (input == nullptr) {
+            std::fprintf(stderr, "ANYPS5_DEBUG_CMD: cannot open '%s', continuing %llu\n", path, static_cast<unsigned long long>(stop.id));
+            registry.Continue(stop.id);
+            return;
+        }
+        RunCommandSession(input, stderr, table, registry, stop);
+        std::fclose(input);
+    };
 }
 
 }
