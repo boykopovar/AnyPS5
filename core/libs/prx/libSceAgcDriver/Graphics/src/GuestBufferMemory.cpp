@@ -5400,7 +5400,7 @@ bool GuestBufferMemory::bindSparseMirror(Region& region, const GuestAllocations:
         refreshHeapMirrors(whole, blocks);
     }
     compareBlocks(blocks);
-    if (mirror == nullptr || !mirror->heap || region.begin < mirror->base || (region.begin - mirrorStart(*mirror)) % viewAlignment() != 0) return false;
+    if (mirror == nullptr || !mirror->heap || region.begin < mirror->base || (region.begin - mirrorStart(*mirror)) % context.limits.minStorageBufferOffsetAlignment != 0) return false;
     region.mirror = std::move(mirror);
     if (!servesView(region, std::max(region.lastView, region.begin))) {
         region.mirror = nullptr;
@@ -5942,7 +5942,7 @@ bool GuestBufferMemory::gpuCopyEligible(const Region& region) const {
 
 bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) const {
     if (adjustedRegions && !addressable) return offset % 4 == 0;
-    return offset % viewAlignment() == 0;
+    return offset % context.limits.minStorageBufferOffsetAlignment == 0;
 }
 
 VkDeviceSize GuestBufferViewAlignment(const VkPhysicalDeviceLimits& limits) {
