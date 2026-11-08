@@ -53,7 +53,7 @@ int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count) {
         std::lock_guard lock(uuidMutex);
         if (!uuidNodeReady) {
             HostEntropy_nid_no_patch(uuidNode.data(), uuidNode.size());
-            uuidNode[0] |= 0x01;
+            uuidNode[0] &= 0xfe;
             uuidNodeReady = true;
         }
         node = uuidNode;
