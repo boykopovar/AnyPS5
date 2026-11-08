@@ -244,6 +244,8 @@ static void VerifyRepeatedAmprCompletionsAreNotLost() {
     Require(sceKernelWaitEqueue(eq, events, 4, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelDeleteAmprEvent(eq, 3) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(sceKernelAddAmprEvent(eq, 3, &udata) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddAmprEvent(0, 3, &udata) == SCE_KERNEL_ERROR_EBADF);
 }
 
 static void VerifyUndrainedTriggersStayBounded() {
