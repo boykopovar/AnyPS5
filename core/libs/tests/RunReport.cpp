@@ -1246,6 +1246,27 @@ void RecipeEnvironmentTest() {
     Require(RunReport::ConfigFileNames({{"ANYPS5_INPUT_CONFIG", ""}}).empty(), "an empty config path names no file");
 }
 
+void RecipeSerializeTest() {
+    RunReport::HostIdentifiers host;
+    host.users.push_back("alice");
+    host.words.push_back("alice");
+    RunReport::Recipe recipe;
+    recipe.generated = "2026-11-08T10:00:00Z";
+    recipe.runId = std::string(32u, 'a');
+    recipe.build.commit = std::string(40u, 'b');
+    recipe.arguments = {"/home/alice/prx/game.elf", "--aps5-report=on"};
+    recipe.environment = {{"ANYPS5_GPU", "AMD Radeon"}, {"ANYPS5_INPUT_CONFIG", "/home/alice/pad.json"}};
+    recipe.configFiles = {"pad.json"};
+    const auto text = RunReport::SerializeRecipe(recipe, host);
+    Require(Contains(text, "\"format\": \"anyps5-recipe\"") && Contains(text, "\"version\": 1"), "the recipe lacks its format header: " + text);
+    Require(Contains(text, "\"argv\": [\n    \"[redacted]\",\n    \"--aps5-report=on\"\n  ]"), "argv is redacted per value: " + text);
+    Require(Contains(text, "\"ANYPS5_GPU\": \"AMD Radeon\"") && Contains(text, "\"ANYPS5_INPUT_CONFIG\": \"[redacted]\""), "environment values are redacted per value: " + text);
+    Require(Contains(text, "\"configFiles\": [\n    \"pad.json\"\n  ]") && Contains(text, "\"commit\": \"" + std::string(40u, 'b') + "\""), "config names or the build commit are missing: " + text);
+    Require(!Contains(text, "alice"), "a user name reached the recipe: " + text);
+    recipe.environment = {{"ANYPS5_API_TOKEN", "hidden"}};
+    Require(!Contains(RunReport::SerializeRecipe(recipe, host), "hidden"), "a secret variable value reached the recipe");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1514,6 +1535,7 @@ int main(int argc, char** argv) {
         Run("slow-compile-count", SlowCompileTest);
         Run("recipe-redaction", RecipeRedactionTest);
         Run("recipe-environment", RecipeEnvironmentTest);
+        Run("recipe-serialize", RecipeSerializeTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
