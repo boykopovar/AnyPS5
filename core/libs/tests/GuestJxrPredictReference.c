@@ -153,3 +153,44 @@ int32_t JxrPredictReferenceMode_nid_no_patch(void* value, size_t column) {
 void JxrPredictReferenceUpdate_nid_no_patch(void* value, void* macroblock, size_t column, int32_t format) {
     updatePredInfo(&((JxrPredictCase*)value)->codec, (CWMIMBInfo*)macroblock, column, (COLORFORMAT)format);
 }
+
+int32_t JxrPredictReferenceAllocate_nid_no_patch(void* value) {
+    return allocatePredInfo(&((JxrPredictCase*)value)->codec);
+}
+
+void JxrPredictReferenceFree_nid_no_patch(void* value) {
+    freePredInfo(&((JxrPredictCase*)value)->codec);
+}
+
+void* JxrPredictPredInfoMemory_nid_no_patch(void* value) {
+    return ((JxrPredictCase*)value)->codec.pPredInfoMemory;
+}
+
+int JxrPredictPredInfoLaidOut_nid_no_patch(void* value) {
+    JxrPredictCase* entry = (JxrPredictCase*)value;
+    CWMImageStrCodec* codec = &entry->codec;
+    CWMIPredInfo* memory = codec->pPredInfoMemory;
+    size_t width = codec->cmbWidth, channel, column;
+    for (channel = 0; channel < MAX_CHANNELS; ++channel) {
+        if (channel >= codec->m_param.cNumChannels) {
+            if (codec->PredInfo[channel] != entry->rows[channel][0] || codec->PredInfoPrevRow[channel] != entry->rows[channel][1])
+                return 0;
+            continue;
+        }
+        if (codec->PredInfo[channel] != memory + 2 * channel * width || codec->PredInfoPrevRow[channel] != memory + (2 * channel + 1) * width)
+            return 0;
+        for (column = 0; column < width; ++column)
+            if (codec->PredInfo[channel][column].piAD != codec->PredInfo[channel][column].iAD ||
+                codec->PredInfoPrevRow[channel][column].piAD != codec->PredInfoPrevRow[channel][column].iAD)
+                return 0;
+    }
+    return 1;
+}
+
+void* JxrPredictPredInfoBlock_nid_no_patch(void* value) {
+    return ((JxrPredictCase*)value)->codec.pPredInfoMemory;
+}
+
+void JxrPredictSetPredInfoBlock_nid_no_patch(void* value, void* memory) {
+    ((JxrPredictCase*)value)->codec.pPredInfoMemory = (CWMIPredInfo*)memory;
+}

@@ -7,7 +7,8 @@ _Static_assert(sizeof(CWMImageStrCodec) == 35944, "CWMImageStrCodec size");
 _Static_assert(offsetof(CWMImageStrCodec, WMISCP) == 128 && offsetof(CWMImageStrCodec, MBInfo) == 33048 &&
                    offsetof(CWMImageStrCodec, m_param) == 34208 && offsetof(CWMImageStrCodec, m_bCtxLeft) == 34432 &&
                    offsetof(CWMImageStrCodec, pTile) == 34448 && offsetof(CWMImageStrCodec, cmbWidth) == 34528 &&
-                   offsetof(CWMImageStrCodec, PredInfo) == 35392,
+                   offsetof(CWMImageStrCodec, PredInfo) == 35392 &&
+                   offsetof(CWMImageStrCodec, pPredInfoMemory) == 35648,
                "CWMImageStrCodec layout");
 
 static const char* CheckTile(const CWMImageStrCodec* codec, size_t tile) {
@@ -81,6 +82,43 @@ const char* JxrGetDcAcPredMode_nid_no_patch(void* value, size_t column, int32_t*
     if (error) return error;
     *mode = getDCACPredMode(codec, column);
     return NULL;
+}
+
+const char* JxrPredInfoSize_nid_no_patch(const void* value, size_t* size) {
+    const CWMImageStrCodec* codec = (const CWMImageStrCodec*)value;
+    if (codec == NULL) return "null codec";
+    if (codec->m_param.cNumChannels > MAX_CHANNELS) return "more than 16 channels";
+    if (codec->cmbWidth > SIZE_MAX / (MAX_CHANNELS * 2 * sizeof(CWMIPredInfo))) return "prediction rows overflow the address space";
+    *size = codec->cmbWidth * codec->m_param.cNumChannels * 2 * sizeof(CWMIPredInfo);
+    return NULL;
+}
+
+void JxrAttachPredInfo_nid_no_patch(void* value, void* memory) {
+    CWMImageStrCodec* codec = (CWMImageStrCodec*)value;
+    CWMIPredInfo* entry = (CWMIPredInfo*)memory;
+    size_t channel, column;
+    codec->pPredInfoMemory = entry;
+    for (channel = 0; channel < codec->m_param.cNumChannels; ++channel) {
+        codec->PredInfo[channel] = entry;
+        entry += codec->cmbWidth;
+        codec->PredInfoPrevRow[channel] = entry;
+        entry += codec->cmbWidth;
+        for (column = 0; column < codec->cmbWidth; ++column) {
+            codec->PredInfo[channel][column].piAD = codec->PredInfo[channel][column].iAD;
+            codec->PredInfoPrevRow[channel][column].piAD = codec->PredInfoPrevRow[channel][column].iAD;
+        }
+    }
+}
+
+const char* JxrPredInfoMemory_nid_no_patch(void* value, void** memory) {
+    CWMImageStrCodec* codec = (CWMImageStrCodec*)value;
+    if (codec == NULL) return "null codec";
+    *memory = codec->pPredInfoMemory;
+    return NULL;
+}
+
+void JxrClearPredInfo_nid_no_patch(void* value) {
+    ((CWMImageStrCodec*)value)->pPredInfoMemory = NULL;
 }
 
 const char* JxrUpdatePredInfo_nid_no_patch(void* value, void* macroblock, size_t column, int32_t format) {
