@@ -617,7 +617,10 @@ int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data) {
 }
 
 int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)handle;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (color >= 4) return PAD_ERROR_INVALID_ARG;
+    NotImplemented_nid_no_patch("scePadSetUserColor: the color-preset ioctl");
     return 0;
 }
 
@@ -1284,6 +1287,8 @@ int APS5_VABI scePadSetFeatureReport2(std::int32_t handle, std::uint8_t reportId
 }
 
 int APS5_VABI scePadSetMuteLed(std::int32_t handle, std::uint32_t mode) {
+    (void)mode;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
