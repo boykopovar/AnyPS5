@@ -253,6 +253,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DebugNidBreakpoints.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DebugNidStops.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/DebugNidCommands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Queue.cpp
 )
 
