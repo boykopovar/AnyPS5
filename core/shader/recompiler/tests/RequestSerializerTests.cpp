@@ -180,16 +180,16 @@ std::string EncodeBase64(const std::vector<std::uint8_t>& bytes) {
     return text;
 }
 std::vector<std::uint8_t> AtVersion55(std::vector<std::uint8_t> bytes) {
-    Require(bytes.size() > 23u && bytes[4] == 58u && std::all_of(bytes.end() - 15, bytes.end(), [](std::uint8_t value) { return value == 0u; }));
-    bytes.resize(bytes.size() - 15u);
+    Require(bytes.size() > 23u && bytes[4] == 59u && std::all_of(bytes.end() - 13, bytes.end(), [](std::uint8_t value) { return value == 0u; }));
+    bytes.resize(bytes.size() - 13u);
     bytes[4] = 55u;
     return bytes;
 }
 
 std::string EncodeAtWriterVersion(std::vector<std::uint8_t> bytes) {
     Require(bytes.size() > 8u && bytes[4] == 55u);
-    bytes[4] = 58u;
-    bytes.insert(bytes.end(), 15u, 0u);
+    bytes[4] = 59u;
+    bytes.insert(bytes.end(), 13u, 0u);
     return EncodeBase64(bytes);
 }
 
@@ -212,8 +212,8 @@ void VerifyHeapProfile(const ShaderRecompiler::RequestSerializer& serializer) {
         Require(replay.request.target.heapDataUniformDwords == profile.heapDataUniformDwords);
         Require(serializer.Serialize(replay.request) == encoded);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes[4] == 58u && bytes.size() > 15u);
-        bytes.resize(bytes.size() - 15u);
+        Require(bytes[4] == 59u && bytes.size() > 13u);
+        bytes.resize(bytes.size() - 13u);
         for (const std::uint8_t version : {55u, 54u, 53u, 52u}) {
             if (version == 53u) bytes.resize(bytes.size() - 2u);
             if (version == 52u) bytes.pop_back();
@@ -222,7 +222,7 @@ void VerifyHeapProfile(const ShaderRecompiler::RequestSerializer& serializer) {
             Require(!older.gpuResolvedImages && !older.descriptorMemory && older.heapDataUniformDwords == 0u);
         }
         bytes.push_back(0u);
-        bytes[4] = 58u;
+        bytes[4] = 59u;
         bool truncated = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
@@ -247,48 +247,35 @@ void VerifyHeapProfile(const ShaderRecompiler::RequestSerializer& serializer) {
     ShaderRecompiler::RecompileRequest addressed = limits;
     addressed.target.heapDataUniformDwords = 0u;
     Require(serializer.Serialize(limits) != serializer.Serialize(addressed));
-    for (const bool descriptors : {false, true}) {
-        auto request = limits;
-        request.target.heapBufferDescriptors = descriptors;
-        const auto encoded = serializer.Serialize(request);
-        Require(serializer.Deserialize(encoded).request.target.heapBufferDescriptors == descriptors);
-        Require((encoded == serializer.Serialize(limits)) == !descriptors);
-        auto bytes = DecodeBase64(encoded);
-        bytes.resize(bytes.size() - 15u);
-        bytes[4] = 55u;
-        Require(!serializer.Deserialize(EncodeBase64(bytes)).request.target.heapBufferDescriptors);
-    }
 }
 
-void VerifyPushedBufferAddresses(const ShaderRecompiler::RequestSerializer& serializer) {
-    for (const bool pushed : {false, true}) {
-        for (const bool uniform : {false, true}) {
-            ShaderRecompiler::RecompileRequest request{};
-            request.target.gpuResolvedImages = true;
-            request.target.descriptorMemory = true;
-            request.target.heapBufferDescriptors = true;
-            request.target.pushedBufferAddresses = pushed;
-            request.target.uniformConstantBuffers = uniform;
-            const auto encoded = serializer.Serialize(request);
-            const auto replay = serializer.Deserialize(encoded).request.target;
-            Require(replay.pushedBufferAddresses == pushed && replay.uniformConstantBuffers == uniform && serializer.Serialize(serializer.Deserialize(encoded).request) == encoded);
-            auto bytes = DecodeBase64(encoded);
-            Require(bytes[4] == 58u && bytes.back() == (uniform ? 1u : 0u) && bytes[bytes.size() - 2u] == (pushed ? 1u : 0u));
-            bytes.pop_back();
-            bytes[4] = 57u;
-            const auto version57 = serializer.Deserialize(EncodeBase64(bytes)).request.target;
-            Require(version57.pushedBufferAddresses == pushed && !version57.uniformConstantBuffers);
-            bytes.pop_back();
-            bytes[4] = 56u;
-            const auto older = serializer.Deserialize(EncodeBase64(bytes)).request.target;
-            Require(!older.pushedBufferAddresses && !older.uniformConstantBuffers && older.gpuResolvedImages && older.descriptorMemory && older.heapBufferDescriptors);
-        }
+void VerifyRetiredHeapTargetFields(const ShaderRecompiler::RequestSerializer& serializer) {
+    for (const bool uniform : {false, true}) {
+        ShaderRecompiler::RecompileRequest request{};
+        request.target.gpuResolvedImages = true;
+        request.target.descriptorMemory = true;
+        request.target.uniformConstantBuffers = uniform;
+        const auto encoded = serializer.Serialize(request);
+        Require(serializer.Deserialize(encoded).request.target.uniformConstantBuffers == uniform);
+        auto bytes = DecodeBase64(encoded);
+        Require(bytes[4] == 59u && bytes.back() == (uniform ? 1u : 0u));
+        bytes.insert(bytes.end() - 1, 2u, 1u);
+        bytes[4] = 58u;
+        Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == encoded);
+        bytes.pop_back();
+        bytes[4] = 57u;
+        auto plain = request;
+        plain.target.uniformConstantBuffers = false;
+        Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == serializer.Serialize(plain));
+        bytes.pop_back();
+        bytes[4] = 56u;
+        Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == serializer.Serialize(plain));
     }
 }
 
 void VerifyKeyedTargetFields(const ShaderRecompiler::RequestSerializer& serializer) {
     using Field = bool ShaderRecompiler::SpirvTarget::*;
-    constexpr std::array<Field, 8> fields{&ShaderRecompiler::SpirvTarget::ldsLockFences, &ShaderRecompiler::SpirvTarget::meshWindowBuffer, &ShaderRecompiler::SpirvTarget::waveLdsMemoryBarriers, &ShaderRecompiler::SpirvTarget::deviceScopeLdsMemoryBarriers, &ShaderRecompiler::SpirvTarget::exactRobustLoads, &ShaderRecompiler::SpirvTarget::robustBufferAccess2, &ShaderRecompiler::SpirvTarget::pushedBufferAddresses, &ShaderRecompiler::SpirvTarget::uniformConstantBuffers};
+    constexpr std::array<Field, 7> fields{&ShaderRecompiler::SpirvTarget::ldsLockFences, &ShaderRecompiler::SpirvTarget::meshWindowBuffer, &ShaderRecompiler::SpirvTarget::waveLdsMemoryBarriers, &ShaderRecompiler::SpirvTarget::deviceScopeLdsMemoryBarriers, &ShaderRecompiler::SpirvTarget::exactRobustLoads, &ShaderRecompiler::SpirvTarget::robustBufferAccess2, &ShaderRecompiler::SpirvTarget::uniformConstantBuffers};
     const ShaderRecompiler::RecompileRequest defaults{};
     const auto defaultEncoded = serializer.Serialize(defaults);
     for (std::size_t chosen = 0; chosen <= fields.size(); ++chosen) {
@@ -300,8 +287,8 @@ void VerifyKeyedTargetFields(const ShaderRecompiler::RequestSerializer& serializ
         for (std::size_t index = 0; index < fields.size(); ++index) Require(replay.request.target.*fields[index] == (chosen == fields.size() || index == chosen));
         Require(serializer.Serialize(replay.request) == encoded);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes[4] == 58u && bytes.size() > 15u);
-        bytes.resize(bytes.size() - 15u);
+        Require(bytes[4] == 59u && bytes.size() > 13u);
+        bytes.resize(bytes.size() - 13u);
         for (const std::uint8_t version : {55u, 54u, 53u, 52u}) {
             if (version == 53u) bytes.resize(bytes.size() - 2u);
             if (version == 52u) bytes.pop_back();
@@ -835,7 +822,7 @@ int main() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 59u;
+        future[4] = 60u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
@@ -1194,7 +1181,7 @@ int main() {
     VerifyHeapProfile(serializer);
 
     VerifyKeyedTargetFields(serializer);
-    VerifyPushedBufferAddresses(serializer);
+    VerifyRetiredHeapTargetFields(serializer);
 
     return 0;
 }

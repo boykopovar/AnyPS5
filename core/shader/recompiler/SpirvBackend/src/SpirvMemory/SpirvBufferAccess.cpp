@@ -67,7 +67,7 @@ std::uint32_t overflowDword(SpirvEmitterState& state, std::uint32_t buffer, std:
 }
 
 std::uint32_t EmitBufferRootDword(SpirvEmitterState& state, std::uint32_t buffer, std::uint32_t word) {
-    if (!state.program.Metadata().bindings.pushedBuffers) FailEmit("only a stage with pushed buffer addresses reads the buffer root");
+    if (state.program.Metadata().bindings.bufferAddressDwords == 0u) FailEmit("only a stage with pushed buffer addresses reads the buffer root");
     if (word >= RuntimeAbi::PushedBufferWords) FailEmit("a pushed buffer record has no such word");
     if (buffer >= RuntimeAbi::PushedBufferLimit) return overflowDword(state, buffer, word);
     const auto u32 = TypeU32(state);
@@ -204,17 +204,11 @@ std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index
     }
     if (state.flattenedSrtVariable == 0) FailEmit("the flattened SRT descriptor is missing");
     const auto u32 = TypeU32(state);
-    std::uint32_t inBounds = 0;
-    if (state.flattenedSrtPushed) {
-        const auto dwords = EmitRootItemDword(state, RuntimeAbi::RootItem::SrtDwords, 0u);
-        inBounds = Binary(state, spv::OpULessThan, TypeBool(state), index, dwords);
-        index = Select(state, u32, inBounds, index, ConstantU32(state, 0u));
-    }
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0u), index);
     const auto value = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, u32, value, pointer);
-    return inBounds != 0 ? Select(state, u32, inBounds, value, ConstantU32(state, 0u)) : value;
+    return value;
 }
 
 std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dwordIndex) {

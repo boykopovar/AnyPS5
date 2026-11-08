@@ -49,7 +49,6 @@ struct IrBindingLayout {
     std::uint32_t samplerSlotDwords = 0;
     std::uint32_t imageSlotDwords = 0;
     std::uint32_t bufferAddressDwords = 0;
-    bool pushedBuffers = false;
     std::vector<std::uint32_t> pushedData;
     bool gpuResolvedImages = false;
     bool heapStorageImages = false;

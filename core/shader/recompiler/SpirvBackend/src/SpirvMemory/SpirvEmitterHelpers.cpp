@@ -510,9 +510,8 @@ void DefineDescriptors(SpirvEmitterState& state) {
         };
         switch (binding.kind) {
         case DescriptorBindingKind::Buffers: {
-            if (layout.bufferAddressDwords != 0u && !state.heapBufferDescriptors) {
+            if (layout.bufferAddressDwords != 0u) {
                 state.addressedBuffers = true;
-                if (!layout.pushedBuffers) break;
                 const auto count = layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
                 const auto pushedBuffer = [&](std::uint32_t type, std::uint32_t element, const char* name) {
                     const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, type), spv::StorageClassStorageBuffer);
@@ -628,12 +627,10 @@ void DefineDescriptors(SpirvEmitterState& state) {
             }
             break;
         case DescriptorBindingKind::FlattenedSrt:
-            if (layout.UsesDataAddress() && !state.heapBufferDescriptors) state.flattenedSrtAddressed = true;
+            if (layout.UsesDataAddress()) state.flattenedSrtAddressed = true;
             else {
                 state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
-                state.flattenedSrtPushed = layout.UsesDataAddress();
-                if (state.flattenedSrtPushed) state.pushItems |= RuntimeAbi::RootItemBit(RuntimeAbi::RootItem::SrtAddress);
-                else state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
+                state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
             }
             break;
         case DescriptorBindingKind::Samplers:

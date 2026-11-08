@@ -232,46 +232,26 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
     const auto& memory = context.Memory(instruction);
     if (state.addressedBuffers) {
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
-        const auto dword = state.program.Metadata().bindings.BufferAddressDword() + element * RuntimeAbi::BufferAddressWords;
-        const bool pushed = state.program.Metadata().bindings.pushedBuffers;
-        const auto word = [&](std::uint32_t index) { return pushed ? EmitBufferRootDword(state, element, index) : EmitShaderDataDwordLoad(state, dword + index); };
-        if (pushed) {
-            if (element >= state.pushedBufferVariables.size()) context.Fail(instruction, "a pushed buffer has no storage buffer variable");
-            if (state.pushedBufferUniformVariables[element] != 0u) {
-                if (instruction.Opcode() != IrOpcode::ReadConstBuffer || wide) context.Fail(instruction, "a pushed constant buffer is read by an access other than a scalar load");
-                MemoryResourceAccess access;
-                access.kind = memory.kind;
-                access.objectPointer = state.pushedBufferUniformVariables[element];
-                access.softwareBounds = true;
-                access.uniform = true;
-                access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, 2u));
-                access.byteOffset = state.memoryByteOffsets.at(element);
-                return access;
-            }
-            const auto variable = wide ? state.pushedBufferU64Variables[element] : plainLoad || state.pushedBufferCoherentVariables[element] == 0u ? state.pushedBufferVariables[element] : state.pushedBufferCoherentVariables[element];
-            if (variable == 0u) context.Fail(instruction, "a pushed buffer lacks the view this access needs");
+        const auto word = [&](std::uint32_t index) { return EmitBufferRootDword(state, element, index); };
+        if (element >= state.pushedBufferVariables.size()) context.Fail(instruction, "a pushed buffer has no storage buffer variable");
+        if (state.pushedBufferUniformVariables[element] != 0u) {
+            if (instruction.Opcode() != IrOpcode::ReadConstBuffer || wide) context.Fail(instruction, "a pushed constant buffer is read by an access other than a scalar load");
             MemoryResourceAccess access;
             access.kind = memory.kind;
-            access.objectPointer = variable;
+            access.objectPointer = state.pushedBufferUniformVariables[element];
             access.softwareBounds = true;
-            access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, wide ? 3u : 2u));
+            access.uniform = true;
+            access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, 2u));
             access.byteOffset = state.memoryByteOffsets.at(element);
-            access.memoryAccess = memory.coherent ? spv::MemoryAccessVolatileMask : 0u;
             return access;
         }
-        const auto u64 = TypeScalarU64(state);
-        auto address = ComposeAddress64(state, [&] { return word(0u); }, [&] { return word(1u); });
+        const auto variable = wide ? state.pushedBufferU64Variables[element] : plainLoad || state.pushedBufferCoherentVariables[element] == 0u ? state.pushedBufferVariables[element] : state.pushedBufferCoherentVariables[element];
+        if (variable == 0u) context.Fail(instruction, "a pushed buffer lacks the view this access needs");
         MemoryResourceAccess access;
         access.kind = memory.kind;
-        access.physical = true;
+        access.objectPointer = variable;
+        access.softwareBounds = true;
         access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, wide ? 3u : 2u));
-        if (state.program.Metadata().bindings.UsesDataAddress()) {
-            const auto empty = Binary(state, spv::OpIEqual, TypeBool(state), access.length, ConstantU32(state, 0u));
-            address = Select(state, u64, empty, EmitRootAddress(state, RuntimeAbi::RootItem::ShaderData), address);
-            access.clampedPhysical = true;
-        }
-        access.objectPointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpConvertUToPtr, readOnly ? TypePhysicalReadOnlyBufferPointer(state, wide) : TypePhysicalBufferPointer(state, wide), access.objectPointer, address);
         access.byteOffset = state.memoryByteOffsets.at(element);
         access.memoryAccess = memory.coherent ? spv::MemoryAccessVolatileMask : 0u;
         return access;

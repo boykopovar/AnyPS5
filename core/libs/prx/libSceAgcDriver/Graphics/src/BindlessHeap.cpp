@@ -149,22 +149,6 @@ bool DescriptorHeapEnabled() {
     return GpuHeapEnabled() && descriptorHeapDevice.load(std::memory_order_relaxed);
 }
 
-namespace {
-
-std::atomic<bool> pushedBufferAddresses{false};
-
-}
-
-// vkd3d-proton's heap mode passes root descriptors as addresses in push data on every vendor and maps
-// them as real buffers (dxil.c heap lowering). Heap stages do the same with their guest buffers;
-// APS5_PUSHED_BUFFERS=0 reads them through heap buffer descriptors written per draw instead.
-bool ChoosePushedBufferAddresses() {
-    const char* forced = std::getenv("APS5_PUSHED_BUFFERS");
-    const bool chosen = forced == nullptr || *forced == '\0' || std::strcmp(forced, "0") != 0;
-    pushedBufferAddresses.store(chosen, std::memory_order_relaxed);
-    return chosen;
-}
-
 std::uint32_t PushedBufferRecordCap() {
     static const std::uint32_t cap = [] {
         const char* value = std::getenv("APS5_PUSHED_BUFFER_RECORDS");
@@ -173,30 +157,21 @@ std::uint32_t PushedBufferRecordCap() {
     return cap;
 }
 
-bool PushedBufferAddressesEnabled() {
-    return DescriptorHeapEnabled() && pushedBufferAddresses.load(std::memory_order_relaxed);
-}
-
 namespace {
 
 std::atomic<bool> uniformConstantBuffers{false};
 
 }
 
-// vkd3d-proton's heap mode maps every root constant buffer as a uniform buffer, on every vendor.
-// Pushed guest buffers that a stage only reads with scalar loads at constant offsets follow it;
-// APS5_UNIFORM_CONSTANT_BUFFERS=0 keeps them storage buffers.
-bool ChooseUniformConstantBuffers(bool pushed, const VkPhysicalDeviceLimits& limits) {
-    const char* forced = std::getenv("APS5_UNIFORM_CONSTANT_BUFFERS");
-    const bool wanted = forced == nullptr || *forced == '\0' || std::strcmp(forced, "0") != 0;
-    const bool chosen = wanted && pushed && limits.maxUniformBufferRange >= ShaderRecompiler::RuntimeAbi::UniformConstantBufferBytes &&
+bool ChooseUniformConstantBuffers(bool standardLayout, const VkPhysicalDeviceLimits& limits) {
+    const bool chosen = standardLayout && limits.maxUniformBufferRange >= ShaderRecompiler::RuntimeAbi::UniformConstantBufferBytes &&
                         limits.minUniformBufferOffsetAlignment <= ShaderRecompiler::RuntimeAbi::UniformViewAdjustmentLimit + 1u;
     uniformConstantBuffers.store(chosen, std::memory_order_relaxed);
     return chosen;
 }
 
 bool UniformConstantBuffersEnabled() {
-    return PushedBufferAddressesEnabled() && uniformConstantBuffers.load(std::memory_order_relaxed);
+    return DescriptorHeapEnabled() && uniformConstantBuffers.load(std::memory_order_relaxed);
 }
 
 namespace {
@@ -271,10 +246,6 @@ HeapSizes heapSizes(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& propertie
     return base;
 }
 
-}
-
-bool BindlessHeap::RingInResourceHeap(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& properties, VkDeviceSize uniformAlignment) {
-    return heapSizes(properties, uniformAlignment).ringBytes != 0u;
 }
 
 bool BindlessHeap::Fits(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& properties) {
@@ -1118,8 +1089,6 @@ struct HeapBindingUse {
     bool meshWindowMemory = false;
     bool scratchPoolMemory = false;
     std::vector<std::uint32_t> dataUniforms;
-    std::vector<std::uint32_t> ringBuffers;
-    std::vector<std::uint32_t> srtAddresses;
     std::vector<std::uint32_t> embeddedSamplers;
     std::vector<std::uint32_t> pushedBuffers;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
@@ -1190,14 +1159,6 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             continue;
         }
         const bool stageBinding = binding / bindingCount < Abi::StageCount;
-        if (roots.gdsAddress && stageBinding && set == Abi::DescriptorSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers)) {
-            if (std::ranges::find(use.ringBuffers, binding) == use.ringBuffers.end()) use.ringBuffers.push_back(binding);
-            continue;
-        }
-        if (roots.gdsAddress && stageBinding && set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt)) {
-            if (std::ranges::find(use.srtAddresses, binding) == use.srtAddresses.end()) use.srtAddresses.push_back(binding);
-            continue;
-        }
         const bool heapImageOrSampler = set == Abi::FragmentDescriptorSet && binding >= firstImage && binding <= samplers;
         if (!heapImageOrSampler) {
             use.refused = entry;
@@ -1237,20 +1198,6 @@ VkDescriptorSetAndBindingMappingEXT pushAddressMapping(std::uint32_t set, std::u
 std::uint32_t rootItemOffset(const ShaderRecompiler::StagePushPlacement* placement, Abi::RootItem item) {
     Require(placement != nullptr && placement->Item(item) != Abi::NoPushPosition, "a heap mapping reads a root item its pipeline's push layout does not hold");
     return placement->Item(item) * static_cast<std::uint32_t>(sizeof(std::uint32_t));
-}
-
-VkDescriptorSetAndBindingMappingEXT ringBufferMapping(std::uint32_t binding, VkDeviceSize ringOffset, const ShaderRecompiler::StagePushPlacement* placement) {
-    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
-    mapping.descriptorSet = Abi::DescriptorSet;
-    mapping.firstBinding = binding;
-    mapping.bindingCount = 1;
-    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
-    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
-    mapping.sourceData.pushIndex.heapOffset = static_cast<std::uint32_t>(ringOffset);
-    mapping.sourceData.pushIndex.pushOffset = rootItemOffset(placement, Abi::RootItem::FlattenedSrt);
-    mapping.sourceData.pushIndex.heapIndexStride = BindlessHeap::BufferSlotBytes;
-    mapping.sourceData.pushIndex.heapArrayStride = BindlessHeap::BufferSlotBytes;
-    return mapping;
 }
 
 VkDescriptorSetAndBindingMappingEXT pushedBufferMapping(std::uint32_t binding, const ShaderRecompiler::StagePushPlacement* placement) {
@@ -1380,8 +1327,6 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         .workgroupAddress = workgroupAddressOffset != ~0u, .gdsAddress = rootGds, .faultAddress = rootFault, .pixelLds = pixelLds, .meshWindow = meshWindow,
         .scratchPool = scratchPool};
     if (!heapBindings(spirv, roots, use)) return false;
-    if (!use.ringBuffers.empty() && !ringInHeap) return false;
-    if (!use.ringBuffers.empty() && context.descriptorHeapProperties.bufferDescriptorSize != BufferSlotBytes) return false;
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
     constexpr VkSpirvResourceTypeFlagsEXT imageResources = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT |
                                                            VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT |
@@ -1411,10 +1356,6 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, placement));
     std::ranges::sort(use.pushedBuffers);
     for (const auto binding : use.pushedBuffers) mappings.push_back(pushedBufferMapping(binding, placement));
-    std::ranges::sort(use.ringBuffers);
-    for (const auto binding : use.ringBuffers) mappings.push_back(ringBufferMapping(binding, ringHeapOffset, placement));
-    std::ranges::sort(use.srtAddresses);
-    for (const auto binding : use.srtAddresses) mappings.push_back(pushAddressMapping(Abi::GpuDataSet, binding, rootItemOffset(placement, Abi::RootItem::SrtAddress)));
     if (use.workgroupMemory)
         mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset));
     if (use.scratchPoolMemory)
@@ -1430,28 +1371,6 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         mappings.push_back(heapMapping(ShaderRecompiler::MeshWindowDescriptorSet, 0,
                                        VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT, meshWindowHeapOffset, 0));
     return true;
-}
-
-std::uint32_t BindlessHeap::RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark) {
-    Require(ringInHeap && context.descriptorHeapProperties.bufferDescriptorSize == BufferSlotBytes, "ring buffer descriptors need the descriptor ring inside the resource heap");
-    SpanScope scope(*this);
-    const auto span = RingAllocate(buffers.size() * (BufferSlotBytes / sizeof(std::uint32_t)), mark);
-    counts.bufferDescriptors += buffers.size();
-    Require(span.offset % BufferSlotBytes == 0u, "a ring buffer descriptor span is misaligned");
-    struct ResourcesStorage {};
-    struct RangesStorage {};
-    auto& resources = HostThreadLocal<std::vector<VkResourceDescriptorInfoEXT>, ResourcesStorage>();
-    auto& ranges = HostThreadLocal<std::vector<VkHostAddressRangeEXT>, RangesStorage>();
-    resources.assign(buffers.size(), {VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT});
-    ranges.resize(buffers.size());
-    auto* bytes = reinterpret_cast<std::byte*>(span.words.data());
-    for (std::size_t index = 0; index < buffers.size(); ++index) {
-        resources[index].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        resources[index].data.pAddressRange = &buffers[index];
-        ranges[index] = {bytes + index * BufferSlotBytes, BufferSlotBytes};
-    }
-    Check(writeResourceDescriptors(context.device, static_cast<std::uint32_t>(buffers.size()), resources.data(), ranges.data()), "vkWriteResourceDescriptorsEXT ring buffers");
-    return static_cast<std::uint32_t>(span.offset / BufferSlotBytes);
 }
 
 void BindlessHeap::writeBufferDescriptor(VkDeviceSize offset, VkDeviceAddress address, VkDeviceSize bytes, const char* what) {
@@ -1516,7 +1435,7 @@ std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapCost::Count)
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(HeapCost::Count)> heapCostCalls{};
 constexpr std::array<const char*, static_cast<std::size_t>(HeapCost::Count)> HeapCostNames{
     "stage prepare",  "heap stage call", "stage finish", "walk memo",        "walk",        "materialize", "template find",
-    "template build", "slots",           "stage data",   "buffer addresses", "memo insert", "guards"};
+    "template build", "slots",           "stage data",   "memo insert", "guards"};
 
 void reportHeapStatistics() {
     if (!pipelineStats()) return;
@@ -1565,7 +1484,6 @@ void reportHeapStatistics() {
             totals.spansExpired += counts.spansExpired;
             totals.encodes += counts.encodes;
             totals.encodedCopies += counts.encodedCopies;
-            totals.bufferDescriptors += counts.bufferDescriptors;
             totals.slotsEvicted += counts.slotsEvicted;
             totals.evictionWaits += counts.evictionWaits;
             totals.ringWaits += counts.ringWaits;
@@ -1592,7 +1510,6 @@ void reportHeapStatistics() {
     const auto spansExpired = windowDelta(totals.spansExpired, lastTotals.spansExpired);
     const auto imageEncodes = windowDelta(totals.encodes, lastTotals.encodes);
     const auto imageCopies = windowDelta(totals.encodedCopies, lastTotals.encodedCopies);
-    const auto bufferDescriptors = windowDelta(totals.bufferDescriptors, lastTotals.bufferDescriptors);
     const auto slotsEvicted = windowDelta(totals.slotsEvicted, lastTotals.slotsEvicted);
     const auto evictionWaits = windowDelta(totals.evictionWaits, lastTotals.evictionWaits);
     const auto ringWaits = windowDelta(totals.ringWaits, lastTotals.ringWaits);
@@ -1610,10 +1527,10 @@ void reportHeapStatistics() {
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; excluded:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, %llu early submits, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); spans %llu written / %llu kept / %llu expired; data pool %llu MiB written, %llu blocks (%llu MiB), %llu made / %llu recycled / %llu freed, since start at most %llu KiB per batch and %llu KiB per span; descriptor ring %llu MiB, %llu waits, %llu busy chunks skipped, %llu early submits, since start at most %llu KiB per batch; image descriptors %llu encoded / %llu copied; image slots %llu of %u held, %llu evicted (%llu waits); samplers evicted %llu; slot pressure submits %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), excluded.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(pressureSubmits), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(poolMiB), printed(totals.poolBlocksHeld), printed(totals.poolBlockBytes >> 20u), printed(poolMade), printed(poolRecycled), printed(poolFreed), printed(totals.poolBatchPeakBytes >> 10u), printed(totals.ringSpanPeakBytes >> 10u), printed(ringMiB), printed(ringWaits), printed(busySkips), printed(pressureSubmits), printed(totals.ringBatchPeakBytes >> 10u), printed(imageEncodes), printed(imageCopies), printed(totals.imageSlotsHeld), BindlessHeap::ImageSlotCapacity(), printed(slotsEvicted), printed(evictionWaits), printed(samplersEvicted), printed(slotPressureSubmits), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {

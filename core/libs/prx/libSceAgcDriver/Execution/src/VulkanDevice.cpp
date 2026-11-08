@@ -751,8 +751,6 @@ struct VulkanDevice::State {
     bool descriptorHeap = false;
     VkPhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     std::uint32_t heapDataUniformDwords = 0;
-    bool heapBufferDescriptors = false;
-    bool pushedBufferAddresses = false;
     bool uniformConstantBuffers = false;
     std::unique_ptr<Graphics::Recorder> recorder;
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
@@ -2296,17 +2294,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             state->descriptorHeap = true;
             state->maintenance5 = true;
             state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
-            if (Graphics::BindlessHeap::RingInResourceHeap(state->descriptorHeapProperties, state->properties.limits.minUniformBufferOffsetAlignment))
-                state->heapBufferDescriptors = state->descriptorHeapProperties.bufferDescriptorSize == Graphics::BindlessHeap::BufferSlotBytes;
-            state->pushedBufferAddresses = Graphics::ChoosePushedBufferAddresses();
-            // A pushed constant buffer is a uniform block of dwords (array stride 4), which needs the
-            // standard (std430) uniform buffer layout.
             if (hasExtension(VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 layoutFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &standardLayout};
                 state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &layoutFeatures);
                 standardLayout.pNext = nullptr;
             }
-            state->uniformConstantBuffers = Graphics::ChooseUniformConstantBuffers(state->pushedBufferAddresses && standardLayout.uniformBufferStandardLayout == VK_TRUE, state->properties.limits);
+            state->uniformConstantBuffers = Graphics::ChooseUniformConstantBuffers(standardLayout.uniformBufferStandardLayout == VK_TRUE, state->properties.limits);
             if (state->uniformConstantBuffers) deviceExtensions.push_back(VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME);
             deviceExtensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
             for (const char* required : {VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME}) {
@@ -4739,9 +4732,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.float32DenormPreserve = state->float32DenormPreserve;
     target.descriptorMemory = Graphics::DescriptorHeapEnabled();
     target.heapDataUniformDwords = target.descriptorMemory ? state->heapDataUniformDwords : 0u;
-    target.heapBufferDescriptors = target.descriptorMemory && state->heapBufferDescriptors;
-    target.pushedBufferAddresses = target.descriptorMemory && state->pushedBufferAddresses;
-    target.uniformConstantBuffers = target.pushedBufferAddresses && state->uniformConstantBuffers;
+    target.uniformConstantBuffers = target.descriptorMemory && state->uniformConstantBuffers;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
     return target;
@@ -4895,7 +4886,6 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.recorder = state->recorder.get();
     context.descriptorHeap = state->descriptorHeap;
     context.descriptorHeapProperties = state->descriptorHeapProperties;
-    context.heapBufferDescriptors = state->heapBufferDescriptors;
     context.descriptorCache = state->descriptorCache.get();
     context.vertexInputs = state->vertexInputs.get();
     context.vertexFormats = &state->vertexFormats;

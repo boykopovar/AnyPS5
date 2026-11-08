@@ -247,7 +247,6 @@ struct Context {
     // Batches GPU work across guest commands (see Recorder); null before the device finished setup.
     Recorder* recorder = nullptr;
     bool descriptorHeap = false;
-    bool heapBufferDescriptors = false;
     VkPhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     // Per-device caches of the immutable descriptor objects a ShaderResources build needs (set
     // layouts, descriptor pools, samplers); null (tests) means every build makes and destroys its own.

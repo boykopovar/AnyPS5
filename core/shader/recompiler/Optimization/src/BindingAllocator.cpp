@@ -81,7 +81,7 @@ bool usesGds(const IrProgram& program) {
 }
 
 BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, const AllocationOptions& options) const {
-    const auto [registrationModules, stencilReplay, gpuResolvedImages, descriptorMemory, pushedBufferAddresses] = options;
+    const auto [registrationModules, stencilReplay, gpuResolvedImages, descriptorMemory] = options;
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
@@ -178,7 +178,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
     if (descriptorMemory && gpuResolvedImages) next.bufferAddressDwords = static_cast<std::uint32_t>(info.buffers.size()) * RuntimeAbi::BufferAddressWords;
-    next.pushedBuffers = pushedBufferAddresses && next.bufferAddressDwords != 0u;
     if (next.UsesDataAddress()) placePushedData(next);
 
     std::vector<std::uint32_t> samplers;

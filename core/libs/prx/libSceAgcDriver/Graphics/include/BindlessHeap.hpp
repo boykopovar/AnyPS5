@@ -44,7 +44,6 @@ public:
     static BindlessHeap* Existing(const Context& context);
     static void Release(VkDevice device);
     static bool Fits(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& properties);
-    static bool RingInResourceHeap(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& properties, VkDeviceSize uniformAlignment);
 
     bool DescriptorHeapMode() const { return resourceHeap != nullptr; }
     VkDeviceSize ImageHeapStride() const { return imageHeapStride; }
@@ -107,7 +106,6 @@ public:
         bool acquired;
     };
     std::optional<DataSpan> KeepOrAllocate(std::size_t words, SpanMark& mark, bool same);
-    std::uint32_t RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark);
     static constexpr std::uint32_t BufferSlotBytes = 16u;
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
@@ -119,7 +117,7 @@ public:
         std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
         std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
         std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0, ringBytes = 0, imageSlotsHeld = 0;
-        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, busyChunksSkipped = 0, bufferDescriptors = 0;
+        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, busyChunksSkipped = 0;
         std::uint64_t ringPressureSubmits = 0, slotPressureSubmits = 0, samplersEvicted = 0;
         std::uint64_t poolBytes = 0, poolBatchPeakBytes = 0, poolBlocksMade = 0, poolBlocksRecycled = 0, poolBlocksFreed = 0, poolBlocksHeld = 0, poolBlockBytes = 0;
     };
@@ -305,9 +303,7 @@ private:
 bool GpuHeapEnabled();
 void SetDescriptorHeapDevice(bool available);
 bool DescriptorHeapEnabled();
-bool ChoosePushedBufferAddresses();
-bool PushedBufferAddressesEnabled();
-bool ChooseUniformConstantBuffers(bool pushed, const VkPhysicalDeviceLimits& limits);
+bool ChooseUniformConstantBuffers(bool standardLayout, const VkPhysicalDeviceLimits& limits);
 bool UniformConstantBuffersEnabled();
 bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
                             std::pair<std::uint32_t, std::uint32_t>* refused = nullptr);
@@ -347,7 +343,6 @@ enum class HeapCost : std::uint8_t {
     TemplateBuild,
     Slots,
     StageData,
-    BufferAddresses,
     MemoInsert,
     Guards,
     Count

@@ -47,7 +47,6 @@ struct SpirvTargetOptions {
     bool gpuResolvedImages = false;
     std::uint32_t heapDataUniformDwords = 0;
     bool uniformConstantBuffers = false;
-    bool heapBufferDescriptors = false;
     bool ldsLockFences = false;
     bool meshWindowBuffer = false;
     bool float16WidenNans = false;

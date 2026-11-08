@@ -121,7 +121,6 @@ struct SpirvEmitterState {
     bool gpuResolvedImages = false;
     std::uint32_t heapDataUniformDwords = 0;
     bool uniformConstantBuffers = false;
-    bool heapBufferDescriptors = false;
     bool addressedBuffers = false;
     std::vector<std::uint32_t> pushedBufferVariables;
     std::vector<std::uint32_t> pushedBufferCoherentVariables;
@@ -248,7 +247,6 @@ struct SpirvEmitterState {
     std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
     bool flattenedSrtAddressed = false;
-    bool flattenedSrtPushed = false;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;
     std::uint32_t ldsBufferU64Variable = 0;

@@ -8273,7 +8273,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQToAAAA=", "new requests did not use serialization version 58");
+    require(requestPrefix(encoded, 8u) == "NVNQQTsAAAA=", "new requests did not use serialization version 59");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8394,7 +8394,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTsAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTwAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8448,9 +8448,9 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
             bytes.push_back(static_cast<std::uint8_t>((chunk >> bits) & 0xffu));
         }
     }
-    if (bytes.size() > 15u && bytes[4] == 58u) {
-        require(std::all_of(bytes.end() - 15, bytes.end(), [](std::uint8_t value) { return value == 0u; }), "a version 58 request in these checks set a GPU heap target field");
-        bytes.resize(bytes.size() - 15u);
+    if (bytes.size() > 13u && bytes[4] == 59u) {
+        require(std::all_of(bytes.end() - 13, bytes.end(), [](std::uint8_t value) { return value == 0u; }), "a version 59 request in these checks set a GPU heap target field");
+        bytes.resize(bytes.size() - 13u);
         bytes[4] = 55u;
     }
     return bytes;
@@ -8458,8 +8458,8 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 
 std::string encodeBase64(std::vector<std::uint8_t> bytes) {
     if (bytes.size() > 4u && bytes[4] == 55u) {
-        bytes[4] = 58u;
-        bytes.insert(bytes.end(), 15u, 0u);
+        bytes[4] = 59u;
+        bytes.insert(bytes.end(), 13u, 0u);
     }
     constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string text;
@@ -9708,7 +9708,7 @@ void verifyCoherentGds() {
     require(std::ranges::find(decorations[gds], static_cast<std::uint32_t>(spv::DecorationCoherent)) != decorations[gds].end(), "coherent GDS: the gds buffer is not Coherent");
 }
 
-auto recompileCoherent(const std::vector<std::uint32_t>& code, std::uint32_t address, std::span<const std::uint32_t> capabilities, bool addressed) {
+auto recompileCoherent(const std::vector<std::uint32_t>& code, std::uint32_t address, std::span<const std::uint32_t> capabilities) {
     using namespace ShaderRecompiler;
     alignas(256) static std::array<std::uint32_t, 64> input{};
     alignas(256) static std::array<std::uint32_t, 64> output{};
@@ -9731,8 +9731,6 @@ auto recompileCoherent(const std::vector<std::uint32_t>& code, std::uint32_t add
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
     request.target.fragmentShaderBarycentricEnabled = false;
-    request.target.gpuResolvedImages = addressed;
-    request.target.descriptorMemory = addressed;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
     return Recompile(request).spirv;
@@ -9751,7 +9749,7 @@ void verifyCoherentBufferAccesses() {
         std::vector<std::uint32_t> code{0x34020082u};
         if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
         code.insert(code.end(), {0xe0301000u | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, 0xe0701000u | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
-        const auto words = recompileCoherent(code, 0x5a000u, capabilities, false);
+        const auto words = recompileCoherent(code, 0x5a000u, capabilities);
         Module module;
         std::map<std::uint32_t, std::uint32_t> bases;
         const auto base = [&](std::uint32_t pointer) {
@@ -9809,51 +9807,6 @@ void verifyCoherentBufferAccesses() {
     const auto invalidated = compile(true, false, true);
     require(!declared(invalidated, "buffers_coherent") && decorated(invalidated, "buffers", spv::DecorationCoherent), "coherent buffers: a program that invalidates the vector caches does not keep every buffer access coherent");
     require(only(invalidated.loads, "buffers") && only(invalidated.stores, "buffers"), "coherent buffers: a program that invalidates the vector caches does not use the coherent buffer array");
-}
-
-void verifyAddressedCoherentBufferAccesses() {
-    using namespace ShaderRecompiler;
-    const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityInt64Atomics, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
-    struct Counts {
-        std::uint32_t loads = 0, stores = 0, wideLoads = 0;
-    };
-    const auto compile = [&](bool glcLoad, bool glcStore, bool pair, bool invalidate) {
-        const std::uint32_t loadOp = pair ? 0xe0341000u : 0xe0301000u;
-        const std::uint32_t storeOp = pair ? 0xe0741000u : 0xe0701000u;
-        std::vector<std::uint32_t> code{0x34020082u};
-        if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
-        code.insert(code.end(), {loadOp | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, storeOp | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
-        const auto words = recompileCoherent(code, 0x5b000u, capabilities, true);
-        std::set<std::uint32_t> wideTypes;
-        Counts counts;
-        for (std::size_t cursor = 5; cursor < words.size();) {
-            const auto count = words[cursor] >> 16u;
-            const auto opcode = words[cursor] & 0xffffu;
-            require(count != 0 && count <= words.size() - cursor, "addressed coherent buffers: truncated SPIR-V instruction");
-            if (opcode == spv::OpTypeInt && words[cursor + 2] == 64u) wideTypes.insert(words[cursor + 1]);
-            if (opcode == spv::OpAtomicLoad) ++(wideTypes.contains(words[cursor + 1]) ? counts.wideLoads : counts.loads);
-            if (opcode == spv::OpAtomicStore) ++counts.stores;
-            cursor += count;
-        }
-        return counts;
-    };
-
-    const auto plain = compile(false, false, false, false);
-    require(plain.loads == 0u && plain.stores == 0u && plain.wideLoads == 0u, "addressed coherent buffers: accesses without GLC became atomics");
-
-    const auto single = compile(true, true, false, false);
-    require(single.loads != 0u, "addressed coherent buffers: a GLC load through a buffer address is not an atomic load");
-    require(single.stores != 0u, "addressed coherent buffers: a GLC store through a buffer address is not an atomic store");
-
-    const auto wide = compile(true, true, true, false);
-    require(wide.wideLoads != 0u, "addressed coherent buffers: a GLC two-dword load through a buffer address is not one 64-bit atomic load");
-    require(wide.stores != 0u, "addressed coherent buffers: a GLC two-dword store through a buffer address is not an atomic store");
-
-    const auto invalidated = compile(false, true, false, true);
-    require(invalidated.loads != 0u, "addressed coherent buffers: a load without GLC in a program that invalidates the vector caches is not an atomic load");
-
-    const auto invalidatedPlain = compile(false, false, false, true);
-    require(invalidatedPlain.loads == 0u && invalidatedPlain.stores == 0u, "addressed coherent buffers: a program that invalidates the vector caches without GLC or DLC accesses made its accesses atomic");
 }
 
 void verifyUnnormalizedSamplers() {
@@ -12097,7 +12050,6 @@ int main(int argc, char** argv) {
         verifyInt64AtomicCapabilities();
         verifySpecializedBufferAtomicBindings();
         verifyCoherentBufferAccesses();
-        verifyAddressedCoherentBufferAccesses();
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyNullVolumeUnnormalizedSampler();

@@ -774,7 +774,6 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.samplerSlotDwords);
     writer.Value(layout.imageSlotDwords);
     writer.Value(layout.bufferAddressDwords);
-    writer.Value(layout.pushedBuffers);
     writer.Values(std::span<const std::uint32_t>(layout.pushedData));
     writer.Value(layout.heapStorageImages);
     writer.Value(layout.gpuResolvedImages);
@@ -797,7 +796,6 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.samplerSlotDwords);
     reader.Value(layout.imageSlotDwords);
     reader.Value(layout.bufferAddressDwords);
-    reader.Value(layout.pushedBuffers);
     reader.Values(layout.pushedData);
     reader.Value(layout.heapStorageImages);
     reader.Value(layout.gpuResolvedImages);

@@ -168,7 +168,6 @@ struct ImageTableReuseCounts {
 };
 ImageTableReuseCounts ImageTableReuses();
 struct HeapBufferPathCounts {
-    std::uint64_t ringRuns = 0;
     std::uint64_t pushedStages = 0;
     std::uint64_t overflowStages = 0;
 };
@@ -681,15 +680,7 @@ private:
     bool splitSets = false;
     bool heapStage = false;
     mutable std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
-    mutable std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringRunPending{};
-    void settleRingRuns() const;
     void writeHeapStage(const CompiledShader& shader);
-    struct RingDescriptors {
-        VkDeviceAddressRangeEXT srt{};
-        std::vector<VkDeviceAddressRangeEXT> ranges;
-        BindlessHeap::SpanMark mark;
-        std::uint32_t first = 0;
-    };
     struct HeapStageState {
         std::vector<std::uintptr_t> key;
         std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
@@ -706,7 +697,6 @@ private:
         };
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
-        mutable RingDescriptors descriptors;
         std::uint64_t inertProgram = 0;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
@@ -747,22 +737,13 @@ private:
     std::vector<VkDeviceAddressRangeEXT> resolvedAddresses;
     VkDeviceAddress emptyAddress = 0;
     std::size_t gdsAllocation = std::numeric_limits<std::size_t>::max();
-    std::array<std::vector<std::uint32_t>, ShaderRecompiler::RuntimeAbi::StageCount> stageDataWords;
-    std::array<std::size_t, ShaderRecompiler::RuntimeAbi::StageCount> stageDataIndex{};
     std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtDwords{};
     std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const CompiledShader& shader, std::size_t stageIndex);
-    void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides,
-                              std::vector<VkDeviceAddressRangeEXT>* ranges = nullptr) const;
-    VkDeviceAddressRangeEXT srtRange(std::size_t stage) const;
-    bool stageReadsOverride(std::size_t stage, const std::vector<VkDescriptorBufferInfo>& overrides) const;
+    void bufferRanges(std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const;
     VkDeviceAddressRangeEXT bufferAddress(const Allocation& allocation) const;
     void resolveBufferAddresses();
-    std::uint32_t ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const;
-    std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtOffsets{};
-    std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringDescriptorStages{};
-    std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const;
     struct FaultDescriptor {
         std::size_t write;
         std::size_t buffer;

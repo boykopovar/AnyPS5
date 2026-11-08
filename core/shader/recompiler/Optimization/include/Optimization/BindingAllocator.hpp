@@ -27,7 +27,6 @@ struct AllocationOptions {
     bool stencilReplay = false;
     bool gpuResolvedImages = false;
     bool descriptorMemory = false;
-    bool pushedBufferAddresses = false;
 };
 
 class BindingAllocator {
