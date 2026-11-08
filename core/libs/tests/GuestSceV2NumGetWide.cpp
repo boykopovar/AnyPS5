@@ -199,6 +199,24 @@ int main() {
     const auto unsignedLong = Run<std::uint64_t>(bench, 10, u"ff", Hex);
     Require(unsignedLong.value == 255 && unsignedLong.state == EofBit, "unsigned long long");
 
+    const auto floatValue = Run<float>(bench, 11, u"1.5x", Dec);
+    Require(floatValue.value == 1.5f && floatValue.state == 0 && floatValue.consumed == 3, "float");
+    const auto doubleHex = Run<double>(bench, 12, u"0x1.8p1", Dec);
+    Require(doubleHex.value == 3.0 && doubleHex.state == EofBit, "double reads hex");
+    const auto highExponent = Run<double>(bench, 12, u"2ť", Dec);
+    Require(highExponent.value == 2.0 && highExponent.state == 0 && highExponent.consumed == 1, "a high byte over e is not an exponent");
+    const auto highPoint = Run<double>(bench, 12, u"2Į5", Dec);
+    Require(highPoint.value == 2.0 && highPoint.state == 0 && highPoint.consumed == 1, "a high byte over the point is not the point");
+    const auto longFloat = Run<long double>(bench, 13, u"2.25e1", Dec);
+    Require(longFloat.value == 22.5L && longFloat.state == EofBit, "long double");
+    const auto longHex = Run<long double>(bench, 13, u"0x1p4", 0x3000);
+    Require(longHex.value == 16.0L && longHex.state == EofBit, "long double hexfloat");
+    const auto highDigit = Run<double>(bench, 12, u"2ĳ", Dec);
+    Require(highDigit.value == 2.0 && highDigit.state == 0 && highDigit.consumed == 1, "a high byte over a digit is not a digit");
+    const auto longHighPoint = Run<long double>(bench, 13, u"2Į5", Dec);
+    Require(longHighPoint.value == 2.0L && longHighPoint.state == 0 && longHighPoint.consumed == 1, "a high byte over the point ends the long double");
+    const auto longHigh = Run<long double>(bench, 13, u"3Ņ", Dec);
+    Require(longHigh.value == 3.0L && longHigh.state == 0 && longHigh.consumed == 1, "a high byte over E ends the long double");
     CheckBool(bench, "bool one", u"1", Dec, true, EofBit, 1);
     CheckBool(bench, "bool true", u"true", BoolAlpha, true, EofBit, 4);
     CheckBool(bench, "bool false", u"false", BoolAlpha, false, EofBit, 5);
@@ -223,6 +241,12 @@ int main() {
     CheckLongLong(bench, "a non-ASCII separator", u"1 234", Dec, 1234, EofBit, 5);
     CheckLongLong(bench, "the separator's low byte is not a separator", u"1/234", Dec, 1, 0, 1);
     CheckLongLong(bench, "a wrong group", u"12 34", Dec, 1234, FailBit | EofBit, 5);
+    numpunct->decimalPoint = 0x066b;
+    const auto widePoint = Run<double>(bench, 12, u"1 234٫5", Dec);
+    Require(widePoint.value == 1234.5 && widePoint.state == EofBit, "a non-ASCII separator and decimal point");
+    const auto widePointLong = Run<long double>(bench, 13, u"1 234٫5", Dec);
+    Require(widePointLong.value == 1234.5L && widePointLong.state == EofBit, "a non-ASCII separator and decimal point for long double");
+    numpunct->decimalPoint = u'.';
     numpunct->grouping = savedGrouping;
     numpunct->thousandsSep = savedSeparator;
 

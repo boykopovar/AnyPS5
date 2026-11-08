@@ -1080,11 +1080,7 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2NumGetLongDouble
 
 template<typename Text> auto SceV2NumGetFloatingSlots() {
     using Virtual = void (APS5_VABI*)();
-    if constexpr (std::is_same_v<Text, char>) {
-        return std::array<Virtual, 3>{reinterpret_cast<Virtual>(&SceV2NumGetFloat_nid_no_patch<Text>), reinterpret_cast<Virtual>(&SceV2NumGetDouble_nid_no_patch<Text>), reinterpret_cast<Virtual>(&SceV2NumGetLongDouble_nid_no_patch<Text>)};
-    } else {
-        return std::array<Virtual, 3>{SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>, SceV2FacetVirtual_nid_no_patch<g_sceV2NumGetFamily>};
-    }
+    return std::array<Virtual, 3>{reinterpret_cast<Virtual>(&SceV2NumGetFloat_nid_no_patch<Text>), reinterpret_cast<Virtual>(&SceV2NumGetDouble_nid_no_patch<Text>), reinterpret_cast<Virtual>(&SceV2NumGetLongDouble_nid_no_patch<Text>)};
 }
 
 template<typename Text> const SceV2NumGetVtable<Text> g_sceV2NumGetVtable{
