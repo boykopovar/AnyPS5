@@ -67,6 +67,14 @@ bool MatchesIndexedCopyKernel(std::span<const std::uint32_t> code, const std::ve
     return stride(1) == 16 && stride(5) == 16 && stride(9) == 16 && !swizzled(1) && !swizzled(5) && !swizzled(9) && userData[3] == userData[7] && type == 0 && !addTid && outOfBounds == 0 && userData[10] >= 1;
 }
 
+bool MatchesTableCopyKernel(std::span<const std::uint32_t>, const std::vector<std::uint32_t>&, const ShaderRecompiler::ShaderComputeStageInfo&) {
+    return false;
+}
+
+std::optional<StreamCopy> TableCopyRange(const std::array<std::uint32_t, 8>&, std::uint32_t) {
+    return std::nullopt;
+}
+
 std::optional<StreamCopy> IndexedCopyRange(const std::vector<std::uint32_t>& userData, std::uint32_t groups, std::uint32_t count, std::uint32_t sourceOffset, std::uint32_t destinationOffset) {
     const auto base = [&](std::size_t word) { return userData[word] | (static_cast<std::uint64_t>(userData[word + 1] & 0xffffu) << 32u); };
     const auto elements = std::min<std::uint64_t>(std::uint64_t{groups} * 64u, count);
