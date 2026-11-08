@@ -110,7 +110,7 @@ The runtime evaluates scheduled events at each controller read, including their 
 
 ## Controller vibration strength
 
-Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller.
+Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller. Vibration also pauses while the window has no focus unless `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` is set, see [Vibration while the window has no focus](USAGE.md#vibration-while-the-window-has-no-focus).
 
 The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
 
