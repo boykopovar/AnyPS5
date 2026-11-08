@@ -144,6 +144,37 @@ int main(int argc, char** argv) {
         Require(cfg->groups[0].attribute.height == 2160);
     }
 
+    {
+        VideoOutBufferAttribute invalidTiling{};
+        sceVideoOutSetBufferAttribute(&invalidTiling, 0x80002200u, 2, 0, 1920, 1080, 1920);
+        bool tilingThrew = false;
+        try {
+            (void)sceVideoOutRegisterBuffers(handle, 2, &buffer.data, 1, &invalidTiling);
+        } catch (const std::runtime_error&) {
+            tilingThrew = true;
+        }
+        Require(tilingThrew);
+
+        VideoOutBufferAttribute legacy{};
+        sceVideoOutSetBufferAttribute(&legacy, 0x80002200u, 0, 0, 1920, 1080, 1920);
+        const int legacyIndex = sceVideoOutRegisterBuffers(handle, 2, &buffer.data, 1, &legacy);
+        Require(legacyIndex >= 0);
+
+        VideoOutBufferAttribute invalidPitch = legacy;
+        invalidPitch.pitch_in_pixel = 1919;
+        Require(sceVideoOutSubmitChangeBufferAttribute(handle, legacyIndex, &invalidPitch) == VIDEO_OUT_ERROR_INVALID_PITCH);
+
+        VideoOutBufferAttribute invalidTilingChange = legacy;
+        invalidTilingChange.tiling_mode = 2;
+        Require(sceVideoOutSubmitChangeBufferAttribute(handle, legacyIndex, &invalidTilingChange) == VIDEO_OUT_ERROR_INVALID_TILING_MODE);
+
+        VideoOutBufferAttribute invalidAspect = legacy;
+        invalidAspect.aspect_ratio = 1;
+        Require(sceVideoOutSubmitChangeBufferAttribute(handle, legacyIndex, &invalidAspect) == VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO);
+
+        Require(sceVideoOutUnregisterBuffers(handle, legacyIndex) == 0);
+    }
+
     if (malformed) {
         bool supportedThrew = false;
         try {
