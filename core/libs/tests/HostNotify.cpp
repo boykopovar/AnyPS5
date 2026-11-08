@@ -1,8 +1,12 @@
 #include "prx/libkernel/System/include/HostNotify.hpp"
 #include <cstdio>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -143,7 +147,62 @@ void LinuxSelectsNotifySendOnlyWhenPresent() {
 }
 #endif
 
+void WaitUntil(const std::atomic<int>& counter, int expected) {
+    for (int waited = 0; waited < 1000 && counter.load() < expected; ++waited) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+void NotifyDoesNotWaitForASleepingBackend() {
+    std::atomic<int> calls{0};
+    DetachedHostNotifySink sink(HostNotifyBackend::NotifySend, [&calls](const HostNotifyArgv&) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        calls.fetch_add(1);
+        return true;
+    });
+    const auto start = std::chrono::steady_clock::now();
+    sink.Notify("AnyPS5", "first");
+    sink.Notify("AnyPS5", "second");
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    Require(elapsed < std::chrono::milliseconds(500), "Notify waited for the backend");
+    WaitUntil(calls, 2);
+    Require(calls.load() == 2, "the backend did not run for both notices");
+}
+
+void NotifyPassesTheBuiltArgvToTheBackend() {
+    std::atomic<int> calls{0};
+    HostNotifyArgv seen;
+    DetachedHostNotifySink sink(HostNotifyBackend::NotifySend, [&](const HostNotifyArgv& argv) {
+        seen = argv;
+        calls.fetch_add(1);
+        return true;
+    });
+    sink.Notify("AnyPS5", "hello $(id)");
+    WaitUntil(calls, 1);
+    Require(calls.load() == 1, "the backend was not run");
+    Require(seen == LinuxNotifyArgv("AnyPS5", "hello $(id)"), "the backend did not get the Linux argv");
+}
+
+void FailingAndThrowingBackendsDoNotStopTheCaller() {
+    std::atomic<int> calls{0};
+    DetachedHostNotifySink failing(HostNotifyBackend::NotifySend, [&calls](const HostNotifyArgv&) {
+        calls.fetch_add(1);
+        return false;
+    });
+    DetachedHostNotifySink throwing(HostNotifyBackend::Osascript, [&calls](const HostNotifyArgv&) -> bool {
+        calls.fetch_add(1);
+        throw std::runtime_error("backend failure");
+    });
+    failing.Notify("AnyPS5", "a");
+    throwing.Notify("AnyPS5", "b");
+    WaitUntil(calls, 2);
+    Require(calls.load() == 2, "a failing backend stopped the caller or the other backend");
+}
+
 int main() {
+    NotifyDoesNotWaitForASleepingBackend();
+    NotifyPassesTheBuiltArgvToTheBackend();
+    FailingAndThrowingBackendsDoNotStopTheCaller();
     ExecutableInPathFindsOnlyExecutableDirectories();
 #if defined(__linux__)
     LinuxSelectsNotifySendOnlyWhenPresent();

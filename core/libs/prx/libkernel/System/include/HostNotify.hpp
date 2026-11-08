@@ -34,4 +34,16 @@ using HostNotifyIsExecutable = std::function<bool(const std::string&)>;
 bool ExecutableInPath(std::string_view name, std::string_view pathList, const HostNotifyIsExecutable& isExecutable);
 HostNotifyBackend SelectHostNotifyBackend(std::string_view pathList, const HostNotifyIsExecutable& isExecutable);
 
+using HostNotifySpawn = std::function<bool(const HostNotifyArgv&)>;
+
+class DetachedHostNotifySink final : public IHostNotifySink {
+public:
+    DetachedHostNotifySink(HostNotifyBackend backend, HostNotifySpawn spawn);
+    void Notify(std::string_view title, std::string_view text) override;
+
+private:
+    HostNotifyBackend backend;
+    HostNotifySpawn spawn;
+};
+
 #endif

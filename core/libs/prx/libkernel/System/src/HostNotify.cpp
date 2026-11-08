@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <system_error>
+#include <thread>
+#include <utility>
 
 namespace {
 
@@ -77,6 +80,20 @@ HostNotifyArgv WindowsNotifyArgv(std::string_view title, std::string_view text) 
     return {"powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", HostNotifyBase64(utf16)};
 }
 
+std::string HostNotifyBackendName(HostNotifyBackend backend) {
+    switch (backend) {
+    case HostNotifyBackend::NotifySend:
+        return "notify-send";
+    case HostNotifyBackend::Osascript:
+        return "osascript";
+    case HostNotifyBackend::PowerShell:
+        return "PowerShell";
+    case HostNotifyBackend::None:
+        break;
+    }
+    return "no backend";
+}
+
 HostNotifyArgv HostNotifyArgvFor(HostNotifyBackend backend, std::string_view title, std::string_view text) {
     switch (backend) {
     case HostNotifyBackend::NotifySend:
@@ -115,6 +132,28 @@ HostNotifyBackend SelectHostNotifyBackend(std::string_view pathList, const HostN
 #else
     return ExecutableInPath("notify-send", pathList, isExecutable) ? HostNotifyBackend::NotifySend : HostNotifyBackend::None;
 #endif
+}
+
+DetachedHostNotifySink::DetachedHostNotifySink(HostNotifyBackend backendValue, HostNotifySpawn spawnValue)
+    : backend(backendValue), spawn(std::move(spawnValue)) {}
+
+void DetachedHostNotifySink::Notify(std::string_view title, std::string_view text) {
+    auto argv = HostNotifyArgvFor(backend, title, text);
+    if (argv.empty()) return;
+    const auto name = HostNotifyBackendName(backend);
+    try {
+        std::thread([spawn = spawn, argv = std::move(argv), name]() {
+            bool shown = false;
+            try {
+                shown = spawn(argv);
+            } catch (...) {
+                shown = false;
+            }
+            if (!shown) HostNotifyLog("the host notice could not be shown with " + name);
+        }).detach();
+    } catch (const std::system_error&) {
+        HostNotifyLog("the host notice could not be started with " + name);
+    }
 }
 
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
