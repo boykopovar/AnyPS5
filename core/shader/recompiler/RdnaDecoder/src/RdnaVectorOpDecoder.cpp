@@ -724,13 +724,7 @@ bool hasDppForm(RdnaOpcode opcode) {
 }
 
 bool acceptsDpp8(RdnaOpcode opcode) {
-    switch (opcode) {
-        case RdnaOpcode::VMovrelsB32:
-        case RdnaOpcode::VMovrelsdB32:
-        case RdnaOpcode::VMovrelsd2B32:
-            return false;
-        default: return hasDppForm(opcode);
-    }
+    return hasDppForm(opcode);
 }
 
 bool isNativeVop3F16TernaryOpcode(RdnaOpcode opcode) {
@@ -1157,6 +1151,9 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtFlrI32F32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VSinF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
     {RdnaOpcode::VCosF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRcpF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VSqrtF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
+    {RdnaOpcode::VRsqF32, sdwaSelFull(), sdwaSelBytes() | sdwaSelWords(), sdwaSelFull(), false},
 };
 
 const Vop1SdwaRule* findVop1SdwaRule(RdnaOpcode opcode) {
