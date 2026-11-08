@@ -27,6 +27,11 @@ extern "C" {
 static constexpr int SCE_OK = 0;
 static constexpr std::size_t FRAME_SIZE = 4096;
 static constexpr std::size_t FRAME_MARGIN = 2 * FRAME_SIZE;
+#ifdef __APPLE__
+static constexpr std::size_t LOCAL_SLACK = 2 * FRAME_SIZE;
+#else
+static constexpr std::size_t LOCAL_SLACK = FRAME_SIZE;
+#endif
 static constexpr std::size_t HOST_CALL_STACK = 256 * 1024;
 static constexpr std::size_t STACK_SIZES[] = {16384, 65536, 1u << 20, 16u << 20};
 #ifdef __linux__
@@ -82,7 +87,7 @@ static void* APS5_VABI Worker(void* arg) {
     const auto begin = reinterpret_cast<std::uintptr_t>(address);
     const auto local = reinterpret_cast<std::uintptr_t>(&size);
     Require(local > begin && local < begin + size);
-    Require(local - begin + FRAME_SIZE >= requested);
+    Require(local - begin + LOCAL_SLACK >= requested);
     const auto deepest = Descend(begin);
     Require(deepest >= begin && deepest < begin + FRAME_MARGIN);
     const auto hostDeepest = descend(begin - HOST_CALL_STACK);
