@@ -94,10 +94,16 @@ void TestRunningBigApp() {
 void TestRemoteSharePlayCpuBudget() {
     Require(Throws(sceShellCoreUtilAcquireRemotePlayCpuBudget));
     Require(Throws(sceShellCoreUtilReleaseRemotePlayCpuBudget));
-    Require(!sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() && !sceShellCoreUtilIsRemotePlayCpuBudgetAcquired());
+    for (int call = 0; call < 2; ++call) {
+        const int remote = sceShellCoreUtilIsRemotePlayCpuBudgetAcquired();
+        Require(remote == static_cast<int>(0x80020000u) && (remote & 0xff) == 0);
+    }
     Require(Throws(sceShellCoreUtilAcquireSharePlayCpuBudget));
     Require(Throws(sceShellCoreUtilReleaseSharePlayCpuBudget));
-    Require(!sceShellCoreUtilIsSharePlayCpuBudgetAcquired() && !sceShellCoreUtilIsSharePlayCpuBudgetAcquired());
+    for (int call = 0; call < 2; ++call) {
+        const int share = sceShellCoreUtilIsSharePlayCpuBudgetAcquired();
+        Require(share == static_cast<int>(0x80020000u) && (share & 0xff) == 0);
+    }
 }
 
 void TestPlayerDialogParam() {
