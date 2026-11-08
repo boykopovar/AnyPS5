@@ -68,6 +68,11 @@ void CheckAvSettingModeHelpers() {
     };
     check(sceAvSettingSetAudioOutModeAny_, 0xff);
     check(sceAvSettingSetAudioOutModeInvalid_, 0x00);
+    std::array<std::uint8_t, 8> invalidBuffer{};
+    invalidBuffer.fill(Fill);
+    sceAvSettingSetAudioOutModeInvalid_(invalidBuffer.data(), -1);
+    for (const auto value : invalidBuffer) Require(value == Fill);
+    sceAvSettingSetAudioOutModeInvalid_(nullptr, -1);
     check(sceAvSettingSetVideoOutModeAny_, 0xff);
     check(sceAvSettingSetVideoOutModeInvalid_, 0x00);
     std::int32_t source = 0x12345678;
