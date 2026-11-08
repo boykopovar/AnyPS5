@@ -71,6 +71,7 @@ public:
     explicit KeyboardMouse(InputConfiguration configuration);
     void Replace(InputConfiguration next);
     InputRequests HandleEvent(const SDL_Event& event, Clock::time_point now);
+    InputRequests PadChordRequests(std::uint32_t buttons);
     bool Advance(Clock::time_point now);
     void SetMouseMode(bool enabled);
     void SetTitleReadsMouse(bool reads);
@@ -101,6 +102,7 @@ private:
     bool axesAdvanced = false;
     bool mouseMode = false;
     bool titleReadsMouse = false;
+    std::uint32_t padButtons = 0;
 };
 
 std::uint8_t StickByte(double deflection);
