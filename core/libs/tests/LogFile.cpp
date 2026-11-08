@@ -271,6 +271,39 @@ void RotationPolicy() {
     Require(RotatedName("/var/log/run.log", 2) == "/var/log/run.log.2", "rotated name differs");
 }
 
+void RotatesWhenFull() {
+    const auto path = g_directory / "rotate.log";
+    for (const char* leftover : {"rotate.log", "rotate.log.1", "rotate.log.2", "rotate.log.3"}) RemoveFile((g_directory / leftover).string());
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open for rotation");
+    Tee tee(file, NoHandle, NoHandle, NoHandle, NoHandle);
+    tee.SetRotation(path.string(), 10, 2);
+    tee.Note("aaaa\n", 5);
+    tee.Note("bbbb\n", 5);
+    tee.Note("cccc\n", 5);
+    tee.Note("dddddddddd\n", 11);
+    tee.Note("e\n", 2);
+    tee.Flush(true);
+    Require(Slurp(path) == "e\n", "the current file does not hold the newest line");
+    Require(Slurp(RotatedName(path.string(), 1)) == "dddddddddd\n", "the first rotated file lacks the last full write");
+    Require(Slurp(RotatedName(path.string(), 2)) == "cccc\n", "the second rotated file lacks the older line");
+    Require(!std::filesystem::exists(RotatedName(path.string(), 3)), "a file beyond the keep count was kept");
+    Require(!tee.FileFailed(), "a rotation was recorded as a failure");
+}
+
+void RotatesNothingWithoutLimit() {
+    const auto path = g_directory / "unlimited.log";
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open unlimited");
+    Tee tee(file, NoHandle, NoHandle, NoHandle, NoHandle);
+    for (int index = 0; index < 50; ++index) tee.Note("0123456789\n", 11);
+    tee.Flush(true);
+    Require(!std::filesystem::exists(RotatedName(path.string(), 1)), "a file with no limit was rotated");
+    Require(Slurp(path).size() == 550, "a file with no limit lost lines");
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -712,6 +745,8 @@ int main(int argc, char** argv) {
     MaxBytesValues();
     KeepValues();
     RotationPolicy();
+    RotatesWhenFull();
+    RotatesNothingWithoutLimit();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();
