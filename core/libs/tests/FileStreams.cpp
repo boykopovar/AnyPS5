@@ -408,6 +408,7 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
         const auto failed = [stream](bool result, const char* message) {
             Require(result && errno == EBADF && ferror_nid_postfix(stream) != 0, message);
             clearerr_nid_postfix(stream);
+            Require(ferror_nid_postfix(stream) == 0, "clearerr after a write-only read");
             errno = 0;
         };
         std::array<char, 4> buffer{};
@@ -418,12 +419,18 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
         failed(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), stream) == nullptr, "fgets on a write-only stream");
         int value = 0;
         Require(fscanf_nid_postfix(stream, "%d", &value) == EOF, "fscanf on a write-only stream");
-#ifdef _WIN32
         Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "fscanf on a write-only stream left errno or the error indicator unset");
         clearerr_nid_postfix(stream);
+        Require(ferror_nid_postfix(stream) == 0, "clearerr after fscanf on a write-only stream");
         errno = 0;
+        Require(ScanList(stream, "%d", &value) == EOF, "vfscanf on a write-only stream");
+        Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "vfscanf on a write-only stream left errno or the error indicator unset");
+        clearerr_nid_postfix(stream);
+        Require(ferror_nid_postfix(stream) == 0, "clearerr after vfscanf on a write-only stream");
+        errno = 0;
+        failed(fgetwc_nid_postfix(stream) == -1, "fgetwc on a write-only stream");
         Require(ungetc_nid_postfix('q', stream) == EOF && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetc on a write-only stream");
-#endif
+        Require(ungetwc_nid_postfix(L'q', stream) == -1 && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetwc on a write-only stream");
         Require(fclose_nid_postfix(stream) == 0, "fclose after reads on a write-only stream");
         Require(ReadWhole(path) == "abc", "Reads on a write-only stream changed the file");
         Require(std::remove(path.c_str()) == 0);
@@ -460,7 +467,17 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
                 Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an update stream set the error indicator");
             });
         }
+        CheckWriteAfterRead(path, "r+b", "0XY3456789", [write](FileStream* stream) {
+            Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0 && fgetc_nid_postfix(stream) == '0', "fgetc on an unbuffered update stream");
+            write(stream);
+            Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an unbuffered update stream set the error indicator");
+        });
     }
+    CheckWriteAfterRead(path, "r+b", "012XY56789", [](FileStream* stream) {
+        std::array<char, 3> buffer{};
+        Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0 && fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size(), "fread on an unbuffered update stream");
+        Require(fputs_nid_postfix("XY", stream) >= 0 && ferror_nid_postfix(stream) == 0, "fputs after fread on an unbuffered update stream");
+    });
     CheckWriteAfterRead(path, "r+b", appended, [](FileStream* stream) {
         std::array<char, 10> buffer{};
         Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size() && feof_nid_postfix(stream) == 0, "fread of every byte of an r+ stream");
