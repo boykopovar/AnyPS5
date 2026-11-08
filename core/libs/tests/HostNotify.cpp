@@ -70,7 +70,19 @@ void MacArgvPassesTextAsTrailingArguments() {
     }
 }
 
+void Base64MatchesRfc4648Vectors() {
+    Require(HostNotifyBase64("") == "", "empty input");
+    Require(HostNotifyBase64("f") == "Zg==", "one byte");
+    Require(HostNotifyBase64("fo") == "Zm8=", "two bytes");
+    Require(HostNotifyBase64("foo") == "Zm9v", "three bytes");
+    Require(HostNotifyBase64("foob") == "Zm9vYg==", "four bytes");
+    Require(HostNotifyBase64("fooba") == "Zm9vYmE=", "five bytes");
+    Require(HostNotifyBase64("foobar") == "Zm9vYmFy", "six bytes");
+    Require(HostNotifyBase64("\xff\xfe") == "//4=", "high bytes");
+}
+
 int main() {
+    Base64MatchesRfc4648Vectors();
     SinkReceivesTitleAndTextAsGiven();
     LinuxArgvIsOneArgumentPerPart();
     LinuxArgvKeepsShellSyntaxAsData();

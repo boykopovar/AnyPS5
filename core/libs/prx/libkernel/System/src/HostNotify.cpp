@@ -1,5 +1,6 @@
 #include "prx/libkernel/System/include/HostNotify.hpp"
 
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -23,6 +24,37 @@ HostNotifyArgv LinuxNotifyArgv(std::string_view title, std::string_view text) {
 
 HostNotifyArgv MacNotifyArgv(std::string_view title, std::string_view text) {
     return {"osascript", "-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", std::string(title), std::string(text)};
+}
+
+std::string HostNotifyBase64(std::string_view bytes) {
+    constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    std::size_t index = 0;
+    for (; index + 3 <= bytes.size(); index += 3) {
+        const auto b0 = static_cast<std::uint8_t>(bytes[index]);
+        const auto b1 = static_cast<std::uint8_t>(bytes[index + 1]);
+        const auto b2 = static_cast<std::uint8_t>(bytes[index + 2]);
+        out += alphabet[b0 >> 2];
+        out += alphabet[((b0 & 0x03) << 4) | (b1 >> 4)];
+        out += alphabet[((b1 & 0x0f) << 2) | (b2 >> 6)];
+        out += alphabet[b2 & 0x3f];
+    }
+    const auto rest = bytes.size() - index;
+    if (rest == 1) {
+        const auto b0 = static_cast<std::uint8_t>(bytes[index]);
+        out += alphabet[b0 >> 2];
+        out += alphabet[(b0 & 0x03) << 4];
+        out += "==";
+    } else if (rest == 2) {
+        const auto b0 = static_cast<std::uint8_t>(bytes[index]);
+        const auto b1 = static_cast<std::uint8_t>(bytes[index + 1]);
+        out += alphabet[b0 >> 2];
+        out += alphabet[((b0 & 0x03) << 4) | (b1 >> 4)];
+        out += alphabet[(b1 & 0x0f) << 2];
+        out += '=';
+    }
+    return out;
 }
 
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
