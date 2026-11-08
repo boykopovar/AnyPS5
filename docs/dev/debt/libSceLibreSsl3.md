@@ -2,6 +2,10 @@
 
 - [OBJ_cmp](../../../core/libs/prx/libSceLibreSsl3/src/ObjCmp.cpp) (libSceLibreSsl3) - PS5 behavior and the library's LibreSSL version are not verified. The 40-byte LP64 `ASN1_OBJECT` layout and the comparison (length difference first, then the first differing byte as a difference of unsigned values) follow the public [LibreSSL source](https://github.com/libressl/openbsd/blob/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto/objects/obj_lib.c); the magnitude of a byte mismatch is the byte difference rather than whatever the console's `memcmp` returns. Null objects, null data with a nonzero length and negative lengths throw. LibreSSL subtracts unequal lengths before reading data, so unequal negative lengths do not necessarily fault; only equal negative lengths reach its byte comparison.
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
+### Silent stubs
+
+- [ERR_load_X509_strings, ERR_load_PEM_strings and OpenSSL_add_all_digests](../../../core/libs/prx/libSceLibreSsl3/src/ErrorStringLoaders.cpp) (libSceLibreSsl3) - return without loading anything, as firmware 13.42 `libSceLibreSsl3.sprx` does: its bodies at `0xc37b0`, `0x989d0` and `0x10100` are a lone `ret`, read from the [disassembly](https://github.com/boykopovar/AnyPS5/pull/15591) and not run on a console, and [LibreSSL](https://github.com/libressl/openbsd/blob/ad3418a862e15ac14ce89ecb3e1989ab9e8739aa/src/lib/libcrypto/pem/pem.h#L463) declares all three `void (void)` in `pem.h`, `x509.h` and `evp.h`. Nothing here fills those tables: `ERR_load_crypto_strings` is empty, `ERR_lib_error_string` throws, and `EVP_get_digestbyname` reads the static `src/DigestNames.cpp` table that object-name registration cannot change. Closes when: compared with the console.
+
 ### Functional
 
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
@@ -73,7 +77,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 117 still-unimplemented callable exports: 108 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 114 still-unimplemented callable exports: 105 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -99,7 +103,6 @@
 | `SSL_CTX_set_max_early_data` | `8kct4CSWwOA` |
 | `X509_STORE_CTX_get0_param` | `8wroYNJAQpo` |
 | `unknown` | `A-Hs-8mau+8` |
-| `ERR_load_X509_strings` | `A0lZtFjhcTw` |
 | `unknown` | `AiNud8LR8B4` |
 | `X509_cmp_current_time` | `Ax+Uu++rnrA` |
 | `SSL_CTX_set_timeout` | `BBOgwZLvXHA` |
@@ -120,8 +123,6 @@
 | `X509_print` | `LA1MlgDx80o` |
 | `HMAC_CTX_new` | `LcxutSyn11o` |
 | `X509_CRL_get0_by_cert` | `LdGe2IfIlpI` |
-| `ERR_load_PEM_strings` | `M7ze0mz2jQM` |
-| `OpenSSL_add_all_digests` | `O9Thca3enw8` |
 | `EVP_PKEY_base_id` | `OqtHJ7QUZg8` |
 | `unknown` | `PBYz0kpXwg8` |
 | `X509_new` | `PNfwr3s6dEs` |
