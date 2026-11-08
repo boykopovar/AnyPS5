@@ -185,6 +185,11 @@ class HashCommentTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(self.findings("tools/generate.py", source, [1, 2]), [])
 
+    def test_hash_bang_after_the_first_line_is_a_comment(self):
+        for path in ("tools/generate.py", "cmake/Generate.cmake", "CMakeLists.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(self.findings(path, "set = 1\n#!pending\n", [1, 2]), [("comment", path, 2, "")])
+
     def test_unparsable_python_falls_back_to_the_line_check(self):
         source = 'TEMPLATE = """\n#include <cstdint>\n'
         self.assertEqual(self.findings("tools/generate.py", source, [2]), [("comment", "tools/generate.py", 2, "")])
