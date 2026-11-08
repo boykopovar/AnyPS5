@@ -13284,6 +13284,20 @@ bool sampledImportPiecesTests(const Device& device, Recorder& recorder) {
     };
     const auto partialProgram = request(address);
     const CompiledShader partialShader{ShaderRecompiler::ShaderStage::Compute, &partialProgram, 0};
+    Require(ExistingHostImportCopies(context, address, 3u * unit).empty(), "a gapped import set produced a partial copy plan");
+    Require(ExistingHostImportCopies(context, address, 0).empty(), "an empty texture range produced import copies");
+    Require(ExistingHostImportCopies(context, UINT64_MAX - 7u, 16u).empty(), "an overflowing texture range produced import copies");
+    const auto partialCommands = recorder.Commands();
+    RecordMemoryBarrier(context, partialCommands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    for (const auto half : {0u, 1u, 4u, 5u}) {
+        const auto begin = address + half * unit / 2u;
+        const auto* imported = ExistingHostImportFor(context, begin, unit / 2u);
+        Require(imported != nullptr, "a gapped sampled texture lost an imported window");
+        const auto value = static_cast<std::uint32_t>(16u + half * 16u) * 0x01010101u;
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(partialCommands, imported->buffer, HostImportOffset(*imported, begin), unit / 2u, value);
+    }
+    recorder.NotePendingWrite(address, 3u * unit);
+    static_cast<void>(AgcDriver::GuestMemory::MarkPossiblyWritten(address, 3u * unit));
     const auto beforePartial = SampledTexturesImported();
     auto partial = std::make_shared<ShaderResources>(context, partialShader);
     Require(SampledTexturesImported() == beforePartial, "a gapped import set was accepted for a sampled texture");
