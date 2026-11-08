@@ -1,10 +1,19 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/NanPayloadEliminator.hpp"
+#include "Recompiler.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <functional>
 #include <initializer_list>
+#include <set>
+#include <span>
+#include <spirv/unified1/spirv.hpp>
+#include <stdexcept>
+#include <string_view>
+#include <vector>
 
 using namespace ShaderRecompiler;
 
@@ -92,6 +101,47 @@ bool run(const char* name, const std::function<bool()>& test) {
         std::fprintf(stderr, "%s: %s\n", name, error.what());
         return false;
     }
+}
+
+std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
+    const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
+    const std::array<std::uint32_t, 2> capabilities{1u, 61u};
+    const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00403000u;
+    request.target.spirvVersion = 0x00010600u;
+    request.target.subgroupSize = 32u;
+    request.target.bdaAbiVersion = 1;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024;
+    request.target.maxWorkgroupSharedMemoryBytes = 49152;
+    request.layout = {0, 0, 0, 128};
+    request.useCache = false;
+    const auto result = Recompile(request);
+    const auto& words = result.spirv.Words();
+    return {words.begin(), words.end()};
+}
+
+std::size_t NanTests(std::span<const std::uint32_t> words) {
+    if (words.size() < 5 || words[0] != spv::MagicNumber) throw std::runtime_error("the recompiler returned no SPIR-V module");
+    std::set<std::uint32_t> infinities;
+    std::size_t tests = 0;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> spv::WordCountShift;
+        if (count == 0 || count > words.size() - offset) throw std::runtime_error("the recompiler returned a malformed SPIR-V instruction");
+        const auto opcode = words[offset] & spv::OpCodeMask;
+        if (opcode == spv::OpConstant && count == 4 && words[offset + 3] == 0x7f800000u) infinities.insert(words[offset + 2]);
+        if (opcode == spv::OpUGreaterThan && count == 5 && infinities.contains(words[offset + 4])) ++tests;
+        offset += count;
+    }
+    return tests;
 }
 
 }
@@ -203,6 +253,25 @@ int main() {
         auto& above = b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude, &b.constant(0x7f800000u)});
         b.keep(b.select(above, b.constant(1u), b.constant(0u)));
         return b.eliminate().removedSelects >= 1u && !sum.HasUses();
+    });
+
+    passed &= run("through Recompile, a clamped v_add_f32 stored to a buffer drops the NaN tests an unclamped one keeps", [] {
+        const std::array<std::uint32_t, 6> clamped{
+            0x06020100u,
+            0xd5038002u, 0x00020301u,
+            0xe0700000u, 0x80000200u,
+            0xbf810000u,
+        };
+        const std::array<std::uint32_t, 6> unclamped{
+            0x06020100u,
+            0xd5030002u, 0x00020301u,
+            0xe0700000u, 0x80000200u,
+            0xbf810000u,
+        };
+        const auto kept = NanTests(Recompiled(unclamped));
+        const auto left = NanTests(Recompiled(clamped));
+        if (left != 0u || kept == 0u) std::fprintf(stderr, "  %zu NaN tests with clamp, %zu without; expected none with clamp and some without\n", left, kept);
+        return left == 0u && kept != 0u;
     });
 
     return passed ? 0 : 1;
