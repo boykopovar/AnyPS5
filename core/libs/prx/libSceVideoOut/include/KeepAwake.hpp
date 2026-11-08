@@ -3,4 +3,21 @@
 
 bool KeepAwakeEnabledFromValue(const char* value);
 
+struct KeepAwakeBackend {
+    void (*disable)();
+    void (*enable)();
+    bool (*isEnabled)();
+};
+
+class HostKeepAwake {
+public:
+    explicit HostKeepAwake(const KeepAwakeBackend& backend);
+    void Acquire();
+    void Release() noexcept;
+
+private:
+    const KeepAwakeBackend& backend;
+    bool held = false;
+};
+
 #endif
