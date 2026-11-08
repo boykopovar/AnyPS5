@@ -150,6 +150,26 @@ static void RefusesBusyPort() {
     Require(refused && !second.IsOpen(), "a port in use is refused and the relay stays closed");
 }
 
+static void OpensAndClosesTwoRelaysWithoutLeaks() {
+    LanRelay::Relay first;
+    LanRelay::Relay second;
+    first.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    second.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    Require(first.Port() != second.Port(), "two relays take two ephemeral ports");
+    const auto firstPort = first.Port();
+    const auto secondPort = second.Port();
+    first.Close();
+    second.Close();
+    LanRelay::Relay reopenedFirst;
+    LanRelay::Relay reopenedSecond;
+    reopenedFirst.Open(LanRelay::Endpoint{"127.0.0.1", firstPort});
+    reopenedSecond.Open(LanRelay::Endpoint{"127.0.0.1", secondPort});
+    Require(reopenedFirst.Port() == firstPort && reopenedSecond.Port() == secondPort,
+        "closed relays release their ports");
+    reopenedFirst.Close();
+    reopenedSecond.Close();
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
@@ -160,5 +180,6 @@ int main() {
     NamesTheVariableInErrors();
     OpensAndClosesOnEphemeralPort();
     RefusesBusyPort();
+    OpensAndClosesTwoRelaysWithoutLeaks();
     return 0;
 }
