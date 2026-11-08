@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include "SDL.h"
+#include "prx/libSceVideoOut/include/KeepAwake.hpp"
 
 inline constexpr std::uint32_t DisplayWindowMinimumWidth = 320;
 inline constexpr std::uint32_t DisplayWindowMinimumHeight = 180;
@@ -40,6 +41,7 @@ private:
     std::uint32_t aspectWidth = 0;
     std::uint32_t aspectHeight = 0;
     std::uint64_t frameNum = 0;
+    HostKeepAwake keepAwake{SdlKeepAwakeBackend()};
 };
 
 #endif
