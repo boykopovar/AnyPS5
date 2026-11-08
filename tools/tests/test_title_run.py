@@ -14,6 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import title_run
 
 
+def feature(name):
+    value = getattr(title_run, name, None)
+    assert value is not None, f"title_run.{name} is missing"
+    return value
+
+
 class TitlesTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -574,38 +580,38 @@ class CompareTests(unittest.TestCase):
     def test_fps_is_compared_on_the_last_run(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}, {"outcome": "rendering", "fps": 30.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0}, {"outcome": "rendering", "fps": 45.5}])
-        compared = title_run.compare_runs(summary, previous)
+        compared = feature("compare_runs")(summary, previous)
         self.assertEqual(compared["PPSA00001"]["fps"], {"before": 30.0, "now": 45.5})
         self.assertEqual(compared["PPSA00001"]["name"], "Game PPSA00001")
 
     def test_a_run_that_did_not_start_has_no_fps(self):
         previous = self.summary(PPSA00001=[{"outcome": "relink-failed", "fps": 0.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 12.0}])
-        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["fps"], {"before": None, "now": 12.0})
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["fps"], {"before": None, "now": 12.0})
 
     def test_average_fps_comes_from_the_report(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0, "report": {"averageFps": 58.0}}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": {"averageFps": 61.5}}])
-        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["averageFps"], {"before": 58.0, "now": 61.5})
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["averageFps"], {"before": 58.0, "now": 61.5})
 
     def test_average_fps_without_a_report_is_not_recorded(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": None}])
-        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["averageFps"], {"before": None, "now": None})
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["averageFps"], {"before": None, "now": None})
 
     def test_shader_counts_are_paired(self):
         report = {"shaders": {"compiled": 12, "failed": 1, "cacheHits": 40}}
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0, "report": report}])
         changed = {"shaders": {"compiled": 3, "failed": 0, "cacheHits": 50}}
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": changed}])
-        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["shaders"],
+        self.assertEqual(feature("compare_runs")(summary, previous)["PPSA00001"]["shaders"],
                          {"compiled": {"before": 12, "now": 3}, "failed": {"before": 1, "now": 0}, "cacheHits": {"before": 40, "now": 50}})
 
     def test_shader_counts_missing_on_one_side_are_not_recorded(self):
         report = {"shaders": {"compiled": 12, "failed": 1, "cacheHits": None}}
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": report}])
-        shaders = title_run.compare_runs(summary, previous)["PPSA00001"]["shaders"]
+        shaders = feature("compare_runs")(summary, previous)["PPSA00001"]["shaders"]
         self.assertEqual(shaders["compiled"], {"before": None, "now": 12})
         self.assertEqual(shaders["cacheHits"], {"before": None, "now": None})
 
@@ -615,7 +621,7 @@ class CompareTests(unittest.TestCase):
         now = {"missing": [{"library": "libSceNet", "name": "c", "calls": 5}, {"library": "libSceAudioOut", "name": "d", "calls": 1}]}
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": before}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": now}])
-        diff = title_run.compare_runs(summary, previous)["PPSA00001"]["missingFunctions"]
+        diff = feature("compare_runs")(summary, previous)["PPSA00001"]["missingFunctions"]
         self.assertEqual(diff["onlyBefore"], [{"library": "libSceNet", "name": "a", "calls": 3}, {"library": None, "name": "b", "calls": 1}])
         self.assertEqual(diff["onlyNow"], [{"library": "libSceAudioOut", "name": "d", "calls": 1}])
         self.assertEqual(diff["both"], [{"library": "libSceNet", "name": "c", "before": 2, "now": 5}])
@@ -623,7 +629,7 @@ class CompareTests(unittest.TestCase):
     def test_missing_functions_on_one_side_are_not_recorded(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": {"missing": []}}])
-        compared = title_run.compare_runs(summary, previous)["PPSA00001"]
+        compared = feature("compare_runs")(summary, previous)["PPSA00001"]
         self.assertIsNone(compared["missingFunctions"])
         self.assertEqual(compared["missingFunctionsTruncated"], {"before": None, "now": None})
 
@@ -634,7 +640,7 @@ class CompareTests(unittest.TestCase):
                                {"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}]}
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": before}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": now}])
-        diff = title_run.compare_runs(summary, previous)["PPSA00001"]["unsupportedInstructions"]
+        diff = feature("compare_runs")(summary, previous)["PPSA00001"]["unsupportedInstructions"]
         self.assertEqual(diff["onlyBefore"], [{"encoding": None, "opcode": None, "opcodeValue": 9, "modifiers": None, "count": 1}])
         self.assertEqual(diff["onlyNow"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}])
         self.assertEqual(diff["both"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "before": 2, "now": 7}])
@@ -644,8 +650,8 @@ class CompareTests(unittest.TestCase):
                              "missing": [{"library": "libSceNet", "name": "a", "calls": 3}], "unsupported": []}, "fps": 20.0}
         now = {"report": {"averageFps": None, "shaders": {"compiled": 3, "failed": 0, "cacheHits": 50},
                           "missing": [{"library": "libSceNet", "name": "b", "calls": 1}], "unsupported": None}, "fps": 25.5, "outcome": "rendering"}
-        compared = title_run.compare_runs(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before]))
-        lines = title_run.render_compare(compared)
+        compared = feature("compare_runs")(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before]))
+        lines = feature("render_compare")(compared)
         self.assertEqual(lines[0], "| Title | ID | Measure | Before | Now |")
         self.assertIn("| Game PPSA00001 | PPSA00001 | FPS | 20.0 | 25.5 |", lines)
         self.assertIn("| Game PPSA00001 | PPSA00001 | Average FPS (report) | 58.0 | not recorded |", lines)
@@ -659,7 +665,7 @@ class CompareTests(unittest.TestCase):
                              "truncated": {"functions": 0, "unsupported": 0}}, "fps": 20.0, "outcome": "rendering"}
         now = {"report": {"averageFps": 60.0, "shaders": {"compiled": 1, "failed": 0, "cacheHits": None}, "missing": [], "unsupported": [],
                           "truncated": {"functions": 0, "unsupported": 0}}, "fps": 21.0, "outcome": "rendering"}
-        document = json.loads(title_run.compare_json(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before])))
+        document = json.loads(feature("compare_json")(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before])))
         self.assertEqual(document["format"], "title-run-compare")
         title = document["titles"]["PPSA00001"]
         self.assertEqual(title["fps"], {"before": 20.0, "now": 21.0})
@@ -672,32 +678,34 @@ class CompareTests(unittest.TestCase):
 
     def test_summaries_from_before_the_report_are_not_recorded_everywhere(self):
         old = {"outcome": "rendering", "fps": 20.0}
-        document = json.loads(title_run.compare_json(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
+        document = json.loads(feature("compare_json")(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
         title = document["titles"]["PPSA00001"]
         self.assertEqual(title["averageFps"], {"before": None, "now": None})
         self.assertEqual(title["missingFunctionsCount"], {"before": None, "now": None})
         self.assertIsNone(title["missingFunctions"])
         self.assertIsNone(title["unsupportedInstructions"])
-        lines = title_run.render_compare(title_run.compare_runs(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
+        lines = feature("render_compare")(feature("compare_runs")(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
         self.assertIn("| Game PPSA00001 | PPSA00001 | Shaders compiled | not recorded | not recorded |", lines)
 
     def test_a_run_that_never_started_records_nothing(self):
         failed = {"outcome": "relink-failed", "fps": 0.0, "report": None}
-        compared = title_run.compare_runs(self.summary(PPSA00001=[failed]), self.summary(PPSA00001=[{"outcome": "rendering", "fps": 9.0, "report": None}]))
+        compared = feature("compare_runs")(self.summary(PPSA00001=[failed]), self.summary(PPSA00001=[{"outcome": "rendering", "fps": 9.0, "report": None}]))
         self.assertEqual(compared["PPSA00001"]["fps"], {"before": 9.0, "now": None})
         self.assertEqual(compared["PPSA00001"]["shaders"]["compiled"], {"before": None, "now": None})
 
     def test_json_needs_a_comparison(self):
-        with self.assertRaises(SystemExit):
-            title_run.main(["--games", str(title_run.ROOT), "--json"])
+        result = subprocess.run([sys.executable, str(title_run.ROOT / "tools/title_run.py"), "--games", str(title_run.ROOT), "--json"],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, "--json without --compare must exit with an error")
+        self.assertIn("--json needs --compare", result.stderr, "--json without --compare must say it needs --compare")
 
     def test_table_has_no_rows_without_common_titles(self):
-        self.assertEqual(title_run.compare_runs(self.summary(PPSA00002=[{"outcome": "rendering", "fps": 1.0}]), self.summary()), {})
+        self.assertEqual(feature("compare_runs")(self.summary(PPSA00002=[{"outcome": "rendering", "fps": 1.0}]), self.summary()), {})
 
     def test_only_titles_in_both_runs_are_compared(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
-        self.assertEqual(list(title_run.compare_runs(summary, previous)), ["PPSA00001"])
+        self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
 
 
 class RunReportTests(unittest.TestCase):
@@ -723,7 +731,7 @@ class RunReportTests(unittest.TestCase):
             path.write_text(document, encoding="utf-8")
         else:
             path.write_text(json.dumps(document), encoding="utf-8")
-        return title_run.read_report(path)
+        return feature("read_report")(path)
 
     def test_full_report(self):
         report = self.read(self.report())
@@ -751,7 +759,7 @@ class RunReportTests(unittest.TestCase):
         self.assertIsNone(self.read(document)["averageFps"])
 
     def test_unreadable_reports_are_not_recorded(self):
-        self.assertIsNone(title_run.read_report(self.root / "missing.json"))
+        self.assertIsNone(feature("read_report")(self.root / "missing.json"))
         self.assertIsNone(self.read("{not json"))
         self.assertIsNone(self.read([1, 2]))
         self.assertIsNone(self.read(self.report(format="other")))
@@ -760,9 +768,9 @@ class RunReportTests(unittest.TestCase):
         work, run_dir = self.root / "work", self.root / "run1"
         work.mkdir()
         run_dir.mkdir()
-        self.assertIsNone(title_run.take_report(work, run_dir))
+        self.assertIsNone(feature("take_report")(work, run_dir))
         (work / "anyps5-report.json").write_text(json.dumps(self.report()), encoding="utf-8")
-        self.assertEqual(title_run.take_report(work, run_dir)["averageFps"], 59.9)
+        self.assertEqual(feature("take_report")(work, run_dir)["averageFps"], 59.9)
         self.assertFalse((work / "anyps5-report.json").exists())
         self.assertTrue((run_dir / "anyps5-report.json").is_file())
 
