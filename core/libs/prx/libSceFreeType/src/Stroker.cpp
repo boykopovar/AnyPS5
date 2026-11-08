@@ -40,10 +40,13 @@ struct NativeVector {
     }
 };
 
-void WriteCount(std::uint32_t* target, FT_UInt value) {
-    if (!target) return;
-    GuestArena::HostWrite write(target, sizeof(*target));
-    *target = value;
+int WriteCounts(std::uint32_t* points, std::uint32_t* contours, FT_UInt nativePoints, FT_UInt nativeContours, int error) {
+    GuestArena::HostWrite pointsWrite(points, points ? sizeof(*points) : 0);
+    GuestArena::HostWrite contoursWrite(contours, contours ? sizeof(*contours) : 0);
+    if ((points && !pointsWrite.Open()) || (contours && !contoursWrite.Open())) return error != 0 ? error : FT_Err_Invalid_Argument;
+    if (points) *points = nativePoints;
+    if (contours) *contours = nativeContours;
+    return error;
 }
 
 FT_Outline NativeOutline(const GuestOutline& outline, FT_Vector* points) {
@@ -116,9 +119,7 @@ int APS5_VABI FT_Stroker_GetCounts_nid_postfix(void* stroker, std::uint32_t* poi
     FT_UInt nativePoints = 0;
     FT_UInt nativeContours = 0;
     const FT_Error error = FT_Stroker_GetCounts(static_cast<FT_Stroker>(stroker), points ? &nativePoints : nullptr, contours ? &nativeContours : nullptr);
-    WriteCount(points, nativePoints);
-    WriteCount(contours, nativeContours);
-    return error;
+    return WriteCounts(points, contours, nativePoints, nativeContours, error);
 }
 
 int APS5_VABI FT_Stroker_BeginSubPath_nid_postfix(void* stroker, const GuestVector* to, std::uint8_t open) {
@@ -149,9 +150,7 @@ int APS5_VABI FT_Stroker_GetBorderCounts_nid_postfix(void* stroker, std::int32_t
     FT_UInt nativeContours = 0;
     const FT_Error error = FT_Stroker_GetBorderCounts(static_cast<FT_Stroker>(stroker), static_cast<FT_StrokerBorder>(border),
                                                       points ? &nativePoints : nullptr, contours ? &nativeContours : nullptr);
-    WriteCount(points, nativePoints);
-    WriteCount(contours, nativeContours);
-    return error;
+    return WriteCounts(points, contours, nativePoints, nativeContours, error);
 }
 
 int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const GuestVector* control, const GuestVector* to) {
