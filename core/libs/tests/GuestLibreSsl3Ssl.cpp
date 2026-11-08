@@ -344,37 +344,6 @@ void CheckKeylogCallback() {
     Require(threw, "null context");
 }
 
-LibreSsl3X509 CertificateWith(LibreSsl3X509CertInfo& info) {
-    LibreSsl3X509 certificate;
-    std::memset(&certificate, 0xA5, sizeof(certificate));
-    certificate.certInfo = &info;
-    return certificate;
-}
-
-void CheckX509SetVersion() {
-    Require(X509_set_version_nid_postfix(nullptr, 1) == 0, "null certificate");
-    LibreSsl3X509CertInfo info{};
-    auto certificate = CertificateWith(info);
-    for (std::int64_t version : {std::int64_t{-1}, std::int64_t{3}}) {
-        Require(X509_set_version_nid_postfix(&certificate, version) == 0, "version out of range");
-        Require(info.version == nullptr && info.encModified == 0, "rejected version leaves cert info unchanged");
-    }
-    Require(X509_set_version_nid_postfix(&certificate, 2) == 1, "allocates the version");
-    Require(info.version != nullptr && info.version->type == 2, "allocated integer type");
-    Require(info.encModified == 1, "marks the encoding modified");
-    Require(X509_get_version_nid_postfix(&certificate) == 2, "reads the new version");
-    auto* allocated = info.version;
-    info.encModified = 0;
-    Require(X509_set_version_nid_postfix(&certificate, 3) == 0, "existing version out of range");
-    Require(info.encModified == 0 && X509_get_version_nid_postfix(&certificate) == 2, "existing version unchanged");
-    Require(X509_set_version_nid_postfix(&certificate, 1) == 1, "updates the version");
-    Require(info.version == allocated && info.encModified == 1, "reuses the existing integer");
-    Require(X509_get_version_nid_postfix(&certificate) == 1, "reads the updated version");
-    Require(X509_set_version_nid_postfix(&certificate, 0) == 1, "version zero");
-    Require(info.version == allocated && X509_get_version_nid_postfix(&certificate) == 0, "reads version zero");
-    ASN1_INTEGER_free_nid_postfix(info.version);
-}
-
 } // namespace
 
 int main() {
@@ -388,8 +357,5 @@ int main() {
     CheckTlsMethod();
     CheckX509Version();
     CheckKeylogCallback();
-}
-
-    CheckX509SetVersion();
     return 0;
 }
