@@ -1,6 +1,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/Api.hpp"
 
+namespace WebCore {
+class DocumentLoader;
+}
+
 extern "C" {
 
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv() {
