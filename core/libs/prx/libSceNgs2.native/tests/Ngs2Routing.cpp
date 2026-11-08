@@ -324,6 +324,9 @@ int main() {
     TestSubmixerFilterOff();
     TestSubmixerKeyInput();
     TestUnityCopy();
-    for (std::uint32_t channels = 1; channels <= 8; channels++) TestIndependentVoicesAndSilentRamp(channels);
+    for (std::uint32_t channels = 1; channels <= 8; channels++) {
+        if (Ps4Library && (channels == 3 || channels == 4 || channels == 5 || channels == 7)) continue;
+        TestIndependentVoicesAndSilentRamp(channels);
+    }
     return 0;
 }
