@@ -66,6 +66,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.Target = args.toWindows ? Relinker::TargetSystem::Windows : args.toMacos ? Relinker::TargetSystem::MacOs : Relinker::TargetSystem::Linux;
     options.ToIntel = args.toIntel;
     options.ToRosetta = args.toRosetta;
+    options.ToAvx = args.toAvx;
     options.FrameRedZone = args.frameRedZone;
     options.SkipSyscallCheck = args.skipSyscallCheck;
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;

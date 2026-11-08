@@ -23,6 +23,8 @@
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/x86/MulxLowering.hpp>
+#include <codegen/x86/CountLowering.hpp>
+#include <codegen/x86/MovbeLowering.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
@@ -183,6 +185,8 @@ public:
 
 private:
     Amd64OnlyTarget _target;
+
+    [[nodiscard]] bool _lowersRosettaSet() const { return _target == Amd64OnlyTarget::Rosetta || _target == Amd64OnlyTarget::Avx; }
     Sse4aLowering _lowering;
     Sha256Lowering _sha256Lowering;
     Sha1Lowering _sha1Lowering;
@@ -255,7 +259,7 @@ Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchMcommit(const DecodedInstructi
 }
 
 std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const {
-    if (_target != Amd64OnlyTarget::Rosetta)
+    if (!_lowersRosettaSet())
         return std::nullopt;
     if (const auto andn = DecodeAndn(instr.Data, instr.Length))
         return _trampoline("ANDN", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitAndn(body, *andn); }));
@@ -265,6 +269,10 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
         return _trampoline(ShiftName(shift->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitShift(body, *shift); }));
     if (const auto bitfield = DecodeBitfield(instr.Data, instr.Length))
         return _trampoline(BitfieldName(bitfield->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitBitfield(body, *bitfield); }));
+    if (const auto count = _target == Amd64OnlyTarget::Avx ? DecodeCount(instr.Data, instr.Length) : std::nullopt)
+        return _trampoline(CountName(count->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitCount(body, *count); }), false, true);
+    if (const auto movbe = _target == Amd64OnlyTarget::Avx ? DecodeMovbe(instr.Data, instr.Length) : std::nullopt)
+        return _trampoline("MOVBE", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitMovbe(body, *movbe); }), false, true);
     if (instr.IsRdseed()) {
         std::vector<std::uint8_t> replacement(instr.Data, instr.Data + instr.Length);
         replacement[instr.OpcodeOffset() + 2] &= static_cast<std::uint8_t>(~(1u << X64OpcodeConstants::ModRmRegShift));
@@ -328,43 +336,51 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
         body.Raw(std::span<const std::uint8_t>(&kMcommitStc, 1));
         return kMcommit.Name;
     }
-    if (_target == Amd64OnlyTarget::Rosetta && instr.IsRdpid()) {
+    if (_lowersRosettaSet() && instr.IsRdpid()) {
         body.Raw(_rdpidReplacement(instr));
         return kRdpid.Name;
     }
-    if (const auto andn = _target == Amd64OnlyTarget::Rosetta ? DecodeAndn(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto andn = _lowersRosettaSet() ? DecodeAndn(instr.Data, instr.Length) : std::nullopt) {
         EmitAndn(body, *andn);
         return "ANDN";
     }
-    if (const auto bls = _target == Amd64OnlyTarget::Rosetta ? DecodeBls(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto bls = _lowersRosettaSet() ? DecodeBls(instr.Data, instr.Length) : std::nullopt) {
         EmitBls(body, *bls);
         return BlsName(bls->Operation);
     }
-    if (const auto shift = _target == Amd64OnlyTarget::Rosetta ? DecodeShift(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto shift = _lowersRosettaSet() ? DecodeShift(instr.Data, instr.Length) : std::nullopt) {
         EmitShift(body, *shift);
         return ShiftName(shift->Operation);
     }
-    if (const auto bitfield = _target == Amd64OnlyTarget::Rosetta ? DecodeBitfield(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto bitfield = _lowersRosettaSet() ? DecodeBitfield(instr.Data, instr.Length) : std::nullopt) {
         EmitBitfield(body, *bitfield);
         return BitfieldName(bitfield->Operation);
     }
-    if (_target == Amd64OnlyTarget::Rosetta && instr.IsRdtscp()) {
+    if (const auto count = _target == Amd64OnlyTarget::Avx ? DecodeCount(instr.Data, instr.Length) : std::nullopt) {
+        EmitCount(body, *count);
+        return CountName(count->Operation);
+    }
+    if (const auto movbe = _target == Amd64OnlyTarget::Avx ? DecodeMovbe(instr.Data, instr.Length) : std::nullopt) {
+        EmitMovbe(body, *movbe);
+        return "MOVBE";
+    }
+    if (_lowersRosettaSet() && instr.IsRdtscp()) {
         body.Raw(_rdtscpReplacement(instr));
         return kRdtscp.Name;
     }
-    if (const auto wide = _target == Amd64OnlyTarget::Rosetta ? DecodeVexWideStore(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto wide = _lowersRosettaSet() ? DecodeVexWideStore(instr.Data, instr.Length) : std::nullopt) {
         _wideStoreLowering.EmitOutOfLine(body, *wide);
         return kWideStore.Name;
     }
-    if (const auto compare = _target == Amd64OnlyTarget::Rosetta ? DecodeScalarCompare(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto compare = _lowersRosettaSet() ? DecodeScalarCompare(instr.Data, instr.Length) : std::nullopt) {
         _emitScalarCompare(body, instr, *compare);
         return kScalarCompare.Name;
     }
-    if (const auto masked = _target == Amd64OnlyTarget::Rosetta ? DecodeMaskedStore(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto masked = _lowersRosettaSet() ? DecodeMaskedStore(instr.Data, instr.Length) : std::nullopt) {
         EmitMaskedStore(body, *masked);
         return masked->Name;
     }
-    if (const auto mulx = _target == Amd64OnlyTarget::Rosetta ? DecodeMulx(instr.Data, instr.Length) : std::nullopt) {
+    if (const auto mulx = _lowersRosettaSet() ? DecodeMulx(instr.Data, instr.Length) : std::nullopt) {
         EmitMulx(body, *mulx);
         return "MULX";
     }
@@ -429,7 +445,7 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
     }
     _moveTrailing(body, trailing);
     const DecodedInstruction first{instructions.front().data(), instructions.front().size()};
-    const bool optional = DecodeReciprocal(first.Data, first.Length).has_value() || (_target == Amd64OnlyTarget::Rosetta && (first.IsRdpid() || first.IsRdtscp()));
+    const bool optional = DecodeReciprocal(first.Data, first.Length).has_value() || (_lowersRosettaSet() && (first.IsRdpid() || first.IsRdtscp()));
     return _trampoline(name, instructions.front().size(), body.Finish(), optional);
 }
 

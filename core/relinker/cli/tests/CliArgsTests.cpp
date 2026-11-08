@@ -336,6 +336,10 @@ void targetSelection() {
     const std::string rosettaConflict = "--to-rosetta conflicts with --windows";
     expectThrows({"--windows", "--to-rosetta", "input.elf", "output.elf"}, rosettaConflict);
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
+    const auto avx = parse({"--macos", "--to-avx", "input.elf", "output.elf"});
+    require(avx.toMacos && avx.toAvx && avx.toIntel && !avx.toRosetta, "--to-avx did not imply --to-intel on macOS");
+    expectThrows({"--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
+    expectThrows({"--windows", "--to-avx", "input.elf", "output.elf"}, "--to-avx requires --macos");
 }
 
 void patchOptions() {
