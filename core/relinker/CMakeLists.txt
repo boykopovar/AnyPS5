@@ -1078,6 +1078,22 @@ if(BUILD_TESTING)
     target_link_libraries(windows_trampoline_builder_tests PRIVATE relinker_core)
     add_test(NAME windows_trampoline_builder COMMAND windows_trampoline_builder_tests)
 
+    add_test_executable(guest_relinker_leb128_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tests/GuestRelinkerLeb128.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EhFrameReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
+    )
+    target_link_libraries(guest_relinker_leb128_tests PRIVATE relinker_core)
+    target_include_directories(guest_relinker_leb128_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+    )
+    add_test(NAME guest_relinker_leb128 COMMAND guest_relinker_leb128_tests)
+    set_tests_properties(guest_relinker_leb128 PROPERTIES TIMEOUT 20)
+
     add_test_executable(entry_stub_tests ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/EntryStubTests.cpp)
     target_link_libraries(entry_stub_tests PRIVATE relinker_core)
     add_test(NAME entry_stub COMMAND entry_stub_tests)
