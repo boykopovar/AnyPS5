@@ -25,6 +25,5 @@ int main() {
     Require(scePadBondUpdateStart(-1, nullptr) == PAD_ERROR_INVALID_ARG);
     PadUpdateData wrong{};
     Require(scePadBondUpdateSendData(0, &wrong) == PAD_ERROR_INVALID_ARG);
-    for (int id : {-1, 0, 7, -12345, 12345})
-        return 0;
+    return 0;
 }
