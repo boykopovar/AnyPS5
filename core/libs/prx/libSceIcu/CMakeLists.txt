@@ -308,3 +308,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
+
+target_sources(libSceIcu PRIVATE CalendarOpen.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_calendar_open_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CalendarOpen.cpp)
+    target_include_directories(guest_icu_calendar_open_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_calendar_open_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_calendar_open_tests)
+    add_test(NAME guest_icu_calendar_open COMMAND guest_icu_calendar_open_tests)
+    set_tests_properties(guest_icu_calendar_open PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_calendar_open PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()

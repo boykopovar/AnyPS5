@@ -83,10 +83,6 @@ int APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucal_open_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
