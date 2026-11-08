@@ -54,12 +54,26 @@ static void CheckAddRemove() {
     Check(Debug::ParseNid("4J2sUJmuHZQ", a));
     Check(Debug::ParseNid("hcuQgD53UxM", b));
     Check(!table.Remove(a));
-    Check(table.Add(a));
-    Check(table.Add(b));
+    Check(table.Add(a) == Debug::NidBreakpointTable::AddResult::Added);
+    Check(table.Add(b) == Debug::NidBreakpointTable::AddResult::Added);
     Check(table.Remove(a));
     Check(!table.Remove(a));
     Check(table.Remove(b));
     Check(!table.Remove(b));
+}
+
+static void CheckDuplicates() {
+    Debug::NidBreakpointTable table;
+    std::uint64_t a = 0;
+    Check(Debug::ParseNid("4J2sUJmuHZQ", a));
+    Check(table.Add(a) == Debug::NidBreakpointTable::AddResult::Added);
+    Check(table.Add(a) == Debug::NidBreakpointTable::AddResult::Duplicate);
+    Check(table.Add(a) == Debug::NidBreakpointTable::AddResult::Duplicate);
+    Check(table.Size() == 1);
+    Check(table.DuplicateCount() == 2);
+    Check(table.Remove(a));
+    Check(table.Add(a) == Debug::NidBreakpointTable::AddResult::Added);
+    Check(table.DuplicateCount() == 2);
 }
 
 int main() {
@@ -67,5 +81,6 @@ int main() {
     CheckParseRejectsMalformed();
     CheckRoundTrip();
     CheckAddRemove();
+    CheckDuplicates();
     return 0;
 }
