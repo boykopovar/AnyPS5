@@ -19,8 +19,8 @@ static void CheckHeldAndReleased() {
     auto other = MakeHostInstanceLockBackend();
     Require(std::filesystem::exists(LockFile()), "start-up must have created the lock file");
     Require(!other->TryLock(LockFile()), "start-up must hold the lock for the whole process");
-    ReleaseHostInstanceLock();
-    Require(other->TryLock(LockFile()), "ReleaseHostInstanceLock must free the lock");
+    ReleaseHostInstanceLock_nid_no_patch();
+    Require(other->TryLock(LockFile()), "ReleaseHostInstanceLock_nid_no_patch must free the lock");
 }
 
 static void CheckNothingCreated() {
@@ -68,7 +68,7 @@ static void CheckSecondInstance(const std::string& executable) {
     Require(message.find(std::filesystem::current_path().string()) != std::string::npos, "the error must name the directory: " + message);
     Require(message.find(LockFile().string()) != std::string::npos, "the error must name the lock file: " + message);
     Require(message.find("ANYPS5_INSTANCE_LOCK=off") != std::string::npos, "the error must name the variable: " + message);
-    ReleaseHostInstanceLock();
+    ReleaseHostInstanceLock_nid_no_patch();
     Require(RunChild(executable, "on", errors) == 0, "a copy must start once the holder released the lock: " + Read(errors));
 }
 #endif

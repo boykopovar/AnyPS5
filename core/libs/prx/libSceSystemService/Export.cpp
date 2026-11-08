@@ -145,7 +145,7 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
 
 void StartHostExecutable(HostLaunch& launch) {
     LogFileRelease_nid_no_patch();
-    ReleaseHostInstanceLock();
+    ReleaseHostInstanceLock_nid_no_patch();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
