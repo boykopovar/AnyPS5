@@ -34,6 +34,7 @@ public:
 
     VkBuffer Handle() const { return buffer; }
     VkDeviceAddress DeviceAddress() const { return address + lead; }
+    VkDeviceAddress HandleAddress() const { return address; }
     std::uint64_t Origin() const { return origin; }
     std::uint64_t BoundBytes() const { return bound * BlockBytes; }
     std::uint32_t MemoryType() const { return type; }

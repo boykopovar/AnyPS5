@@ -6431,7 +6431,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE && !heapStage) || (usesBda && !spaceReuse)) return {};
     const bool readsInPlace = usesBda && heapStage;
     movedOnly = movedOnly || readsInPlace;
-    thread_local std::vector<std::pair<std::size_t, VkDescriptorBufferInfo>>* inPlaceSlot = nullptr;
+    thread_local std::vector<std::pair<std::size_t, VkDeviceAddressRangeEXT>>* inPlaceSlot = nullptr;
     auto& inPlace = ShaderRecompiler::ThreadOwned(inPlaceSlot);
     inPlace.clear();
     prepareFaultSlot();
@@ -6457,7 +6457,10 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         if (override != moved.end() && override->words.empty()) result->movedReads.emplace_back(override->address, override->address + override->size);
         if (override != moved.end() && override->words.empty() && readsInPlace) {
             std::uint32_t adjustment = 0;
-            inPlace.push_back({index, wholeDwordRange(guestMemory.Descriptor(override->address, override->size, adjustment))});
+            VkDeviceAddress handle = 0;
+            const auto info = wholeDwordRange(guestMemory.Descriptor(override->address, override->size, adjustment, &handle));
+            Require(handle != 0, "a moved buffer read in place has no device address");
+            inPlace.push_back({index, {handle + info.offset, info.range}});
             Require(adjustment == item.adjustment, "a moved buffer read in place lost its view's alignment");
             continue;
         }
@@ -6534,7 +6537,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     return result;
 }
 
-void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDescriptorBufferInfo>> inPlace) const {
+void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDeviceAddressRangeEXT>> inPlace) const {
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
     std::array<bool, 2> described{};
     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
@@ -6598,16 +6601,16 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
     }
     Require(nextWrite == writes.end(), "draw snapshot writes disagree with their descriptor bindings");
     if (addressedBuffers) {
-        std::vector<VkDescriptorBufferInfo> overrides(allocations.size(), VkDescriptorBufferInfo{VK_NULL_HANDLE, 0, 0});
+        std::vector<VkDeviceAddressRangeEXT> overrides(allocations.size(), VkDeviceAddressRangeEXT{0, 0});
         bool overridden = false;
         for (std::size_t index = 0; index < selected.size(); ++index) {
             const auto& snapshot = result.snapshots[index];
-            overrides[selected[index]] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes};
+            overrides[selected[index]] = {snapshot.buffer->DeviceAddress() + snapshot.offset, snapshot.bytes};
         }
-        for (const auto& [index, info] : inPlace) overrides[index] = info;
+        for (const auto& [index, range] : inPlace) overrides[index] = range;
         for (const auto& binding : bindings) {
             if (!binding.addressed) continue;
-            for (const auto allocation : binding.allocations) overridden = overridden || overrides[allocation].buffer != VK_NULL_HANDLE;
+            for (const auto allocation : binding.allocations) overridden = overridden || overrides[allocation].address != 0;
         }
         if (overridden) {
             result.heapOffsets = heapOffsets;
@@ -6730,6 +6733,18 @@ void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) 
 
 VkDeviceAddressRangeEXT ShaderResources::bufferAddress(const Allocation& allocation) const {
     auto adjustment = allocation.adjustment;
+    if (allocation.guest) {
+        VkDeviceAddress handle = 0;
+        const auto info = wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, adjustment, &handle));
+        Require(handle != 0, "an addressed guest buffer has no device address");
+        return {handle + info.offset, info.range};
+    }
+    if (allocation.role == ShaderRecompiler::DescriptorRole::BdaPagetable || allocation.role == ShaderRecompiler::DescriptorRole::FaultBuffer) {
+        Require(bda != nullptr, "BDA descriptors have no memory owner");
+        if (allocation.role == ShaderRecompiler::DescriptorRole::BdaPagetable) return {bda->TableAddress(), bda->Table().range};
+        return {bda->FaultAddress(), bda->Fault().range};
+    }
+    if (allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.buffer != nullptr) return {allocation.buffer->DeviceAddress(), allocation.size};
     auto info = descriptor(allocation, adjustment);
     if (info.buffer == VK_NULL_HANDLE) info = {context.emptyBuffer, 0, EmptyBufferBytes};
     const auto base = BufferDeviceAddress(context, info.buffer);
@@ -6740,6 +6755,7 @@ VkDeviceAddressRangeEXT ShaderResources::bufferAddress(const Allocation& allocat
 void ShaderResources::resolveBufferAddresses() {
     if (!resolvedAddresses.empty()) return;
     if (emptyAddress == 0) emptyAddress = BufferDeviceAddress(context, context.emptyBuffer);
+    if (gdsAllocation != std::numeric_limits<std::size_t>::max() && resolvedGds == 0) resolvedGds = bufferAddress(allocations[gdsAllocation]).address;
     if (!addressedBuffers) return;
     resolvedAddresses.assign(allocations.size(), {});
     for (const auto& binding : bindings) {
@@ -6751,12 +6767,12 @@ void ShaderResources::resolveBufferAddresses() {
     }
 }
 
-void ShaderResources::bufferRanges(std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const {
+void ShaderResources::bufferRanges(std::uint32_t dataStage, const std::vector<VkDeviceAddressRangeEXT>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const {
     static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
     if (dataStage >= addressedElements.size()) return;
     for (const auto index : addressedElements[dataStage]) {
         const auto& allocation = allocations[index];
-        const bool overridden = overrides != nullptr && (*overrides)[index].buffer != VK_NULL_HANDLE;
+        const bool overridden = overrides != nullptr && (*overrides)[index].address != 0;
         const bool owned = !overridden && !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
         const bool resolved = !overridden && index < resolvedAddresses.size() && resolvedAddresses[index].address != 0;
         VkDeviceAddress address = 0;
@@ -6772,11 +6788,8 @@ void ShaderResources::bufferRanges(std::uint32_t dataStage, const std::vector<Vk
                 if (fresh.address != address || fresh.size != range) throw std::runtime_error("AGC graphics: a GPU heap buffer address resolved when the draw's resources were built changed");
             }
         } else if (overridden) {
-            const auto& info = (*overrides)[index];
-            const auto base = BufferDeviceAddress(context, info.buffer);
-            Require(base != 0, "an addressed buffer has no device address");
-            address = base + info.offset;
-            range = info.range;
+            address = (*overrides)[index].address;
+            range = (*overrides)[index].size;
         } else {
             const auto fresh = bufferAddress(allocation);
             address = fresh.address;
@@ -6806,17 +6819,11 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
     const bool tableBound = binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
     const bool faultBound = binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
     if (bda != nullptr && (tableBound || faultBound)) {
-        const auto of = [&](const VkDescriptorBufferInfo& info) {
-            const auto base = BufferDeviceAddress(context, info.buffer);
-            Require(base != 0, "a BDA buffer has no device address");
-            return base + info.offset;
-        };
         if (tableBound) {
-            const auto tableInfo = bda->Table();
-            table = of(tableInfo);
-            tableDwords = static_cast<std::uint32_t>(tableInfo.range / sizeof(std::uint32_t));
+            table = bda->TableAddress();
+            tableDwords = static_cast<std::uint32_t>(bda->Table().range / sizeof(std::uint32_t));
         }
-        if (faultBound) fault = of(bda->Fault());
+        if (faultBound) fault = bda->FaultAddress();
     }
     Require(placements.size() == shaders.size(), "the push layout does not describe the draw's stages");
     std::optional<VkDeviceAddress> gds;
@@ -6825,12 +6832,11 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
         gds = VkDeviceAddress{0};
         if (gdsAllocation == std::numeric_limits<std::size_t>::max()) return *gds;
         const auto* overrides = rewritten != nullptr && rewritten->addressOffsets ? &rewritten->addressOverrides : nullptr;
-        auto adjustment = allocations[gdsAllocation].adjustment;
-        const auto info = overrides != nullptr && (*overrides)[gdsAllocation].buffer != VK_NULL_HANDLE ? (*overrides)[gdsAllocation] : descriptor(allocations[gdsAllocation], adjustment);
-        Require(info.buffer != VK_NULL_HANDLE, "the GDS buffer is missing");
-        const auto base = BufferDeviceAddress(context, info.buffer);
-        Require(base != 0, "the GDS buffer has no device address");
-        gds = base + info.offset;
+        const bool overridden = overrides != nullptr && (*overrides)[gdsAllocation].address != 0;
+        gds = overridden ? (*overrides)[gdsAllocation].address : resolvedGds;
+        Require(*gds != 0, "the GDS buffer has no device address");
+        static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+        if (verify && !overridden && bufferAddress(allocations[gdsAllocation]).address != *gds) throw std::runtime_error("AGC graphics: the GDS address resolved when the draw's resources were built changed");
         return *gds;
     };
     bool rooted = false;
@@ -6865,7 +6871,7 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
     if (rooted) NoteDataAddressPush();
 }
 
-void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDescriptorBufferInfo>* overrides, VkDeviceAddress empty) const {
+void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     struct RangeStorage {};
     auto& ranges = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();

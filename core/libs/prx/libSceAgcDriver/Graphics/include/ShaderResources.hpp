@@ -231,7 +231,7 @@ public:
         std::vector<Snapshot> snapshots;
         bool addressOffsets = false;
         std::array<std::uint64_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
-        std::vector<VkDescriptorBufferInfo> addressOverrides;
+        std::vector<VkDeviceAddressRangeEXT> addressOverrides;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> movedReads;
         ~DrawBindings();
     };
@@ -377,7 +377,7 @@ public:
     }
     void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
     void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
-    void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDescriptorBufferInfo>* overrides, VkDeviceAddress empty) const;
+    void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     std::size_t BindingCount() const { return bindings.size(); }
@@ -742,12 +742,13 @@ private:
     std::vector<VkDeviceAddressRangeEXT> resolvedAddresses;
     std::array<std::vector<std::uint32_t>, ShaderRecompiler::RuntimeAbi::StageCount> addressedElements;
     VkDeviceAddress emptyAddress = 0;
+    VkDeviceAddress resolvedGds = 0;
     std::size_t gdsAllocation = std::numeric_limits<std::size_t>::max();
     std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtDwords{};
     std::array<std::uint64_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, std::size_t stageIndex);
-    void bufferRanges(std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const;
+    void bufferRanges(std::uint32_t dataStage, const std::vector<VkDeviceAddressRangeEXT>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const;
     VkDeviceAddressRangeEXT bufferAddress(const Allocation& allocation) const;
     void resolveBufferAddresses();
     struct FaultDescriptor {
@@ -757,7 +758,7 @@ private:
     };
     std::vector<FaultDescriptor> faultDescriptors;
     void prepareFaultSlot() const;
-    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDescriptorBufferInfo>> inPlace = {}) const;
+    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDeviceAddressRangeEXT>> inPlace = {}) const;
     std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write

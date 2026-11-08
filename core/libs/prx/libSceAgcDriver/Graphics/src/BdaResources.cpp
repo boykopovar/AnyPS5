@@ -452,6 +452,15 @@ VkDescriptorBufferInfo BdaResources::Fault() const {
     return {faultChunk->buffer->Handle(), faultOffset, faultChunk->slotBytes};
 }
 
+VkDeviceAddress BdaResources::TableAddress() const {
+    Require(table != nullptr, "BDA page table was not requested");
+    return table->DeviceAddress();
+}
+
+VkDeviceAddress BdaResources::FaultAddress() const {
+    return faultChunk->buffer->DeviceAddress() + faultOffset;
+}
+
 namespace {
 std::atomic<bool> loopGuardTripped{false};
 }

@@ -2913,6 +2913,10 @@ VkDeviceAddress mirrorAddress(const ImageMirror& mirror) {
     return mirror.resident != nullptr ? mirror.resident->DeviceAddress() : mirror.buffer->DeviceAddress();
 }
 
+VkDeviceAddress mirrorHandleAddress(const ImageMirror& mirror) {
+    return mirror.resident != nullptr ? mirror.resident->HandleAddress() : mirror.buffer->DeviceAddress();
+}
+
 bool sameRange(const std::weak_ptr<const GuestAllocations::Range>& mirrored, const std::shared_ptr<const GuestAllocations::Range>& range) {
     return !mirrored.owner_before(range) && !range.owner_before(mirrored);
 }
@@ -6806,14 +6810,14 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     recorder.EndGpuTiming(timing, copiedBytes);
 }
 
-VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
+VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment, VkDeviceAddress* handleAddress) const {
     std::string failure;
-    const auto info = TryDescriptor(address, bytes, adjustment, &failure);
+    const auto info = TryDescriptor(address, bytes, adjustment, &failure, handleAddress);
     if (!info.has_value()) Require(false, failure);
     return *info;
 }
 
-std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment, std::string* failure) const {
+std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment, std::string* failure, VkDeviceAddress* handleAddress) const {
     const auto fail = [failure](std::string text) -> std::optional<VkDescriptorBufferInfo> {
         if (failure != nullptr) *failure = std::move(text);
         return std::nullopt;
@@ -6846,6 +6850,7 @@ std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint
     if (address - adjustment + range > end) return fail(describe("rounded up to its view range exceeds"));
     if (range > context.limits.maxStorageBufferRange) return fail("guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? mirrorHandle(*region.mirror) : region.buffer->Handle();
+    if (handleAddress != nullptr) *handleAddress = region.direct != nullptr ? region.direct->address - region.direct->lead : region.mirror != nullptr ? mirrorHandleAddress(*region.mirror) : region.buffer->DeviceAddress();
     return VkDescriptorBufferInfo{handle, offset - adjustment, range};
 }
 
