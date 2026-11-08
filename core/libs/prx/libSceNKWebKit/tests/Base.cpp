@@ -1524,6 +1524,79 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 }
 
+static void TestInspector() {
+    Require(WKInspectorGetTypeID() == 67);
+    auto inspector = NKWebKit::Make<NKWebKit::Inspector>();
+    const void* ref = inspector.Get();
+
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isAttached = true;
+    Require(WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isAttached = false;
+    inspector->isConnected = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isConnected = false;
+    inspector->isElementSelectionActive = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isElementSelectionActive = false;
+    inspector->isFront = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isFront = false;
+    inspector->isProfilingPage = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isProfilingPage = false;
+    inspector->isVisible = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(WKInspectorIsVisible(ref));
+
+    bool threw = false;
+    try {
+        WKInspectorIsAttached(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1549,7 +1622,9 @@ int main() {
     TestProtectionSpace();
     TestPermissionRequests();
     TestCertificateInfo();
-    TestEmptyFrameLoaderClient();
+TestEmptyFrameLoaderClient();
+
+TestInspector();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
