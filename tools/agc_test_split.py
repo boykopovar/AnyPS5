@@ -97,7 +97,7 @@ def arguments_of(text, position, line):
             continue
         if character == "#":
             comment = re.match(r"#\[(=*)\[", text[position:position + 32])
-            close = text.index("]" + comment[1] + "]", position) + len(comment[0]) if comment else text.find("\n", position)
+            close = text.index("]" + comment[1] + "]", position) + len(comment[1]) + 2 if comment else text.find("\n", position)
             line += text[position:close].count("\n")
             position = close
             continue

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -87,9 +88,14 @@ FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
 int __isthreaded_nid_postfix = 1;
 
+int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode) {
+    return stream->Orientation(mode);
+}
+
 int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToReading()) return -1;
     const int result = std::fgetc(native);
     stream->SyncStatus();
@@ -101,6 +107,7 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
         errno = 22;
         return -1;
     }
+    stream->Orientation(1);
     if (const char16_t low = stream->TakeLowSurrogate(); low != 0) return low;
     stream->NoteWideRead();
     const auto invalid = [stream] {
@@ -129,7 +136,9 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
 }
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    if (stream == nullptr) { errno = 22; return -1; }
+    if (!stream->IsOpen()) { errno = 9; return -1; }
+    stream->Orientation(1);
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
         errno = 86;
@@ -137,6 +146,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
         return -1;
     }
     auto* native = GetNativeStream(stream);
+    if (!stream->OpenForReading()) return -1;
     if (!stream->SwitchToReading()) return -1;
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
@@ -147,6 +157,7 @@ int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(st
 int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToReadingUnlocked()) return -1;
 #ifdef _WIN32
     const int result = _fgetc_nolock(native);
@@ -190,6 +201,7 @@ int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
     const int result = std::fputc(value, native);
     stream->SyncStatus();
@@ -206,6 +218,7 @@ int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     const int result = putc_unlocked(value, native);
 #endif
     stream->SyncUnlockedStatus();
+    stream->Orientation(-1);
     return result;
 }
 int APS5_VABI __swbuf_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
@@ -213,25 +226,154 @@ int APS5_VABI putchar_nid_postfix(int value) { return fputc_nid_postfix(value, _
 int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    if (value != EOF && stream && !stream->OpenForReading()) return -1;
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (value != EOF && !stream->SwitchToReading()) return -1;
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
+    if (size < 2) return nullptr;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
-    if (size <= 0) {
-        stream->SetError();
-        errno = 22;
-        return nullptr;
-    }
+    if (stream) stream->Orientation(-1);
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return nullptr;
     auto* result = std::fgets(buffer, size, native);
     stream->SyncStatus();
     stream->KeepDirectoryReadError(result == nullptr);
     return result;
+}
+}
+
+namespace {
+void* SafeAllocate(std::size_t size) {
+    try {
+        return ApplicationHeapAllocate_nid_no_patch(size);
+    } catch (const std::bad_alloc&) {
+    } catch (const std::length_error&) {
+    }
+    errno = 12;
+    return nullptr;
+}
+void* SafeReallocate(void* ptr, std::size_t size) {
+    try {
+        return ApplicationHeapReallocate_nid_no_patch(ptr, size);
+    } catch (const std::bad_alloc&) {
+    } catch (const std::length_error&) {
+    }
+    errno = 12;
+    return nullptr;
+}
+}
+
+namespace LibcDetail {
+bool ExpandLineBufferCapacity(std::size_t current, std::size_t needed, std::size_t limit, std::size_t& result) {
+    if (needed > limit) return false;
+    std::size_t next = current < 64 ? 128 : (current <= limit / 2 ? current * 2 : limit);
+    if (next < needed) next = needed;
+    if (next > limit || next <= current) return false;
+    result = next;
+    return true;
+}
+}
+
+extern "C" {
+std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, size_t* n, int delimiter, FileStream* stream) {
+    if (!stream) {
+        errno = 22;
+        return -1;
+    }
+    if (!stream->IsOpen()) {
+        errno = 9;
+        return -1;
+    }
+    if (!lineptr || !n) {
+        stream->SetError();
+        errno = 22;
+        return -1;
+    }
+    constexpr std::size_t maxLineSize = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max());
+    flockfile_nid_postfix(stream);
+    struct Unlock {
+        FileStream* stream;
+        ~Unlock() { funlockfile_nid_postfix(stream); }
+    } unlock{stream};
+
+    if (*lineptr == nullptr) {
+        *n = 0;
+        std::size_t initialSize = 128;
+        char* newBuf = static_cast<char*>(SafeAllocate(initialSize));
+        if (!newBuf) {
+            stream->SetError();
+            return -1;
+        }
+        *lineptr = newBuf;
+        *n = initialSize;
+    }
+
+    std::size_t pos = 0;
+    for (;;) {
+        const int ch = fgetc_nid_postfix(stream);
+        if (ch == -1) {
+            if (ferror_nid_postfix(stream)) {
+                stream->SetError();
+                return -1;
+            }
+            if (pos == 0) {
+                if (*n < 1) {
+                    std::size_t nextCapacity = 0;
+                    if (!LibcDetail::ExpandLineBufferCapacity(*n, 1, maxLineSize, nextCapacity)) {
+                        errno = 84;
+                        stream->SetError();
+                        return -1;
+                    }
+                    char* resized = static_cast<char*>(SafeReallocate(*lineptr, nextCapacity));
+                    if (!resized) {
+                        stream->SetError();
+                        return -1;
+                    }
+                    *lineptr = resized;
+                    *n = nextCapacity;
+                }
+                (*lineptr)[0] = '\0';
+                return -1;
+            }
+            break;
+        }
+        if (pos + 2 > *n) {
+            std::size_t nextCapacity = 0;
+            if (!LibcDetail::ExpandLineBufferCapacity(*n, pos + 2, maxLineSize, nextCapacity)) {
+                ungetc_nid_postfix(ch, stream);
+                errno = 84;
+                stream->SetError();
+                return -1;
+            }
+            char* resized = static_cast<char*>(SafeReallocate(*lineptr, nextCapacity));
+            if (!resized) {
+                const int savedErrno = errno;
+                ungetc_nid_postfix(ch, stream);
+                errno = savedErrno;
+                stream->SetError();
+                return -1;
+            }
+            *lineptr = resized;
+            *n = nextCapacity;
+        }
+        (*lineptr)[pos++] = static_cast<char>(ch);
+        if (ch == static_cast<unsigned char>(delimiter)) break;
+    }
+    if (pos > maxLineSize) {
+        errno = 84;
+        stream->SetError();
+        return -1;
+    }
+    (*lineptr)[pos] = '\0';
+    return static_cast<std::int64_t>(pos);
+}
+std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, size_t* n, FileStream* stream) {
+    return getdelim_nid_postfix(lineptr, n, '\n', stream);
 }
 int APS5_VABI feof_nid_postfix(FileStream* stream) {
     stream->SyncStatus();
@@ -287,8 +429,14 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
     buffer = nullptr;
-#endif
+    ::_lock_file(handle);
+    const int result = std::setvbuf(handle, buffer, native, size);
+    if (result == 0 && native == _IONBF) reinterpret_cast<UcrtStreamState*>(handle)->bufferSize = 1;
+    ::_unlock_file(handle);
+    return result;
+#else
     return std::setvbuf(handle, buffer, native, size);
+#endif
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);

@@ -149,6 +149,7 @@ enum class IrOpcode : std::uint16_t {
     PackFloat2x16Rtz,
     FPAdd16x2,
     FPMul16x2,
+    FPFma16x2,
     FPAbs32,
     FPNeg32,
     FPSaturate32,
@@ -284,6 +285,7 @@ enum class IrOpcode : std::uint16_t {
     Permlane16U32,
     BpermuteU32,
     PermuteU32,
+    HalfSwapU32,
     GetSrtResource,
     GetBufferResource,
     GetAddressResource,
@@ -518,6 +520,10 @@ struct PermlaneFlags {
     bool x16 = false;
     bool fetchInactive = false;
     bool boundControl = false;
+};
+
+struct FloatConvertFlags {
+    bool nanPayloadUnused = false;
 };
 
 struct MemoryFlags {

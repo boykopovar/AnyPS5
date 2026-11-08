@@ -1,6 +1,7 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/CodegenException.hpp>
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <initializer_list>
@@ -218,6 +219,66 @@ void CheckAddressSizeOverride() {
     const Pointers missing;
     RequireOffsets(*BuildControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, true), {0, 8});
     RequireOffsets(*BuildAddressTakenControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, {}), {0, 8});
+}
+
+void CheckRipDisplacementBounds() {
+    constexpr auto low = VirtualAddress{0x10};
+    constexpr auto high = std::numeric_limits<VirtualAddress>::max() - 16;
+    const auto build = [](Bytes prefix, std::int32_t displacement, VirtualAddress base, VirtualAddress slot) {
+        Bytes text(16, 0xc3);
+        std::copy(prefix.begin(), prefix.end(), text.begin());
+        std::memcpy(text.data() + prefix.size(), &displacement, sizeof(displacement));
+        Pointers pointers;
+        pointers.Slots = {{slot, base + 12}};
+        return BuildControlFlowGraph(text, base, base, {}, pointers);
+    };
+
+    const auto next = low + 6;
+    const auto underflowCall = build({0xff, 0x15}, -0x20, low, next - 0x20);
+    std::unordered_set<VirtualAddress> expectedUnderflow{low, low + 6, low + 12};
+    Require(underflowCall->ReachableVaddrs() == expectedUnderflow, "Unexpected reachable instruction set for underflowing call target");
+
+    const auto underflowJump = build({0xff, 0x25}, -0x20, low, next - 0x20);
+    std::unordered_set<VirtualAddress> expectedUnderflowJump{low, low + 12};
+    Require(underflowJump->ReachableVaddrs() == expectedUnderflowJump, "Unexpected reachable instruction set for underflowing jump target");
+
+    Bytes underflowLeaText(16, 0xc3);
+    const Bytes leaPrefix = {0x48, 0x8d, 0x05};
+    std::copy(leaPrefix.begin(), leaPrefix.end(), underflowLeaText.begin());
+    const std::int32_t underflowDisp = -0x20;
+    std::memcpy(underflowLeaText.data() + leaPrefix.size(), &underflowDisp, sizeof(underflowDisp));
+    Pointers emptyPointers;
+    const auto underflowLea = BuildControlFlowGraph(underflowLeaText, low, low, {}, emptyPointers);
+    std::unordered_set<VirtualAddress> expectedUnderflowLea{low, low + 7};
+    Require(underflowLea->ReachableVaddrs() == expectedUnderflowLea, "Unexpected reachable instruction set for underflowing LEA target");
+
+    const auto overflowCall = build({0xff, 0x15}, 0x20, high, high + 6 + 0x20);
+    std::unordered_set<VirtualAddress> expectedOverflow{high, high + 6, high + 12};
+    Require(overflowCall->ReachableVaddrs() == expectedOverflow, "Unexpected reachable instruction set for overflowing call target");
+
+    const auto overflowJump = build({0xff, 0x25}, 0x20, high, high + 6 + 0x20);
+    std::unordered_set<VirtualAddress> expectedOverflowJump{high, high + 12};
+    Require(overflowJump->ReachableVaddrs() == expectedOverflowJump, "Unexpected reachable instruction set for overflowing jump target");
+
+    Bytes overflowLeaText(16, 0xc3);
+    std::copy(leaPrefix.begin(), leaPrefix.end(), overflowLeaText.begin());
+    const std::int32_t overflowDisp = 0x20;
+    std::memcpy(overflowLeaText.data() + leaPrefix.size(), &overflowDisp, sizeof(overflowDisp));
+    const auto overflowLea = BuildControlFlowGraph(overflowLeaText, high, high, {}, emptyPointers);
+    std::unordered_set<VirtualAddress> expectedOverflowLea{high, high + 7};
+    Require(overflowLea->ReachableVaddrs() == expectedOverflowLea, "Unexpected reachable instruction set for overflowing LEA target");
+
+    const auto validZero = build({0xff, 0x15}, -static_cast<std::int32_t>(next), low, 0);
+    std::unordered_set<VirtualAddress> expectedZero{low, low + 6, low + 12};
+    Require(validZero->ReachableVaddrs() == expectedZero, "Unexpected reachable instruction set for target 0");
+
+    const auto validMax = build({0xff, 0x15}, 10, high, high + 16);
+    std::unordered_set<VirtualAddress> expectedMax{high, high + 6, high + 12};
+    Require(validMax->ReachableVaddrs() == expectedMax, "Unexpected reachable instruction set for target max");
+
+    const auto validEip = build({0x67, 0xff, 0x15}, -0x20, low, static_cast<std::uint32_t>(low + 7 - 0x20));
+    std::unordered_set<VirtualAddress> expectedEip{low, low + 7, low + 12};
+    Require(validEip->ReachableVaddrs() == expectedEip, "Unexpected reachable instruction set for 0x67 wrap");
 }
 
 void CheckCodeAddresses() {
@@ -488,6 +549,49 @@ void CheckRelativeJumpTables() {
     Require(Relinker::FindRelativeJumpTables(cutShort, TextAddress, {{TextAddress, TextAddress + cutShort.size()}}).empty(), "Table followed by more of its function was accepted");
 }
 
+Bytes GapStubTable(std::initializer_list<std::uint8_t> stub) {
+    constexpr std::size_t function = 16;
+    constexpr std::size_t tableOffset = 40;
+    Bytes text(64, 0x90);
+    for (std::size_t i = 0; i < function; ++i) text[i] = 0xcc;
+    std::copy(stub.begin(), stub.end(), text.begin());
+    text[function] = 0x48;
+    text[function + 1] = 0x8d;
+    text[function + 2] = 0x05;
+    SetDisplacement(text, function + 3, function + 7, TextAddress + tableOffset);
+    text[function + 7] = 0xe8;
+    SetDisplacement(text, function + 8, function + 12, TextAddress);
+    text[function + 12] = 0xc3;
+    for (std::size_t i = function + 13; i < tableOffset; ++i) text[i] = 0xcc;
+    text[tableOffset] = 0x0f;
+    text[tableOffset + 1] = 0x78;
+    text[tableOffset + 2] = 0x33;
+    text[tableOffset + 3] = 0x1e;
+    return text;
+}
+
+std::vector<Relinker::RelativeJumpTable> GapStubTables(const Bytes& text) {
+    return Relinker::FindRelativeJumpTables(text, TextAddress, {{TextAddress + 16, TextAddress + 29}, {TextAddress + text.size(), TextAddress + text.size() + 8}});
+}
+
+void CheckGapWalkBranchTargets() {
+    const auto returning = GapStubTables(GapStubTable({0xc3}));
+    Require(returning.size() == 1 && returning[0].Begin == TextAddress + 40, "A gap stub that returns hid the data table");
+
+    Bytes direct = GapStubTable({0xe9, 0, 0, 0, 0});
+    SetDisplacement(direct, 1, 5, TextAddress + 40);
+    Require(GapStubTables(direct).empty(), "A jump from a called gap stub into the table was missed");
+
+    Bytes afterOneByte = GapStubTable({0x55, 0xe9, 0, 0, 0, 0});
+    SetDisplacement(afterOneByte, 2, 6, TextAddress + 40);
+    Require(GapStubTables(afterOneByte).empty(), "A jump after a one-byte instruction in a gap stub was missed");
+
+    Bytes chained = GapStubTable({0xe9, 0, 0, 0, 0, 0xc3, 0xcc, 0xcc, 0xe9, 0, 0, 0, 0});
+    SetDisplacement(chained, 1, 5, TextAddress + 8);
+    SetDisplacement(chained, 9, 13, TextAddress + 40);
+    Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
+}
+
 void CheckEmbeddedDataTables() {
     constexpr std::size_t tableOffset = 24;
     Bytes text(48, 0x90);
@@ -751,6 +855,7 @@ int main() {
         CheckRelocatedTransfers();
         CheckSegmentRelativeTransfers();
         CheckAddressSizeOverride();
+        CheckRipDisplacementBounds();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
         CheckTrailingZeroRoots();
@@ -765,6 +870,7 @@ int main() {
         CheckStubBeforeUndecodableData();
         CheckTableWithPaddingAndReturnBytes();
         CheckLargeZeroGaps();
+        CheckGapWalkBranchTargets();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {

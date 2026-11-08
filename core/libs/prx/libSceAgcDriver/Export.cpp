@@ -32,14 +32,14 @@ int APS5_VABI sceAgcDriverDestroyQueue(void) {
     return 0;
 }
 
-int APS5_VABI sceAgcDriverGetRegShadowInfo(void) {
+int APS5_VABI sceAgcDriverGetRegShadowInfo(void* info) {
+    if (info == nullptr) return static_cast<int>(0x8A6D0003u);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceAgcDriverGetRegShadowInfoAgr(void) {
+int APS5_VABI sceAgcDriverGetRegShadowInfoAgr(void* info) {
+    if (info == nullptr) return static_cast<int>(0x8A6D0003u);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAgcDriverGetReservedDmemForAgc(void) {
@@ -127,22 +127,52 @@ int APS5_VABI sceAgcDriverTmpInitIdhs(void) {
     return 0;
 }
 
-int APS5_VABI sceAgcDriverUserDataWritePacket(void) {
+int APS5_VABI sceAgcSdmaClose(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAgcDriverUserDataWritePopMarker(void) {
+int APS5_VABI sceAgcSdmaConstFill(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAgcDriverUserDataWritePushMarker(void) {
+int APS5_VABI sceAgcSdmaCopyLinear(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAgcDriverUserDataWriteSetMarker(void) {
+int APS5_VABI sceAgcSdmaCopyTiledBC(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyTiledGen2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyWindowBC(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaCopyWindowGen2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaFlush(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaOpen(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAgcSdmaSetTileModesBC(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -44,14 +44,6 @@ int APS5_VABI sceVideodec2CreateDecoderBid() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideodec2CreateHevcDecoder() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceVideodec2QueryHevcDecoderMemoryInfo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceVideodec2InitLibrary() {
     NotImplemented_nid_no_patch(__func__);
 }

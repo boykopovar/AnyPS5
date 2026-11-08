@@ -8,10 +8,13 @@
 #include <cstdlib>
 #include <string>
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -399,11 +402,13 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 
 template<typename TNode>
 bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask, std::unordered_set<const IrValue*>& firstLanes) {
-    std::unordered_map<const IrValue*, bool> known;
+    std::array<std::byte, 2048> scratch;
+    std::pmr::monotonic_buffer_resource arena(scratch.data(), scratch.size());
+    std::pmr::unordered_map<const IrValue*, bool> known(&arena);
     const auto takesActiveArm = [activeMask](const IrValue* current) {
         return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(activeMask, current->Argument(0));
     };
-    std::vector<IrValue*> required;
+    std::pmr::vector<IrValue*> required(&arena);
     const auto requirements = [&program, &takesActiveArm, &required](IrValue* current) {
         required.clear();
         if (takesActiveArm(current)) {
@@ -443,8 +448,9 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
             required.push_back(argument != nullptr ? argument->Resolve() : nullptr);
         }
     };
-    std::unordered_set<const IrValue*> expanding;
-    std::vector<std::pair<IrValue*, bool>> pending{{value->Resolve(), false}};
+    std::pmr::unordered_set<const IrValue*> expanding(&arena);
+    std::pmr::vector<std::pair<IrValue*, bool>> pending(&arena);
+    pending.emplace_back(value->Resolve(), false);
     while (!pending.empty()) {
         const auto [current, expanded] = pending.back();
         pending.pop_back();
@@ -487,18 +493,29 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 
 template<typename TNode>
 bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value) {
+    std::unordered_map<const IrValue*, bool> decided;
+    return MayDecide(program, value, decided);
+}
+
+template<typename TNode>
+bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value, std::unordered_map<const IrValue*, bool>& decided) {
     if (value == nullptr) return false;
-    if (MayEvaluate(program, value)) return true;
     value = value->Resolve();
-    const auto decides = [&program, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index)); };
-    switch (value->Opcode()) {
-        case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
-        case IrOpcode::LogicalAnd:
-        case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
-        case IrOpcode::ULessThan32:
-        case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
-        default: return false;
-    }
+    if (const auto found = decided.find(value); found != decided.end()) return found->second;
+    const auto decides = [&program, &decided, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index), decided); };
+    const auto decidable = [&] {
+        if (MayEvaluate(program, value)) return true;
+        switch (value->Opcode()) {
+            case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
+            case IrOpcode::LogicalAnd:
+            case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+            case IrOpcode::ULessThan32:
+            case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
+            default: return false;
+        }
+    }();
+    decided.emplace(value, decidable);
+    return decidable;
 }
 
 template<typename TNode>

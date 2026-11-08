@@ -1,6 +1,7 @@
 #include "prx/libScePlayerSelectionDialog/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -75,16 +76,24 @@ int APS5_VABI scePlayerSelectionDialogGetResult(PlayerSelectionDialogResult* res
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
- result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
+ const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(&result->result, &canceled, sizeof(canceled));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 
 int APS5_VABI scePlayerSelectionDialogParamInitialize(PlayerSelectionDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- std::memset(param, 0, sizeof(*param));
- param->base.size = sizeof(param->base);
- param->base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param->base)) - 1060003575u;
- param->size = sizeof(*param);
+ PlayerSelectionDialogParam local{};
+ local.base.size = sizeof(local.base);
+ local.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param->base)) - 1060003575u;
+ local.size = sizeof(local);
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(param, &local, sizeof(local));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  return COMMON_DIALOG_OK;
 }
 
