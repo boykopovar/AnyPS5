@@ -544,6 +544,20 @@ Pad::InputConfiguration defaultConfiguration() {
     return Pad::InputConfiguration{{Pad::InputMapping.begin(), Pad::InputMapping.end()}, {}};
 }
 
+bool sameBinding(const Pad::InputBinding& left, const Pad::InputBinding& right) {
+    return left.key == right.key && left.mouseButton == right.mouseButton && left.control == right.control && left.button == right.button && left.wheelDirection == right.wheelDirection && left.padButtons == right.padButtons;
+}
+
+bool sameConfiguration(const Pad::InputConfiguration& left, const Pad::InputConfiguration& right) {
+    if (left.bindings.size() != right.bindings.size()) return false;
+    for (std::size_t index = 0; index < left.bindings.size(); ++index) {
+        if (!sameBinding(left.bindings[index], right.bindings[index])) return false;
+    }
+    const auto& a = left.settings;
+    const auto& b = right.settings;
+    return a.leftStickDeadzonePercent == b.leftStickDeadzonePercent && a.rightStickDeadzonePercent == b.rightStickDeadzonePercent && a.mouseSensitivity == b.mouseSensitivity && a.mouseVerticalScale == b.mouseVerticalScale && a.mouseCurve == b.mouseCurve && a.mouseDeadzoneOffset == b.mouseDeadzoneOffset && a.mouseMaxSpeed == b.mouseMaxSpeed && a.mouseSmoothingMs == b.mouseSmoothingMs && a.mouseDecayMs == b.mouseDecayMs && a.stickModifierScale == b.stickModifierScale && a.keyboardRampMs == b.keyboardRampMs && a.triggerRampMs == b.triggerRampMs && a.mouseControlsRightStick == b.mouseControlsRightStick;
+}
+
 void parserValidText() {
     auto configuration = defaultConfiguration();
     std::string message;
@@ -592,10 +606,11 @@ void reloadInputMappingAction() {
 void reloadErrorNamesLine() {
     useConfig("Cross = KEY:F\nMouseCurve = 9\n");
     auto configuration = defaultConfiguration();
+    const auto before = configuration;
     std::string error;
     require(!Pad::TryLoadInputMapping("", configuration, error), "a reload of an invalid file fails");
     require(error.find("anyps5-input.ini:2") != std::string::npos && error.find("mouse curve") != std::string::npos, "a reload error names the file, the line and the reason");
-    require(crossOnKey(configuration, SDL_SCANCODE_RETURN) && configuration.settings.mouseCurve == 1.0, "a failed reload does not touch the target configuration");
+    require(sameConfiguration(configuration, before), "a failed reload does not touch the target configuration");
     useConfig("Cross = KEY:F\n");
     require(Pad::TryLoadInputMapping("", configuration, error) && crossOnKey(configuration, SDL_SCANCODE_F), "a valid file reloads");
 }
