@@ -53,13 +53,19 @@ void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std
 void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue);
 
 namespace {
+enum class VkDrawKind : std::size_t { Direct, Indexed, Indirect, Mesh, Count };
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(VkDrawKind::Count)> vkDrawCounts{};
+void CountVkDraw(VkDrawKind kind) {
+    vkDrawCounts[static_cast<std::size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+
 
 bool DrawFaultTokens() {
     static const bool enabled = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
     return enabled;
 }
 
-void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, bool indirect) {
+void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, std::uint32_t stage, const Pm4::DrawParameters::IndirectDraw* args) {
     try {
         if (!DrawFaultTokens()) return;
         const auto queue = GuestMemory::GpuLockThreadTag();
@@ -74,7 +80,29 @@ void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuf
                 if (shader.program != nullptr && (variant == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) variant = shader.program->variantId;
             }
             entry->variantId = variant;
-            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", indirect ? " indirect" : "", draw.indexCount, draw.instanceCount);
+            entry->stage = stage;
+            entry->argBuffer = 0;
+            entry->argOffset = 0;
+            entry->argStride = 0;
+            entry->argCount = 0;
+            for (auto& word : entry->argWords) word = 0;
+            if (args != nullptr) {
+                entry->argBuffer = args->arguments;
+                entry->argOffset = 0;
+                entry->argStride = args->stride;
+                try {
+                    constexpr std::uint32_t argWordLimit = 4;
+                    const auto first = Pm4::ReadDrawArgumentsUnsynced(*args, 0);
+                    entry->argWords[0] = first.count;
+                    entry->argWords[1] = first.instances;
+                    entry->argWords[2] = first.firstVertexOrIndex;
+                    entry->argWords[3] = draw.indexed ? first.vertexOffset : first.firstInstance;
+                    entry->argCount = argWordLimit;
+                } catch (...) {
+                    entry->argCount = 0;
+                }
+            }
+            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", args != nullptr ? " indirect" : "", draw.indexCount, draw.instanceCount);
             recorder.NoteFaultToken(faultToken);
             std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
         }
@@ -2216,6 +2244,7 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     };
     const auto* args = indirect != nullptr ? indirect->args : nullptr;
     if (state.stages.mesh && (args != nullptr || state.tessellationCapture != nullptr)) {
+        CountVkDraw(VkDrawKind::Mesh);
         context.Function<PFN_vkCmdDrawMeshTasksIndirectEXT>("vkCmdDrawMeshTasksIndirectEXT")(commands, argumentBuffer, argumentOffset, 1, sizeof(VkDrawMeshTasksIndirectCommandEXT));
         recorded(subdraw++);
         emitted = true;
@@ -2223,6 +2252,7 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     }
     if (state.stages.mesh) {
         APS5_LOG_OUT_DEBUG("vkCmdDrawMeshTasksEXT groups=%u instances=%u layers=%u", inputs.meshGroups, draw.instanceCount, inputs.meshLayers);
+        CountVkDraw(VkDrawKind::Mesh);
         context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, inputs.meshGroups, draw.instanceCount, inputs.meshLayers);
         recorded(subdraw++);
         emitted = true;
@@ -2231,6 +2261,7 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     if (!inputs.vertexHandles.empty()) context.Resolved(&DeviceFunctions::cmdBindVertexBuffers, "vkCmdBindVertexBuffers")(commands, 0, static_cast<std::uint32_t>(inputs.vertexHandles.size()), inputs.vertexHandles.data(), inputs.vertexOffsets.data());
     if (inputs.expandedIndexCount != 0u) {
         context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, VK_INDEX_TYPE_UINT32);
+        CountVkDraw(VkDrawKind::Indexed);
         context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, inputs.expandedIndexCount, draw.instanceCount, 0, static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
         emitted = true;
         return true;
@@ -2238,10 +2269,12 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     if (draw.indexed) context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, draw.indexSize == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
     if (args == nullptr) {
         if (draw.indexed) {
+            CountVkDraw(VkDrawKind::Indexed);
             context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, pieceFirstIndex ? draw.indexCount : inputs.indexCount.value_or(draw.indexCount), draw.instanceCount, pieceFirstIndex.value_or(0u), static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
             recorded(subdraw++);
             emitted = true;
         } else {
+            CountVkDraw(VkDrawKind::Direct);
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, draw.indexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance);
             recorded(subdraw++);
             emitted = true;
@@ -2249,14 +2282,17 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
     } else if (indirect->path == IndirectDrawPath::Gpu) {
         emitted = true;
         if (args->countIndirect) {
+            CountVkDraw(VkDrawKind::Indirect);
             if (draw.indexed) context.Function<PFN_vkCmdDrawIndexedIndirectCountKHR>("vkCmdDrawIndexedIndirectCountKHR")(commands, argumentBuffer, argumentOffset, indirect->countImport->buffer, HostImportOffset(*indirect->countImport, args->countAddress), args->count, args->stride);
             else context.Function<PFN_vkCmdDrawIndirectCountKHR>("vkCmdDrawIndirectCountKHR")(commands, argumentBuffer, argumentOffset, indirect->countImport->buffer, HostImportOffset(*indirect->countImport, args->countAddress), args->count, args->stride);
         } else if (args->count <= 1 || context.multiDrawIndirect) {
+            CountVkDraw(VkDrawKind::Indirect);
             if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexedIndirect, "vkCmdDrawIndexedIndirect")(commands, argumentBuffer, argumentOffset, args->count, args->stride);
             else context.Resolved(&DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect")(commands, argumentBuffer, argumentOffset, args->count, args->stride);
         } else {
             for (std::uint32_t record = 0; record < args->count; ++record) {
                 const auto offset = argumentOffset + static_cast<VkDeviceSize>(record) * args->stride;
+                CountVkDraw(VkDrawKind::Indirect);
                 if (draw.indexed) context.Resolved(&DeviceFunctions::cmdDrawIndexedIndirect, "vkCmdDrawIndexedIndirect")(commands, argumentBuffer, offset, 1, args->stride);
                 else context.Resolved(&DeviceFunctions::cmdDrawIndirect, "vkCmdDrawIndirect")(commands, argumentBuffer, offset, 1, args->stride);
             }
@@ -2274,10 +2310,12 @@ bool recordDrawCommandsImpl(const Context& context, VkCommandBuffer commands, co
                 if (record.firstVertexOrIndex >= boundCount) continue;
                 const auto vertexOffset = args->vertexRule == Rule::InPlace ? record.vertexOffset : args->vertexConstant;
                 emitted = true;
+                CountVkDraw(VkDrawKind::Indexed);
                 context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, std::min(record.count, boundCount - record.firstVertexOrIndex), record.instances, record.firstVertexOrIndex, static_cast<std::int32_t>(vertexOffset), firstInstance);
             } else {
                 const auto firstVertex = args->vertexRule == Rule::InPlace ? record.firstVertexOrIndex : args->vertexConstant;
                 emitted = true;
+                CountVkDraw(VkDrawKind::Direct);
                 context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, record.count, record.instances, firstVertex, firstInstance);
             }
         }
@@ -2884,7 +2922,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
-    noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
+    noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -3872,7 +3910,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
-    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
+    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
@@ -4259,7 +4297,12 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
     for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
-    record.pushBytes = &recipe.pushBytes;
+    auto pushBytes = recipe.pushBytes;
+    if (recipe.pushStages != 0) {
+        pushBytes = AssemblePushConstants(shaders);
+        record.resources->PatchPushConstants(pushBytes);
+    }
+    record.pushBytes = &pushBytes;
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, trace);
@@ -4379,6 +4422,16 @@ bool DrawPipelineEnabled() {
 
 bool CommitTrims() {
     return DrawPipelineEnabled();
+}
+
+
+VkDrawCounts TakeVkDrawCounts() {
+    VkDrawCounts counts;
+    counts.direct = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Direct)].exchange(0, std::memory_order_relaxed);
+    counts.indexed = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Indexed)].exchange(0, std::memory_order_relaxed);
+    counts.indirect = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Indirect)].exchange(0, std::memory_order_relaxed);
+    counts.mesh = vkDrawCounts[static_cast<std::size_t>(VkDrawKind::Mesh)].exchange(0, std::memory_order_relaxed);
+    return counts;
 }
 
 }
