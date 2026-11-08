@@ -304,6 +304,35 @@ void RotatesNothingWithoutLimit() {
     Require(Slurp(path).size() == 550, "a file with no limit lost lines");
 }
 
+void InvalidLimitsStopBeforeOpening() {
+    const auto path = g_directory / "limits-refused.log";
+    std::filesystem::remove(path);
+    std::string error;
+#ifdef _WIN32
+    _putenv_s("ANYPS5_LOG_KEEP", "x");
+#else
+    ::setenv("ANYPS5_LOG_KEEP", "x", 1);
+#endif
+    Require(SystemFactory().Create(path.string(), error) == nullptr, "an invalid keep count started a session");
+    Require(error.find("ANYPS5_LOG_KEEP") != std::string::npos, "the error does not name ANYPS5_LOG_KEEP");
+    Require(!std::filesystem::exists(path), "an invalid keep count created the file");
+#ifdef _WIN32
+    _putenv_s("ANYPS5_LOG_KEEP", "");
+    _putenv_s("ANYPS5_LOG_MAX_BYTES", "12");
+#else
+    ::unsetenv("ANYPS5_LOG_KEEP");
+    ::setenv("ANYPS5_LOG_MAX_BYTES", "12", 1);
+#endif
+    error.clear();
+    Require(SystemFactory().Create(path.string(), error) == nullptr && error.find("ANYPS5_LOG_MAX_BYTES") != std::string::npos, "an invalid byte limit was accepted");
+    Require(!std::filesystem::exists(path), "an invalid byte limit created the file");
+#ifdef _WIN32
+    _putenv_s("ANYPS5_LOG_MAX_BYTES", "");
+#else
+    ::unsetenv("ANYPS5_LOG_MAX_BYTES");
+#endif
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -747,6 +776,7 @@ int main(int argc, char** argv) {
     RotationPolicy();
     RotatesWhenFull();
     RotatesNothingWithoutLimit();
+    InvalidLimitsStopBeforeOpening();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();
