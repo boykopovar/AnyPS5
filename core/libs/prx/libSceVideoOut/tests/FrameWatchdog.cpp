@@ -1,7 +1,9 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -33,6 +35,16 @@ void ReportsOncePerHang() {
     Require(!frame_watchdog::HangReportDue(state, 500, 500 + Threshold - 1, Threshold), "a new frame did not reset the hang");
     Require(frame_watchdog::HangReportDue(state, 500, 500 + Threshold, Threshold), "a second hang was not reported");
     Require(!frame_watchdog::HangReportDue(state, 500, 500 + 2 * Threshold, Threshold), "the second hang was reported twice");
+void StartAndStop() {
+    frame_watchdog::Start(1);
+    for (int index = 0; index < 15; ++index) {
+        frame_watchdog::Beat();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    frame_watchdog::Stop();
+    frame_watchdog::Stop();
+    frame_watchdog::Start(0);
+    frame_watchdog::Stop();
 }
 
 }
@@ -40,5 +52,6 @@ void ReportsOncePerHang() {
 int main() {
     Values();
     ReportsOncePerHang();
+    StartAndStop();
     return 0;
 }

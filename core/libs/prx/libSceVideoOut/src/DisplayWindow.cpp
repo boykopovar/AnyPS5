@@ -6,8 +6,12 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "Decoder/Png.hpp"
 #include "SDL_vulkan.h"
+#include "prx/libc/include/general/LogMacros.hpp"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <span>
@@ -89,7 +93,10 @@ DisplayWindow::~DisplayWindow() {
 
 void DisplayWindow::Ensure(std::uint32_t sourceWidth, std::uint32_t sourceHeight) {
     require(sourceWidth != 0 && sourceHeight != 0, "source extent must be non-zero");
-    if (window == nullptr) create(sourceWidth, sourceHeight);
+    if (window == nullptr) {
+        create(sourceWidth, sourceHeight);
+        frame_watchdog::StartFromEnvironment();
+    }
     updateAspectRatio(sourceWidth, sourceHeight);
 }
 
@@ -127,6 +134,7 @@ void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t s
 }
 
 void DisplayWindow::Destroy() noexcept {
+    frame_watchdog::Stop();
     if (window == nullptr) return;
     if (fullscreen) fullscreen->Release();
     fullscreen.reset();
@@ -165,6 +173,61 @@ namespace {
 
 std::atomic<std::int64_t> g_lastFrameNanoseconds{0};
 
+}
+
+namespace {
+
+std::mutex g_watchMutex;
+std::condition_variable g_watchWake;
+std::thread g_watchThread;
+bool g_watchStopping = false;
+
+std::int64_t NowNanoseconds() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void Watch(std::uint32_t seconds) {
+    const auto threshold = static_cast<std::int64_t>(seconds) * 1000000000;
+    HangState state;
+    std::unique_lock lock(g_watchMutex);
+    while (!g_watchStopping) {
+        g_watchWake.wait_for(lock, std::chrono::milliseconds(100), [] { return g_watchStopping; });
+        if (g_watchStopping) break;
+        if (HangReportDue(state, g_lastFrameNanoseconds.load(std::memory_order_relaxed), NowNanoseconds(), threshold)) {
+            APS5_LOG_ERR("no frame for %llu s; last stage: frame presented to the window; shader compilation can take seconds, so this line is a warning and not a hang report", static_cast<unsigned long long>(seconds));
+        }
+    }
+}
+
+}
+
+void Start(std::uint32_t seconds) {
+    if (seconds == 0 || g_watchThread.joinable()) return;
+    Beat();
+    {
+        std::lock_guard lock(g_watchMutex);
+        g_watchStopping = false;
+    }
+    g_watchThread = std::thread(Watch, seconds);
+}
+
+void Stop() noexcept {
+    {
+        std::lock_guard lock(g_watchMutex);
+        g_watchStopping = true;
+    }
+    g_watchWake.notify_all();
+    if (g_watchThread.joinable()) g_watchThread.join();
+}
+
+void StartFromEnvironment() {
+    std::uint32_t seconds = 0;
+    std::string error;
+    if (!ParseHangSeconds(std::getenv("ANYPS5_HANG_SECONDS"), seconds, error)) {
+        APS5_LOG_ERR("%s; the watchdog stays off", error.c_str());
+        return;
+    }
+    Start(seconds);
 }
 
 bool HangReportDue(HangState& state, std::int64_t beat, std::int64_t now, std::int64_t thresholdNanoseconds) {
