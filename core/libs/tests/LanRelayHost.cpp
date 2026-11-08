@@ -330,6 +330,16 @@ static void SendsFrameToEveryPeer() {
     second.Close();
 }
 
+static void StartsAndStopsDelivery() {
+    LanRelay::Relay relay;
+    Require(!relay.StartDelivery(), "a closed relay cannot start delivery");
+    relay.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    Require(relay.StartDelivery(), "an open relay starts delivery");
+    Require(!relay.StartDelivery(), "delivery starts once");
+    relay.Close();
+    Require(!relay.IsOpen(), "Close stops delivery and closes the relay");
+}
+
 static void RoundTripsFrames() {
     LanRelay::Frame frame;
     frame.Instance = 0x01020304;
