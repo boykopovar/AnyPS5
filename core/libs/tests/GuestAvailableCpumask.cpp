@@ -244,28 +244,28 @@ int main() {
         Require(ownResult == 0 && ownSet[0] == last);
     }
     std::uint64_t request[GUEST_CPUSET_BYTES / sizeof(std::uint64_t)] = {first, 0, 0, 0};
-    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, request) == 0);
+    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), 8, request) == 0);
     Require(ReadCpuset(pthread_self_nid_postfix()) == first);
     std::promise<void> settle;
     auto settled = settle.get_future();
     Pthread target = nullptr;
     Require(scePthreadCreate(&target, &attr, Worker, &settled, nullptr) == SCE_OK);
     request[0] = last;
-    Require(pthread_setaffinity_np_nid_postfix(target, GUEST_CPUSET_BYTES, request) == 0);
+    Require(pthread_setaffinity_np_nid_postfix(target, 16, request) == 0);
     Require(ReadCpuset(target) == last && ReadCpuset(pthread_self_nid_postfix()) == first);
     request[0] = available | (1ull << 40);
-    request[3] = 1ull << 63;
-    Require(pthread_setaffinity_np_nid_postfix(target, GUEST_CPUSET_BYTES, request) == 0);
+    Require(pthread_setaffinity_np_nid_postfix(target, 12, request) == 0);
     Require(ReadCpuset(target) == available);
-    const std::uint64_t outside[GUEST_CPUSET_BYTES / sizeof(std::uint64_t)] = {1ull << 40, 1, 0, 0};
-    Require(pthread_setaffinity_np_nid_postfix(target, GUEST_CPUSET_BYTES, outside) == GUEST_EDEADLK);
-    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, outside) == GUEST_EDEADLK);
+    const std::uint64_t outside[GUEST_CPUSET_BYTES / sizeof(std::uint64_t)] = {1ull << 40, 0, 0, 0};
+    Require(pthread_setaffinity_np_nid_postfix(target, 8, outside) == GUEST_EDEADLK);
+    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, outside) == GUEST_EDEADLK);
     Require(ReadCpuset(target) == available && ReadCpuset(pthread_self_nid_postfix()) == first);
-    for (const std::size_t size : {std::size_t{0}, std::size_t{8}, std::size_t{31}, std::size_t{33}, std::size_t{64}}) {
+    for (const std::size_t size : {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{7}, std::size_t{24}, std::size_t{32}, std::size_t{64}, std::size_t{128}}) {
         Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, request) == GUEST_ERANGE);
         Require(pthread_setaffinity_np_nid_postfix(target, size, request) == GUEST_ERANGE);
     }
-    Require(pthread_setaffinity_np_nid_postfix(target, GUEST_CPUSET_BYTES, nullptr) == GUEST_EFAULT);
+    Require(ReadCpuset(target) == available && ReadCpuset(pthread_self_nid_postfix()) == first);
+    Require(pthread_setaffinity_np_nid_postfix(target, 8, nullptr) == GUEST_EFAULT);
     Require(pthread_setaffinity_np_nid_postfix(nullptr, GUEST_CPUSET_BYTES, request) == GUEST_EINVAL);
     std::uint64_t unknownThread[8]{};
     Require(pthread_setaffinity_np_nid_postfix(reinterpret_cast<Pthread>(unknownThread), GUEST_CPUSET_BYTES, request) == GUEST_ESRCH);
@@ -274,8 +274,7 @@ int main() {
     Require(scePthreadJoin(target, nullptr) == SCE_OK);
     Require(pthread_setaffinity_np_nid_postfix(target, GUEST_CPUSET_BYTES, request) == GUEST_ESRCH);
     request[0] = available;
-    request[3] = 0;
-    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, request) == 0);
+    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), 8, request) == 0);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
 
     Require(ReadCpuset(pthread_self_nid_postfix()) == available);
@@ -297,7 +296,7 @@ int main() {
     Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, nullptr) == GUEST_EFAULT);
     auto* const badSet = reinterpret_cast<void*>(0x10);
     Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, badSet) == GUEST_EFAULT);
-    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, badSet) == GUEST_EFAULT);
+    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, badSet) == GUEST_EFAULT);
     Require(cpuset_getaffinity_nid_postfix(3, 1, -1, 8, badSet) == -1 && *__error_nid_postfix() == GUEST_EFAULT);
     Require(cpuset_setaffinity_nid_postfix(3, 1, -1, 8, badSet) == -1 && *__error_nid_postfix() == GUEST_EFAULT);
     Require(cpuset_getaffinity_nid_postfix(3, 1, scePthreadGetthreadid(), 8, processSet) == 0 && processSet[0] == available);
