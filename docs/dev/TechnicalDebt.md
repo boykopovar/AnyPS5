@@ -2,6 +2,8 @@
 
 Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
 
+Pull requests add, change and remove entries through fragments in `debt/changes/`, which [`tools/debt_fold.py`](../../tools/debt_fold.py) applies to these files; the format is in [CONTRIBUTING](../../CONTRIBUTING.md#documentation).
+
 ### Build
 
 - The full Windows build requires x86-64 MinGW-w64 GCC with POSIX threads and DWARF or SEH exception support for System V ABI functions. The build checks these capabilities; see the [Windows build requirements](BUILD.md#windows-setup-and-troubleshooting) for the validated WinLibs and MSYS2 toolchains.

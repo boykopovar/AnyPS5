@@ -5,16 +5,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_conventions import DEBT_DIR, debt_entries
+from check_conventions import DEBT, DEBT_CHANGES, DEBT_DIR, debt_entries
 
 ROOT = Path(__file__).resolve().parent.parent
-CHANGES = DEBT_DIR + "changes/"
 OPERATION = re.compile(r"## (add|change|remove) (.+)")
 ROW = re.compile(r"\| (?!-)(?!Name \|).*\|")
 
 
 class FoldError(Exception):
     pass
+
+
+def debt_file(library):
+    return DEBT if library == Path(DEBT).stem else f"{DEBT_DIR}{library}.md"
 
 
 @dataclass
@@ -33,7 +36,7 @@ def parse(path, root):
     for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
         if line.startswith("# "):
             library, current = line[2:].strip(), None
-            if not (root / DEBT_DIR / f"{library}.md").is_file():
+            if not (root / debt_file(library)).is_file():
                 raise FoldError(f"{name}:{number}: no debt file for {library}")
         elif match := OPERATION.fullmatch(line.strip()):
             if library is None:
@@ -102,11 +105,11 @@ def apply(text, operation):
 
 
 def fold(root, write):
-    fragments = sorted((root / CHANGES).glob("*.md"))
+    fragments = sorted((root / DEBT_CHANGES).glob("*.md"))
     operations = [operation for path in fragments for operation in parse(path, root)]
     texts, claimed, problems = {}, {}, []
     for operation in operations:
-        path = root / DEBT_DIR / f"{operation.library}.md"
+        path = root / debt_file(operation.library)
         original = path.read_text(encoding="utf-8")
         texts.setdefault(operation.library, original)
         if operation.kind != "add":
@@ -124,7 +127,7 @@ def fold(root, write):
         texts[operation.library] = apply(texts[operation.library], operation)
     if write:
         for library, text in texts.items():
-            (root / DEBT_DIR / f"{library}.md").write_text(text, encoding="utf-8", newline="\n")
+            (root / debt_file(library)).write_text(text, encoding="utf-8", newline="\n")
         for path in fragments:
             path.unlink()
     return texts, fragments
@@ -142,7 +145,7 @@ def main(argv=None):
         print(error, file=sys.stderr)
         return 1
     if args.show:
-        path = args.root / DEBT_DIR / f"{args.show}.md"
+        path = args.root / debt_file(args.show)
         if not path.is_file():
             print(f"no debt file for {args.show}", file=sys.stderr)
             return 1

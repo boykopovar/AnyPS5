@@ -80,3 +80,21 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 ## Documentation
 
 Text in the repository is dry, strict and concise. Record known gaps, unknown NIDs and signatures in [technical debt](docs/dev/TechnicalDebt.md) instead of new files. An entry states the gap first (what differs from the console, what is unverified, what throws) and describes the implemented behaviour only as far as the gap needs it. A pull request that closes a gap removes its entry, or cuts it to what is still open, instead of rewriting it to describe the corrected behaviour. An entry goes in `docs/dev/debt/<name>.md`, named after the first `core/` path it links (`<name>` for `core/libs/prx/<name>/...`, otherwise for `core/<name>/...`), under the same `###` sections as the index; entries that link neither stay in the index. A pull request whose `TechnicalDebt.md` change conflicts after the split rebases and runs `python3 tools/debt_split.py resolve` during the stopped rebase, which moves its added, edited and removed entries to their files; `python3 tools/debt_split.py split` moves entries left in the index.
+
+A pull request does not edit the debt files to add, change or remove entries. It adds its own fragment, `docs/dev/debt/changes/<branch>.md`, with a `# <name>` line per debt file (`TechnicalDebt` for the index) and these operations under it:
+
+```markdown
+# libc
+
+## add Silent stubs
+
+- [sceFoo](../../../core/libs/prx/libc/Export.cpp) (libc) - returns 0 without reading its argument
+
+## change [sceBar]
+
+- [sceBar](../../../core/libs/prx/libc/Export.cpp) (libc) - clears the pool, as the 4.03 module does
+
+## remove [sceBaz]
+```
+
+`add` appends entries to the end of that `###` section, creating it if needed. `change` and `remove` name text that occurs in exactly one entry of the file, usually its link; table rows count as entries. Links are written as in the debt file. `python3 tools/debt_fold.py --show <name>` prints a debt file with the pending fragments applied and `--check` validates them; the Conventions check runs the same check. `python3 tools/debt_fold.py` applies every fragment and deletes it, and refuses two fragments that change the same entry. Headings and text outside entries are still edited in place.
