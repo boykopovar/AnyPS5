@@ -1,5 +1,7 @@
 # libc technical debt
 
+- [NID breakpoint table: pause, command input and name lookup](../../../core/libs/prx/libc/src/DebugNidBreakpoints.cpp) (libc): the table only records NIDs from `ANYPS5_DEBUG_NIDS`. Nothing pauses a guest thread, no command channel is read, no name is resolved through a name table, and the table is not consulted on any call path. The stop and command parts are not built; they are follow-up pull requests.
+### Debugger breakpoints
 ### Silent stubs
 
 - [_Mtx_current_owns](../../../core/libs/prx/libc/src/Threads.cpp) (libSceLibcInternal, implemented in libc, NID `VYQwFs4CC4Y`) returns 1 and ignores its argument. This follows the PS5 12.00 body reading reported in [PR8859](https://github.com/boykopovar/AnyPS5/pull/8859), rather than inspecting host mutex ownership. The firmware observation is attributed to that contributor; other firmware versions and the argument's console type remain unverified.
