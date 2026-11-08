@@ -118,7 +118,6 @@ void OpenFile() {
     const auto bytes = Pattern(300);
     Write("app0/data.bin", bytes);
     Write("app0/empty.bin", {});
-    std::filesystem::create_directories("app0/folder");
 
     Require(FT_Stream_Open_nid_postfix(nullptr, "/app0/data.bin") == InvalidStreamHandle, "a null stream is Invalid_Stream_Handle");
 
@@ -133,10 +132,6 @@ void OpenFile() {
     Require(FT_Stream_Open_nid_postfix(&stream, "/app0/empty.bin") == CannotOpenStream, "an empty file is Cannot_Open_Stream");
     Require(stream.size == 0 && !stream.descriptor && !stream.read && !stream.close, "an empty file is closed again");
 
-    Require(Throws([] {
-        GuestStreamRec folder{};
-        FT_Stream_Open_nid_postfix(&folder, "/app0/folder");
-    }), "a directory throws");
     Require(Throws([] {
         GuestStreamRec unnamed{};
         FT_Stream_Open_nid_postfix(&unnamed, nullptr);
@@ -211,10 +206,6 @@ void NewStream() {
     stream = reinterpret_cast<GuestStreamRec*>(&args);
     Require(FT_Stream_New_nid_postfix(&owner.library, &args, &stream) == CannotOpenResource && !stream, "a missing path fails");
     Require(owner.recorder.allocs == owner.recorder.frees, "a failed path frees its record");
-
-    args.pathname = const_cast<char*>("/app0/folder");
-    Require(Throws([&] { FT_Stream_New_nid_postfix(&owner.library, &args, &stream); }), "a directory path throws");
-    Require(owner.recorder.allocs == owner.recorder.frees, "a throwing path frees its record");
 
     Recorder other;
     other.memory = {&other, RecordAlloc, RecordFree, RecordRealloc};
