@@ -3169,8 +3169,8 @@ enum class DriverFill { Whole, Partial, Queued };
 
 class DriverDepthTarget {
 public:
-    DriverDepthTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one)
-        : context(context), recorder(recorder), extent{5u, 3u}, fragments(fragments),
+    DriverDepthTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one, VkExtent2D size)
+        : context(context), recorder(recorder), extent(size), fragments(fragments),
           memory(static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments))),
           stencil(static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments))),
           metadata(DriverMetadataSpan),
@@ -3263,8 +3263,8 @@ private:
     std::unique_ptr<Fetch> fetch;
 };
 
-void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one, DriverFill fill) {
-    const DriverDepthTarget target(context, recorder, fragments, one);
+void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one, DriverFill fill, VkExtent2D size = {5u, 3u}) {
+    const DriverDepthTarget target(context, recorder, fragments, one, size);
     target.Sample(std::nullopt, std::nullopt, "native depth imported on the driver's device");
     target.Sample(0.25f, 0.25f, "native depth drawn on the driver's device");
     const auto fillsBefore = AgcDriver::DriverDetail::dmaFills.load();
@@ -3285,7 +3285,7 @@ void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint
     Require(AgcDriver::DriverDetail::dmaFills.load() == fillsBefore, "a whole-HTILE DMA_DATA fill of 64 KiB or less was stored as a queued buffer fill");
     target.Sample(std::nullopt, std::nullopt, "a whole-HTILE DMA_DATA fill through the driver");
     target.Sample(0.125f, 0.125f, "native depth drawn after a DMA_DATA clear through the driver");
-    std::printf("Native depth on the driver's device samples=%u clear=%u: drawn, cleared by a DMA_DATA fill of its HTILE through the driver and sampled\n", fragments, one);
+    std::printf("Native depth on the driver's device samples=%u clear=%u %ux%u: drawn, cleared by a DMA_DATA fill of its HTILE through the driver and sampled\n", fragments, one, size.width, size.height);
 }
 
 int CheckDriverPath(bool queued) {
@@ -3315,8 +3315,9 @@ int CheckDriverPath(bool queued) {
         Require(supported(4u), "the native depth driver-path regression requires sampled D32S8 with four samples");
         std::uint32_t checked = 0u, unavailable = 0u;
         for (const auto samples : {2u, 4u, 8u}) {
-            if (!supported(samples)) { unavailable += 2u; continue; }
+            if (!supported(samples)) { unavailable += queued ? 2u : 3u; continue; }
             for (const bool one : {false, true}) { CheckDriverPathTarget(context, *recorder, samples, one, queued ? DriverFill::Queued : DriverFill::Whole); ++checked; }
+            if (!queued) { CheckDriverPathTarget(context, *recorder, samples, false, DriverFill::Whole, {64u, 32u}); ++checked; }
         }
         if (!queued) CheckDriverPathTarget(context, *recorder, 4u, false, DriverFill::Partial);
         AgcDriverWaitIdle_nid_postfix();
@@ -3421,6 +3422,161 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+void CheckUniformPlaneAliasedDepth(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes), stencil(stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    ColorTarget color{};
+    color.address = color.surfaceAddress = memory.Address();
+    color.extent = color.surfaceExtent = extent;
+    color.format = VK_FORMAT_R32_SFLOAT;
+    color.elementBytes = 4u;
+    color.tileMode = ColorTileMode::RenderTarget;
+    color.samples = samples;
+    color.bytes = static_cast<std::size_t>(extent.width) * extent.height * 4u;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto clear = [&] {
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+        ClearDepthSurfaces(context.device);
+        ClearMultisampleTargets(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() { action(); }
+    } cleanup{clear};
+    const auto fill = [&](float depth, std::uint32_t pattern) {
+        const auto word = std::bit_cast<std::uint32_t>(depth);
+        for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &word, 4u);
+        std::memset(stencil.Data(), 0x5a, stencilBytes);
+        Require(MultisampleTargetView(context, color) != VK_NULL_HANDLE, "the colour target over the uniform depth plane has no attachment");
+        Require(MultisampledColorFillAbsorbs(color.address, depthBytes, pattern), "the colour target over the uniform depth plane did not absorb its fill");
+        NoteColorMetadataFill(color.address, depthBytes, pattern);
+    };
+    const auto words = DepthSampleWords(target);
+    const auto sample = [&](float expected) {
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a uniform depth plane aliased by a colour target has no attachment view");
+        auto texture = CachedSampledTexture(context, words);
+        Require(texture != nullptr, "a uniform depth plane aliased by a cleared colour target was not imported");
+        recorder.Sync();
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> sampled{};
+            std::memcpy(sampled.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            Require(sampled == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "a uniform depth plane aliased by a colour target did not take the colour clear");
+        }
+        Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0x5a}; }), "a uniform depth plane aliased by a colour target wrote its guest stencil plane");
+        texture.reset();
+    };
+    fill(0.5f, 0u);
+    sample(0.0f);
+    clear();
+    fill(0.25f, std::bit_cast<std::uint32_t>(1.0f));
+    sample(1.0f);
+    clear();
+    fill(0.0f, std::bit_cast<std::uint32_t>(2.0f));
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a refused aliased uniform depth plane has no attachment view");
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, depthAliasRefusal);
+    std::printf("Native D32S8 without HTILE, samples=%u: uniform depth aliased by an R32F colour target took its clear and refused an out-of-range one\n", samples);
+}
+
+
+void CheckHtileAliasedDepth(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), stencil(stencilBytes), metadata(65536u);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    target.clearStencil = 0x5a;
+    ColorTarget color{};
+    color.address = color.surfaceAddress = memory.Address();
+    color.extent = color.surfaceExtent = extent;
+    color.format = VK_FORMAT_R32_SFLOAT;
+    color.elementBytes = 4u;
+    color.tileMode = ColorTileMode::RenderTarget;
+    color.samples = samples;
+    color.bytes = static_cast<std::size_t>(extent.width) * extent.height * 4u;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto clear = [&] {
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+        ClearDepthSurfaces(context.device);
+        ClearMultisampleTargets(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() { action(); }
+    } cleanup{clear};
+    const auto fill = [&](float depth, std::uint32_t pattern, std::uint32_t htileWord = 0u) {
+        const auto word = std::bit_cast<std::uint32_t>(depth);
+        for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &word, 4u);
+        std::memset(stencil.Data(), 0x5a, stencilBytes);
+        for (std::size_t offset = 0u; offset < metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &htileWord, 4u);
+        Require(MultisampleTargetView(context, color) != VK_NULL_HANDLE, "the colour target over the HTILE depth plane has no attachment");
+        Require(MultisampledColorFillAbsorbs(color.address, depthBytes, pattern), "the colour target over the HTILE depth plane did not absorb its fill");
+        NoteColorMetadataFill(color.address, depthBytes, pattern);
+    };
+    const auto words = DepthSampleWords(target);
+    const auto sample = [&](float expected, bool checkStencil = true) {
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "an HTILE depth plane aliased by a colour target has no attachment view");
+        auto texture = CachedSampledTexture(context, words);
+        Require(texture != nullptr, "an HTILE depth plane aliased by a cleared colour target was not imported");
+        recorder.Sync();
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> sampled{};
+            std::memcpy(sampled.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            Require(sampled == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "an HTILE depth plane aliased by a colour target did not take the colour clear");
+        }
+        if (checkStencil) Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0x5a}; }), "an HTILE depth plane aliased by a colour target wrote its guest stencil plane");
+        texture.reset();
+    };
+    fill(0.5f, 0u);
+    sample(0.0f);
+    clear();
+    fill(0.25f, std::bit_cast<std::uint32_t>(1.0f), 0xfffffff0u);
+    sample(1.0f);
+    clear();
+    fill(0.25f, std::bit_cast<std::uint32_t>(1.0f));
+    sample(0.0f);
+    clear();
+    fill(0.5f, 0u);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the unstored stencil fill fixture has no depth attachment");
+    NoteDepthMetadataFill(target.stencilAddress, stencilBytes, 0x33333333u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample stencil plane fill has no complete tracked store");
+    clear();
+    fill(0.5f, 0u);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the stored stencil fill fixture has no depth attachment");
+    NoteDepthMetadataFill(target.stencilAddress, stencilBytes, 0x33333333u);
+    AgcDriver::GuestMemory::StoreOwnBytes(target.stencilAddress, stencilBytes, [&] { std::memset(stencil.Data(), 0x33, stencilBytes); });
+    sample(0.0f, false);
+    std::printf("Native D32S8 with HTILE, samples=%u: a depth plane aliased by an R32F colour target took a matching clear, read DB_DEPTH_CLEAR under a different fill, kept a depth alias separate from a stored stencil fill and refused an unstored one\n", samples);
+}
+
+
 void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{5u, 3u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -3514,6 +3670,7 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     sample(1.0f);
     std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused and a stored refill after a draw was accepted\n", samples);
 }
+
 
 int main(int argc, char** argv) {
     try {
@@ -3630,6 +3787,30 @@ int main(int argc, char** argv) {
                 ++checked;
             }
             std::printf("Native depth uniform-plane cases checked=%u unavailable=%u\n", checked, unavailable);
+            return checked != 0u ? 0 : VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--htile-plane-alias") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u && (context.limits.framebufferColorSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the aliased HTILE depth-plane regression requires sampled D32S8 and multisampled colour with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { ++unavailable; continue; }
+                CheckHtileAliasedDepth(context, samples);
+                ++checked;
+            }
+            std::printf("Native depth HTILE-plane alias cases checked=%u unavailable=%u\n", checked, unavailable);
+            return checked != 0u ? 0 : VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--uniform-plane-alias") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples) && (context.limits.framebufferColorSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the aliased uniform depth-plane regression requires sampled D32S8 and multisampled colour with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { ++unavailable; continue; }
+                CheckUniformPlaneAliasedDepth(context, samples);
+                ++checked;
+            }
+            std::printf("Native depth uniform-plane alias cases checked=%u unavailable=%u\n", checked, unavailable);
             return checked != 0u ? 0 : VulkanTestSkipped;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--clears") {
