@@ -2674,8 +2674,61 @@ double APS5_VABI asinh_nid_postfix(double x) {
     }
     return hx > 0 ? w : -w;
 }
-float APS5_VABI asinhf_nid_postfix(float x) { return std::asinh(x); }
-double APS5_VABI acosh_nid_postfix(double x) { return std::acosh(x); }
+float APS5_VABI asinhf_nid_postfix(float x) {
+    constexpr float ln2 = 6.9314718246e-01f;
+    const std::uint32_t bits = std::bit_cast<std::uint32_t>(x);
+    const std::uint32_t magnitude = bits & 0x7fffffffu;
+    if (magnitude >= 0x7f800000u) return x + x;
+    if (magnitude < 0x31800000u) {
+        volatile float huge = 1.0e30f;
+        if (huge + x > 1.0f) return x;
+    }
+    const float absolute = std::fabs(x);
+    float result;
+    if (magnitude > 0x4d800000u) {
+        result = logf_nid_postfix(absolute) + ln2;
+    } else if (magnitude > 0x40000000u) {
+        result = logf_nid_postfix(2.0f * absolute + 1.0f / (std::sqrt(x * x + 1.0f) + absolute));
+    } else {
+        const float square = x * x;
+        result = AtanhfLog1p(absolute + square / (1.0f + std::sqrt(1.0f + square)));
+    }
+    return std::copysign(result, x);
+}
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ *
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_acosh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_acosh.c */
+double APS5_VABI acosh_nid_postfix(double x) {
+    const double one = 1.0;
+    const double ln2 = 6.93147180559945286227e-01;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    if (hx < 0x3ff00000) {
+        if (!std::isnan(x) || std::signbit(x)) _Feraise_nid_postfix(0x01);
+        return (x - x) / (x - x);
+    }
+    if (hx >= 0x41b00000) {
+        if (hx >= 0x7ff00000) return x + x;
+        return log_nid_postfix(x) + ln2;
+    }
+    if (((hx - 0x3ff00000) | lx) == 0) return 0.0;
+    if (hx > 0x40000000) {
+        const double t = x * x;
+        return log_nid_postfix(2.0 * x - one / (x + std::sqrt(t - one)));
+    }
+    const double t = x - one;
+    return log1p_nid_postfix(t + std::sqrt(2.0 * t + t * t));
+}
 float APS5_VABI acoshf_nid_postfix(float x) {
     constexpr float ln2 = 6.9314718246e-01f;
     const std::uint32_t bits = std::bit_cast<std::uint32_t>(x);
@@ -4103,6 +4156,28 @@ SonyDconst _LDenorm_nid_postfix {{1, 0, 0, 0, 0, 0, 0, 0}};
 SonyDconst _LInf_nid_postfix {{0, 0, 0, 0x8000, 0x7fff, 0, 0, 0}};
 SonyDconst _LNan_nid_postfix {{0, 0, 0, 0xc000, 0x7fff, 0, 0, 0}};
 SonyDconst _LSnan_nid_postfix {{1, 0, 0, 0x8000, 0x7fff, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v27_DenormE_nid_postfix {{1, 0, 0, 0, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v24_EpsE_nid_postfix {{0, 0, 0, 0x3c90, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v28_HugevalE_nid_postfix {{0, 0, 0, 0x7ff0, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v24_InfE_nid_postfix {{0, 0, 0, 0x7ff0, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v24_NanE_nid_postfix {{0, 0, 0, 0x7ff8, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v26_RtepsE_nid_postfix {{0, 0, 0, 0x3e40, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v25_SnanE_nid_postfix {{1, 0, 0, 0x7ff0, 0, 0, 0, 0}};
+double _ZNSt8__sce_v25_XbigE_nid_postfix = std::bit_cast<double>(std::uint64_t{0x4032bced916872b0});
+LibcFloatConstant _ZNSt8__sce_v28_FDenormE_nid_postfix {{0x00000001u, 0, 0, 0}};
+LibcFloatConstant _ZNSt8__sce_v25_FEpsE_nid_postfix {{0x33000000u, 0, 0, 0}};
+LibcFloatConstant _ZNSt8__sce_v25_FInfE_nid_postfix {{0x7f800000u, 0, 0, 0}};
+LibcFloatConstant _ZNSt8__sce_v25_FNanE_nid_postfix {{0x7fc00000u, 0, 0, 0}};
+LibcFloatConstant _ZNSt8__sce_v27_FRtepsE_nid_postfix {{0x39800000u, 0, 0, 0}};
+LibcFloatConstant _ZNSt8__sce_v26_FSnanE_nid_postfix {{0x7f800001u, 0, 0, 0}};
+float _ZNSt8__sce_v26_FXbigE_nid_postfix = std::bit_cast<float>(std::uint32_t{0x410acccd});
+SonyDconst _ZNSt8__sce_v28_LDenormE_nid_postfix {{1, 0, 0, 0, 0, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v25_LEpsE_nid_postfix {{0, 0, 0, 0x8000, 0x3fbd, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v25_LInfE_nid_postfix {{0, 0, 0, 0x8000, 0x7fff, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v25_LNanE_nid_postfix {{0, 0, 0, 0xc000, 0x7fff, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v27_LRtepsE_nid_postfix {{0, 0, 0, 0x8000, 0x3fde, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v26_LSnanE_nid_postfix {{1, 0, 0, 0x8000, 0x7fff, 0, 0, 0}};
+SonyDconst _ZNSt8__sce_v26_LXbigE_nid_postfix {{0, 0, 0, 0xb000, 0x4003, 0, 0, 0}};
 
 int APS5_VABI fesetenv_nid_postfix(const GuestFloatingPointEnvironment* environment) {
     if (environment == nullptr) throw std::invalid_argument("fesetenv: null environment");

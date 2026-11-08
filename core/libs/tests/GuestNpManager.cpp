@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -662,7 +663,97 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckNpOfflineGetters() {
+    const char accountId[16] = {};
+    char language[8];
+    char untouchedLanguage[8];
+    std::memset(language, 0x5a, sizeof(language));
+    std::memset(untouchedLanguage, 0x5a, sizeof(untouchedLanguage));
+    Require(sceNpManagerIntGetAccountLanguage(-1, accountId, language) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject user -1");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, nullptr, language) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject a null account id");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, accountId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject a null output");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, accountId, language) == SignedOut, "sceNpManagerIntGetAccountLanguage must report NP as signed out");
+    Require(std::memcmp(language, untouchedLanguage, sizeof(language)) == 0, "sceNpManagerIntGetAccountLanguage must leave the output untouched");
+    std::uint32_t status = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, -1, &status) == InvalidArgument, "sceNpManagerIntGetCommunicationRestrictionStatus must reject -1");
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, 0, nullptr) == InvalidArgument, "sceNpManagerIntGetCommunicationRestrictionStatus must reject a null output");
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, 0, &status) == SignedOut, "sceNpManagerIntGetCommunicationRestrictionStatus must report NP as signed out");
+    Require(status == 0x5a5a5a5a, "sceNpManagerIntGetCommunicationRestrictionStatus must leave the output untouched");
+    int flag = 0x5a5a5a5a;
+    Require(sceNpManagerIntIsSubAccount(-1, &flag) == InvalidArgument, "sceNpManagerIntIsSubAccount must reject user -1");
+    Require(sceNpManagerIntIsSubAccount(0x10000, nullptr) == InvalidArgument, "sceNpManagerIntIsSubAccount must reject a null output");
+    Require(sceNpManagerIntIsSubAccount(0x10000, &flag) == SignedOut, "sceNpManagerIntIsSubAccount must report NP as signed out");
+    Require(flag == 0x5a5a5a5a, "sceNpManagerIntIsSubAccount must leave the output untouched");
+    Require(sceNpManagerIntIsTemporarySignout(0x10000, nullptr) == InvalidArgument, "sceNpManagerIntIsTemporarySignout must reject a null output");
+    Require(sceNpManagerIntIsTemporarySignout(0x10000, &flag) == SignedOut, "sceNpManagerIntIsTemporarySignout must report NP as signed out");
+    Require(flag == 0x5a5a5a5a, "sceNpManagerIntIsTemporarySignout must leave the output untouched");
+}
+
+void CheckAsmLifecycle() {
+    constexpr int AsmAlreadyInitialized = static_cast<int>(0x8055A201u);
+    constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
+    constexpr int AsmInvalidArgument = static_cast<int>(0x8055A203u);
+    constexpr int ClientAlreadyInitialized = static_cast<int>(0x8055A281u);
+    constexpr int ClientNotInitialized = static_cast<int>(0x8055A282u);
+    constexpr int ClientInvalidArgument = static_cast<int>(0x8055A283u);
+    int connection = 0;
+    int request = 0;
+    int result = 0;
+    Require(sceNpAsmTerminate() == AsmNotInitialized, "sceNpAsmTerminate must reject an uninitialized service");
+    Require(sceNpAsmAbort() == AsmNotInitialized, "sceNpAsmAbort must reject an uninitialized service");
+    Require(sceNpAsmCreateConnection(1, &connection) == AsmNotInitialized, "sceNpAsmCreateConnection must reject an uninitialized service");
+    Require(sceNpAsmDeleteConnection(nullptr) == AsmNotInitialized, "sceNpAsmDeleteConnection must reject an uninitialized service");
+    Require(sceNpAsmCreateRequest(nullptr, nullptr, nullptr) == AsmNotInitialized, "sceNpAsmCreateRequest must reject an uninitialized service");
+    Require(sceNpAsmDeleteRequest(nullptr) == AsmNotInitialized, "sceNpAsmDeleteRequest must reject an uninitialized service");
+    Require(sceNpAsmInitialize() == 0, "sceNpAsmInitialize failed");
+    Require(sceNpAsmInitialize() == AsmAlreadyInitialized, "sceNpAsmInitialize must reject a second initialization");
+    Require(sceNpAsmAbort() == 0, "sceNpAsmAbort failed");
+    Require(sceNpAsmCreateConnection(1, nullptr) == AsmInvalidArgument, "sceNpAsmCreateConnection must reject a null connection");
+    Require(sceNpAsmDeleteConnection(nullptr) == AsmInvalidArgument, "sceNpAsmDeleteConnection must reject a null connection");
+    Require(sceNpAsmCreateRequest(nullptr, &request, &result) == AsmInvalidArgument, "sceNpAsmCreateRequest must reject a null connection");
+    Require(sceNpAsmCreateConnection(1, &connection) == 0, "sceNpAsmCreateConnection failed");
+    Require(sceNpAsmCreateRequest(&connection, &request, &result) == 0, "sceNpAsmCreateRequest failed");
+    Require(sceNpAsmDeleteRequest(&request) == 0, "sceNpAsmDeleteRequest failed");
+    Require(sceNpAsmDeleteConnection(&connection) == 0, "sceNpAsmDeleteConnection failed");
+    Require(sceNpAsmDeleteConnection(&connection) == 0, "sceNpAsmDeleteConnection was not idempotent");
+    Require(sceNpAsmTerminate() == 0, "sceNpAsmTerminate failed");
+    Require(sceNpAsmTerminate() == AsmNotInitialized, "sceNpAsmTerminate must reject a second termination");
+    int client = 0;
+    const char param[4] = {};
+    Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject an uninitialized client");
+    Require(sceNpAsmClientInitialize(&client, nullptr) == ClientInvalidArgument, "sceNpAsmClientInitialize must reject a null parameter");
+    Require(sceNpAsmClientInitialize(&client, param) == 0, "sceNpAsmClientInitialize failed");
+    Require(sceNpAsmClientInitialize(&client, nullptr) == ClientAlreadyInitialized, "sceNpAsmClientInitialize must reject a second initialization");
+    char titleId[16] = "PPSA00000_00";
+    Require(sceNpAsmClientSetNpTitleId(nullptr, titleId) == ClientInvalidArgument, "sceNpAsmClientSetNpTitleId must reject a null client");
+    Require(sceNpAsmClientSetNpTitleId(&client, nullptr) == ClientInvalidArgument, "sceNpAsmClientSetNpTitleId must reject a null title id");
+    Require(sceNpAsmClientSetNpTitleId(&client, titleId) == 0, "sceNpAsmClientSetNpTitleId failed");
+    Require(sceNpAsmClientTerminate(&client) == 0, "sceNpAsmClientTerminate failed");
+    Require(sceNpAsmClientSetNpTitleId(&client, titleId) == ClientNotInitialized, "sceNpAsmClientSetNpTitleId must reject a terminated client");
+    Require(sceNpAsmClientTerminate(&client) == ClientNotInitialized, "sceNpAsmClientTerminate must reject a second termination");
+}
+
+void CheckEmptyDestructors() {
+    unsigned char object[0x40];
+    unsigned char untouched[sizeof(object)];
+    std::memset(object, 0xa5, sizeof(object));
+    std::memcpy(untouched, object, sizeof(object));
+    for (auto destructor : {_ZN3sce2np10NpOnlineIdD1Ev, _ZN3sce2np10NpOnlineIdD2Ev, _ZN3sce2np12NpTitleTokenD1Ev, _ZN3sce2np12NpTitleTokenD2Ev,
+                            _ZN3sce2np13NpAccessTokenD1Ev, _ZN3sce2np13NpAccessTokenD2Ev, _ZN3sce2np4NpIdD1Ev, _ZN3sce2np4NpIdD2Ev,
+                            _ZN3sce2np4UserD1Ev, _ZN3sce2np4UserD2Ev}) {
+        destructor(object);
+        Require(std::memcmp(object, untouched, sizeof(object)) == 0, "an empty destructor wrote the object");
+    }
+    libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch();
+    libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch();
+    libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch();
+    libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
+}
+
 int main() {
+    CheckNpOfflineGetters();
+    CheckAsmLifecycle();
+    CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
