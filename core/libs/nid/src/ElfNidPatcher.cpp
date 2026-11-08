@@ -386,6 +386,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     std::size_t versymOffset = 0u, versymSize = 0u;
     bool hasDynamic = false;
     std::uint32_t dynSymSectionIndex = 0u;
+    std::uint32_t dynSymSectionLink = 0u;
+    bool hasDynSym = false;
     std::uint32_t gnuHashSymOffset = 0u;
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
@@ -394,10 +396,13 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         if (shdr.sh_type == kShtDynsym) {
             if (shdr.sh_entsize != sizeof(Elf64_Sym) || shdr.sh_size % sizeof(Elf64_Sym) || shdr.sh_link >= ehdr.e_shnum)
                 throw std::runtime_error("invalid ELF dynsym layout");
+            if (hasDynSym) throw std::runtime_error("multiple ELF dynsym sections");
             RequireElfRange(elf, shdr.sh_offset, shdr.sh_size, "dynsym");
             dynSymOffset = static_cast<std::size_t>(shdr.sh_offset);
             dynSymSize = static_cast<std::size_t>(shdr.sh_size);
             dynSymSectionIndex = i;
+            dynSymSectionLink = shdr.sh_link;
+            hasDynSym = true;
         }
         if (shdr.sh_type == kShtGnuHash) {
             gnuHashOffset = static_cast<std::size_t>(shdr.sh_offset);
@@ -433,6 +438,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
     if (symCount == 0u) throw std::runtime_error(".dynsym is empty");
+    if (versymOffset != 0u) {
+        RequireElfRange(elf, versymOffset, versymSize, "versym");
+        if (versymSize < symCount * sizeof(std::uint16_t))
+            throw std::runtime_error("invalid ELF version symbol table size");
+    }
     if (sysvHashOffset != 0u) {
         if (sysvHashLink != dynSymSectionIndex) throw std::runtime_error("invalid ELF hash symbol table link");
         ValidateSysvHash(elf, sysvHashOffset, sysvHashSize, symCount);
@@ -442,18 +452,9 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
     }
 
-    const std::size_t dynStrSectionLink = [&]() -> std::size_t {
-        for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
-            const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
-            const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
-            if (shdr.sh_type == kShtDynsym) return static_cast<std::size_t>(shdr.sh_link);
-        }
-        throw std::runtime_error("cannot find dynsym sh_link");
-    }();
-
     std::size_t dynStrOffset = 0u, dynStrSize = 0u;
     {
-        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + dynStrSectionLink * sizeof(Elf64_Shdr);
+        const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + dynSymSectionLink * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
         if (shdr.sh_type != 3) throw std::runtime_error("invalid ELF dynstr section type");
         RequireElfRange(elf, shdr.sh_offset, shdr.sh_size, "dynstr");
@@ -612,7 +613,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         dynStrOffset = static_cast<std::size_t>(fileOffset + tableSize);
         dynStrSize = newDynStr.size();
         const auto stringAddress = address + tableSize;
-        const auto sectionOffset = ehdr.e_shoff + dynStrSectionLink * sizeof(Elf64_Shdr);
+        const auto sectionOffset = ehdr.e_shoff + dynSymSectionLink * sizeof(Elf64_Shdr);
         auto strings = Read<Elf64_Shdr>(elf, sectionOffset);
         strings.sh_offset = dynStrOffset;
         strings.sh_addr = stringAddress;
@@ -653,8 +654,6 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     if (gnuHashOffset != 0u) {
         const auto bucketCount = Read<std::uint32_t>(elf, gnuHashOffset);
         std::vector<std::uint32_t> oldToNewIndex(symCount);
-        if (versymOffset != 0u && versymSize < symCount * sizeof(std::uint16_t))
-            throw std::runtime_error("invalid ELF version symbol table size");
         ReorderDynSymForGnuHash(elf, dynSymOffset, symCount, gnuHashSymOffset, bucketCount, newSymbolNames, oldToNewIndex, versymOffset);
         FixupRelocationSymbolIndices(elf, ehdr, dynSymSectionIndex, oldToNewIndex);
         RebuildGnuHash(elf, gnuHashOffset, gnuHashSize, symCount, newSymbolNames);

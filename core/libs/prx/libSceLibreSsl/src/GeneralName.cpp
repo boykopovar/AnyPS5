@@ -8,6 +8,10 @@ static_assert(sizeof(LibreSslGeneralName) == 16);
 static_assert(offsetof(LibreSslGeneralName, value) == 8);
 static_assert(sizeof(Asn1String) == 24);
 static_assert(sizeof(LibreSslAsn1Object) == 40);
+static_assert(sizeof(LibreSslOcspResponse) == 16);
+static_assert(offsetof(LibreSslOcspResponse, responseBytes) == 8);
+static_assert(sizeof(LibreSslOcspResponseBytes) == 16);
+static_assert(offsetof(LibreSslOcspResponseBytes, response) == 8);
 
 namespace {
 
@@ -180,6 +184,30 @@ void APS5_VABI GENERAL_NAMES_free_nid_postfix(LibreSslStack* names) {
     sk_pop_free_nid_postfix(names, +[](void* pointer) APS5_VABI {
         GENERAL_NAME_free_nid_postfix(static_cast<LibreSslGeneralName*>(pointer));
     });
+}
+
+void APS5_VABI OCSP_RESPONSE_free_nid_postfix(LibreSslOcspResponse* response) {
+    if (!response) return;
+    auto* bytes = static_cast<LibreSslOcspResponseBytes*>(response->responseBytes);
+    const auto invalidString = [](const Asn1String* string) {
+        return string && string->data && !(string->flags & Asn1StringNdef) && string->length < 0;
+    };
+    if (invalidString(response->responseStatus) || (bytes && invalidString(bytes->response)))
+        throw std::invalid_argument("OCSP_RESPONSE_free: negative owned string length");
+    const auto* object = bytes ? bytes->responseType : nullptr;
+    if (object && (object->flags & DynamicData) && object->data && object->length < 0)
+        throw std::invalid_argument("OCSP_RESPONSE_free: negative owned object length");
+    if (bytes) {
+        FreeString(bytes->response);
+        bytes->response = nullptr;
+        FreeObject(bytes->responseType);
+        bytes->responseType = nullptr;
+        free_nid_postfix(bytes);
+        response->responseBytes = nullptr;
+    }
+    FreeString(response->responseStatus);
+    response->responseStatus = nullptr;
+    free_nid_postfix(response);
 }
 
 }
