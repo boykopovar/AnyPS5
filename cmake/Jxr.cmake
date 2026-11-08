@@ -39,6 +39,8 @@ add_library(jxr STATIC EXCLUDE_FROM_ALL
     ${JXR_SOURCE_DIR}/jxrgluelib/JXRGluePFC.c
     ${JXR_SOURCE_DIR}/jxrgluelib/JXRMeta.c)
 configure_jxr_native(jxr)
+set_source_files_properties(${JXR_SOURCE_DIR}/image/sys/strcodec.c ${JXR_SOURCE_DIR}/image/decode/segdec.c
+    PROPERTIES COMPILE_DEFINITIONS _M_IA64)
 if(UNIX)
     target_link_libraries(jxr PRIVATE m)
 endif()

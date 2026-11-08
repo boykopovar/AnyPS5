@@ -57,6 +57,7 @@ struct SectionHeader {
     ByteCount SectionSize;
     std::uint32_t Link;
     std::uint32_t Info;
+    std::uint64_t Alignment;
     std::uint64_t EntrySize;
 };
 

@@ -21,6 +21,7 @@ HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 PROGRESS_EVERY = 100
+MAX_REPORT_CHARS = 60000
 _REPO_ROOTS = {}
 
 
@@ -377,10 +378,17 @@ def base_exports(ref):
     return found
 
 
+def merge_base(ref):
+    bases = git("merge-base", "--all", "refs/pr/base", ref).split()
+    if len(bases) == 1:
+        return bases[0]
+    return min(bases, key=lambda base: git("diff", "--name-only", "--no-renames", "-z", base, ref).count("\0"))
+
+
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
     pr["tree"] = None if conflicted else commit(tree)
-    old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
+    old, new = (merge_base(pr["ref"]), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
     changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
     for status, path in zip(changes[::2], changes[1::2]):
@@ -394,7 +402,8 @@ def scan(pr):
 
 
 def probe(pr):
-    changes = git("diff", "--name-status", "--no-renames", "-z", f"refs/pr/base...{pr['ref']}").split("\0")
+    base = merge_base(pr["ref"])
+    changes = git("diff", "--name-status", "--no-renames", "-z", base, pr["ref"]).split("\0")
     files, existing = set(), set()
     for status, path in zip(changes[::2], changes[1::2]):
         files.add(path)
@@ -402,7 +411,7 @@ def probe(pr):
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
         return files, (set(), {}), existing
-    diff = git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp")
+    diff = git("diff", "-U0", "--no-color", base, pr["ref"], "--", "core/libs/prx/*.cpp")
     return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
@@ -568,7 +577,26 @@ def report(rows, blob, main_exports=None):
         ])
         for number, files in sorted(uncompared.items()):
             lines.append(f"| {pull(blob, number)} | {cell(files)} |")
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    return body if len(body) <= MAX_REPORT_CHARS else truncated(lines)
+
+
+def truncated(lines):
+    cumulative = []
+    total = 0
+    for index, line in enumerate(lines):
+        if index:
+            total += 1
+        total += len(line)
+        cumulative.append(total)
+    keep = 1
+    for candidate in range(len(lines) - 1, 0, -1):
+        notice = f"_Report truncated: {len(lines) - candidate} more lines omitted._"
+        if cumulative[candidate - 1] + 1 + len(notice) + 1 <= MAX_REPORT_CHARS:
+            keep = candidate
+            break
+    notice = f"_Report truncated: {len(lines) - keep} more lines omitted._"
+    return "\n".join(lines[:keep] + [notice]) + "\n"
 
 
 def write_reports(out, rows, blob, main_exports=None):
