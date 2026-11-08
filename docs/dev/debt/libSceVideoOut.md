@@ -301,6 +301,10 @@
 | `Unknown` | `gQwfLPPIZQ8` |
 | `Unknown` | `rJmjlPlreu4` |
 
+### Host screen keep-awake
+
+- [Wayland](../../../core/libs/prx/libSceVideoOut/src/KeepAwake.cpp) - not verified. SDL 2.33.0 (bundled) suspends the screen saver on Wayland through the idle-inhibit protocol, one inhibitor per window surface, when the compositor offers it; no Wayland session was available here, so whether the screen stays awake under a given compositor is unmeasured.
+
 - Focus pause for rumble (host side, not console behaviour): while `ANYPS5_RUMBLE_ON_FOCUS_LOSS` is on and the window has no focus, the motor and non-PS5 trigger rumble requests are dropped and a controller that was rumbling gets one zero-intensity request. Not paused: the PS5 adaptive trigger vibration profiles sent as trigger effects, and the DualSense audio haptics path ([`PadInput.cpp`](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp)), which keeps running while unfocused.
 
 ### Host input mapping gaps
