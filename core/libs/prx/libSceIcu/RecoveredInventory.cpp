@@ -247,10 +247,6 @@ int APS5_VABI udatpg_getFieldDisplayName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udatpg_getSkeleton_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI udatpg_open_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
