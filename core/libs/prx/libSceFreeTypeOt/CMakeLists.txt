@@ -1,5 +1,10 @@
-add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeType/src/OutlineBorders.cpp
-        ../libSceFreeType/src/OutlineDecompose.cpp ../libSceFreeType/src/OutlineOrientation.cpp ../libSceFreeType/src/Trigonometry.cpp)
+add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL
+        Export.cpp
+        ../libSceFreeType/src/OutlineBitmap.cpp
+        ../libSceFreeType/src/OutlineBorders.cpp
+        ../libSceFreeType/src/OutlineDecompose.cpp
+        ../libSceFreeType/src/OutlineOrientation.cpp
+        ../libSceFreeType/src/Trigonometry.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
 target_link_libraries(libSceFreeTypeOt PRIVATE freetype)
@@ -34,6 +39,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_freetype_corner PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_freetype_corner PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
+
+    add_test_executable(guest_freetype_ot_outline_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineBitmap.cpp)
+    target_include_directories(guest_freetype_ot_outline_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_outline_bitmap_tests PRIVATE libSceFreeTypeOt libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_ot_outline_bitmap_tests)
+    add_test(NAME guest_freetype_ot_outline_bitmap COMMAND guest_freetype_ot_outline_bitmap_tests)
+    set_tests_properties(guest_freetype_ot_outline_bitmap PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_outline_bitmap PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
     endif()
 
