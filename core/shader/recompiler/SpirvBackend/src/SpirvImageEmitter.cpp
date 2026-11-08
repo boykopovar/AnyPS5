@@ -1004,9 +1004,13 @@ std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAcce
 std::uint32_t GatherAddress(SpirvEmitterState& state, std::uint32_t mode, std::uint32_t texel, std::uint32_t extent) {
     const auto i32 = TypeI32(state);
     const auto boolean = TypeBool(state);
-    const auto wrapped = Binary(state, spv::OpSMod, i32, texel, extent);
+    const auto positiveRemainder = [&](std::uint32_t divisor) {
+        const auto remainder = Binary(state, spv::OpSRem, i32, texel, divisor);
+        return Select(state, i32, Binary(state, spv::OpSLessThan, boolean, remainder, ConstantI32(state, 0)), Binary(state, spv::OpIAdd, i32, remainder, divisor), remainder);
+    };
+    const auto wrapped = positiveRemainder(extent);
     const auto period = Binary(state, spv::OpIMul, i32, extent, ConstantI32(state, 2));
-    const auto folded = Binary(state, spv::OpSMod, i32, texel, period);
+    const auto folded = positiveRemainder(period);
     const auto mirrored = Select(state, i32, Binary(state, spv::OpSLessThan, boolean, folded, extent), folded, Binary(state, spv::OpISub, i32, Binary(state, spv::OpISub, i32, period, ConstantI32(state, 1)), folded));
     const auto last = Binary(state, spv::OpISub, i32, extent, ConstantI32(state, 1));
     const auto clamped = state.module.AllocateId();
