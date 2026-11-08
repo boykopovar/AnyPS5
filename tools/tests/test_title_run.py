@@ -654,6 +654,26 @@ class CompareTests(unittest.TestCase):
         self.assertIn("| Game PPSA00001 | PPSA00001 | Unsupported instructions | 0 | not recorded |", lines)
         self.assertIn("Game PPSA00001 (PPSA00001), missing functions: only before: libSceNet/a; only now: libSceNet/b; in both: 0", lines)
 
+    def test_json_holds_the_comparison_and_null_for_not_recorded(self):
+        before = {"report": {"averageFps": None, "shaders": None, "missing": [{"library": None, "name": "a", "calls": 2}], "unsupported": None,
+                             "truncated": {"functions": 0, "unsupported": 0}}, "fps": 20.0, "outcome": "rendering"}
+        now = {"report": {"averageFps": 60.0, "shaders": {"compiled": 1, "failed": 0, "cacheHits": None}, "missing": [], "unsupported": [],
+                          "truncated": {"functions": 0, "unsupported": 0}}, "fps": 21.0, "outcome": "rendering"}
+        document = json.loads(title_run.compare_json(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before])))
+        self.assertEqual(document["format"], "title-run-compare")
+        title = document["titles"]["PPSA00001"]
+        self.assertEqual(title["fps"], {"before": 20.0, "now": 21.0})
+        self.assertEqual(title["averageFps"], {"before": None, "now": 60.0})
+        self.assertEqual(title["shaders"]["compiled"], {"before": None, "now": 1})
+        self.assertEqual(title["shaders"]["cacheHits"], {"before": None, "now": None})
+        self.assertEqual(title["missingFunctions"], {"onlyBefore": [{"library": None, "name": "a", "calls": 2}], "onlyNow": [], "both": []})
+        self.assertIsNone(title["unsupportedInstructions"])
+        self.assertEqual(title["missingFunctionsCount"], {"before": 1, "now": 0})
+
+    def test_json_needs_a_comparison(self):
+        with self.assertRaises(SystemExit):
+            title_run.main(["--games", str(title_run.ROOT), "--json"])
+
     def test_table_has_no_rows_without_common_titles(self):
         self.assertEqual(title_run.compare_runs(self.summary(PPSA00002=[{"outcome": "rendering", "fps": 1.0}]), self.summary()), {})
 
