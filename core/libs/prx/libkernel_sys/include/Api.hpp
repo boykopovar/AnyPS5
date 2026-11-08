@@ -267,7 +267,7 @@ int APS5_VABI sceKernelGetIdTableCurrentCount(void);
 int APS5_VABI sceKernelGetIoreq(void);
 int APS5_VABI sceKernelGetIpcPath(void);
 int APS5_VABI sceKernelGetKnobs(void);
-int APS5_VABI sceKernelGetKqueueFromEqueue(void);
+int APS5_VABI sceKernelGetKqueueFromEqueue(KernelEqueue eq, int* kq);
 int APS5_VABI sceKernelGetMemoryPstate(void);
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id);
 int APS5_VABI sceKernelGetPagingStatsOfAllObjects(void);
