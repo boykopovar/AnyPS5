@@ -90,7 +90,7 @@ private:
 
 std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log);
 bool WithActiveRelay(const std::function<void(Relay&)>& action);
-void ForwardBroadcastSend(std::uintptr_t native, const sockaddr* destination, const void* buffer, std::size_t length);
+void ForwardLanSend(std::uintptr_t native, const sockaddr* destination, const void* buffer, std::size_t length);
 
 }
 
