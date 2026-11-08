@@ -9,6 +9,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +18,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -95,6 +98,98 @@ bool headlessSurfaces(PFN_vkGetInstanceProcAddr resolve) {
     return false;
 }
 
+bool headlessDriver(VkDriverId driver) {
+    switch (driver) {
+        case VK_DRIVER_ID_MESA_RADV:
+        case VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA:
+        case VK_DRIVER_ID_MESA_LLVMPIPE:
+        case VK_DRIVER_ID_MOLTENVK:
+        case VK_DRIVER_ID_MESA_VENUS:
+        case VK_DRIVER_ID_MESA_NVK:
+        case VK_DRIVER_ID_MESA_HONEYKRISP:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool namesDevice(std::string_view name, std::string_view request) {
+    return std::search(name.begin(), name.end(), request.begin(), request.end(), [](char left, char right) {
+        return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
+    }) != name.end();
+}
+
+struct Candidate {
+    std::string name;
+    VkPhysicalDeviceType type;
+    bool headless;
+};
+
+std::vector<Candidate> candidates(PFN_vkGetInstanceProcAddr resolve) {
+    const auto create = reinterpret_cast<PFN_vkCreateInstance>(resolve(VK_NULL_HANDLE, "vkCreateInstance"));
+    Require(create != nullptr, "vkCreateInstance is unavailable");
+    VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    application.apiVersion = VK_API_VERSION_1_2;
+    VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    info.pApplicationInfo = &application;
+    VkInstance instance = VK_NULL_HANDLE;
+    Require(create(&info, nullptr, &instance) == VK_SUCCESS, "vkCreateInstance failed");
+    const auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(resolve(instance, "vkDestroyInstance"));
+    struct Destroy { VkInstance instance; PFN_vkDestroyInstance destroy; ~Destroy() { destroy(instance, nullptr); } } release{instance, destroy};
+    const auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(resolve(instance, "vkEnumeratePhysicalDevices"));
+    const auto properties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(resolve(instance, "vkGetPhysicalDeviceProperties"));
+    const auto properties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(resolve(instance, "vkGetPhysicalDeviceProperties2"));
+    Require(enumerate != nullptr && properties != nullptr && properties2 != nullptr, "the Vulkan device queries are unavailable");
+    std::uint32_t count = 0;
+    Require(enumerate(instance, &count, nullptr) == VK_SUCCESS, "vkEnumeratePhysicalDevices failed");
+    std::vector<VkPhysicalDevice> devices(count);
+    Require(enumerate(instance, &count, devices.data()) == VK_SUCCESS, "vkEnumeratePhysicalDevices failed");
+    devices.resize(count);
+    std::vector<Candidate> found;
+    for (const auto physical : devices) {
+        VkPhysicalDeviceProperties device{};
+        properties(physical, &device);
+        if (device.apiVersion < VK_API_VERSION_1_1) continue;
+        bool headless = false;
+        if (device.apiVersion >= VK_API_VERSION_1_2) {
+            VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+            VkPhysicalDeviceProperties2 queried{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+            queried.pNext = &driver;
+            properties2(physical, &queried);
+            headless = headlessDriver(driver.driverID);
+        }
+        found.push_back({device.deviceName, device.deviceType, headless});
+    }
+    return found;
+}
+
+int rank(VkPhysicalDeviceType type) {
+    switch (type) {
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 2;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 1;
+        default: return 0;
+    }
+}
+
+std::string headlessDevice(PFN_vkGetInstanceProcAddr resolve) {
+    const auto found = candidates(resolve);
+    const char* requested = std::getenv("ANYPS5_GPU");
+    std::string name = requested != nullptr ? requested : "";
+    if (name.empty()) {
+        int best = -1;
+        for (const auto& candidate : found) {
+            if (candidate.headless && rank(candidate.type) > best) {
+                best = rank(candidate.type);
+                name = candidate.name;
+            }
+        }
+        if (name.empty()) return name;
+    }
+    const bool unlisted = std::any_of(found.begin(), found.end(), [&](const Candidate& candidate) { return !candidate.headless && namesDevice(candidate.name, name); });
+    return unlisted ? std::string() : name;
+}
+
 void setEnvironment(const char* name, const char* value) {
 #ifdef _WIN32
     _putenv_s(name, value);
@@ -164,10 +259,12 @@ int main() {
             std::printf("skipped, no usable Vulkan device\n");
             return VulkanTestSkipped;
         }
-        if (!headlessSurfaces(resolve)) {
+        const auto device = headlessSurfaces(resolve) ? headlessDevice(resolve) : std::string();
+        if (device.empty()) {
             std::printf("skipped, the device lacks %s\n", VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME);
             return VulkanTestSkipped;
         }
+        setEnvironment("ANYPS5_GPU", device.c_str());
         Headless headless{1084, 610, resolve};
         const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME};
         const AgcDriver::PresentationWindow window{&headless, extensions, createSurface, drawableSize, 3840, 2160, nullptr};
