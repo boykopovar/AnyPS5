@@ -30,6 +30,9 @@ extern FileStream* __stdinp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
 extern int __isthreaded_nid_postfix;
+extern std::uint32_t Need_sceLibc_nid_postfix;
+extern int _thread_autoinit_dummy_decl_nid_postfix;
+extern int _thread_autoinit_dummy_decl_stub_nid_postfix;
 
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -875,6 +878,9 @@ int main(int argc, char** argv) {
     Require(std::strcmp(stringOutput, "1 2 3 4 5 6 7 8 9 10 1.25") == 0);
     Require(FormatString(stringOutput, "") == 0 && stringOutput[0] == '\0');
     Require(__isthreaded_nid_postfix == 1);
+    Require(Need_sceLibc_nid_postfix == 1);
+    Require(_thread_autoinit_dummy_decl_nid_postfix == 0);
+    Require(_thread_autoinit_dummy_decl_stub_nid_postfix == 0);
     Require(__stdoutp_nid_postfix == &_Stdout_nid_postfix);
     Require(__stderrp_nid_postfix == &_Stderr_nid_postfix);
     Require(fileno_nid_postfix(__stdinp_nid_postfix) == 0);

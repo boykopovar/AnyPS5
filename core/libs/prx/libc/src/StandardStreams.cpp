@@ -86,6 +86,8 @@ FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
 int __isthreaded_nid_postfix = 1;
+int _thread_autoinit_dummy_decl_nid_postfix = 0;
+int _thread_autoinit_dummy_decl_stub_nid_postfix = 0;
 
 int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode) {
     return stream->Orientation(mode);

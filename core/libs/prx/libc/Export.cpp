@@ -5,7 +5,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 
-uint32_t Need_sceLibc = 1;
+uint32_t Need_sceLibc_nid_postfix = 1;
 
 extern "C" {
 
