@@ -10,3 +10,9 @@
 ### Silent stubs
 
 - [sceContentExportTerm](../../../core/libs/prx/libSceContentExport/Export.cpp) (libSceContentExport) returns 0 without waiting for ongoing operations, tearing down threads, or verifying that all resources have been released.
+
+### Unknown function info
+
+- [sceContentExportDataProvideFunction, sceContentExportFree, sceContentExportFrom and sceContentExportMalloc](../../../core/libs/prx/libSceContentExport/Export.cpp): their signatures remain unresolved; these names have no matching exports in the supplied module's C or assembly listing.
+
+- [Content export arguments](../../../core/libs/prx/libSceContentExport/Export.cpp): file/data entry points and content-ID operations have restored argument lists. The Share Factory parameter contains a size, metadata string, content-ID list, count and option; metadata format and option values remain unresolved. Protected export bodies are unchanged.
