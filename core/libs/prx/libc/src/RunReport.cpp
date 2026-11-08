@@ -371,6 +371,10 @@ std::optional<std::string> SafeText(std::string_view text, const HostIdentifiers
     return owned;
 }
 
+std::string RedactedValue(std::string_view text, const HostIdentifiers& host) {
+    return SafeText(text, host).value_or("[redacted]");
+}
+
 namespace {
 
 std::string LowerAscii(std::string_view text) {

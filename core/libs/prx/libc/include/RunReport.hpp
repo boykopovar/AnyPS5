@@ -236,6 +236,7 @@ std::string FormatUtc(std::chrono::system_clock::time_point time);
 std::string Serialize(const Report& report);
 std::string Serialize(const Report& report, const HostIdentifiers& host);
 std::optional<std::string> SafeText(std::string_view text, const HostIdentifiers& host);
+std::string RedactedValue(std::string_view text, const HostIdentifiers& host);
 HostIdentifiers CurrentHostIdentifiers();
 Toggle ResolveToggle(std::optional<std::string_view> flag, std::optional<std::string_view> environment);
 std::optional<std::string> FlagFromArguments(const std::vector<std::string>& arguments);
