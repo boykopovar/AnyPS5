@@ -32,9 +32,15 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
 #include "prx/libScePad/include/HostVolumeSettings.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
 namespace {
+
+void stopRumble(SDL_GameController* controller) {
+    SDL_GameControllerRumble(controller, 0, 0, 0);
+    if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) SDL_GameControllerRumbleTriggers(controller, 0, 0, 0);
+}
 
 std::string appTitleId() {
     if (!std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.json")) && !std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.sfo"))) return {};
@@ -322,7 +328,12 @@ void PadInput::applyOutput() {
                 : LightBarPacer::Color{def.r, def.g, def.b};
             if (slots[slot].lightBar.Due(color, now)) slots[slot].lightBar.Result(color, now, SDL_GameControllerSetLED(controller, color[0], color[1], color[2]) == 0);
         }
-        const bool titleActive = slots[slot].outputPending || rumbling || triggerRumble;
+        const bool suppressed = Pad::RumbleSuppressed(Pad::RumblePausesOnFocusLoss(), HostVolumeFocused_nid_no_patch());
+        if (suppressed && slots[slot].rumbleLive) {
+            stopRumble(controller);
+            slots[slot].rumbleLive = false;
+        }
+        const bool titleActive = suppressed || slots[slot].outputPending || rumbling || triggerRumble;
         if (slots[slot].identify.Tick(now, titleActive, rumblePercent, [controller](std::uint16_t low, std::uint16_t high, std::uint32_t durationMs) {
                 SDL_GameControllerRumble(controller, low, high, durationMs);
             })) continue;
