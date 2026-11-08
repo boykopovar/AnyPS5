@@ -33,6 +33,7 @@
 #include <system_error>
 
 #ifndef _WIN32
+#include <alloca.h>
 #include <cerrno>
 #include <csetjmp>
 #include <csignal>
@@ -81,6 +82,7 @@ struct ThreadArgs {
 #ifndef _WIN32
     sigset_t signalMask;
 #endif
+    GuestSignalSet guestSignalMask{};
 };
 
 #ifdef __APPLE__
@@ -411,8 +413,10 @@ static void SetStackFromHost(PthreadPrivate* thread) {
     std::uintptr_t low = 0;
     std::uintptr_t high = 0;
     if (!HostStackLimits(&low, &high)) throw std::runtime_error("Cannot query the host thread stack");
-    thread->stackAddress = reinterpret_cast<void*>(low);
-    thread->stackSize = static_cast<std::size_t>(high - low);
+    const auto start = (low + PS5_PAGE_SIZE - 1) & ~std::uintptr_t{PS5_PAGE_SIZE - 1};
+    if (start >= high) throw std::runtime_error("The host thread stack holds no whole guest page");
+    thread->stackAddress = reinterpret_cast<void*>(start);
+    thread->stackSize = static_cast<std::size_t>(high - start);
 }
 
 static bool CurrentStack(std::uintptr_t* low, std::uintptr_t* high) {
@@ -900,6 +904,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     CurrentGuestState().current = self;
     asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
     RegisterStack(self);
+    sigprocmask_nid_postfix(3, &args->guestSignalMask, nullptr);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
 #endif
@@ -1085,9 +1090,9 @@ static void* StartNativeThread(void* opaque) {
         std::uintptr_t low = 0;
         std::uintptr_t high = 0;
         const auto reserve = HostStackReserve();
-        if (!HostStackLimits(&low, &high) || high - low < reserve + self->stackSize)
+        if (!HostStackLimits(&low, &high) || high - low < reserve + self->stackSize + PS5_PAGE_SIZE - 1)
             throw std::runtime_error("Cannot query guest thread stack");
-        self->stackAddress = reinterpret_cast<void*>(high - reserve - self->stackSize);
+        self->stackAddress = reinterpret_cast<void*>((high - reserve - self->stackSize) & ~std::uintptr_t{PS5_PAGE_SIZE - 1});
         self->threadId = std::this_thread::get_id();
 #if defined(__linux__)
         self->hostTid = static_cast<int>(gettid());
@@ -1109,6 +1114,9 @@ static void* StartNativeThread(void* opaque) {
             ReleaseThread(self);
         }
     } guard{self};
+    const auto stackEnd = reinterpret_cast<std::uintptr_t>(self->stackAddress) + self->stackSize;
+    if (const auto frame = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)); frame > stackEnd)
+        static_cast<volatile unsigned char*>(alloca(frame - stackEnd))[0] = 0;
     std::jmp_buf exitJump;
     if (_setjmp(exitJump) == 0) {
         threadExitJump = &exitJump;
@@ -1147,6 +1155,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     p->pendingException.store(0, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
+    sigprocmask_nid_postfix(1, nullptr, &args->guestSignalMask);
 #ifdef _WIN32
     args->gsBase = GuestGsGet_nid_no_patch();
     SYSTEM_INFO system{};
