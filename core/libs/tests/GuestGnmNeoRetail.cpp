@@ -106,4 +106,22 @@ int main() {
         sceGnmValidateResetState,
         sceGnmValidationRegisterMemoryCheckCallback,
     });
+
+    std::uint32_t streamId = 0;
+    if (sceGnmCreateWorkloadStream(0, &streamId) != 3) std::abort();
+    if (sceGnmCreateWorkloadStream(12345, nullptr) != 3) std::abort();
+    if (sceGnmCreateWorkloadStream(12345, &streamId) != 0 || streamId != 1) std::abort();
+
+    std::uint64_t workloadId = 0;
+    if (sceGnmBeginWorkload(0, nullptr) != 3) std::abort();
+    if (sceGnmBeginWorkload(0x10, &workloadId) != 1 || workloadId != 0) std::abort();
+    if (sceGnmBeginWorkload(0x20, &workloadId) != 1 || workloadId != 0) std::abort();
+    if (sceGnmBeginWorkload(0, &workloadId) != 0 || workloadId != 1) std::abort();
+    if (sceGnmBeginWorkload(0xf, &workloadId) != 0 || workloadId != 1) std::abort();
+
+    if (sceGnmEndWorkload(0) != 2) std::abort();
+    if (sceGnmEndWorkload(0x1000000000000000ull) != 2) std::abort();
+    if (sceGnmEndWorkload(0xff00000000000000ull) != 2) std::abort();
+    if (sceGnmEndWorkload(1) != 0) std::abort();
+    if (sceGnmEndWorkload(0x0f00000000000001ull) != 0) std::abort();
 }
