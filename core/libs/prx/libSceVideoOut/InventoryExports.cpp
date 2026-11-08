@@ -800,42 +800,100 @@ APS5_EXPORT("ys239q8VgXY", libSceVideoOutUnknown_ys239q8VgXY_nid_no_patch);
 
 extern "C" {
 
-int APS5_VABI videoOutLegacyUnknown__plus_epU_plus_rgObyw_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorObtain() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("+epU+rgObyw", videoOutLegacyUnknown__plus_epU_plus_rgObyw_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_6L0_minus_A5piudQ_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorDisable() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("6L0-A5piudQ", videoOutLegacyUnknown_6L0_minus_A5piudQ_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_QSmT3attiVg_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorRelease() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("QSmT3attiVg", videoOutLegacyUnknown_QSmT3attiVg_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_ekwMB_minus_Ftq18_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorIsUpdatePending() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ekwMB-Ftq18", videoOutLegacyUnknown_ekwMB_minus_Ftq18_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_fZgBeiGqE_plus_c_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorSetPosition() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("fZgBeiGqE+c", videoOutLegacyUnknown_fZgBeiGqE_plus_c_nid_no_patch);
 
 int APS5_VABI videoOutLegacyUnknown_spvjek0G4es_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("spvjek0G4es", videoOutLegacyUnknown_spvjek0G4es_nid_no_patch);
 
-int APS5_VABI videoOutLegacyUnknown_xwhyGPZkW6w_nid_no_patch() {
+int APS5_VABI sceVideoOutSysCursorEnable() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("xwhyGPZkW6w", videoOutLegacyUnknown_xwhyGPZkW6w_nid_no_patch);
 
 int APS5_VABI sceVideoOutSetConfigurationMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-7inAKRfvfE", libSceVideoOutUnknown__minus_7inAKRfvfE_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("24GHCH4jyzU", libSceVideoOutUnknown_24GHCH4jyzU_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9jqDAT2tPAg", libSceVideoOutUnknown_9jqDAT2tPAg_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DFNafp+tWs8", libSceVideoOutUnknown_DFNafp_plus_tWs8_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("G0FPxnpizUc", libSceVideoOutUnknown_G0FPxnpizUc_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JpVPYbAVxRQ", libSceVideoOutUnknown_JpVPYbAVxRQ_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KEOpdUvfQHQ", libSceVideoOutUnknown_KEOpdUvfQHQ_nid_no_patch);
+
+int APS5_VABI libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("koLWa3yaO-8", libSceVideoOutUnknown_koLWa3yaO_minus_8_nid_no_patch);
+
+int APS5_VABI sceVideoOutLatencyMeasureSetStartPointAuto() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSetDrrMonitorCapability() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysAddFlipEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysDeleteFlipEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoOutSysSetBusTransfer() {
     NotImplemented_nid_no_patch(__func__);
 }
 
