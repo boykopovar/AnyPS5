@@ -320,6 +320,7 @@ ShaderMemory::Page& ShaderMemory::addPage(std::size_t position, std::uint64_t ba
     owned->raw.Reset();
     owned->read.Reset();
     owned->recent.Reset();
+    owned->kept.Reset();
     owned->wordwise = false;
     owned->lazy = false;
     owned->backing = PageBacking(base, PageBytes);
@@ -394,7 +395,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         return spanNeedsSync(spanPolicy) || spanPolicy == PendingWrite::KnownValue;
     };
     const auto checkSpanBytes = std::max<std::size_t>(self.descriptorSpanBytes, sizeof(*value));
-    if (page.wordwise && page.valid.Test(index) &&
+    if (page.wordwise && page.valid.Test(index) && !page.kept.Test(index) &&
         (self.forceSync != 0u ? self.pendingWrite(address, checkSpanBytes, {}) != PendingWrite::None
                               : (spanInvalidatesCache(self.pendingWrite(address, checkSpanBytes, {})) ||
                                  (checkSpanBytes > sizeof(*value) && spanInvalidatesCache(self.pendingWrite(address, sizeof(*value), {})))))) {
@@ -500,6 +501,7 @@ bool ShaderMemory::pagesCurrent() {
         if (backing == existing->backing) continue;
         existing->valid.Reset();
         existing->raw.Reset();
+        existing->kept.Reset();
         existing->backing = backing;
         existing->wordwise = false;
         existing->lazy = false;
@@ -512,6 +514,38 @@ bool ShaderMemory::pagesCurrent() {
 bool ShaderMemory::snapshotCurrent(void* context, std::span<const ShaderRecompiler::RegisteredImageView> views) {
     const bool pages = static_cast<ShaderMemory*>(context)->pagesCurrent();
     return pages && DriverDetail::CaptureRegisteredViewsCurrent(views);
+}
+
+bool ShaderMemory::KeepTable(std::uint64_t address) {
+    constexpr std::size_t Words = KeepBytes / sizeof(std::uint32_t);
+    if (address % sizeof(std::uint32_t) != 0 || address > std::numeric_limits<std::uint64_t>::max() - KeepBytes) return false;
+    const auto end = address + KeepBytes;
+    if (overlapsInitial(address, end)) return false;
+    if (std::any_of(keptRanges.begin(), keptRanges.end(), [&](const auto& range) { return range.first < end && address < range.second; })) return false;
+    if (std::any_of(supplied.begin(), supplied.end(), [&](const Supplied& entry) { return entry.begin < end && address < entry.end; })) return false;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), KeepBytes)) return false;
+    const auto quiet = [&] { return pendingSpan != nullptr && pendingSpan(address, KeepBytes, {}) == PendingWrite::None; };
+    if (!quiet()) return false;
+    std::array<std::uint32_t, Words> copy;
+    GuestMemory::CopyGuestBytes(copy.data(), reinterpret_cast<const void*>(address), KeepBytes);
+    if (!quiet()) return false;
+    for (auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1); base < end; base += PageBytes) static_cast<void>(page(base));
+    if (!place(address, copy.data(), Words, true, true)) return false;
+    for (auto cursor = address; cursor < end;) {
+        const auto base = cursor & ~static_cast<std::uint64_t>(PageBytes - 1);
+        const auto index = static_cast<std::size_t>((cursor % PageBytes) / sizeof(std::uint32_t));
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>((end - cursor) / sizeof(std::uint32_t), PageWords - index));
+        auto& marked = page(base);
+        marked.kept.SetRun(index, count);
+        for (std::size_t word = 0; word < count; ++word) {
+            marked.read.Clear(index + word);
+            marked.recent.Clear(index + word);
+        }
+        cursor += static_cast<std::uint64_t>(count) * sizeof(std::uint32_t);
+    }
+    GuestMemory::GuardRead(address, KeepBytes);
+    keptRanges.emplace_back(address, end);
+    return true;
 }
 
 bool ShaderMemory::invalidateRawPages() {

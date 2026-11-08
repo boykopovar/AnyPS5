@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <atomic>
@@ -238,6 +239,21 @@ std::optional<HeldReason> writesBeyondTargets(const ShaderRecompiler::RecompileR
         }
     }
     return std::nullopt;
+}
+
+bool DrawTableSnapshotEnabled() {
+    return Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::TableSnapshot);
+}
+
+void KeepUserDataTables(ShaderMemory& memory, const std::vector<DrawProgram>& programs) {
+    for (const auto& program : programs) {
+        const std::span<const std::uint32_t> userData = program.userData;
+        for (std::size_t index = 0; index + 1u < userData.size(); ++index) {
+            if (userData[index + 1u] > 0xffffu) continue;
+            const auto address = static_cast<std::uint64_t>(userData[index]) | (static_cast<std::uint64_t>(userData[index + 1u]) << 32u);
+            if (address != 0) static_cast<void>(memory.KeepTable(address));
+        }
+    }
 }
 
 DrawFinisher::Pending heldWrites(const DrawTail& tail) {
@@ -744,6 +760,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         tail.submissionSerial = submission.serial;
         tail.packetOffset = static_cast<std::size_t>(packet.data() - submission.commands.data());
         noteFinisherHandOff(true);
+        if (DrawTableSnapshotEnabled()) KeepUserDataTables(*shaderMemory, programs);
         DrawFinisher::Pending held;
         if (DrawFinisher::Overlap()) held = heldWrites(tail);
         DrawFinisher::Get().Enqueue([this, tailHolder] {
