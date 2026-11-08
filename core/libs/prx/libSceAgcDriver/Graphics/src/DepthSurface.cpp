@@ -3042,27 +3042,16 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
         if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::ReadCaptured);
         publishWrittenDepth(written, cause);
     }
-    std::vector<std::shared_ptr<std::atomic<bool>>> published;
-    {
-        std::unique_lock lock(depthGuardMutex());
-        for (const auto& range : depthGuards()) {
-            if (overlaps(range)) Require(!range.hostWritten->load(std::memory_order_acquire), "sample-preserving guest publication of native multisample depth is not implemented");
-        }
-        for (const auto& range : depthGuards()) {
-            if (!overlaps(range) || !range.active->load(std::memory_order_acquire)) continue;
-            const bool everWritten = range.hostEverWritten->load(std::memory_order_acquire);
-            if (cause == DepthReadCause::Reuse && everWritten && std::ranges::find(published, range.active) == published.end()) published.push_back(range.active);
-            if (cause == DepthReadCause::Reuse || !everWritten) range.active->store(false, std::memory_order_release);
-        }
-        std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
-        anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+    std::unique_lock lock(depthGuardMutex());
+    for (const auto& range : depthGuards()) {
+        if (overlaps(range)) Require(!range.hostWritten->load(std::memory_order_acquire), "sample-preserving guest publication of native multisample depth is not implemented");
     }
-    if (published.empty()) return;
-    std::lock_guard gpu(GuestMemory::GpuMutex());
-    std::lock_guard lock(surfacesMutex());
-    for (const auto& surface : surfaces()) {
-        if (std::ranges::find(published, surface->active) != published.end()) retire(*surface);
+    for (const auto& range : depthGuards()) {
+        if (!overlaps(range) || !range.active->load(std::memory_order_acquire)) continue;
+        if (cause == DepthReadCause::Reuse || !range.hostEverWritten->load(std::memory_order_acquire)) range.active->store(false, std::memory_order_release);
     }
+    std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
+    anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
 }
 
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
