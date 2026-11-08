@@ -82,6 +82,24 @@ void CloseNative(SocketHandle socket) {
 #endif
 }
 
+void WriteU16(std::vector<std::uint8_t>& out, std::uint16_t value) {
+    out.push_back(static_cast<std::uint8_t>(value >> 8));
+    out.push_back(static_cast<std::uint8_t>(value));
+}
+
+void WriteU32(std::vector<std::uint8_t>& out, std::uint32_t value) {
+    WriteU16(out, static_cast<std::uint16_t>(value >> 16));
+    WriteU16(out, static_cast<std::uint16_t>(value));
+}
+
+std::uint16_t ReadU16(const std::vector<std::uint8_t>& in, std::size_t offset) {
+    return static_cast<std::uint16_t>((in[offset] << 8) | in[offset + 1]);
+}
+
+std::uint32_t ReadU32(const std::vector<std::uint8_t>& in, std::size_t offset) {
+    return (static_cast<std::uint32_t>(ReadU16(in, offset)) << 16) | ReadU16(in, offset + 2);
+}
+
 }
 
 Endpoint ParseEndpoint(const std::string& text) {
