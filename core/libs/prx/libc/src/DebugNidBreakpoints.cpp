@@ -98,6 +98,17 @@ bool NidBreakpointTable::Empty() const {
     return count_.load(std::memory_order_acquire) == 0;
 }
 
+bool NidBreakpointTable::IsArmed(std::uint64_t nid) const {
+    if (Empty())
+        return false;
+    const std::size_t count = count_.load(std::memory_order_acquire);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (nids_[i].load(std::memory_order_relaxed) == nid)
+            return true;
+    }
+    return false;
+}
+
 std::uint64_t NidBreakpointTable::DuplicateCount() const {
     std::lock_guard lock(mutex_);
     return duplicates_;
