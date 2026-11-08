@@ -64,6 +64,7 @@ int main() {
             Reader reader{documents[index]};
             const int status = callback ? _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&value, Read, &reader)
                 : _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, documents[index].data(), documents[index].size());
+            if (status != 0) std::fprintf(stderr, "document=%u callback=%d parse status=0x%x\n", index, callback, static_cast<unsigned>(status));
             Require(status == 0);
             Check(value, index);
             _ZN3sce4Json5ValueD1Ev(&value);
