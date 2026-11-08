@@ -93,6 +93,7 @@ void DeviceGate() {
             }
         });
     }
+    while (uses.load(std::memory_order_relaxed) == 0) std::this_thread::yield();
     for (int r = 0; r < 2; ++r) {
         threads.emplace_back([&] {
             for (int i = 0; i < 300; ++i) {

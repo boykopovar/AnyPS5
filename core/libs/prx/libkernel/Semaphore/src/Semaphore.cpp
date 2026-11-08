@@ -88,6 +88,9 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  if (need <= 0) {
   APS5_INVALID_ARG_EX;
  }
+ if (need > sem->maxCount) {
+  return SCE_KERNEL_ERROR_EINVAL;
+ }
 
  std::unique_lock<std::mutex> lock(sem->mutex);
  const void* caller = __builtin_return_address(0);

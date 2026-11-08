@@ -173,6 +173,21 @@ void run() {
         require(overlappingSections.size() == 1, "Section added on overlapping section");
     }
     require(caughtOverlap, "Build succeeded with overlapping resource section");
+
+    std::vector<Elfpatcher::Windows::PeSection> virtualOverlap{
+        {".data", 0x10000, Elfpatcher::Windows::SectionRead | 0x40u, std::vector<std::uint8_t>(0x1000, 0), 0x41000}
+    };
+    bool caughtVirtualOverlap = false;
+    try {
+        builder.Build(Png, iconPath, virtualOverlap, 0x50000);
+    } catch (const Domain::RelinkerException& error) {
+        caughtVirtualOverlap = true;
+        require(std::string(error.what()).find("Windows resource section overlaps preceding section") != std::string::npos, "Unexpected error for virtual overlap");
+        require(virtualOverlap.size() == 1, "Section added on virtual overlap");
+    }
+    require(caughtVirtualOverlap, "Build succeeded with a resource section overlapping virtual data");
+    const auto following = builder.Build(Png, iconPath, virtualOverlap, 0x60000);
+    require(following.Rva == 0x60000 && virtualOverlap.size() == 2, "Build rejected a resource section after virtual data");
 }
 
 }

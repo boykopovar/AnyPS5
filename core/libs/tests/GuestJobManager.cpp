@@ -683,8 +683,8 @@ static SpinSample QuietestWorkerSpin(std::uint32_t spin, std::uint32_t rounds, b
 
 static void WorkerSpinCase() {
     constexpr std::uint32_t rounds = 512;
-    const auto parked = MeasureWorkerSpin(0, rounds, true);
-    const auto spinning = MeasureWorkerSpin(50, rounds, true);
+    const auto parked = QuietestWorkerSpin(0, rounds, true);
+    const auto spinning = QuietestWorkerSpin(50, rounds, true);
     const auto noPending = QuietestWorkerSpin(50, rounds, false);
 #ifdef _WIN32
     constexpr const char* units = "cycles";
