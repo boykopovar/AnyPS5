@@ -5945,6 +5945,16 @@ bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) 
     return offset % context.limits.minStorageBufferOffsetAlignment == 0;
 }
 
+VkDeviceSize GuestBufferViewAlignment(const VkPhysicalDeviceLimits& limits) {
+    Require(limits.minStorageBufferOffsetAlignment != 0, "no storage buffer offset alignment");
+    const auto storage = std::max<VkDeviceSize>(limits.minStorageBufferOffsetAlignment, 4);
+    return UniformConstantBuffersEnabled() ? std::max<VkDeviceSize>(storage, limits.minUniformBufferOffsetAlignment) : storage;
+}
+
+VkDeviceSize GuestBufferMemory::viewAlignment() const {
+    return GuestBufferViewAlignment(context.limits);
+}
+
 bool GuestBufferMemory::stagingEligible(const Region& region, bool addressable) const {
     return !region.adaptiveInPlace && stagingWanted(region, addressable);
 }
@@ -6822,9 +6832,8 @@ std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint
     if (!(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr))) return fail(describe("exceeds"));
     const auto base = region.direct != nullptr ? region.direct->base - region.direct->lead : region.mirror != nullptr ? mirrorStart(*region.mirror) : region.begin;
     const auto offset = address - base;
-    Require(context.limits.minStorageBufferOffsetAlignment != 0, "no storage buffer offset alignment");
     if (base % 4 != 0) return fail("a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
-    adjustment = static_cast<std::uint32_t>(offset % std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4));
+    adjustment = static_cast<std::uint32_t>(offset % viewAlignment());
     if (bytes / 4 + adjustment / 4 + 2 > std::numeric_limits<std::uint64_t>::max() / 4) return fail("guest buffer view range overflow");
     auto range = ViewBytes(bytes, adjustment);
     const auto end = region.direct != nullptr ? region.direct->base + region.direct->bytes : servedEnd(region);

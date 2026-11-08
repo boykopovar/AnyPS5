@@ -315,6 +315,10 @@ struct AddressCopy {
 };
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit);
 
+// The start alignment of a guest buffer view and of every copy that stands in for one: storage buffer
+// offset alignment, and the uniform one too while pushed buffers may be read as uniform buffers.
+VkDeviceSize GuestBufferViewAlignment(const VkPhysicalDeviceLimits& limits);
+
 class AddressCopyCounters {
 public:
     struct Totals {
@@ -578,6 +582,7 @@ private:
     bool overlayCandidate(const Region& inside, bool readOnly) const;
     void resolveOverlays();
     bool bindableInPlace(std::uint64_t offset, bool addressable) const;
+    VkDeviceSize viewAlignment() const;
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);

@@ -369,6 +369,7 @@ struct SpirvTarget {
     std::uint32_t heapDataUniformDwords = 0;
     bool heapBufferDescriptors = false;
     bool pushedBufferAddresses = false;
+    bool uniformConstantBuffers = false;
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;

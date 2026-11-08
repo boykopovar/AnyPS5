@@ -235,6 +235,30 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
         const auto dword = state.program.Metadata().bindings.BufferAddressDword() + element * RuntimeAbi::BufferAddressWords;
         const bool pushed = state.program.Metadata().bindings.pushedBuffers;
         const auto word = [&](std::uint32_t index) { return pushed ? EmitBufferRootDword(state, element, index) : EmitShaderDataDwordLoad(state, dword + index); };
+        if (pushed) {
+            if (element >= state.pushedBufferVariables.size()) context.Fail(instruction, "a pushed buffer has no storage buffer variable");
+            if (state.pushedBufferUniformVariables[element] != 0u) {
+                if (instruction.Opcode() != IrOpcode::ReadConstBuffer || wide) context.Fail(instruction, "a pushed constant buffer is read by an access other than a scalar load");
+                MemoryResourceAccess access;
+                access.kind = memory.kind;
+                access.objectPointer = state.pushedBufferUniformVariables[element];
+                access.softwareBounds = true;
+                access.uniform = true;
+                access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, 2u));
+                access.byteOffset = state.memoryByteOffsets.at(element);
+                return access;
+            }
+            const auto variable = wide ? state.pushedBufferU64Variables[element] : plainLoad || state.pushedBufferCoherentVariables[element] == 0u ? state.pushedBufferVariables[element] : state.pushedBufferCoherentVariables[element];
+            if (variable == 0u) context.Fail(instruction, "a pushed buffer lacks the view this access needs");
+            MemoryResourceAccess access;
+            access.kind = memory.kind;
+            access.objectPointer = variable;
+            access.softwareBounds = true;
+            access.length = Binary(state, spv::OpShiftRightLogical, TypeU32(state), word(2u), ConstantU32(state, wide ? 3u : 2u));
+            access.byteOffset = state.memoryByteOffsets.at(element);
+            access.memoryAccess = memory.coherent ? spv::MemoryAccessVolatileMask : 0u;
+            return access;
+        }
         const auto u64 = TypeScalarU64(state);
         auto address = ComposeAddress64(state, [&] { return word(0u); }, [&] { return word(1u); });
         MemoryResourceAccess access;
@@ -305,7 +329,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
-    const bool exact = state.exactRobustLoads && !access.physical && LoadsSelectable(state, access);
+    const bool exact = state.exactRobustLoads && !access.physical && !access.softwareBounds && LoadsSelectable(state, access);
     if (!exact && boundedEnable != 0u) enable = boundedEnable;
     const auto bounds = exact ? 0u : EmitMemoryElementInBounds(state, access, last);
     const auto inBounds = exact ? 0u : (enable != 0u ? both(state, enable, bounds) : bounds);
@@ -352,7 +376,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(lowIndex), shift);
     const auto high = EmitValueOrZero(state, unaligned, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), load(highIndex), highShift));
     const auto value = combine(low, high);
-    const bool robustZero = !access.physical && ((access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u || (state.requirements.readOnlyStorage && access.memoryAccess == 0u));
+    const bool robustZero = !access.physical && !access.softwareBounds && ((access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u || (state.requirements.readOnlyStorage && access.memoryAccess == 0u));
     return robustZero ? value : EmitValueOrZero(state, inBounds, value);
 }
 

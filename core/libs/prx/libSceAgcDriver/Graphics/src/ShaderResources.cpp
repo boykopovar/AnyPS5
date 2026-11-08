@@ -6945,13 +6945,13 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
         put(Abi::RootItem::SrtDwords, 0u, ringStage ? static_cast<std::uint32_t>(std::min<VkDeviceSize>(heapSrtDwords[stage], srt.size / sizeof(std::uint32_t))) : heapSrtDwords[stage]);
         putAddress(Abi::RootItem::TableMap, heapTableMapSet[stage] ? heapTableMaps[stage] : offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
         writePushedData(bytes, shader, placement.pushed);
-        if (shader.program->pushedBufferCount != 0u) writePushedBuffers(bytes, stage, placement, addressed ? &rewritten->addressOverrides : nullptr);
+        if (shader.program->pushedBufferCount != 0u) writePushedBuffers(bytes, stage, placement, addressed ? &rewritten->addressOverrides : nullptr, offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
         rooted = true;
     }
     if (rooted) NoteDataAddressPush();
 }
 
-void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDescriptorBufferInfo>* overrides) const {
+void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDescriptorBufferInfo>* overrides, VkDeviceAddress empty) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     struct RangeStorage {};
     auto& ranges = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
@@ -6959,8 +6959,12 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
     writeBufferAddresses({}, static_cast<std::uint32_t>(stage), overrides, &ranges);
     Require(ranges.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
     heapPushedStages.fetch_add(1, std::memory_order_relaxed);
+    Require(empty != 0u, "a stage with pushed buffers has no shader data to stand in for an empty buffer");
     const auto record = [&](std::size_t index) {
-        return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(ranges[index].address), static_cast<std::uint32_t>(ranges[index].address >> 32u), static_cast<std::uint32_t>(std::min<VkDeviceSize>(ranges[index].size, 0xffffffffu)), 0u};
+        const auto size = static_cast<std::uint32_t>(std::min<VkDeviceSize>(ranges[index].size, 0xffffffffu));
+        const auto address = size != 0u && ranges[index].address != 0u ? ranges[index].address : empty;
+        Require(!UniformConstantBuffersEnabled() || address % context.limits.minUniformBufferOffsetAlignment == 0, "a pushed buffer address is off the uniform buffer offset alignment");
+        return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), address == empty ? 0u : size, 0u};
     };
     const auto put = [&](std::uint32_t position, std::span<const std::uint32_t> words) {
         Require(position != Abi::NoPushPosition && (position + words.size()) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed buffer words lie outside the push data");

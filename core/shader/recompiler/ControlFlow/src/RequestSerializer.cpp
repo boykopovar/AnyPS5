@@ -916,7 +916,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(57u);
+    writer.WriteU32(58u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -974,6 +974,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.robustBufferAccess2);
     writer.WriteBool(request.target.heapBufferDescriptors);
     writer.WriteBool(request.target.pushedBufferAddresses);
+    writer.WriteBool(request.target.uniformConstantBuffers);
     return base64Encode(buffer);
 }
 
@@ -982,7 +983,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 57u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 58u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1062,6 +1063,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.heapBufferDescriptors = reader.ReadBool();
     }
     if (version >= 57u) result.request.target.pushedBufferAddresses = reader.ReadBool();
+    if (version >= 58u) result.request.target.uniformConstantBuffers = reader.ReadBool();
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

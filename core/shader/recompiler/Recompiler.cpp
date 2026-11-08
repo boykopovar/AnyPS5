@@ -792,6 +792,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
     targetOptions.gpuResolvedImages = allocation.gpuResolvedImages;
     targetOptions.heapDataUniformDwords = request.target.heapDataUniformDwords;
+    targetOptions.uniformConstantBuffers = request.target.uniformConstantBuffers;
     targetOptions.heapBufferDescriptors = request.target.descriptorMemory && request.target.heapBufferDescriptors;
     targetOptions.ldsLockFences = request.target.ldsLockFences;
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
@@ -1043,7 +1044,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpEntryPoint && count >= 2u) compute = materialized[cursor + 1u] == spv::ExecutionModelGLCompute;
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
-        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet || materialized[cursor + 3u] == RuntimeAbi::EmbeddedSamplerSet || (compute && !target.gpuResolvedImages && materialized[cursor + 3u] == WorkgroupMemoryDescriptorSet))) ldsBuffers.insert(materialized[cursor + 1u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet || materialized[cursor + 3u] == RuntimeAbi::EmbeddedSamplerSet || materialized[cursor + 3u] == RuntimeAbi::PushedBufferSet || (compute && !target.gpuResolvedImages && materialized[cursor + 3u] == WorkgroupMemoryDescriptorSet))) ldsBuffers.insert(materialized[cursor + 1u]);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationSpecId) {
             const auto id = materialized[cursor + 3u];
             if (!PipelineSpecialization::IsWorkgroupOffset(id)) module->specialization.push_back({id, supplied.at(id)});

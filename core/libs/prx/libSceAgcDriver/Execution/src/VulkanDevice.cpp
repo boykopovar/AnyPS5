@@ -753,6 +753,7 @@ struct VulkanDevice::State {
     std::uint32_t heapDataUniformDwords = 0;
     bool heapBufferDescriptors = false;
     bool pushedBufferAddresses = false;
+    bool uniformConstantBuffers = false;
     std::unique_ptr<Graphics::Recorder> recorder;
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
     // last; each is filled once by a doubling chain in device memory.
@@ -1720,6 +1721,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     const std::array<const char*, 2> meshExtensions{VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_SPIRV_1_4_EXTENSION_NAME};
     const bool meshAvailable = std::all_of(meshExtensions.begin(), meshExtensions.end(), hasExtension);
     VkPhysicalDeviceMeshShaderFeaturesEXT meshFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
+    VkPhysicalDeviceUniformBufferStandardLayoutFeaturesKHR standardLayout{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFORM_BUFFER_STANDARD_LAYOUT_FEATURES_KHR};
     if (meshAvailable) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &meshFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
@@ -2296,7 +2298,16 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
             if (Graphics::BindlessHeap::RingInResourceHeap(state->descriptorHeapProperties, state->properties.limits.minUniformBufferOffsetAlignment))
                 state->heapBufferDescriptors = state->descriptorHeapProperties.bufferDescriptorSize == Graphics::BindlessHeap::BufferSlotBytes;
-            state->pushedBufferAddresses = Graphics::ChoosePushedBufferAddresses(state->properties.vendorID);
+            state->pushedBufferAddresses = Graphics::ChoosePushedBufferAddresses();
+            // A pushed constant buffer is a uniform block of dwords (array stride 4), which needs the
+            // standard (std430) uniform buffer layout.
+            if (hasExtension(VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 layoutFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &standardLayout};
+                state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &layoutFeatures);
+                standardLayout.pNext = nullptr;
+            }
+            state->uniformConstantBuffers = Graphics::ChooseUniformConstantBuffers(state->pushedBufferAddresses && standardLayout.uniformBufferStandardLayout == VK_TRUE, state->properties.limits);
+            if (state->uniformConstantBuffers) deviceExtensions.push_back(VK_KHR_UNIFORM_BUFFER_STANDARD_LAYOUT_EXTENSION_NAME);
             deviceExtensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
             for (const char* required : {VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME}) {
                 if (std::find_if(deviceExtensions.begin(), deviceExtensions.end(), [&](const char* name) { return std::strcmp(name, required) == 0; }) == deviceExtensions.end()) deviceExtensions.push_back(required);
@@ -2334,6 +2345,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (state->meshShader) {
         meshFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &meshFeatures;
+    }
+    if (state->uniformConstantBuffers) {
+        standardLayout = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFORM_BUFFER_STANDARD_LAYOUT_FEATURES_KHR, const_cast<void*>(deviceInfo.pNext), VK_TRUE};
+        deviceInfo.pNext = &standardLayout;
     }
     if (state->descriptorHeap) {
         descriptorHeapFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
@@ -4726,6 +4741,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.heapDataUniformDwords = target.descriptorMemory ? state->heapDataUniformDwords : 0u;
     target.heapBufferDescriptors = target.descriptorMemory && state->heapBufferDescriptors;
     target.pushedBufferAddresses = target.descriptorMemory && state->pushedBufferAddresses;
+    target.uniformConstantBuffers = target.pushedBufferAddresses && state->uniformConstantBuffers;
     target.float16WidenNans = state->float16WidenNans;
     target.float16NarrowNans = state->float16NarrowNans;
     return target;

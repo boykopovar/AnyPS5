@@ -512,6 +512,77 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::Buffers: {
             if (layout.bufferAddressDwords != 0u && !state.heapBufferDescriptors) {
                 state.addressedBuffers = true;
+                if (!layout.pushedBuffers) break;
+                const auto count = layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
+                const auto pushedBuffer = [&](std::uint32_t type, std::uint32_t element, const char* name) {
+                    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, type), spv::StorageClassStorageBuffer);
+                    state.module.AddName(variable, (std::string(name) + "_" + std::to_string(element)).c_str());
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
+                    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
+                    return variable;
+                };
+                const bool aliased = state.requirements.coherentBufferAlias || state.requirements.bufferU64View;
+                // vkd3d-proton's heap mode maps root constant buffers as uniform buffers, which NVIDIA
+                // reads through its constant path. A guest buffer qualifies when every access is
+                // a non-coherent scalar load at a constant offset, so its highest word is known here; the
+                // view's start adjustment (below the uniform offset alignment, at most 63 bytes) and a
+                // misaligned base's second word are added to that bound.
+                std::vector<std::uint32_t> uniformWords(count, 0u);
+                if (state.uniformConstantBuffers) {
+                    std::vector<bool> eligible(count, true);
+                    std::vector<std::uint32_t> end(count, 0u);
+                    const auto& memory = state.program.Resources().memoryInfo;
+                    for (const auto& block : state.program.Blocks()) {
+                        for (const IrValue* inst : block->Instructions()) {
+                            const auto op = inst->Opcode();
+                            if (op != IrOpcode::ReadConstBuffer && BufferAccessOf(op) == BufferAccess::None) continue;
+                            const auto index = inst->Flags<MemoryFlags>().index;
+                            if (index >= memory.size()) continue;
+                            const auto& info = memory[index];
+                            if (info.gpuDescriptor || info.planningOnly || (info.kind != ResourceKind::Buffer && info.kind != ResourceKind::ScalarBuffer)) continue;
+                            const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, info.resource);
+                            if (element >= count) continue;
+                            const auto* offset = inst->ArgumentCount() > 1u ? inst->Argument(1u) : nullptr;
+                            if (op != IrOpcode::ReadConstBuffer || info.coherent || offset == nullptr || !offset->HasImmediate()) {
+                                eligible[element] = false;
+                                continue;
+                            }
+                            const auto byte = static_cast<std::uint64_t>(offset->ImmediateU32()) + info.offset;
+                            end[element] = std::max(end[element], static_cast<std::uint32_t>(std::min<std::uint64_t>((byte & ~std::uint64_t{3u}) + 8u, 0xffffffffu)));
+                        }
+                    }
+                    for (std::uint32_t element = 0; element < count; ++element) {
+                        const auto bytes = static_cast<std::uint64_t>(end[element]) + RuntimeAbi::UniformViewAdjustmentLimit;
+                        if (eligible[element] && end[element] != 0u && bytes <= RuntimeAbi::UniformConstantBufferBytes) uniformWords[element] = static_cast<std::uint32_t>((bytes + 3u) / 4u);
+                    }
+                }
+                for (std::uint32_t element = 0; element < count; ++element) {
+                    if (uniformWords[element] != 0u) {
+                        // A block of dwords (std430 uniform layout, uniformBufferStandardLayout).
+                        const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, TypeU32(state), ConstantU32(state, uniformWords[element]));
+                        const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
+                        const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
+                        state.module.AddName(variable, ("pushed_constant_buffer_" + std::to_string(element)).c_str());
+                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::PushedBufferSet);
+                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, element);
+                        state.pushedBufferUniformVariables.push_back(variable);
+                        state.pushedBufferVariables.push_back(0u);
+                        state.pushedBufferCoherentVariables.push_back(0u);
+                        state.pushedBufferU64Variables.push_back(0u);
+                        continue;
+                    }
+                    state.pushedBufferUniformVariables.push_back(0u);
+                    state.pushedBufferVariables.push_back(pushedBuffer(StorageBufferBlockType(state), element, "pushed_buffer"));
+                    state.pushedBufferCoherentVariables.push_back(state.requirements.coherentBufferAlias ? pushedBuffer(StorageBufferBlockType(state), element, "pushed_buffer_coherent") : 0u);
+                    state.pushedBufferU64Variables.push_back(state.requirements.bufferU64View ? pushedBuffer(StorageBufferU64BlockType(state), element, "pushed_buffer_u64") : 0u);
+                    for (const auto variable : {state.pushedBufferVariables.back(), state.pushedBufferCoherentVariables.back(), state.pushedBufferU64Variables.back()}) {
+                        if (variable != 0u && aliased) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
+                    }
+                    if (state.requirements.coherentBuffers) {
+                        state.module.AddAnnotation(spv::OpDecorate, state.pushedBufferCoherentVariables.back() != 0u ? state.pushedBufferCoherentVariables.back() : state.pushedBufferVariables.back(), spv::DecorationCoherent);
+                        if (state.pushedBufferU64Variables.back() != 0u) state.module.AddAnnotation(spv::OpDecorate, state.pushedBufferU64Variables.back(), spv::DecorationCoherent);
+                    }
+                }
                 break;
             }
             state.storageBufferVariable = Define(ArrayType(StorageBufferBlockType(state)), "buffers");
