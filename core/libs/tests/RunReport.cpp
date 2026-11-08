@@ -1112,6 +1112,20 @@ void CoverageOffTest() {
     Require(Contains(text, "\"milestones\": false,\n    \"missing\": false,\n    \"shaders\": false") && !Contains(text, "cacheHits"), "a section the build does not collect is marked as covered: " + text);
 }
 
+void FixedRingTest() {
+    RunReport::FixedRing<int, 3> ring;
+    Require(ring.Size() == 0 && ring.Values().empty(), "an empty ring holds values");
+    ring.Push(1);
+    ring.Push(2);
+    Require(ring.Size() == 2 && ring.Values() == std::vector<int>({1, 2}), "the ring lost values before it was full");
+    ring.Push(3);
+    ring.Push(4);
+    ring.Push(5);
+    Require(ring.Size() == 3 && ring.Values() == std::vector<int>({3, 4, 5}), "a full ring must keep the newest values, oldest first");
+    ring.Push(6);
+    Require(ring.Values() == std::vector<int>({4, 5, 6}), "the ring wrapped incorrectly");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1371,6 +1385,7 @@ int main(int argc, char** argv) {
         Run("commit-with-hex-name", CommitWithHexNameTest);
         Run("search-only-ancestor", SearchOnlyAncestorTest);
         Run("dropped-entries-are-distinct", DroppedEntriesAreDistinctTest);
+        Run("fixed-ring", FixedRingTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
