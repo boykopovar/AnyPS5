@@ -621,6 +621,16 @@ class RunReportTests(unittest.TestCase):
         self.assertIsNone(self.read([1, 2]))
         self.assertIsNone(self.read(self.report(format="other")))
 
+    def test_take_report_moves_the_file_into_the_run(self):
+        work, run_dir = self.root / "work", self.root / "run1"
+        work.mkdir()
+        run_dir.mkdir()
+        self.assertIsNone(title_run.take_report(work, run_dir))
+        (work / "anyps5-report.json").write_text(json.dumps(self.report()), encoding="utf-8")
+        self.assertEqual(title_run.take_report(work, run_dir)["averageFps"], 59.9)
+        self.assertFalse((work / "anyps5-report.json").exists())
+        self.assertTrue((run_dir / "anyps5-report.json").is_file())
+
     def test_wrong_shapes_are_not_recorded(self):
         report = self.read(self.report(missing={"functions": "many"}, shaders=[1]))
         self.assertIsNone(report["missing"])
