@@ -48,7 +48,7 @@ void RunTests() {
     LibreSsl3Rsa rsa{};
     int dsa = 0;
     int dh = 0;
-    int ec = 0;
+    LibreSsl3EcKey ec{};
     int unknown = 0;
 
     auto rsaKey = KeyWith(EvpPkeyRsa, &rsa);
@@ -78,6 +78,11 @@ void RunTests() {
     Require(errno == 126);
     Require(dhKey.references == 1 && dhKey.key == &dh);
 
+    errno = 127;
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&ecKey) == &ec);
+    Require(errno == 127);
+    Require(ecKey.references == 1 && ecKey.key == &ec);
+
     auto emptyRsa = KeyWith(EvpPkeyRsa, nullptr);
     auto emptyPss = KeyWith(EvpPkeyRsaPss, nullptr);
     auto emptyDsa = KeyWith(EvpPkeyDsa, nullptr);
@@ -106,6 +111,10 @@ void RunTests() {
     Require(errno == 204);
     Require(emptyDh.references == 1 && emptyDh.key == nullptr);
     Require(ERR_peek_last_error_nid_postfix() == 0);
+
+    auto emptyEc = KeyWith(EvpPkeyEc, nullptr);
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&emptyEc) == nullptr);
+    Require(emptyEc.references == 1 && emptyEc.key == nullptr);
 
     LibreSsl3EvpPkey* rsaMismatches[] = {&dsaKey, &dhKey, &ecKey, &unknownKey};
     for (auto* mismatchKey : rsaMismatches) {

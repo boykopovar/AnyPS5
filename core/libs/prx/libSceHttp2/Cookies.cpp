@@ -321,10 +321,49 @@ void AppendCookie(std::string& header, const Cookie& cookie) {
 }
 
 CookieBox* FindBox(int cookieBoxId) {
-    if (!Http2CookieBoxExists(cookieBoxId)) return nullptr;
-    return &g_cookieBoxes[cookieBoxId];
+    const auto box = g_cookieBoxes.find(cookieBoxId);
+    return box != g_cookieBoxes.end() ? &box->second : nullptr;
 }
 
+std::vector<const Cookie*> Matches(CookieBox& box, const Url& url) {
+    RemoveExpired(box, Now());
+    std::vector<const Cookie*> matches;
+    for (const Cookie& stored : box.cookies) {
+        if (DomainMatches(url.host, stored.domain) && PathMatches(url.path, stored.path) && (!stored.secure || url.secure)) matches.push_back(&stored);
+    }
+    std::stable_sort(matches.begin(), matches.end(), [](const Cookie* left, const Cookie* right) { return left->path.size() > right->path.size(); });
+    for (auto run = matches.begin(); run != matches.end();) {
+        const auto end = std::find_if(run, matches.end(), [&](const Cookie* match) { return match->path.size() != (*run)->path.size(); });
+        std::rotate(run, run + 1, end);
+        run = end;
+    }
+    return matches;
+}
+
+}
+
+std::optional<std::string> Http2CookieHeader(int cookieBoxId, std::string_view url) {
+    std::lock_guard lock(g_cookiesMutex);
+    CookieBox* box = FindBox(cookieBoxId);
+    Url parsed{};
+    if (!box || ParseUrl(url, parsed) != 0) return std::nullopt;
+    const auto matches = Matches(*box, parsed);
+    if (matches.empty()) return std::nullopt;
+    std::string header;
+    for (const Cookie* match : matches) AppendCookie(header, *match);
+    return header;
+}
+
+void Http2StoreResponseCookie(int cookieBoxId, std::string_view url, std::string_view cookie) {
+    std::lock_guard lock(g_cookiesMutex);
+    CookieBox* box = FindBox(cookieBoxId);
+    Url parsed{};
+    if (box && ParseUrl(url, parsed) == 0) static_cast<void>(StoreCookie(*box, parsed, cookie, Now()));
+}
+
+void Http2AddCookieBox(int cookieBoxId) {
+    std::lock_guard lock(g_cookiesMutex);
+    g_cookieBoxes.try_emplace(cookieBoxId);
 }
 
 void Http2ForgetCookies(int cookieBoxId) {
@@ -358,19 +397,9 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     Url parsed{};
     if (const int result = ParseUrl(url, parsed); result == ERROR_REJECTED) return ERROR_NOT_FOUND;
     else if (result != 0) return result;
-    RemoveExpired(*box, Now());
-    std::vector<const Cookie*> matches;
-    for (const Cookie& stored : box->cookies) {
-        if (DomainMatches(parsed.host, stored.domain) && PathMatches(parsed.path, stored.path) && (!stored.secure || parsed.secure)) matches.push_back(&stored);
-    }
+    const auto matches = Matches(*box, parsed);
     if (matches.empty()) return ERROR_NOT_FOUND;
     if (!cookie && !required) return ERROR_INVALID_VALUE;
-    std::stable_sort(matches.begin(), matches.end(), [](const Cookie* left, const Cookie* right) { return left->path.size() > right->path.size(); });
-    for (auto run = matches.begin(); run != matches.end();) {
-        const auto end = std::find_if(run, matches.end(), [&](const Cookie* match) { return match->path.size() != (*run)->path.size(); });
-        std::rotate(run, run + 1, end);
-        run = end;
-    }
     std::string header;
     for (const Cookie* match : matches) AppendCookie(header, *match);
     const std::size_t size = header.size() + HEADER_SLACK;
