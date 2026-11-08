@@ -74,8 +74,16 @@ Settings ReadSettings(const char* listen, const char* peers) {
         if (!peersText.empty()) throw std::invalid_argument("ANYPS5_LAN_PEERS needs ANYPS5_LAN_LISTEN");
         return settings;
     }
-    settings.Listen = ParseEndpoint(listenText);
-    settings.Peers = ParsePeers(peersText);
+    try {
+        settings.Listen = ParseEndpoint(listenText);
+    } catch (const std::invalid_argument& error) {
+        throw std::invalid_argument(std::string("ANYPS5_LAN_LISTEN: ") + error.what());
+    }
+    try {
+        settings.Peers = ParsePeers(peersText);
+    } catch (const std::invalid_argument& error) {
+        throw std::invalid_argument(std::string("ANYPS5_LAN_PEERS: ") + error.what());
+    }
     return settings;
 }
 
