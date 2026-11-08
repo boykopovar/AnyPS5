@@ -1,6 +1,9 @@
 #include "prx/libc/include/DebugNidBreakpoints.hpp"
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
 
 namespace {
 
@@ -13,6 +16,11 @@ int DecodeChar(char c) {
             return i;
     }
     return -1;
+}
+
+void ReportMalformedEntry(std::string_view entry) {
+    std::fprintf(stderr, "ANYPS5_DEBUG_NIDS: ignored malformed entry '%.*s'\n",
+                 static_cast<int>(entry.size()), entry.data());
 }
 
 }
@@ -146,6 +154,16 @@ std::size_t NidBreakpointTable::IndexOf(std::uint64_t nid) const {
 NidBreakpointTable& NidBreakpoints() {
     static NidBreakpointTable table;
     return table;
+}
+
+void LoadNidBreakpointsFromEnvironment() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        const char* value = std::getenv("ANYPS5_DEBUG_NIDS");
+        if (value == nullptr || *value == '\0')
+            return;
+        AddNidList(value, NidBreakpoints(), ReportMalformedEntry);
+    });
 }
 
 std::size_t AddNidList(std::string_view list, NidBreakpointTable& table, MalformedEntryReport report) {
