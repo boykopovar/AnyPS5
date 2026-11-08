@@ -375,6 +375,10 @@ int main() {
     RefusesBusyPort();
     OpensAndClosesTwoRelaysWithoutLeaks();
     GivesEachOpenRelayItsOwnInstance();
+    RecognisesOwnFrames();
+    DeliversFrameOnceBetweenRelays();
+    SkipsMalformedDatagrams();
+    ClosedRelayNeitherSendsNorReceives();
     LeavesNoDescriptorsBehind();
     StaysOffByDefault();
     InvalidSettingsLogOneLineAndStayOff();
