@@ -99,6 +99,8 @@ void RequireNotices(std::uint8_t* param, std::uint8_t* paramA) {
     PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
     ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
     Require(sceNpProfileDialogOpen(nullptr) == kErrArgNull);
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(0x10)) == kErrArgNull);
+    Require(sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(0x10)) == kErrArgNull);
     Require(!PsnNoticeShown());
 
     Store<std::uint32_t>(param, 56, 9);
