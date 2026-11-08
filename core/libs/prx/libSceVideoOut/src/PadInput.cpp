@@ -50,7 +50,7 @@ PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
 
-PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
+PadInput::PadInput(Pad::InputConfiguration configuration) : mappings(std::move(configuration)), appliedMapping(mappings.Snapshot()), keyboardMouse(*appliedMapping), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
     identifyMode = Pad::IdentifyModeFromEnvironment();
     openAvailableControllers();
@@ -347,6 +347,13 @@ void PadInput::applyOutput() {
     }
 }
 
+void PadInput::applyMappingSnapshot() {
+    auto snapshot = mappings.Snapshot();
+    if (snapshot == appliedMapping) return;
+    appliedMapping = snapshot;
+    keyboardMouse.Replace(*snapshot);
+}
+
 void PadInput::setMouseMode(bool enabled) {
     SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, "0");
     SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "0");
@@ -430,6 +437,7 @@ PadInputState PadInput::sampleController(int slot) const {
 }
 
 void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
+    applyMappingSnapshot();
     if (event.type == SDL_CONTROLLERDEVICEADDED) {
         openController(event.cdevice.which);
         return;
@@ -492,6 +500,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
 }
 
 void PadInput::Update(const DisplayWindow& window) {
+    applyMappingSnapshot();
     if (!hostFocusSynced && window.Handle() != nullptr) {
         hostFocusSynced = true;
         HostVolume volume;
