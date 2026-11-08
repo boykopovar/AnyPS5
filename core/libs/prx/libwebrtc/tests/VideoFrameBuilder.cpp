@@ -66,6 +66,24 @@ void TestId() {
     Require(OnlyChanged(builder, offsetof(WebRtcVideoFrameBuilder, id), 2));
 }
 
+void TestConstructor() {
+    WebRtcVideoFrameBuilder builder = Filled();
+    _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(&builder);
+    Require(builder.id == 0 && builder.videoFrameBuffer == nullptr && builder.timestampUs == 0);
+    Require(!builder.presentationTimestamp.engaged && !builder.referenceTime.engaged);
+    Require(builder.timestampRtp == 0 && builder.ntpTimeMs == 0 && builder.rotation == 0);
+    Require(builder.colorSpace[68] == 0 && !builder.useLowLatencyRendering && !builder.hasMaxCompositionDelayInFrames);
+    Require(!builder.hasUpdateRect && builder.packetInfos == nullptr);
+}
+
+void TestDestructor() {
+    WebRtcVideoFrameBuilder builder = Filled();
+    _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(&builder);
+    _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(&builder, 5);
+    _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(&builder);
+    Require(builder.id == 5);
+}
+
 void TestNullBuilderThrows() {
     try {
         _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(nullptr, 1);
@@ -82,6 +100,8 @@ int main() {
     TestTimestampRtp();
     TestNtpTime();
     TestId();
+    TestConstructor();
+    TestDestructor();
     TestNullBuilderThrows();
     return 0;
 }
