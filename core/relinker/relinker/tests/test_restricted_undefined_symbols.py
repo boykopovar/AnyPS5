@@ -10,7 +10,7 @@ from test_guest_none_relocations import TARGET, module
 
 
 TARGETS = (("linux", []), ("pie", ["--lazy-binding"]), ("windows", ["--windows"]), ("macos", ["--macos"]))
-ERROR = "Undefined non-weak symbol has non-default visibility: "
+ERROR = "Undefined local symbol has non-default visibility: "
 
 
 def executable(relocation, visibility, binding=1, referenced=True):
@@ -82,15 +82,16 @@ def main():
                         lambda visibility, **kw: executable(relocation, visibility, **kw))
                     label = f"{relocation}-{target}-{sce}"
                     for visibility in (1, 2, 3):
-                        convert(label + f"-visibility-{visibility}", make(visibility), options, True)
-                    convert(label + "-local-hidden", make(2, binding=0), options, True)
+                        convert(label + f"-visibility-{visibility}", make(visibility), options, False)
+                        convert(label + f"-weak-visibility-{visibility}", make(visibility, binding=2), options, False)
+                        convert(label + f"-local-visibility-{visibility}", make(visibility, binding=0), options, True)
                     convert(label + "-default", make(0), options, False)
                     convert(label + "-weak-default", make(0, binding=2), options, False)
-                    convert(label + "-unreferenced", make(2, referenced=False), options, False)
+                    convert(label + "-unreferenced", make(2, binding=0, referenced=False), options, False)
                     if is_guest:
                         convert(label + "-defined-hidden", make(2, defined=True), options, False)
                     else:
-                        convert(label + "-filtered", make(2), [*options, "unused-filter=1"], True)
+                        convert(label + "-filtered", make(2, binding=0), [*options, "unused-filter=1"], True)
     print(f"Restricted undefined symbol tests passed: {count} conversions ({'guest' if is_guest else 'executable'})")
 
 
