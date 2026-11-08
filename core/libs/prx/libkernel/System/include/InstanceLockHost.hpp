@@ -6,6 +6,6 @@
 #include <memory>
 
 std::unique_ptr<IInstanceLockBackend> MakeHostInstanceLockBackend();
-void ReleaseHostInstanceLock();
+void ReleaseHostInstanceLock_nid_no_patch();
 
 #endif
