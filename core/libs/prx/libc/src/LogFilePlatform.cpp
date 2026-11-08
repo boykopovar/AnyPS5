@@ -21,8 +21,6 @@ namespace log_file {
 
 namespace {
 
-constexpr const char VariableName[] = "ANYPS5_LOG_FILE";
-
 #ifdef _WIN32
 
 HANDLE g_diverted[3] = {nullptr, nullptr, nullptr};
@@ -170,11 +168,12 @@ void WriteStandardDirect(int standard, const char* text, std::size_t length) {
     WriteFile(handle, text, static_cast<DWORD>(length), &written, nullptr);
 }
 
-bool ReadVariable(std::string& value) {
-    const DWORD size = GetEnvironmentVariableW(L"ANYPS5_LOG_FILE", nullptr, 0);
+bool ReadVariable(const char* name, std::string& value) {
+    const std::wstring wideName(name, name + std::strlen(name));
+    const DWORD size = GetEnvironmentVariableW(wideName.c_str(), nullptr, 0);
     if (size <= 1) return false;
     std::wstring wide(size, L'\0');
-    const DWORD length = GetEnvironmentVariableW(L"ANYPS5_LOG_FILE", wide.data(), size);
+    const DWORD length = GetEnvironmentVariableW(wideName.c_str(), wide.data(), size);
     if (length == 0 || length >= size) return false;
     wide.resize(length);
     const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
@@ -294,8 +293,8 @@ void WriteStandardDirect(int standard, const char* text, std::size_t length) {
     }
 }
 
-bool ReadVariable(std::string& value) {
-    const char* text = std::getenv(VariableName);
+bool ReadVariable(const char* name, std::string& value) {
+    const char* text = std::getenv(name);
     if (text == nullptr || *text == '\0') return false;
     value = text;
     return true;

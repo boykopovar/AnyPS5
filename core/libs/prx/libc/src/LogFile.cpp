@@ -293,7 +293,7 @@ namespace {
 
 [[maybe_unused]] const bool g_started = [] {
     std::string value;
-    const bool set = ReadVariable(value);
+    const bool set = ReadVariable(VariableName, value);
     std::string error;
     auto session = StartFromValue(set ? value.c_str() : nullptr, SystemFactory(), error);
     if (!error.empty()) FailStartup(error + "\n");
