@@ -1162,6 +1162,12 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelocTableBoundsTests.cpp
         )
         add_test(NAME reloc_table_bounds COMMAND reloc_table_bounds_tests $<TARGET_FILE:relinker>)
+
+        add_test_executable(guest_relinker_pc32_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestRelinkerPc32Reloc.cpp
+        )
+        target_include_directories(guest_relinker_pc32_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
+        add_test(NAME guest_relinker_pc32 COMMAND guest_relinker_pc32_tests $<TARGET_FILE:relinker>)
     endif()
 endif()
 
