@@ -2,6 +2,7 @@
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -238,6 +239,9 @@ int main() {
     Require(systemInfo.maxMaterials == options.maxMaterials && systemInfo.pathCapacityPerSource == 6 && systemInfo.propagationSpeed == options.propagationSpeed, "system query info capacities");
     Require(systemInfo.reserved44 == 0xdeadbeef, "system query info overwrote reserved output");
     Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo) - 1) == AudioPropagation::ErrorInvalidHandle, "system query info accepted wrong size");
+    errno = 71;
+    Require(sceAudioPropagationSystemQueryInfo(system, reinterpret_cast<AudioPropagation::SystemInfo*>(0x10), sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted unmapped output");
+    Require(errno == 71, "system query info preserved errno");
     Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
     Require(sceAudioPropagationSystemUnlock(system) == AudioPropagation::ErrorInvalidArgument, "unbalanced system unlock was accepted");
     Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
