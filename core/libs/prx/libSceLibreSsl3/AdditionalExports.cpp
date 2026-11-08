@@ -7,14 +7,6 @@ int APS5_VABI tls_config_set_cert_mem_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_clear_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_set_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI BN_dup_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -148,10 +140,6 @@ int APS5_VABI EC_KEY_set_asn1_flag_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -190,10 +178,6 @@ int APS5_VABI EVP_chacha20_nid_postfix() {
 }
 
 int APS5_VABI X509_set_pubkey_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_get_shutdown_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -277,11 +261,6 @@ int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch() {
 }
 APS5_EXPORT("GjO5Ap3E-t4", Unknown_GjO5Ap3E_minus_t4_nid_no_patch);
 
-int APS5_VABI Unknown_HE_minus_vihq_minus_KKw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("HE-vihq-KKw", Unknown_HE_minus_vihq_minus_KKw_nid_no_patch);
-
 int APS5_VABI X509_set_version_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -343,10 +322,6 @@ int APS5_VABI X509_get_signature_nid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ECDSA_SIG_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -360,10 +335,6 @@ int APS5_VABI X509_sign_nid_postfix() {
 }
 
 int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_get_data_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -420,27 +391,11 @@ int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_ALGOR_get0_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_set_shutdown_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BN_div_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -527,14 +482,6 @@ int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix() {
 }
 
 int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ASN1_TYPE_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ECDSA_SIG_set0_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

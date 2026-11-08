@@ -4,6 +4,11 @@
 #include "SceTypes.hpp"
 #include <streambuf>
 
+namespace LibcException {
+struct SystemErrorObject;
+struct ErrorCode;
+}
+
 extern "C" {
 
 int APS5_VABI libSceLibcInternalInventory_000_nid_no_patch();
@@ -24,7 +29,7 @@ int APS5_VABI libSceLibcInternalInventory_014_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_015_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_016_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_017_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_019_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_019_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
 int APS5_VABI libSceLibcInternalInventory_020_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_021_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_022_nid_no_patch(void* self);

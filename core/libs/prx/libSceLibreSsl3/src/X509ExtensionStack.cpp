@@ -56,7 +56,7 @@ Asn1Object_nid_no_patch* DuplicateObject_nid_no_patch(const Asn1Object_nid_no_pa
     }
     copy->data = nullptr;
     copy->length = 0;
-    if ((source->flags & DynamicData) && source->data) {
+    if (source->data) {
         if (source->length < 0) {
             ASN1_OBJECT_free_nid_postfix(copy);
             throw std::invalid_argument("X509_EXTENSION_dup: negative object data length");
@@ -140,17 +140,26 @@ int APS5_VABI X509_add_ext_nid_postfix(void* x509, const void* extension, int lo
     auto* certificate = const_cast<LibreSsl3ExtensionsCertInfo*>(wrapper->certInfo);
     if (!certificate) return 0;
     auto* stack = reinterpret_cast<LibreSslStack*>(const_cast<LibreSsl3Stack*>(certificate->extensions));
-    if (!stack) {
-        stack = sk_new_nid_postfix(nullptr);
-        if (!stack) return 0;
-        certificate->extensions = reinterpret_cast<const LibreSsl3Stack*>(stack);
-    }
-    if (stack->num < 0) throw std::invalid_argument(std::string(__func__) + ": negative extension count");
-    if (location < 0 || location > stack->num) location = stack->num;
+    if (stack && stack->num < 0) throw std::invalid_argument(std::string(__func__) + ": negative extension count");
     auto* copy = DuplicateExtension_nid_no_patch(static_cast<const X509Extension*>(extension));
     if (!copy) return 0;
+    bool created = false;
+    if (!stack) {
+        stack = sk_new_nid_postfix(nullptr);
+        if (!stack) {
+            FreeExtension_nid_no_patch(copy);
+            return 0;
+        }
+        certificate->extensions = reinterpret_cast<const LibreSsl3Stack*>(stack);
+        created = true;
+    }
+    if (location < 0 || location > stack->num) location = stack->num;
     if (!sk_push_nid_postfix(stack, copy)) {
         FreeExtension_nid_no_patch(copy);
+        if (created) {
+            sk_free_nid_postfix(stack);
+            certificate->extensions = nullptr;
+        }
         return 0;
     }
     if (location < stack->num - 1) {

@@ -115,6 +115,20 @@ Extension* MakeBorrowedExtension(unsigned char* data) {
     return extension;
 }
 
+Extension* MakeStaticExtension(unsigned char* data) {
+    static Asn1Object_nid_no_patch object{};
+    auto* extension = static_cast<Extension*>(Callocate_nid_no_patch(1, sizeof(Extension)));
+    object.shortName = "keyUsage";
+    object.longName = "X509v3 Key Usage";
+    object.nid = 83;
+    object.length = 3;
+    object.data = data;
+    extension->object = &object;
+    extension->critical = 0;
+    extension->value = MakeValue(9);
+    return extension;
+}
+
 }
 
 int main() {
@@ -155,9 +169,20 @@ int main() {
     Require(borrowedCopy->value->data[0] == 0x33 && borrowedCopy->value->data[1] == 0x44);
     Require((borrowedCopy->value->flags & 0x10) == 0);
 
+    static unsigned char staticOid[] = {0x55, 0x1d, 0x0f};
+    Extension* staticExtension = MakeStaticExtension(staticOid);
+    Require(X509_add_ext_nid_postfix(&x509, staticExtension, -1) == 1);
+    Require(stack->num == 4);
+    auto* staticCopy = reinterpret_cast<Extension*>(stack->data[3]);
+    Require(staticCopy->object->nid == 83 && staticCopy->object->length == 3);
+    Require(staticCopy->object->data != staticOid);
+    Require(std::memcmp(staticCopy->object->data, staticOid, 3) == 0);
+    Require((staticCopy->object->flags & 0x08) != 0);
+
     X509_EXTENSION_free_nid_postfix(first);
     X509_EXTENSION_free_nid_postfix(second);
     X509_EXTENSION_free_nid_postfix(borrowed);
+    X509_EXTENSION_free_nid_postfix(staticExtension);
     X509_EXTENSION_free_nid_postfix(nullptr);
     Require(X509_add_ext_nid_postfix(nullptr, nullptr, 0) == 0);
     Require(X509_add_ext_nid_postfix(&x509, nullptr, 0) == 0);
@@ -165,6 +190,7 @@ int main() {
     X509_EXTENSION_free_nid_postfix(stack->data[0]);
     X509_EXTENSION_free_nid_postfix(stack->data[1]);
     X509_EXTENSION_free_nid_postfix(stack->data[2]);
+    X509_EXTENSION_free_nid_postfix(stack->data[3]);
     sk_free_nid_postfix(stack);
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509 extension stack tests passed");
