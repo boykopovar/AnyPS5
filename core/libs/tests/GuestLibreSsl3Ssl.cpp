@@ -216,6 +216,43 @@ void CheckClientRandom() {
     Require(SSL_get_client_random_nid_postfix(&ssl, out.data(), 0) == 0, "an empty copy does not read SSL3 state");
 }
 
+void CheckQuicTransportParams() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.quicTransportParams = nullptr;
+    guarded.object.quicTransportParamsLength = 0;
+    const auto start = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3Ssl>, object) + 280;
+    const auto Stored = [&](const std::uint8_t* params, std::uint64_t length) {
+        auto expected = start;
+        const auto* pointer = guarded.object.quicTransportParams;
+        std::memcpy(expected.data() + offset, &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offset + 8, &length, sizeof(length));
+        return Same(guarded, expected) && pointer && pointer != params && std::memcmp(pointer, params, length) == 0;
+    };
+    const std::uint8_t first[] = {0x01, 0x04, 0x80, 0x00, 0x75, 0x30};
+    Require(SSL_set_quic_transport_params_nid_postfix(&guarded.object, first, sizeof(first)) == 1, "parameters");
+    Require(Stored(first, sizeof(first)), "parameters not copied to offsets 280 and 288");
+    const std::uint8_t second[] = {0x04, 0x02, 0x40, 0x64};
+    Require(SSL_set_quic_transport_params_nid_postfix(&guarded.object, second, sizeof(second)) == 1, "replacement");
+    Require(Stored(second, sizeof(second)), "replacement not copied");
+    auto before = Bytes(guarded);
+    bool threw = false;
+    try {
+        SSL_set_quic_transport_params_nid_postfix(&guarded.object, nullptr, 1);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && Same(guarded, before), "null parameters with a length");
+    threw = false;
+    try {
+        SSL_set_quic_transport_params_nid_postfix(nullptr, first, sizeof(first));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL");
+}
+
 struct VersionResult {
     std::int64_t value;
     std::uint64_t error;
@@ -290,5 +327,6 @@ int main() {
     CheckClientRandom();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
     CheckX509Version();
+    CheckQuicTransportParams();
     return 0;
 }
