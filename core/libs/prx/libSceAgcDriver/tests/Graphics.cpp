@@ -9259,6 +9259,11 @@ void framebufferOwnerTests() {
     Require(mock.live == 0, "framebuffer owner tests leaked Vulkan objects");
 }
 
+std::size_t VariableBuiltIns(const ShaderRecompiler::RecompileResult& result, spv::BuiltIn builtin);
+bool DeclaresCapability(const ShaderRecompiler::RecompileResult& result, std::uint32_t capability);
+bool DeclaresExtension(const ShaderRecompiler::RecompileResult& result, std::string_view name);
+std::optional<std::uint32_t> UintArrayAt(const ShaderRecompiler::RecompileResult& result, spv::StorageClass storage, std::uint32_t location);
+
 void barycentricEmulationTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -9487,6 +9492,31 @@ void barycentricEmulationTests() {
     Require(memberBuiltIn(clippedPatches.evaluation, spv::BuiltInClipDistance) && !variableBuiltIn(clippedPatches.evaluation, spv::BuiltInClipDistance), "the generated evaluation stage does not keep the clip distances in its per-vertex blocks");
     const std::array<CompiledShader, 4> clippedShaders{{{ShaderStage::Vertex, &clipped, 0}, {ShaderStage::TessellationControl, &clippedPatches.control, 0}, {ShaderStage::TessellationEvaluation, &clippedPatches.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
     ValidateShaders(clippedShaders, state, subgroup, false, false, false, false, false, false, true);
+    Require(VariableBuiltIns(patches.control, spv::BuiltInLayer) == 0u && VariableBuiltIns(patches.evaluation, spv::BuiltInLayer) == 0u && !DeclaresCapability(patches.evaluation, spv::CapabilityShaderViewportIndexLayerEXT), "a generated tessellation stage writes a layer the vertex shader does not");
+    {
+        const std::array<std::uint32_t, 3> layerCapabilities{spv::CapabilityShader, spv::CapabilityTessellation, spv::CapabilityShaderViewportIndexLayerEXT};
+        auto layerTarget = tessellationTarget;
+        layerTarget.supportedCapabilities = layerCapabilities;
+        RecompileResult layered;
+        layered.spirv = makeModule({.parameterOutput = true, .layerOutput = true});
+        layered.parameterExports = {0u};
+        expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(layered, fragment, tessellationTarget, 128u, 0u)); }, "VK_EXT_shader_viewport_index_layer");
+        const auto first = BuildBarycentricTessellationShaders(layered, fragment, layerTarget, 128u, 0u);
+        const auto last = BuildBarycentricTessellationShaders(layered, fragment, layerTarget, 128u, 2u);
+        Require(first.control.Identity() == last.control.Identity() && first.evaluation.Identity() != last.evaluation.Identity(), "only the evaluation stage should depend on the provoking vertex that selects the layer");
+        auto context = mockContext();
+        context.provokingVertexLast = false;
+        auto lastState = state;
+        lastState.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+        for (const auto* built : {&first, &last}) {
+            Require(VariableBuiltIns(built->control, spv::BuiltInLayer) == 0u && UintArrayAt(built->control, spv::StorageClassInput, 1u) == 3u && UintArrayAt(built->control, spv::StorageClassOutput, 1u) == 3u, "the generated control stage does not pass the vertex layer on at its location");
+            Require(VariableBuiltIns(built->evaluation, spv::BuiltInLayer) == 1u && UintArrayAt(built->evaluation, spv::StorageClassInput, 1u) == 3u && DeclaresCapability(built->evaluation, spv::CapabilityShaderViewportIndexLayerEXT) && DeclaresExtension(built->evaluation, "SPV_EXT_shader_viewport_index_layer"), "the generated evaluation stage does not write the vertex layer");
+            const std::array<CompiledShader, 4> layeredShaders{{{ShaderStage::Vertex, &layered, 0}, {ShaderStage::TessellationControl, &built->control, 0}, {ShaderStage::TessellationEvaluation, &built->evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
+            ValidateShaders(layeredShaders, state, subgroup, false, false, false, false, false, false, false, false, true);
+            expectFailure([&] { ValidateShaders(layeredShaders, state, subgroup, false, false, false, false, false, false, false, false, false); }, "VK_EXT_shader_viewport_index_layer");
+            ValidateProvokingVertex(context, lastState, layeredShaders);
+        }
+    }
     vertex.parameterExports.clear();
     expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(vertex, fragment, tessellationTarget, 128u, 0u)); }, "not exported by the vertex shader");
     expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits)); }, "not exported by the vertex shader");
