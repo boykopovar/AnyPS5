@@ -2,12 +2,14 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 
 static int cleanupAt = -1;
 static void APS5_VABI Cleanup(void*) { cleanupAt = 0; }
@@ -140,6 +142,45 @@ static void MonotonicClockWait() {
     Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
 }
 
+static KernelTimespec RealtimeAfter(std::int64_t seconds) {
+    KernelTimespec now{};
+    Require(sceKernelClockGettime(0, &now) == SCE_OK);
+    return KernelTimespec{now.tv_sec + seconds, now.tv_nsec};
+}
+
+static void DistantAbsoluteDeadline() {
+    constexpr std::uint64_t nanosPerSecond = 1000000000ULL;
+    const auto remaining = [](const KernelTimespec& abstime) {
+        std::uint64_t deadline = 0;
+        Require(PosixThread::AbsoluteDeadlineNanos(0, &abstime, &deadline));
+        const auto now = TimedWait::NowNanos();
+        return deadline > now ? deadline - now : 0;
+    };
+    const auto twoHours = remaining(RealtimeAfter(7200));
+    Require(twoHours > 7199 * nanosPerSecond && twoHours <= 7200 * nanosPerSecond);
+    const auto oneDay = remaining(RealtimeAfter(86400));
+    Require(oneDay > 86399 * nanosPerSecond && oneDay <= 86400 * nanosPerSecond);
+    const auto forever = remaining(KernelTimespec{std::numeric_limits<std::int64_t>::max(), 999999999});
+    Require(forever > 86400 * 30 * nanosPerSecond);
+    Require(remaining(RealtimeAfter(-5)) == 0);
+
+    Signalled signalled;
+    Require(scePthreadMutexInit(&signalled.mutex, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadCondInit(&signalled.cond, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, Signaller, &signalled, nullptr) == SCE_OK);
+    const auto distant = RealtimeAfter(7200);
+    const auto waitStart = std::chrono::steady_clock::now();
+    while (!signalled.ready)
+        Require(pthread_cond_timedwait_nid_postfix(&signalled.cond, &signalled.mutex, &distant) == 0);
+    Require(std::chrono::steady_clock::now() - waitStart < std::chrono::seconds(5));
+    Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
+    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+    Require(scePthreadCondDestroy(&signalled.cond) == SCE_OK);
+    Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
+}
+
 static void SignalTo() {
     Signalled signalled;
     signalled.target = scePthreadSelf();
@@ -196,6 +237,7 @@ static void SignalToEveryRound(bool recursive) {
 int main() {
     RelativeWait();
     MonotonicClockWait();
+    DistantAbsoluteDeadline();
     SignalTo();
     SignalToEveryRound(false);
     SignalToEveryRound(true);

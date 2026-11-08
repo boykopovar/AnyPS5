@@ -172,14 +172,14 @@ int waitUntil(std::shared_ptr<TimedWait::Condition> condition, PthreadMutex* mut
 }
 
 int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    KernelUseconds usec = 0;
+    std::uint64_t deadlineNanos = 0;
     int clockId = 0;
     auto condition = resolveCond(cond, &clockId);
     if (!condition)
         return SCE_KERNEL_ERROR_EINVAL;
-    if (!PosixThread::RelativeMicroseconds(clockId, abstime, &usec))
+    if (!PosixThread::AbsoluteDeadlineNanos(clockId, abstime, &deadlineNanos))
         throw std::invalid_argument("Invalid absolute condition variable timeout");
-    return waitUntil(std::move(condition), mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
+    return waitUntil(std::move(condition), mutex, deadlineNanos, __builtin_return_address(0));
 }
 
 int CondOperations::LoadAttribute(const PthreadCondattr* attr, PthreadCondattr& handle) {
