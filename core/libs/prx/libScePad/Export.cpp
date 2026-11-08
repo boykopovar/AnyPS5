@@ -197,7 +197,7 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  info->stickInfo.deadZoneLeft = 13;
  info->stickInfo.deadZoneRight = 13;
  info->connectionType = PAD_CONNECTION_TYPE_LOCAL;
- const bool connected = PortOf(handle) != 0 || Pad::IsConnected(0);
+ const bool connected = Pad::IsConnected(PortOf(handle));
  info->connectedCount = connected ? 1 : 0;
  info->connected = connected;
  info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
@@ -357,6 +357,7 @@ int APS5_VABI scePadSetFeatureReport(std::int32_t handle, std::uint8_t reportId,
 int APS5_VABI scePadOutputReport(std::int32_t handle, std::uint8_t reportId, const void* data, std::uint64_t size) { NotImplemented_nid_no_patch(__func__); return 0; }
 
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr || num <= 0) return PAD_ERROR_INVALID_ARG;
  if (RemoteHandle(handle)) {
@@ -371,8 +372,9 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
 }
 
 int APS5_VABI scePadReadState(int handle, PadData* data) {
- if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+ if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+ if (!KnownHandle(handle) && !RemoteHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
 
  *data = RemoteHandle(handle) ? PadData{} : SpecialHandle(handle) ? SpecialData() : Pad::ReadState(PortOf(handle));
 
@@ -461,7 +463,7 @@ int APS5_VABI scePadSetVibrationMode(int handle, int mode) {
  if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
  if (mode <= 0) return PAD_ERROR_INVALID_ARG;
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (mode > 3 && mode != 5) return PAD_ERROR_INVALID_ARG;
+ if (mode > 5) return PAD_ERROR_INVALID_ARG;
  if (SpecialHandle(handle)) return PAD_OK;
  Pad::SetVibrationMode(PortOf(handle), mode);
  return PAD_OK;
@@ -990,7 +992,8 @@ int APS5_VABI scePadSetProfileIndicatorAnimation(std::int32_t handle, std::uint8
 }
 
 int APS5_VABI scePadIsCoPilot(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    (void)handle;
     return 0;
 }
 
@@ -1121,7 +1124,8 @@ int APS5_VABI scePadGetBluetoothAddress(std::int32_t handle, std::uint64_t* addr
 }
 
 int APS5_VABI scePadIsMoveReproductionModel(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    (void)handle;
     return 0;
 }
 
