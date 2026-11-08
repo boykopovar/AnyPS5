@@ -25,6 +25,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libc/GuestStringStorage.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -90,12 +91,6 @@ const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, Destroy
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
 
-constexpr std::size_t GuestStringInlineCapacity = 15;
-constexpr std::size_t GuestStringCapacityMask = 15;
-constexpr std::size_t GuestStringLargeAllocation = 0x1000;
-constexpr std::size_t GuestLargeAllocationPadding = 0x27;
-constexpr std::uintptr_t GuestLargeAllocationAlignment = 0x20;
-
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
 }
@@ -136,9 +131,9 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     const auto length = static_cast<std::size_t>(last - first);
     if (length != 0 && std::memchr(first, 0, length) != nullptr) throw std::runtime_error("collate::do_transform: embedded null characters are not supported");
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, first, length);
@@ -220,9 +215,9 @@ GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const 
     if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
     const std::size_t length = std::strlen(source);
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, source, length);
@@ -389,9 +384,9 @@ const GuestLocale::NumpunctFacet* RequireNumpunct(const GuestLocale::NumpunctFac
 std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
     GuestLocale::String value{};
     method(&value, AsNumpunct(facet));
-    const bool onHeap = value.capacity > GuestStringInlineCapacity;
+    const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    if (onHeap) GuestStringStorage::Deallocate(value.pointer, value.capacity + 1);
     return text;
 }
 
@@ -593,22 +588,13 @@ int ConvertCharacter(int value, bool upper) {
 }
 
 void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
-    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
-    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
-    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
+    return GuestStringStorage::Allocate(bytes);
 }
 
 void GuestLocale::ReleaseStringStorage(String& string) {
-    if (string.capacity > GuestStringInlineCapacity) {
-        void* storage = string.pointer;
-        if (string.capacity + 1 >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
-        _ZdlPv_nid_postfix(storage);
-    }
+    if (string.capacity > StringInlineCapacity) GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
     string = {};
-    string.capacity = GuestStringInlineCapacity;
+    string.capacity = StringInlineCapacity;
 }
 
 extern "C" {
@@ -928,6 +914,62 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
     self->locale = nullptr;
 }
 
+namespace {
+
+constexpr std::size_t SceV2FlagsOffset = 0x18;
+constexpr std::size_t SceV2PrecisionOffset = 0x20;
+
+std::uint32_t SceV2Flags(const GuestLocale::SceV2IosBase* stream) {
+    std::uint32_t flags;
+    std::memcpy(&flags, reinterpret_cast<const unsigned char*>(stream) + SceV2FlagsOffset, sizeof(flags));
+    return flags;
+}
+
+void SetSceV2Flags(GuestLocale::SceV2IosBase* stream, std::uint32_t flags) {
+    std::memcpy(reinterpret_cast<unsigned char*>(stream) + SceV2FlagsOffset, &flags, sizeof(flags));
+}
+
+void APS5_VABI ResetSceV2Flags_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t mask) {
+    if (stream == nullptr) throw std::invalid_argument("resetiosflags: null stream");
+    SetSceV2Flags(stream, SceV2Flags(stream) & ~static_cast<std::uint32_t>(mask));
+}
+
+void APS5_VABI SetSceV2FlagBits_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t mask) {
+    if (stream == nullptr) throw std::invalid_argument("setiosflags: null stream");
+    const auto bits = static_cast<std::uint32_t>(mask);
+    SetSceV2Flags(stream, (SceV2Flags(stream) & ~bits) | (bits & 0xffffu));
+}
+
+void APS5_VABI SetSceV2Base_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t base) {
+    if (stream == nullptr) throw std::invalid_argument("setbase: null stream");
+    const auto value = static_cast<std::int32_t>(base);
+    const std::uint32_t field = value == 8 ? 0x400u : value == 10 ? 0x200u : value == 16 ? 0x800u : 0u;
+    SetSceV2Flags(stream, (SceV2Flags(stream) & 0xfffff1ffu) | field);
+}
+
+void APS5_VABI SetSceV2Precision_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t precision) {
+    if (stream == nullptr) throw std::invalid_argument("setprecision: null stream");
+    std::memcpy(reinterpret_cast<unsigned char*>(stream) + SceV2PrecisionOffset, &precision, sizeof(precision));
+}
+
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v213resetiosflagsEi_nid_postfix(std::int32_t mask) {
+    return {&ResetSceV2Flags_nid_no_patch, static_cast<std::uint32_t>(mask)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v211setiosflagsEi_nid_postfix(std::int32_t mask) {
+    return {&SetSceV2FlagBits_nid_no_patch, static_cast<std::uint32_t>(mask)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v27setbaseEi_nid_postfix(std::int32_t base) {
+    return {&SetSceV2Base_nid_no_patch, static_cast<std::uint32_t>(base)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v212setprecisionEx_nid_postfix(std::int64_t precision) {
+    return {&SetSceV2Precision_nid_no_patch, static_cast<std::uint64_t>(precision)};
+}
+
 void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet) {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
     g_sceV2RegisteredFacets.push_back(facet);
@@ -1045,6 +1087,27 @@ std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
 GuestLocale::String* APS5_VABI _ZNKSt7collateIcE9transformEPKcS2__nid_postfix(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last) {
     if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument("collate::transform: null facet");
     return reinterpret_cast<const GuestLocale::CollateVtable*>(self->base.vtable)->transform(result, self, first, last);
+}
+
+static const char* CopyCtypeRange(const char* first, const char* last, char* destination) {
+    if (first != last) std::memcpy(destination, first, static_cast<std::size_t>(last - first));
+    return last;
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE8do_widenEc_nid_postfix(const GuestLocale::Facet*, char character) {
+    return character;
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix(const GuestLocale::Facet*, const char* first, const char* last, char* destination) {
+    return CopyCtypeRange(first, last, destination);
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix(const GuestLocale::Facet*, char character, char) {
+    return character;
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix(const GuestLocale::Facet*, const char* first, const char* last, char, char* destination) {
+    return CopyCtypeRange(first, last, destination);
 }
 
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
