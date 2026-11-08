@@ -235,16 +235,38 @@ class RegistrationTests(unittest.TestCase):
 
     def test_looping_subdirectory_is_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            loop = build / "first"
+            (build / "nested").mkdir()
+            (build / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            original_resolve = Path.resolve
+
+            def resolve(path):
+                if path == loop:
+                    raise RuntimeError("Symlink loop")
+                return original_resolve(path)
+
+            for root, expected in ((build, {"buffer_bounds_tests"}), (loop, set())):
+                with self.subTest(root=root), patch.object(Path, "resolve", autospec=True, side_effect=resolve) as resolving:
+                    self.assertEqual(check_test_registration.registered(root), expected)
+                    resolving.assert_any_call(loop)
+
+    def test_real_looping_subdirectory_is_skipped_where_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
             (build / "nested").mkdir()
             try:
-                os.symlink("second", build / "first")
-                os.symlink("first", build / "second")
+                os.symlink("second", build / "first", target_is_directory=True)
+                os.symlink("first", build / "second", target_is_directory=True)
+            except NotImplementedError as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
             except OSError as error:
                 if os.name == "nt" and getattr(error, "winerror", None) == 1314:
-                    self.skipTest("creating symlinks requires Windows privileges")
+                    self.skipTest(f"symbolic link privilege is unavailable: {error}")
                 raise
-            (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (build / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
             (build / "nested/CTestTestfile.cmake").write_text(
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
             self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
