@@ -167,6 +167,27 @@ std::atomic<std::int64_t> g_lastFrameNanoseconds{0};
 
 }
 
+bool ParseHangSeconds(const char* text, std::uint32_t& seconds, std::string& error) {
+    constexpr std::uint32_t Largest = 86400;
+    seconds = 0;
+    error.clear();
+    if (text == nullptr || *text == '\0') return true;
+    std::uint32_t parsed = 0;
+    for (const char* digit = text; *digit != '\0'; ++digit) {
+        if (*digit < '0' || *digit > '9' || parsed > Largest) {
+            error = "ANYPS5_HANG_SECONDS: \"" + std::string(text) + "\" is not a number of seconds between 0 and 86400";
+            return false;
+        }
+        parsed = parsed * 10 + static_cast<std::uint32_t>(*digit - '0');
+    }
+    if (parsed > Largest) {
+        error = "ANYPS5_HANG_SECONDS: \"" + std::string(text) + "\" is not a number of seconds between 0 and 86400";
+        return false;
+    }
+    seconds = parsed;
+    return true;
+}
+
 void Beat() noexcept {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     g_lastFrameNanoseconds.store(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), std::memory_order_relaxed);
