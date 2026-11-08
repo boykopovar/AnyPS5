@@ -29,17 +29,17 @@ bool Rejects(const TCall& call) {
 Words Multiply(unsigned long long left, unsigned long long right) {
     Words product;
     product.fill(0xAAAAAAAAAAAAAAAAull);
-    sceLibcInternalMultiPrecisionMultiply_nid_no_patch(product.data(), left, right);
+    _ZSt7_MP_MulPyyy(product.data(), left, right);
     return product;
 }
 
 Words Add(Words value, unsigned long long addend) {
-    sceLibcInternalMultiPrecisionAdd_nid_no_patch(value.data(), addend);
+    _ZSt7_MP_AddPyy(value.data(), addend);
     return value;
 }
 
 Words Remainder(Words value, unsigned long long divisor) {
-    sceLibcInternalMultiPrecisionRemainder_nid_no_patch(value.data(), divisor);
+    _ZSt7_MP_RemPyy(value.data(), divisor);
     return value;
 }
 
@@ -77,9 +77,9 @@ void CheckMultiply() {
 
 void CheckGet() {
     Words value{5, 7, 9, 11, 13};
-    Require(sceLibcInternalMultiPrecisionGet_nid_no_patch(value.data()) == (7ull << 32) + 5, "_MP_Get joins the two low digits");
+    Require(_ZSt7_MP_GetPy(value.data()) == (7ull << 32) + 5, "_MP_Get joins the two low digits");
     value = {1, 0x100000002ull, 0, 0, 0};
-    Require(sceLibcInternalMultiPrecisionGet_nid_no_patch(value.data()) == 0x200000001ull, "_MP_Get wraps a second word wider than a digit");
+    Require(_ZSt7_MP_GetPy(value.data()) == 0x200000001ull, "_MP_Get wraps a second word wider than a digit");
 }
 
 void CheckAdd() {
@@ -98,11 +98,11 @@ void CheckRemainder() {
         for (int step = 0; step < 10000; ++step) {
             const unsigned long long expected = AddModulo(MultiplyModulo(multiplier, state, modulus), increment, modulus);
             Words value{};
-            sceLibcInternalMultiPrecisionMultiply_nid_no_patch(value.data(), multiplier, state);
-            sceLibcInternalMultiPrecisionAdd_nid_no_patch(value.data(), increment);
-            sceLibcInternalMultiPrecisionRemainder_nid_no_patch(value.data(), modulus);
+            _ZSt7_MP_MulPyyy(value.data(), multiplier, state);
+            _ZSt7_MP_AddPyy(value.data(), increment);
+            _ZSt7_MP_RemPyy(value.data(), modulus);
             Require(value[2] == 0 && value[3] == 0 && value[4] == 0, "_MP_Rem leaves the remainder in the two low digits");
-            state = sceLibcInternalMultiPrecisionGet_nid_no_patch(value.data());
+            state = _ZSt7_MP_GetPy(value.data());
             Require(state == expected, "_MP_Rem gives the remainder of a linear congruential step");
         }
     }
@@ -121,16 +121,16 @@ void CheckRemainder() {
 
 void CheckRejections() {
     Words zero{};
-    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(zero.data(), 1ull << 32); }) && zero == Words{}, "_MP_Rem rejects a zero value");
+    Require(Rejects([&] { _ZSt7_MP_RemPyy(zero.data(), 1ull << 32); }) && zero == Words{}, "_MP_Rem rejects a zero value");
     Words fifth{1, 0, 0, 0, 1};
-    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(fifth.data(), 1ull << 32); }) && fifth == Words{1, 0, 0, 0, 1}, "_MP_Rem rejects a nonzero fifth word");
+    Require(Rejects([&] { _ZSt7_MP_RemPyy(fifth.data(), 1ull << 32); }) && fifth == Words{1, 0, 0, 0, 1}, "_MP_Rem rejects a nonzero fifth word");
     Words small{8, 0, 0, 0, 0};
-    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(small.data(), 0); }), "_MP_Rem rejects a zero divisor");
-    Require(Rejects([&] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(small.data(), 7); }) && small == Words{8, 0, 0, 0, 0}, "_MP_Rem rejects a nonzero quotient digit for a one-digit divisor");
-    Require(Rejects([] { sceLibcInternalMultiPrecisionGet_nid_no_patch(nullptr); }), "_MP_Get rejects a null value");
-    Require(Rejects([] { sceLibcInternalMultiPrecisionAdd_nid_no_patch(nullptr, 1); }), "_MP_Add rejects a null value");
-    Require(Rejects([] { sceLibcInternalMultiPrecisionMultiply_nid_no_patch(nullptr, 1, 1); }), "_MP_Mul rejects a null product");
-    Require(Rejects([] { sceLibcInternalMultiPrecisionRemainder_nid_no_patch(nullptr, 1ull << 32); }), "_MP_Rem rejects a null value");
+    Require(Rejects([&] { _ZSt7_MP_RemPyy(small.data(), 0); }), "_MP_Rem rejects a zero divisor");
+    Require(Rejects([&] { _ZSt7_MP_RemPyy(small.data(), 7); }) && small == Words{8, 0, 0, 0, 0}, "_MP_Rem rejects a nonzero quotient digit for a one-digit divisor");
+    Require(Rejects([] { _ZSt7_MP_GetPy(nullptr); }), "_MP_Get rejects a null value");
+    Require(Rejects([] { _ZSt7_MP_AddPyy(nullptr, 1); }), "_MP_Add rejects a null value");
+    Require(Rejects([] { _ZSt7_MP_MulPyyy(nullptr, 1, 1); }), "_MP_Mul rejects a null product");
+    Require(Rejects([] { _ZSt7_MP_RemPyy(nullptr, 1ull << 32); }), "_MP_Rem rejects a null value");
 }
 
 }

@@ -73,16 +73,16 @@ int main() {
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
 
-    void* newDelete = sceLibcInternalPmrNewDeleteResource_nid_no_patch();
-    void* nullRes = sceLibcInternalPmrNullMemoryResource_nid_no_patch();
+    void* newDelete = _ZNSt3pmr19new_delete_resourceEv();
+    void* nullRes = _ZNSt3pmr20null_memory_resourceEv();
     void* aligned = _Aligned_new_delete_resource_nid_postfix();
     void* unaligned = _Unaligned_new_delete_resource_nid_postfix();
     void* libcNull = null_memory_resource_nid_postfix();
 
     Require(newDelete != nullptr, "new_delete_resource returned null");
     Require(nullRes != nullptr, "null_memory_resource returned null");
-    Require(newDelete == sceLibcInternalPmrNewDeleteResource_nid_no_patch(), "new_delete_resource is stable");
-    Require(nullRes == sceLibcInternalPmrNullMemoryResource_nid_no_patch(), "null_memory_resource is stable");
+    Require(newDelete == _ZNSt3pmr19new_delete_resourceEv(), "new_delete_resource is stable");
+    Require(nullRes == _ZNSt3pmr20null_memory_resourceEv(), "null_memory_resource is stable");
     Require(newDelete != nullRes, "new_delete and null resources must be distinct");
     Require(newDelete != aligned && newDelete != unaligned && newDelete != libcNull, "standard new_delete is distinct from __sce_v2 family");
     Require(nullRes != aligned && nullRes != unaligned && nullRes != libcNull, "standard null_memory_resource is distinct from __sce_v2 family");
@@ -108,24 +108,24 @@ int main() {
     Slot<Deallocate>(nullRes, 3)(nullRes, nullptr, 0, 1);
     Slot<Deallocate>(nullRes, 3)(nullRes, newDelete, 64, 8);
 
-    void* defaultRes = sceLibcInternalPmrGetDefaultResource_nid_no_patch();
+    void* defaultRes = _ZNSt3pmr20get_default_resourceEv();
     Require(defaultRes == newDelete, "initial default resource matches new_delete_resource");
     Require(_Aligned_get_default_resource_nid_postfix() == aligned, "initial aligned default matches aligned new_delete");
     Require(_Unaligned_get_default_resource_nid_postfix() == unaligned, "initial unaligned default matches unaligned new_delete");
 
-    void* previousDefault = sceLibcInternalPmrSetDefaultResource_nid_no_patch(nullRes);
+    void* previousDefault = _ZNSt3pmr20set_default_resourceEPNS_15memory_resourceE(nullRes);
     Require(previousDefault == newDelete, "set_default_resource returned previous default");
-    Require(sceLibcInternalPmrGetDefaultResource_nid_no_patch() == nullRes, "get_default_resource reflects update");
+    Require(_ZNSt3pmr20get_default_resourceEv() == nullRes, "get_default_resource reflects update");
     Require(_Aligned_get_default_resource_nid_postfix() == aligned, "standard set_default_resource does not affect _Aligned_ default");
     Require(_Unaligned_get_default_resource_nid_postfix() == unaligned, "standard set_default_resource does not affect _Unaligned_ default");
 
     Require(_Aligned_set_default_resource_nid_postfix(libcNull) == aligned, "_Aligned_set_default_resource returned previous aligned default");
     Require(_Aligned_get_default_resource_nid_postfix() == libcNull, "_Aligned_get_default_resource reflects update");
-    Require(sceLibcInternalPmrGetDefaultResource_nid_no_patch() == nullRes, "_Aligned_set_default_resource does not affect standard default");
+    Require(_ZNSt3pmr20get_default_resourceEv() == nullRes, "_Aligned_set_default_resource does not affect standard default");
 
-    void* previousFromNull = sceLibcInternalPmrSetDefaultResource_nid_no_patch(nullptr);
+    void* previousFromNull = _ZNSt3pmr20set_default_resourceEPNS_15memory_resourceE(nullptr);
     Require(previousFromNull == nullRes, "set_default_resource with null returns previous default");
-    Require(sceLibcInternalPmrGetDefaultResource_nid_no_patch() == newDelete, "set_default_resource with null resets default to new_delete");
+    Require(_ZNSt3pmr20get_default_resourceEv() == newDelete, "set_default_resource with null resets default to new_delete");
     Require(_Aligned_get_default_resource_nid_postfix() == libcNull, "standard reset does not affect _Aligned_ default");
 
     Require(_Aligned_set_default_resource_nid_postfix(nullptr) == libcNull, "_Aligned_set_default_resource with null returns previous default");

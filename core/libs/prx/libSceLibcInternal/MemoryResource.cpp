@@ -96,24 +96,20 @@ MemoryResource* OrFallback(MemoryResource* resource, MemoryResource* fallback) {
 
 extern "C" {
 
-void* APS5_VABI sceLibcInternalPmrNewDeleteResource_nid_no_patch() noexcept {
+void* APS5_VABI _ZNSt3pmr19new_delete_resourceEv() noexcept {
     return &NewDeleteResource;
 }
-APS5_EXPORT("9G32u5RRYxE", sceLibcInternalPmrNewDeleteResource_nid_no_patch);
 
-void* APS5_VABI sceLibcInternalPmrGetDefaultResource_nid_no_patch() noexcept {
+void* APS5_VABI _ZNSt3pmr20get_default_resourceEv() noexcept {
     return OrFallback(DefaultResource.load(), &NewDeleteResource);
 }
-APS5_EXPORT("d2u38zs4Pe8", sceLibcInternalPmrGetDefaultResource_nid_no_patch);
 
-void* APS5_VABI sceLibcInternalPmrNullMemoryResource_nid_no_patch() noexcept {
+void* APS5_VABI _ZNSt3pmr20null_memory_resourceEv() noexcept {
     return &NullResource;
 }
-APS5_EXPORT("eWMGI7B7Lyc", sceLibcInternalPmrNullMemoryResource_nid_no_patch);
 
-void* APS5_VABI sceLibcInternalPmrSetDefaultResource_nid_no_patch(void* resource) noexcept {
+void* APS5_VABI _ZNSt3pmr20set_default_resourceEPNS_15memory_resourceE(void* resource) noexcept {
     return OrFallback(DefaultResource.exchange(static_cast<MemoryResource*>(resource)), &NewDeleteResource);
 }
-APS5_EXPORT("TKYsv0jdvRw", sceLibcInternalPmrSetDefaultResource_nid_no_patch);
 
 }

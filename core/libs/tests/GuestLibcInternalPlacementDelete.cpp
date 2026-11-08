@@ -57,10 +57,10 @@ int main() {
     std::memset(block, 0x5A, 32);
     releases = 0;
 
-    sceLibcInternalPlacementDelete_nid_no_patch(block, block);
-    sceLibcInternalPlacementArrayDelete_nid_no_patch(block, block);
-    sceLibcInternalPlacementDelete_nid_no_patch(nullptr, block);
-    sceLibcInternalPlacementArrayDelete_nid_no_patch(nullptr, block);
+    _ZdlPvS_(block, block);
+    _ZdaPvS_(block, block);
+    _ZdlPvS_(nullptr, block);
+    _ZdaPvS_(nullptr, block);
     Require(releases == 0, "the placement forms free nothing");
     Require(Untouched(block, 32), "the placement forms leave the block unchanged");
 
