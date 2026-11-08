@@ -36,6 +36,7 @@
 #include <fstream>
 #include <string>
 #include <sys/mman.h>
+#include <sys/statvfs.h>
 #include <time.h>
 #include <unistd.h>
 #elif defined(__APPLE__)
@@ -3542,7 +3543,7 @@ static void CheckRegularFileMapping() {
     Require(std::filesystem::remove(path));
 }
 
-static void CheckExecutableSharedMappings() {
+static bool CheckExecutableSharedMappings() {
     constexpr std::size_t page = 0x4000;
     const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
     const auto code = [](std::uint32_t value) {
@@ -3556,8 +3557,9 @@ static void CheckExecutableSharedMappings() {
         std::memcpy(&function, &address, sizeof(function));
         return static_cast<std::uint32_t>(function());
     };
-    const auto check = [&](int writer, int fd, int access) {
+    const auto check = [&](int writer, int fd, int access, bool executable) {
         for (int protection = 0; protection <= 7; ++protection) {
+            if (!executable && (protection & 4) != 0) continue;
             const auto stored = code(0x100 + protection);
             Require(sceKernelPwrite(writer, stored.data(), stored.size(), page) == static_cast<std::int64_t>(stored.size()));
             int refusal = 0;
@@ -3597,27 +3599,36 @@ static void CheckExecutableSharedMappings() {
     const int fileReader = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     const int fileWriter = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_WRONLY, 0);
     Require(file >= 0 && fileReader >= 0 && fileWriter >= 0);
-    check(file, file, 2);
-    check(file, fileReader, 0);
-    check(file, fileWriter, 1);
+    check(file, file, 2, true);
+    check(file, fileReader, 0, true);
+    check(file, fileWriter, 1, true);
     Require(sceKernelClose(fileWriter) == 0 && sceKernelClose(fileReader) == 0 && sceKernelClose(file) == 0);
     Require(std::filesystem::remove(path));
     const int anonymous = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
     Require(anonymous >= 0 && ftruncate_nid_postfix(anonymous, page * 2) == 0);
-    check(anonymous, anonymous, 2);
+    check(anonymous, anonymous, 2, true);
     Require(close_nid_postfix(anonymous) == 0);
+#ifdef _WIN32
+    const bool namedExecutable = true;
+#else
+    struct statvfs sharedMemoryMount{};
+    Require(statvfs("/dev/shm", &sharedMemoryMount) == 0);
+    const bool namedExecutable = (sharedMemoryMount.f_flag & ST_NOEXEC) == 0;
+#endif
     const auto name = "/anyps5-executable-mapping-" + stamp;
     const int named = shm_open_nid_postfix(name.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0600);
     Require(named >= 0 && ftruncate_nid_postfix(named, page * 2) == 0);
     const int namedReader = shm_open_nid_postfix(name.c_str(), SCE_KERNEL_O_RDONLY, 0);
     Require(namedReader >= 0);
-    check(named, named, 2);
-    check(named, namedReader, 0);
+    check(named, named, 2, namedExecutable);
+    check(named, namedReader, 0, namedExecutable);
     Require(close_nid_postfix(namedReader) == 0 && close_nid_postfix(named) == 0 && shm_unlink_nid_postfix(name.c_str()) == 0);
     int jit = -1;
     Require(sceKernelJitCreateSharedMemory(nullptr, page * 2, 7, &jit) == 0 && jit >= 0);
-    check(jit, jit, 2);
+    check(jit, jit, 2, true);
     Require(close_nid_postfix(jit) == 0);
+    if (!namedExecutable) std::puts("skipped, the host mounts /dev/shm noexec, so named shared memory is not mapped executable");
+    return namedExecutable;
 }
 #endif
 
@@ -4154,8 +4165,7 @@ int main(int argc, char** argv) {
     }
 #if defined(__linux__) || defined(_WIN32)
     if (argc == 2 && std::strcmp(argv[1], "executable-mappings") == 0) {
-        CheckExecutableSharedMappings();
-        return 0;
+        return CheckExecutableSharedMappings() ? 0 : 77;
     }
 #endif
     Require(argc == 1);
