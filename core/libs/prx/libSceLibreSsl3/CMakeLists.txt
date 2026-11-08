@@ -23,6 +23,8 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LibTls.cp
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestNames.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EcdsaSig.cpp)
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/EcKey.cpp)
+target_include_directories(libSceLibreSsl3 PRIVATE $<TARGET_PROPERTY:mbedcrypto,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1Values.cpp)
 
@@ -97,6 +99,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_libressl3_ecdsa_sig PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
+    add_test_executable(guest_libressl3_ec_key_asn1_flag_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/EcKeyAsn1Flag.cpp)
+    target_include_directories(guest_libressl3_ec_key_asn1_flag_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_ec_key_asn1_flag_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc mbedcrypto)
+    configure_windows_unwind(guest_libressl3_ec_key_asn1_flag_tests)
+    add_test(NAME guest_libressl3_ec_key_asn1_flag COMMAND guest_libressl3_ec_key_asn1_flag_tests)
+    set_tests_properties(guest_libressl3_ec_key_asn1_flag PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_ec_key_asn1_flag PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
     add_test_executable(guest_libressl3_pkey_getters_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyGetters.cpp)
     target_include_directories(guest_libressl3_pkey_getters_tests PRIVATE ${LIBS_INCLUDE_DIR})
