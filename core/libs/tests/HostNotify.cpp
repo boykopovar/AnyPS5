@@ -199,7 +199,35 @@ void FailingAndThrowingBackendsDoNotStopTheCaller() {
     Require(calls.load() == 2, "a failing backend stopped the caller or the other backend");
 }
 
+void OffOrNoBackendMakesNoSinkAndNeverSpawns() {
+    std::atomic<int> calls{0};
+    const auto spawn = [&calls](const HostNotifyArgv&) {
+        calls.fetch_add(1);
+        return true;
+    };
+    Require(MakeHostNotifySink(HostNotifyMode::Off, HostNotifyBackend::NotifySend, spawn) == nullptr, "Off made a sink");
+    Require(MakeHostNotifySink(HostNotifyMode::On, HostNotifyBackend::None, spawn) == nullptr, "a missing backend made a sink");
+    const auto sink = MakeHostNotifySink(HostNotifyMode::On, HostNotifyBackend::NotifySend, spawn);
+    Require(sink != nullptr, "On with a backend made no sink");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(calls.load() == 0, "a sink spawned before any notice");
+}
+
+void UnsetVariableIsOffAndAStrayNoticeDoesNotSpawn() {
+    Require(HostNotifyModeFromEnvironment(nullptr) == HostNotifyMode::Off, "an unset ANYPS5_HOST_NOTIFY is not off");
+    std::atomic<int> calls{0};
+    const auto sink = MakeHostNotifySink(HostNotifyModeFromEnvironment(nullptr), HostNotifyBackend::NotifySend, [&calls](const HostNotifyArgv&) {
+        calls.fetch_add(1);
+        return true;
+    });
+    Require(sink == nullptr, "the default made a sink");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(calls.load() == 0, "the default spawned a notifier");
+}
+
 int main() {
+    OffOrNoBackendMakesNoSinkAndNeverSpawns();
+    UnsetVariableIsOffAndAStrayNoticeDoesNotSpawn();
     NotifyDoesNotWaitForASleepingBackend();
     NotifyPassesTheBuiltArgvToTheBackend();
     FailingAndThrowingBackendsDoNotStopTheCaller();

@@ -1,6 +1,7 @@
 #include "prx/libkernel/System/include/HostNotify.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <cstdio>
 #include <string>
 #include <system_error>
@@ -154,6 +155,11 @@ void DetachedHostNotifySink::Notify(std::string_view title, std::string_view tex
     } catch (const std::system_error&) {
         HostNotifyLog("the host notice could not be started with " + name);
     }
+}
+
+std::unique_ptr<IHostNotifySink> MakeHostNotifySink(HostNotifyMode mode, HostNotifyBackend backend, HostNotifySpawn spawn) {
+    if (mode == HostNotifyMode::Off || backend == HostNotifyBackend::None) return nullptr;
+    return std::make_unique<DetachedHostNotifySink>(backend, std::move(spawn));
 }
 
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {

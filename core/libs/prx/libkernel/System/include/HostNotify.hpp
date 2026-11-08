@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -45,5 +46,7 @@ private:
     HostNotifyBackend backend;
     HostNotifySpawn spawn;
 };
+
+std::unique_ptr<IHostNotifySink> MakeHostNotifySink(HostNotifyMode mode, HostNotifyBackend backend, HostNotifySpawn spawn);
 
 #endif
