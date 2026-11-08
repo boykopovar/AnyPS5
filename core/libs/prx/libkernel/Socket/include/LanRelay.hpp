@@ -51,6 +51,7 @@ struct Ipv4Interface {
 };
 
 bool IsBroadcast(std::uint32_t destination, const std::vector<Ipv4Interface>& interfaces);
+bool IsMulticast(std::uint32_t destination);
 bool IsOwnFrame(const Frame& frame, std::uint32_t instance);
 
 class Relay {
