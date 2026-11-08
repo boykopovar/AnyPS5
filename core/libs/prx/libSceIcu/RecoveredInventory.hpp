@@ -26,7 +26,6 @@ int APS5_VABI ucal_open_nid_postfix();
 int APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix();
 int APS5_VABI ucal_openTimeZones_nid_postfix();
 int APS5_VABI ucal_setGregorianChange_nid_postfix();
-int APS5_VABI ucal_setMillis_nid_postfix();
 int APS5_VABI ucol_close_nid_postfix();
 int APS5_VABI ucol_countAvailable_nid_postfix();
 int APS5_VABI ucol_getAttribute_nid_postfix();
