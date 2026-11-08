@@ -1,6 +1,8 @@
 #include "prx/libSceJson2/include/Api.hpp"
+#include "JsonTestAllocator.hpp"
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -54,6 +56,13 @@ static void Check(Value& value, unsigned index) {
 }
 
 int main() {
+    JsonTest::Allocator allocator;
+    InitParameter2 parameters{};
+    _ZN3sce4Json14InitParameter2C1Ev(&parameters);
+    _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(&parameters, &allocator, nullptr);
+    std::uint8_t initializer = 0;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameters) == 0);
     const std::array<std::string, 3> documents{
         R"json( {"values":[-7,1.5,true,null],"text":"\b\f\n\r\t\\\"\/\u00e9\ud83d\ude00","empty":{}} )json",
         " \n\t[]\r ", std::string(32, '[') + "42" + std::string(32, ']')};
@@ -70,4 +79,6 @@ int main() {
             _ZN3sce4Json5ValueD1Ev(&value);
         }
     }
+    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0);
+    _ZN3sce4Json11InitializerD1Ev(&initializer);
 }
