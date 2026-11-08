@@ -318,6 +318,31 @@ void TestStencilUnormView(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestCopiedHtileProvesNoClear(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    DepthTarget target{0xc0000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DepthSurfaceView(context, target);
+    const auto image = lastImage;
+    std::fill(words.begin(), words.end(), 0u);
+    NoteCopyDestination(htile, bytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    clearedImages.clear();
+    DepthSurfaceView(context, target);
+    Require(std::ranges::find(clearedImages, image) == clearedImages.end(), "clear words that a copy wrote into an HTILE must not fast-clear its depth surface");
+    NoteHtileDepthClear(htile, bytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    clearedImages.clear();
+    DepthSurfaceView(context, target);
+    Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "an HTILE fill after the copy must fast-clear the depth surface");
+    ClearDepthSurfaces(context.device);
+}
+
 void TestD16StencilFallback(const Context& context) {
     Require(HostDepthFormat(context, VK_FORMAT_D16_UNORM_S8_UINT) == VK_FORMAT_D16_UNORM_S8_UINT && HostDepthBiasConstant(context, VK_FORMAT_D16_UNORM_S8_UINT, 2.0f) == 2.0f, "a device with D16_UNORM_S8_UINT must keep it and its depth bias");
     static int withoutTag = 0;
@@ -828,6 +853,7 @@ void RunDepthSurfaceReuseTests() {
     context.limits.maxFramebufferHeight = 16384;
     context.limits.maxFramebufferLayers = 1;
     TestD16StencilFallback(context);
+    TestCopiedHtileProvesNoClear(context);
     TestMultisampleDepthOwnership(context);
     TestMultisampleStencilAliases(context);
     TestStencilUnormView(context);

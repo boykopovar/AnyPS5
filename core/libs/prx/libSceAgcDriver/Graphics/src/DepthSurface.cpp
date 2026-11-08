@@ -3787,6 +3787,8 @@ void ForgetHtileMasks_nid_no_patch(std::uint64_t recorderId) {
     std::erase_if(htileMasks(), [&](const HtileMaskWrite& write) { return write.recorderId == recorderId; });
 }
 
+void NoteCopyDestination(std::uint64_t, std::size_t) {}
+
 bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes) {
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(htileAddress, bytes);
