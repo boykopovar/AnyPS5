@@ -591,6 +591,22 @@ class CompareTests(unittest.TestCase):
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": None}])
         self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["averageFps"], {"before": None, "now": None})
 
+    def test_shader_counts_are_paired(self):
+        report = {"shaders": {"compiled": 12, "failed": 1, "cacheHits": 40}}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0, "report": report}])
+        changed = {"shaders": {"compiled": 3, "failed": 0, "cacheHits": 50}}
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": changed}])
+        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["shaders"],
+                         {"compiled": {"before": 12, "now": 3}, "failed": {"before": 1, "now": 0}, "cacheHits": {"before": 40, "now": 50}})
+
+    def test_shader_counts_missing_on_one_side_are_not_recorded(self):
+        report = {"shaders": {"compiled": 12, "failed": 1, "cacheHits": None}}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": report}])
+        shaders = title_run.compare_runs(summary, previous)["PPSA00001"]["shaders"]
+        self.assertEqual(shaders["compiled"], {"before": None, "now": 12})
+        self.assertEqual(shaders["cacheHits"], {"before": None, "now": None})
+
     def test_only_titles_in_both_runs_are_compared(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
