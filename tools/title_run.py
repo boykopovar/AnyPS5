@@ -231,6 +231,26 @@ def compare(summary, previous):
     return regressions, improvements
 
 
+def last_run(title):
+    return title["runs"][-1]
+
+
+def pair(before, now):
+    return {"before": before, "now": now}
+
+
+def fps_of(run):
+    return None if run.get("outcome") == "relink-failed" else run.get("fps")
+
+
+def compare_runs(summary, previous):
+    compared = {}
+    for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
+        before, now = last_run(previous["titles"][title_id]), last_run(summary["titles"][title_id])
+        compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now))}
+    return compared
+
+
 def render_markdown(summary, previous=None):
     build, machine = summary["build"], summary["machine"]
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
