@@ -2,9 +2,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <functional>
 #include <optional>
-#include <unordered_map>
-#include <unordered_set>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -21,8 +22,6 @@ constexpr int ConditionDepth = 16;
 constexpr int AlwaysNanDepth = 24;
 
 enum class Difference : std::uint8_t { Equal, NanPayload, Arbitrary };
-
-using ValueSet = std::unordered_set<const IrValue*>;
 
 bool isImmediate(const IrValue* value, std::uint32_t bits) {
     return value->HasImmediate() && value->ImmediateU32() == bits;
@@ -215,14 +214,46 @@ bool pureOperation(IrOpcode opcode) {
     }
 }
 
+using MemberList = std::vector<const IrValue*>;
+
+struct NoMembers {
+    [[nodiscard]] bool operator()(const IrValue*) const { return false; }
+};
+
+struct SortedMembers {
+    const MemberList* values;
+    [[nodiscard]] bool operator()(const IrValue* value) const { return std::binary_search(values->begin(), values->end(), value, std::less<const IrValue*>{}); }
+};
+
+struct SingleMember {
+    const IrValue* member;
+    [[nodiscard]] bool operator()(const IrValue* value) const { return value == member; }
+};
+
+struct StampMembers {
+    const std::vector<std::uint32_t>* stamps;
+    std::uint32_t generation;
+    [[nodiscard]] bool operator()(const IrValue* value) const { return stamps->at(value->Id()) == generation; }
+};
+
+template<typename Member>
+[[nodiscard]] bool contains(const Member& member, const IrValue* value) {
+    return member(value->Resolve()) || member(withoutBitCasts(value));
+}
+
 class PayloadAnalysis {
 public:
+    explicit PayloadAnalysis(std::size_t valueBound)
+        : alwaysNan(valueBound, AlwaysUnknown), stamps(valueBound, 0u), tieIndex(valueBound, NoTies), conditionIndex(valueBound, NoTies), states(valueBound, Difference::Equal),
+          causes(valueBound, nullptr), sourceFlags(valueBound, 0u), seenFlags(valueBound, 0u) {}
+
     [[nodiscard]] bool AlwaysNan(const IrValue* value, int depth = 0) {
         value = value->Resolve();
         if (value->HasImmediate()) return isNanImmediate(value);
         if (depth > AlwaysNanDepth) return false;
-        if (const auto found = alwaysNan.find(value); found != alwaysNan.end()) return found->second;
-        alwaysNan.emplace(value, false);
+        const std::uint8_t known = alwaysNan.at(value->Id());
+        if (known != AlwaysUnknown) return known == AlwaysTrue;
+        alwaysNan.at(value->Id()) = AlwaysFalse;
         bool result = false;
         if (isBitCast(value) || value->Opcode() == IrOpcode::Identity) {
             result = AlwaysNan(value->Argument(0), depth + 1);
@@ -233,14 +264,15 @@ public:
             result = source != nullptr && AlwaysNan(source, depth + 1);
         } else if (isSelect(*value)) {
             const IrValue* tested = nanTested(value->Argument(0));
-            result = TakenIsNan(value->Argument(1), tested, empty, depth + 1) && AlwaysNan(value->Argument(2), depth + 1);
+            result = TakenIsNan(value->Argument(1), tested, NoMembers{}, depth + 1) && AlwaysNan(value->Argument(2), depth + 1);
         }
-        alwaysNan[value] = result;
+        alwaysNan.at(value->Id()) = result ? AlwaysTrue : AlwaysFalse;
         return result;
     }
 
-    [[nodiscard]] bool TakenIsNan(const IrValue* arm, const IrValue* tested, const ValueSet& tied, int depth = 0) {
-        if (contains(tied, arm)) return true;
+    template<typename Member>
+    [[nodiscard]] bool TakenIsNan(const IrValue* arm, const IrValue* tested, const Member& member, int depth = 0) {
+        if (contains(member, arm)) return true;
         if (tested != nullptr) {
             const IrValue* bits = withoutBitCasts(arm);
             if (bits == tested) return true;
@@ -250,29 +282,32 @@ public:
         return AlwaysNan(arm, depth);
     }
 
-    [[nodiscard]] const ValueSet& TiesOf(const IrValue* cause) {
+    [[nodiscard]] const MemberList& TiesOf(const IrValue* cause) {
         cause = withoutBitCasts(cause);
-        if (const auto found = tieCache.find(cause); found != tieCache.end()) return found->second;
-        ValueSet computed = ties(cause);
-        return tieCache.emplace(cause, std::move(computed)).first->second;
-    }
-
-    [[nodiscard]] static bool Contains(const ValueSet& set, const IrValue* value) {
-        return contains(set, value);
+        const std::uint32_t slot = tieIndex.at(cause->Id());
+        if (slot != NoTies) return tieSets[slot];
+        tieSets.push_back(ties(cause));
+        tieIndex.at(cause->Id()) = static_cast<std::uint32_t>(tieSets.size() - 1u);
+        return tieSets.back();
     }
 
     [[nodiscard]] std::vector<IrValue*> Removable(const std::vector<IrValue*>& candidates, bool& exhausted) {
-        std::unordered_set<const IrValue*> sources(candidates.begin(), candidates.end());
+        std::size_t remaining = 0;
+        for (const IrValue* candidate : candidates) {
+            if (sourceFlags.at(candidate->Id()) == 0u) ++remaining;
+            sourceFlags.at(candidate->Id()) = 1u;
+        }
         std::size_t steps = 0;
-        for (std::size_t iteration = 0; iteration < MaxIterations && !sources.empty(); ++iteration) {
-            states.clear();
-            causes.clear();
+        for (std::size_t iteration = 0; iteration < MaxIterations && remaining != 0u; ++iteration) {
+            std::fill(states.begin(), states.end(), Difference::Equal);
+            std::fill(causes.begin(), causes.end(), nullptr);
             std::vector<const IrValue*> observed;
             std::vector<const IrValue*> pending;
-            for (const IrValue* source : sources) {
-                states[source] = Difference::NanPayload;
-                causes[source] = source;
-                pending.push_back(source);
+            for (const IrValue* candidate : candidates) {
+                if (sourceFlags.at(candidate->Id()) == 0u) continue;
+                states.at(candidate->Id()) = Difference::NanPayload;
+                causes.at(candidate->Id()) = candidate;
+                pending.push_back(candidate);
             }
             while (!pending.empty()) {
                 const IrValue* current = pending.back();
@@ -287,42 +322,44 @@ public:
                         if (stateOf(user->Argument(use.operand)) != Difference::Equal) observed.push_back(current);
                         continue;
                     }
-                    auto [state, cause] = sources.contains(user) ? sourceTransfer(*user) : transfer(*user);
-                    const Difference old = stateOf(user);
+                    auto [state, cause] = sourceFlags.at(user->Id()) != 0u ? sourceTransfer(*user) : transfer(*user);
+                    const Difference old = states.at(user->Id());
                     bool changed = state > old;
                     if (!changed && state == old && state != Difference::Equal) {
-                        const auto stored = causes.find(user);
-                        if (stored != causes.end() && stored->second != nullptr && stored->second != cause) {
+                        const IrValue* stored = causes.at(user->Id());
+                        if (stored != nullptr && stored != cause) {
                             cause = nullptr;
                             changed = true;
                         }
                     }
                     if (!changed) continue;
-                    states[user] = state;
-                    causes[user] = cause;
+                    states.at(user->Id()) = state;
+                    causes.at(user->Id()) = cause;
                     pending.push_back(user);
                 }
             }
             if (observed.empty()) {
                 std::vector<IrValue*> result;
                 for (IrValue* candidate : candidates) {
-                    if (sources.contains(candidate)) result.push_back(candidate);
+                    if (sourceFlags.at(candidate->Id()) != 0u) result.push_back(candidate);
                 }
                 return result;
             }
-            const auto blamed = blame(observed, sources);
-            if (blamed.empty()) return {};
-            for (const IrValue* value : blamed) sources.erase(value);
+            const std::size_t blamed = blame(observed);
+            if (blamed == 0u) return {};
+            remaining -= blamed;
         }
         return {};
     }
 
 private:
-    [[nodiscard]] static bool contains(const ValueSet& set, const IrValue* value) {
-        return set.contains(value->Resolve()) || set.contains(withoutBitCasts(value));
-    }
+    static constexpr std::uint8_t AlwaysUnknown = 0u;
+    static constexpr std::uint8_t AlwaysFalse = 1u;
+    static constexpr std::uint8_t AlwaysTrue = 2u;
+    static constexpr std::uint32_t NoTies = 0xffffffffu;
 
-    [[nodiscard]] std::optional<bool> conditionWhenNan(const IrValue* condition, const ValueSet& tied, int depth = 0) const {
+    template<typename Member>
+    [[nodiscard]] std::optional<bool> conditionWhenNan(const IrValue* condition, const Member& tied, int depth = 0) const {
         condition = condition->Resolve();
         if (depth > ConditionDepth) return std::nullopt;
         const IrOpcode opcode = condition->Opcode();
@@ -370,11 +407,26 @@ private:
         return std::nullopt;
     }
 
-    [[nodiscard]] ValueSet ties(const IrValue* start) {
-        ValueSet tied{start};
-        std::vector<const IrValue*> pending{start};
+    void nextGeneration() {
+        if (++generation == 0u) {
+            std::fill(stamps.begin(), stamps.end(), 0u);
+            generation = 1u;
+        }
+    }
+
+    [[nodiscard]] MemberList ties(const IrValue* start) {
+        nextGeneration();
+        const StampMembers member{&stamps, generation};
+        MemberList members;
+        std::vector<const IrValue*> pending;
         std::vector<const IrValue*> selects;
-        while (!pending.empty() && tied.size() < TieLimit) {
+        const auto add = [&](const IrValue* value) {
+            stamps.at(value->Id()) = generation;
+            members.push_back(value);
+            pending.push_back(value);
+        };
+        add(start);
+        while (!pending.empty() && members.size() < TieLimit) {
             const IrValue* current = pending.back();
             pending.pop_back();
             selects.clear();
@@ -384,27 +436,36 @@ private:
                     if (use.operand != 0u) selects.push_back(user);
                     continue;
                 }
-                if (!tied.contains(user) && propagatesNan(*user, use.operand)) {
-                    tied.insert(user);
-                    pending.push_back(user);
-                }
+                if (!member(user) && propagatesNan(*user, use.operand)) add(user);
             }
-            conditionSelects(current, selects, 0);
+            const MemberList& guarded = conditionSelectsOf(current);
+            selects.insert(selects.end(), guarded.begin(), guarded.end());
             for (const IrValue* select : selects) {
-                if (tied.contains(select) || !selectJoins(*select, tied)) continue;
-                tied.insert(select);
-                pending.push_back(select);
+                if (member(select) || !selectJoins(*select, member)) continue;
+                add(select);
             }
         }
-        return tied;
+        std::sort(members.begin(), members.end(), std::less<const IrValue*>{});
+        return members;
     }
 
-    [[nodiscard]] bool selectJoins(const IrValue& select, const ValueSet& tied) {
+    template<typename Member>
+    [[nodiscard]] bool selectJoins(const IrValue& select, const Member& tied) {
         const auto known = conditionWhenNan(select.Argument(0), tied);
         const IrValue* tested = nanTested(select.Argument(0));
         const auto falseNan = [&] { return contains(tied, select.Argument(2)) || AlwaysNan(select.Argument(2)); };
         if (known.has_value()) return *known ? TakenIsNan(select.Argument(1), tested, tied) : falseNan();
         return TakenIsNan(select.Argument(1), tested, tied) && falseNan();
+    }
+
+    [[nodiscard]] const MemberList& conditionSelectsOf(const IrValue* value) {
+        const std::uint32_t slot = conditionIndex.at(value->Id());
+        if (slot != NoTies) return conditionLists[slot];
+        MemberList found;
+        conditionSelects(value, found, 0);
+        conditionLists.push_back(std::move(found));
+        conditionIndex.at(value->Id()) = static_cast<std::uint32_t>(conditionLists.size() - 1u);
+        return conditionLists.back();
     }
 
     void conditionSelects(const IrValue* value, std::vector<const IrValue*>& selects, int depth) const {
@@ -417,8 +478,7 @@ private:
     }
 
     [[nodiscard]] Difference stateOf(const IrValue* value) const {
-        const auto found = states.find(value->Resolve());
-        return found != states.end() ? found->second : Difference::Equal;
+        return states.at(value->Resolve()->Id());
     }
 
     [[nodiscard]] const IrValue* causeOf(const IrValue* value) const {
@@ -426,8 +486,7 @@ private:
         const Difference state = stateOf(value);
         if (state == Difference::Equal) return nullptr;
         if (state == Difference::NanPayload) return withoutBitCasts(value);
-        const auto found = causes.find(value);
-        return found != causes.end() ? found->second : nullptr;
+        return causes.at(value->Id());
     }
 
     [[nodiscard]] std::pair<Difference, const IrValue*> sourceTransfer(const IrValue& select) {
@@ -435,7 +494,7 @@ private:
         if (tested == nullptr || stateOf(tested) == Difference::Arbitrary || stateOf(select.Argument(0)) == Difference::Arbitrary) return {Difference::Arbitrary, nullptr};
         if (stateOf(select.Argument(2)) == Difference::Arbitrary) {
             const IrValue* cause = causeOf(select.Argument(2));
-            if (cause == nullptr || !contains(TiesOf(cause), tested)) return {Difference::Arbitrary, nullptr};
+            if (cause == nullptr || !contains(SortedMembers{&TiesOf(cause)}, tested)) return {Difference::Arbitrary, nullptr};
         }
         return {Difference::NanPayload, &select};
     }
@@ -465,7 +524,7 @@ private:
                 if (armState == Difference::Equal) continue;
                 const IrValue* armCause = causeOf(user.Argument(arm));
                 if (armCause != nullptr) {
-                    const auto known = conditionWhenNan(user.Argument(0), TiesOf(armCause));
+                    const auto known = conditionWhenNan(user.Argument(0), SortedMembers{&TiesOf(armCause)});
                     if (known.has_value() && *known != (arm == 1u)) continue;
                 }
                 result = std::max(result, armState);
@@ -503,15 +562,19 @@ private:
         return {Difference::Arbitrary, single};
     }
 
-    [[nodiscard]] std::unordered_set<const IrValue*> blame(const std::vector<const IrValue*>& observed, const std::unordered_set<const IrValue*>& sources) const {
-        std::unordered_set<const IrValue*> blamed;
-        std::unordered_set<const IrValue*> seen;
+    [[nodiscard]] std::size_t blame(const std::vector<const IrValue*>& observed) {
+        std::fill(seenFlags.begin(), seenFlags.end(), 0u);
+        std::size_t blamed = 0;
         std::vector<const IrValue*> pending(observed.begin(), observed.end());
         while (!pending.empty()) {
             const IrValue* value = pending.back()->Resolve();
             pending.pop_back();
-            if (!seen.insert(value).second) continue;
-            if (sources.contains(value)) blamed.insert(value);
+            if (seenFlags.at(value->Id()) != 0u) continue;
+            seenFlags.at(value->Id()) = 1u;
+            if (sourceFlags.at(value->Id()) != 0u) {
+                sourceFlags.at(value->Id()) = 0u;
+                ++blamed;
+            }
             for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
                 const IrValue* argument = value->Argument(index)->Resolve();
                 if (stateOf(argument) != Difference::Equal) pending.push_back(argument);
@@ -520,34 +583,61 @@ private:
         return blamed;
     }
 
-    ValueSet empty;
-    std::unordered_map<const IrValue*, bool> alwaysNan;
-    std::unordered_map<const IrValue*, ValueSet> tieCache;
-    std::unordered_map<const IrValue*, Difference> states;
-    std::unordered_map<const IrValue*, const IrValue*> causes;
+    std::vector<std::uint8_t> alwaysNan;
+    std::vector<std::uint32_t> stamps;
+    std::uint32_t generation = 0;
+    std::vector<std::uint32_t> tieIndex;
+    std::deque<MemberList> tieSets;
+    std::vector<std::uint32_t> conditionIndex;
+    std::deque<MemberList> conditionLists;
+    std::vector<Difference> states;
+    std::vector<const IrValue*> causes;
+    std::vector<std::uint8_t> sourceFlags;
+    std::vector<std::uint8_t> seenFlags;
 };
+
+std::size_t valueBound(IrProgram& program) {
+    std::size_t bound = 0;
+    const auto include = [&](const IrValue* value) {
+        bound = std::max<std::size_t>(bound, std::size_t{value->Id()} + 1u);
+        bound = std::max<std::size_t>(bound, std::size_t{value->Resolve()->Id()} + 1u);
+    };
+    for (auto* block : program.BlockOrder()) {
+        for (auto* inst : block->Instructions()) {
+            include(inst);
+            for (std::size_t index = 0; index < inst->ArgumentCount(); ++index) include(inst->Argument(index));
+        }
+    }
+    return bound;
+}
 
 }
 
 NanPayloadEliminationStats NanPayloadEliminator::Eliminate(IrProgram& program) const {
     NanPayloadEliminationStats stats;
-    PayloadAnalysis analysis;
-    std::vector<IrValue*> candidates;
-    for (auto* block : program.BlockOrder()) {
-        for (auto* inst : block->Instructions()) {
-            if (!inst->HasUses() || !isSelect(*inst)) continue;
-            const IrValue* tested = nanTested(inst->Argument(0));
-            if (tested == nullptr) continue;
-            ++stats.candidates;
-            const ValueSet& tied = analysis.TiesOf(tested);
-            const IrValue* falseArm = inst->Argument(2);
-            const bool falseNan = PayloadAnalysis::Contains(tied, falseArm) || analysis.AlwaysNan(falseArm);
-            if (falseNan && analysis.TakenIsNan(inst->Argument(1), tested, tied)) candidates.push_back(inst);
+    std::vector<IrValue*> removable;
+    try {
+        PayloadAnalysis analysis(valueBound(program));
+        std::vector<IrValue*> candidates;
+        for (auto* block : program.BlockOrder()) {
+            for (auto* inst : block->Instructions()) {
+                if (!inst->HasUses() || !isSelect(*inst)) continue;
+                const IrValue* tested = nanTested(inst->Argument(0));
+                if (tested == nullptr) continue;
+                ++stats.candidates;
+                const SortedMembers tied{&analysis.TiesOf(tested)};
+                const IrValue* falseArm = inst->Argument(2);
+                const bool falseNan = contains(tied, falseArm) || analysis.AlwaysNan(falseArm);
+                if (falseNan && analysis.TakenIsNan(inst->Argument(1), tested, tied)) candidates.push_back(inst);
+            }
         }
+        bool exhausted = false;
+        removable = analysis.Removable(candidates, exhausted);
+        if (exhausted) ++stats.budgetExhausted;
+    } catch (const std::out_of_range&) {
+        ++stats.budgetExhausted;
+        return stats;
     }
-    bool exhausted = false;
-    const std::vector<IrValue*> removable = analysis.Removable(candidates, exhausted);
-    if (exhausted) ++stats.budgetExhausted;
     for (IrValue* select : removable) {
         select->ReplaceAllUsesWith(select->Argument(2)->Resolve());
         ++stats.removedSelects;
