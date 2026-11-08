@@ -21,5 +21,6 @@ std::optional<HostNotifyMode> ParseHostNotifyMode(const char* text);
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text);
 
 HostNotifyArgv LinuxNotifyArgv(std::string_view title, std::string_view text);
+HostNotifyArgv MacNotifyArgv(std::string_view title, std::string_view text);
 
 #endif

@@ -21,6 +21,10 @@ HostNotifyArgv LinuxNotifyArgv(std::string_view title, std::string_view text) {
     return {"notify-send", "--", std::string(title), std::string(text)};
 }
 
+HostNotifyArgv MacNotifyArgv(std::string_view title, std::string_view text) {
+    return {"osascript", "-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", std::string(title), std::string(text)};
+}
+
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;
     HostNotifyLog("ANYPS5_HOST_NOTIFY must be 0 or 1, not '" + std::string(text) + "'; host notifications stay off");

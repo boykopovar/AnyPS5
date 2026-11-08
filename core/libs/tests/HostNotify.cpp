@@ -1,5 +1,6 @@
 #include "prx/libkernel/System/include/HostNotify.hpp"
 #include <cstdio>
+#include <cstddef>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -58,11 +59,23 @@ void LinuxArgvKeepsLeadingDashAsText() {
     Require(argv.size() == 4 && argv[1] == "--" && argv[3] == "--urgency=critical", "a text starting with a dash is read as an option");
 }
 
+void MacArgvPassesTextAsTrailingArguments() {
+    const std::string text = "say \"hi\" \\ $HOME\nnext line";
+    const auto argv = MacNotifyArgv("AnyPS5", text);
+    Require(argv.size() == 9, "the macOS argv has an unexpected length");
+    Require(argv[0] == "osascript" && argv[1] == "-e" && argv[2] == "on run argv", "the macOS argv does not start with the run handler");
+    Require(argv[7] == "AnyPS5" && argv[8] == text, "the macOS title and text are not the last two arguments");
+    for (std::size_t index = 0; index < 7; ++index) {
+        Require(argv[index].find("say") == std::string::npos && argv[index].find("$HOME") == std::string::npos, "user text leaked into the AppleScript source");
+    }
+}
+
 int main() {
     SinkReceivesTitleAndTextAsGiven();
     LinuxArgvIsOneArgumentPerPart();
     LinuxArgvKeepsShellSyntaxAsData();
     LinuxArgvKeepsLeadingDashAsText();
+    MacArgvPassesTextAsTrailingArguments();
     Require(ParseHostNotifyMode(nullptr) == HostNotifyMode::Off, "an unset variable is not off");
     Require(ParseHostNotifyMode("") == HostNotifyMode::Off, "an empty value is not off");
     Require(ParseHostNotifyMode("0") == HostNotifyMode::Off, "0 is not off");
