@@ -4,6 +4,7 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
+- [X509_set_pubkey](../../../core/libs/prx/libSceLibreSsl3/src/X509SetPubkey.cpp) - allocates a zeroed 24-byte `X509_PUBKEY` with the supplied `EVP_PKEY` and stores it at certificate-info offset 48; a null certificate, certificate info or key returns 0. The previous public key is replaced without an ownership-aware teardown because its algorithm and encoded-key children are not modelled. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
 - [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
@@ -72,7 +73,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 118 still-unimplemented callable exports: 109 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 117 still-unimplemented callable exports: 108 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -87,7 +88,6 @@
 | `unknown` | `3KZ-L4y1gak` |
 | `EVP_chacha20_poly1305` | `3m4CmAyOXwQ` |
 | `EVP_chacha20` | `3tGgkjBQ82A` |
-| `X509_set_pubkey` | `409ieWBMPUk` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
