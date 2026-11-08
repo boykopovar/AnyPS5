@@ -84,6 +84,7 @@ public:
     KernelEqueuePrivate(const KernelEqueuePrivate&) = delete;
     KernelEqueuePrivate& operator=(const KernelEqueuePrivate&) = delete;
 
+    KernelEqueue Handle() const { return m_handle; }
     const std::string& GetName() const { return m_name; }
     void SetName(std::string name) { m_name = std::move(name); }
 
@@ -142,6 +143,9 @@ void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
 void KqueueSignalSent(int guest);
 extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
+int ReserveKqueueDescriptor();
+void RegisterKqueueDescriptor(int descriptor, KernelEqueueRef queue);
+KernelEqueueRef FindKqueueDescriptor(int descriptor);
 extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);
