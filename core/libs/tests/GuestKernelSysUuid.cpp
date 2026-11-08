@@ -38,6 +38,7 @@ int main() {
     Require(uuidgen_nid_postfix(first.data(), 0) == -1 && Error() == 22);
     Require(uuidgen_nid_postfix(first.data(), 2049) == -1 && Error() == 22);
     Require(uuidgen_nid_postfix(nullptr, 1) == -1 && Error() == 14);
+    Require(uuidgen_nid_postfix(reinterpret_cast<GuestUuid*>(0x10), 1) == -1 && Error() == 14);
     Require(uuidgen_nid_postfix(first.data(), static_cast<int>(first.size())) == 0);
     Require(uuidgen_nid_postfix(second.data(), static_cast<int>(second.size())) == 0);
     for (const auto& uuid : first) {

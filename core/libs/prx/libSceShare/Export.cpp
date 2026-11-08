@@ -2,6 +2,7 @@
 #include "prx/libSceShare/include/InventoryExports.hpp"
 #include "prx/libSceShare/include/Api.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include "SceTypes.hpp"
@@ -55,7 +56,13 @@ int APS5_VABI sceShareGetCurrentStatus(uint32_t feature_flag, ShareCurrentStatus
     if (feature_flag == 0 || status == nullptr) {
         return ERROR_INVALID_PARAM;
     }
-    std::memset(status, 0, sizeof(*status));
+    const ShareCurrentStatus zeroStatus{};
+    const auto savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(status, &zeroStatus, sizeof(zeroStatus))) {
+        errno = savedErrno;
+        return ERROR_INVALID_PARAM;
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -122,7 +129,13 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
     if (status == nullptr) {
         return ERROR_INVALID_PARAM;
     }
-    *status = 0;
+    const std::uint32_t zeroStatus = 0;
+    const auto savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(status, &zeroStatus, sizeof(zeroStatus))) {
+        errno = savedErrno;
+        return ERROR_INVALID_PARAM;
+    }
+    errno = savedErrno;
     return 0;
 }
 

@@ -1,3 +1,4 @@
+#include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
 #include "prx/libSceNpWebApi2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -41,6 +42,15 @@ struct PushHandle {
 static std::unordered_map<int, PushHandle> pushHandles;
 
 extern "C" {
+
+int APS5_VABI sceNpWebApi2IntGlobalPush2Initialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpWebApi2IntGlobalPush2Terminate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceNpWebApi2AbortRequest(int64_t request_id) {
     (void)request_id;
@@ -165,8 +175,8 @@ int APS5_VABI sceNpWebApi2PushEventDeletePushContext(int user_context_id, const 
 int APS5_VABI sceNpWebApi2PushEventRegisterCallback(int user_context_id, int filter_id, void* callback, void* user_arg) {
     (void)user_context_id;
     (void)filter_id;
-    (void)callback;
     (void)user_arg;
+    if (!callback) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -187,6 +197,7 @@ int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size
 
 int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
     std::lock_guard lock(g_poolsMutex);
+    if (!g_pools.contains(lib_ctx_id)) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     std::erase_if(pushHandles, [lib_ctx_id](const auto& item) { return item.second.libraryContextId == lib_ctx_id; });
     g_pools.erase(lib_ctx_id);
     return 0;
@@ -210,6 +221,7 @@ int APS5_VABI sceNpWebApi2PushEventSetHandleTimeout(int libraryContextId, int ha
 }
 
 int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t userContextId, std::int32_t filterId, void* callback, void* userArg) {
+    if (!callback) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 

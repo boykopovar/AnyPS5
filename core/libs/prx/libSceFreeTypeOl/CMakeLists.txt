@@ -11,6 +11,8 @@ if(ANYPS5_USE_SYSTEM_DEPS)
 endif()
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeTypeOl PRIVATE LINKER:--exclude-libs,ALL)
+elseif(APPLE)
+    target_link_options(libSceFreeTypeOl PRIVATE "LINKER:-exported_symbol,*_nid_*")
 endif()
 configure_windows_unwind(libSceFreeTypeOl)
 

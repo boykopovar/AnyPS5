@@ -73,6 +73,7 @@ static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I32L = 0x16;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32L = 0x18;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32B = 0x19;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F64L = 0x1a;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_VAG = 0x1c;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_ATRAC9 = 0x40;
 
 static constexpr std::uint32_t SCE_NGS2_VOICE_EVENT_PLAY = 1;
@@ -118,6 +119,7 @@ static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP = 0x4
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN = 0x40030004;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT = 0x40030005;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER = 0x40001300;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_REVERB = 0x40001b00;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN = 0x40001500;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX = 0x40001900;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_DELAY = 0x40001d00;
