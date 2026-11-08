@@ -29,6 +29,7 @@
 #include "prx/libwebrtc/include/CryptoOptions.hpp"
 #include "prx/libwebrtc/include/VideoFrame.hpp"
 #include "prx/libwebrtc/include/PlatformThread.hpp"
+#include "prx/libwebrtc/include/I420Buffer.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
@@ -132,9 +133,9 @@ int APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc12EncodedImageC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc12EncodedImageD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10I420Buffer6CreateEiiiii_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(void);
+std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(WebRtcI420Buffer* buffer);
+std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(WebRtcI420Buffer* buffer);
+std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(WebRtcI420Buffer* buffer);
 int APS5_VABI _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc19I420BufferInterface7GetI420Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc16VideoFrameBuffer12CropAndScaleEiiiiii_nid_postfix(void);
