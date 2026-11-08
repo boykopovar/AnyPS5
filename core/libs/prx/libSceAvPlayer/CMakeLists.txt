@@ -2,6 +2,11 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/AvPlayerLibrary.cmake)
 add_sce_avplayer_library(libSceAvPlayer)
 
 if(BUILD_TESTING)
+    add_test_executable(avplayer_file_seek_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerFileSeek.cpp)
+    target_include_directories(avplayer_file_seek_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(avplayer_file_seek_tests PRIVATE ffmpeg)
+    configure_host_test_executable(avplayer_file_seek_tests)
+    add_test(NAME avplayer_file_seek COMMAND avplayer_file_seek_tests)
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
         string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
     endforeach()
@@ -44,7 +49,7 @@ if(BUILD_TESTING)
             if(WIN32 AND TARGET mimalloc)
                 add_dependencies(avplayer_http_patched_closure mimalloc pe_import_first)
                 set(httpPatchedAllocatorArguments
-                    -DALLOCATOR_DIRECTORY=$<TARGET_FILE_DIR:mimalloc>
+                    -DALLOCATOR=$<TARGET_FILE:mimalloc>
                     -DIMPORT_FIRST=$<TARGET_FILE:pe_import_first>)
             endif()
             add_dependencies(avplayer_http_patched_modules_tests avplayer_http_patched_closure

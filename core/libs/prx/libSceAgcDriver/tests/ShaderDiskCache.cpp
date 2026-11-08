@@ -478,6 +478,40 @@ void verifyResultRoundTrip() {
     require(!ShaderDiskCache::DecodeResult(bytes, decoded), "an incompatible runtime ABI result decodes");
 }
 
+void verifyElementFlags() {
+    ElementFlags flags;
+    std::vector<bool> expected;
+    for (std::size_t index = 0; index < 70; ++index) {
+        flags.push_back(index % 3 == 0);
+        expected.push_back(index % 3 == 0);
+        require(flags == expected, "element flags differ from a vector after " + std::to_string(index + 1) + " entries");
+    }
+    const auto copy = flags;
+    require(copy == flags && copy.size() == 70 && copy.at(69) && !copy.at(68), "a copy of spilled element flags differs");
+    require(std::count(flags.begin(), flags.end(), true) == 24, "spilled element flags do not iterate");
+    auto writable = flags;
+    writable[69] = false;
+    writable.back().flip();
+    writable[0] = writable[1];
+    require(writable.size() == 70 && writable.back() && !writable[0] && writable[3], "a write through a spilled flag was lost");
+    writable.resize(3);
+    require(writable == std::vector<bool>{false, false, false}, "shrinking spilled element flags kept the wrong entries");
+    writable.resize(5, true);
+    writable[1] = true;
+    writable.back().flip();
+    require(writable == std::vector<bool>{false, true, false, true, false}, "a write through an inline flag was lost");
+    auto result = sampleResult();
+    result.bindings[1].bufferWritten = flags;
+    std::vector<std::byte> bytes;
+    ShaderDiskCache::EncodeResult(result, bytes);
+    RecompileResult decoded;
+    require(ShaderDiskCache::DecodeResult(bytes, decoded) && decoded.bindings[1].bufferWritten == expected, "spilled element flags do not round trip");
+    flags.assign(3, true);
+    require(flags == std::vector<bool>{true, true, true}, "assigned element flags kept spilled entries");
+    flags.clear();
+    require(flags.empty() && flags == ElementFlags{}, "cleared element flags are not empty");
+}
+
 void verifyEntryRoundTrip() {
     SampleRequest sample;
     const auto key = sample.Key();
@@ -805,6 +839,29 @@ void verifyMeshBarycentricRequestSerialization() {
         const auto restored = RequestSerializer{}.Deserialize(text);
         require(restored.request.graphics.has_value() && restored.request.graphics->meshBarycentrics == layout, "a captured mesh request lost its barycentric layout");
     }
+}
+
+void verifyHashBytes() {
+    constexpr std::array<std::array<std::uint64_t, 3>, 8> expected{{
+        {0u, 0x840bc8c130ceedb6ull, 0x7e0452fcbd09083dull},
+        {1u, 0x2bb08a6e94d5ffabull, 0xe3641007415d06d1ull},
+        {7u, 0xd0ec3c76aa3e2e44ull, 0x345f41799c18a2b1ull},
+        {8u, 0xa0c4caa4a9025c5aull, 0xa3829d1fdbcf4aebull},
+        {9u, 0x5976a0604c948110ull, 0xeaeed8d5500a97a2ull},
+        {15u, 0x55bbcd3fcf37abd7ull, 0x420b82b607b1d4f9ull},
+        {16u, 0x731681f2dbac64e8ull, 0x4a9c1f25580b95a4ull},
+        {17u, 0x31a156cfac950b79ull, 0xac0b4579d052a463ull},
+    }};
+    std::array<std::byte, 17> bytes{};
+    for (std::size_t index = 0; index < bytes.size(); ++index) bytes[index] = static_cast<std::byte>(index);
+    for (const auto& sample : expected) {
+        const auto input = std::span<const std::byte>(bytes).first(sample[0]);
+        const auto hashes = ShaderRecompiler::ShaderDiskCache::PackKeyHash(input);
+        require(hashes == std::array{sample[1], sample[2]}, "paired cache hashes changed");
+        require(ShaderRecompiler::HashBytes(input, 0x5eed0001ull) == sample[1] && ShaderRecompiler::HashBytes(input, 0x5eed0002ull) == sample[2], "scalar cache hashes changed");
+    }
+    require(ShaderRecompiler::HashBytes({}) == 0u, "empty cache checksum changed");
+    require(ShaderRecompiler::ShaderDiskCache::EntryName(bytes) == "31a156cfac950b79ac0b4579d052a463.bin", "cache entry name changed");
 }
 
 void verifyKeySensitivity() {
@@ -2737,9 +2794,11 @@ int main(int argc, char** argv) {
         setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
+        verifyElementFlags();
         verifyEntryRoundTrip();
         verifyPrebuiltPack(directory / "packs");
         verifyArtifactStorageIsolation();
+        verifyHashBytes();
         verifyKeySensitivity();
         verifyMeshBarycentricRequestSerialization();
         verifyFloatModeSerialization();

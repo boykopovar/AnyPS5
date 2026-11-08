@@ -3,6 +3,7 @@
 #include "Recompiler.hpp"
 #include "Translation/InstructionTranslator.hpp"
 #include "BdaAbi.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -60,12 +61,13 @@ void expectRejected(std::span<const std::uint32_t> code, std::optional<ShaderFlo
 }
 
 void verifyReads() {
-    constexpr std::array<std::uint32_t, 11> code{
+    constexpr std::array<std::uint32_t, 16> code{
         0xb9140001, 0xb9150801, 0xb9161001, 0xb9171801, 0xb9180041,
-        0xb9190841, 0xb91a1041, 0xb91b0081, 0xb91c0881, 0xb91d00c1, 0xbf810000
+        0xb9190841, 0xb91a1041, 0xb91b0081, 0xb91c0881, 0xb91d00c1,
+        0xb91e0901, 0xb91f0981, 0xb9201901, 0xb9213801, 0xb9221881, 0xbf810000
     };
-    constexpr std::array<std::uint32_t, 10> offsets{0, 0, 0, 0, 1, 1, 1, 2, 2, 3};
-    constexpr std::array<std::uint32_t, 10> masks{1, 3, 7, 15, 1, 3, 7, 1, 3, 1};
+    constexpr std::array<std::uint32_t, 15> offsets{0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 6, 4, 0, 2};
+    constexpr std::array<std::uint32_t, 15> masks{1, 3, 7, 15, 1, 3, 7, 1, 3, 1, 3, 3, 15, 255, 15};
     for (const auto waveSize : {32u, 64u}) {
         for (std::uint32_t mode = 0; mode < 256; ++mode) {
             const auto program = translate(code, ShaderFloatMode{mode, true, true, true}, waveSize);
@@ -73,8 +75,11 @@ void verifyReads() {
                 expectRegister(program, 20 + index, (mode >> offsets[index]) & masks[index]);
             }
         }
-        const auto legacy = translate(code, std::nullopt, waveSize);
-        for (std::uint32_t index = 0; index < offsets.size(); ++index) expectRegister(legacy, 20 + index, 0);
+        std::array<std::uint32_t, 11> roundingCode{};
+        std::copy_n(code.begin(), 10, roundingCode.begin());
+        roundingCode[10] = code.back();
+        const auto legacy = translate(roundingCode, std::nullopt, waveSize);
+        for (std::uint32_t index = 0; index < 10; ++index) expectRegister(legacy, 20 + index, 0);
     }
 }
 
@@ -186,9 +191,32 @@ void verifyRoundInstruction() {
 }
 
 void verifyUnsupportedReads() {
-    for (const auto instruction : {0xb9140002u, 0xb9140101u, 0xb91408c1u, 0xb914f801u}) {
+    for (const auto instruction : {0xb9140002u, 0xb9140201u, 0xb91409c1u, 0xb914f801u}) {
         const std::array<std::uint32_t, 2> code{instruction, endProgram};
         expectRejected(code, ShaderFloatMode{0xc0}, "s_getreg_b32");
+    }
+}
+
+void verifyDenormalReadsAfterRoundingWrites() {
+    constexpr std::array<std::uint32_t, 5> offsets{4, 6, 4, 0, 2};
+    constexpr std::array<std::uint32_t, 5> masks{3, 3, 15, 255, 15};
+    for (std::uint32_t mode = 0; mode < 256; ++mode) {
+        const std::array<std::uint32_t, 5> dynamic{0xb9801801, 0xb9140901, 0xb9150981, 0xb9161901, endProgram};
+        const auto unknownRounding = translate(dynamic, ShaderFloatMode{mode});
+        for (std::uint32_t index = 0; index < 3; ++index) {
+            expectRegister(unknownRounding, 20 + index, (mode >> offsets[index]) & masks[index]);
+        }
+        for (std::uint32_t rounding = 0; rounding < 16; ++rounding) {
+            const std::array<std::uint32_t, 8> immediate{0xba801801, rounding, 0xb9140901, 0xb9150981, 0xb9161901, 0xb9173801, 0xb9181881, endProgram};
+            const auto program = translate(immediate, ShaderFloatMode{mode});
+            const std::array<std::uint32_t, 7> instruction{roundMode(rounding), 0xb9140901, 0xb9150981, 0xb9161901, 0xb9173801, 0xb9181881, endProgram};
+            const auto rounded = translate(instruction, ShaderFloatMode{mode});
+            const std::uint32_t expected = (mode & 0xf0u) | rounding;
+            for (std::uint32_t index = 0; index < offsets.size(); ++index) {
+                expectRegister(program, 20 + index, (expected >> offsets[index]) & masks[index]);
+                expectRegister(rounded, 20 + index, (expected >> offsets[index]) & masks[index]);
+            }
+        }
     }
 }
 
@@ -309,13 +337,14 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 16> checks{{
+    constexpr std::array<Check, 17> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"roundInstruction", verifyRoundInstruction}, {"unsupportedReads", verifyUnsupportedReads}, {"branch", verifyBranch},
         {"diamond", verifyDiamond}, {"directed32", verifyRoundingBeforeDirected32Use}, {"restored", verifyRoundingRestoredBeforeUse},
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation},
+        {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
     }};
     int failures = 0;
     for (const auto& check : checks) {
