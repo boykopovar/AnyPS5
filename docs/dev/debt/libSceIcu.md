@@ -2,7 +2,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 71 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
 
 - [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
 
@@ -69,7 +69,6 @@
 | `unorm2_getRawDecomposition` | `B8jGs8D+GHY` |
 | `unorm2_isNormalized` | `7ETpt3V2fEU` |
 | `unorm2_normalize` | `eMM8e4yA3AU` |
-| `ures_close` | `--GQ9Ov+0mM` |
 | `ures_getByKey` | `8WDJjbxNvCg` |
 | `ures_getStringByKey` | `apt8-c9wFxQ` |
 | `ures_open` | `bpD6xUk4QVI` |
@@ -150,6 +149,7 @@
 - [Java modified UTF-8 to UTF-16 conversion](../../../core/libs/prx/libSceIcu/JavaUtf8.cpp) is unverified on a console. `u_strFromJavaModifiedUTF8WithSub` follows ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp) and [utf_impl.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/utf_impl.cpp), including the bytes a malformed sequence swallows and the preflight count of one unit per substituted sequence after the destination fills, even for a supplementary substitution character. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 - [UTF-16 to Java modified UTF-8 conversion](../../../core/libs/prx/libSceIcu/JavaUtf8.cpp) is unverified on a console. `u_strToJavaModifiedUTF8` follows ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp): each code unit is encoded alone (surrogates take three bytes, U+0000 takes two), output stops at the first unit that does not fit, and the result codes follow `u_terminateChars`. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 - [UTF-16 to UTF-32 conversion](../../../core/libs/prx/libSceIcu/Utf32.cpp) is unverified on a console. `u_strToUTF32` and `u_strToUTF32WithSub` follow ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp): only a lead surrogate followed by a trail surrogate is combined, every other surrogate is replaced or fails with `U_INVALID_CHAR_FOUND`, and the result codes follow `u_terminateUChar32s`. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NIDs come from the 3.20 inventory and their presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
+- [Resource bundle disposal](../../../core/libs/prx/libSceIcu/ResourceBundle.cpp) `ures_close` throws through `NotImplemented_nid_no_patch` for every non-null handle, because no `UResourceBundle` producer exists in this module (`ures_open` throws) and the ICU 68.2 layout, entry release and stack-object test in [ures_closeBundle](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uresbund.cpp#L924-L945) are not modelled. A null handle returns without effect, as in [ures_close](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/uresbund.cpp#L948-L951). Unverified on a console; the NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: `ures_open` creates bundles and disposal is compared with the console.
 
 ### Known export names; ABI prototypes unverified
 

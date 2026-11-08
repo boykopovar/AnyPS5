@@ -65,7 +65,6 @@ int APS5_VABI unorm2_getNFKDInstance();
 int APS5_VABI unorm2_getRawDecomposition();
 int APS5_VABI unorm2_isNormalized();
 int APS5_VABI unorm2_normalize();
-int APS5_VABI ures_close();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
