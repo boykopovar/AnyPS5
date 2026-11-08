@@ -51,6 +51,44 @@ static std::uint16_t ReadU16(const unsigned char* at) {
     return static_cast<std::uint16_t>((at[0] << 8) | at[1]);
 }
 
+static std::uint32_t LoopbackInterfaceIndex() {
+    GuestInterfaceAddress* list = nullptr;
+    Require(getifaddrs_nid_postfix(&list) == 0, "getifaddrs lists the interfaces");
+    std::string loopback;
+    for (const GuestInterfaceAddress* item = list; item != nullptr && loopback.empty(); item = item->next) {
+        const auto* address = static_cast<const unsigned char*>(item->address);
+        if (address != nullptr && address[1] == GuestAfInet && address[4] == 127 && address[5] == 0 && address[6] == 0 && address[7] == 1)
+            loopback = item->name;
+    }
+    std::uint32_t index = 0;
+    for (const GuestInterfaceAddress* item = list; item != nullptr && index == 0; item = item->next) {
+        const auto* address = static_cast<const unsigned char*>(item->address);
+        if (address == nullptr || address[1] != GuestAfLink || loopback != item->name) continue;
+        std::uint16_t small = 0;
+        std::memcpy(&small, address + 2, sizeof small);
+        index = small;
+    }
+    freeifaddrs_nid_postfix(list);
+    return index;
+}
+
+static void SetsMulticastInterfaceByIndex() {
+    const int datagram = socket_nid_postfix(2, 2, 0);
+    Require(datagram >= 0, "a socket for IP_MULTICAST_IF");
+    const std::uint32_t index = LoopbackInterfaceIndex();
+    Require(index != 0, "the loopback interface has an index");
+    unsigned char request[12]{};
+    const std::int32_t known = static_cast<std::int32_t>(index);
+    std::memcpy(request + 8, &known, sizeof known);
+    Require(setsockopt_nid_postfix(datagram, IpLevel, IpMulticastInterface, request, sizeof request) == 0,
+        "IP_MULTICAST_IF accepts the loopback interface index");
+    const std::int32_t unknown = 0x7fffffff;
+    std::memcpy(request + 8, &unknown, sizeof unknown);
+    Require(setsockopt_nid_postfix(datagram, IpLevel, IpMulticastInterface, request, sizeof request) == -1
+            && *__error_nid_postfix() == ErrorAddressNotAvailable, "an interface index that is not on the host is refused");
+    close_nid_postfix(datagram);
+}
+
 int main() {
     const int peer = socket_nid_postfix(2, 2, 0);
     const Address peerAddress = Endpoint(127, 0, 0, 1, PeerPort);
