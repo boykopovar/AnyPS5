@@ -1054,6 +1054,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodecCpu>")
     endif()
 
+    add_test_executable(guest_audio_in_status_tests tests/GuestAudioInStatus.cpp)
+    target_include_directories(guest_audio_in_status_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_audio_in_status_tests PRIVATE libSceAudioIn libc)
+    configure_windows_unwind(guest_audio_in_status_tests)
+    add_test(NAME guest_audio_in_status COMMAND guest_audio_in_status_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_in_status PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioIn>")
+    endif()
+
     add_test_executable(guest_usb_storage_dialog_tests tests/GuestUsbStorageDialog.cpp)
     target_include_directories(guest_usb_storage_dialog_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_usb_storage_dialog_tests PRIVATE libSceUsbStorageDialog libSceUserService libc)
