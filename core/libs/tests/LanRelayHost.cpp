@@ -307,6 +307,29 @@ static void MatchesLimitedAndInterfaceBroadcasts() {
     Require(!LanRelay::IsBroadcast(0x0A000005u, {{0x0A000005u, 0xFFFFFFFFu}}), "a host route address is not a broadcast");
 }
 
+static void SendsFrameToEveryPeer() {
+    LanRelay::Relay sender;
+    LanRelay::Relay first;
+    LanRelay::Relay second;
+    sender.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    first.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    second.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    Require(sender.SendToPeers(5000, 47000, {1}) && !first.Receive(100).has_value(), "with no peers nothing is sent");
+    sender.SetPeers({LanRelay::Endpoint{"127.0.0.1", first.Port()}, LanRelay::Endpoint{"127.0.0.1", second.Port()}});
+    Require(sender.Peers().size() == 2, "both peers are kept in order");
+    Require(sender.SendToPeers(5000, 47000, {7, 8}), "a frame is sent to each peer");
+    const auto atFirst = first.Receive(2000);
+    const auto atSecond = second.Receive(2000);
+    Require(atFirst.has_value() && atFirst->Payload == std::vector<std::uint8_t>({7, 8}) && atFirst->SourcePort == 5000
+            && atFirst->DestinationPort == 47000 && atFirst->Instance == sender.Instance(), "the first peer receives the frame");
+    Require(atSecond.has_value() && atSecond->Payload == std::vector<std::uint8_t>({7, 8}) && atSecond->Instance == sender.Instance(),
+        "the second peer receives the frame");
+    Require(!first.Receive(100).has_value(), "each peer receives the frame once");
+    sender.Close();
+    first.Close();
+    second.Close();
+}
+
 static void RoundTripsFrames() {
     LanRelay::Frame frame;
     frame.Instance = 0x01020304;
