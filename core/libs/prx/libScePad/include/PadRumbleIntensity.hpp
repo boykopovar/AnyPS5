@@ -67,6 +67,11 @@ inline bool ParseRumbleOnFocusLoss(const char* text) {
     throw std::runtime_error("ANYPS5_RUMBLE_ON_FOCUS_LOSS must be 0 or 1, got '" + value + "'");
 }
 
+inline bool RumblePausesOnFocusLoss() {
+    static const bool pause = ParseRumbleOnFocusLoss(std::getenv("ANYPS5_RUMBLE_ON_FOCUS_LOSS"));
+    return pause;
+}
+
 inline unsigned RumblePercent() {
     static const unsigned percent = ParseRumblePercent(std::getenv("ANYPS5_RUMBLE"));
     return percent;
