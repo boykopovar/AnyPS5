@@ -1190,6 +1190,21 @@ void CompileTimeTest() {
     collector.Finish(RunReport::Exit::Clean, {}, 0);
 }
 
+void CompileTimeReportTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteCompileTime(4500000);
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(Contains(Read(collector.ReportPath()), "\"compileMs\": 4.500"), "the report lacks the total compile time");
+    Directory second, other;
+    RunReport::Collector off(SettingsFor(second.path, other.path, IdB));
+    Require(off.Start(), "the collector did not start");
+    off.NoteCompileTime(4500000);
+    off.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(!Contains(Read(off.ReportPath()), "compileMs"), "a build that does not collect shaders must not report compile time");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1454,6 +1469,7 @@ int main(int argc, char** argv) {
         Run("frame-ring-wiring", FrameRingWiringTest);
         Run("frame-times-report", FrameTimesReportTest);
         Run("compile-time-total", CompileTimeTest);
+        Run("compile-time-report", CompileTimeReportTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
