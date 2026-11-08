@@ -850,7 +850,7 @@ std::string RenderReport(const Report& report) {
     JsonWriter json;
     json.BeginObject();
     json.String("format", std::string_view("anyps5-report"));
-    json.Int("version", std::int64_t{1});
+    json.Int("version", std::int64_t{2});
     json.String("generated", std::string_view(report.generated));
     json.BeginObject("anyps5");
     json.String("commit", report.build.commit);
