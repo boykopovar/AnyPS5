@@ -341,7 +341,7 @@ int APS5_VABI SSL_get0_verified_chain_nid_postfix();
 int APS5_VABI RSA_set0_crt_params_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* dmp1, LibreSsl3Bignum* dmq1, LibreSsl3Bignum* iqmp);
 int APS5_VABI EVP_PKEY_derive_nid_postfix();
 int APS5_VABI EVP_PKEY_sign_nid_postfix();
-int APS5_VABI X509_get_signature_nid_nid_postfix();
+int APS5_VABI X509_get_signature_nid_nid_postfix(const LibreSsl3X509* certificate);
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix();
 int APS5_VABI X509V3_EXT_conf_nid_nid_postfix();
 int APS5_VABI X509_sign_nid_postfix();
