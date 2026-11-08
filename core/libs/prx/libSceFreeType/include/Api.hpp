@@ -89,7 +89,6 @@ int APS5_VABI FT_Load_Sfnt_Table_nid_postfix(FreeType::GuestFaceRec* face, std::
 int APS5_VABI FT_Outline_Check_nid_postfix(FreeType::GuestOutline* outline);
 void APS5_VABI FT_Outline_Get_CBox_nid_postfix(const FreeType::GuestOutline* outline, FreeType::GuestBBox* box);
 int APS5_VABI FT_Outline_Get_BBox_nid_postfix(FreeType::GuestOutline* outline, FreeType::GuestBBox* boundingBox);
-int APS5_VABI sceFreeTypeOtOutlineGetBBox_nid_no_patch(FreeType::GuestOutline* outline, FreeType::GuestBBox* boundingBox);
 void APS5_VABI FT_Outline_Translate_nid_postfix(const FreeType::GuestOutline* outline, std::int64_t xOffset, std::int64_t yOffset);
 void APS5_VABI FT_Outline_Reverse_nid_postfix(FreeType::GuestOutline* outline);
 int APS5_VABI FT_Request_Size_nid_postfix(FreeType::GuestFaceRec* face, const FreeType::GuestSizeRequestRec* request);

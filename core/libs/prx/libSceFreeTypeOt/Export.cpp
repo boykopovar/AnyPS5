@@ -228,11 +228,6 @@ int APS5_VABI sceFreeTypeOtOutlineEmboldenXY_nid_no_patch() {
 }
 APS5_EXPORT("BgUMBGvhATU", sceFreeTypeOtOutlineEmboldenXY_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtOutlineGetBBox_nid_no_patch(FreeType::GuestOutline* outline, FreeType::GuestBBox* boundingBox) {
-    return FT_Outline_Get_BBox_nid_postfix(outline, boundingBox);
-}
-APS5_EXPORT("0Aal-TIC4so", sceFreeTypeOtOutlineGetBBox_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
