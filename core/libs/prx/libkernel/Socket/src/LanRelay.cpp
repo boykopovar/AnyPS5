@@ -237,6 +237,7 @@ void Relay::Close() {
     CloseNative(static_cast<SocketHandle>(handle));
     handle = NoSocket;
     port = 0;
+    instance = 0;
 }
 
 bool Relay::IsOpen() const {
