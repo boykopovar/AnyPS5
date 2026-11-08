@@ -315,10 +315,6 @@ int APS5_VABI uidna_nameToUnicode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uidna_openUTS46_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uldn_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
