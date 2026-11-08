@@ -1,4 +1,4 @@
-add_library(libSceFios2 SHARED EXCLUDE_FROM_ALL Export.cpp src/Runtime.cpp src/Control.cpp src/PathQueries.cpp src/PathOperations.cpp src/FileHandles.cpp src/DirectoryHandles.cpp src/Time.cpp)
+add_library(libSceFios2 SHARED EXCLUDE_FROM_ALL Export.cpp src/Runtime.cpp src/Control.cpp src/PathQueries.cpp src/PathOperations.cpp src/FileHandles.cpp src/DirectoryHandles.cpp src/Time.cpp src/Diagnostics.cpp)
 target_include_directories(libSceFios2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceFios2)
 
