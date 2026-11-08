@@ -103,6 +103,7 @@ std::unique_ptr<Session> StartFromValue(const char* value, Factory& factory, std
 Factory& SystemFactory();
 
 bool ParseMaxBytes(const char* text, std::uint64_t& value, std::string& error);
+bool ParseKeep(const char* text, unsigned& value, std::string& error);
 
 bool Active();
 void Flush();
