@@ -57,6 +57,26 @@ std::string HostNotifyBase64(std::string_view bytes) {
     return out;
 }
 
+HostNotifyArgv WindowsNotifyArgv(std::string_view title, std::string_view text) {
+    const std::string script =
+        "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
+        "$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + HostNotifyBase64(title) + "'));"
+        "$x=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + HostNotifyBase64(text) + "'));"
+        "$n=New-Object System.Windows.Forms.NotifyIcon;"
+        "$n.Icon=[System.Drawing.SystemIcons]::Information;"
+        "$n.Visible=$true;"
+        "$n.ShowBalloonTip(5000,$t,$x,[System.Windows.Forms.ToolTipIcon]::Info);"
+        "Start-Sleep -Seconds 6;"
+        "$n.Dispose()";
+    std::string utf16;
+    utf16.reserve(script.size() * 2);
+    for (const char character : script) {
+        utf16 += character;
+        utf16 += '\0';
+    }
+    return {"powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", HostNotifyBase64(utf16)};
+}
+
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;
     HostNotifyLog("ANYPS5_HOST_NOTIFY must be 0 or 1, not '" + std::string(text) + "'; host notifications stay off");

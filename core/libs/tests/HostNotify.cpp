@@ -81,7 +81,44 @@ void Base64MatchesRfc4648Vectors() {
     Require(HostNotifyBase64("\xff\xfe") == "//4=", "high bytes");
 }
 
+std::string Base64Decode(const std::string& text) {
+    const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    unsigned buffer = 0;
+    int bits = 0;
+    for (const char character : text) {
+        if (character == '=') break;
+        buffer = (buffer << 6) | static_cast<unsigned>(alphabet.find(character));
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += static_cast<char>((buffer >> bits) & 0xff);
+        }
+    }
+    return out;
+}
+
+void WindowsArgvCarriesTextOnlyAsBase64() {
+    const std::string text = "a \"quoted\" $(calc) '; Remove-Item *";
+    const auto argv = WindowsNotifyArgv("AnyPS5", text);
+    Require(argv.size() == 7 && argv[0] == "powershell.exe", "the Windows argv does not start with powershell.exe");
+    Require(argv[5] == "-EncodedCommand", "the Windows argv does not pass an encoded command");
+    for (const auto& argument : argv) {
+        Require(argument.find("quoted") == std::string::npos && argument.find("calc") == std::string::npos, "user text appears in a PowerShell argument");
+    }
+    for (const char character : argv[6]) {
+        Require(std::string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=").find(character) != std::string::npos, "the encoded command is not base64");
+    }
+    std::string script;
+    for (const char character : Base64Decode(argv[6])) {
+        if (character != '\0') script += character;
+    }
+    Require(script.find("ShowBalloonTip") != std::string::npos, "the script does not show a balloon tip");
+    Require(script.find(HostNotifyBase64(text)) != std::string::npos, "the text is not carried as base64 in the script");
+}
+
 int main() {
+    WindowsArgvCarriesTextOnlyAsBase64();
     Base64MatchesRfc4648Vectors();
     SinkReceivesTitleAndTextAsGiven();
     LinuxArgvIsOneArgumentPerPart();

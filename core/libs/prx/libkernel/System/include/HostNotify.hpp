@@ -23,5 +23,6 @@ HostNotifyMode HostNotifyModeFromEnvironment(const char* text);
 HostNotifyArgv LinuxNotifyArgv(std::string_view title, std::string_view text);
 HostNotifyArgv MacNotifyArgv(std::string_view title, std::string_view text);
 std::string HostNotifyBase64(std::string_view bytes);
+HostNotifyArgv WindowsNotifyArgv(std::string_view title, std::string_view text);
 
 #endif
