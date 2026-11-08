@@ -281,7 +281,6 @@ def chain_trie(depth):
 
 
 def check_freetype_library_version(patcher, directory):
-    # FT_Library_Version hashes to 5qqbXOGlHw4, the same guest name as the cut alias.
     assert nid("FT_Library_Version") == "5qqbXOGlHw4"
     leaked = [
         ("_FT_Library_Version", 0, 0x100),
