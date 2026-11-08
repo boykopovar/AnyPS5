@@ -1162,6 +1162,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelocTableBoundsTests.cpp
         )
         add_test(NAME reloc_table_bounds COMMAND reloc_table_bounds_tests $<TARGET_FILE:relinker>)
+
+        add_test_executable(guest_relinker_hash_bucket_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestRelinkerHashBucket.cpp
+        )
+        add_test(NAME guest_relinker_hash_bucket COMMAND guest_relinker_hash_bucket_tests $<TARGET_FILE:relinker>)
     endif()
 endif()
 
