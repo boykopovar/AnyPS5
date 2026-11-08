@@ -69,7 +69,6 @@ int APS5_VABI udtitvfmt_close_nid_postfix();
 int APS5_VABI udtitvfmt_closeResult_nid_postfix();
 int APS5_VABI udtitvfmt_formatCalendarToResult_nid_postfix();
 int APS5_VABI udtitvfmt_formatToResult_nid_postfix();
-int APS5_VABI udtitvfmt_open_nid_postfix();
 int APS5_VABI udtitvfmt_openResult_nid_postfix();
 int APS5_VABI udtitvfmt_resultAsValue_nid_postfix();
 int APS5_VABI ufieldpositer_close_nid_postfix();
