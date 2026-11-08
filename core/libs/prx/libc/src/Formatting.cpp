@@ -660,6 +660,8 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 }
 
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
     if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
         std::va_list args;
@@ -1013,6 +1015,8 @@ int APS5_VABI puts_nid_postfix(const char* s) {
 extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
+    std::string quadHead;
+    format = CutAtQuadScanDirective(format, quadHead);
 #ifndef _WIN32
     if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
         LibcDetail::FormatArguments arguments(args);
