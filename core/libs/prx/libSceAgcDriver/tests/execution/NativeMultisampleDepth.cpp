@@ -3430,7 +3430,7 @@ void CheckUniformPlanePublication(Context context, std::uint32_t samples, Unifor
 }
 
 void CheckSmallerExtent(Context context, std::uint32_t samples) {
-    constexpr VkExtent2D extent{200u, 130u}, smaller{193u, 129u};
+    constexpr VkExtent2D extent{104u, 67u}, smaller{97u, 66u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
     const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
     Require(depthBytes == MultisampledDepthBytes_nid_no_patch(smaller, 4u, samples) && stencilBytes == MultisampledDepthBytes_nid_no_patch(smaller, 1u, samples), "the smaller-extent fixture must keep the plane footprints");
