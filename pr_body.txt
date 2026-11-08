@@ -1,0 +1,21 @@
+## What
+- Authors standalone guest unit test `guest_kernel_setrlimit_perm` in [`GuestKernelSetrlimitPerm.cpp`](file:///D:/GEMINI%20AGY/workers/worker_5/core/libs/tests/GuestKernelSetrlimitPerm.cpp) to audit `setrlimit` permission boundaries and maximum limit validation (returning EPERM/EINVAL/EFAULT) and invalid resource types.
+- Registers test executable and test target in [`CMakeLists.txt`](file:///D:/GEMINI%20AGY/workers/worker_5/core/libs/prx/libkernel/CMakeLists.txt).
+
+## Tested
+- Executed conventions checks via `python tools/check_conventions.py --base origin/main`.
+
+## Depends on
+- None
+
+## Fixes
+- None
+
+## Unblocks
+- libkernel resource limit validation testing and compliance auditing.
+
+## GPUs tested
+- n/a
+
+## AI-assisted
+- yes
