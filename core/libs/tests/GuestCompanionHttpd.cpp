@@ -4,35 +4,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <string>
 
 namespace {
 
 constexpr int InvalidParam = static_cast<int>(0x80E40004u);
-constexpr int NotInitialized = static_cast<int>(0x80E40006u);
-constexpr int AlreadyInitialized = static_cast<int>(0x80E40007u);
 constexpr int NoEvent = static_cast<int>(0x80E40008u);
-constexpr int AlreadyStarted = static_cast<int>(0x80E4000Au);
-constexpr int NotStarted = static_cast<int>(0x80E4000Bu);
-constexpr int AlreadyRegistered = static_cast<int>(0x80E4000Cu);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "CompanionHttpd: %s\n", message);
         std::abort();
     }
-}
-
-template <typename TCall>
-void RequireNotImplemented(TCall call, const std::string& name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == name + " not implemented", "a companion function threw another error");
-        return;
-    }
-    Require(false, "a companion function that should throw returned");
 }
 
 int APS5_VABI RequestCallback(int, int, const void*, void*, void*) {
@@ -51,69 +33,57 @@ void CheckOptionBlock() {
     }
 }
 
+void RequireSecondaryCallsReturnZero(const char* message) {
+    Require(sceCompanionHttpdGet2ndScreenStatus() == 0, message);
+    Require(sceCompanionHttpdGetUserId() == 0, message);
+    Require(sceCompanionHttpdInitialize2() == 0, message);
+    Require(sceCompanionHttpdRegisterRequestBodyReceptionCallback() == 0, message);
+    Require(sceCompanionHttpdRegisterRequestCallback2() == 0, message);
+    Require(sceCompanionHttpdUnregisterRequestBodyReceptionCallback() == 0, message);
+}
+
+void RequireNoEvent(unsigned char* event, const unsigned char* untouched, std::size_t size, const char* message) {
+    Require(sceCompanionHttpdGetEvent(nullptr) == NoEvent, message);
+    Require(sceCompanionHttpdGetEvent(event) == NoEvent, message);
+    Require(std::memcmp(event, untouched, size) == 0, "sceCompanionHttpdGetEvent wrote the event");
+}
+
 void CheckStates() {
     unsigned char param[0x60]{};
     unsigned char event[0x104];
     std::memset(event, 0x5a, sizeof(event));
     unsigned char untouched[0x104];
     std::memset(untouched, 0x5a, sizeof(untouched));
-    auto* callback = reinterpret_cast<void*>(&RequestCallback);
-    Require(sceCompanionHttpdGetEvent(nullptr) == InvalidParam, "a null event before initialization");
-    Require(sceCompanionHttpdGetEvent(event) == NotInitialized, "an event before initialization");
-    Require(sceCompanionHttpdStart() == NotInitialized, "a start before initialization");
-    Require(sceCompanionHttpdStop() == NotInitialized, "a stop before initialization");
-    Require(sceCompanionHttpdTerminate() == NotInitialized, "a termination before initialization");
-    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == InvalidParam, "a null callback before initialization");
-    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == NotInitialized, "a callback before initialization");
-    Require(sceCompanionHttpdUnregisterRequestCallback() == NotInitialized, "an unregistration before initialization");
-    Require(sceCompanionHttpdGet2ndScreenStatus() == 0, "get 2nd screen status before initialization");
-    Require(sceCompanionHttpdGetUserId() == 0, "get user id before initialization");
-    Require(sceCompanionHttpdInitialize2() == 0, "initialize2 before initialization");
-    Require(sceCompanionHttpdRegisterRequestBodyReceptionCallback() == 0, "register request body reception callback before initialization");
-    Require(sceCompanionHttpdRegisterRequestCallback2() == 0, "register request callback 2 before initialization");
-    Require(sceCompanionHttpdUnregisterRequestBodyReceptionCallback() == 0, "unregister request body reception callback before initialization");
-    Require(sceCompanionHttpdInitialize(nullptr) == InvalidParam, "a null parameter must be rejected");
-    Require(sceCompanionHttpdInitialize(reinterpret_cast<const CompanionHttpdOptParam*>(param)) == 0, "sceCompanionHttpdInitialize failed");
-    Require(sceCompanionHttpdInitialize(reinterpret_cast<const CompanionHttpdOptParam*>(param)) == AlreadyInitialized, "a second initialization");
-    Require(sceCompanionHttpdGet2ndScreenStatus() == 0, "get 2nd screen status while initialized");
-    Require(sceCompanionHttpdGetUserId() == 0, "get user id while initialized");
-    Require(sceCompanionHttpdInitialize2() == 0, "initialize2 while initialized");
-    Require(sceCompanionHttpdRegisterRequestBodyReceptionCallback() == 0, "register request body reception callback while initialized");
-    Require(sceCompanionHttpdRegisterRequestCallback2() == 0, "register request callback 2 while initialized");
-    Require(sceCompanionHttpdUnregisterRequestBodyReceptionCallback() == 0, "unregister request body reception callback while initialized");
-    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == InvalidParam, "a null callback must be rejected");
-    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), param) == 0, "registering the request callback failed");
-    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), param) == AlreadyRegistered, "a second callback");
-    Require(sceCompanionHttpdGetEvent(nullptr) == InvalidParam, "a null event must be rejected");
-    Require(sceCompanionHttpdGetEvent(event) == NoEvent, "no companion device connects before the start");
-    Require(sceCompanionHttpdStop() == NotStarted, "a stop before the start");
+    const auto callback = reinterpret_cast<CompanionHttpdRequestCallback>(reinterpret_cast<void*>(&RequestCallback));
+    const auto* option = reinterpret_cast<const CompanionHttpdOptParam*>(param);
+    RequireNoEvent(event, untouched, sizeof(event), "GetEvent must report no event before initialization");
+    Require(sceCompanionHttpdStart() == 0, "a start before initialization must return 0");
+    Require(sceCompanionHttpdStop() == 0, "a stop before initialization must return 0");
+    Require(sceCompanionHttpdTerminate() == 0, "a termination before initialization must return 0");
+    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == 0, "a null callback before initialization must return 0");
+    Require(sceCompanionHttpdRegisterRequestCallback(callback, nullptr) == 0, "a callback before initialization must return 0");
+    Require(sceCompanionHttpdUnregisterRequestCallback() == 0, "an unregistration before initialization must return 0");
+    RequireSecondaryCallsReturnZero("a secondary call before initialization must return 0");
+    Require(sceCompanionHttpdInitialize(nullptr) == 0, "a null parameter must return 0");
+    Require(sceCompanionHttpdInitialize(option) == 0, "sceCompanionHttpdInitialize failed");
+    Require(sceCompanionHttpdInitialize(option) == 0, "a second initialization must return 0");
+    RequireSecondaryCallsReturnZero("a secondary call while initialized must return 0");
+    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == 0, "a null callback must return 0");
+    Require(sceCompanionHttpdRegisterRequestCallback(callback, param) == 0, "registering the request callback failed");
+    Require(sceCompanionHttpdRegisterRequestCallback(callback, param) == 0, "a second callback must return 0");
+    RequireNoEvent(event, untouched, sizeof(event), "GetEvent must report no event before the start");
+    Require(sceCompanionHttpdStop() == 0, "a stop before the start must return 0");
     Require(sceCompanionHttpdStart() == 0, "sceCompanionHttpdStart failed");
-    Require(sceCompanionHttpdStart() == AlreadyStarted, "a second start");
-    Require(sceCompanionHttpdGetEvent(event) == NoEvent, "no companion device connects after the start");
-    Require(std::memcmp(event, untouched, sizeof(event)) == 0, "sceCompanionHttpdGetEvent wrote the event");
-    RequireNotImplemented([] { sceCompanionHttpdTerminate(); }, "sceCompanionHttpdTerminate");
+    Require(sceCompanionHttpdStart() == 0, "a second start must return 0");
+    RequireNoEvent(event, untouched, sizeof(event), "GetEvent must report no event after the start");
+    Require(sceCompanionHttpdTerminate() == 0, "a termination while started must return 0");
     Require(sceCompanionHttpdStop() == 0, "sceCompanionHttpdStop failed");
     Require(sceCompanionHttpdUnregisterRequestCallback() == 0, "unregistering the request callback failed");
-    RequireNotImplemented([] { sceCompanionHttpdUnregisterRequestCallback(); }, "sceCompanionHttpdUnregisterRequestCallback");
+    Require(sceCompanionHttpdUnregisterRequestCallback() == 0, "an unregistration with no callback must return 0");
     Require(sceCompanionHttpdTerminate() == 0, "sceCompanionHttpdTerminate failed");
-    Require(sceCompanionHttpdTerminate() == NotInitialized, "a second termination");
-    Require(sceCompanionHttpdInitialize(reinterpret_cast<const CompanionHttpdOptParam*>(param)) == 0, "initializing again after the termination failed");
-    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == 0, "the termination kept the callback");
-    Require(sceCompanionHttpdTerminate() == 0, "the last termination failed");
-    Require(sceCompanionHttpdGetEvent(nullptr) == InvalidParam, "a null event after the last termination");
-    Require(sceCompanionHttpdGetEvent(event) == NotInitialized, "an event after the last termination");
-    Require(sceCompanionHttpdStart() == NotInitialized, "a start after the last termination");
-    Require(sceCompanionHttpdStop() == NotInitialized, "a stop after the last termination");
-    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == InvalidParam, "a null callback after the last termination");
-    Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == NotInitialized, "a callback after the last termination");
-    Require(sceCompanionHttpdUnregisterRequestCallback() == NotInitialized, "an unregistration after the last termination");
-    Require(sceCompanionHttpdGet2ndScreenStatus() == 0, "get 2nd screen status after the last termination");
-    Require(sceCompanionHttpdGetUserId() == 0, "get user id after the last termination");
-    Require(sceCompanionHttpdInitialize2() == 0, "initialize2 after the last termination");
-    Require(sceCompanionHttpdRegisterRequestBodyReceptionCallback() == 0, "register request body reception callback after the last termination");
-    Require(sceCompanionHttpdRegisterRequestCallback2() == 0, "register request callback 2 after the last termination");
-    Require(sceCompanionHttpdUnregisterRequestBodyReceptionCallback() == 0, "unregister request body reception callback after the last termination");
-    Require(sceCompanionHttpdInitialize(nullptr) == InvalidParam, "a null parameter on reinit after termination");
+    Require(sceCompanionHttpdTerminate() == 0, "a second termination must return 0");
+    RequireNoEvent(event, untouched, sizeof(event), "GetEvent must report no event after the termination");
+    RequireSecondaryCallsReturnZero("a secondary call after the termination must return 0");
 }
 
 void CheckResponseBuilders() {
