@@ -103,6 +103,25 @@ std::uint32_t ReadU32(const std::vector<std::uint8_t>& in, std::size_t offset) {
     return (static_cast<std::uint32_t>(ReadU16(in, offset)) << 16) | ReadU16(in, offset + 2);
 }
 
+std::uint32_t ProcessId() {
+#ifdef _WIN32
+    return static_cast<std::uint32_t>(GetCurrentProcessId());
+#else
+    return static_cast<std::uint32_t>(getpid());
+#endif
+}
+
+std::uint32_t NewInstanceId() {
+    std::random_device entropy;
+    std::uint64_t seed = (static_cast<std::uint64_t>(entropy()) << 32) | entropy();
+    seed ^= static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    seed ^= static_cast<std::uint64_t>(ProcessId()) << 32;
+    seed = (seed ^ (seed >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    seed = (seed ^ (seed >> 27)) * 0x94d049bb133111ebULL;
+    seed ^= seed >> 31;
+    return static_cast<std::uint32_t>(seed);
+}
+
 }
 
 Endpoint ParseEndpoint(const std::string& text) {
