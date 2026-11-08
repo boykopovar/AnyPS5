@@ -358,7 +358,7 @@ void PadInput::reloadInputMapping() {
     Pad::InputConfiguration configuration;
     std::string error;
     if (!Pad::TryLoadInputMapping(appTitleId(), configuration, error)) {
-        APS5_LOG_ERR("Pad: input mapping reload failed, keeping the previous mapping: %s", error.c_str());
+        APS5_LOG_ERR("Pad: input mapping reload rejected, the previous mapping stays active: %s", error.c_str());
         return;
     }
     mappings.Publish(std::move(configuration));
