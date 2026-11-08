@@ -118,7 +118,7 @@ std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* reg
 extern "C" {
 
 int APS5_VABI sceGnmIsDebugResetAvailable() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload) {
@@ -382,7 +382,6 @@ int APS5_VABI sceGnmDriverInternalRetrieveGnmInterfaceForValidation(void) {
 }
 
 int APS5_VABI sceGnmDriverInternalVirtualQuery(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -404,7 +403,6 @@ int APS5_VABI sceGnmFindResourcesPublic(void) {
 }
 
 int APS5_VABI sceGnmGetCoredumpAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -537,17 +535,14 @@ int APS5_VABI sceGnmMapComputeQueueWithPriority(void) {
 }
 
 int APS5_VABI sceGnmPaDisableFlipCallbacks(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmPaEnableFlipCallbacks(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceGnmPaHeartbeat(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -556,7 +551,6 @@ int APS5_VABI sceGnmQueryResourceRegistrationUserMemoryRequirements(void) {
 }
 
 int APS5_VABI sceGnmRaiseUserExceptionEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -835,7 +829,6 @@ int APS5_VABI sceGnmValidateGetDiagnostics(void) {
 }
 
 int APS5_VABI sceGnmValidateGetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -856,67 +849,63 @@ int APS5_VABI sceGnmValidationRegisterMemoryCheckCallback(void) {
 extern "C" {
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown__plus_RaJBCVJZVM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("+RaJBCVJZVM", libSceGnmDriverForNeoModeUnknown__plus_RaJBCVJZVM_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("-bNK8kTFf6s", libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_1TRGZJsC5Y4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("1TRGZJsC5Y4", libSceGnmDriverForNeoModeUnknown_1TRGZJsC5Y4_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("2T1zOhnddFQ", libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_5R1E24FRI4w_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("5R1E24FRI4w", libSceGnmDriverForNeoModeUnknown_5R1E24FRI4w_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_6a3_plus_Twrkogk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("6a3+Twrkogk", libSceGnmDriverForNeoModeUnknown_6a3_plus_Twrkogk_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("7LTGukH+M1A", libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch);
 
-int APS5_VABI libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch() {}
 APS5_EXPORT("8+itHHi1ea0", libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_HEOIaxbuVTA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("HEOIaxbuVTA", libSceGnmDriverForNeoModeUnknown_HEOIaxbuVTA_nid_no_patch);
 
-int APS5_VABI libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch() {}
 APS5_EXPORT("KKsYtugjKLw", libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_MLr_plus_Fyrxf_plus_8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("MLr+Fyrxf+8", libSceGnmDriverForNeoModeUnknown_MLr_plus_Fyrxf_plus_8_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_QP7vDGU0xDQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("QP7vDGU0xDQ", libSceGnmDriverForNeoModeUnknown_QP7vDGU0xDQ_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("QWuQed5Mus4", libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch);
 
@@ -926,17 +915,17 @@ int APS5_VABI libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch() {
 APS5_EXPORT("R3TYO7Tdv5o", libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_UGePHM7rmgA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 APS5_EXPORT("UGePHM7rmgA", libSceGnmDriverForNeoModeUnknown_UGePHM7rmgA_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_epUMKkeaze8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("epUMKkeaze8", libSceGnmDriverForNeoModeUnknown_epUMKkeaze8_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("gQNwGezNDgE", libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch);
 
@@ -951,7 +940,7 @@ int APS5_VABI libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch() {
 APS5_EXPORT("ut57TBmRQN0", libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch);
 
 int APS5_VABI libSceGnmDriverForNeoModeUnknown_v7QcBXR48L8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+    return Failure;
 }
 APS5_EXPORT("v7QcBXR48L8", libSceGnmDriverForNeoModeUnknown_v7QcBXR48L8_nid_no_patch);
 

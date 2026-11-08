@@ -62,6 +62,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             stalled["open"].set()
             time.sleep(2)
         full = path.startswith(("/ignore/", "/full/", "/full-chunk/", "/full-close/"))
+        if not full and start >= len(content):
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{len(content)}")
+            self.send_header("Content-Length", "13")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"unsatisfiable")
+            return
         if full:
             start, end = 0, len(content) - 1
             self.send_response(200)
