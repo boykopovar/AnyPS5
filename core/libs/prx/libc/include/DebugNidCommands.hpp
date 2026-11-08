@@ -1,7 +1,11 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_DEBUGNIDCOMMANDS_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_DEBUGNIDCOMMANDS_HPP
 
+#include "prx/libc/include/DebugNidBreakpoints.hpp"
+#include "prx/libc/include/DebugNidStops.hpp"
+
 #include <cstdint>
+#include <cstdio>
 #include <string_view>
 
 namespace Debug {
@@ -24,6 +28,8 @@ struct Command {
 };
 
 Command ParseCommand(std::string_view line);
+
+void RunCommandSession(std::FILE* input, std::FILE* output, NidBreakpointTable& table, NidStopRegistry& registry, const NidStopRegistry::Stop& stop);
 
 }
 
