@@ -29,6 +29,7 @@ RULES = {
     "alignment": ("error", "CONTRIBUTING.md#code", "MinGW GCC rejects static objects aligned above 8192 bytes; align a larger block at run time inside a bigger buffer"),
     "notes-file": ("error", "CONTRIBUTING.md#branches-and-pull-requests", "Notes, investigation and agent files go in the pull request, not in the repository; only the root AGENTS.md is allowed"),
     "binary": ("error", "docs/dev/CONVENTIONS.md", "Only UTF-8 text files in the repository; images go in the gist comments"),
+    "line-ending": ("error", "docs/dev/CONVENTIONS.md", "Text files use LF line endings; this file adds lines ending in CRLF"),
     "ci-gate": ("error", "CONTRIBUTING.md#build-and-test", "A job that runs for pull requests needs a file filter: paths on the pull_request trigger, or needs eligibility and an if on its outputs"),
     "doc-link": ("error", "CONTRIBUTING.md#documentation", "Relative link to a file that does not exist"),
     "commit-subject": ("error", "docs/dev/CONVENTIONS.md", "Commit subject is not Conventional Commits"),
@@ -319,6 +320,10 @@ class Check:
                 self.report("binary", path, 0)
             if self.status.get(path) in ("A", "R") and allowed_notes(path) is False:
                 self.report("notes-file", path, 0)
+        for path, lines in self.files(lambda p: p.suffix.lower() not in IMAGES):
+            number = next((number for number, text in lines if text.endswith("\r")), None)
+            if number is not None:
+                self.report("line-ending", path, number)
 
     def docs(self):
         files = dict(self.files(lambda p: p.suffix == ".md"))
