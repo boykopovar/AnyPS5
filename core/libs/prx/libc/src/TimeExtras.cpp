@@ -84,4 +84,31 @@ Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target) {
     return {seconds, nanos};
 }
 
+std::int64_t APS5_VABI _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(const Xtime* target, const Xtime* now) {
+    constexpr std::uint64_t billion = nanosPerSecond;
+    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(target->nsec);
+    if (static_cast<std::int64_t>(nanos) < 0) {
+        const std::uint64_t lowest = 0 - billion;
+        const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
+        seconds -= whole + 1;
+        nanos += (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) >= nanosPerSecond) {
+        const std::uint64_t whole = ((nanos >= 2 * billion - 1 ? nanos - (2 * billion - 1) : 0) + billion - 1) / billion;
+        seconds += whole + 1;
+        nanos -= (whole + 1) * billion;
+    }
+    if (static_cast<std::int64_t>(nanos) < now->nsec) {
+        seconds += ~static_cast<std::uint64_t>(now->sec);
+        nanos += billion;
+    } else {
+        seconds -= static_cast<std::uint64_t>(now->sec);
+    }
+    nanos -= static_cast<std::uint64_t>(now->nsec);
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && static_cast<std::int64_t>(nanos) <= 0)) return 0;
+    const std::int64_t millis = static_cast<std::int64_t>(nanos + 999999) / 1000000;
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(millis) + seconds * 1000);
+}
+
 }

@@ -13,7 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <immintrin.h>
+#include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
 #include <tuple>
 #include <vector>
@@ -366,7 +366,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         ++polls;
         if (spinning) {
-            _mm_pause();
+            PreciseSpinPause();
             if ((polls & 63u) != 0) continue;
             if (std::chrono::steady_clock::now() - spinStart > spinLimit) spinning = false;
         } else if (pauseSpin || polls >= 4000) {
