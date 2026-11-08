@@ -1,0 +1,21 @@
+## What
+- Authors standalone guest unit test `guest_kernel_priority_range` in [`GuestKernelPriorityRange.cpp`](file:///D:/GEMINI%20AGY/workers/worker_5/core/libs/tests/GuestKernelPriorityRange.cpp) to audit `getpriority` and `setpriority` boundary values (-20 to 19 clamping), invalid which values, and unprivileged renicing limits.
+- Registers test executable and test target in [`CMakeLists.txt`](file:///D:/GEMINI%20AGY/workers/worker_5/core/libs/prx/libkernel/CMakeLists.txt).
+
+## Tested
+- Executed conventions checks via `python tools/check_conventions.py --base origin/main`.
+
+## Depends on
+- None
+
+## Fixes
+- None
+
+## Unblocks
+- libkernel priority range and process parameter validation testing.
+
+## GPUs tested
+- n/a
+
+## AI-assisted
+- yes
