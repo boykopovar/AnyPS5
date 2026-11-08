@@ -1065,7 +1065,7 @@ def render(summary, records, missing, stops, missing_hosts=(), located=None):
         lines.extend(f"  {label(record)} -> {nid_names.compute_nid(record['nid'])}" for record in mismatched)
     unsearched = sum(1 for record in records if record["unsearched_providers"])
     if unsearched:
-        lines.extend(["", f"Absent imports that only libraries the title does not load export ({unsearched}): Windows searches an import without a library "
+        lines.extend(["", f"Absent imports that only libraries the loader does not search export ({unsearched}): Windows searches an import without a library "
                       "only in the title's modules, its needed libraries, the kernel family when it needs a kernel library, and libc.prx when it needs "
                       "a kernel library or libSceLibcInternal.prx"])
         lines.extend(f"  {library}: {count} imports" for library, count in summary["unsearched_providers"].items())

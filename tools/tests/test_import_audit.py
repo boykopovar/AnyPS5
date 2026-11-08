@@ -536,6 +536,20 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual((classes["SSSSSSSSSSS"], classes["WWWWWWWWWWW"], classes["CCCCCCCCCCC"]), expected)
                 self.assertEqual(code, 0 if expected[0] == "implemented" else 1)
 
+    def test_unscoped_windows_name_fallback_skips_unsearched_literal_exports(self):
+        work = self.work
+        name, nid = "strlen", nid_names.compute_nid("strlen")
+        (work.libs / "libc.prx").write_bytes(build_pe([nid]))
+        (work.libs / "libkernel_web.prx").write_bytes(build_pe(["WWWWWWWWWWW"]))
+        (work.libs / "libSceOther.prx").write_bytes(build_pe([name]))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        write_registry(registry, [(name, "")])
+        registry.with_name("game.needed.json").write_text(json.dumps(["libkernel_web.sprx"]))
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        record = json.loads(result.read_text())["imports"][0]
+        self.assertEqual((record["class"], record["providers"], record["unsearched_providers"], record["symbol_mismatch"]), ("implemented", ["libc.prx"], [], False))
+
     def test_named_nid_fallback_preserves_stub_and_library_classification(self):
         nid = nid_names.compute_nid(MESSAGE_NAME)
         imports = [(MESSAGE_NAME, "libSceOther.prx", False)]
