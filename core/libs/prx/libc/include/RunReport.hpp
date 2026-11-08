@@ -255,6 +255,7 @@ std::string GenerateRunId();
 std::string FormatUtc(std::chrono::system_clock::time_point time);
 std::string Serialize(const Report& report);
 std::string Serialize(const Report& report, const HostIdentifiers& host);
+std::string SerializeRecipe(const Recipe& recipe, const HostIdentifiers& host);
 std::optional<std::string> SafeText(std::string_view text, const HostIdentifiers& host);
 std::string RedactedValue(std::string_view text, const HostIdentifiers& host);
 HostIdentifiers CurrentHostIdentifiers();

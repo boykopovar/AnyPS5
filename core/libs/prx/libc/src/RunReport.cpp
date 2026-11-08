@@ -989,6 +989,33 @@ std::string RenderReport(const Report& report) {
 
 }
 
+std::string SerializeRecipe(const Recipe& recipe, const HostIdentifiers& host) {
+    JsonWriter json;
+    json.BeginObject();
+    json.String("format", std::string_view("anyps5-recipe"));
+    json.Int("version", std::int64_t{1});
+    json.String("generated", std::string_view(recipe.generated));
+    json.BeginObject("run");
+    json.String("id", std::string_view(recipe.runId));
+    json.EndObject();
+    json.BeginObject("anyps5");
+    json.String("commit", recipe.build.commit ? std::optional<std::string>(RedactedValue(*recipe.build.commit, host)) : std::nullopt);
+    json.EndObject();
+    json.BeginArray("argv");
+    for (const auto& argument : recipe.arguments) json.String(nullptr, std::string_view(RedactedValue(argument, host)));
+    json.EndArray();
+    json.BeginObject("environment");
+    for (const auto& [name, value] : recipe.environment) {
+        if (RecipeVariableAllowed(name)) json.String(name.c_str(), std::string_view(RedactedValue(value, host)));
+    }
+    json.EndObject();
+    json.BeginArray("configFiles");
+    for (const auto& name : recipe.configFiles) json.String(nullptr, std::string_view(RedactedValue(name, host)));
+    json.EndArray();
+    json.EndObject();
+    return json.Take();
+}
+
 std::string Serialize(const Report& original, const HostIdentifiers& host) {
     Report report = Sanitized(original, host);
     NormalizeObservations(report.observed, host);
