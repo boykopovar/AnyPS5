@@ -202,6 +202,23 @@ int main(int argc, char** argv) {
         Require(add && add(30, 12) == 42);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
     }
+    {
+        const char* path = "/system/common/lib/anyps5-system-module-for-test.sprx";
+        KernelLoadModuleOpt loadOpt{};
+        int started = -1;
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 1, nullptr, &started) == static_cast<int>(0x80020016u) && started == -1);
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 0, &loadOpt, &started) == static_cast<int>(0x80020016u) && started == -1);
+        const int system = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, &started);
+        Require(system > 0 && started == 0);
+        KernelUnloadModuleOpt unloadOpt{};
+        int stopped = -1;
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 1, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, &unloadOpt, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        Require(sceKernelStopUnloadModule(0, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
+        Require(add && add(30, 12) == 42);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
+    }
     Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-missing-system-module.sprx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
     Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-system-module-for-test.prx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
     std::filesystem::copy_file(argv[1], "anyps5-escape-module-for-test.prx", std::filesystem::copy_options::overwrite_existing);
