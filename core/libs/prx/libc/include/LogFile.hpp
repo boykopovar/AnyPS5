@@ -29,7 +29,7 @@ void RestoreStandard(int standard, Handle original);
 bool IsInteractive(Handle handle);
 void PauseMicroseconds(long microseconds);
 void WriteStandardDirect(int standard, const char* text, std::size_t length);
-bool ReadVariable(std::string& value);
+bool ReadVariable(const char* name, std::string& value);
 [[noreturn]] void FailStartup(const std::string& message);
 bool WaitReadable(Handle read, int milliseconds);
 long ReadAvailable(Handle read, char* buffer, std::size_t capacity);
