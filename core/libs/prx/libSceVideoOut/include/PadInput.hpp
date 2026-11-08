@@ -4,6 +4,7 @@
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
 #include "SDL_hidapi.h"
+#include "prx/libScePad/include/InputMapping.hpp"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
@@ -14,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
@@ -53,6 +55,7 @@ private:
 
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
+    void applyMappingSnapshot();
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();
@@ -73,6 +76,8 @@ private:
     void closeHaptics();
     void streamHaptics();
 
+    Pad::InputMappingStore mappings;
+    std::shared_ptr<const Pad::InputConfiguration> appliedMapping;
     Pad::KeyboardMouse keyboardMouse;
     Pad::IdentifyMode identifyMode = Pad::IdentifyMode::Off;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
