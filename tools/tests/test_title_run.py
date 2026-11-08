@@ -607,6 +607,24 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(shaders["compiled"], {"before": None, "now": 12})
         self.assertEqual(shaders["cacheHits"], {"before": None, "now": None})
 
+    def test_missing_functions_are_diffed_by_library_and_name(self):
+        before = {"missing": [{"library": "libSceNet", "name": "a", "calls": 3}, {"library": None, "name": "b", "calls": 1},
+                              {"library": "libSceNet", "name": "c", "calls": 2}]}
+        now = {"missing": [{"library": "libSceNet", "name": "c", "calls": 5}, {"library": "libSceAudioOut", "name": "d", "calls": 1}]}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": before}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": now}])
+        diff = title_run.compare_runs(summary, previous)["PPSA00001"]["missingFunctions"]
+        self.assertEqual(diff["onlyBefore"], [{"library": "libSceNet", "name": "a", "calls": 3}, {"library": None, "name": "b", "calls": 1}])
+        self.assertEqual(diff["onlyNow"], [{"library": "libSceAudioOut", "name": "d", "calls": 1}])
+        self.assertEqual(diff["both"], [{"library": "libSceNet", "name": "c", "before": 2, "now": 5}])
+
+    def test_missing_functions_on_one_side_are_not_recorded(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": {"missing": []}}])
+        compared = title_run.compare_runs(summary, previous)["PPSA00001"]
+        self.assertIsNone(compared["missingFunctions"])
+        self.assertEqual(compared["missingFunctionsTruncated"], {"before": None, "now": None})
+
     def test_only_titles_in_both_runs_are_compared(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
