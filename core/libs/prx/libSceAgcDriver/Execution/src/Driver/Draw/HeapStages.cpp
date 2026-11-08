@@ -350,7 +350,7 @@ std::uint64_t HeapWalkWordsBytes(const ShaderRecompiler::HeapStageWords& words) 
 }
 
 std::uint64_t HeapWalkEntryOwnBytes(const HeapWalkEntry& entry) {
-    return sizeof(HeapWalkEntry) + vectorBytes(entry.userData) + vectorBytes(entry.ranges) + (entry.values != nullptr ? vectorBytes(*entry.values) : 0u) +
+    return sizeof(HeapWalkEntry) + vectorBytes(entry.userData) + (entry.ranges != nullptr ? vectorBytes(*entry.ranges) : 0u) + (entry.values != nullptr ? vectorBytes(*entry.values) : 0u) +
            vectorBytes(entry.accessible) + vectorBytes(entry.userDataUse.reads) + vectorBytes(entry.merges);
 }
 
@@ -494,7 +494,7 @@ bool sameWalkInputs(const HeapWalkEntry& entry, const ShaderRecompiler::Prepared
     if (!sameStage || !std::equal(entry.userData.begin(), entry.userData.end(), userData.begin(), userData.end())) return false;
     if (!std::ranges::equal(entry.merges, targetMerges(invocation))) return false;
     std::size_t cursor = 0;
-    for (const auto& [begin, end] : entry.ranges) {
+    for (const auto& [begin, end] : *entry.ranges) {
         const auto count = static_cast<std::size_t>((end - begin) / WordBytes);
         if (GuestMemory::CompareMapped(begin, std::as_bytes(std::span(entry.values->data() + cursor, count))) != GuestMemory::Compare::Equal)
             return false;
@@ -511,7 +511,7 @@ void noteMemoBytes(const HeapWalkMemo& memo, std::uint64_t heldBefore) {
 }
 
 void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvocation& invocation,
-                  std::span<const std::uint32_t> userData, std::uint64_t shaderBase, const AddressRanges& ranges,
+                  std::span<const std::uint32_t> userData, std::uint64_t shaderBase, const std::shared_ptr<const AddressRanges>& ranges,
                   const std::shared_ptr<const std::vector<std::uint32_t>>& values, const AddressRanges& accessible,
                   const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture,
                   const std::shared_ptr<const ShaderRecompiler::RecompileResult>& result, const ShaderRecompiler::HeapStageWords& words) {
@@ -546,9 +546,9 @@ bool adoptWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvo
     for (std::size_t way = 0; found != nullptr && way < found->size(); ++way) {
         auto& entry = (*found)[way];
         if (!sameWalkInputs(entry, invocation, userData, shaderBase)) continue;
-        if (!rangesSettled(entry.ranges, before, generation)) break;
+        if (!rangesSettled(*entry.ranges, before, generation)) break;
         memo.touch(entry);
-        guardRanges(entry.ranges);
+        guardRanges(*entry.ranges);
         adopted.words = entry.words;
         adopted.reads = {entry.ranges, entry.values, entry.userDataUse, entry.capture, true};
         adopted.result = entry.result;
@@ -624,10 +624,11 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     const bool complete = !reads.failed && result != nullptr;
     HeapStageMaterialized materialized;
     auto shared = complete ? std::make_shared<const std::vector<std::uint32_t>>(values) : nullptr;
-    if (complete) materialized.reads = {ranges, shared, capture->userDataUse, capture, true};
+    auto sharedRanges = complete ? std::make_shared<const AddressRanges>(ranges) : nullptr;
+    if (complete) materialized.reads = {sharedRanges, shared, capture->userDataUse, capture, true};
     Graphics::HeapCostScope insertCost(Graphics::HeapCost::MemoInsert);
     if (memoOn && complete && (memoKnown || heapWalkMemo().admit(memoKey)))
-        rememberWalk(memoKey, invocation, userData, shaderBase, ranges, shared, reads.accessible, capture, result, *words);
+        rememberWalk(memoKey, invocation, userData, shaderBase, sharedRanges, shared, reads.accessible, capture, result, *words);
     materialized.result = std::move(result);
     materialized.words = std::move(words);
     return materialized;

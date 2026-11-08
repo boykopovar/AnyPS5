@@ -26,7 +26,7 @@ bool HeapStageFits(const ShaderRecompiler::RecompileResult& result, bool workgro
 bool SampleHeapStageVerify();
 
 struct HeapStageReads {
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    std::shared_ptr<const std::vector<std::pair<std::uint64_t, std::uint64_t>>> ranges;
     std::shared_ptr<const std::vector<std::uint32_t>> values;
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
