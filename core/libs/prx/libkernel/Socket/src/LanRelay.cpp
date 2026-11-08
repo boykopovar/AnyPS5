@@ -248,6 +248,10 @@ std::uint16_t Relay::Port() const {
     return port;
 }
 
+std::uint32_t Relay::Instance() const {
+    return instance;
+}
+
 std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log) {
     Settings settings;
     try {
