@@ -1,5 +1,10 @@
 #include "prx/libc/include/DebugNidBreakpoints.hpp"
 
+#include <cstdlib>
+#ifdef _WIN32
+#include <stdlib.h>
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -155,6 +160,21 @@ static void CheckList() {
     Check(listed[0] == a && listed[1] == b);
 }
 
+static void CheckUnsetLeavesTableEmpty() {
+#ifdef _WIN32
+    _putenv_s("ANYPS5_DEBUG_NIDS", "");
+#else
+    unsetenv("ANYPS5_DEBUG_NIDS");
+#endif
+    Debug::LoadNidBreakpointsFromEnvironment();
+    Check(Debug::NidBreakpoints().Empty());
+    Check(Debug::NidBreakpoints().Size() == 0);
+    Check(Debug::NidBreakpoints().DuplicateCount() == 0);
+    std::uint64_t probe = 0;
+    Check(Debug::ParseNid("4J2sUJmuHZQ", probe));
+    Check(!Debug::NidBreakpoints().IsArmed(probe));
+}
+
 int main() {
     CheckParseKnownValues();
     CheckParseRejectsMalformed();
@@ -166,5 +186,6 @@ int main() {
     CheckEnvironmentList();
     CheckMalformedReport();
     CheckList();
+    CheckUnsetLeavesTableEmpty();
     return 0;
 }
