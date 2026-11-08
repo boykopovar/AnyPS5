@@ -1,4 +1,6 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -47,14 +49,31 @@ bool IsVideoFormat(std::uint32_t format) {
 }
 
 int CheckParam(const VideoRecordingParam* param) {
- if (param == nullptr || param->size < MinimumParamSize) return ErrorInvalidArgument;
- if (param->duration == 0 || param->duration > MaximumDuration || param->mode > 1) return ErrorInvalidArgument;
- const std::uint32_t option = param->size > offsetof(VideoRecordingParam, option) ? param->option : 0;
- const std::uint32_t format = param->size > offsetof(VideoRecordingParam, format) ? param->format : 0;
- if (option == 0 && format == 0) return MinimumHeapSize;
- if (option > 1 || (format != 0 && !IsVideoFormat(format))) return ErrorInvalidArgument;
- if (format == 0) return ErrorNoVideoFormat;
- return 0;
+    if (param == nullptr) return ErrorInvalidArgument;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size))) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    if (size < MinimumParamSize) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    VideoRecordingParam localParam{};
+    const std::size_t copySize = std::min(static_cast<std::size_t>(size), sizeof(localParam));
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, copySize)) {
+        errno = savedErrno;
+        return ErrorInvalidArgument;
+    }
+    errno = savedErrno;
+    if (localParam.duration == 0 || localParam.duration > MaximumDuration || localParam.mode > 1) return ErrorInvalidArgument;
+    const std::uint32_t option = size > offsetof(VideoRecordingParam, option) ? localParam.option : 0;
+    const std::uint32_t format = size > offsetof(VideoRecordingParam, format) ? localParam.format : 0;
+    if (option == 0 && format == 0) return MinimumHeapSize;
+    if (option > 1 || (format != 0 && !IsVideoFormat(format))) return ErrorInvalidArgument;
+    if (format == 0) return ErrorNoVideoFormat;
+    return 0;
 }
 }
 

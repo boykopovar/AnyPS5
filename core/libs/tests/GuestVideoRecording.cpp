@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -63,6 +64,9 @@ int main() {
     query.fill(Sentinel);
     Require(Throws([&] { _sceVideoRecordingQueryParam_nid_postfix(reinterpret_cast<VideoRecordingQueryParam*>(query.data())); }), "the default parameters were produced");
 
+    errno = 71;
+    Require(sceVideoRecordingQueryMemSize(reinterpret_cast<const VideoRecordingParam*>(0x10)) == InvalidArgument, "an unmapped parameter block was refused");
+    Require(errno == 71, "errno was preserved across unmapped query");
     Require(sceVideoRecordingQueryMemSize(nullptr) == InvalidArgument, "a heap size was reported for no parameters");
     for (std::uint32_t format = 0x3; format <= 0x44; ++format) {
         if (format == 0x10 || format == 0x11 || format == 0x28 || format == 0x40 || format == 0x41) continue;
@@ -121,6 +125,9 @@ int main() {
     VideoRecordingParam refused = RecordingParam(1);
     refused.duration = 0;
     Require(sceVideoRecordingOpen(nullptr, &video, heap.data(), static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened without a path");
+    errno = 71;
+    Require(sceVideoRecordingOpen("clip.mp4", reinterpret_cast<const VideoRecordingParam*>(0x10), heap.data(), static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened with unmapped parameters");
+    Require(errno == 71, "errno was preserved across unmapped open");
     Require(sceVideoRecordingOpen("clip.mp4", nullptr, heap.data(), static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened without parameters");
     Require(sceVideoRecordingOpen("clip.mp4", &video, nullptr, static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened without a heap");
     Require(sceVideoRecordingOpen("clip.mp4", &video, heap.data(), -1) == InvalidArgument, "the recorder opened with a negative heap size");
