@@ -38,6 +38,11 @@ int APS5_VABI sceNpFriendListDialogOpenA(const void* param) {
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    std::uint8_t dummy = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&dummy, param, sizeof(dummy));
+    errno = savedErrno;
+    if (!readable) return COMMON_DIALOG_ERROR_ARG_NULL;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return 0;
