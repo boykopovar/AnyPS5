@@ -144,6 +144,7 @@
 
 ### Functional
 
+- [_ZNSt12system_errorC2ESt10error_codePKc](../../../core/libs/prx/libc/src/exception/StandardExceptions.cpp) (libc) - the console module's body is unverified. The constructor fills the 32-byte guest object as Dinkumware `_Makestr` does: the `runtime_error` base takes the message, appends `": "` only when the message is non-empty, then appends `error_code.message()` through the category's guest vtable; the 16-byte `error_code` is stored at offset 16. A null message becomes an empty message here, where Dinkumware dereferences it; a null category throws `std::invalid_argument`, where Dinkumware dereferences it. It is exported from libc so the weak libstdc++ copy in libSceLibcInternal is preserved by the NID patcher; libSceLibcInternal's `oly3wSwEJ2A` export forwards to it.
 - [insque and remque](../../../core/libs/prx/libc/src/Queue.cpp) (libc) have not been verified on a console. A null element throws; behavior with corrupted links is unverified. Otherwise, the queue operations follow FreeBSD 11.4 [insque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/insque.c) and [remque.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/stdlib/remque.c).
 
 - [Call tracing](../../../core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp) (libc) - an unlabeled import whose function has no loaded host image, such as a generated code address, retains an empty library label; `all` still records it. Otherwise missing labels use the defining host module filename; supplied labels are retained.

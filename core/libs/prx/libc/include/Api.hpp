@@ -1564,6 +1564,8 @@ void APS5_VABI _ZNSt12system_errorD0Ev_nid_postfix(LibcException::ExceptionObjec
 const char* APS5_VABI _ZNKSt12system_error4whatEv_nid_postfix(const LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt12system_errorC1ERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source);
 void APS5_VABI _ZNSt12system_errorC2ERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source);
+void APS5_VABI _ZNSt12system_errorC2ESt10error_codePKc_nid_postfix(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
+void APS5_VABI LibcExceptionConstructSystemError_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
 LibcException::SystemErrorObject* APS5_VABI _ZNSt12system_erroraSERKS__nid_postfix(LibcException::SystemErrorObject* self, const LibcException::SystemErrorObject* source);
 void APS5_VABI _ZNSt11regex_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt11regex_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self);
