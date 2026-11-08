@@ -24,6 +24,7 @@ static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
+static constexpr int SSL_ERROR_INVALID_ID = static_cast<int>(0x8095F006);
 static constexpr int ERROR_NETWORK = static_cast<int>(0x80431063);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
@@ -260,6 +261,7 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
     if (max_concurrent_request == 0) return ERROR_INVALID_VALUE;
     if (max_concurrent_request < 0) NotImplemented_nid_no_patch(__func__);
+    if (libssl_ctx_id == 0) return SSL_ERROR_INVALID_ID;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_handlesMutex);
     Http2Handle handle{Http2Kind::Context, 0, pool_size};
