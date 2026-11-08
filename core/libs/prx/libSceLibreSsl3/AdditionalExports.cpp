@@ -15,10 +15,6 @@ int APS5_VABI BIO_set_flags_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BN_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ERR_func_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -449,10 +445,6 @@ int APS5_VABI BIO_set_shutdown_nid_postfix() {
 }
 
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BN_div_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
