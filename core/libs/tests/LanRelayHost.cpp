@@ -315,6 +315,7 @@ int main() {
     OpensAndClosesOnEphemeralPort();
     RefusesBusyPort();
     OpensAndClosesTwoRelaysWithoutLeaks();
+    GivesEachOpenRelayItsOwnInstance();
     LeavesNoDescriptorsBehind();
     StaysOffByDefault();
     InvalidSettingsLogOneLineAndStayOff();
