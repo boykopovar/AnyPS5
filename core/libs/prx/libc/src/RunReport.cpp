@@ -754,6 +754,11 @@ void NormalizeObservations(Observations& o, const HostIdentifiers& host) {
         o.loaded = o.started = o.firstDraw = o.firstPresent = std::nullopt;
         o.framesPresented = 0;
         o.averageFps = o.fpsWindowSeconds = std::nullopt;
+        o.frameMs.reset();
+    }
+    if (o.frameMs) {
+        const auto valid = [](double value) { return value >= 0.0 && value <= 1.0e9; };
+        if (!valid(o.frameMs->p50) || !valid(o.frameMs->p90) || !valid(o.frameMs->p99)) o.frameMs.reset();
     }
     if (!o.coverage.missing) o.functions.clear(), o.truncated.functions = 0;
     if (!o.coverage.shaders) o.shadersCompiled = o.shadersFailed = 0, o.cacheHits.reset();
@@ -821,6 +826,15 @@ std::string RenderReport(const Report& report) {
     json.Int("framesPresented", o.framesPresented);
     if (o.averageFps) json.Number("averageFps", *o.averageFps); else json.Null("averageFps");
     if (o.fpsWindowSeconds) json.Number("fpsWindowSeconds", *o.fpsWindowSeconds); else json.Null("fpsWindowSeconds");
+    if (o.frameMs) {
+        json.BeginObject("frameMs");
+        json.Number("p50", o.frameMs->p50);
+        json.Number("p90", o.frameMs->p90);
+        json.Number("p99", o.frameMs->p99);
+        json.EndObject();
+    } else {
+        json.Null("frameMs");
+    }
     json.Bool("recovered", report.recovered);
     json.Bool("incomplete", report.incomplete);
     json.EndObject();
@@ -1529,6 +1543,11 @@ Observations Collector::Observe() const {
         const double window = static_cast<double>(lastFrameNanos - firstFrameNanos) / 1.0e9;
         o.fpsWindowSeconds = window;
         o.averageFps = static_cast<double>(o.framesPresented - 1) / window;
+    }
+    auto intervals = FrameTimesMilliseconds();
+    if (!intervals.empty()) {
+        std::sort(intervals.begin(), intervals.end());
+        o.frameMs = FrameTimes{FramePercentile(intervals, 0.5), FramePercentile(intervals, 0.9), FramePercentile(intervals, 0.99)};
     }
     o.shadersCompiled = compiled;
     o.shadersFailed = failedShaders;

@@ -129,10 +129,15 @@ struct Truncated {
     std::int64_t functions = 0, unsupported = 0, imageFormats = 0, descriptors = 0;
 };
 
+struct FrameTimes {
+    double p50 = 0.0, p90 = 0.0, p99 = 0.0;
+};
+
 struct Observations {
     std::optional<double> loaded, started, firstDraw, firstPresent;
     std::int64_t framesPresented = 0;
     std::optional<double> averageFps, fpsWindowSeconds;
+    std::optional<FrameTimes> frameMs;
     std::int64_t shadersCompiled = 0, shadersFailed = 0;
     std::optional<std::int64_t> cacheHits;
     std::vector<FunctionEntry> functions;
