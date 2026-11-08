@@ -46,6 +46,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_resolver PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_resolver_system_errors_tests
+            ${LIBS_INCLUDE_DIR}/tests/ResolverSystemErrors.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Resolver.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/HostErrno.cpp)
+        target_include_directories(guest_resolver_system_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_options(guest_resolver_system_errors_tests PRIVATE -ffunction-sections -fdata-sections)
+        target_link_options(guest_resolver_system_errors_tests PRIVATE
+            -Wl,--gc-sections -Wl,--wrap=getaddrinfo -Wl,--wrap=getnameinfo)
+        configure_host_test_executable(guest_resolver_system_errors_tests)
+        add_test(NAME guest_resolver_system_errors COMMAND guest_resolver_system_errors_tests)
+        set_tests_properties(guest_resolver_system_errors PROPERTIES TIMEOUT 20)
+    endif()
     add_test_executable(guest_service_database_tests ${LIBS_INCLUDE_DIR}/tests/GuestServiceDatabase.cpp)
     target_include_directories(guest_service_database_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_service_database_tests PRIVATE libScePosixForWebKit libc)
