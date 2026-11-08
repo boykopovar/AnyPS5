@@ -262,6 +262,15 @@ void KeepValues() {
     }
 }
 
+void RotationPolicy() {
+    Require(!RotationNeeded(1000, 1000, 0), "a zero limit rotates");
+    Require(!RotationNeeded(0, 5000, 100), "an empty file rotates before its first line");
+    Require(!RotationNeeded(60, 40, 100), "a write that exactly fills the limit rotates");
+    Require(RotationNeeded(60, 41, 100), "a write past the limit did not rotate");
+    Require(RotationNeeded(10, 5000, 100), "an oversize write into a used file did not rotate first");
+    Require(RotatedName("/var/log/run.log", 2) == "/var/log/run.log.2", "rotated name differs");
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -702,6 +711,7 @@ int main(int argc, char** argv) {
     FilePrimitives();
     MaxBytesValues();
     KeepValues();
+    RotationPolicy();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();
