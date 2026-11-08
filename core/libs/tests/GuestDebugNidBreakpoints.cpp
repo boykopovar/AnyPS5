@@ -104,6 +104,22 @@ static void CheckArmedLockFree() {
     Check(!table.IsArmed(a));
 }
 
+static void CheckEnvironmentList() {
+    Debug::NidBreakpointTable table;
+    Check(Debug::AddNidList("", table) == 0);
+    Check(Debug::AddNidList(",,", table) == 0);
+    Check(table.Empty());
+    Check(Debug::AddNidList(" 4J2sUJmuHZQ , hcuQgD53UxM,Q3VBxCXhUHs ", table) == 3);
+    Check(table.Size() == 3);
+    Check(table.IsArmed(0) == false);
+    std::uint64_t nid = 0;
+    Check(Debug::ParseNid("hcuQgD53UxM", nid));
+    Check(table.IsArmed(nid));
+    Check(Debug::AddNidList("4J2sUJmuHZQ,AAAAAAAAAA!,hcuQgD53UxM", table) == 0);
+    Check(table.Size() == 3);
+    Check(table.DuplicateCount() == 2);
+}
+
 int main() {
     CheckParseKnownValues();
     CheckParseRejectsMalformed();
@@ -112,5 +128,6 @@ int main() {
     CheckDuplicates();
     CheckCapacity();
     CheckArmedLockFree();
+    CheckEnvironmentList();
     return 0;
 }
