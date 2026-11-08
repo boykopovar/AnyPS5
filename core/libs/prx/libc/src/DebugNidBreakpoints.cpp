@@ -75,14 +75,28 @@ std::string FormatNid(std::uint64_t nid) {
     return text;
 }
 
-bool NidBreakpointTable::Add(std::uint64_t nid) {
+NidBreakpointTable::AddResult NidBreakpointTable::Add(std::uint64_t nid) {
     std::lock_guard lock(mutex_);
     const std::size_t count = count_.load(std::memory_order_relaxed);
-    if (count == kCapacity || IndexOf(nid) != count)
-        return false;
+    const std::size_t index = IndexOf(nid);
+    if (index != count) {
+        ++duplicates_;
+        return AddResult::Duplicate;
+    }
+    if (count == kCapacity)
+        return AddResult::Full;
     nids_[count].store(nid, std::memory_order_relaxed);
     count_.store(count + 1, std::memory_order_release);
-    return true;
+    return AddResult::Added;
+}
+
+std::size_t NidBreakpointTable::Size() const {
+    return count_.load(std::memory_order_acquire);
+}
+
+std::uint64_t NidBreakpointTable::DuplicateCount() const {
+    std::lock_guard lock(mutex_);
+    return duplicates_;
 }
 
 bool NidBreakpointTable::Remove(std::uint64_t nid) {
