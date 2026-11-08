@@ -20,14 +20,6 @@
 #include <string>
 #include <vector>
 
-namespace AgcDriver {
-
-struct VulkanDeviceTestAccess {
-    static bool ImageViewMinLod(const VulkanDevice& device) { return device.graphicsContext().imageViewMinLod; }
-};
-
-}
-
 namespace {
 
 using AgcDriver::Graphics::Require;
@@ -374,7 +366,9 @@ void CheckSpirvLanes(const ShaderRecompiler::SpirvTarget& deviceTarget) {
 
 int main(int argc, char** argv) {
     try {
-        const bool shaderLane = argc > 1 && std::strcmp(argv[1], "--shader-lane") == 0;
+        const auto hasArgument = [&](const char* name) { return std::any_of(argv + 1, argv + argc, [&](const char* argument) { return std::strcmp(argument, name) == 0; }); };
+        const bool shaderLane = hasArgument("--shader-lane");
+        const bool pipelineLibrary = hasArgument("--pipeline-library");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
@@ -383,11 +377,11 @@ int main(int argc, char** argv) {
         }
         const bool shaderClamp = device->Target().shaderImageMinLod;
         if (shaderLane && !shaderClamp) {
-            std::puts("skipped, the device does not apply T# minimum LODs in the shader under APS5_NO_IMAGE_VIEW_MIN_LOD and APS5_NO_GPL");
+            std::puts("skipped, the device applies T# minimum LODs through the image view, which APS5_NO_IMAGE_VIEW_MIN_LOD turns off");
             return VulkanTestSkipped;
         }
-        if (!shaderClamp && !AgcDriver::VulkanDeviceTestAccess::ImageViewMinLod(*device)) {
-            std::puts("skipped, the device has no VK_EXT_image_view_min_lod, and graphics pipeline libraries keep T# minimum LODs out of the shader");
+        if (pipelineLibrary && !device->Target().registrationModules) {
+            std::puts("skipped, the device has no graphics pipeline libraries");
             return VulkanTestSkipped;
         }
         CheckSpirvLanes(device->Target());
