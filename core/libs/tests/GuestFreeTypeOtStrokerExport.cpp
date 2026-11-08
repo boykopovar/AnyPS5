@@ -17,8 +17,8 @@ void Require(bool condition, const char* message) {
 
 struct Output {
     std::vector<FT_Vector> points;
-    std::vector<char> tags;
-    std::vector<short> contours;
+    std::vector<unsigned char> tags;
+    std::vector<unsigned short> contours;
     FT_Outline outline{};
 
     explicit Output(FT_UInt pointCount, FT_UInt contourCount)
@@ -31,8 +31,8 @@ struct Output {
 
 void Prepare(FT_Stroker stroker) {
     FT_Stroker_Set(stroker, 64, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
-    const FT_Vector start{0, 0};
-    const FT_Vector end{640, 0};
+    FT_Vector start{0, 0};
+    FT_Vector end{640, 0};
     Require(FT_Stroker_BeginSubPath(stroker, &start, 1) == 0, "begin subpath");
     Require(FT_Stroker_LineTo(stroker, &end) == 0, "line to");
     Require(FT_Stroker_EndSubPath(stroker) == 0, "end subpath");
@@ -59,8 +59,7 @@ int main() {
 
     FreeType::GuestVector* guestPoints = reinterpret_cast<FreeType::GuestVector*>(actual.points.data());
     FreeType::GuestOutline guestOutline{0, 0, guestPoints,
-        reinterpret_cast<unsigned char*>(actual.tags.data()),
-        reinterpret_cast<std::uint16_t*>(actual.contours.data()), 0};
+        actual.tags.data(), actual.contours.data(), 0};
     sceFreeTypeOtStrokerExport_nid_no_patch(actualStroker, &guestOutline);
 
     Require(guestOutline.n_points == expected.outline.n_points, "point count matches FreeType");
