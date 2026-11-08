@@ -24,7 +24,7 @@
   "PPSA99007": {"seconds": 30},
   "PPSA99008": {"relink": ["--trap-sdk-syscall-stubs"], "seconds": 30},
   "PPSA99009": {"seconds": 40, "pad": {"after_s": 14, "events": [{"at_ms": 0, "hold_ms": 200, "buttons": ["down"]}, {"at_ms": 4000, "hold_ms": 200, "buttons": ["down"]}, {"at_ms": 5500, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 8500, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 9100, "hold_ms": 200, "buttons": ["up"]}, {"at_ms": 9600, "hold_ms": 200, "buttons": ["up"]}, {"at_ms": 10100, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 11500, "hold_ms": 200, "buttons": ["down"]}, {"at_ms": 12000, "hold_ms": 200, "buttons": ["down"]}, {"at_ms": 12500, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 13000, "hold_ms": 200, "buttons": ["up"]}, {"at_ms": 13500, "hold_ms": 200, "buttons": ["up"]}, {"at_ms": 14000, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 15500, "hold_ms": 200, "buttons": ["cross"]}, {"at_ms": 16000, "hold_ms": 200, "buttons": ["up"]}, {"at_ms": 16500, "hold_ms": 200, "buttons": ["left"]}, {"at_ms": 17000, "hold_ms": 200, "buttons": ["cross"]}]}},
-  "PPSA99010": {"seconds": 30, "files": {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}},
+  "PPSA99010": {"files": {"app0/id1/autoexec.cfg": {"text": "r_rtshadows 0\n"}, "app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}},
   "PPSA99011": {"relink": ["--trap-sdk-syscall-stubs"]},
   "PPSA99082": {"seconds": 30},
   "PPSA99109": {"seconds": 30},
