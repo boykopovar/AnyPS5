@@ -37,6 +37,7 @@
 
 struct WebRtcVadInstance;
 #include "prx/libwebrtc/include/TaskQueueBase.hpp"
+#include "prx/libwebrtc/include/SequenceChecker.hpp"
 
 extern "C" {
 
@@ -124,7 +125,7 @@ int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObser
 int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown12(void);
 int APS5_VABI libwebrtcUnknown13(void);
-int APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(void);
+void APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(WebRtcSequenceCheckerImpl* checker, bool attachToCurrentThread);
 int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void);
 void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterC1EPS0__nid_postfix(WebRtcCurrentTaskQueueSetter* setter, WebRtcTaskQueueBase* taskQueue);
 void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterD1Ev_nid_postfix(WebRtcCurrentTaskQueueSetter* setter);
