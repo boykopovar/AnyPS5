@@ -132,6 +132,7 @@ void DisplayWindow::Destroy() noexcept {
     if (fullscreen) fullscreen->Release();
     fullscreen.reset();
     hostWindow.reset();
+    keepAwake.Release();
     removeSubclass();
     SDL_DestroyWindow(window);
     window = nullptr;
