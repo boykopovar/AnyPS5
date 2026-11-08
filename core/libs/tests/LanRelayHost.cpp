@@ -170,6 +170,35 @@ static void OpensAndClosesTwoRelaysWithoutLeaks() {
     reopenedSecond.Close();
 }
 
+static std::size_t OpenDescriptorCount() {
+#ifdef __linux__
+    std::size_t count = 0;
+    if (DIR* directory = opendir("/proc/self/fd")) {
+        while (readdir(directory) != nullptr) ++count;
+        closedir(directory);
+    }
+    return count;
+#else
+    return 0;
+#endif
+}
+
+static void LeavesNoDescriptorsBehind() {
+    const auto before = OpenDescriptorCount();
+    for (int cycle = 0; cycle < 200; ++cycle) {
+        LanRelay::Relay relay;
+        relay.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+        relay.Close();
+    }
+    for (int cycle = 0; cycle < 200; ++cycle) {
+        LanRelay::Relay relay;
+        relay.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    }
+#ifdef __linux__
+    Require(OpenDescriptorCount() == before, "no descriptor is left open after the relays are closed or destroyed");
+#endif
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
@@ -181,5 +210,6 @@ int main() {
     OpensAndClosesOnEphemeralPort();
     RefusesBusyPort();
     OpensAndClosesTwoRelaysWithoutLeaks();
+    LeavesNoDescriptorsBehind();
     return 0;
 }
