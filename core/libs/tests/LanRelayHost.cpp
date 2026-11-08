@@ -137,6 +137,19 @@ static void OpensAndClosesOnEphemeralPort() {
     relay.Close();
 }
 
+static void RefusesBusyPort() {
+    LanRelay::Relay first;
+    first.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    LanRelay::Relay second;
+    bool refused = false;
+    try {
+        second.Open(LanRelay::Endpoint{"127.0.0.1", first.Port()});
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused && !second.IsOpen(), "a port in use is refused and the relay stays closed");
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
@@ -146,5 +159,6 @@ int main() {
     ReadsSettings();
     NamesTheVariableInErrors();
     OpensAndClosesOnEphemeralPort();
+    RefusesBusyPort();
     return 0;
 }
