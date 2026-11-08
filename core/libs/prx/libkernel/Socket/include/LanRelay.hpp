@@ -39,6 +39,13 @@ struct Frame {
 
 std::vector<std::uint8_t> EncodeFrame(const Frame& frame);
 std::optional<Frame> DecodeFrame(const std::vector<std::uint8_t>& datagram);
+
+struct Ipv4Interface {
+    std::uint32_t Address = 0;
+    std::uint32_t Netmask = 0;
+};
+
+bool IsBroadcast(std::uint32_t destination, const std::vector<Ipv4Interface>& interfaces);
 bool IsOwnFrame(const Frame& frame, std::uint32_t instance);
 
 class Relay {
