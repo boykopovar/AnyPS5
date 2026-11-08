@@ -226,6 +226,72 @@ static void StartsWhenConfigured() {
     Require(relay != nullptr && relay->IsOpen() && relay->Port() != 0, "a listen address starts the relay");
 }
 
+static void RoundTripsFrames() {
+    LanRelay::Frame frame;
+    frame.Instance = 0x01020304;
+    frame.SourcePort = 5000;
+    frame.DestinationPort = 47000;
+    frame.Payload = {0xAA, 0xBB, 0xCC};
+    const auto datagram = LanRelay::EncodeFrame(frame);
+    Require(datagram.size() == LanRelay::FrameHeaderSize + 3, "the header adds FrameHeaderSize bytes to the payload");
+    Require(datagram[0] == LanRelay::FrameVersion, "the first byte is the frame version");
+    Require(datagram[1] == 0x01 && datagram[4] == 0x04, "the instance is written big-endian");
+    Require(datagram[9] == 0 && datagram[10] == 3, "the payload length is written big-endian");
+    const auto decoded = LanRelay::DecodeFrame(datagram);
+    Require(decoded.has_value(), "an encoded frame decodes");
+    Require(decoded->Instance == frame.Instance && decoded->SourcePort == 5000 && decoded->DestinationPort == 47000 && decoded->Payload == frame.Payload,
+        "the decoded frame matches the encoded one");
+    LanRelay::Frame empty;
+    empty.DestinationPort = 1;
+    const auto emptyDecoded = LanRelay::DecodeFrame(LanRelay::EncodeFrame(empty));
+    Require(emptyDecoded.has_value() && emptyDecoded->Payload.empty(), "an empty payload round-trips");
+    LanRelay::Frame largest = frame;
+    largest.Payload.assign(LanRelay::MaxFramePayload, 0x5A);
+    Require(LanRelay::EncodeFrame(largest).size() == LanRelay::MaxDatagramSize, "the largest payload fills a datagram");
+}
+
+static void RefusesMalformedFrames() {
+    LanRelay::Frame frame;
+    frame.DestinationPort = 47000;
+    frame.Payload = {1, 2};
+    const auto valid = LanRelay::EncodeFrame(frame);
+    auto otherVersion = valid;
+    otherVersion[0] = LanRelay::FrameVersion + 1;
+    Require(!LanRelay::DecodeFrame(otherVersion), "a frame with another version is dropped");
+    Require(!LanRelay::DecodeFrame({}), "an empty datagram is dropped");
+    Require(!LanRelay::DecodeFrame(std::vector<std::uint8_t>(valid.begin(), valid.begin() + LanRelay::FrameHeaderSize - 1)),
+        "a datagram shorter than the header is dropped");
+    Require(!LanRelay::DecodeFrame(std::vector<std::uint8_t>(valid.begin(), valid.end() - 1)), "a truncated payload is dropped");
+    auto trailing = valid;
+    trailing.push_back(0);
+    Require(!LanRelay::DecodeFrame(trailing), "trailing bytes past the declared payload are dropped");
+    auto portZero = valid;
+    portZero[7] = 0;
+    portZero[8] = 0;
+    Require(!LanRelay::DecodeFrame(portZero), "a frame to port 0 is dropped");
+}
+
+template <typename TError, typename Function>
+static void ThrowsError(const char* message, Function function) {
+    try {
+        function();
+    } catch (const TError&) {
+        return;
+    }
+    std::fprintf(stderr, "%s\n", message);
+    std::exit(1);
+}
+
+static void RefusesFramesThatCannotBeSent() {
+    LanRelay::Frame oversized;
+    oversized.DestinationPort = 47000;
+    oversized.Payload.assign(LanRelay::MaxFramePayload + 1, 0);
+    ThrowsError<std::length_error>("a payload that does not fit in a datagram is refused", [&] { LanRelay::EncodeFrame(oversized); });
+    LanRelay::Frame toPortZero;
+    toPortZero.Payload = {1};
+    ThrowsError<std::invalid_argument>("a frame to port 0 is refused", [&] { LanRelay::EncodeFrame(toPortZero); });
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
