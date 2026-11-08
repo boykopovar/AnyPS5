@@ -94,6 +94,10 @@ std::size_t NidBreakpointTable::Size() const {
     return count_.load(std::memory_order_acquire);
 }
 
+bool NidBreakpointTable::Empty() const {
+    return count_.load(std::memory_order_acquire) == 0;
+}
+
 std::uint64_t NidBreakpointTable::DuplicateCount() const {
     std::lock_guard lock(mutex_);
     return duplicates_;
