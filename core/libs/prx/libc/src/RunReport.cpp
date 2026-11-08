@@ -48,6 +48,10 @@
 #endif
 #endif
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+extern char** environ;
+#endif
+
 #if __has_include("RunReportRevision.hpp")
 #include "RunReportRevision.hpp"
 #endif
@@ -627,8 +631,7 @@ EnvironmentVariables ProcessEnvironment() {
 #if defined(__APPLE__)
     char** variables = *_NSGetEnviron();
 #else
-    extern char** environ;
-    char** variables = environ;
+    char** variables = ::environ;
 #endif
     for (char** entry = variables; entry != nullptr && *entry != nullptr; ++entry) entries.emplace_back(*entry);
 #endif
