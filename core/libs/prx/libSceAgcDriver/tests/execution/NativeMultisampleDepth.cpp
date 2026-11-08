@@ -1628,7 +1628,7 @@ void CheckStorageAliasRetirement() {
     std::puts("cached storage span retires only intersecting native depth owners");
 }
 
-enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear, DriverBufferDispatch };
+enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear, DriverBufferDispatch, SupersededClear };
 enum class ClearSource { HtileDispatch, Fill, QueuedFill };
 
 void CheckClearDispatch() {
@@ -1877,6 +1877,11 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                             TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, "sample-preserving guest publication");
                         }
                         if (fault == ClearFault::Overlap) NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes);
+                        if (fault == ClearFault::SupersededClear) {
+                            Require(NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes), "a superseding native HTILE clear dispatch was not noted");
+                            ArmHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            CompleteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                        }
                         const auto storedBytes = fault == ClearFault::PartialStore ? 4u : static_cast<std::size_t>(metadataBytes);
                         if (fault == ClearFault::PossibleStore || fault == ClearFault::CompletedPossibleStore) {
                             const auto generation = AgcDriver::GuestMemory::TrackerGeneration();
@@ -4229,14 +4234,14 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     reset(0.0f);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear has no complete tracked HTILE store");
 
     reset(0.0f);
     target.clearDepth = 1.0f;
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     store(one, 4u);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear has no complete tracked HTILE store");
 
     reset(0.0f);
     target.clearDepth = 1.0f;
@@ -4253,7 +4258,14 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     store(one, metadataBytes);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     sample(1.0f);
-    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused and a stored refill after a draw was accepted\n", samples);
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one, metadataBytes);
+    sample(1.0f);
+    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused, a stored refill after a draw was accepted and a superseding fill was applied\n", samples);
 }
 
 
@@ -4341,11 +4353,12 @@ int main(int argc, char** argv) {
                      std::pair{ClearFault::PossibleStore, "no complete tracked HTILE store"},
                      std::pair{ClearFault::UnprovenDispatch, "incomplete or unproven"},
                      std::pair{ClearFault::PendingWrite, "external GPU writes"},
-                     std::pair{ClearFault::Overlap, "overlapping native multisample depth"},
-                     std::pair{ClearFault::FillDuringClear, "metadata fill over a pending HTILE clear dispatch"}}) {
+                     std::pair{ClearFault::Overlap, "native multisample depth clear has not been recorded"}}) {
                 TargetRefuses([&] { CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, fault, ClearSource::HtileDispatch, lock); }, expected);
                 std::printf("Native depth clear fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::FillDuringClear, ClearSource::HtileDispatch, lock);
+            std::puts("Native depth clear superseded by a metadata fill before arming was accepted");
             for (const auto& [fault, expected] : std::array{
                      std::pair{ClearFault::CpuWrite, "CPU writes raced"},
                      std::pair{ClearFault::DepthWrite, "guest writes"},
@@ -4488,6 +4501,7 @@ int main(int argc, char** argv) {
                 }
             }
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::CompletedPossibleStore, ClearSource::HtileDispatch, lock);
+            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::SupersededClear, ClearSource::HtileDispatch, lock);
             ++checked;
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::ImportWindowWrite, ClearSource::HtileDispatch, lock);
             ++checked;
@@ -4520,11 +4534,12 @@ int main(int argc, char** argv) {
                      std::tuple{StencilFault::FillPartialStore, true, "no complete tracked HTILE store"},
                      std::tuple{StencilFault::FillCpuWrite, true, "CPU writes raced"},
                      std::tuple{StencilFault::FillStencilWrite, true, "guest writes over native multisample depth"},
-                     std::tuple{StencilFault::FillOverlap, true, "overlapping native multisample depth"},
                      std::tuple{StencilFault::MaskClear, true, "HTILE mask clear of a stencil surface"}}) {
                 TargetRefuses([&] { CheckStencilTarget(context, 4u, false, filling, fault); }, expected);
                 std::printf("Native depth-stencil fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            CheckStencilTarget(context, 4u, false, true, StencilFault::FillOverlap);
+            std::puts("Native depth-stencil superseding repeated HTILE fill was accepted");
             std::printf("Native depth-stencil cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
@@ -4584,8 +4599,8 @@ int main(int argc, char** argv) {
             TargetRefuses([&] { CheckGhostSequence(context, 4u, GhostFill::Stored, GhostFault::WrittenReach); }, "external GPU writes over native multisample depth are not implemented");
             std::puts("Native depth after HTILE and stencil plane fills refused a pending raw-pointer reach whose use stored into the depth plane: external GPU writes over native multisample depth are not implemented");
             for (const auto path : {GhostFill::Stored, GhostFill::QueuedNotedTwice}) {
-                TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::RepeatedStencilNote); }, "overlapping native multisample stencil plane fills are not implemented");
-                std::printf("Native depth after HTILE and stencil plane fills path=%u refused a stencil plane fill noted twice without a write between: overlapping native multisample stencil plane fills are not implemented\n", static_cast<std::uint32_t>(path));
+                CheckGhostSequence(context, 4u, path, GhostFault::RepeatedStencilNote);
+                std::printf("Native depth after HTILE and stencil plane fills path=%u superseded a stencil plane fill noted twice without a write between\n", static_cast<std::uint32_t>(path));
             }
             for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote}) {
                 TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::CreationRefused); }, "native multisample depth HTILE that is not pipe-aligned holds more than one word");
