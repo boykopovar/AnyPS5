@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -653,6 +654,14 @@ public:
             if ((*this)[index] != other[index]) return false;
         }
         return true;
+    }
+    template<typename TVisit>
+    void ForEachSet(TVisit&& visit) const {
+        if (count <= InlineFlags) {
+            for (auto rest = bits; rest != 0; rest &= rest - 1) visit(static_cast<std::size_t>(std::countr_zero(rest)));
+            return;
+        }
+        for (auto it = std::find(spill.begin(), spill.end(), true); it != spill.end(); it = std::find(it + 1, spill.end(), true)) visit(static_cast<std::size_t>(it - spill.begin()));
     }
 
 private:
