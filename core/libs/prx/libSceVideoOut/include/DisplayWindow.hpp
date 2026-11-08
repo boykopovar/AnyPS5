@@ -22,6 +22,9 @@ struct HangState {
 };
 
 bool HangReportDue(HangState& state, std::int64_t beat, std::int64_t now, std::int64_t thresholdNanoseconds);
+void Start(std::uint32_t seconds);
+void Stop() noexcept;
+void StartFromEnvironment();
 
 }
 
