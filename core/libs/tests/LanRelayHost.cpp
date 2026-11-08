@@ -307,5 +307,8 @@ int main() {
     StaysOffByDefault();
     InvalidSettingsLogOneLineAndStayOff();
     StartsWhenConfigured();
+    RoundTripsFrames();
+    RefusesMalformedFrames();
+    RefusesFramesThatCannotBeSent();
     return 0;
 }
