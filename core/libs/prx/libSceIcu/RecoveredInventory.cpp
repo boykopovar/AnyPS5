@@ -483,10 +483,6 @@ int APS5_VABI uplrules_selectWithFormat_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ureldatefmt_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ureldatefmt_format_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
