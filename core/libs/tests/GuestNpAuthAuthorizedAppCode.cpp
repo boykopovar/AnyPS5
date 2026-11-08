@@ -51,4 +51,19 @@ int main() {
     Require(sceNpAuthGetAuthorizedAppCode(requestId, &parameter, code.data(), nullptr, &authorizationRequired) == requestNotFound);
     Require(sceNpAuthDeleteRequest(requestId) == 0);
     Require(sceNpAuthDeleteRequest(-1) == 0);
+
+#ifdef _WIN32
+    Require(_putenv("APS5_NET_DISCONNECTED=1") == 0);
+#else
+    Require(setenv("APS5_NET_DISCONNECTED", "1", 1) == 0);
+#endif
+    constexpr auto signedOut = static_cast<int>(0x80550006u);
+    const auto offlineRequest = sceNpAuthCreateRequest();
+    Require(offlineRequest > 0);
+    int issuerId = -1;
+    Require(sceNpAuthGetAuthorizedAppCode(offlineRequest, nullptr, code.data(), &issuerId, &authorizationRequired) == invalidArgument);
+    Require(sceNpAuthGetAuthorizedAppCode(-1, &parameter, code.data(), &issuerId, &authorizationRequired) == requestNotFound);
+    Require(sceNpAuthGetAuthorizedAppCode(offlineRequest, &parameter, code.data(), &issuerId, &authorizationRequired) == signedOut);
+    Require(code == original && issuerId == -1 && authorizationRequired);
+    Require(sceNpAuthDeleteRequest(offlineRequest) == 0);
 }

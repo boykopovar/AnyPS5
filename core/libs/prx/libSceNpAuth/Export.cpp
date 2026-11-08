@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -74,6 +75,7 @@ int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t requestId, const NpAuth
  if (parameter->userId == -1 || parameter->clientId == nullptr || parameter->scope == nullptr || parameter->option > 1) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  if (!g_requests.contains(requestId)) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
+ if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) return SCE_NP_ERROR_SIGNED_OUT;
  throw std::logic_error("sceNpAuthGetAuthorizedAppCode: authorization backend is not implemented");
 }
 
