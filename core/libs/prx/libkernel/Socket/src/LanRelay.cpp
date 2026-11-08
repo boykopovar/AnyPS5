@@ -262,6 +262,7 @@ void Relay::Open(const Endpoint& listen) {
 
 void Relay::Close() {
     if (!IsOpen()) return;
+    StopDelivery();
     CloseNative(static_cast<SocketHandle>(handle));
     handle = NoSocket;
     port = 0;
