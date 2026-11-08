@@ -25,6 +25,7 @@
 #include <codegen/x86/MulxLowering.hpp>
 #include <codegen/x86/CountLowering.hpp>
 #include <codegen/x86/MovbeLowering.hpp>
+#include <codegen/x86/Avx2TwinLowering.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
@@ -301,6 +302,10 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
 }
 
 const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, const DecodedInstruction& instr) const {
+    if (const auto twin = _target == Amd64OnlyTarget::Avx ? DecodeAvx2Twin(instr.Data, instr.Length) : std::nullopt) {
+        EmitAvx2Twin(body, *twin);
+        return twin->Name;
+    }
     if (instr.IsExtrq() || instr.IsInsertq()) {
         const auto operands = DecodeSse4a(instr.Data, instr.Length);
         _lowering.EmitOutOfLine(body, operands);
@@ -495,6 +500,9 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
 
     if (instr.IsMcommit())
         return _matchMcommit(instr);
+
+    if (auto twin = _target == Amd64OnlyTarget::Avx ? DecodeAvx2Twin(data, length) : std::nullopt)
+        return Amd64OnlyMatch{twin->Name, length, Amd64OnlyLowering::InPlace, std::move(twin->Replacement), {}, 0};
 
     return _matchRosetta(instr, trailing);
 }
