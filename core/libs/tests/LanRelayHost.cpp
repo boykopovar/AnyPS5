@@ -80,10 +80,19 @@ static void RejectsEmptyPeerEntries() {
     RejectsPeers("127.0.0.1:47001,,10.0.0.2:47002", "an empty entry between peers is refused", parse);
 }
 
+static void KeepsOneCopyOfDuplicatePeers() {
+    const auto peers = LanRelay::ParsePeers("127.0.0.1:47001,10.0.0.2:47002,127.0.0.1:47001");
+    Require(peers.size() == 2, "a repeated peer is kept once");
+    Require(peers[0].Host == "127.0.0.1" && peers[0].Port == 47001, "the first copy stays");
+    Require(peers[1].Host == "10.0.0.2" && peers[1].Port == 47002, "the other peer stays in order");
+    Require(LanRelay::ParsePeers("127.0.0.1:47001,127.0.0.1:47002").size() == 2, "the same host on another port is another peer");
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
     RejectsEmptyPeerEntries();
+    KeepsOneCopyOfDuplicatePeers();
     RejectsInvalidEndpoints();
     return 0;
 }
