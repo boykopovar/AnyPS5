@@ -329,8 +329,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
                 constantFolder.Fold(program);
                 ResolveControlFlowIdentities(program);
                 deadCodeEliminator.RemoveIdentities(program);
+                deadCodeEliminator.Eliminate(program);
             }
-            deadCodeEliminator.Eliminate(program);
         }
         if (constantFolder.ComposePackedAncillary(program)) {
             deadCodeEliminator.Eliminate(program);
@@ -1662,6 +1662,10 @@ std::uint64_t vectorBytes(const std::vector<T>& values) {
 
 std::uint64_t vectorBytes(const std::vector<bool>& values) {
     return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
+}
+
+std::uint64_t vectorBytes(const ElementFlags& values) {
+    return values.size() > 64u ? (static_cast<std::uint64_t>(values.size()) + 7u) / 8u : 0u;
 }
 
 std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
