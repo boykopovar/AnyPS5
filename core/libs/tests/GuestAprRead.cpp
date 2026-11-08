@@ -4,6 +4,9 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -229,12 +232,83 @@ void TestQueries() {
     Require(sceKernelAprSubmitCommandBufferAndGetResult(nullptr, 0, &result, &first) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null command buffer");
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null submission id");
     Require(result == 0xFFFFFFFFu && first == 0, "a rejected APR submission wrote its result or id");
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(reinterpret_cast<const Apr::CommandBufferObject*>(0x10), 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unreadable command buffer object");
+    Apr::CommandBufferObject unreadable{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), nullptr};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&unreadable, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a command buffer with an unreadable base");
+    const Apr::CommandBufferObject oversized{Apr::BufferType::Generic, 0, sizeof(memory) + 1, 1, sizeof(memory), memory.data()};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&oversized, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past the command buffer capacity");
+    Require(sceKernelAprSubmitCommandBuffer(&oversized, 0) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past the command buffer capacity without an id");
+    const Apr::CommandBufferObject zero{Apr::BufferType::Generic, 0, 1, 1, 0, memory.data()};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&zero, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past a command buffer without capacity");
+    Require(sceKernelAprSubmitCommandBuffer(&zero, 0) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past a command buffer without capacity without an id");
+    Require(first == 0 && result == 0xFFFFFFFFu, "a rejected APR submission wrote its result or id");
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &first) == 0 && result == 0 && first != 0, "APR did not return a result and an id");
     Require(sceKernelAprWaitCommandBuffer(first) == 0, "APR did not wait for the submission");
     for (std::size_t index = 0; index < data.size(); ++index) Require(data[index] == FileByte(100 + index), "APR read through the submission with a result returned incorrect bytes");
     std::uint32_t second = 0;
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 1, &result, &second) == 0 && second == first + 1, "APR submission ids did not count up");
     Require(sceKernelAprWaitCommandBuffer(second) == 0, "APR did not wait for the second submission");
+}
+
+template<class TCommand>
+void Append(std::vector<std::uint8_t>& memory, const TCommand& command) {
+    const auto at = memory.size();
+    memory.resize(at + sizeof(command));
+    std::memcpy(memory.data() + at, &command, sizeof(command));
+}
+
+Apr::WaitCommand WaitAtLeast(const std::uint64_t* address, std::uint64_t reference) {
+    Apr::WaitCommand command{};
+    command.header = {Apr::Opcode::WaitOnAddress, sizeof(Apr::WaitCommand)};
+    command.address = reinterpret_cast<std::uint64_t>(address);
+    command.reference = reference;
+    command.mask = ~std::uint64_t{0};
+    command.compare = 4;
+    return command;
+}
+
+Apr::WriteAddressCommand WriteValue(std::uint64_t* address, std::uint64_t value) {
+    return {{Apr::Opcode::WriteAddress, sizeof(Apr::WriteAddressCommand)}, reinterpret_cast<std::uint64_t>(address), value, 0, 0};
+}
+
+std::uint64_t LoadValue(std::uint64_t* address) {
+    return std::atomic_ref<std::uint64_t>(*address).load(std::memory_order_acquire);
+}
+
+void TestPriorities() {
+    alignas(8) static std::uint64_t release = 0;
+    alignas(8) static std::uint64_t waiterDone = 0;
+    alignas(8) static std::uint64_t releaserDone = 0;
+    alignas(8) static std::uint64_t behindDone = 0;
+    std::vector<std::uint8_t> waiter;
+    Append(waiter, WaitAtLeast(&release, 1));
+    Append(waiter, WriteValue(&waiterDone, 1));
+    std::vector<std::uint8_t> behind;
+    Append(behind, WriteValue(&behindDone, 1));
+    std::vector<std::uint8_t> releaser;
+    Append(releaser, WriteValue(&release, 1));
+    Append(releaser, WriteValue(&releaserDone, 1));
+    const auto object = [](std::vector<std::uint8_t>& memory) {
+        return Apr::CommandBufferObject{Apr::BufferType::Generic, 0, static_cast<std::uint32_t>(memory.size()), 2, static_cast<std::uint32_t>(memory.size()), memory.data()};
+    };
+    auto waiterBuffer = object(waiter);
+    auto behindBuffer = object(behind);
+    auto releaserBuffer = object(releaser);
+    std::uint32_t waiterId = 0, behindId = 0, releaserId = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&waiterBuffer, 5, &waiterId) == 0, "the waiting APR buffer was not submitted");
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&behindBuffer, 5, &behindId) == 0, "the APR buffer behind the wait was not submitted");
+    Require(behindId == waiterId + 1, "APR submission ids did not count up across one priority");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(LoadValue(&waiterDone) == 0 && LoadValue(&behindDone) == 0, "an APR buffer ran past an unsatisfied wait of its own priority");
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&releaserBuffer, 1, &releaserId) == 0 && releaserId == behindId + 1, "APR submission ids did not count up across priorities");
+    for (int poll = 0; poll < 5000 && LoadValue(&releaserDone) == 0; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(LoadValue(&releaserDone) == 1, "an APR buffer at another priority stayed behind a waiting buffer");
+    Require(sceKernelAprWaitCommandBuffer(releaserId) == 0 && sceKernelAprWaitCommandBuffer(waiterId) == 0 && sceKernelAprWaitCommandBuffer(behindId) == 0, "APR did not wait for the buffers by id");
+    Require(LoadValue(&waiterDone) == 1 && LoadValue(&behindDone) == 1, "the released APR buffers did not finish in order");
 }
 
 #ifdef _WIN32
@@ -333,6 +407,8 @@ int main(int argc, char** argv) {
             TestErrors(fixture);
         } else if (mode == "streams") {
             TestStreams(fixture);
+        } else if (mode == "priorities") {
+            TestPriorities();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;

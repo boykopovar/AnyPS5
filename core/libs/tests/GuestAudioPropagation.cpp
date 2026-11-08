@@ -1,7 +1,11 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
+#include <atomic>
+#include <chrono>
+#include <cstdarg>
 #include <cstdint>
+#include <thread>
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
@@ -58,6 +62,108 @@ AudioPropagation::Attribute Attribute(const void* value, std::size_t size) {
     attribute.value = value;
     attribute.valueSize = size;
     return attribute;
+}
+
+struct ReportProbe {
+    std::uint32_t calls = 0;
+    bool fieldsMatch = false;
+    int integerArgument = 0;
+    const char* stringArgument = nullptr;
+    double floatingArgument = 0.0;
+};
+
+#ifdef _WIN32
+using TestVaList = __builtin_sysv_va_list;
+#else
+using TestVaList = std::va_list;
+#endif
+
+static_assert(sizeof(TestVaList) == sizeof(AudioPropagation::ReportArguments));
+
+TestVaList& ReportArguments(AudioPropagation::ReportInfo* report) {
+    return *reinterpret_cast<TestVaList*>(&report->arguments);
+}
+
+struct MixedReportProbe {
+    std::uint32_t calls = 0;
+    int integer = 0;
+    double floating = 0.0;
+    const char* text = nullptr;
+};
+
+void APS5_VABI CaptureMixedReport(const AudioPropagation::ReportInfo* report, void* userData) {
+    auto& probe = *static_cast<MixedReportProbe*>(userData);
+    auto& arguments = ReportArguments(const_cast<AudioPropagation::ReportInfo*>(report));
+    probe.integer = va_arg(arguments, int);
+    probe.floating = va_arg(arguments, double);
+    probe.text = va_arg(arguments, const char*);
+    ++probe.calls;
+}
+
+struct FloatingReportProbe {
+    std::uint32_t calls = 0;
+    std::array<double, 9> values{};
+};
+
+void APS5_VABI CaptureFloatingReport(const AudioPropagation::ReportInfo* report, void* userData) {
+    auto& probe = *static_cast<FloatingReportProbe*>(userData);
+    auto& arguments = ReportArguments(const_cast<AudioPropagation::ReportInfo*>(report));
+    for (auto& value : probe.values) value = va_arg(arguments, double);
+    ++probe.calls;
+}
+
+struct IntegerReportProbe {
+    std::uint32_t calls = 0;
+    int integer = 0;
+    const char* text = nullptr;
+};
+
+void APS5_VABI CaptureIntegerReport(const AudioPropagation::ReportInfo* report, void* userData) {
+    auto& probe = *static_cast<IntegerReportProbe*>(userData);
+    auto& arguments = ReportArguments(const_cast<AudioPropagation::ReportInfo*>(report));
+    probe.integer = va_arg(arguments, int);
+    probe.text = va_arg(arguments, const char*);
+    ++probe.calls;
+}
+
+void APS5_VABI CountReport(const AudioPropagation::ReportInfo*, void* userData) {
+    ++*static_cast<std::uint32_t*>(userData);
+}
+
+void APS5_VABI CaptureReport(const AudioPropagation::ReportInfo* report, void* userData) {
+    auto& probe = *static_cast<ReportProbe*>(userData);
+    ++probe.calls;
+    probe.fieldsMatch = report && report->size == sizeof(*report) && report->handle == 0x1234 &&
+        report->category == 0 && report->result == -7 && report->operation == 9 &&
+        report->function && std::strcmp(report->function, "sceAudioPropagationTest") == 0 &&
+        report->format && std::strcmp(report->format, "%d %s %f") == 0;
+    std::memcpy(&probe.integerArgument, report->arguments.overflowArguments, sizeof(probe.integerArgument));
+    std::memcpy(&probe.stringArgument, static_cast<const std::byte*>(report->arguments.overflowArguments) + sizeof(std::uint64_t), sizeof(probe.stringArgument));
+    std::memcpy(&probe.floatingArgument, static_cast<const std::byte*>(report->arguments.savedRegisters) + 48, sizeof(probe.floatingArgument));
+}
+
+struct SelfUnregisterProbe {
+    AudioPropagation::ReportRegistration* registration = nullptr;
+    std::uint32_t calls = 0;
+};
+
+void APS5_VABI SelfUnregisterReport(const AudioPropagation::ReportInfo*, void* userData) {
+    auto& probe = *static_cast<SelfUnregisterProbe*>(userData);
+    ++probe.calls;
+    Require(sceAudioPropagationReportUnregisterHandler(probe.registration) == 0, "report self-unregister failed");
+}
+
+struct BlockingReportProbe {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    std::atomic<std::uint32_t> calls{0};
+};
+
+void APS5_VABI BlockingReport(const AudioPropagation::ReportInfo*, void* userData) {
+    auto& probe = *static_cast<BlockingReportProbe*>(userData);
+    probe.calls.fetch_add(1, std::memory_order_relaxed);
+    probe.entered.store(true, std::memory_order_release);
+    while (!probe.release.load(std::memory_order_acquire)) std::this_thread::yield();
 }
 
 }
@@ -124,6 +230,31 @@ int main() {
     memory.size_cpu_mem = required;
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "create failed");
     Require(system == reinterpret_cast<std::uintptr_t>(arena), "system handle is not its memory");
+    AudioPropagation::SystemInfo systemInfo{};
+    systemInfo.reserved44 = 0xdeadbeef;
+    Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo)) == 0, "system query info failed");
+    Require(systemInfo.cpuMemory == arena && systemInfo.cpuMemorySize == memory.size_cpu_mem && systemInfo.index == 0, "system query info memory or index");
+    Require(systemInfo.frameSamples == options.frameSamples && systemInfo.parameter24 == 1 && systemInfo.maxSources == options.maxSources, "system query info options");
+    Require(systemInfo.maxMaterials == options.maxMaterials && systemInfo.pathCapacityPerSource == 6 && systemInfo.propagationSpeed == options.propagationSpeed, "system query info capacities");
+    Require(systemInfo.reserved44 == 0xdeadbeef, "system query info overwrote reserved output");
+    Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo) - 1) == AudioPropagation::ErrorInvalidHandle, "system query info accepted wrong size");
+    Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
+    Require(sceAudioPropagationSystemUnlock(system) == AudioPropagation::ErrorInvalidArgument, "unbalanced system unlock was accepted");
+    Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
+    Require(sceAudioPropagationSystemLock(system) == 0, "recursive system lock failed");
+    Require(sceAudioPropagationSystemDestroy(system) == AudioPropagation::ErrorInvalidArgument, "same-thread destroy under system lock was accepted");
+    std::atomic<std::int32_t> crossThreadUnlock{0};
+    std::thread wrongUnlocker([&] { crossThreadUnlock.store(sceAudioPropagationSystemUnlock(system), std::memory_order_release); });
+    wrongUnlocker.join();
+    Require(crossThreadUnlock.load(std::memory_order_acquire) == AudioPropagation::ErrorInvalidArgument, "cross-thread system unlock was accepted");
+    Require(sceAudioPropagationSystemUnlock(system) == 0, "first recursive system unlock failed");
+    Require(sceAudioPropagationSystemUnlock(system) == 0, "system unlock failed");
+    Require(sceAudioPropagationSystemLock(system + 16) == AudioPropagation::ErrorInvalidHandle, "invalid system lock result");
+    Require(sceAudioPropagationSystemUnlock(system + 16) == AudioPropagation::ErrorInvalidHandle, "invalid system unlock result");
+    Require(sceAudioPropagationSystemEnumHandles(nullptr, 0) == 1, "system handle count");
+    Require(sceAudioPropagationSystemEnumHandles(nullptr, 1) == AudioPropagation::ErrorInvalidArgument, "null handle array with capacity");
+    AudioPropagationHandle enumerated[2]{};
+    Require(sceAudioPropagationSystemEnumHandles(enumerated, 1) == 1 && enumerated[0] == system, "single system enumeration");
     AudioPropagationHandle twice = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &twice); }, "second system in the same memory");
 
@@ -236,6 +367,9 @@ int main() {
     otherMemory.p_cpu_mem = otherArena;
     AudioPropagationHandle otherSystem = 0;
     Require(sceAudioPropagationSystemCreate(&options, &otherMemory, &otherSystem) == 0, "second system create failed");
+    AudioPropagationHandle enumeratedSystems[2]{};
+    Require(sceAudioPropagationSystemEnumHandles(enumeratedSystems, 2) == 2 && enumeratedSystems[0] == otherSystem && enumeratedSystems[1] == system, "system enumeration is not newest first");
+    Require(sceAudioPropagationSystemQueryInfo(otherSystem, &systemInfo, sizeof(systemInfo)) == 0 && systemInfo.index == 1, "second system slot index");
     AudioPropagationHandle otherSource = 0;
     Require(sceAudioPropagationSourceCreate(otherSystem, &otherSource) == 0, "second system source create failed");
     AudioPropagationHandle foreignRoom = 0;
@@ -354,6 +488,7 @@ int main() {
     reset();
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "render of a destroyed source");
     Require(sceAudioPropagationSystemDestroy(otherSystem) == 0, "second system destroy failed");
+    Require(sceAudioPropagationSystemEnumHandles(enumeratedSystems, 2) == 1 && enumeratedSystems[0] == system, "destroyed system remained enumerated");
 
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationRoomDestroy(system, source); }, "room destroy of a source");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system + 16, source); }, "source destroy with another system");
@@ -380,9 +515,138 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system, lateSource); }, "orphan destroyed twice");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemDestroy(system); }, "destroy twice");
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "memory reuse after destroy failed");
-    Require(sceAudioPropagationSystemDestroy(system) == 0, "second destroy failed");
+    Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo)) == 0 && systemInfo.index == 0, "system slot was not reused");
+    Require(sceAudioPropagationSystemLock(system) == 0, "system lock before destroy failed");
+    std::atomic<bool> destroyStarted{false};
+    std::atomic<bool> destroyFinished{false};
+    std::thread destroyThread([&] {
+        destroyStarted.store(true, std::memory_order_release);
+        Require(sceAudioPropagationSystemDestroy(system) == 0, "concurrent system destroy failed");
+        destroyFinished.store(true, std::memory_order_release);
+    });
+    while (!destroyStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    Require(!destroyFinished.load(std::memory_order_acquire), "system destroy ignored the held lock");
+    Require(sceAudioPropagationSystemUnlock(system) == 0, "system unlock before destroy failed");
+    destroyThread.join();
+    Require(destroyFinished.load(std::memory_order_acquire), "system destroy did not finish");
 
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(0); }, "system lock throw");
+    Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "create for stale lock waiter failed");
+    Require(sceAudioPropagationSystemLock(system) == 0, "system lock before stale waiter failed");
+    std::atomic<bool> waiterStarted{false};
+    std::atomic<bool> waiterFinished{false};
+    std::atomic<std::int32_t> waiterResult{0};
+    std::thread waiter([&] {
+        waiterStarted.store(true, std::memory_order_release);
+        const auto result = sceAudioPropagationSystemLock(system);
+        waiterResult.store(result, std::memory_order_release);
+        if (result == 0) Require(sceAudioPropagationSystemUnlock(system) == 0, "stale lock waiter cleanup failed");
+        waiterFinished.store(true, std::memory_order_release);
+    });
+    while (!waiterStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    std::atomic<bool> reuseDestroyStarted{false};
+    std::thread reuseDestroyer([&] {
+        reuseDestroyStarted.store(true, std::memory_order_release);
+        Require(sceAudioPropagationSystemDestroy(system) == 0, "destroy with a blocked lock waiter failed");
+    });
+    while (!reuseDestroyStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    Require(sceAudioPropagationSystemUnlock(system) == 0, "unlock before address reuse failed");
+    reuseDestroyer.join();
+    waiter.join();
+    Require(waiterFinished.load(std::memory_order_acquire) && waiterResult.load(std::memory_order_acquire) == AudioPropagation::ErrorInvalidHandle, "waiter acquired a destroyed system lock");
+    Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "create at reused system address failed");
+    Require(sceAudioPropagationSystemLock(system) == 0 && sceAudioPropagationSystemUnlock(system) == 0, "new system lock was affected by a stale waiter");
+    Require(sceAudioPropagationSystemDestroy(system) == 0, "destroy after address reuse failed");
+
+    Require(sceAudioPropagationSystemLock(0) == AudioPropagation::ErrorInvalidHandle, "system lock invalid handle");
+
+    ReportProbe probe{};
+    AudioPropagation::ReportRegistration* registration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(2, CaptureReport, &probe, &registration) == -4, "invalid report category");
+    Require(sceAudioPropagationReportRegisterHandler(0, nullptr, &probe, &registration) == -2, "null report handler");
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, &registration) == 0 && registration, "report handler registration");
+    Require(sceAudioPropagationReportApi(0, 0x1234, -7, 9, "sceAudioPropagationTest", "%d %s %f", 42, "ok", 3.25) == 0, "report dispatch");
+    Require(probe.calls == 1 && probe.fieldsMatch && probe.integerArgument == 42 && std::strcmp(probe.stringArgument, "ok") == 0 && probe.floatingArgument == 3.25, "report info or va_list capture");
+    Require(sceAudioPropagationReportUnregisterHandler(registration) == 0, "report handler unregister");
+    Require(sceAudioPropagationReportUnregisterHandler(registration) == -1, "duplicate report handler unregister");
+    Require(sceAudioPropagationReportUnregisterHandler(nullptr) == -1, "null report registration");
+
+    MixedReportProbe firstMixed{};
+    MixedReportProbe secondMixed{};
+    AudioPropagation::ReportRegistration* firstMixedRegistration = nullptr;
+    AudioPropagation::ReportRegistration* secondMixedRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureMixedReport, &firstMixed, &firstMixedRegistration) == 0, "first mixed report registration");
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureMixedReport, &secondMixed, &secondMixedRegistration) == 0, "second mixed report registration");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "mixed", "%d %f %s", 27, 6.5, "independent") == 0, "mixed report dispatch");
+    for (const auto* probeValue : {&firstMixed, &secondMixed}) {
+        Require(probeValue->calls == 1 && probeValue->integer == 27 && probeValue->floating == 6.5 && std::strcmp(probeValue->text, "independent") == 0, "handlers did not receive independent mixed varargs state");
+    }
+    Require(sceAudioPropagationReportUnregisterHandler(firstMixedRegistration) == 0, "first mixed report unregister");
+    Require(sceAudioPropagationReportUnregisterHandler(secondMixedRegistration) == 0, "second mixed report unregister");
+
+    FloatingReportProbe floatingProbe{};
+    AudioPropagation::ReportRegistration* floatingRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureFloatingReport, &floatingProbe, &floatingRegistration) == 0, "floating report registration");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "floating", "%f%f%f%f%f%f%f%f%f", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0) == 0, "stack-spilled floating report dispatch");
+    Require(floatingProbe.calls == 1, "stack-spilled floating callback count");
+    for (std::size_t index = 0; index < floatingProbe.values.size(); ++index) Require(floatingProbe.values[index] == static_cast<double>(index + 1), "stack-spilled floating argument mismatch");
+    Require(sceAudioPropagationReportUnregisterHandler(floatingRegistration) == 0, "floating report unregister");
+
+    IntegerReportProbe integerProbe{};
+    AudioPropagation::ReportRegistration* integerRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureIntegerReport, &integerProbe, &integerRegistration) == 0, "integer-only report registration");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "integer-only", "%d %s", -19, "no-floats") == 0, "integer-only report dispatch");
+    Require(integerProbe.calls == 1 && integerProbe.integer == -19 && std::strcmp(integerProbe.text, "no-floats") == 0, "integer-only varargs mismatch");
+    Require(sceAudioPropagationReportUnregisterHandler(integerRegistration) == 0, "integer-only report unregister");
+
+    AudioPropagation::ReportRegistration* registrations[8]{};
+    for (auto& slot : registrations) Require(sceAudioPropagationReportRegisterHandler(1, CaptureReport, &probe, &slot) == 0 && slot, "report category slot allocation");
+    Require(sceAudioPropagationReportRegisterHandler(1, CaptureReport, &probe, nullptr) == -3, "report category capacity");
+    for (auto* slot : registrations) Require(sceAudioPropagationReportUnregisterHandler(slot) == 0, "report category slot release");
+
+    std::uint32_t oldHandlerCalls = 0;
+    std::uint32_t newHandlerCalls = 0;
+    AudioPropagation::ReportRegistration* oldRegistration = nullptr;
+    AudioPropagation::ReportRegistration* newRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, CountReport, &oldHandlerCalls, &oldRegistration) == 0, "old report registration");
+    Require(sceAudioPropagationReportUnregisterHandler(oldRegistration) == 0, "old report unregister");
+    Require(sceAudioPropagationReportRegisterHandler(0, CountReport, &newHandlerCalls, &newRegistration) == 0 && newRegistration == oldRegistration, "native report slot address was not reused");
+    Require(sceAudioPropagationReportUnregisterHandler(oldRegistration) == 0, "stale registration did not release the reused native slot");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "stale-registration", "") == 0 && newHandlerCalls == 0, "stale registration left the reused handler active");
+
+    SelfUnregisterProbe selfUnregister{};
+    Require(sceAudioPropagationReportRegisterHandler(0, SelfUnregisterReport, &selfUnregister, &selfUnregister.registration) == 0, "self-unregister handler registration");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0 && selfUnregister.calls == 1, "self-unregister callback dispatch");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0 && selfUnregister.calls == 1, "self-unregistered callback still dispatched");
+
+    BlockingReportProbe blocking{};
+    AudioPropagation::ReportRegistration* blockingRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, BlockingReport, &blocking, &blockingRegistration) == 0, "blocking handler registration");
+    std::thread reportThread([&] {
+        Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0, "blocking report dispatch");
+    });
+    while (!blocking.entered.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::atomic<bool> unregisterStarted{false};
+    std::atomic<bool> unregisterFinished{false};
+    std::thread unregisterThread([&] {
+        unregisterStarted.store(true, std::memory_order_release);
+        Require(sceAudioPropagationReportUnregisterHandler(blockingRegistration) == 0, "concurrent report unregister failed");
+        unregisterFinished.store(true, std::memory_order_release);
+    });
+    while (!unregisterStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    Require(!unregisterFinished.load(std::memory_order_acquire), "handler unregistered before in-flight callback completed");
+    blocking.release.store(true, std::memory_order_release);
+    reportThread.join();
+    unregisterThread.join();
+    Require(unregisterFinished.load(std::memory_order_acquire), "handler unregistration did not finish");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0 && blocking.calls.load() == 1, "unregistered handler dispatched again");
+
+    std::uint32_t unreturnedRegistrationCalls = 0;
+    Require(sceAudioPropagationReportRegisterHandler(1, CountReport, &unreturnedRegistrationCalls, nullptr) == 0, "registration without output pointer failed");
+    Require(sceAudioPropagationReportApi(1, 0, 0, 0, "unreturned-registration", "") == 0 && unreturnedRegistrationCalls == 1, "registration without output pointer was not retained");
 
     Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
     for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {
