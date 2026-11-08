@@ -199,6 +199,11 @@ static void LeavesNoDescriptorsBehind() {
 #endif
 }
 
+static void StartsWhenConfigured() {
+    auto relay = LanRelay::StartRelay("127.0.0.1:47123", "", nullptr);
+    Require(relay != nullptr && relay->IsOpen() && relay->Port() != 0, "a listen address starts the relay");
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
@@ -211,5 +216,6 @@ int main() {
     RefusesBusyPort();
     OpensAndClosesTwoRelaysWithoutLeaks();
     LeavesNoDescriptorsBehind();
+    StartsWhenConfigured();
     return 0;
 }
