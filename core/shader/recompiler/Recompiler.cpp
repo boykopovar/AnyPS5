@@ -1664,6 +1664,10 @@ std::uint64_t vectorBytes(const std::vector<bool>& values) {
     return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
 }
 
+std::uint64_t vectorBytes(const ElementFlags& values) {
+    return values.size() > 64u ? (static_cast<std::uint64_t>(values.size()) + 7u) / 8u : 0u;
+}
+
 std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
     return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
 }
