@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 
 namespace Debug {
@@ -23,7 +24,9 @@ public:
         std::uint64_t args[kMaxArgs] = {};
     };
 
-    std::uint64_t Hit(const NidBreakpointTable& table, std::uint64_t nid, const std::uint64_t* args, std::size_t argCount);
+    using Session = std::function<void(NidBreakpointTable& table, NidStopRegistry& registry, const Stop& stop)>;
+
+    std::uint64_t Hit(NidBreakpointTable& table, std::uint64_t nid, const std::uint64_t* args, std::size_t argCount, const Session& session = {});
     bool Continue(std::uint64_t id);
     std::size_t Size() const;
     std::size_t List(Stop* out, std::size_t capacity) const;
