@@ -221,7 +221,7 @@ bool ParseKeep(const char* text, unsigned& value, std::string& error) {
 }
 
 bool RotationNeeded(std::uint64_t size, std::uint64_t length, std::uint64_t maxBytes) {
-    return maxBytes != 0 && size != 0 && length <= maxBytes && size + length > maxBytes;
+    return maxBytes != 0 && size != 0 && size + length > maxBytes;
 }
 
 std::string RotatedName(const std::string& path, unsigned index) {
