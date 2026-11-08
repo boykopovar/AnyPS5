@@ -113,6 +113,7 @@ int main() {
     Require(ReadU16(datagram + 9) == sizeof payload, "the frame carries the payload length");
     Require(std::memcmp(datagram + FrameHeaderSize, payload, sizeof payload) == 0, "the frame carries the payload");
 
+    SetsMulticastInterfaceByIndex();
     close_nid_postfix(guest);
     close_nid_postfix(peer);
     return 0;
