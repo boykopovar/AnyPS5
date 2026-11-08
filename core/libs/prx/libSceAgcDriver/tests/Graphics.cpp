@@ -36,6 +36,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <limits>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
@@ -9635,6 +9636,48 @@ bool MemberBuiltIn(const ShaderRecompiler::RecompileResult& result, spv::BuiltIn
     return false;
 }
 
+std::optional<std::uint32_t> DecoratedLocation(std::span<const std::uint32_t> words, std::uint32_t target) {
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpDecorate && (words[at] >> 16u) == 4u && words[at + 1] == target && words[at + 2] == spv::DecorationLocation) return words[at + 3];
+    }
+    return std::nullopt;
+}
+
+void vertexLayerRelocationTests() {
+    using namespace ShaderRecompiler;
+    Require(!FindVertexLayerOutput({}) && RelocateVertexLayerOutput({}).empty(), "an empty vertex module was given a layer output");
+    const auto plain = makeModule({.parameterOutput = true});
+    Require(!FindVertexLayerOutput(plain) && RelocateVertexLayerOutput(plain).empty(), "a vertex module without gl_Layer was given a layer output");
+    for (const auto [parameterOutput, parameterLocation, expected] : {std::tuple{false, 0u, 0u}, std::tuple{true, 0u, 1u}, std::tuple{true, 2u, 0u}}) {
+        const auto words = makeModule({.parameterOutput = parameterOutput, .parameterLocation = parameterLocation, .layerOutput = true});
+        const auto layer = FindVertexLayerOutput(words);
+        Require(layer && layer->location == expected, "the vertex gl_Layer was not given the first location no vertex output covers");
+        const auto relocated = RelocateVertexLayerOutput(words);
+        RecompileResult result;
+        result.spirv = relocated;
+        Require(relocated.size() == words.size() && VariableBuiltIns(result, spv::BuiltInLayer) == 0u && DecoratedLocation(relocated, layer->variable) == expected, "the relocated vertex gl_Layer is not a plain output at its location");
+        Require(!FindVertexLayerOutput(relocated), "a relocated vertex module still has a layer output");
+    }
+    const auto words = makeModule({.parameterOutput = true, .layerOutput = true});
+    const auto layer = FindVertexLayerOutput(words);
+    Require(layer.has_value(), "the vertex gl_Layer was not found");
+    auto twice = words;
+    twice.insert(twice.end(), {(4u << 16u) | spv::OpDecorate, layer->variable, spv::DecorationBuiltIn, spv::BuiltInLayer});
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(twice)); }, "more than one gl_Layer");
+    auto member = words;
+    member.insert(member.end(), {(5u << 16u) | spv::OpMemberDecorate, layer->variable, 0u, spv::DecorationBuiltIn, spv::BuiltInLayer});
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(member)); }, "block member");
+    auto viewport = words;
+    viewport[layer->decoration + 3] = spv::BuiltInViewportIndex;
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(viewport)); }, "gl_ViewportIndex");
+    auto located = words;
+    located.insert(located.end(), {(4u << 16u) | spv::OpDecorate, layer->variable, spv::DecorationLocation, 5u});
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(located)); }, "location or component");
+    auto truncated = words;
+    truncated.push_back((9u << 16u) | spv::OpNop);
+    expectFailure([&] { static_cast<void>(FindVertexLayerOutput(truncated)); }, "malformed");
+}
+
 void rectListTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -13975,6 +14018,7 @@ int main(int argc, char** argv) {
         vertexZeroFillMergeTests();
         parallelCompareTests();
         pixelParameterSlotTests();
+        vertexLayerRelocationTests();
         rectListTests();
         quadListTests();
         floatControlsModeTests();

@@ -6,11 +6,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/PatchVertexLayer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "SpirvBackend/SpirvVertexLayer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
 #include <array>
@@ -139,6 +139,10 @@ void ValidateDepthBounds(const Context& context, const State& state) {
 
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders) {
     return !state.rectList && state.stages.path == ShaderPath::Vertex && std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::TessellationControl; });
+}
+
+bool ForwardsVertexLayer(const State& state, std::span<const CompiledShader> shaders) {
+    return state.rectList || BarycentricPatches(state, shaders) || (state.stages.path == ShaderPath::Vertex && std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; }));
 }
 
 bool FragmentInterlock(std::span<const CompiledShader> shaders) {
@@ -499,6 +503,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     ValidateProvokingVertex(context, state, shaders);
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     const bool barycentricPatches = BarycentricPatches(state, shaders);
+    const bool forwardsLayer = ForwardsVertexLayer(state, shaders);
     if (barycentricPatches) Require(context.tessellationShader && ((state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !context.primitiveListRestart)) || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP), "emulated barycentrics through tessellation require a triangle list or strip, with primitive restart in a list only on a device without VK_EXT_primitive_topology_list_restart");
     if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; })) Require(context.geometryShader, "device does not support geometry shaders");
     if (state.stages.tessellation) {
@@ -523,8 +528,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            const auto demoted = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
-            const auto words = demoted.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(demoted);
+            const auto relocated = forwardsLayer && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? ShaderRecompiler::RelocateVertexLayerOutput(shader.spirv.Words()) : std::vector<std::uint32_t>{};
+            const auto words = relocated.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(relocated);
             _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
