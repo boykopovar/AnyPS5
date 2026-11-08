@@ -118,6 +118,7 @@ void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight
     hostWindow = std::make_unique<SdlHostWindow>(window);
     fullscreen = std::make_unique<HostFullscreenState>(*hostWindow);
     fullscreen->Adopt(fullscreenMode, HostWindowSize{static_cast<int>(initialSize.width), static_cast<int>(initialSize.height)});
+    if (KeepAwakeEnabled()) keepAwake.Acquire();
 }
 
 void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t sourceHeight) {
