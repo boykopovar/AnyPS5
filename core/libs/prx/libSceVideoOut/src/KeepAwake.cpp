@@ -1,4 +1,5 @@
 #include "prx/libSceVideoOut/include/KeepAwake.hpp"
+#include "SDL.h"
 #include <cstring>
 
 bool KeepAwakeEnabledFromValue(const char* value) {
@@ -18,4 +19,26 @@ void HostKeepAwake::Release() noexcept {
     if (!held) return;
     backend.enable();
     held = false;
+}
+
+namespace {
+
+void SdlDisable() {
+    SDL_DisableScreenSaver();
+}
+
+void SdlEnable() {
+    SDL_EnableScreenSaver();
+}
+
+bool SdlIsEnabled() {
+    return SDL_IsScreenSaverEnabled() == SDL_TRUE;
+}
+
+const KeepAwakeBackend sdlBackend{SdlDisable, SdlEnable, SdlIsEnabled};
+
+}
+
+const KeepAwakeBackend& SdlKeepAwakeBackend() {
+    return sdlBackend;
 }
