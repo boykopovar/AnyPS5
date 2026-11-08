@@ -1,0 +1,933 @@
+#include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
+
+#include <atomic>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <initializer_list>
+#include <limits>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+#include "mbedtls/bignum.h"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl3/include/PkeyState.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
+
+namespace {
+
+using LibreSsl3::DigestContext;
+using LibreSsl3::DigestMethod;
+
+constexpr int RsaLibrary = 4;
+constexpr int BigNumberLibrary = 3;
+constexpr int AnyFunction = 0xfff;
+constexpr int AllocationFailure = 65;
+constexpr int InternalFailure = 68;
+
+constexpr int ReasonBadExponentValue = 101;
+constexpr int ReasonBadFixedHeaderDecrypt = 102;
+constexpr int ReasonBadPadByteCount = 103;
+constexpr int ReasonModulusTooLarge = 105;
+constexpr int ReasonBlockTypeIsNotOne = 106;
+constexpr int ReasonBlockTypeIsNotTwo = 107;
+constexpr int ReasonDataGreaterThanModulusLength = 108;
+constexpr int ReasonDataTooLarge = 109;
+constexpr int ReasonDataTooLargeForKeySize = 110;
+constexpr int ReasonNullBeforeBlockMissing = 113;
+constexpr int ReasonPaddingCheckFailed = 114;
+constexpr int ReasonUnknownPaddingType = 118;
+constexpr int ReasonKeySizeTooSmall = 120;
+constexpr int ReasonOaepDecodingError = 121;
+constexpr int ReasonDataTooSmallForKeySize = 122;
+constexpr int ReasonDataTooLargeForModulus = 132;
+
+constexpr int MaximumModulusBits = 16384;
+constexpr int SmallModulusBits = 3072;
+constexpr int MaximumPublicExponentBits = 64;
+constexpr int BlindingDraws = 33;
+constexpr int DefaultPublicExponent = 0x10001;
+constexpr int BignumAllocated = 1;
+
+void QueueError(int reason) {
+    LibreSslPutError_nid_no_patch(RsaLibrary, AnyFunction, reason);
+}
+
+void QueueBigNumberError(int reason) {
+    LibreSslPutError_nid_no_patch(BigNumberLibrary, AnyFunction, reason);
+}
+
+[[noreturn]] void Reject(const std::string& message) {
+    throw std::invalid_argument("libSceLibreSsl3 RSA: " + message);
+}
+
+void Wipe(void* memory, std::size_t bytes) {
+    auto* target = static_cast<volatile unsigned char*>(memory);
+    for (std::size_t index = 0; index < bytes; ++index) target[index] = 0;
+}
+
+const LibreSsl3Bignum& RequireComponent(const void* component, const char* function, const char* name) {
+    if (!component) Reject(std::string(function) + ": null " + name);
+    const auto& value = *static_cast<const LibreSsl3Bignum*>(component);
+    if (value.top < 0 || value.top > std::numeric_limits<int>::max() / 64)
+        Reject(std::string(function) + ": " + name + " limb count out of range");
+    if (value.capacity < value.top)
+        Reject(std::string(function) + ": " + name + " limb capacity is below its limb count");
+    if (value.top != 0 && value.data == nullptr) Reject(std::string(function) + ": null " + name + " limbs");
+    if (value.negative != 0)
+        NotImplemented_nid_no_patch((std::string(function) + ": a negative " + name).c_str());
+    return value;
+}
+
+int BitCount(const LibreSsl3Bignum& value) {
+    if (value.top == 0) return 0;
+    return (value.top - 1) * 64 + static_cast<int>(std::bit_width(value.data[value.top - 1]));
+}
+
+int ByteCount(const LibreSsl3Bignum& value) {
+    return (BitCount(value) + 7) / 8;
+}
+
+int SignificantLimbs(int bits) {
+    return (bits + 63) / 64;
+}
+
+int CompareComponents(const LibreSsl3Bignum& left, const LibreSsl3Bignum& right) {
+    const int leftBits = BitCount(left);
+    const int rightBits = BitCount(right);
+    if (leftBits != rightBits) return leftBits < rightBits ? -1 : 1;
+    for (int index = SignificantLimbs(leftBits) - 1; index >= 0; --index) {
+        if (left.data[index] != right.data[index]) return left.data[index] > right.data[index] ? 1 : -1;
+    }
+    return 0;
+}
+
+void CheckNumberSize(const LibreSsl3Bignum& value, const char* what) {
+    if (BitCount(value) > MBEDTLS_MPI_MAX_BITS)
+        NotImplemented_nid_no_patch((std::string("libSceLibreSsl3 RSA: a ") + what + " over " +
+            std::to_string(MBEDTLS_MPI_MAX_BITS) + " bits").c_str());
+}
+
+bool HandleMbedtls(int status, const char* function) {
+    if (status == 0) return true;
+    if (status == MBEDTLS_ERR_MPI_ALLOC_FAILED) {
+        QueueBigNumberError(AllocationFailure);
+        return false;
+    }
+    if (status == MBEDTLS_ERR_MPI_BAD_INPUT_DATA || status == MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) return false;
+    NotImplemented_nid_no_patch((std::string(function) + ": unexpected mbedTLS status " + std::to_string(status)).c_str());
+}
+
+struct Number {
+    mbedtls_mpi value;
+
+    Number() {
+        mbedtls_mpi_init(&value);
+    }
+
+    Number(const Number&) = delete;
+    Number& operator=(const Number&) = delete;
+
+    Number(Number&& other) noexcept : value(other.value) {
+        mbedtls_mpi_init(&other.value);
+    }
+
+    Number& operator=(Number&& other) noexcept {
+        if (this != &other) {
+            mbedtls_mpi_free(&value);
+            value = other.value;
+            mbedtls_mpi_init(&other.value);
+        }
+        return *this;
+    }
+
+    ~Number() {
+        mbedtls_mpi_free(&value);
+    }
+};
+
+Number ComponentNumber(const LibreSsl3Bignum& component, const char* function) {
+    CheckNumberSize(component, "key component");
+    Number number;
+    if (!HandleMbedtls(mbedtls_mpi_read_binary_le(&number.value, reinterpret_cast<const unsigned char*>(component.data),
+            static_cast<std::size_t>(component.top) * 8), function))
+        Reject(std::string(function) + ": mbedTLS rejected a key component");
+    return number;
+}
+
+Number BytesNumber(const unsigned char* bytes, std::size_t length, const char* function) {
+    Number number;
+    if (!HandleMbedtls(mbedtls_mpi_read_binary(&number.value, bytes, length), function))
+        Reject(std::string(function) + ": mbedTLS rejected the input");
+    return number;
+}
+
+bool WriteBytes(const Number& number, unsigned char* output, std::size_t length, const char* function) {
+    return HandleMbedtls(mbedtls_mpi_write_binary(&number.value, output, length), function);
+}
+
+bool Power(const Number& base, const Number& exponent, const Number& modulus, Number& result, const char* function) {
+    return HandleMbedtls(mbedtls_mpi_exp_mod(&result.value, &base.value, &exponent.value, &modulus.value, nullptr), function);
+}
+
+bool Remainder(Number& result, const Number& value, const Number& modulus, const char* function) {
+    Number temporary;
+    if (!HandleMbedtls(mbedtls_mpi_mod_mpi(&temporary.value, &value.value, &modulus.value), function)) return false;
+    result = std::move(temporary);
+    return true;
+}
+
+bool MultiplyRemainder(Number& result, const Number& left, const Number& right, const Number& modulus,
+    const char* function) {
+    Number product;
+    Number temporary;
+    if (!HandleMbedtls(mbedtls_mpi_mul_mpi(&product.value, &left.value, &right.value), function)) return false;
+    if (!HandleMbedtls(mbedtls_mpi_mod_mpi(&temporary.value, &product.value, &modulus.value), function)) return false;
+    result = std::move(temporary);
+    return true;
+}
+
+bool Subtract(Number& result, const Number& left, const Number& right, const char* function) {
+    Number temporary;
+    if (!HandleMbedtls(mbedtls_mpi_sub_mpi(&temporary.value, &left.value, &right.value), function)) return false;
+    result = std::move(temporary);
+    return true;
+}
+
+bool InverseModulo(Number& result, const Number& value, const Number& modulus, const char* function) {
+    Number temporary;
+    const int status = mbedtls_mpi_inv_mod(&temporary.value, &value.value, &modulus.value);
+    if (status == MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) return false;
+    if (!HandleMbedtls(status, function)) return false;
+    result = std::move(temporary);
+    return true;
+}
+
+bool IsOne(const Number& number) {
+    return mbedtls_mpi_cmp_int(&number.value, 1) == 0;
+}
+
+bool IsOdd(const Number& number) {
+    return mbedtls_mpi_get_bit(&number.value, 0) == 1;
+}
+
+int EntropySource(void*, unsigned char* output, std::size_t length) {
+    HostEntropy_nid_no_patch(output, length);
+    return 0;
+}
+
+bool RandomBelow(Number& result, const Number& modulus, const char* function) {
+    const int bits = static_cast<int>(mbedtls_mpi_bitlen(&modulus.value));
+    if (bits <= 0) return false;
+    const int bytes = (bits + 7) / 8;
+    const int spare = bytes * 8 - bits;
+    Number candidate;
+    do {
+        if (!HandleMbedtls(mbedtls_mpi_lset(&candidate.value, 0), function)) return false;
+        if (!HandleMbedtls(mbedtls_mpi_fill_random(&candidate.value, bytes, EntropySource, nullptr), function)) return false;
+        if (spare > 0 && !HandleMbedtls(mbedtls_mpi_shift_r(&candidate.value, static_cast<size_t>(spare)), function)) return false;
+    } while (mbedtls_mpi_cmp_mpi(&candidate.value, &modulus.value) >= 0);
+    result = std::move(candidate);
+    return true;
+}
+
+bool BlindingExponent(const LibreSsl3Rsa& rsa, Number& exponent, const char* function) {
+    if (rsa.e) {
+        exponent = ComponentNumber(RequireComponent(rsa.e, function, "exponent"), function);
+        return true;
+    }
+    return HandleMbedtls(mbedtls_mpi_lset(&exponent.value, DefaultPublicExponent), function);
+}
+
+struct Blinding {
+    Number factor;
+    Number unblind;
+    bool applied = false;
+};
+
+bool SetupBlinding(const LibreSsl3Rsa& rsa, const Number& modulusNumber, Blinding& blinding, const char* function) {
+    if (rsa.blinding || rsa.mtBlinding)
+        NotImplemented_nid_no_patch((std::string(function) + ": blinding state held by the key").c_str());
+    if (rsa.methodModN || rsa.methodModP || rsa.methodModQ)
+        NotImplemented_nid_no_patch((std::string(function) + ": a method Montgomery context").c_str());
+    if (IsOne(modulusNumber)) return true;
+    if (!IsOdd(modulusNumber)) return false;
+    blinding.applied = true;
+    Number exponent;
+    if (!BlindingExponent(rsa, exponent, function)) return false;
+    Number random;
+    bool usable = false;
+    for (int draw = 0; draw < BlindingDraws && !usable; ++draw) {
+        usable = RandomBelow(random, modulusNumber, function) && InverseModulo(blinding.unblind, random, modulusNumber, function);
+    }
+    if (!usable) return false;
+    Number blinded;
+    if (!Power(random, exponent, modulusNumber, blinded, function)) return false;
+    blinding.factor = std::move(blinded);
+    return true;
+}
+
+bool CombinedChineseRemainder(Number& result, const Number& powerP, const Number& powerQ, const LibreSsl3Bignum& coefficient,
+    const LibreSsl3Bignum& p, const LibreSsl3Bignum& q, const char* function) {
+    const Number factor = ComponentNumber(coefficient, function);
+    const Number primeP = ComponentNumber(p, function);
+    const Number primeQ = ComponentNumber(q, function);
+    Number difference;
+    Number scaled;
+    Number total;
+    if (!Subtract(difference, powerP, powerQ, function)) return false;
+    if (!MultiplyRemainder(scaled, difference, factor, primeP, function)) return false;
+    if (!HandleMbedtls(mbedtls_mpi_mul_mpi(&total.value, &scaled.value, &primeQ.value), function)) return false;
+    if (!HandleMbedtls(mbedtls_mpi_add_mpi(&total.value, &total.value, &powerQ.value), function)) return false;
+    result = std::move(total);
+    return true;
+}
+
+bool RemainderOfComponent(Number& result, const Number& value, const LibreSsl3Bignum& modulus, const char* function) {
+    const Number divisor = ComponentNumber(modulus, function);
+    return Remainder(result, value, divisor, function);
+}
+
+bool ChineseRemainderPower(const LibreSsl3Rsa& rsa, const Number& value, const Number& modulusNumber, Number& result,
+    const char* function) {
+    if (rsa.methodModP || rsa.methodModQ)
+        NotImplemented_nid_no_patch((std::string(function) + ": a method Montgomery context").c_str());
+    const auto& p = RequireComponent(rsa.p, function, "p");
+    const auto& q = RequireComponent(rsa.q, function, "q");
+    if (p.top == 0 || q.top == 0) return false;
+    Number powerP;
+    Number powerQ;
+    Number reducedP;
+    Number reducedQ;
+    if (!RemainderOfComponent(reducedP, value, p, function)) return false;
+    if (!Power(reducedP, ComponentNumber(RequireComponent(rsa.dmp1, function, "dmp1"), function), ComponentNumber(p, function),
+            powerP, function))
+        return false;
+    if (!RemainderOfComponent(reducedQ, value, q, function)) return false;
+    if (!Power(reducedQ, ComponentNumber(RequireComponent(rsa.dmq1, function, "dmq1"), function), ComponentNumber(q, function),
+            powerQ, function))
+        return false;
+    if (!CombinedChineseRemainder(result, powerP, powerQ, RequireComponent(rsa.iqmp, function, "iqmp"), p, q, function))
+        return false;
+    if (rsa.e) {
+        Number check;
+        if (!Power(result, ComponentNumber(RequireComponent(rsa.e, function, "exponent"), function), modulusNumber, check,
+                function))
+            return false;
+        if (mbedtls_mpi_cmp_mpi(&check.value, &value.value) == 0) return true;
+    }
+    if (!rsa.d) return true;
+    return Power(value, ComponentNumber(RequireComponent(rsa.d, function, "private exponent"), function), modulusNumber, result,
+        function);
+}
+
+bool PrivatePower(const LibreSsl3Rsa& rsa, const Number& value, Number& result, const char* function) {
+    const auto& modulus = RequireComponent(rsa.n, function, "modulus");
+    CheckNumberSize(modulus, "modulus");
+    const Number modulusNumber = ComponentNumber(modulus, function);
+    Blinding blinding;
+    Number blinded;
+    if ((rsa.flags & LibreSsl3RsaFlagNoBlinding) == 0) {
+        if (!SetupBlinding(rsa, modulusNumber, blinding, function)) {
+            LibreSslPutError_nid_no_patch(RsaLibrary, AnyFunction, InternalFailure);
+            return false;
+        }
+        if (blinding.applied && !MultiplyRemainder(blinded, value, blinding.factor, modulusNumber, function)) return false;
+    }
+    const bool usesChineseRemainder = (rsa.flags & LibreSsl3RsaFlagExternalPrivateKey) != 0 ||
+        (rsa.p && rsa.q && rsa.dmp1 && rsa.dmq1 && rsa.iqmp);
+    Number worked;
+    if (usesChineseRemainder) {
+        if (!ChineseRemainderPower(rsa, blinding.applied ? blinded : value, modulusNumber, worked, function)) return false;
+    } else {
+        const auto& exponent = RequireComponent(rsa.d, function, "private exponent");
+        if (!Power(blinding.applied ? blinded : value, ComponentNumber(exponent, function), modulusNumber, worked, function))
+            return false;
+    }
+    if (!blinding.applied) {
+        result = std::move(worked);
+        return true;
+    }
+    return MultiplyRemainder(result, worked, blinding.unblind, modulusNumber, function);
+}
+
+bool PublicPower(const LibreSsl3Rsa& rsa, const Number& value, Number& result, const char* function) {
+    const auto& modulus = RequireComponent(rsa.n, function, "modulus");
+    const auto& exponent = RequireComponent(rsa.e, function, "exponent");
+    if (rsa.methodModN) NotImplemented_nid_no_patch((std::string(function) + ": a method Montgomery context").c_str());
+    return Power(value, ComponentNumber(exponent, function), ComponentNumber(modulus, function), result, function);
+}
+
+bool PublicComponents(const LibreSsl3Rsa* rsa, const char* function, const LibreSsl3Bignum*& modulus,
+    const LibreSsl3Bignum*& exponent) {
+    if (!rsa) Reject(std::string(function) + ": null key");
+    modulus = &RequireComponent(rsa->n, function, "modulus");
+    if (BitCount(*modulus) > MaximumModulusBits) {
+        QueueError(ReasonModulusTooLarge);
+        return false;
+    }
+    exponent = &RequireComponent(rsa->e, function, "exponent");
+    if (CompareComponents(*modulus, *exponent) <= 0) {
+        QueueError(ReasonBadExponentValue);
+        return false;
+    }
+    if (BitCount(*modulus) > SmallModulusBits && BitCount(*exponent) > MaximumPublicExponentBits) {
+        QueueError(ReasonBadExponentValue);
+        return false;
+    }
+    return true;
+}
+
+bool WriteOutput(unsigned char* to, int size, const Number& result, const char* function) {
+    if (size > 0 && !to) Reject(std::string(function) + ": null output");
+    return WriteBytes(result, to, static_cast<std::size_t>(size), function);
+}
+
+int ModulusByteCount(const LibreSsl3Rsa* rsa, const char* function) {
+    if (!rsa) Reject(std::string(function) + ": null key");
+    return ByteCount(RequireComponent(rsa->n, function, "modulus"));
+}
+
+int DigestSize(const DigestMethod* digest) {
+    return digest ? digest->digestSize : -1;
+}
+
+bool RunDigest(const DigestMethod* digest, std::initializer_list<std::span<const unsigned char>> spans,
+    unsigned char* output) {
+    if (!digest || !digest->init || !digest->update || !digest->finalize) return false;
+    if (digest->contextSize < 0) return false;
+    std::vector<unsigned char> storage(static_cast<std::size_t>(digest->contextSize));
+    DigestContext context {};
+    context.digest = digest;
+    context.data = storage.empty() ? nullptr : storage.data();
+    if (digest->init(&context) != 1) return false;
+    for (const auto& span : spans) {
+        if (span.empty()) continue;
+        if (digest->update(&context, span.data(), span.size()) != 1) return false;
+    }
+    return digest->finalize(&context, output) == 1;
+}
+
+std::vector<unsigned char> DigestBytes(const DigestMethod* digest, std::span<const unsigned char> input, int size) {
+    std::vector<unsigned char> output(static_cast<std::size_t>(size));
+    if (!RunDigest(digest, {input}, output.data())) return {};
+    return output;
+}
+
+bool ApplyPadding(int padding, unsigned char* block, int size, const unsigned char* from, int length,
+    const char* function) {
+    switch (padding) {
+    case LibreSsl3RsaPaddingPkcs1:
+        return LibreSsl3::RsaPaddingAddPkcs1Type2_nid_no_patch(block, size, from, length) > 0;
+    case LibreSsl3RsaPaddingX931:
+        NotImplemented_nid_no_patch((std::string(function) + ": X9.31 padding").c_str());
+    case LibreSsl3RsaPaddingOaep:
+        return LibreSsl3::RsaPaddingAddPkcs1OaepMgf1_nid_no_patch(block, size, from, length, nullptr, 0, nullptr,
+            nullptr) > 0;
+    case LibreSsl3RsaPaddingNone:
+        return LibreSsl3::RsaPaddingAddNone_nid_no_patch(block, size, from, length) > 0;
+    default:
+        QueueError(ReasonUnknownPaddingType);
+        return false;
+    }
+}
+
+bool RecoverPadding(int padding, unsigned char* to, int size, const unsigned char* block, int length, int modulusLength,
+    const char* function, int& recovered) {
+    switch (padding) {
+    case LibreSsl3RsaPaddingPkcs1:
+        recovered = LibreSsl3::RsaPaddingCheckPkcs1Type2_nid_no_patch(to, size, block, length, modulusLength);
+        break;
+    case LibreSsl3RsaPaddingX931:
+        NotImplemented_nid_no_patch((std::string(function) + ": X9.31 padding").c_str());
+    case LibreSsl3RsaPaddingOaep:
+        recovered = LibreSsl3::RsaPaddingCheckPkcs1OaepMgf1_nid_no_patch(to, size, block, length, modulusLength, nullptr, 0,
+            nullptr, nullptr);
+        break;
+    case LibreSsl3RsaPaddingNone:
+        recovered = LibreSsl3::RsaPaddingCheckNone_nid_no_patch(to, size, block, length, modulusLength);
+        break;
+    default:
+        QueueError(ReasonUnknownPaddingType);
+        return false;
+    }
+    if (recovered < 0) QueueError(ReasonPaddingCheckFailed);
+    return true;
+}
+
+bool DecodedTail(const Number& result, std::vector<unsigned char>& block, int size, int& length, const char* function) {
+    length = static_cast<int>((mbedtls_mpi_bitlen(&result.value) + 7) / 8);
+    if (size < length) return false;
+    return WriteBytes(result, block.data(), static_cast<std::size_t>(length), function);
+}
+
+} // namespace
+
+namespace LibreSsl3 {
+
+int RsaByteCount_nid_no_patch(const LibreSsl3Rsa* rsa) {
+    return ModulusByteCount(rsa, "RSA_size");
+}
+
+int RsaBitCount_nid_no_patch(const LibreSsl3Rsa* rsa) {
+    if (!rsa) Reject("RSA_bits: null key");
+    return BitCount(RequireComponent(rsa->n, "RSA_bits", "modulus"));
+}
+
+int RsaComponentBits_nid_no_patch(const void* component) {
+    return BitCount(RequireComponent(component, "BN_num_bits", "number"));
+}
+
+LibreSsl3Bignum* NewRsaBignum_nid_no_patch(const unsigned char* bytes, std::size_t length) {
+    auto* number = static_cast<LibreSsl3Bignum*>(malloc_nid_postfix(sizeof(LibreSsl3Bignum)));
+    if (!number) return nullptr;
+    *number = {nullptr, 0, 0, 0, BignumAllocated};
+    if (length == 0) return number;
+    const std::size_t limbs = (length - 1) / 8 + 1;
+    if (limbs > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        free_nid_postfix(number);
+        return nullptr;
+    }
+    number->data = static_cast<std::uint64_t*>(malloc_nid_postfix(limbs * sizeof(std::uint64_t)));
+    if (!number->data) {
+        free_nid_postfix(number);
+        return nullptr;
+    }
+    number->capacity = static_cast<std::int32_t>(limbs);
+    for (std::size_t limb = 0; limb < limbs; ++limb) {
+        std::uint64_t value = 0;
+        for (std::size_t byte = 0; byte < 8; ++byte) {
+            const std::size_t position = limb * 8 + byte;
+            if (position < length) value |= static_cast<std::uint64_t>(bytes[length - 1 - position]) << (8 * byte);
+        }
+        number->data[limb] = value;
+    }
+    number->top = static_cast<std::int32_t>(limbs);
+    while (number->top > 0 && number->data[number->top - 1] == 0) --number->top;
+    return number;
+}
+
+LibreSsl3Bignum* DuplicateRsaBignum_nid_no_patch(const LibreSsl3Bignum* number) {
+    if (!number || number->top < 0 || number->capacity < number->top) return nullptr;
+    if (number->top > 0 && !number->data) return nullptr;
+    const std::size_t limbs = number->top == 0 ? 1 : static_cast<std::size_t>(number->top);
+    auto* copy = static_cast<LibreSsl3Bignum*>(malloc_nid_postfix(sizeof(LibreSsl3Bignum)));
+    if (!copy) return nullptr;
+    copy->data = static_cast<std::uint64_t*>(malloc_nid_postfix(limbs * sizeof(std::uint64_t)));
+    if (!copy->data) {
+        free_nid_postfix(copy);
+        return nullptr;
+    }
+    for (std::size_t index = 0; index < limbs; ++index) copy->data[index] = number->data ? number->data[index] : 0;
+    copy->top = number->top;
+    copy->capacity = static_cast<std::int32_t>(limbs);
+    copy->negative = number->negative;
+    copy->flags = BignumAllocated;
+    return copy;
+}
+
+void FreeRsa_nid_no_patch(LibreSsl3Rsa* rsa) {
+    if (!rsa) return;
+    const int remaining = std::atomic_ref<std::int32_t>(rsa->references).fetch_add(-1) - 1;
+    if (remaining > 0) return;
+    if (rsa->pss || rsa->blinding || rsa->mtBlinding || rsa->extraData)
+        NotImplemented_nid_no_patch("RSA_free of a key holding PSS parameters, blinding state or extra data");
+    if (rsa->methodModN || rsa->methodModP || rsa->methodModQ || rsa->method)
+        NotImplemented_nid_no_patch("RSA_free of a key with method data");
+    for (void* component : {rsa->n, rsa->e, rsa->d, rsa->p, rsa->q, rsa->dmp1, rsa->dmq1, rsa->iqmp})
+        BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(component));
+    Wipe(rsa, sizeof(*rsa));
+    free_nid_postfix(rsa);
+}
+
+int RsaPublicEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, const LibreSsl3Rsa* rsa,
+    int padding) {
+    constexpr auto function = "RSA_public_encrypt";
+    const LibreSsl3Bignum* modulus = nullptr;
+    const LibreSsl3Bignum* exponent = nullptr;
+    if (!PublicComponents(rsa, function, modulus, exponent)) return -1;
+    const int size = ByteCount(*modulus);
+    std::vector<unsigned char> block(static_cast<std::size_t>(size));
+    if (!ApplyPadding(padding, block.data(), size, from, length, function)) return -1;
+    const Number value = BytesNumber(block.data(), block.size(), function);
+    const Number modulusNumber = ComponentNumber(*modulus, function);
+    if (mbedtls_mpi_cmp_mpi(&value.value, &modulusNumber.value) >= 0) {
+        QueueError(ReasonDataTooLargeForModulus);
+        return -1;
+    }
+    Number result;
+    if (!Power(value, ComponentNumber(*exponent, function), modulusNumber, result, function)) return -1;
+    if (!WriteOutput(to, size, result, function)) return -1;
+    return size;
+}
+
+int RsaPrivateEncrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, const LibreSsl3Rsa* rsa,
+    int padding) {
+    constexpr auto function = "RSA_private_encrypt";
+    const int size = ModulusByteCount(rsa, function);
+    CheckNumberSize(RequireComponent(rsa->n, function, "modulus"), "modulus");
+    std::vector<unsigned char> block(static_cast<std::size_t>(size));
+    if (!ApplyPadding(padding, block.data(), size, from, length, function)) return -1;
+    const Number value = BytesNumber(block.data(), block.size(), function);
+    const Number modulusNumber = ComponentNumber(RequireComponent(rsa->n, function, "modulus"), function);
+    if (mbedtls_mpi_cmp_mpi(&value.value, &modulusNumber.value) >= 0) {
+        QueueError(ReasonDataTooLargeForModulus);
+        return -1;
+    }
+    Number result;
+    if (!PrivatePower(*rsa, value, result, function)) return -1;
+    if (!WriteOutput(to, size, result, function)) return -1;
+    return size;
+}
+
+int RsaPrivateDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, const LibreSsl3Rsa* rsa,
+    int padding) {
+    constexpr auto function = "RSA_private_decrypt";
+    if (!rsa) Reject(std::string(function) + ": null key");
+    const int size = ModulusByteCount(rsa, function);
+    if (length > size) {
+        QueueError(ReasonDataGreaterThanModulusLength);
+        return -1;
+    }
+    if (length > 0 && !from) Reject(std::string(function) + ": null input");
+    const Number value = BytesNumber(from, static_cast<std::size_t>(length), function);
+    const Number modulusNumber = ComponentNumber(RequireComponent(rsa->n, function, "modulus"), function);
+    if (mbedtls_mpi_cmp_mpi(&value.value, &modulusNumber.value) >= 0) {
+        QueueError(ReasonDataTooLargeForModulus);
+        return -1;
+    }
+    Number result;
+    if (!PrivatePower(*rsa, value, result, function)) return -1;
+    std::vector<unsigned char> block(static_cast<std::size_t>(size));
+    int decodedLength = 0;
+    if (!DecodedTail(result, block, size, decodedLength, function)) return -1;
+    int recovered = -1;
+    if (!RecoverPadding(padding, to, size, block.data(), decodedLength, size, function, recovered)) return -1;
+    return recovered;
+}
+
+int RsaPublicDecrypt_nid_no_patch(int length, const unsigned char* from, unsigned char* to, const LibreSsl3Rsa* rsa,
+    int padding) {
+    constexpr auto function = "RSA_public_decrypt";
+    const LibreSsl3Bignum* modulus = nullptr;
+    const LibreSsl3Bignum* exponent = nullptr;
+    if (!PublicComponents(rsa, function, modulus, exponent)) return -1;
+    const int size = ByteCount(*modulus);
+    if (length > size) {
+        QueueError(ReasonDataGreaterThanModulusLength);
+        return -1;
+    }
+    if (length > 0 && !from) Reject(std::string(function) + ": null input");
+    const Number value = BytesNumber(from, static_cast<std::size_t>(length), function);
+    const Number modulusNumber = ComponentNumber(*modulus, function);
+    if (mbedtls_mpi_cmp_mpi(&value.value, &modulusNumber.value) >= 0) {
+        QueueError(ReasonDataTooLargeForModulus);
+        return -1;
+    }
+    Number result;
+    if (!PublicPower(*rsa, value, result, function)) return -1;
+    std::vector<unsigned char> block(static_cast<std::size_t>(size));
+    int decodedLength = 0;
+    if (!DecodedTail(result, block, size, decodedLength, function)) return -1;
+    int recovered = -1;
+    if (!RecoverPadding(padding, to, size, block.data(), decodedLength, size, function, recovered)) return -1;
+    return recovered;
+}
+
+int RsaPaddingAddNone_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length) {
+    if (length < 0 || size < 0) return 0;
+    if (length > size) {
+        QueueError(ReasonDataTooLargeForKeySize);
+        return 0;
+    }
+    if (length < size) {
+        QueueError(ReasonDataTooSmallForKeySize);
+        return 0;
+    }
+    if (length > 0 && !from) Reject("RSA_padding_add_none: null input");
+    if (size > 0 && !to) Reject("RSA_padding_add_none: null output");
+    if (length) std::memcpy(to, from, static_cast<std::size_t>(length));
+    return 1;
+}
+
+int RsaPaddingCheckNone_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length,
+    int modulusLength) {
+    (void) modulusLength;
+    if (length < 0 || size < 0) return -1;
+    if (length > size) {
+        QueueError(ReasonDataTooLarge);
+        return -1;
+    }
+    if (length > 0 && !from) Reject("RSA_padding_check_none: null input");
+    if (size > 0 && !to) Reject("RSA_padding_check_none: null output");
+    if (size > length) std::memset(to, 0, static_cast<std::size_t>(size - length));
+    if (length) std::memcpy(to + size - length, from, static_cast<std::size_t>(length));
+    return size;
+}
+
+int RsaPaddingAddPkcs1Type1_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length) {
+    if (size < 0 || length < 0) return 0;
+    if (length > size - LibreSsl3RsaPkcs1PaddingSize) {
+        QueueError(ReasonDataTooLargeForKeySize);
+        return 0;
+    }
+    if (length > 0 && !from) Reject("RSA_padding_add_PKCS1_type_1: null input");
+    if (size > 0 && !to) Reject("RSA_padding_add_PKCS1_type_1: null output");
+    if (size > 0) {
+        to[0] = 0;
+        to[1] = 1;
+        std::memset(to + 2, 0xff, static_cast<std::size_t>(size - 3 - length));
+        to[size - length - 1] = 0;
+    }
+    if (length) std::memcpy(to + size - length, from, static_cast<std::size_t>(length));
+    return 1;
+}
+
+int RsaPaddingCheckPkcs1Type1_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length,
+    int modulusLength) {
+    if (size < 0 || length < 0) return -1;
+    const unsigned char* data = from;
+    if (modulusLength != length + 1 || length <= 0 || !data || *(data++) != 0x01) {
+        QueueError(ReasonBlockTypeIsNotOne);
+        return -1;
+    }
+    int remaining = length - 1;
+    int index = 0;
+    for (; index < remaining; ++index, ++data) {
+        if (*data == 0xff) continue;
+        if (*data) {
+            QueueError(ReasonBadFixedHeaderDecrypt);
+            return -1;
+        }
+        ++data;
+        break;
+    }
+    if (index == remaining) {
+        QueueError(ReasonNullBeforeBlockMissing);
+        return -1;
+    }
+    if (index < 8) {
+        QueueError(ReasonBadPadByteCount);
+        return -1;
+    }
+    ++index;
+    remaining -= index;
+    if (remaining > size) {
+        QueueError(ReasonDataTooLarge);
+        return -1;
+    }
+    if (remaining > 0 && !to) Reject("RSA_padding_check_PKCS1_type_1: null output");
+    if (remaining) std::memcpy(to, data, static_cast<std::size_t>(remaining));
+    return remaining;
+}
+
+int RsaPaddingAddPkcs1Type2_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length) {
+    if (size < 0 || length < 0) return 0;
+    if (length > size - LibreSsl3RsaPkcs1PaddingSize) {
+        QueueError(ReasonDataTooLargeForKeySize);
+        return 0;
+    }
+    if (length > 0 && !from) Reject("RSA_padding_add_PKCS1_type_2: null input");
+    if (size > 0 && !to) Reject("RSA_padding_add_PKCS1_type_2: null output");
+    if (size > 0) {
+        to[0] = 0;
+        to[1] = 2;
+        unsigned char* padding = to + 2;
+        for (int index = 0; index < size - 3 - length; ++index) {
+            unsigned char byte = 0;
+            while (!byte) HostEntropy_nid_no_patch(&byte, 1);
+            *padding++ = byte;
+        }
+        *padding++ = 0;
+        std::memcpy(padding, from, static_cast<std::size_t>(length));
+    }
+    return 1;
+}
+
+int RsaPaddingCheckPkcs1Type2_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length,
+    int modulusLength) {
+    if (size < 0 || length < 0) return -1;
+    const unsigned char* data = from;
+    if (modulusLength != length + 1 || length <= 0 || !data || *(data++) != 0x02) {
+        QueueError(ReasonBlockTypeIsNotTwo);
+        return -1;
+    }
+    int remaining = length - 1;
+    int index = 0;
+    for (; index < remaining; ++index, ++data) {
+        if (*data) continue;
+        ++data;
+        break;
+    }
+    if (index == remaining) {
+        QueueError(ReasonNullBeforeBlockMissing);
+        return -1;
+    }
+    if (index < 8) {
+        QueueError(ReasonBadPadByteCount);
+        return -1;
+    }
+    ++index;
+    remaining -= index;
+    if (remaining > size) {
+        QueueError(ReasonDataTooLarge);
+        return -1;
+    }
+    if (remaining > 0 && !to) Reject("RSA_padding_check_PKCS1_type_2: null output");
+    if (remaining) std::memcpy(to, data, static_cast<std::size_t>(remaining));
+    return remaining;
+}
+
+bool RsaMaskGenerationFunction_nid_no_patch(unsigned char* mask, int length, const unsigned char* seed, int seedLength,
+    const DigestMethod* digest) {
+    const int size = DigestSize(digest);
+    if (size < 0) return false;
+    if (length <= 0 || size == 0) return true;
+    if (seedLength > 0 && !seed) Reject("PKCS1_MGF1: null seed");
+    for (int counter = 0; counter * size < length; ++counter) {
+        const std::uint32_t bigEndianCounter = static_cast<std::uint32_t>(counter);
+        const unsigned char counterBytes[] {
+            static_cast<unsigned char>((bigEndianCounter >> 24) & 0xff),
+            static_cast<unsigned char>((bigEndianCounter >> 16) & 0xff),
+            static_cast<unsigned char>((bigEndianCounter >> 8) & 0xff),
+            static_cast<unsigned char>(bigEndianCounter & 0xff),
+        };
+        std::vector<unsigned char> block(static_cast<std::size_t>(size));
+        const std::span<const unsigned char> seedSpan(seed, static_cast<std::size_t>(seedLength));
+        const std::span<const unsigned char> counterSpan(counterBytes, sizeof(counterBytes));
+        if (!RunDigest(digest, {seedSpan, counterSpan}, block.data())) return false;
+        const int offset = counter * size;
+        const int taken = (offset + size <= length) ? size : (length - offset);
+        std::memcpy(mask + offset, block.data(), static_cast<std::size_t>(taken));
+    }
+    return true;
+}
+
+bool RsaDigestSpans_nid_no_patch(const DigestMethod* digest, std::span<const unsigned char> first,
+    std::span<const unsigned char> second, unsigned char* output) {
+    return RunDigest(digest, {first, second}, output);
+}
+
+int RsaPaddingAddPkcs1OaepMgf1_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length,
+    const unsigned char* label, int labelLength, const DigestMethod* digest, const DigestMethod* maskDigest) {
+    const DigestMethod* messageDigest = digest ? digest : EVP_sha1_nid_postfix();
+    const DigestMethod* maskMethod = maskDigest ? maskDigest : messageDigest;
+    if (size < 0 || length < 0) return 0;
+    const int digestLength = DigestSize(messageDigest);
+    if (digestLength <= 0) return 0;
+    const int encodedLength = size - 1;
+    if (length > encodedLength - 2 * digestLength - 1) {
+        QueueError(ReasonDataTooLargeForKeySize);
+        return 0;
+    }
+    if (encodedLength < 2 * digestLength + 1) {
+        QueueError(ReasonKeySizeTooSmall);
+        return 0;
+    }
+    if (length > 0 && !from) Reject("RSA_padding_add_PKCS1_OAEP_mgf1: null input");
+    if (labelLength > 0 && !label) Reject("RSA_padding_add_PKCS1_OAEP_mgf1: null label");
+    if (size > 0 && !to) Reject("RSA_padding_add_PKCS1_OAEP_mgf1: null output");
+    to[0] = 0;
+    unsigned char* seed = to + 1;
+    unsigned char* block = to + digestLength + 1;
+    const std::span<const unsigned char> labelSpan(label, static_cast<std::size_t>(labelLength > 0 ? labelLength : 0));
+    const std::vector<unsigned char> hashedLabel = DigestBytes(messageDigest, labelSpan, digestLength);
+    if (hashedLabel.empty()) return 0;
+    std::memcpy(block, hashedLabel.data(), static_cast<std::size_t>(digestLength));
+    std::memset(block + digestLength, 0, static_cast<std::size_t>(encodedLength - length - 2 * digestLength - 1));
+    block[encodedLength - length - digestLength - 1] = 0x01;
+    if (length) std::memcpy(block + encodedLength - length - digestLength, from, static_cast<std::size_t>(length));
+    HostEntropy_nid_no_patch(seed, static_cast<std::size_t>(digestLength));
+    std::vector<unsigned char> blockMask(static_cast<std::size_t>(encodedLength - digestLength));
+    if (!RsaMaskGenerationFunction_nid_no_patch(blockMask.data(), encodedLength - digestLength, seed, digestLength,
+            maskMethod))
+        return 0;
+    for (int index = 0; index < encodedLength - digestLength; ++index)
+        block[static_cast<std::size_t>(index)] ^= blockMask[static_cast<std::size_t>(index)];
+    std::vector<unsigned char> seedMask(static_cast<std::size_t>(digestLength));
+    if (!RsaMaskGenerationFunction_nid_no_patch(seedMask.data(), digestLength, block, encodedLength - digestLength,
+            maskMethod))
+        return 0;
+    for (int index = 0; index < digestLength; ++index)
+        seed[static_cast<std::size_t>(index)] ^= seedMask[static_cast<std::size_t>(index)];
+    return 1;
+}
+
+int RsaPaddingCheckPkcs1OaepMgf1_nid_no_patch(unsigned char* to, int size, const unsigned char* from, int length,
+    int modulusLength, const unsigned char* label, int labelLength, const DigestMethod* digest,
+    const DigestMethod* maskDigest) {
+    const DigestMethod* messageDigest = digest ? digest : EVP_sha1_nid_postfix();
+    const DigestMethod* maskMethod = maskDigest ? maskDigest : messageDigest;
+    const int digestLength = DigestSize(messageDigest);
+    if (digestLength <= 0) return -1;
+    if (size <= 0 || length <= 0) return -1;
+    if (length > 0 && !from) Reject("RSA_padding_check_PKCS1_OAEP_mgf1: null input");
+    if (labelLength > 0 && !label) Reject("RSA_padding_check_PKCS1_OAEP_mgf1: null label");
+    if (modulusLength < length || modulusLength < 2 * digestLength + 2) {
+        QueueError(ReasonOaepDecodingError);
+        return -1;
+    }
+    const int blockLength = modulusLength - digestLength - 1;
+    std::vector<unsigned char> encoded(static_cast<std::size_t>(modulusLength));
+    std::memcpy(encoded.data() + static_cast<std::size_t>(modulusLength - length), from, static_cast<std::size_t>(length));
+    bool good = encoded[0] == 0;
+    const unsigned char* maskedSeed = encoded.data() + 1;
+    const unsigned char* maskedBlock = encoded.data() + 1 + digestLength;
+    std::vector<unsigned char> seed(static_cast<std::size_t>(digestLength));
+    if (!RsaMaskGenerationFunction_nid_no_patch(seed.data(), digestLength, maskedBlock, blockLength, maskMethod))
+        return -1;
+    for (int index = 0; index < digestLength; ++index)
+        seed[static_cast<std::size_t>(index)] ^= maskedSeed[static_cast<std::size_t>(index)];
+    std::vector<unsigned char> block(static_cast<std::size_t>(blockLength));
+    if (!RsaMaskGenerationFunction_nid_no_patch(block.data(), blockLength, seed.data(), digestLength, maskMethod))
+        return -1;
+    for (int index = 0; index < blockLength; ++index)
+        block[static_cast<std::size_t>(index)] ^= maskedBlock[static_cast<std::size_t>(index)];
+    const std::span<const unsigned char> labelSpan(label, static_cast<std::size_t>(labelLength > 0 ? labelLength : 0));
+    const std::vector<unsigned char> hashedLabel = DigestBytes(messageDigest, labelSpan, digestLength);
+    if (hashedLabel.empty()) return -1;
+    if (std::memcmp(block.data(), hashedLabel.data(), static_cast<std::size_t>(digestLength)) != 0) good = false;
+    bool found = false;
+    int oneIndex = 0;
+    for (int index = digestLength; index < blockLength; ++index) {
+        const unsigned char byte = block[static_cast<std::size_t>(index)];
+        if (!found && byte == 1) {
+            oneIndex = index;
+            found = true;
+        }
+        if (!found && byte != 0) good = false;
+    }
+    if (!found) good = false;
+    const int messageLength = blockLength - oneIndex - 1;
+    if (size < messageLength) good = false;
+    if (!good) {
+        QueueError(ReasonOaepDecodingError);
+        return -1;
+    }
+    if (messageLength > 0) {
+        if (!to) Reject("RSA_padding_check_PKCS1_OAEP_mgf1: null output");
+        std::memcpy(to, block.data() + oneIndex + 1, static_cast<std::size_t>(messageLength));
+    }
+    return messageLength;
+}
+
+} // namespace LibreSsl3
+
+extern "C" {
+
+LibreSsl3Rsa* APS5_VABI RSA_new_nid_disambig1_nid_postfix() {
+    auto* rsa = static_cast<LibreSsl3Rsa*>(calloc_nid_postfix(1, sizeof(LibreSsl3Rsa)));
+    if (!rsa) {
+        QueueError(AllocationFailure);
+        return nullptr;
+    }
+    rsa->references = 1;
+    return rsa;
+}
+
+}
