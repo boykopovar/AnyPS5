@@ -1032,12 +1032,7 @@ template<typename Range>
 void SplitPages(std::size_t pages, const Range& range) {
     static const unsigned hostThreads = std::max(1u, std::thread::hardware_concurrency() / 2);
     const auto workers = std::min<std::size_t>({ImportHashThreads, hostThreads, pages / ImportHashPagesPerThread});
-#ifdef __APPLE__
-    const bool holder = GpuMutex().HeldByThisThread();
-#else
-    const bool holder = false;
-#endif
-    if (workers < 2 || holder) {
+    if (workers < 2) {
         range(std::size_t{0}, pages);
         return;
     }
@@ -1063,19 +1058,47 @@ std::vector<std::uint64_t> PagesOf(std::span<const std::pair<std::uint64_t, std:
     return pages;
 }
 
-void HashPages(std::uint64_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, std::vector<std::uint64_t>& hashes) {
+std::vector<std::uint8_t> TrappedPages(std::span<const std::uint64_t> pages) {
+    std::vector<std::uint8_t> trapped(pages.size(), 0);
+#ifdef __APPLE__
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
+    for (std::size_t from = 0; from < pages.size();) {
+        auto to = from + 1;
+        while (to < pages.size() && pages[to] == pages[to - 1] + WritePageBytes) ++to;
+        GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(pages[from]), (to - from) * WritePageBytes, +[](void* context, std::uintptr_t begin, std::uintptr_t end) { static_cast<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>*>(context)->emplace_back(begin, end); }, &runs);
+        from = to;
+    }
+    if (runs.empty()) return trapped;
+    std::sort(runs.begin(), runs.end());
+    for (std::size_t index = 0; index < pages.size(); ++index) {
+        const auto page = static_cast<std::uintptr_t>(pages[index]);
+        const auto run = std::partition_point(runs.begin(), runs.end(), [&](const auto& candidate) { return candidate.second <= page; });
+        trapped[index] = run != runs.end() && run->first < page + WritePageBytes;
+    }
+#endif
+    return trapped;
+}
+
+void HashPages(std::uint64_t first, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, std::vector<std::uint64_t>& hashes, std::vector<std::uint8_t>& unknown) {
     const auto pages = PagesOf(spans);
+    const auto trapped = TrappedPages(pages);
     SplitPages(pages.size(), [&](std::size_t from, std::size_t to) {
-        for (auto index = from; index < to; ++index) hashes[static_cast<std::size_t>((pages[index] - first) / WritePageBytes)] = HashPage(reinterpret_cast<const std::byte*>(pages[index]));
+        for (auto index = from; index < to; ++index) {
+            const auto at = static_cast<std::size_t>((pages[index] - first) / WritePageBytes);
+            if (trapped[index] != 0) unknown[at] = 1;
+            else hashes[at] = HashPage(reinterpret_cast<const std::byte*>(pages[index]));
+        }
     });
 }
 
 struct WindowCopy {
     std::uint64_t first;
     std::span<const std::uint64_t> hashes;
+    std::span<const std::uint8_t> unknown;
 
     bool Holds(std::uintptr_t page) const {
-        return HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[(page - first) / WritePageBytes];
+        const auto at = (page - first) / WritePageBytes;
+        return unknown[at] == 0 && HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[at];
     }
 };
 
@@ -1668,9 +1691,10 @@ void stampWrittenRun(void* context, std::uintptr_t begin, std::uintptr_t end) {
 
 void stampWindowRuns(StampRuns& runs) {
     const auto pages = PagesOf(runs.windowRuns);
+    const auto trapped = TrappedPages(pages);
     std::vector<std::uint8_t> held(pages.size(), 0);
     SplitPages(pages.size(), [&](std::size_t from, std::size_t to) {
-        for (auto index = from; index < to; ++index) held[index] = runs.window->Holds(static_cast<std::uintptr_t>(pages[index]));
+        for (auto index = from; index < to; ++index) held[index] = trapped[index] == 0 && runs.window->Holds(static_cast<std::uintptr_t>(pages[index]));
     });
     auto& tracker = runs.tracker;
     const auto generation = tracker.generation.load(std::memory_order_relaxed);
@@ -2102,7 +2126,8 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     }
     std::vector<std::uint64_t> hashes(static_cast<std::size_t>((stop - first) / page), 0);
     for (const auto& [begin, end] : spans) CheckRange(reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin), 1, false);
-    HashPages(first, spans, hashes);
+    std::vector<std::uint8_t> unknown(hashes.size(), 0);
+    HashPages(first, spans, hashes, unknown);
     const auto failWalk = importWalkFailureForTest.load(std::memory_order_acquire);
     const auto failSpan = importWalkFailureSpanForTest.load(std::memory_order_acquire);
     const auto failsWalk = [&](int walk, std::uint64_t begin, std::uint64_t end) {
@@ -2121,7 +2146,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     });
     leave(leaving);
     if (!runImport()) return false;
-    const WindowCopy window{first, hashes};
+    const WindowCopy window{first, hashes, unknown};
     leaving.clear();
     std::erase_if(spans, [&](const auto& span) {
         if (failsWalk(2, span.first, span.second) || !walkWrites(tracker, span.first, span.second, StampKind::Cpu, true, &window)) {

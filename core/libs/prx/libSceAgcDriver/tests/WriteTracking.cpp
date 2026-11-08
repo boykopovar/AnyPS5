@@ -1763,11 +1763,17 @@ void CheckImportWindow() {
 #ifdef __APPLE__
 void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
     const std::lock_guard held(GpuMutex());
+    std::memset(reinterpret_cast<void*>(begin), 0x33, end - begin);
     GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
 }
 
-bool CheckImportUnderGpuMutex() {
-    if (std::thread::hardware_concurrency() / 2 < 2) return false;
+std::size_t TrappedBytes(std::uint64_t address, std::size_t bytes) {
+    std::size_t trapped = 0;
+    GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(address), bytes, +[](void* context, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::size_t*>(context) += end - begin; }, &trapped);
+    return trapped;
+}
+
+void CheckImportOverReadTraps() {
     ::alarm(20);
     constexpr std::size_t bytes = 256 * Block;
     void* memory = AllocateWatched(bytes);
@@ -1776,17 +1782,20 @@ bool CheckImportUnderGpuMutex() {
     const auto synced = CollectWritesUncached(base, bytes);
     Require(synced != 0, "the read-trapped import range is not collected");
     Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
-    GuestWriteWatch::GuestWriteWatchSetReadTrapBypass_nid_postfix(+[] { return GpuMutex().HeldByThisThread(); });
     {
         const std::lock_guard held(GpuMutex());
         Require(ImportWatched(base, bytes, [&] {
             std::memset(memory, 0x22, bytes);
             return GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes);
         }, true, false), "the import under the GPU mutex failed");
+        Require(TrappedBytes(base, bytes) == bytes, "the import took read traps off its range");
     }
     Require(Watched(base, bytes), "the import under the GPU mutex left its range unwatched");
     Require(WrittenSince(base, bytes, synced), "the stores within the import were missed");
-    return true;
+    std::uint8_t seen = 0;
+    std::thread reader([&] { seen = *static_cast<const volatile std::uint8_t*>(memory); });
+    reader.join();
+    Require(seen == 0x33, "a read after the import did not see the bytes its trap stores");
 }
 #endif
 
@@ -2468,12 +2477,9 @@ int main(int argc, char** argv) {
             return 0;
         }
 #ifdef __APPLE__
-        if (argc == 2 && std::string_view(argv[1]) == "--import-under-gpu-mutex") {
-            if (!CheckImportUnderGpuMutex()) {
-                std::cout << "fewer than 4 hardware threads: imports hash on one thread anyway, skipped\n";
-                return 77;
-            }
-            std::cout << "import under the GPU mutex test passed\n";
+        if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
+            CheckImportOverReadTraps();
+            std::cout << "import over read traps test passed\n";
             return 0;
         }
 #endif
