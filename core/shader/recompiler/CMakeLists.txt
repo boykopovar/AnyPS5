@@ -253,6 +253,7 @@ function(add_shader_recompiler target runtimeTarget)
             DebugProbeActive
             DecodeRdnaInstruction
             DepthBitsTextureWidth
+            ExactF32Arithmetic
             HashBytes
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
