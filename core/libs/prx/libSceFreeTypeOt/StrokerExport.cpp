@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include FT_STROKER_H
