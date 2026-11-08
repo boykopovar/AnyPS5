@@ -3,10 +3,13 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+struct sockaddr;
 
 namespace LanRelay {
 
