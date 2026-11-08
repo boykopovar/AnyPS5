@@ -1,4 +1,4 @@
-#include "LoweringExecution.hpp"
+#include "VectorExecution.hpp"
 #include <codegen/x86/LaneSplitLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
@@ -115,72 +115,14 @@ void matching() {
 
 #if LOWERING_EXECUTION_AVAILABLE
 
-struct Machine {
-    std::array<std::array<std::uint64_t, 4>, 16> Ymm;
-    std::array<std::uint64_t, 4> Memory;
-    std::array<std::uint64_t, 16> RedZone;
-};
-
-class Runner {
-public:
-    explicit Runner(const Bytes& body) {
-        Bytes code;
-        code.insert(code.end(), {0x48, 0x8D, 0x87});
-        append32(code, 512);
-        for (std::uint8_t reg = 0; reg < 16; ++reg) {
-            code.insert(code.end(), {0xC4, static_cast<std::uint8_t>((reg & 8 ? 0x60 : 0xE0) | 1), 0x7E, 0x6F, static_cast<std::uint8_t>(0x87 | ((reg & 7) << 3))});
-            append32(code, reg * 32);
-        }
-        for (int slot = 0; slot < 16; ++slot) {
-            code.insert(code.end(), {0x48, 0x8B, 0x8F});
-            append32(code, 544 + slot * 8);
-            code.insert(code.end(), {0x48, 0x89, 0x8C, 0x24});
-            append32(code, -128 + slot * 8);
-        }
-        code.insert(code.end(), body.begin(), body.end());
-        for (std::uint8_t reg = 0; reg < 16; ++reg) {
-            code.insert(code.end(), {0xC4, static_cast<std::uint8_t>((reg & 8 ? 0x60 : 0xE0) | 1), 0x7E, 0x7F, static_cast<std::uint8_t>(0x87 | ((reg & 7) << 3))});
-            append32(code, reg * 32);
-        }
-        for (int slot = 0; slot < 16; ++slot) {
-            code.insert(code.end(), {0x48, 0x8B, 0x8C, 0x24});
-            append32(code, -128 + slot * 8);
-            code.insert(code.end(), {0x48, 0x89, 0x8F});
-            append32(code, 544 + slot * 8);
-        }
-        code.insert(code.end(), {0xC5, 0xF8, 0x77, 0xC3});
-        page = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        if (page == MAP_FAILED) throw std::runtime_error("Cannot allocate the lane-split execution page");
-        if (code.size() > 8192) throw std::runtime_error("Lane-split execution code is too large");
-        std::memcpy(page, code.data(), code.size());
-        if (mprotect(page, 8192, PROT_READ | PROT_EXEC) != 0) throw std::runtime_error("Cannot make the lane-split execution page executable");
-    }
-    ~Runner() { munmap(page, 8192); }
-    Runner(const Runner&) = delete;
-    Runner& operator=(const Runner&) = delete;
-    void Run(Machine& machine) const { reinterpret_cast<void (*)(Machine*)>(page)(&machine); }
-
-private:
-    std::uint8_t* page = nullptr;
-    static void append32(Bytes& bytes, std::int32_t value) {
-        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
-    }
-};
+using VectorExecution::Machine;
+using VectorExecution::Runner;
 
 Bytes lowered(const Bytes& instruction) {
     Codegen::StubBodyBuilder body;
     Codegen::EmitLaneSplit(body, *Codegen::DecodeLaneSplit(instruction.data(), instruction.size()));
     const auto finished = body.Finish();
     return Bytes(finished.Bytes.begin(), finished.Bytes.begin() + static_cast<std::ptrdiff_t>(finished.ReturnBranchOffset));
-}
-
-Machine initial() {
-    Machine machine{};
-    for (std::size_t reg = 0; reg < 16; ++reg)
-        for (std::size_t q = 0; q < 4; ++q) machine.Ymm[reg][q] = 0x0123456789ABCDEFull * (reg + 1) ^ (0x1111111111111111ull * (q + 3)) ^ (q == 1 ? 0x8000800080008000ull : 0);
-    for (std::size_t q = 0; q < 4; ++q) machine.Memory[q] = 0xFEDCBA9876543210ull ^ (0x0F0F0F0F0F0F0F0Full * q);
-    for (auto& slot : machine.RedZone) slot = LoweringExecution::kSentinel;
-    return machine;
 }
 
 std::array<std::uint64_t, 4> perHalf(const Form& form, const Machine& start, std::uint8_t first, std::uint8_t second, int imm, bool memorySecond) {
@@ -204,7 +146,7 @@ std::array<std::uint64_t, 4> perHalf(const Form& form, const Machine& start, std
 void check(const Form& form, std::uint8_t dst, std::uint8_t first, std::uint8_t second, int imm) {
     const auto instruction = site(form, true, dst, first, second, imm);
     const Runner runner(lowered(instruction));
-    auto machine = initial();
+    auto machine = VectorExecution::Initial();
     const auto start = machine;
     runner.Run(machine);
     const bool unary = form.Shape == LaneSplitShape::Unary || form.Shape == LaneSplitShape::UnaryImmediate;
