@@ -39,6 +39,7 @@ Tee::Tee(Handle file, Handle terminalOutput, Handle terminalError, Handle source
 
 Tee::~Tee() {
     Stop();
+    if (_file != NoHandle) Close(_file);
 }
 
 Tee::Stream& Tee::streamOf(int standard) {
