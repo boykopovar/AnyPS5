@@ -565,6 +565,28 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
 
 
+class CompareTests(unittest.TestCase):
+    def summary(self, **titles):
+        return {"titles": {title_id: {"name": f"Game {title_id}", "runs": runs} for title_id, runs in titles.items()}}
+
+    def test_fps_is_compared_on_the_last_run(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}, {"outcome": "rendering", "fps": 30.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0}, {"outcome": "rendering", "fps": 45.5}])
+        compared = title_run.compare_runs(summary, previous)
+        self.assertEqual(compared["PPSA00001"]["fps"], {"before": 30.0, "now": 45.5})
+        self.assertEqual(compared["PPSA00001"]["name"], "Game PPSA00001")
+
+    def test_a_run_that_did_not_start_has_no_fps(self):
+        previous = self.summary(PPSA00001=[{"outcome": "relink-failed", "fps": 0.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 12.0}])
+        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["fps"], {"before": None, "now": 12.0})
+
+    def test_only_titles_in_both_runs_are_compared(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
+        self.assertEqual(list(title_run.compare_runs(summary, previous)), ["PPSA00001"])
+
+
 class RunReportTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
