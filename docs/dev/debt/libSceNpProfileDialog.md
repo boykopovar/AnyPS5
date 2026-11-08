@@ -13,3 +13,5 @@
 ### Functional
 
 - [sceNpProfileDialogInitialize](../../../core/libs/prx/libSceNpProfileDialog/Export.cpp) (libSceNpProfileDialog) - never returns shadPS4's `NOT_SYSTEM_INITIALIZED` (`sceCommonDialogInitialize` not called) or `BUSY` (another common dialog in use): libSceCommonDialog shares neither state here.
+
+- [sceNpProfileDialogOpen, sceNpProfileDialogOpenA](../../../core/libs/prx/libSceNpProfileDialog/Export.cpp) (libSceNpProfileDialog) - returning COMMON_DIALOG_ERROR_ARG_NULL (0x80B8000D) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
