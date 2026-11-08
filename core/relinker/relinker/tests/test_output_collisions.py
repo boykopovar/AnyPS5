@@ -27,6 +27,8 @@ def prepare(case, windows):
         "module-registry": case / "output.sample.prx.guest.prx.registry.json",
         "needed": case / "output.needed.json",
         "module-needed": case / "output.sample.prx.guest.prx.needed.json",
+        "hooks": case / "output.hooks.json",
+        "module-hooks": case / "output.sample.prx.guest.prx.hooks.json",
     }
     if windows:
         paths["diagnostics"] = case / "windows-diagnostics-imports.txt"
