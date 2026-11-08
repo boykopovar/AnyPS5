@@ -1362,7 +1362,7 @@ bool DrawRecipes() {
 }
 
 const char* DrawRecipeMissName(DrawRecipeMiss miss) {
-    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof"};
+    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof", "buffers"};
     return names[static_cast<std::size_t>(miss)];
 }
 
@@ -4230,6 +4230,8 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         timer.phase(PhaseLookup);
         return miss(DrawRecipeMiss::Proof);
     }
+    const auto moved = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
+    if (!moved.has_value()) return miss(DrawRecipeMiss::Buffers);
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
     if (recipe.hasDepth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     SharedResourceCache().Touch(recipe.key);
@@ -4254,6 +4256,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.recorder = recorder;
     record.completion = outcome.completion;
     record.resources = std::move(resources);
+    record.moved = *moved;
     record.pipeline = std::move(pipeline);
     record.framebuffer = std::move(framebuffer);
     record.targetViews = recipe.targetViews;
