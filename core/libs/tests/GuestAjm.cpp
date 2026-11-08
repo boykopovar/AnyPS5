@@ -1032,7 +1032,7 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchCancel(context, second) == invalidBatch);
     Require(sceAjmBatchWait(context, second, 0, &error) == invalidBatch);
     Require(sceAjmBatchWait(0, first, 0, &error) == invalidContext);
-    Require(sceAjmBatchWait(other + 1, first, 0, &error) == invalidContext);
+    Require(sceAjmBatchWait(highHalf + 1, first, 0, &error) == invalidContext);
     Require(sceAjmBatchCancel(context, first) == 0);
     Require(sceAjmBatchWait(context, first, 0, &error) == 0);
     Require(sceAjmBatchWait(other, second, 0, &error) == 0);
@@ -1040,7 +1040,7 @@ void TestBatchContextOwnership(std::uint32_t context) {
     Require(sceAjmBatchWait(other, second, 0, &error) == invalidBatch);
     std::uint32_t untouched = 0xfeedu;
     Require(sceAjmBatchStart(0, &info, 0, &error, &untouched) == invalidContext);
-    Require(sceAjmBatchStart(other + 1, &info, 0, &error, &untouched) == invalidContext);
+    Require(sceAjmBatchStart(highHalf + 1, &info, 0, &error, &untouched) == invalidContext);
     Require(untouched == 0xfeedu);
     Require(sceAjmFinalize(other) == 0);
 }
