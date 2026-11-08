@@ -393,6 +393,7 @@ int main() {
     StaysOffByDefault();
     InvalidSettingsLogOneLineAndStayOff();
     StartsWhenConfigured();
+    MatchesLimitedAndInterfaceBroadcasts();
     RoundTripsFrames();
     RefusesMalformedFrames();
     RefusesFramesThatCannotBeSent();
