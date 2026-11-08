@@ -1152,6 +1152,31 @@ void FrameRingWiringTest() {
     collector.Finish(RunReport::Exit::Clean, {}, 0);
 }
 
+void FrameTimesReportTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteFramePresented();
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(Contains(Read(collector.ReportPath()), "\"frameMs\": null"), "one frame gives no frame percentiles");
+    Directory second, other;
+    RunReport::Collector many(Covered(second.path, other.path, IdB));
+    Require(many.Start(), "the collector did not start");
+    for (int index = 0; index < 4; ++index) {
+        many.NoteFramePresented();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    many.Finish(RunReport::Exit::Clean, {}, 0);
+    const auto text = Read(many.ReportPath());
+    Require(Contains(text, "\"frameMs\": {\n") && Contains(text, "\"p50\": ") && Contains(text, "\"p90\": ") && Contains(text, "\"p99\": "), "frame percentiles are missing: " + text);
+    RunReport::Report report;
+    report.observed.coverage.milestones = false;
+    report.observed.frameMs = RunReport::FrameTimes{1.0, 2.0, 3.0};
+    Require(Contains(RunReport::Serialize(report, RunReport::HostIdentifiers{}), "\"frameMs\": null"), "a run without milestone coverage must not show frame percentiles");
+    report.observed.coverage.milestones = true;
+    Require(Contains(RunReport::Serialize(report, RunReport::HostIdentifiers{}), "\"p99\": 3.000"), "covered frame percentiles must be written");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1414,6 +1439,7 @@ int main(int argc, char** argv) {
         Run("fixed-ring", FixedRingTest);
         Run("frame-percentile", FramePercentileTest);
         Run("frame-ring-wiring", FrameRingWiringTest);
+        Run("frame-times-report", FrameTimesReportTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
