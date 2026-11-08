@@ -10388,13 +10388,6 @@ int APS5_VABI WKBundleBackForwardListClear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleClearHistoryForTesting() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleClearResourceLoadStatistics() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleCreateWKDataFromUInt8Array() {
     NotImplemented_nid_no_patch(__func__);
@@ -11147,9 +11140,6 @@ int APS5_VABI WKBundleReportException() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleResetOriginAccessAllowLists() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleResourceLoadStatisticsNotifyObserver() {
     NotImplemented_nid_no_patch(__func__);

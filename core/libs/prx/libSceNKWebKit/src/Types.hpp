@@ -147,6 +147,13 @@ public:
     bool isContentEditable = false;
 };
 
+class Bundle final : public ObjectOf<ObjectType::Bundle> {
+public:
+    bool historyCleared = false;
+    bool resourceLoadStatisticsCleared = false;
+    bool originAccessAllowListsReset = false;
+};
+
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
