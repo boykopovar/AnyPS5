@@ -1,6 +1,7 @@
 #include "strcodec.h"
 #include "JXRGlue.h"
 #include "GuestHeap.h"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -101,4 +102,61 @@ int32_t JxrAllocateBitIOInfo_nid_no_patch(void* codec) {
 
     pSC->cNumBitIO = cNumBitIO;
     return ICERR_OK;
+}
+
+typedef int64_t (APS5_VABI *JxrGuestGetPos)(struct WMPStream*, size_t*);
+typedef int64_t (APS5_VABI *JxrGuestClose)(struct WMPStream**);
+
+int32_t JxrDecodeStreamHasGetPos_nid_no_patch(void* stream) {
+    return ((struct WMPStream*)stream)->GetPos != NULL;
+}
+
+int32_t JxrDecodeHasClose_nid_no_patch(void* decoder) {
+    const PKImageDecode* pID = (const PKImageDecode*)decoder;
+    return !pID->fStreamOwner || (pID->pStream != NULL && pID->pStream->Close != NULL);
+}
+
+int64_t JxrDecodeInitialize_nid_no_patch(void* decoder, void* stream) {
+    PKImageDecode* pID = (PKImageDecode*)decoder;
+    struct WMPStream* pStream = (struct WMPStream*)stream;
+
+    pID->pStream = pStream;
+    pID->guidPixFormat = GUID_PKPixelFormatDontCare;
+    pID->fResX = 96;
+    pID->fResY = 96;
+    pID->cFrame = 1;
+
+    if (!Failed(((JxrGuestGetPos)pStream->GetPos)(pStream, &pID->offStart)))
+        memset(&pID->WMP.wmiDEMisc, 0, sizeof(pID->WMP.wmiDEMisc));
+    return WMP_errSuccess;
+}
+
+int64_t JxrDecodeGetPixelFormat_nid_no_patch(void* decoder, void* format) {
+    return PKImageDecode_GetPixelFormat((PKImageDecode*)decoder, (PKPixelFormatGUID*)format);
+}
+
+int64_t JxrDecodeGetSize_nid_no_patch(void* decoder, int32_t* width, int32_t* height) {
+    return PKImageDecode_GetSize((PKImageDecode*)decoder, (I32*)width, (I32*)height);
+}
+
+int64_t JxrDecodeGetResolution_nid_no_patch(void* decoder, float* x, float* y) {
+    return PKImageDecode_GetResolution((PKImageDecode*)decoder, x, y);
+}
+
+int64_t JxrDecodeGetFrameCount_nid_no_patch(void* decoder, uint32_t* count) {
+    return PKImageDecode_GetFrameCount((PKImageDecode*)decoder, count);
+}
+
+int64_t JxrDecodeGetColorContext_nid_no_patch(void* decoder, uint8_t* buffer, uint32_t* size) {
+    return PKImageDecode_GetColorContext((PKImageDecode*)decoder, buffer, size);
+}
+
+int64_t JxrDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* metadata) {
+    return PKImageDecode_GetDescriptiveMetadata((PKImageDecode*)decoder, (DESCRIPTIVEMETADATA*)metadata);
+}
+
+int64_t JxrDecodeRelease_nid_no_patch(void** decoder) {
+    PKImageDecode* pID = (PKImageDecode*)*decoder;
+    if (pID->fStreamOwner) ((JxrGuestClose)pID->pStream->Close)(&pID->pStream);
+    return PKFree(decoder);
 }
