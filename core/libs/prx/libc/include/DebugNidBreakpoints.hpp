@@ -26,6 +26,7 @@ public:
     bool Empty() const;
     bool IsArmed(std::uint64_t nid) const;
     std::uint64_t DuplicateCount() const;
+    std::size_t List(std::uint64_t* out, std::size_t capacity) const;
 
 private:
     std::size_t IndexOf(std::uint64_t nid) const;
