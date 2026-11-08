@@ -791,6 +791,10 @@ void GuestAllocationsSetUnmapObserver_nid_postfix(void (*callback)(std::uintptr_
     unmapObserver.store(callback, std::memory_order_release);
 }
 
+bool GuestAllocationsUnmapObservedForTest_nid_postfix() {
+    return unmapObserver.load(std::memory_order_acquire) != nullptr;
+}
+
 Lease GuestAllocationsAcquire_nid_postfix() {
     std::lock_guard lock(registry().mutex);
     if (auto shared = registry().readableLease) return Lease(std::move(shared));

@@ -1,7 +1,9 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -25,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <span>
 #include <string>
@@ -276,6 +279,17 @@ int main(int argc, char** argv) {
         for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of the whole plane");
         for (std::size_t unit = 3; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels - EdgeTexels, "after a read of the whole plane, the padding below the last row");
         Require(!AgcDriver::Graphics::DepthPlanesStale(), "a read of the whole plane left it stale");
+
+        Fill(plane, 1.0f);
+        Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before a reset flush did not cover the plane");
+        const auto owned = AgcDriver::Graphics::GpuOwnedRanges(base, PlaneBytes);
+        Require(std::ranges::any_of(owned, [&](const auto& range) { return range.first <= base && base < range.first + range.second; }), "a stale depth plane is not among the GPU-owned ranges a reset compares");
+        std::exception_ptr failure;
+        AgcDriverFlushGuestMemory_nid_no_patch(base, PlaneBytes, &failure);
+        if (failure) std::rethrow_exception(failure);
+        device->WaitIdle();
+        Require(AgcDriver::Graphics::ResidentOwnersOver(base, PlaneBytes, true) == 0, "a reset flush left the drawn depth plane newer on the GPU");
+        for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a reset flush");
 
         if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(base, PlaneBytes)) {
             std::puts("guest memory is not write-watched here: guest writes into a partly stored plane are not exercised");

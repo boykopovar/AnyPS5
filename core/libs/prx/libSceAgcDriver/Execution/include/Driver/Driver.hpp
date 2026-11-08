@@ -72,6 +72,7 @@ public:
     void Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip = false);
     void SubmitFlip(const FlipInfo& info);
     void SuspendPoint();
+    void WaitDeviceIdle();
     std::uint32_t ReserveEopFlip(const FlipInfo& info);
     std::uint32_t ReserveEopFlipAt(const FlipInfo& info, std::uint32_t token);
     std::vector<std::uint32_t> PendingEopFlipTokens();
