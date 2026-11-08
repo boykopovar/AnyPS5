@@ -512,6 +512,22 @@ void deadzoneShapesSticks() {
     require(rejected, "an out-of-range deadzone is rejected");
 }
 
+void snapshotSwap() {
+    Pad::InputConfiguration first;
+    first.settings.mouseSensitivity = 2.0;
+    Pad::InputMappingStore store(first);
+    const auto before = store.Snapshot();
+    const auto generation = store.Generation();
+    Pad::InputConfiguration second;
+    second.settings.mouseSensitivity = 3.0;
+    store.Publish(second);
+    require(before->settings.mouseSensitivity == 2.0, "a snapshot taken before a publish keeps its values");
+    require(store.Snapshot()->settings.mouseSensitivity == 3.0, "a publish replaces the snapshot");
+    require(store.Snapshot() != before, "readers get a new snapshot pointer after a publish");
+    require(store.Generation() == generation + 1, "a publish advances the generation");
+    require(store.Snapshot()->bindings.size() == 0 && store.Snapshot()->settings.mouseSensitivity == 3.0, "the published configuration is stored whole");
+}
+
 }
 
 int main() try {
@@ -545,6 +561,7 @@ int main() try {
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();
+    snapshotSwap();
     std::filesystem::remove_all(root);
     std::cout << "input mapping tests passed\n";
     return 0;
