@@ -18,6 +18,11 @@ static void Require(bool value, const char* message) {
 using Address = std::array<unsigned char, 16>;
 
 constexpr short PollIn = 1;
+constexpr int IpLevel = 0;
+constexpr int IpMulticastInterface = 9;
+constexpr int ErrorAddressNotAvailable = 49;
+constexpr unsigned char GuestAfInet = 2;
+constexpr unsigned char GuestAfLink = 18;
 constexpr std::uint16_t PeerPort = 47422;
 constexpr std::uint16_t SourcePort = 47423;
 constexpr std::uint16_t GroupPort = 47424;
