@@ -678,7 +678,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
 
             if (source != nullptr) {
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-                CopyBuffer(context, commands, source->buffer, descriptor.baseAddress - source->base, tiled->Handle(), 0, guestBytes);
+                CopyBuffer(context, commands, source->buffer, HostImportOffset(*source, descriptor.baseAddress), tiled->Handle(), 0, guestBytes);
             } else {
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | Recorder::UploadScratchReuseStages, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
                 CopyBuffer(context, commands, staging->Handle(), 0, tiled->Handle(), 0, guestBytes);
