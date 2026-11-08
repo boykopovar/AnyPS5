@@ -73,16 +73,19 @@ struct Throw {
     const char* message;
     const GuestLocale::String* path;
     LibcException::ErrorCode code;
+    const GuestLocale::String* path2 = nullptr;
 };
 
 static void APS5_VABI ThrowFilesystemError(const void* argument) {
     const auto* request = static_cast<const Throw*>(argument);
+    if (request->path && request->path2) _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix(request->message, request->path, request->path2, request->code);
     if (request->path) _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix(request->message, request->path, request->code);
     _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix(request->message, request->code);
 }
 
 static void APS5_VABI ThrowSceV2FilesystemError(const void* argument) {
     const auto* request = static_cast<const Throw*>(argument);
+    if (request->path && request->path2) _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix(request->message, request->path, request->path2, request->code);
     if (request->path) _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(request->message, request->path, request->code);
     _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix(request->message, request->code);
 }
@@ -143,7 +146,9 @@ static void Catch(Thrower thrower, const Throw& request, const void* catchType, 
     SceV2Catch(thrower, &request);
     Require(SceV2Selector == selector, label);
     Require(inspected.type == expectedType, label);
-    Require(inspected.path2.empty() && inspected.path2Capacity == 15, label);
+    if (!request.path2) {
+        Require(inspected.path2.empty() && inspected.path2Capacity == 15, label);
+    }
 }
 
 static void CheckMessages() {
@@ -182,9 +187,25 @@ static void CheckPaths() {
     }
 }
 
+static void CheckTwoPaths() {
+    const TypeRecord unrelated = Named("St11range_error");
+    const auto* generic = _ZSt16generic_categoryv_nid_postfix();
+    GuestLocale::String path1 = GuestString("source.txt");
+    GuestLocale::String path2 = GuestString(std::string(4500, 'q'));
+    Catch(ThrowFilesystemError, {"copy_file", &path1, {0, 17, generic}, &path2}, &_ZTISt12system_error_nid_postfix, &unrelated, 2, "NSt10filesystem16filesystem_errorE", "two paths overload");
+    Require(inspected.path1 == "source.txt", "path1 is source");
+    Require(inspected.path2 == std::string(4500, 'q'), "path2 is destination");
+    Require(inspected.what == "copy_file: file exists", "two paths message leaves paths out");
+    Require(Text(path1) == "source.txt", "caller path1 unchanged");
+    Require(Text(path2) == std::string(4500, 'q'), "caller path2 unchanged");
+    ReleaseGuestString(path1);
+    ReleaseGuestString(path2);
+}
+
 static void CheckNullArguments() {
     const auto* generic = _ZSt16generic_categoryv_nid_postfix();
     GuestLocale::String path = GuestString("a");
+    GuestLocale::String path2 = GuestString("b");
     auto throws = [](auto call) {
         try { call(); } catch (const std::invalid_argument&) { return true; }
         return false;
@@ -193,6 +214,12 @@ static void CheckNullArguments() {
     Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix("x", {0, 2, nullptr}); }), "null category throws");
     Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix("x", nullptr, {0, 2, generic}); }), "null path throws");
     Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix(nullptr, &path, {0, 2, generic}); }), "null message with a path throws");
+    Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix(nullptr, &path, &path2, {0, 2, generic}); }), "null message with two paths throws");
+    Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix("x", nullptr, &path2, {0, 2, generic}); }), "null path1 with two paths throws");
+    Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix("x", &path, nullptr, {0, 2, generic}); }), "null path2 with two paths throws");
+    Require(throws([&] { _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code_nid_postfix("x", &path, &path2, {0, 2, nullptr}); }), "null category with two paths throws");
+    ReleaseGuestString(path);
+    ReleaseGuestString(path2);
 }
 
 static void CheckSceV2Messages() {
@@ -233,9 +260,26 @@ static void CheckSceV2Paths() {
     }
 }
 
+static void CheckSceV2TwoPaths() {
+    const TypeRecord unrelated = Named("St11range_error");
+    const TypeRecord systemError = Named("NSt8__sce_v212system_errorE");
+    const auto* generic = _ZSt16generic_categoryv_nid_postfix();
+    GuestLocale::String path1 = GuestString("source.txt");
+    GuestLocale::String path2 = GuestString(std::string(4500, 'q'));
+    Catch(ThrowSceV2FilesystemError, {"copy_file", &path1, {0, 17, generic}, &path2}, &systemError, &unrelated, 2, "NSt8__sce_v210filesystem16filesystem_errorE", "sce_v2 two paths overload");
+    Require(inspected.path1 == "source.txt", "sce_v2 path1 is source");
+    Require(inspected.path2 == std::string(4500, 'q'), "sce_v2 path2 is destination");
+    Require(inspected.what == "copy_file: file exists", "sce_v2 two paths message leaves paths out");
+    Require(Text(path1) == "source.txt", "sce_v2 caller path1 unchanged");
+    Require(Text(path2) == std::string(4500, 'q'), "sce_v2 caller path2 unchanged");
+    ReleaseGuestString(path1);
+    ReleaseGuestString(path2);
+}
+
 static void CheckSceV2NullArguments() {
     const auto* generic = _ZSt16generic_categoryv_nid_postfix();
     GuestLocale::String path = GuestString("a");
+    GuestLocale::String path2 = GuestString("b");
     auto throws = [](auto call) {
         try { call(); } catch (const std::invalid_argument&) { return true; }
         return false;
@@ -244,6 +288,12 @@ static void CheckSceV2NullArguments() {
     Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcNS_10error_codeE_nid_postfix("x", {0, 2, nullptr}); }), "sce_v2 null category throws");
     Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix("x", nullptr, {0, 2, generic}); }), "sce_v2 null path throws");
     Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathENS_10error_codeE_nid_postfix(nullptr, &path, {0, 2, generic}); }), "sce_v2 null message with a path throws");
+    Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix(nullptr, &path, &path2, {0, 2, generic}); }), "sce_v2 null message with two paths throws");
+    Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix("x", nullptr, &path2, {0, 2, generic}); }), "sce_v2 null path1 with two paths throws");
+    Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix("x", &path, nullptr, {0, 2, generic}); }), "sce_v2 null path2 with two paths throws");
+    Require(throws([&] { _ZNSt8__sce_v210filesystem18_Xfilesystem_errorEPKcRKNS0_4pathES5_NS_10error_codeE_nid_postfix("x", &path, &path2, {0, 2, nullptr}); }), "sce_v2 null category with two paths throws");
+    ReleaseGuestString(path);
+    ReleaseGuestString(path2);
 }
 
 static void CheckSceV2SystemErrorBase() {
@@ -276,9 +326,11 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(defaultHeap.data());
     CheckMessages();
     CheckPaths();
+    CheckTwoPaths();
     CheckNullArguments();
     CheckSceV2Messages();
     CheckSceV2Paths();
+    CheckSceV2TwoPaths();
     CheckSceV2NullArguments();
     CheckSceV2SystemErrorBase();
     if (failures) return 1;
