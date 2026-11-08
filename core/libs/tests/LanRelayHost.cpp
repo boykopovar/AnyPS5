@@ -409,6 +409,7 @@ int main() {
     OpensAndClosesTwoRelaysWithoutLeaks();
     GivesEachOpenRelayItsOwnInstance();
     RecognisesOwnFrames();
+    SendsFrameToEveryPeer();
     DeliversFrameOnceBetweenRelays();
     SkipsMalformedDatagrams();
     ClosedRelayNeitherSendsNorReceives();
