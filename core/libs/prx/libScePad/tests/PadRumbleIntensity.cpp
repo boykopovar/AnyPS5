@@ -167,6 +167,14 @@ void RumbleOnFocusLossParserAcceptsOnlyZeroOrOne() {
     }
 }
 
+void FocusSequenceResumesWithTheNextPulse() {
+    const bool sequence[] = {true, false, false, true, true, false, true};
+    const bool expected[] = {false, true, true, false, false, true, false};
+    for (std::size_t index = 0; index < sizeof(sequence); ++index) {
+        Require(Pad::RumbleSuppressed(true, sequence[index]) == expected[index], "each focus change flips the gate at once and nothing stays stuck");
+    }
+}
+
 }
 
 int main() {
@@ -179,5 +187,6 @@ int main() {
     ParserAcceptsAndRefuses();
     EnvironmentIsReadOnceAndInvalidValuesKeepFailing();
     RumbleOnFocusLossParserAcceptsOnlyZeroOrOne();
+    FocusSequenceResumesWithTheNextPulse();
     return 0;
 }
