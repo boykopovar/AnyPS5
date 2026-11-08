@@ -230,7 +230,8 @@ class ReportTests(unittest.TestCase):
         now = summary({"PPSA85300": {"name": "Light", "version": "0.4",
                                      "runs": [run("crashed", error="what(): unsupported MIB 1.1 | x"), run("rendering", "warm", 31.0)]}})
         before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
-        self.assertEqual(title_run.render_markdown(now, before), "\n".join([
+        report = title_run.render_markdown(now, before)
+        self.assertTrue(report.startswith("\n".join([
             "AnyPS5 `abc1234`, main + #6814. Windows 11, Radeon 860M, driver 32.0.13058.8001, CPU Ryzen AI 7 350. 2 runs per title, 60 s each.",
             "",
             "Regressions: Light (PPSA85300) rendering -> crashed",
@@ -239,7 +240,8 @@ class ReportTests(unittest.TestCase):
             "|---|---|---|---|---|---|---|---|",
             "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
             "",
-        ]))
+        ])))
+        self.assertIn("| Title | ID | Measure | Before | Now |", report)
         self.assertNotIn("Before", title_run.render_markdown(now))
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
@@ -636,6 +638,24 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(diff["onlyBefore"], [{"encoding": None, "opcode": None, "opcodeValue": 9, "modifiers": None, "count": 1}])
         self.assertEqual(diff["onlyNow"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}])
         self.assertEqual(diff["both"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "before": 2, "now": 7}])
+
+    def test_table_shows_both_sides_and_not_recorded(self):
+        before = {"report": {"averageFps": 58.0, "shaders": {"compiled": 12, "failed": 1, "cacheHits": None},
+                             "missing": [{"library": "libSceNet", "name": "a", "calls": 3}], "unsupported": []}, "fps": 20.0}
+        now = {"report": {"averageFps": None, "shaders": {"compiled": 3, "failed": 0, "cacheHits": 50},
+                          "missing": [{"library": "libSceNet", "name": "b", "calls": 1}], "unsupported": None}, "fps": 25.5, "outcome": "rendering"}
+        compared = title_run.compare_runs(self.summary(PPSA00001=[now]), self.summary(PPSA00001=[before]))
+        lines = title_run.render_compare(compared)
+        self.assertEqual(lines[0], "| Title | ID | Measure | Before | Now |")
+        self.assertIn("| Game PPSA00001 | PPSA00001 | FPS | 20.0 | 25.5 |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Average FPS (report) | 58.0 | not recorded |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Shader cache hits | not recorded | 50 |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Missing functions | 1 | 1 |", lines)
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Unsupported instructions | 0 | not recorded |", lines)
+        self.assertIn("Game PPSA00001 (PPSA00001), missing functions: only before: libSceNet/a; only now: libSceNet/b; in both: 0", lines)
+
+    def test_table_has_no_rows_without_common_titles(self):
+        self.assertEqual(title_run.compare_runs(self.summary(PPSA00002=[{"outcome": "rendering", "fps": 1.0}]), self.summary()), {})
 
     def test_only_titles_in_both_runs_are_compared(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])

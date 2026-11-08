@@ -28,6 +28,7 @@ PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
 SHADER_COUNTS = ("compiled", "failed", "cacheHits")
+UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
 
 
 def pad_text(pad, sequence):
@@ -251,6 +252,10 @@ def shader_count(run, name):
     return (report_field(run, "shaders") or {}).get(name)
 
 
+def distinct(entries, keys):
+    return None if entries is None else len({json.dumps([entry.get(name) for name in keys]) for entry in entries})
+
+
 def tally(entries, keys, count):
     totals = {}
     for entry in entries:
@@ -296,11 +301,48 @@ def compare_runs(summary, previous):
                               "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
                               "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
                               "missingFunctions": diff_entries(missing_functions(before), missing_functions(now), ("library", "name"), "calls"),
+                              "missingFunctionsCount": pair(distinct(missing_functions(before), ("library", "name")), distinct(missing_functions(now), ("library", "name"))),
                               "missingFunctionsTruncated": pair(truncated_functions(before), truncated_functions(now)),
-                              "unsupportedInstructions": diff_entries(unsupported_instructions(before), unsupported_instructions(now),
-                                                                      ("encoding", "opcode", "opcodeValue", "modifiers"), "count"),
+                              "unsupportedInstructions": diff_entries(unsupported_instructions(before), unsupported_instructions(now), UNSUPPORTED_KEYS, "count"),
+                              "unsupportedInstructionsCount": pair(distinct(unsupported_instructions(before), UNSUPPORTED_KEYS),
+                                                                   distinct(unsupported_instructions(now), UNSUPPORTED_KEYS)),
                               "unsupportedInstructionsTruncated": pair(truncated_unsupported(before), truncated_unsupported(now))}
     return compared
+
+
+def display(value):
+    if value is None:
+        return "not recorded"
+    return f"{value:.1f}" if isinstance(value, float) else str(value)
+
+
+def label(entry):
+    if "name" in entry:
+        return f"{entry['library']}/{entry['name']}" if entry.get("library") else entry["name"]
+    return f"{entry.get('opcode') or 'unnamed'} ({entry.get('encoding') or 'unknown encoding'}, opcode value {entry.get('opcodeValue')})"
+
+
+def names(entries):
+    return ", ".join(label(entry) for entry in entries)
+
+
+def render_compare(compared):
+    columns = ["Title", "ID", "Measure", "Before", "Now"]
+    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    details = []
+    for title_id, title in compared.items():
+        measures = [("FPS", title["fps"]), ("Average FPS (report)", title["averageFps"]),
+                    ("Shaders compiled", title["shaders"]["compiled"]), ("Shaders failed", title["shaders"]["failed"]),
+                    ("Shader cache hits", title["shaders"]["cacheHits"])]
+        for label, key in (("Missing functions", "missingFunctions"), ("Unsupported instructions", "unsupportedInstructions")):
+            diff = title[key]
+            measures.append((label, title[key + "Count"]))
+            if diff and (diff["onlyBefore"] or diff["onlyNow"] or diff["both"]):
+                details.append(f"{title['name']} ({title_id}), {label.lower()}: only before: {names(diff['onlyBefore']) or 'none'}; "
+                               f"only now: {names(diff['onlyNow']) or 'none'}; in both: {len(diff['both'])}")
+        for label, values in measures:
+            lines.append("| " + " | ".join([title["name"], title_id, label, display(values["before"]), display(values["now"])]) + " |")
+    return lines + [""] + details
 
 
 def render_markdown(summary, previous=None):
@@ -335,6 +377,8 @@ def render_markdown(summary, previous=None):
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
         lines.append("| " + " | ".join(row) + " |")
+    if previous and (compared := compare_runs(summary, previous)):
+        lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
 
 
