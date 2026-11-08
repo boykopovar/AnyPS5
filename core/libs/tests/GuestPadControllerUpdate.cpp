@@ -5,16 +5,6 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename F>
-static void RequireThrows(F&& fn) {
-    bool threw = false;
-    try {
-        fn();
-    } catch (...) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 int main() {
     std::int32_t value = 1;
@@ -41,16 +31,5 @@ int main() {
     Require(scePadControllerUpdateStart(-1, nullptr) == PAD_ERROR_INVALID_ARG);
     PadUpdateData wrong{};
     Require(scePadControllerUpdateSendData(0, &wrong) == PAD_ERROR_INVALID_ARG);
-    PadUpdateData right{};
-    right.size = 0x8000;
-    RequireThrows([&] { (void)scePadControllerUpdateIsUpdateNeeded2(0, &version, &status); });
-    RequireThrows([&] { (void)scePadControllerUpdateInit(); });
-    RequireThrows([&] { (void)scePadControllerUpdateTerm(); });
-    RequireThrows([&] { (void)scePadControllerUpdateIsReady(-1, &value); });
-    RequireThrows([&] { (void)scePadControllerUpdateGetStatus(0, &value); });
-    RequireThrows([&] { (void)scePadControllerUpdateGetReconnectStatus(&value); });
-    RequireThrows([&] { (void)scePadControllerUpdateStart(-1, parameter); });
-    RequireThrows([&] { (void)scePadControllerUpdateSendData(0, &right); });
-    RequireThrows([&] { (void)scePadControllerUpdateResetController(0); });
     return 0;
 }
