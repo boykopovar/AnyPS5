@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_RUNREPORT_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_RUNREPORT_HPP
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -43,6 +44,32 @@ inline constexpr std::size_t MaxBytes = 65536;
 inline constexpr std::size_t MaxListedFunctions = 200;
 inline constexpr std::size_t MaxListedFormats = 100;
 inline constexpr std::size_t MaxTextCharacters = 300;
+
+template <typename TValue, std::size_t TCapacity>
+class FixedRing {
+    static_assert(TCapacity > 0u);
+
+public:
+    void Push(const TValue& value) noexcept {
+        items[head] = value;
+        head = (head + 1u) % TCapacity;
+        if (count < TCapacity) ++count;
+    }
+
+    std::size_t Size() const noexcept { return count; }
+
+    std::vector<TValue> Values() const {
+        std::vector<TValue> values;
+        values.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) values.push_back(items[(head + TCapacity - count + index) % TCapacity]);
+        return values;
+    }
+
+private:
+    std::array<TValue, TCapacity> items{};
+    std::size_t head = 0;
+    std::size_t count = 0;
+};
 
 enum class Kind { None, MissingFunction, UnsupportedShader, UnsupportedFormat, Crash, Assert, Other };
 enum class Reason { GuestExit, QuitRequested, RuntimeStop, Crash, UncleanUnknown, Other };
