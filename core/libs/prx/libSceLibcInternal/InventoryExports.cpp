@@ -324,9 +324,10 @@ int APS5_VABI _ZNSt6locale7_LocimpD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNSt6localeD1Ev() {
+int APS5_VABI libSceLibcInternalInventory_083_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
+APS5_EXPORT("pMWnITHysPc", libSceLibcInternalInventory_083_nid_no_patch);
 
 int APS5_VABI _ZNSt7_MpunctIcE5_InitERKSt8_Locinfob() {
     NotImplemented_nid_no_patch(__func__);

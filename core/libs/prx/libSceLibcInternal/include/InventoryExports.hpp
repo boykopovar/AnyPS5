@@ -89,7 +89,7 @@ int APS5_VABI _ZNSt6locale7_Locimp9_MakexlocERKSt8_LocinfoiPS0_PKS_();
 int APS5_VABI _ZNSt6locale7_LocimpC2ERKS0_();
 int APS5_VABI _ZNSt6locale7_LocimpD1Ev();
 int APS5_VABI _ZNSt6locale7_LocimpD2Ev();
-int APS5_VABI _ZNSt6localeD1Ev();
+int APS5_VABI libSceLibcInternalInventory_083_nid_no_patch();
 int APS5_VABI _ZNSt7_MpunctIcE5_InitERKSt8_Locinfob();
 int APS5_VABI _ZNSt7_MpunctIcEC2EPKcmbb();
 int APS5_VABI _ZNSt7_MpunctIcED1Ev();
