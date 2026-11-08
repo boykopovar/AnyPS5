@@ -1766,7 +1766,8 @@ void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
     GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
 }
 
-void CheckImportUnderGpuMutex() {
+bool CheckImportUnderGpuMutex() {
+    if (std::thread::hardware_concurrency() / 2 < 2) return false;
     ::alarm(20);
     constexpr std::size_t bytes = 256 * Block;
     void* memory = AllocateWatched(bytes);
@@ -1785,6 +1786,7 @@ void CheckImportUnderGpuMutex() {
     }
     Require(Watched(base, bytes), "the import under the GPU mutex left its range unwatched");
     Require(WrittenSince(base, bytes, synced), "the stores within the import were missed");
+    return true;
 }
 #endif
 
@@ -2467,7 +2469,10 @@ int main(int argc, char** argv) {
         }
 #ifdef __APPLE__
         if (argc == 2 && std::string_view(argv[1]) == "--import-under-gpu-mutex") {
-            CheckImportUnderGpuMutex();
+            if (!CheckImportUnderGpuMutex()) {
+                std::cout << "fewer than 4 hardware threads: imports hash on one thread anyway, skipped\n";
+                return 77;
+            }
             std::cout << "import under the GPU mutex test passed\n";
             return 0;
         }
