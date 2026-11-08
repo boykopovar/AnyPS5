@@ -1,8 +1,11 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <initializer_list>
 #include <source_location>
@@ -234,13 +237,125 @@ void Cleanup() {
     Require(std::string(u_getDataDirectory_nid_postfix()) == "");
 }
 
+struct HookCalls {
+    int allocations = 0;
+    int reallocations = 0;
+    int releases = 0;
+    std::size_t lastSize = 0;
+    const void* lastContext = nullptr;
+};
+
+HookCalls Calls;
+
+void* APS5_VABI CountingAllocate_nid_no_patch(const void* context, std::size_t size) {
+    ++Calls.allocations;
+    Calls.lastSize = size;
+    Calls.lastContext = context;
+    return std::malloc(size);
+}
+
+void* APS5_VABI CountingReallocate_nid_no_patch(const void* context, void* block, std::size_t size) {
+    ++Calls.reallocations;
+    Calls.lastSize = size;
+    Calls.lastContext = context;
+    return std::realloc(block, size);
+}
+
+void APS5_VABI CountingRelease_nid_no_patch(const void* context, void* block) {
+    ++Calls.releases;
+    Calls.lastContext = context;
+    std::free(block);
+}
+
+void DefaultAllocation() {
+    u_cleanup_nid_postfix();
+    void* empty = uprv_malloc_nid_postfix(0);
+    Require(empty != nullptr && empty == uprv_malloc_nid_postfix(0));
+
+    auto* bytes = static_cast<char*>(uprv_malloc_nid_postfix(4));
+    Require(bytes != nullptr && bytes != empty);
+    std::memcpy(bytes, "abc", 4);
+    bytes = static_cast<char*>(uprv_realloc_nid_postfix(bytes, 4096));
+    Require(bytes != nullptr && std::string(bytes) == "abc");
+    Require(uprv_realloc_nid_postfix(bytes, 0) == empty);
+
+    auto* grown = static_cast<char*>(uprv_realloc_nid_postfix(empty, 8));
+    Require(grown != nullptr && grown != empty);
+    std::memcpy(grown, "growing", 8);
+    Require(std::string(grown) == "growing");
+    Require(uprv_realloc_nid_postfix(empty, 0) == empty);
+    free_nid_postfix(grown);
+
+    char* copy = uprv_strdup_nid_postfix("icu data");
+    Require(copy != nullptr && std::string(copy) == "icu data");
+    free_nid_postfix(copy);
+    copy = uprv_strdup_nid_postfix("");
+    Require(copy != nullptr && copy != empty && copy[0] == '\0');
+    free_nid_postfix(copy);
+
+    copy = uprv_strndup_nid_postfix("abcdef", 3);
+    Require(copy != nullptr && std::string(copy) == "abc");
+    free_nid_postfix(copy);
+    copy = uprv_strndup_nid_postfix("abcdef", -1);
+    Require(copy != nullptr && std::string(copy) == "abcdef");
+    free_nid_postfix(copy);
+    copy = uprv_strndup_nid_postfix("abcdef", 0);
+    Require(copy != nullptr && copy[0] == '\0');
+    free_nid_postfix(copy);
+    const char embedded[] = {'a', '\0', 'b', 'c'};
+    copy = uprv_strndup_nid_postfix(embedded, 4);
+    Require(copy != nullptr && std::memcmp(copy, embedded, 4) == 0 && copy[4] == '\0');
+    free_nid_postfix(copy);
+
+    RequireThrows([] { uprv_strdup_nid_postfix(nullptr); });
+    RequireThrows([] { uprv_strndup_nid_postfix(nullptr, 2); });
+    RequireThrows([] { uprv_strndup_nid_postfix(nullptr, -1); });
+}
+
+void HookedAllocation() {
+    int marker = 0;
+    std::int32_t status = 0;
+    u_setMemoryFunctions_nid_postfix(&marker, CountingAllocate_nid_no_patch, CountingReallocate_nid_no_patch, CountingRelease_nid_no_patch, &status);
+    Require(status == 0);
+    Calls = {};
+
+    void* empty = uprv_malloc_nid_postfix(0);
+    Require(empty != nullptr && Calls.allocations == 0);
+    void* block = uprv_malloc_nid_postfix(24);
+    Require(block != nullptr && Calls.allocations == 1 && Calls.lastSize == 24 && Calls.lastContext == &marker);
+    block = uprv_realloc_nid_postfix(block, 48);
+    Require(block != nullptr && Calls.reallocations == 1 && Calls.lastSize == 48 && Calls.lastContext == &marker);
+    Require(uprv_realloc_nid_postfix(block, 0) == empty && Calls.releases == 1 && Calls.lastContext == &marker);
+    block = uprv_realloc_nid_postfix(empty, 16);
+    Require(block != nullptr && Calls.allocations == 2 && Calls.reallocations == 1 && Calls.lastSize == 16);
+    CountingRelease_nid_no_patch(&marker, block);
+
+    char* copy = uprv_strdup_nid_postfix("hook");
+    Require(copy != nullptr && std::string(copy) == "hook" && Calls.allocations == 3 && Calls.lastSize == 5);
+    std::free(copy);
+    copy = uprv_strndup_nid_postfix("hooked", 2);
+    Require(copy != nullptr && std::string(copy) == "ho" && Calls.allocations == 4 && Calls.lastSize == 3);
+    std::free(copy);
+
+    u_setMemoryFunctions_nid_postfix(&marker, Allocate_nid_no_patch, Reallocate_nid_no_patch, Release_nid_no_patch, &status);
+    Require(uprv_malloc_nid_postfix(8) == nullptr);
+    Require(uprv_strdup_nid_postfix("lost") == nullptr);
+    Require(uprv_strndup_nid_postfix("lost", 2) == nullptr);
+    Require(uprv_malloc_nid_postfix(0) == empty);
+    u_cleanup_nid_postfix();
+}
+
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    Require(ApplicationHeapDefault_nid_no_patch());
     Locking();
     Memory();
     DataDirectory();
     TimeZoneDirectory();
     Cleanup();
+    DefaultAllocation();
+    HookedAllocation();
     std::puts("ICU configuration tests passed");
 }
