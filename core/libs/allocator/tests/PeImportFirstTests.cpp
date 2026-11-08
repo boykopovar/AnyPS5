@@ -153,6 +153,18 @@ void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const s
     throw std::runtime_error(what + ": the move did not fail");
 }
 
+void failsWithoutTouchingTheImage(const std::string& what, const std::vector<unsigned char>& bytes, const std::string& expected) {
+    auto copy = bytes;
+    try {
+        Allocator::MoveImportFirst(copy, "mimalloc-redirect.dll");
+    } catch (const std::exception& error) {
+        require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
+        require(copy == bytes, what + ": the image changed although the move failed");
+        return;
+    }
+    throw std::runtime_error(what + ": the move did not fail");
+}
+
 }
 
 int main() {
@@ -166,27 +178,27 @@ int main() {
         failsWithoutTouchingTheFile(directory, "missing-import", image({"kernel32.dll", "ucrtbase.dll"}), "does not import mimalloc-redirect.dll");
         auto truncated = image({"kernel32.dll", "mimalloc-redirect.dll", "ucrtbase.dll"});
         truncated.resize(SectionOffset + DescriptorBytes + DescriptorBytes / 2);
-        failsWithoutTouchingTheFile(directory, "truncated-directory", truncated, "truncated import directory");
-        failsWithoutTouchingTheFile(directory, "pe32", image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x10b), "not a PE32+ image");
+        failsWithoutTouchingTheImage("truncated-directory", truncated, "truncated import directory");
+        failsWithoutTouchingTheImage("pe32", image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x10b), "not a PE32+ image");
         auto undeclared = image({"kernel32.dll", "mimalloc-redirect.dll"});
         put32(undeclared, OptionalOffset + 108, 0);
-        failsWithoutTouchingTheFile(directory, "directory-count-zero", undeclared, "the image has no imports");
+        failsWithoutTouchingTheImage("directory-count-zero", undeclared, "the image has no imports");
         auto oneDirectory = image({"kernel32.dll", "mimalloc-redirect.dll"});
         put32(oneDirectory, OptionalOffset + 108, 1);
-        failsWithoutTouchingTheFile(directory, "directory-count-one", oneDirectory, "the image has no imports");
+        failsWithoutTouchingTheImage("directory-count-one", oneDirectory, "the image has no imports");
         auto shortHeader = image({"kernel32.dll", "mimalloc-redirect.dll"});
         put16(shortHeader, PeOffset + 20, 112);
-        failsWithoutTouchingTheFile(directory, "optional-header-without-imports", shortHeader, "the image has no imports");
+        failsWithoutTouchingTheImage("optional-header-without-imports", shortHeader, "the image has no imports");
         auto incompleteEntry = image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x20b, 2, 128);
         put16(incompleteEntry, PeOffset + 20, 127);
-        failsWithoutTouchingTheFile(directory, "optional-header-incomplete-import-entry", incompleteEntry, "the image has no imports");
+        failsWithoutTouchingTheImage("optional-header-incomplete-import-entry", incompleteEntry, "the image has no imports");
         auto unterminated = image({"kernel32.dll", "mimalloc-redirect.dll"});
         unterminated.resize(SectionOffset + 3 * DescriptorBytes + 13 + 21);
-        failsWithoutTouchingTheFile(directory, "unterminated-name", unterminated, "unterminated import name");
+        failsWithoutTouchingTheImage("unterminated-name", unterminated, "unterminated import name");
         auto outsideFile = image({"kernel32.dll", "mimalloc-redirect.dll", "ucrtbase.dll"});
         put32(outsideFile, SectionOffset + 2 * DescriptorBytes + 12, static_cast<std::uint32_t>(SectionRva + 0x1ff));
         outsideFile.resize(0x300);
-        failsWithoutTouchingTheFile(directory, "name-past-the-file", outsideFile, "RVA outside the file data");
+        failsWithoutTouchingTheImage("name-past-the-file", outsideFile, "RVA outside the file data");
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         std::error_code ignored;

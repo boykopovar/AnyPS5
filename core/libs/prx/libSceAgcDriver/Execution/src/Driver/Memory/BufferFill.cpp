@@ -376,6 +376,9 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
         Graphics::StorageTexture::ClearByKeysFill(base, bytes, static_cast<std::uint8_t>(pattern[0]));
     }
 
+    const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];
+    const bool absorbable = uniform && coverage.cover == Graphics::StorageTexture::FillCover::None && Graphics::MultisampledColorFillAbsorbs(base, bytes, pattern[0]);
+    if (uniform && !absorbable) static_cast<void>(Graphics::DiscardFilledDepthPlanes(base, bytes, pattern[0]));
     const auto discarded = fillClearEnabled() ? Graphics::StorageTexture::DiscardPendingInside(base, bytes) : 0u;
     phase(FillDiscard);
     const char* refusal = nullptr;
@@ -395,8 +398,7 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
     fillClearCount(coverage, bytes, pattern, discarded, cleared, refusal);
     noteForeignWriter(base, base + bytes, queueId);
 
-    const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];
-    const bool absorbed = !cleared && uniform && coverage.cover == Graphics::StorageTexture::FillCover::None && Graphics::MultisampledColorFillAbsorbs(base, bytes, pattern[0]);
+    const bool absorbed = !cleared && absorbable;
     if (absorbed) {
         ++absorbedFills;
         absorbedBytes += bytes;
@@ -460,7 +462,7 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
     };
     static const bool orderedFills = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
     if (orderedFills && queueId == 0 && DrawPipeline::Active()) {
-        DrawPipeline::Queue0().Enqueue([store, queueId] {
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::BufferFill, [store, queueId] {
             GuestMemory::SetCurrentPacket(0x15, queueId);
             store();
         }, {{base, base + bytes}});
