@@ -381,9 +381,12 @@ int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value) {
 }
 
 int APS5_VABI pthread_timedjoin_np_nid_postfix(Pthread thread, void** value, const KernelTimespec* abstime) {
-    if (abstime == nullptr || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
+    if (abstime == nullptr) return PosixThread::GUEST_EINVAL;
+    KernelTimespec deadline{};
+    if (!GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return PosixThread::GUEST_EFAULT;
+    if (deadline.tv_sec < 0 || deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000)
         return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, abstime));
+    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, &deadline));
 }
 
 namespace {
