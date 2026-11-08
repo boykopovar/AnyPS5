@@ -449,9 +449,13 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
             if (const int fault = ReadValue(request, value, sizeof(request))) return fault;
             std::int32_t index;
             std::memcpy(&index, request + 8, sizeof(index));
-            if (index != 0) throw std::runtime_error("IP_MULTICAST_IF: an interface index is not supported");
             if (std::any_of(request, request + 8, [](unsigned char byte) { return byte != 0; }))
                 throw std::runtime_error("IP_MULTICAST_IF: an ip_mreqn with a non-zero address is not supported");
+            if (index != 0) {
+                std::uint32_t networkAddress = 0;
+                if (index < 0 || !LanRelay::HostIpv4AddressOfIndex(static_cast<std::uint32_t>(index), networkAddress)) return ErrorAddressNotAvailable;
+                std::memcpy(&address, &networkAddress, sizeof(address));
+            }
         } else {
             if (const int fault = ReadValue(&address, value, sizeof(address))) return fault;
         }
