@@ -155,6 +155,20 @@ class ExportGapTests(unittest.TestCase):
         source = "int APS5_VABI\nsceExamplePresent_nid_postfix(\n    int value)\n{ return value; }\n"
         self.assertTrue(provides_with(source, nid_of("sceExamplePresent")))
 
+    def test_shared_sources_confirm_local_declarations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "CMakeLists.txt": "include(${CMAKE_CURRENT_SOURCE_DIR}/../libExample.native/Shared.cmake)\n",
+                "Api.hpp": "int APS5_VABI Present(void);\nint APS5_VABI Missing(void);\n",
+            })
+            write_module(prx, "libExample.native", {
+                "Export.cpp": "int APS5_VABI Present(void) { return 0; }\nint APS5_VABI SiblingOnly(void) { return 0; }\n",
+            })
+            provided = export_gap.collect_provided(library)
+            self.assertEqual(set(provided), {nid_of("Present")})
+            self.assertIn("libExample.native", provided[nid_of("Present")])
+
     def test_disambig_postfix_provides_hashed_base_nid(self):
         self.assertTrue(provides("alias_nid_disambig12_nid_postfix", nid_of("alias")))
 
