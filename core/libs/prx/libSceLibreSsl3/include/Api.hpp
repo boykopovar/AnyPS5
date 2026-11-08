@@ -352,7 +352,7 @@ int APS5_VABI X509V3_set_ctx_nid_postfix();
 int APS5_VABI BIO_meth_set_destroy_nid_postfix();
 int APS5_VABI tls_config_set_ciphers_nid_postfix();
 int APS5_VABI RSA_pkey_ctx_ctrl_nid_postfix();
-int APS5_VABI ASN1_get_object_nid_postfix();
+int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** pp, long* length, int* tag, int* objectClass, long max);
 int APS5_VABI SSL_provide_quic_data_nid_postfix();
 int APS5_VABI BIO_meth_new_nid_postfix();
 int APS5_VABI d2i_PUBKEY_nid_postfix();
