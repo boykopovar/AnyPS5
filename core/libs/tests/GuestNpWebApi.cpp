@@ -220,7 +220,18 @@ void TestResponses() {
     Require(sceNpWebApiGetHttpResponseHeaderValueLength(aborted, "Content-Type", &length) == HttpInvalidResponse, "header length of an aborted request");
     Require(value[0] == 'x' && value[7] == 'x' && length == 123, "a failed header query leaves the outputs alone");
 
+    int statusCode = 999;
+    Require(sceNpWebApiGetHttpStatusCode(request, nullptr) == InvalidArgument, "status code without an output");
+    Require(sceNpWebApiGetHttpStatusCode(-1, nullptr) == InvalidArgument, "the output pointer is checked before the request");
+    Require(sceNpWebApiGetHttpStatusCode(-1, &statusCode) == LibContextNotFound, "status code of request -1");
+    Require(sceNpWebApiGetHttpStatusCode(static_cast<std::int64_t>(user + 1) << 32 | 1, &statusCode) == UserContextNotFound, "status code of a request of an unknown user context");
+    Require(sceNpWebApiGetHttpStatusCode(request + 0x10000, &statusCode) == RequestNotFound, "status code of an unknown request");
+    Require(sceNpWebApiGetHttpStatusCode(request, &statusCode) == HttpInvalidResponse, "status code of a request that was never sent");
+    Require(sceNpWebApiGetHttpStatusCode(aborted, &statusCode) == HttpInvalidResponse, "status code of an aborted request");
+    Require(statusCode == 999, "a failed status code query leaves the output alone");
+
     Require(sceNpWebApiDeleteRequest(request) == 0 && sceNpWebApiDeleteRequest(aborted) == 0, "delete the response requests");
+    Require(sceNpWebApiGetHttpStatusCode(request, &statusCode) == RequestNotFound, "status code of a deleted request");
     Require(sceNpWebApiReadData(request, data.data(), data.size()) == RequestNotFound, "read a deleted request");
     Require(sceNpWebApiTerminate(context) == 0, "terminate the response library context");
 }

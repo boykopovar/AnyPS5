@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceIcu/Version.hpp"
 
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -278,6 +279,13 @@ static void TestSystem() {
     Require(page == 4096);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
+
+    std::uint8_t icuVersion[4] = {0};
+    u_getVersion_nid_postfix(icuVersion);
+    Require(_ZN3WTF3ICU12majorVersionEv() == icuVersion[0]);
+    Require(_ZN3WTF3ICU12minorVersionEv() == icuVersion[1]);
+    Require(_ZN3WTF3ICU12majorVersionEv() == 78);
+    Require(_ZN3WTF3ICU12minorVersionEv() == 1);
 
     char b1[16] = {0};
     char b2[16] = {0};
