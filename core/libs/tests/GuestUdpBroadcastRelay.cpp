@@ -82,7 +82,8 @@ int main() {
     Require(!Readable(peer, 300), "a unicast send is not forwarded");
 
     const int quiet = socket_nid_postfix(2, 2, 0);
-    Require(quiet >= 0 && bind_nid_postfix(quiet, guestAddress.data(), guestAddress.size()) == 0, "a second guest socket binds");
+    const Address quietAddress = Endpoint(0, 0, 0, 0, QuietPort);
+    Require(quiet >= 0 && bind_nid_postfix(quiet, quietAddress.data(), quietAddress.size()) == 0, "a second guest socket binds");
     sendto_nid_postfix(quiet, payload, sizeof payload, 0, broadcast.data(), broadcast.size());
     Require(!Readable(peer, 300), "a broadcast from a socket without SO_BROADCAST is not forwarded");
 
