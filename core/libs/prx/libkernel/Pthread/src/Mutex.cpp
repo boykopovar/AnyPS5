@@ -229,17 +229,24 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
 int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
+    PthreadMutex probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+        return SCE_KERNEL_ERROR_EFAULT;
     std::lock_guard lock(InitializationMutex());
-    if (*mutex == destroyedMutex())
+    PthreadMutex destroyed = destroyedMutex();
+    if (*mutex == destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
     if (*mutex == adaptiveInitializer()) {
-        std::atomic_ref<PthreadMutex>(*mutex).store(destroyedMutex(), std::memory_order_release);
+        if (!GuestCopyOut_nid_no_patch(mutex, &destroyed, sizeof(destroyed)))
+            return SCE_KERNEL_ERROR_EFAULT;
         return 0;
     }
     if (*mutex && (*mutex)->_owner.load(std::memory_order_acquire) != std::thread::id{})
         return SCE_KERNEL_ERROR_EBUSY;
-    delete *mutex;
-    std::atomic_ref<PthreadMutex>(*mutex).store(destroyedMutex(), std::memory_order_release);
+    PthreadMutex released = *mutex;
+    if (!GuestCopyOut_nid_no_patch(mutex, &destroyed, sizeof(destroyed)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    delete released;
     return 0;
 }
 
