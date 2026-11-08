@@ -367,12 +367,6 @@ def main():
             return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
 
         for sce in modes:
-            if "linux" in systems:
-                strtab, value = (0x61000035, 0) if sce else (5, 0x2200)
-                image = insert_dynamic_tag(module([RELATIVE], sce=sce), strtab, value)
-                result, artifact, output = convert(f"{sce}-identical-dynamic-tag-strtab", "linux", image)
-                assert result.returncode == 0, (sce, result.stdout, result.stderr)
-                check_output(artifact.read_bytes(), "linux", [RELATIVE], [], UNCHANGED)
             for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
                 for encoding in ("rela", "repeated", "relr"):
                     entries = [(TARGET, 8, addend)]
@@ -421,6 +415,12 @@ def main():
                     result, artifact, output = convert(f"{sce}-{name}", "windows", image)
                     assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
                     assert not artifact.exists() and not output.exists(), name
+            if "linux" in systems:
+                strtab, value = (0x61000035, 0) if sce else (5, 0x2200)
+                image = insert_dynamic_tag(module([RELATIVE], sce=sce), strtab, value)
+                result, artifact, output = convert(f"{sce}-identical-dynamic-tag-strtab", "linux", image)
+                assert result.returncode == 0, (sce, result.stdout, result.stderr)
+                check_output(artifact.read_bytes(), "linux", [RELATIVE], [], UNCHANGED)
     print(f"Guest no-op relocation {group} tests passed")
 
 
