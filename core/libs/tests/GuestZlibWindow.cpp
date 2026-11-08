@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -124,7 +125,74 @@ static std::vector<unsigned char> Compressed(std::uint32_t distance, std::vector
     for (int shift : {24, 16, 8, 0}) result.push_back(static_cast<unsigned char>(adler >> shift));
     return result;
 }
+static void WaitPointers() {
+    constexpr auto invalid = static_cast<std::int32_t>(0x81120016);
+    constexpr auto timedOut = static_cast<std::int32_t>(0x81120027);
+    constexpr auto notInitialized = static_cast<std::int32_t>(0x81120032);
+    Guarded timeoutMemory;
+    Guarded resultMemory;
+    auto* unreadableTimeout = reinterpret_cast<std::uint32_t*>(timeoutMemory.End(1) + 1);
+    auto* crossingTimeout = reinterpret_cast<std::uint32_t*>(timeoutMemory.End(2));
+    auto* unwritableResult = reinterpret_cast<std::uint64_t*>(resultMemory.End(1) + 1);
+    auto* crossingResult = reinterpret_cast<std::uint64_t*>(resultMemory.End(4));
+    auto* readOnlyResult = reinterpret_cast<std::uint64_t*>(resultMemory.End(sizeof(std::uint64_t)));
+    auto* readOnlyTimeout = reinterpret_cast<std::uint32_t*>(timeoutMemory.End(sizeof(std::uint32_t)));
+    const std::uint32_t zero = 0;
+    std::memcpy(readOnlyTimeout, &zero, sizeof(zero));
+    timeoutMemory.Protect(true);
+    std::uint64_t completed = 0;
+    Require(sceZlibWaitForDone(unwritableResult, unreadableTimeout) == notInitialized);
+    Require(sceZlibInitialize(nullptr, 0) == 0);
+    errno = EDOM;
+    Require(sceZlibWaitForDone(nullptr, unreadableTimeout) == invalid);
+    Require(sceZlibWaitForDone(&completed, unreadableTimeout) == invalid);
+    Require(errno == EDOM && completed == 0);
+    Require(sceZlibWaitForDone(&completed, crossingTimeout) == invalid);
+    Require(errno == EDOM && completed == 0);
+    Require(sceZlibWaitForDone(&completed, readOnlyTimeout) == timedOut);
+    Require(errno == EDOM && completed == 0);
+    Require(sceZlibWaitForDone(unwritableResult, readOnlyTimeout) == timedOut);
+    Require(errno == EDOM);
+    std::vector<unsigned char> expected;
+    const auto compressed = Compressed(1, expected);
+    alignas(2048) std::array<unsigned char, 2048> output{};
+    std::uint64_t id = 0;
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output.data(), output.size(), &id) == 0);
+    errno = EDOM;
+    Require(sceZlibWaitForDone(&completed, unreadableTimeout) == invalid);
+    Require(errno == EDOM && completed == 0);
+    Require(sceZlibWaitForDone(unwritableResult, readOnlyTimeout) == invalid);
+    Require(errno == EDOM);
+    Require(sceZlibWaitForDone(crossingResult, readOnlyTimeout) == invalid);
+    Require(errno == EDOM);
+    resultMemory.Reset();
+    resultMemory.Protect(true);
+    errno = EDOM;
+    Require(sceZlibWaitForDone(readOnlyResult, nullptr) == invalid);
+    Require(errno == EDOM);
+    for (std::size_t index = 0; index < sizeof(std::uint64_t); ++index)
+        Require(reinterpret_cast<unsigned char*>(readOnlyResult)[index] == 0xa5);
+    resultMemory.Protect(false);
+    Require(sceZlibWaitForDone(readOnlyResult, readOnlyTimeout) == 0);
+    Require(errno == EDOM);
+    std::memcpy(&completed, readOnlyResult, sizeof(completed));
+    Require(completed == id);
+    Require(sceZlibWaitForDone(&completed, readOnlyTimeout) == timedOut);
+    Require(completed == id);
+    std::uint32_t produced = 0;
+    std::int32_t status = -1;
+    Require(sceZlibGetResult(id, &produced, &status) == 0);
+    Require(status == 0 && produced == expected.size());
+    Require(std::equal(expected.begin(), expected.end(), output.begin()));
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output.data(), output.size(), &id) == 0);
+    completed = 0;
+    Require(sceZlibWaitForDone(&completed, reinterpret_cast<std::uint32_t*>(&completed)) == 0);
+    Require(completed == id);
+    Require(sceZlibFinalize() == 0);
+}
+
 int main() {
+    WaitPointers();
     Require(sceZlibInitialize(nullptr, 0) == 0);
     std::size_t cases = 0;
     for (unsigned distance : {1,2,3,4,1024,16384,32767,32768}) {
