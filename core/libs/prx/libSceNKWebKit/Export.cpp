@@ -11547,10 +11547,6 @@ int APS5_VABI WKFrameGetWebArchive() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameHandleGetFrameID() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameInfoCreateFrameHandleRef() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15582,10 +15578,6 @@ int APS5_VABI _ZN3WTF10WorkerPoolD2Ev() {
 }
 
 int APS5_VABI _ZN3WTF10initializeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF11LogArgumentIPKvE8toStringES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -30534,9 +30526,6 @@ int APS5_VABI _ZNK3WTF3URL4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZNK3WTF6String18simplifyWhiteSpaceEPFbDsE() {
     NotImplemented_nid_no_patch(__func__);
