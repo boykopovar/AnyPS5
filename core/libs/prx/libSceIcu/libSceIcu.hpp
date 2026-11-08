@@ -48,3 +48,5 @@
 #include "RecoveredSignatures.hpp"
 #include "Copy.hpp"
 #include "UtfConversions.hpp"
+#include "BreakIterator.hpp"
+#include "Data.hpp"
