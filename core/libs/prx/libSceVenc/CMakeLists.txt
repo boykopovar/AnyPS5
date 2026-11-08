@@ -1,0 +1,15 @@
+add_library(libSceVenc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVenc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVenc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_venc_tests ${LIBS_INCLUDE_DIR}/tests/GuestVenc.cpp)
+    target_include_directories(guest_venc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_venc_tests PRIVATE libSceVenc libkernel libc)
+    configure_windows_unwind(guest_venc_tests)
+    add_test(NAME guest_venc COMMAND guest_venc_tests)
+    if(WIN32)
+        set_tests_properties(guest_venc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVenc>")
+    endif()
+endif()
