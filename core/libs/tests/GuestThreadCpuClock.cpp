@@ -131,6 +131,7 @@ int main() {
     int clockId = 0;
     Require(pthread_getcpuclockid_nid_postfix(nullptr, &clockId) == GUEST_EINVAL);
     Require(pthread_getcpuclockid_nid_postfix(pthread_self_nid_postfix(), nullptr) == GUEST_EFAULT);
+    Require(pthread_getcpuclockid_nid_postfix(pthread_self_nid_postfix(), reinterpret_cast<int*>(0x10)) == GUEST_EFAULT);
     OwnClockFollowsThreadCpuTime();
     OtherThreadClockReadsThatThread();
     ProcessClocksNameOnlyTheGuest();

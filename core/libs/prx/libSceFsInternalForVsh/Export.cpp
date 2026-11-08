@@ -627,9 +627,16 @@ int APS5_VABI sceFsTransactionStart() {
     return 0;
 }
 
-int APS5_VABI sceFsTrophyImageError() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFsTrophyImageError(int error) {
+    switch (static_cast<std::uint32_t>(error)) {
+    case 0x80020005u:
+    case 0x80020016u:
+    case 0x8002002du:
+    case 0x80020060u:
+        return 0;
+    default:
+        return static_cast<int>(0x80020016u);
+    }
 }
 
 int APS5_VABI sceFsUfsAllocateAdditionalContents() {

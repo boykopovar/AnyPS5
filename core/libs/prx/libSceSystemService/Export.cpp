@@ -29,6 +29,7 @@
 #include "SceTypes.hpp"
 #include "LoadExec.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
@@ -103,21 +104,6 @@ constexpr wchar_t MainExecutableVariableWide[] = L"APS5_EBOOT";
     throw std::runtime_error("sceSystemServiceLoadExec: " + message);
 }
 
-std::string ConvertedExecutableName(const char* path) {
-    std::string_view relative(path);
-    if (!relative.starts_with(ApplicationRoot)) UnconvertedExecutable(std::string("executables outside /app0 (") + path + ")");
-    relative.remove_prefix(std::size(ApplicationRoot) - 1);
-    std::string name;
-    while (true) {
-        const std::size_t separator = relative.find('/');
-        const std::string_view component = relative.substr(0, separator);
-        if (component.empty() || component == "." || component == "..") UnconvertedExecutable(std::string("a path with an empty, . or .. component (") + path + ")");
-        name += (name.empty() ? "" : ".") + std::string(component);
-        if (separator == std::string_view::npos) return name;
-        relative.remove_prefix(separator + 1);
-    }
-}
-
 void RequireExecutableBeside(const std::filesystem::path& directory, const std::filesystem::path& target, const char* guestPath) {
     if (target.lexically_normal().parent_path() != directory.lexically_normal()) {
         UnconvertedExecutable(std::string("an executable outside /app0 (") + guestPath + ")");
@@ -125,47 +111,13 @@ void RequireExecutableBeside(const std::filesystem::path& directory, const std::
 }
 
 #if defined(_WIN32)
-std::wstring Utf16(const std::string& text) {
-    if (text.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0) throw std::runtime_error("sceSystemServiceLoadExec: argument is not valid UTF-8");
-    std::wstring wide(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
-    return wide;
-}
-
-std::wstring QuotedArgument(const std::wstring& argument) {
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
-    std::wstring quoted = L"\"";
-    for (std::size_t index = 0;; ++index) {
-        std::size_t backslashes = 0;
-        while (index < argument.size() && argument[index] == L'\\') {
-            ++backslashes;
-            ++index;
-        }
-        if (index == argument.size()) {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-        quoted.push_back(argument[index]);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
-
 struct HostLaunch {
     std::wstring executable;
     std::wstring commandLine;
 };
 
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
-    std::wstring own(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-    if (length == 0 || length >= own.size()) {
-        throw std::runtime_error("sceSystemServiceLoadExec: GetModuleFileNameW failed with error " + std::to_string(GetLastError()));
-    }
-    own.resize(length);
+    const std::wstring own = HostExecutable::Own("sceSystemServiceLoadExec").wstring();
     HostLaunch launch;
     const std::filesystem::path ownPath(own);
     if (std::strcmp(path, MainExecutable) == 0) {
@@ -173,7 +125,7 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
         const DWORD mainLength = GetEnvironmentVariableW(MainExecutableVariableWide, main.data(), static_cast<DWORD>(main.size()));
         launch.executable = mainLength > 0 && mainLength < main.size() ? main.substr(0, mainLength) : own;
     } else {
-        const auto target = ownPath.parent_path() / (Utf16(ConvertedExecutableName(path)) + ownPath.extension().wstring());
+        const auto target = ownPath.parent_path() / (HostExecutable::Wide(HostExecutable::ConvertedName(path, UnconvertedExecutable), "sceSystemServiceLoadExec") + ownPath.extension().wstring());
         RequireExecutableBeside(ownPath.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -185,7 +137,7 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
     }
     launch.commandLine = L"\"" + launch.executable + L"\"";
     for (std::size_t index = 0; arguments != nullptr && arguments[index] != nullptr; ++index) {
-        launch.commandLine += L" " + QuotedArgument(Utf16(arguments[index]));
+        launch.commandLine += L" " + HostExecutable::QuotedArgument(HostExecutable::Wide(arguments[index], "sceSystemServiceLoadExec"));
     }
     return launch;
 }
@@ -207,30 +159,14 @@ struct HostLaunch {
     std::vector<std::string> arguments;
 };
 
-std::filesystem::path OwnExecutable() {
-    std::error_code error;
-#ifdef __APPLE__
-    std::uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> executable(size);
-    std::filesystem::path own;
-    if (_NSGetExecutablePath(executable.data(), &size) == 0) own = std::filesystem::canonical(executable.data(), error);
-    if (own.empty()) throw std::runtime_error("sceSystemServiceLoadExec: cannot locate the executable");
-#else
-    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
-    if (error) throw std::runtime_error("sceSystemServiceLoadExec: cannot read /proc/self/exe: " + error.message());
-#endif
-    return own;
-}
-
 HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
-    const auto own = OwnExecutable();
+    const auto own = HostExecutable::Own("sceSystemServiceLoadExec");
     HostLaunch launch;
     if (std::strcmp(path, MainExecutable) == 0) {
         const char* main = std::getenv(MainExecutableVariable);
         launch.executable = main != nullptr && *main != '\0' ? main : own.string();
     } else {
-        const auto target = own.parent_path() / (ConvertedExecutableName(path) + own.extension().string());
+        const auto target = own.parent_path() / (HostExecutable::ConvertedName(path, UnconvertedExecutable) + own.extension().string());
         RequireExecutableBeside(own.parent_path(), target, path);
         if (!std::filesystem::is_regular_file(target)) {
             UnconvertedExecutable(std::string(path) + " without its converted executable; relink with --executable " + (path + std::size(ApplicationRoot) - 1));
@@ -583,9 +519,7 @@ int APS5_VABI sceSystemServicePowerTick(void) {
 }
 
 int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
- if (event == nullptr) {
-  return SYSTEM_SERVICE_ERROR_PARAMETER;
- }
+ (void)event;
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
