@@ -345,6 +345,10 @@ def render_compare(compared):
     return lines + [""] + details
 
 
+def compare_json(summary, previous):
+    return json.dumps({"format": "title-run-compare", "version": 1, "titles": compare_runs(summary, previous)}, indent=2)
+
+
 def render_markdown(summary, previous=None):
     build, machine = summary["build"], summary["machine"]
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
@@ -765,10 +769,13 @@ def main(argv=None):
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
     parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
+    parser.add_argument("--json", action="store_true", help="print the comparison as JSON instead of the table")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     parser.add_argument("--content", type=Path, help="directory holding the files that titles.json names with \"content\"")
     args = parser.parse_args(argv)
     args.out = args.out or args.build / "title-runs"
+    if args.json and not args.compare:
+        parser.error("--json needs --compare")
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
@@ -824,7 +831,10 @@ def main(argv=None):
     write_summary(output, summary)
     report = render_markdown(summary, previous)
     (output / "summary.md").write_text(report, encoding="utf-8")
-    print(report)
+    if args.json:
+        print(compare_json(summary, previous))
+    else:
+        print(report)
     print(f"written to {output}")
     return 0
 
