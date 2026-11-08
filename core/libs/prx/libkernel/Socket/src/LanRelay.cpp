@@ -211,6 +211,10 @@ std::optional<Frame> DecodeFrame(const std::vector<std::uint8_t>& datagram) {
     return frame;
 }
 
+bool IsOwnFrame(const Frame& frame, std::uint32_t instance) {
+    return frame.Instance == instance;
+}
+
 Relay::~Relay() {
     Close();
 }
