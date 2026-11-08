@@ -1,6 +1,7 @@
 #pragma once
 #include "prx/libSceNKWebKit/include/CredentialBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
+#include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
 #include "prx/libSceNKWebKit/include/Api.hpp"
@@ -8,9 +9,13 @@
 #include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/JscExports.hpp"
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
+#include "prx/libSceNKWebKit/include/ParsedContentRangeExports.hpp"
+#include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceResponseExports.hpp"
 #include "prx/libSceNKWebKit/include/SecurityOriginExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreDumpExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreParsersExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
