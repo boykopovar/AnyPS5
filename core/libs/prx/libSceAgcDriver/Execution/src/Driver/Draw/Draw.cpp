@@ -360,6 +360,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     using Stage = ShaderRecompiler::ShaderStage;
     using Role = ShaderRecompiler::ProgramRole;
 
+    static const bool dumpGraphics = std::getenv("APS5_DUMP_GRAPHICS_SHADERS") != nullptr;
     static const std::uint64_t dumpTarget = [] { const char* text = std::getenv("APS5_DUMP_DRAW_SHADERS"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
 
     static const std::uint64_t dumpSlot1 = [] { const char* text = std::getenv("APS5_DUMP_DRAW_SLOT1"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
@@ -387,7 +388,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     timing.Mark("device_setup");
     phaseTiming.Phase(DrawRowVectors);
 
-    const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && dumpTarget == 0 && dumpSlot1 == 0;
+    const bool useDrawEntries = drawEntries() && !ShaderRecompiler::DebugProbeActive() && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0;
     tail.registerKey = useDrawEntries && registerKeyEnabled();
     const bool registerKey = tail.registerKey;
     auto& drawKey = tail.drawKey;
@@ -416,6 +417,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
         }
         drawKey = drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr, aliasFirst ? relocation.get() : nullptr, aliasFirst ? &drawAlias : nullptr);
+        DrawPipeline::NoteDrawKey(drawKey, shapeKey);
         if (DrawFinisher::Busy()) {
             bool shapeMatters = false;
             if (DrawFinisher::Overlap() && drawDataHits()) {
@@ -734,7 +736,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.dumpTarget = dumpTarget;
     tail.dumpSlot1 = dumpSlot1;
     tail.packetOffset = packetOffset;
-    const bool handOff = pipelined && !drawParameters.indirect && !profile && !lockedPrepare && dumpTarget == 0 && dumpSlot1 == 0 && !tracePrograms && !verifyDrawDataHits() && deferredLabels().labels.empty() && DrawFinisher::Enabled();
+    const bool handOff = pipelined && !drawParameters.indirect && !profile && !lockedPrepare && !dumpGraphics && dumpTarget == 0 && dumpSlot1 == 0 && !tracePrograms && !verifyDrawDataHits() && deferredLabels().labels.empty() && DrawFinisher::Enabled();
     if (handOff) {
         tail.epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         tail.submissionSerial = submission.serial;
@@ -1207,7 +1209,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                     commitDraw(localDevice, commitQueue, decode->state, direct, stages, snapshots, nullptr, {}, 0, nullptr);
                 };
                 auto held = std::make_shared<decltype(commit)>(std::move(commit));
-                DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes));
+                DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::IndirectDraw, [held] { (*held)(); }, std::move(writes));
                 phaseTiming.Phase(DrawRowLockWait);
                 timing.Mark("draw_enqueued");
                 return drawn();
@@ -1277,7 +1279,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey, recipeDonor, trace, shape);
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
-        DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads), true);
+        DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Draw, [held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads), true);
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
         return drawn();
