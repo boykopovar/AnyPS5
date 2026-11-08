@@ -25,6 +25,18 @@ void CheckIPv4(const std::string& host) {
     if (!digits || parts != 3) throw std::invalid_argument("host is not an IPv4 address");
 }
 
+std::uint16_t ParsePort(const std::string& text) {
+    if (text.empty()) throw std::invalid_argument("missing port");
+    std::uint32_t value = 0;
+    for (const char digit : text) {
+        if (digit < '0' || digit > '9') throw std::invalid_argument("port is not a number");
+        value = value * 10 + static_cast<std::uint32_t>(digit - '0');
+        if (value > 65535) throw std::invalid_argument("port out of range");
+    }
+    if (value == 0) throw std::invalid_argument("port out of range");
+    return static_cast<std::uint16_t>(value);
+}
+
 }
 
 Endpoint ParseEndpoint(const std::string& text) {
@@ -33,14 +45,7 @@ Endpoint ParseEndpoint(const std::string& text) {
     Endpoint endpoint;
     endpoint.Host = text.substr(0, colon);
     CheckIPv4(endpoint.Host);
-    const std::string port = text.substr(colon + 1);
-    if (port.empty()) throw std::invalid_argument("missing port");
-    std::uint32_t value = 0;
-    for (const char digit : port) {
-        if (digit < '0' || digit > '9') throw std::invalid_argument("port is not a number");
-        value = value * 10 + static_cast<std::uint32_t>(digit - '0');
-    }
-    endpoint.Port = static_cast<std::uint16_t>(value);
+    endpoint.Port = ParsePort(text.substr(colon + 1));
     return endpoint;
 }
 
