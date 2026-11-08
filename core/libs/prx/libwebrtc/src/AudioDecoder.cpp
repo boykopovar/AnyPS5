@@ -41,6 +41,9 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <stdexcept>
 
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +62,25 @@ void APS5_VABI _ZN6webrtc12AudioDecoder11GeneratePlcEmPN3rtc7BufferTIsLb0EEE_nid
 
 int APS5_VABI _ZN6webrtc12AudioDecoder9ErrorCodeEv_nid_postfix(WebRtcAudioDecoder*) {
     return 0;
+}
+
+void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(WebRtcAudioDecoderParseResult* result, WebRtcAudioDecoderParseResult* other) {
+    if (!result)
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a result");
+    if (!other)
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a source");
+    void* frame = other->frame;
+    other->frame = nullptr;
+    result->timestamp = other->timestamp;
+    result->priority = other->priority;
+    result->frame = frame;
+}
+
+void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(WebRtcAudioDecoderParseResult* result) {
+    if (!result)
+        throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a result");
+    if (result->frame)
+        NotImplemented_nid_no_patch("AudioDecoder::ParseResult destructor with a frame: deleting the guest EncodedAudioFrame");
 }
 
 }
