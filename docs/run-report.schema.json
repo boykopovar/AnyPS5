@@ -7,7 +7,7 @@
   "required": ["format", "version", "generated", "anyps5", "game", "system", "run", "coverage", "truncated", "missing", "shaders", "stop"],
   "properties": {
     "format": { "const": "anyps5-report" },
-    "version": { "const": 1 },
+    "version": { "const": 2 },
     "generated": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
     "anyps5": {
       "type": "object",
@@ -75,6 +75,16 @@
         "framesPresented": { "$ref": "#/$defs/count" },
         "averageFps": { "type": ["number", "null"], "minimum": 0, "maximum": 1000000 },
         "fpsWindowSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1000000000 },
+        "frameMs": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["p50", "p90", "p99"],
+          "properties": {
+            "p50": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+            "p90": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+            "p99": { "type": "number", "minimum": 0, "maximum": 1000000000 }
+          }
+        },
         "recovered": { "type": "boolean" },
         "incomplete": { "type": "boolean" }
       },
@@ -142,6 +152,8 @@
         "compiled": { "$ref": "#/$defs/count" },
         "failed": { "$ref": "#/$defs/count" },
         "cacheHits": { "$ref": "#/$defs/count" },
+        "compileMs": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+        "slowCompiles": { "$ref": "#/$defs/count" },
         "unsupported": {
           "type": "array",
           "maxItems": 200,
