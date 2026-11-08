@@ -671,28 +671,33 @@ void WriteBackPressure() {
     scenario.client = [&](Connection& tls, int fd) {
         MakeNonBlocking(fd);
         Require(Handshake(tls) == Result::Done, "back-pressure handshake");
+        std::vector<std::uint8_t> moved(payload);
+        const std::uint8_t* active = payload.data();
+        LibreSslTls::WriteOptions options;
         std::size_t transferred = 0;
         bool waited = false;
         bool misused = false;
-        Result result;
         int rounds = 0;
-        while ((result = tls.Write(payload.data(), payload.size(), transferred)) != Result::Done) {
+        Result result = tls.Write(active, payload.size(), transferred, options);
+        while (result != Result::Done) {
             Require(result == Result::WantWrite && transferred == 0, "a stalled write must want a write and report nothing transferred");
             waited = true;
             if (!misused) {
                 misused = true;
-                std::vector<std::uint8_t> moved(payload);
                 Require(tls.Write(moved.data(), moved.size(), transferred) == Result::Ssl && transferred == 0,
                     "retrying a stalled write with another buffer is a bad write retry");
                 Require(tls.FailureKind() == LibreSslTls::Failure::BadWriteRetry, "a bad write retry is classified");
                 Require(tls.Write(payload.data(), 10, transferred) == Result::Ssl && tls.FailureKind() == LibreSslTls::Failure::BadWriteRetry,
                     "retrying a stalled write with a shorter length is a bad write retry");
-                LibreSslTls::WriteOptions moving;
-                moving.movingBuffer = true;
-                Require(tls.Write(moved.data(), moved.size(), transferred, moving) != Result::Ssl, "a moving write buffer is accepted when the option is set");
+                active = moved.data();
+                options.movingBuffer = true;
+                result = tls.Write(active, moved.size(), transferred, options);
+                Require(result != Result::Ssl, "a moving write buffer is accepted when the option is set");
+                continue;
             }
             Require(++rounds < WaitRounds, "the stalled write never finished");
             Settle();
+            result = tls.Write(active, payload.size(), transferred, options);
         }
         Require(waited, "a 16 MiB write into a sleeping peer never stalled; back-pressure was not exercised");
         Require(transferred == payload.size(), "a completed write transferred every byte");
