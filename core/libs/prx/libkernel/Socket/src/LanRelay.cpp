@@ -270,6 +270,42 @@ std::uint32_t Relay::Instance() const {
     return instance;
 }
 
+bool Relay::SendDatagram(const Endpoint& peer, const std::vector<std::uint8_t>& datagram) {
+    if (!IsOpen()) return false;
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(peer.Port);
+    if (inet_pton(AF_INET, peer.Host.c_str(), &address.sin_addr) != 1) return false;
+    const auto sent = sendto(static_cast<SocketHandle>(handle), reinterpret_cast<const char*>(datagram.data()), static_cast<int>(datagram.size()), 0,
+        reinterpret_cast<sockaddr*>(&address), sizeof address);
+    return sent >= 0 && static_cast<std::size_t>(sent) == datagram.size();
+}
+
+bool Relay::SendFrame(const Endpoint& peer, std::uint16_t sourcePort, std::uint16_t destinationPort, const std::vector<std::uint8_t>& payload) {
+    Frame frame;
+    frame.Instance = instance;
+    frame.SourcePort = sourcePort;
+    frame.DestinationPort = destinationPort;
+    frame.Payload = payload;
+    return SendDatagram(peer, EncodeFrame(frame));
+}
+
+std::optional<Frame> Relay::Receive(int timeoutMilliseconds) {
+    if (!IsOpen()) return std::nullopt;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMilliseconds);
+    std::vector<std::uint8_t> buffer(MaxDatagramSize);
+    while (true) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+        if (!WaitReadable(handle, remaining > 0 ? static_cast<int>(remaining) : 0)) return std::nullopt;
+        const auto count = recvfrom(static_cast<SocketHandle>(handle), reinterpret_cast<char*>(buffer.data()), static_cast<int>(buffer.size()), 0, nullptr, nullptr);
+        if (count < 0) return std::nullopt;
+        const std::vector<std::uint8_t> datagram(buffer.begin(), buffer.begin() + count);
+        auto frame = DecodeFrame(datagram);
+        if (frame && !IsOwnFrame(*frame, instance)) return frame;
+        if (std::chrono::steady_clock::now() >= deadline) return std::nullopt;
+    }
+}
+
 std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log) {
     Settings settings;
     try {
