@@ -98,10 +98,13 @@ bool IsRoundedRectRenderable(const RoundedRect& rr) {
     int blh = rr.m_radii.m_bottomLeft.m_height.m_value;
     int brw = rr.m_radii.m_bottomRight.m_width.m_value;
     int brh = rr.m_radii.m_bottomRight.m_height.m_value;
+    auto saturatedSum = [](int a, int b) {
+        return static_cast<int>(std::min<std::int64_t>(static_cast<std::int64_t>(a) + b, std::numeric_limits<int>::max()));
+    };
     return tlw >= 0 && tlh >= 0 && blw >= 0 && blh >= 0
         && trw >= 0 && trh >= 0 && brw >= 0 && brh >= 0
-        && (tlw + trw) <= w && (blw + brw) <= w
-        && (tlh + blh) <= h && (trh + brh) <= h;
+        && saturatedSum(tlw, trw) <= w && saturatedSum(blw, brw) <= w
+        && saturatedSum(tlh, blh) <= h && saturatedSum(trh, brh) <= h;
 }
 
 }  // namespace
