@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <source_location>
 
 namespace {
@@ -31,6 +33,7 @@ int main() {
     auto dsaKey = KeyWith(116, &dsa);
     auto dhKey = KeyWith(28, &dh);
     auto ecKey = KeyWith(408, &ec);
+    ERR_clear_error_nid_postfix();
     Require(EVP_PKEY_get0_RSA_nid_postfix(&rsaKey) == &rsa);
     Require(EVP_PKEY_get0_RSA_nid_postfix(&rsaPssKey) == &rsa);
     Require(EVP_PKEY_get0_DSA_nid_postfix(&dsaKey) == &dsa);
@@ -41,4 +44,25 @@ int main() {
     Require(EVP_PKEY_get0_RSA_nid_postfix(&emptyRsa) == nullptr);
     auto emptyEc = KeyWith(408, nullptr);
     Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&emptyEc) == nullptr);
+    Require(ERR_get_error_nid_postfix() == 0);
+    const auto rejected = [](void* result, std::uint64_t code) {
+        Require(result == nullptr);
+        Require(ERR_get_error_nid_postfix() == code);
+        Require(ERR_get_error_nid_postfix() == 0);
+    };
+    rejected(EVP_PKEY_get0_RSA_nid_postfix(&dsaKey), 0x06fff07f);
+    rejected(EVP_PKEY_get0_RSA_nid_postfix(&ecKey), 0x06fff07f);
+    rejected(EVP_PKEY_get0_DSA_nid_postfix(&rsaKey), 0x06fff081);
+    rejected(EVP_PKEY_get0_DSA_nid_postfix(&rsaPssKey), 0x06fff081);
+    rejected(EVP_PKEY_get0_DH_nid_postfix(&dsaKey), 0x06fff080);
+    rejected(EVP_PKEY_get0_EC_KEY_nid_postfix(&rsaKey), 0x06fff08e);
+    Require(rsaKey.references == 1 && rsaPssKey.references == 1 && dsaKey.references == 1 && ecKey.references == 1);
+    auto untyped = KeyWith(0, &rsa);
+    Require(EVP_PKEY_get0_RSA_nid_postfix(&untyped) == nullptr);
+    Require(EVP_PKEY_get0_DSA_nid_postfix(&untyped) == nullptr);
+    Require(EVP_PKEY_get0_DH_nid_postfix(&untyped) == nullptr);
+    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&untyped) == nullptr);
+    for (const std::uint64_t code : {0x06fff07fULL, 0x06fff081ULL, 0x06fff080ULL, 0x06fff08eULL})
+        Require(ERR_get_error_nid_postfix() == code);
+    Require(ERR_get_error_nid_postfix() == 0 && untyped.references == 1);
 }
