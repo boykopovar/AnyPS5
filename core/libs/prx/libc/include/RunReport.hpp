@@ -16,6 +16,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 struct RunReportGame {
@@ -216,6 +217,17 @@ struct Toggle {
     std::vector<std::string> warnings;
 };
 
+using EnvironmentVariables = std::vector<std::pair<std::string, std::string>>;
+
+struct Recipe {
+    std::string generated;
+    std::string runId;
+    BuildInfo build;
+    std::vector<std::string> arguments;
+    EnvironmentVariables environment;
+    std::vector<std::string> configFiles;
+};
+
 struct Settings {
     std::filesystem::path executableDirectory;
     std::filesystem::path userStateDirectory;
@@ -226,7 +238,15 @@ struct Settings {
     std::vector<std::string> requiredComponents;
     std::optional<SystemInfo> machine;
     Coverage coverage;
+    std::vector<std::string> arguments;
+    EnvironmentVariables environment;
+    std::vector<std::string> configFiles;
 };
+
+bool RecipeVariableAllowed(std::string_view name);
+EnvironmentVariables RecipeEnvironment(const EnvironmentVariables& all);
+EnvironmentVariables ProcessEnvironment();
+std::vector<std::string> ConfigFileNames(const EnvironmentVariables& environment);
 
 void RegisterComponent(std::string_view name, std::string_view commit, int modified);
 std::optional<std::string> SourceOf(std::string_view file, int line);

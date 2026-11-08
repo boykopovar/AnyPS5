@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <random>
 #include <regex>
@@ -584,6 +585,70 @@ std::vector<std::string> CommandLineArguments() {
     }
 #endif
     return arguments;
+}
+
+bool RecipeVariableAllowed(std::string_view name) {
+    if (!name.starts_with("ANYPS5_")) return false;
+    const auto upper = [&](std::string_view text) {
+        std::string result(text);
+        for (auto& character : result) character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+        return result;
+    }(name);
+    for (const char* secret : {"TOKEN", "KEY", "PASSWORD", "SECRET"}) {
+        if (upper.find(secret) != std::string::npos) return false;
+    }
+    return true;
+}
+
+EnvironmentVariables RecipeEnvironment(const EnvironmentVariables& all) {
+    EnvironmentVariables allowed;
+    for (const auto& [name, value] : all) {
+        if (RecipeVariableAllowed(name)) allowed.emplace_back(name, value);
+    }
+    std::ranges::sort(allowed);
+    return allowed;
+}
+
+EnvironmentVariables ProcessEnvironment() {
+    std::vector<std::string> entries;
+#if defined(_WIN32)
+    if (const wchar_t* block = GetEnvironmentStringsW()) {
+        for (const wchar_t* entry = block; *entry != L'\0'; entry += std::wcslen(entry) + 1u) {
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, entry, -1, nullptr, 0, nullptr, nullptr);
+            if (bytes <= 1) continue;
+            std::string utf8(static_cast<std::size_t>(bytes - 1), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, entry, -1, utf8.data(), bytes, nullptr, nullptr);
+            entries.push_back(std::move(utf8));
+        }
+        FreeEnvironmentStringsW(const_cast<wchar_t*>(block));
+    }
+#else
+#if defined(__APPLE__)
+    char** variables = *_NSGetEnviron();
+#else
+    extern char** environ;
+    char** variables = environ;
+#endif
+    for (char** entry = variables; entry != nullptr && *entry != nullptr; ++entry) entries.emplace_back(*entry);
+#endif
+    EnvironmentVariables all;
+    for (const auto& entry : entries) {
+        const auto equals = entry.find('=');
+        if (equals == std::string::npos || equals == 0u) continue;
+        const auto name = entry.substr(0, equals);
+        if (RecipeVariableAllowed(name)) all.emplace_back(name, entry.substr(equals + 1u));
+    }
+    return RecipeEnvironment(all);
+}
+
+std::vector<std::string> ConfigFileNames(const EnvironmentVariables& environment) {
+    std::vector<std::string> names;
+    for (const auto& [name, value] : environment) {
+        if (name != "ANYPS5_INPUT_CONFIG" || value.empty()) continue;
+        const auto leaf = fs::path(value).filename().string();
+        if (!leaf.empty()) names.push_back(leaf);
+    }
+    return names;
 }
 
 fs::path ExecutableDirectory() {
@@ -1714,6 +1779,9 @@ bool StartRunReport() noexcept {
         settings.game = ProvideGame;
         settings.requiredComponents = {"libkernel", "libSceVideoOut", "libSceAgcDriver"};
         settings.coverage = {true, true, true, true, true, true};
+        settings.arguments = arguments;
+        settings.environment = RunReport::ProcessEnvironment();
+        settings.configFiles = RunReport::ConfigFileNames(settings.environment);
         auto* created = new RunReport::Collector(std::move(settings));
         if (!created->Start()) {
             delete created;
