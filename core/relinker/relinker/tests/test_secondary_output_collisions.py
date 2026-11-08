@@ -61,6 +61,7 @@ def prepare_secondary(case, windows):
         paths[name] = case / f"{source.name}{paths['executable'].suffix}"
         paths[f"{name}-registry"] = case / f"{source.name}.registry.json"
         paths[f"{name}-needed"] = case / f"{source.name}.needed.json"
+        paths[f"{name}-hooks"] = case / f"{source.name}.hooks.json"
     if not windows:
         icon = case / "sce_sys/icon0.png"
         inputs[icon] = icon.read_bytes()
