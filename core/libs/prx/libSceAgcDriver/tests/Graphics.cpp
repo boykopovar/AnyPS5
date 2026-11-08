@@ -2088,7 +2088,7 @@ void TuningFieldTests() {
 }
 
 void ShadersWriteMemoryTests() {
-    const auto binding = [](ShaderRecompiler::DescriptorKind kind, ShaderRecompiler::DescriptorRole role, std::vector<bool> written) {
+    const auto binding = [](ShaderRecompiler::DescriptorKind kind, ShaderRecompiler::DescriptorRole role, ShaderRecompiler::ElementFlags written) {
         ShaderRecompiler::DescriptorBinding result{};
         result.kind = kind;
         result.role = role;
@@ -2129,6 +2129,22 @@ void ReversedComponentOrderTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "constant color factor");
         queue.context[0x1e0] = (1u << 30u) | (2u << 5u) | 13u;
         Require(AgcDriver::Graphics::DecodeState(queue).blends[0].colorBlendOp == VK_BLEND_OP_MIN, "a constant color factor of a MIN blend into an 8_8 SWAP_ALT target was rejected");
+    }
+    for (const auto& [number, format] : {std::pair{0u, VK_FORMAT_R16G16_UNORM}, std::pair{1u, VK_FORMAT_R16G16_SNORM}, std::pair{4u, VK_FORMAT_R16G16_UINT}, std::pair{7u, VK_FORMAT_R16G16_SFLOAT}}) {
+        auto queue = makeState();
+        const auto info = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (5u << 2u) | (number << 8u);
+        for (const auto swap : {0u, 1u}) {
+            queue.context[0x31c] = info | (swap << 11u);
+            const auto state = AgcDriver::Graphics::DecodeState(queue);
+            Require(state.colors.size() == 1 && state.colors[0].format == format && state.colors[0].elementBytes == 4 && state.colors[0].componentMapping == (swap == 1u ? 0xecu : 0xe4u), "a 16_16 target did not store the x and y exports, or with SWAP_ALT the x and w exports, in its two channels");
+        }
+        if (number == 7u) {
+            queue.context[0x31c] = info | (1u << 11u);
+            for (const auto offset : {0x105u, 0x106u, 0x107u, 0x108u}) queue.context[offset] = 0;
+            queue.context[0x1e0] = 0x60000001u;
+            Require(AgcDriver::Graphics::SplitsAlternateAlpha(AgcDriver::Graphics::DecodeState(queue)), "a separate alpha blend into a 16_16 SWAP_ALT target did not split its second channel");
+            queue.context[0x1e0] = 0;
+        }
     }
     for (const auto& [swap, mapping] : {std::pair{2u, 0x1bu}, std::pair{3u, 0x93u}}) {
         auto queue = makeState();
@@ -12667,6 +12683,34 @@ void vertexZeroFillTests() {
     Require(std::all_of(bytes.begin() + static_cast<std::ptrdiff_t>(valid), bytes.end(), [](std::byte value) { return value == std::byte{0}; }), "a vertex fetch past the record count did not read as zeros");
 }
 
+std::vector<std::pair<std::uint64_t, std::size_t>> paddedVertexFlushes;
+
+void RecordPaddedVertexFlush(std::uint64_t address, std::size_t bytes) {
+    paddedVertexFlushes.emplace_back(address, bytes);
+}
+
+void vertexZeroFillFlushTests() {
+    using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
+    constexpr std::size_t valid = 24 * 3;
+    constexpr std::size_t fetched = valid + 40;
+    std::vector<std::byte> guest(fetched, std::byte{0x7a});
+    const auto address = reinterpret_cast<std::uint64_t>(guest.data());
+    const auto previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    paddedVertexFlushes.clear();
+    AgcDriver::GuestMemory::SetFlushHook(&RecordPaddedVertexFlush);
+    try {
+        const auto copy = CopyZeroPaddedDrawInput(mockContext(), address, fetched, valid);
+        const auto bytes = copy.buffer->Bytes();
+        Require(std::all_of(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(valid), [](std::byte value) { return value == std::byte{0x7a}; }), "a zero-padded vertex fetch did not copy its valid bytes");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    Require(std::any_of(paddedVertexFlushes.begin(), paddedVertexFlushes.end(), [&](const auto& flush) { return flush.first <= address && flush.first + flush.second >= address + valid; }), "a zero-padded vertex fetch read its valid bytes without flushing pending GPU results over them");
+    Require(std::all_of(paddedVertexFlushes.begin(), paddedVertexFlushes.end(), [&](const auto& flush) { return flush.first + flush.second <= address + valid; }), "a zero-padded vertex fetch flushed pending GPU results over the padding it fills with zeros");
+}
+
 void vertexOverhangTests() {
     using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
     constexpr std::size_t page = 65536;
@@ -13942,6 +13986,7 @@ int main(int argc, char** argv) {
         storeAtLabelTests();
         nullVertexDescriptorTests();
         vertexZeroFillTests();
+        vertexZeroFillFlushTests();
         vertexOverhangTests();
         vertexZeroFillMergeTests();
         parallelCompareTests();
