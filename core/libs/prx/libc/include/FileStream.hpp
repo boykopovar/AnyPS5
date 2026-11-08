@@ -24,6 +24,9 @@ struct UcrtStreamState {
     char* base;
     int count;
     long flags;
+    long descriptor;
+    int characterBuffer;
+    int bufferSize;
 };
 extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor), void (*duplicate)(int from, int to));
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
@@ -336,6 +339,8 @@ public:
         constexpr long UcrtUpdate = 0x0004;
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
         return (state.load() & (UcrtReading | UcrtUpdate)) != 0;
+#elif defined(__GLIBC__)
+        return ::__freadable(GetHandle()) != 0;
 #else
         return true;
 #endif
@@ -361,7 +366,13 @@ public:
         return switched;
 #elif defined(__GLIBC__)
         auto* native = GetHandle();
-        if (!::__freadable(native) || !::__fwriting(native)) return true;
+        if (!::__freadable(native)) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
+        if (!::__fwriting(native)) return true;
         const bool switched = ::_IO_switch_to_get_mode(native) == 0;
         SyncUnlockedStatus();
         return switched;
@@ -474,8 +485,13 @@ inline std::FILE* GetNativeStream(FileStream* stream) {
 }
 
 extern "C" {
+extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
+}
+
+namespace LibcDetail {
+bool ExpandLineBufferCapacity(std::size_t current, std::size_t needed, std::size_t limit, std::size_t& result);
 }
 
 #endif
