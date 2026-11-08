@@ -10,7 +10,7 @@
 
 namespace {
 
-constexpr int kUnsupported = static_cast<int>(0x809D4054u);
+constexpr int kResult809D4054 = static_cast<int>(0x809D4054u);
 constexpr std::size_t kConfigSize = 0x58;
 
 std::mutex g_configMutex;
@@ -46,12 +46,12 @@ int APS5_VABI libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch(const void* config
 APS5_EXPORT("WvV54DtSzmQ", libSceGifParserUnknown_WvV54DtSzmQ_nid_no_patch);
 
 int APS5_VABI libSceGifParserUnknown_qiEL_minus_fPgaAA_nid_no_patch() {
-    return kUnsupported;
+    return kResult809D4054;
 }
 APS5_EXPORT("qiEL-fPgaAA", libSceGifParserUnknown_qiEL_minus_fPgaAA_nid_no_patch);
 
 int APS5_VABI libSceGifParserUnknown__minus_ZzjSDCInl4_nid_no_patch() {
-    return kUnsupported;
+    return kResult809D4054;
 }
 APS5_EXPORT("-ZzjSDCInl4", libSceGifParserUnknown__minus_ZzjSDCInl4_nid_no_patch);
 
