@@ -12,6 +12,20 @@ requests = []
 targets = []
 failures = []
 stalled = {"read": threading.Event(), "open": threading.Event()}
+references = {
+    "absolute": ("http://{authority}/resolved/a/.././payload.bin?next=/./../%2e#fragment", "/resolved/payload.bin?next=/./../%2e"),
+    "network": ("//{authority}/resolved/a/.././payload.bin?next=/./../%2e#fragment", "/resolved/payload.bin?next=/./../%2e"),
+    "relative": ("../resolved/a/.././payload.bin?relative=/../.#fragment", "/resolved/payload.bin?relative=/../."),
+    "root": ("/../../resolved/a/../payload.bin?root=/./..#fragment", "/resolved/payload.bin?root=/./.."),
+    "query": ("?next=/./../%2e#fragment", "/client-reference/query?next=/./../%2e"),
+    "empty-query": ("?#fragment", "/client-reference/empty-query?"),
+    "encoded": ("http://{authority}/resolved/%2e/%2e%2e/payload.bin?encoded=1#fragment", "/resolved/%2e/%2e%2e/payload.bin?encoded=1"),
+    "absolute-slashes": ("http://{authority}/resolved//a/..//./payload.bin?slashes=1#fragment", "/resolved///payload.bin?slashes=1"),
+    "network-slashes": ("//{authority}/resolved//a/..//./payload.bin?slashes=1#fragment", "/resolved///payload.bin?slashes=1"),
+    "absolute-empty": ("http://{authority}?empty=absolute#fragment", "/?empty=absolute"),
+    "network-empty": ("//{authority}?empty=network#fragment", "/?empty=network"),
+}
+redirected = set()
 
 
 class Server(http.server.ThreadingHTTPServer):
@@ -36,6 +50,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         requests.append((path, self.headers.get("Range")))
         targets.append(self.path)
+        if path.startswith("/client-unsupported/"):
+            location = {"https": "https://{authority}/payload.bin", "scheme": "ftp://{authority}/payload.bin", "userinfo": "http://user@{authority}/payload.bin"}[path.removeprefix("/client-unsupported/")]
+            self.send_response(307)
+            self.send_header("Location", location.format(authority=self.server.redirect_authority))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        reference = path.removeprefix("/client-reference/")
+        if path.startswith("/client-reference/") and reference not in redirected:
+            redirected.add(reference)
+            self.send_response(307)
+            self.send_header("Location", references[reference][0].format(authority=self.server.redirect_authority))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        resolved = self.path in {target for _, target in references.values()}
+        authority_targets = {target for name, (_, target) in references.items() if name.startswith(("absolute", "network")) or name == "encoded"}
+        if ((path.startswith(("/client-reference/", "/resolved/")) or path == "/") and not resolved
+                or self.path in authority_targets and not self.server.redirect_destination):
+            print(f"Refused unexpected redirect request target: {self.path!r}", file=sys.stderr)
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if path.startswith("/sync/"):
             ready = stalled[path.removeprefix("/sync/")].wait(2)
             self.send_response(200 if ready else 500)
@@ -51,7 +89,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        content = pathlib.Path("app0", pathlib.PurePosixPath(path).name).read_bytes()
+        content = pathlib.Path("app0", "payload.bin" if resolved else pathlib.PurePosixPath(path).name).read_bytes()
         match = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
         assert match is not None
         start, end = map(int, match.groups())
@@ -62,6 +100,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             stalled["open"].set()
             time.sleep(2)
         full = path.startswith(("/ignore/", "/full/", "/full-chunk/", "/full-close/"))
+        if not full and start >= len(content):
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{len(content)}")
+            self.send_header("Content-Length", "13")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"unsatisfiable")
+            return
         if full:
             start, end = 0, len(content) - 1
             self.send_response(200)
@@ -69,7 +115,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(206)
             end = min(end, start + 511, len(content) - 1)
             first = start + 1 if path.startswith("/bad/") or path.startswith("/bad-late/") and start else start
-            self.send_header("Content-Range", f"bytes {first}-{end}/{len(content)}")
+            unit = path.split("/")[2] if path.startswith("/unit/") else "BYTES" if path.startswith(("/bad/", "/range-number/")) else "bytes"
+            first = "invalid" if path.startswith("/range-number/") else first
+            self.send_header("Content-Range", f"{unit} {first}-{end}/{len(content)}")
         if start:
             expected = "Wed, 01 Jan 2020 00:00:00 GMT" if path.startswith("/modified/") else '"fixture-v1"'
             assert self.headers.get("If-Range") == expected
@@ -96,14 +144,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
 
 
-with Server(("127.0.0.1", 0), Handler) as server:
+with Server(("127.0.0.1", 0), Handler) as server, Server(("127.0.0.1", 0), Handler) as destination:
+    server.redirect_authority = destination.redirect_authority = f"127.0.0.1:{destination.server_port}"
+    server.redirect_destination = False
+    destination.redirect_destination = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
+    destination_thread = threading.Thread(target=destination.serve_forever, daemon=True)
     thread.start()
+    destination_thread.start()
     mode = sys.argv[2] if len(sys.argv) > 2 else "avplayer"
     arguments = [sys.argv[1], f"http://127.0.0.1:{server.server_port}", *sys.argv[3:]] if mode != "avplayer" else [sys.argv[1], "--http", f"http://127.0.0.1:{server.server_port}"]
     result = subprocess.run(arguments)
     server.shutdown()
+    destination.shutdown()
     thread.join()
+    destination_thread.join()
     if result.returncode:
         sys.exit(result.returncode)
     assert not failures, failures
@@ -111,9 +166,15 @@ with Server(("127.0.0.1", 0), Handler) as server:
     if mode == "avplayer":
         assert {"/range/avplayer.mp4", "/chunk/avplayer.webm", "/ignore/avplayer.mp4", "/redirect/avplayer.mp4"}.issubset({path for path, _ in requests})
     if mode == "client":
+        assert set(references) == redirected
+        assert {target for _, target in references.values()}.issubset(targets)
         expected = {"/range/payload.bin", "/range/alternate.bin", "/full/payload.bin", "/full-chunk/payload.bin", "/full-close/payload.bin", "/client-redirect/payload.bin", "/changed/payload.bin", "/modified/payload.bin", "/bad/payload.bin", "/short/payload.bin", "/chunk-bad/payload.bin", "/stall/payload.bin", "/stall-open/payload.bin", "/sync/read", "/sync/open"}
         assert expected.issubset({path for path, _ in requests})
         assert sum(path == "/cache/payload.bin" for path, _ in requests) == 1
         assert any(target == "/range/payload.bin?redirected=1" for target in targets)
         assert any(target == "/range/payload.bin?token=direct" for target in targets)
         assert all("#" not in target for target in targets)
+        for unit in ("bytes", "Bytes", "BYTES", "bYtEs"):
+            path = f"/unit/{unit}/payload.bin"
+            assert (path, "bytes=0-65535") in requests
+            assert (path, "bytes=90000-99999") in requests
