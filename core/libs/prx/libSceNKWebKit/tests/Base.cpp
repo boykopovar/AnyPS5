@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
+#include "prx/libSceNKWebKit/src/FrameHandle.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -368,6 +369,28 @@ static void TestArray() {
     Require(WKArrayGetSize(arr) == 2);
     Require(WKStringIsEqual(WKArrayGetItemAtIndex(arr, 0), s1));
     Require(WKStringIsEqual(WKArrayGetItemAtIndex(arr, 1), s2));
+
+    bool rejectedNull = false;
+    try {
+        WKArrayCreate(nullptr, 1);
+    } catch (...) {
+        rejectedNull = true;
+    }
+    Require(rejectedNull);
+    rejectedNull = false;
+    try {
+        WKArrayCreateAdoptingValues(nullptr, 1);
+    } catch (...) {
+        rejectedNull = true;
+    }
+    Require(rejectedNull);
+    rejectedNull = false;
+    try {
+        WKDictionaryCreate(nullptr, nullptr, 1);
+    } catch (...) {
+        rejectedNull = true;
+    }
+    Require(rejectedNull);
 
     bool caught = false;
     try {
@@ -1511,6 +1534,39 @@ static void TestPermissionRequests() {
     Require(threw);
 }
 
+static void TestFrameHandle() {
+    auto* handle = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>(0x0123456789ABCDEFull));
+    Require(WKGetTypeID(handle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(handle) == 0x0123456789ABCDEFull);
+    WKRelease(handle);
+
+    auto* zero = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>());
+    Require(WKFrameHandleGetFrameID(zero) == 0);
+    WKRelease(zero);
+
+    auto* maximum = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>(UINT64_MAX));
+    Require(WKFrameHandleGetFrameID(maximum) == UINT64_MAX);
+    WKRelease(maximum);
+
+    auto* notHandle = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a frame handle"));
+    bool threw = false;
+    try {
+        WKFrameHandleGetFrameID(notHandle);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    WKRelease(notHandle);
+
+    threw = false;
+    try {
+        WKFrameHandleGetFrameID(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -1524,6 +1580,79 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 }
 
+static void TestInspector() {
+    Require(WKInspectorGetTypeID() == 67);
+    auto inspector = NKWebKit::Make<NKWebKit::Inspector>();
+    const void* ref = inspector.Get();
+
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isAttached = true;
+    Require(WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isAttached = false;
+    inspector->isConnected = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isConnected = false;
+    inspector->isElementSelectionActive = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isElementSelectionActive = false;
+    inspector->isFront = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isFront = false;
+    inspector->isProfilingPage = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(WKInspectorIsProfilingPage(ref));
+    Require(!WKInspectorIsVisible(ref));
+
+    inspector->isProfilingPage = false;
+    inspector->isVisible = true;
+    Require(!WKInspectorIsAttached(ref));
+    Require(!WKInspectorIsConnected(ref));
+    Require(!WKInspectorIsElementSelectionActive(ref));
+    Require(!WKInspectorIsFront(ref));
+    Require(!WKInspectorIsProfilingPage(ref));
+    Require(WKInspectorIsVisible(ref));
+
+    bool threw = false;
+    try {
+        WKInspectorIsAttached(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -1548,8 +1677,11 @@ int main() {
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();
+    TestFrameHandle();
     TestCertificateInfo();
-    TestEmptyFrameLoaderClient();
+TestEmptyFrameLoaderClient();
+
+TestInspector();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
