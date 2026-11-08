@@ -663,6 +663,32 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckNpOfflineGetters() {
+    const char accountId[16] = {};
+    char language[8];
+    char untouchedLanguage[8];
+    std::memset(language, 0x5a, sizeof(language));
+    std::memset(untouchedLanguage, 0x5a, sizeof(untouchedLanguage));
+    Require(sceNpManagerIntGetAccountLanguage(-1, accountId, language) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject user -1");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, nullptr, language) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject a null account id");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, accountId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject a null output");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, accountId, language) == SignedOut, "sceNpManagerIntGetAccountLanguage must report NP as signed out");
+    Require(std::memcmp(language, untouchedLanguage, sizeof(language)) == 0, "sceNpManagerIntGetAccountLanguage must leave the output untouched");
+    std::uint32_t status = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, -1, &status) == InvalidArgument, "sceNpManagerIntGetCommunicationRestrictionStatus must reject -1");
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, 0, nullptr) == InvalidArgument, "sceNpManagerIntGetCommunicationRestrictionStatus must reject a null output");
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, 0, &status) == SignedOut, "sceNpManagerIntGetCommunicationRestrictionStatus must report NP as signed out");
+    Require(status == 0x5a5a5a5a, "sceNpManagerIntGetCommunicationRestrictionStatus must leave the output untouched");
+    int flag = 0x5a5a5a5a;
+    Require(sceNpManagerIntIsSubAccount(-1, &flag) == InvalidArgument, "sceNpManagerIntIsSubAccount must reject user -1");
+    Require(sceNpManagerIntIsSubAccount(0x10000, nullptr) == InvalidArgument, "sceNpManagerIntIsSubAccount must reject a null output");
+    Require(sceNpManagerIntIsSubAccount(0x10000, &flag) == SignedOut, "sceNpManagerIntIsSubAccount must report NP as signed out");
+    Require(flag == 0x5a5a5a5a, "sceNpManagerIntIsSubAccount must leave the output untouched");
+    Require(sceNpManagerIntIsTemporarySignout(0x10000, nullptr) == InvalidArgument, "sceNpManagerIntIsTemporarySignout must reject a null output");
+    Require(sceNpManagerIntIsTemporarySignout(0x10000, &flag) == SignedOut, "sceNpManagerIntIsTemporarySignout must report NP as signed out");
+    Require(flag == 0x5a5a5a5a, "sceNpManagerIntIsTemporarySignout must leave the output untouched");
+}
+
 void CheckAsmLifecycle() {
     constexpr int AsmAlreadyInitialized = static_cast<int>(0x8055A201u);
     constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
@@ -725,6 +751,7 @@ void CheckEmptyDestructors() {
 }
 
 int main() {
+    CheckNpOfflineGetters();
     CheckAsmLifecycle();
     CheckEmptyDestructors();
     CheckSandboxInfo();
