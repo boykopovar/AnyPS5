@@ -13,6 +13,7 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
 
 KNOWN_UNRUN = set()
+SANITIZER_SKIPPED_LIBRARIES = {"libSceAddressSanitizer"}
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
@@ -77,7 +78,16 @@ def compiled(build):
     return sources
 
 
-def unbuilt_exports(root, sources):
+def skipped_libraries(build):
+    enabled = False
+    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+        name, _, value = line.partition(":")
+        if name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            enabled = enabled or value.partition("=")[2].strip().upper() in ("ON", "1", "TRUE", "YES", "Y")
+    return set(SANITIZER_SKIPPED_LIBRARIES) if enabled else set()
+
+
+def unbuilt_exports(root, sources, skipped=()):
     prx = (Path(root) / "core" / "libs" / "prx").resolve()
     built_sources = {source for source in sources if prx in source.parents}
     if not built_sources:
@@ -97,6 +107,8 @@ def unbuilt_exports(root, sources):
     unbuilt = []
     for file in sorted(prx.glob("*/**/*.cpp")):
         relative = file.relative_to(prx)
+        if relative.parts[0] in skipped:
+            continue
         if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
             continue
         if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
@@ -320,7 +332,9 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs, or a library source that defines exports is never compiled")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
-    parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="emit registration audit results as JSON")
+    output.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
     args = parser.parse_args(argv)
     if args.scripts:
@@ -328,6 +342,10 @@ def main(argv=None):
             scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
         except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             parser.error(f"--scripts reads the source tree from git, so run it in a git checkout: {error}")
+        if args.json:
+            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun,
+                              "registered": sorted(set(scripts) - set(unrun))}, sort_keys=True))
+            return int(bool(unrun))
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
         if unrun:
@@ -338,7 +356,8 @@ def main(argv=None):
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
-        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build))
+        skipped = skipped_libraries(args.build)
+        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build), skipped)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
@@ -346,15 +365,23 @@ def main(argv=None):
             print(f"{'run' if name in run else 'NOT RUN'}  {name}")
         return 0
     unrun = sorted(set(every) - run)
+    stale = sorted(KNOWN_UNRUN & run)
+    fresh = sorted(set(unrun) - KNOWN_UNRUN)
+    if args.json:
+        print(json.dumps({"mode": "executables", "tests": every, "registered": sorted(set(every) & run),
+                          "unregistered": unrun, "known_unrun": sorted(set(unrun) & KNOWN_UNRUN),
+                          "stale_exceptions": stale, "new_unregistered": fresh,
+                          "unbuilt_exports": None if unbuilt is None else [path.as_posix() for path in unbuilt]}, sort_keys=True))
+        return int(not every or bool(stale or fresh or unbuilt))
     if not every:
         print(f"no test executables found under {args.build}; is it configured with -DBUILD_TESTING=ON?")
         return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
-    stale = sorted(KNOWN_UNRUN & run)
+    for name in sorted(skipped):
+        print(f"note: {name} is not built in this ASan/TSan configuration")
     for name in stale:
         print(f"error: {name} is run by ctest now; remove it from KNOWN_UNRUN")
-    fresh = sorted(set(unrun) - KNOWN_UNRUN)
     for name in fresh:
         print(f"error: {name} is built but no ctest test runs it")
     if fresh:

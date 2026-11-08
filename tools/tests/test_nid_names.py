@@ -374,6 +374,19 @@ class NidArgumentTests(unittest.TestCase):
         rows = json.loads(printed.call_args.args[0])["rows"]
         self.assertEqual({row["nid"]: row["suggestion"] for row in rows}, database)
 
+    def test_symbol_file_skips_whitespace_only_lines_without_trimming_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names = Path(directory) / "symbols.txt"
+            symbols = ["sceExample", "  literal spaces  ", "-leading-dash", "unicode_Ω"]
+            names.write_text("\ufeffsceExample\r\n \t \r\n  literal spaces  \r\n\t\r\n-leading-dash\r\nunicode_Ω\r\n", encoding="utf-8")
+            for source in (str(names), "-"):
+                with self.subTest(source=source), patch("sys.stdin", io.StringIO(names.read_text(encoding="utf-8-sig"))), \
+                        patch.object(nid_names, "load_db", side_effect=AssertionError("database used")), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(nid_names.main(["--from-file", source, "--json"]), 0)
+                self.assertEqual(json.loads(output.getvalue())["symbols"],
+                                 [{"name": name, "nid": nid_names.compute_nid(name)} for name in symbols])
+
     def test_symbol_files_and_stdin_compute_nids_without_a_database(self):
         with tempfile.TemporaryDirectory() as directory:
             names = Path(directory) / "symbols.txt"
