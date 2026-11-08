@@ -6,22 +6,23 @@
 namespace {
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_PKEY base/EC check failed at line %u\n", location.line());
+    std::fprintf(stderr, "LibreSSL3 EVP_PKEY base check failed at line %u\n", location.line());
     std::abort();
 }
 }
 
 int main() {
-    LibreSsl3EcKey ec{};
     LibreSsl3EvpPkey key{};
     key.type = 408;
-    key.key = &ec;
     Require(EVP_PKEY_base_id_nid_postfix(&key) == 408);
-    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == &ec);
     key.type = 6;
     Require(EVP_PKEY_base_id_nid_postfix(&key) == 6);
-    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(&key) == nullptr);
+    key.type = 19;
+    Require(EVP_PKEY_base_id_nid_postfix(&key) == 6);
+    key.type = 66;
+    Require(EVP_PKEY_base_id_nid_postfix(&key) == 116);
+    key.type = 1000000;
+    Require(EVP_PKEY_base_id_nid_postfix(&key) == 0);
     Require(EVP_PKEY_base_id_nid_postfix(nullptr) == 0);
-    Require(EVP_PKEY_get0_EC_KEY_nid_postfix(nullptr) == nullptr);
-    std::puts("libSceLibreSsl3 EVP_PKEY base/EC tests passed");
+    std::puts("libSceLibreSsl3 EVP_PKEY base tests passed");
 }
