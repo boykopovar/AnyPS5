@@ -13856,6 +13856,11 @@ int main(int argc, char** argv) {
             std::cout << "Depth bounds state checks passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-surface-reuse") {
+            RunDepthSurfaceReuseTests();
+            std::cout << "Depth surface reuse checks passed\n";
+            return 0;
+        }
         {
             const AgcDriver::Graphics::Context context{};
             const AgcDriver::Graphics::State state{};

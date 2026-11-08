@@ -74,6 +74,25 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_linear_volume_nonresident PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_depth_surface_reuse COMMAND agc_driver_graphics_tests --depth-surface-reuse)
+    set_tests_properties(agc_driver_depth_surface_reuse PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_surface_reuse PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    foreach(collectMode no_collect_memo:APS5_NO_COLLECT_MEMO shared_collect_memo:APS5_SHARED_COLLECT_MEMO no_epoch_collect_map:APS5_NO_EPOCH_COLLECT_MAP)
+        string(REPLACE ":" ";" collectParts "${collectMode}")
+        list(GET collectParts 0 collectName)
+        list(GET collectParts 1 collectVariable)
+        add_test(NAME agc_driver_depth_store_window_${collectName} COMMAND agc_driver_graphics_tests --depth-surface-reuse)
+        set_tests_properties(agc_driver_depth_store_window_${collectName} PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;${collectVariable}=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_depth_store_window_${collectName} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test(NAME agc_driver_msaa_dcc_state COMMAND agc_driver_graphics_tests --multisample-dcc-state)
     add_test(NAME agc_driver_unused_viewport_depth COMMAND agc_driver_graphics_tests --unused-viewport-depth)
     set_tests_properties(agc_driver_unused_viewport_depth PROPERTIES TIMEOUT 30)

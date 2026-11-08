@@ -621,6 +621,209 @@ void CheckUnwatch() {
     Require(!UnchangedSince(base, Block, adjacent), "unwatch hid a CPU edit in unrelated memory");
 }
 
+#ifdef _WIN32
+std::atomic<int> walkingEntered{0};
+std::atomic<int> walkingRelease{0};
+
+bool HoldFreshWalk(std::uintptr_t, std::size_t, void (*)(void*, std::uintptr_t, std::uintptr_t), void*) {
+    walkingEntered.store(1, std::memory_order_release);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (walkingRelease.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    return true;
+}
+#endif
+
+void CheckCollectReceipts() {
+    constexpr std::size_t evictions = 70;
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 3 * Block);
+    BumpCollectEpoch();
+    CollectReceipt token;
+    auto walks = CollectWalks();
+    auto hits = CollectMemoHits();
+    auto reuses = ThreadReceiptReuses();
+    const auto walked = CollectWrites(base, 3 * Block, token);
+    Require(walked != 0 && token.memoized && token.first == base && token.stop >= base + 3 * Block, "a first walk did not produce a receipt");
+    Require(CollectWalks() == walks + 1 && CollectMemoHits() == hits && ThreadReceiptReuses() == reuses, "a first collect was not exactly one walk");
+    walks = CollectWalks();
+    bytes[Block + 10] = 7;
+    const auto reused = RecollectWrites(base, 3 * Block, token);
+    Require(CollectWalks() == walks && CollectMemoHits() == hits && ThreadReceiptReuses() == reuses + 1, "reusing a receipt was not exactly one reuse");
+    Require(reused == CollectWrites(base, 3 * Block), "reusing a receipt differs from the memo hit it replaces");
+    Require(CollectWalks() == walks && CollectMemoHits() == hits + 1 && ThreadReceiptReuses() == reuses + 1, "the ordinary collect was not exactly one memo hit");
+    BumpCollectEpoch();
+    const auto afterEpoch = RecollectWrites(base, 3 * Block, token);
+    Require(afterEpoch > reused && !UnchangedSinceCollected(base + Block, Block, reused) && UnchangedSinceCollected(base + Block, Block, afterEpoch), "a receipt outlived its collect epoch");
+
+    CollectReceipt widened;
+    BumpCollectEpoch();
+    CollectWrites(base + 4096, 4096, widened);
+    Require(widened.memoized && widened.first == base && widened.stop == base + Block, "a block-widened walk produced the wrong receipt range");
+    hits = CollectMemoHits();
+    RecollectWrites(base + 8192, 4096, widened);
+    Require(CollectMemoHits() == hits, "a request inside the widened block did not reuse the receipt");
+
+    void* partlyUnwatched = AllocateWatched(2 * Block);
+    const auto partial = reinterpret_cast<std::uint64_t>(partlyUnwatched);
+    Unwatch(partial + Block, Block);
+    BumpCollectEpoch();
+    CollectReceipt cleared;
+    CollectWrites(base, Block, cleared);
+    Require(cleared.memoized, "the control receipt was not produced");
+    Require(CollectWrites(partial, 2 * Block, cleared) == 0 && !cleared.memoized, "a partial collection kept its receipt");
+    CollectWrites(base, Block, cleared);
+    Require(cleared.memoized, "the control receipt was not produced again");
+    Require(CollectWrites(partial + Block, Block, cleared) == 0 && !cleared.memoized, "a refused collection kept its receipt");
+
+    void* ringOnly = AllocateWatched(4 * Block);
+    const auto ring = reinterpret_cast<std::uint64_t>(ringOnly);
+    BumpCollectEpoch();
+    CollectWrites(ring, 3 * Block);
+    CollectReceipt contained;
+    Require(CollectWrites(ring + Block, Block, contained) != 0 && contained.memoized && contained.first == ring + Block && contained.stop == ring + 2 * Block, "a map hit on a contained range did not produce a receipt for that range");
+
+    void* subrange = AllocateWatched(3 * Block);
+    const auto sub = reinterpret_cast<std::uint64_t>(subrange);
+    void* evicting = AllocateWatched(evictions * Block);
+    const auto evict = reinterpret_cast<std::uint64_t>(evicting);
+    std::memset(subrange, 0x11, 3 * Block);
+    BumpCollectEpoch();
+    CollectReceipt wide;
+    CollectWrites(sub, 3 * Block, wide);
+    Require(wide.memoized, "the wide receipt was not produced");
+    for (std::size_t block = 0; block < evictions; ++block) CollectWrites(evict + block * Block, Block);
+    static_cast<volatile std::uint8_t*>(subrange)[Block + 16] = 5;
+    walks = CollectWalks();
+    hits = CollectMemoHits();
+    reuses = ThreadReceiptReuses();
+    const auto containedGeneration = RecollectWrites(sub + Block, Block, wide);
+    Require(ThreadReceiptReuses() == reuses + 1 && CollectWalks() == walks, "a range inside the receipt did not reuse it after the ring evicted its entry");
+    Require(containedGeneration == CollectWrites(sub + Block, Block) && CollectWalks() == walks && CollectMemoHits() == hits + 1, "reusing a receipt for a contained range differs from the ordinary memo hit");
+
+    void* unwatched = AllocateWatched(3 * Block);
+    const auto plane = reinterpret_cast<std::uint64_t>(unwatched);
+    BumpCollectEpoch();
+    CollectReceipt planeToken;
+    CollectWrites(plane, 3 * Block, planeToken);
+    Require(planeToken.memoized, "the plane receipt was not produced");
+    Unwatch(plane + Block, Block);
+    Require(RecollectWrites(plane, 3 * Block, planeToken) == 0, "a receipt was reused after its own plane was partly unwatched");
+
+    void* remapped = AllocateWatched(2 * Block);
+    const auto remap = reinterpret_cast<std::uint64_t>(remapped);
+    const auto noop = [](const void*, std::size_t, const void*, bool) {};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(remapped, 2 * Block, true, true, true);
+    }
+    std::memset(remapped, 0x11, 2 * Block);
+    BumpCollectEpoch();
+    CollectReceipt remapToken;
+    const auto remapGeneration = CollectWrites(remap, 2 * Block, remapToken);
+    Require(remapToken.memoized, "the remap receipt was not produced");
+    static_cast<volatile std::uint8_t*>(remapped)[100] = 9;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(remapped, 2 * Block, noop);
+        mutation.Add(remapped, 2 * Block, true, true, true);
+    }
+    const auto remapped2 = RecollectWrites(remap, 2 * Block, remapToken);
+    Require(remapped2 > remapGeneration && !UnchangedSinceCollected(remap, Block, remapGeneration) && UnchangedSinceCollected(remap, Block, remapped2), "a receipt was reused after its own plane was remapped");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(remapped);
+    }
+
+    BumpCollectEpoch();
+    CollectReceipt forged;
+    CollectWrites(base, Block, forged);
+    Require(forged.memoized, "the wrap receipt was not produced");
+    forged.first = 0;
+    forged.stop = ~std::uint64_t{0};
+    reuses = ThreadReceiptReuses();
+    Require(RecollectWrites(~std::uint64_t{0} - 1, 1, forged) == 0 && ThreadReceiptReuses() == reuses, "a request whose rounded range wraps reused a receipt");
+
+    void* adopted = AllocateWatched(2 * Block);
+    const auto adoptedBase = reinterpret_cast<std::uint64_t>(adopted);
+    std::memset(adopted, 0x11, 2 * Block);
+    BumpCollectEpoch();
+    CollectReceipt adoptedToken;
+    const auto adoptedGeneration = CollectWrites(adoptedBase, 2 * Block, adoptedToken);
+    Require(adoptedToken.memoized, "the adopted-epoch receipt was not produced");
+    static_cast<volatile std::uint8_t*>(adopted)[Block + 8] = 6;
+    std::uint64_t adoptedResult = 0;
+    std::uint64_t adoptedReuses = 0;
+    bool adoptedEpoch = false;
+    std::thread adopter([&] {
+        AdoptLatestCollectEpoch();
+        adoptedEpoch = ThreadCollectEpoch() == adoptedToken.epoch;
+        const auto before = ThreadReceiptReuses();
+        adoptedResult = RecollectWrites(adoptedBase, 2 * Block, adoptedToken);
+        adoptedReuses = ThreadReceiptReuses() - before;
+    });
+    adopter.join();
+    Require(adoptedEpoch, "the other thread did not adopt the receipt's epoch");
+    Require(adoptedReuses == 0 && adoptedResult > adoptedGeneration && UnchangedSinceCollected(adoptedBase + Block, Block, adoptedResult), "a receipt was reused by another thread that adopted its epoch");
+
+#ifdef _WIN32
+    void* walking = AllocateWatched(2 * Block);
+    const auto walkingBase = reinterpret_cast<std::uint64_t>(walking);
+    std::memset(walking, 0x11, 2 * Block);
+    BumpCollectEpoch();
+    CollectReceipt walkingToken;
+    const auto walkingGeneration = CollectWrites(walkingBase, 2 * Block, walkingToken);
+    Require(walkingToken.memoized, "the in-progress receipt was not produced");
+    walkingEntered.store(0, std::memory_order_relaxed);
+    walkingRelease.store(0, std::memory_order_relaxed);
+    struct Holder {
+        std::thread thread;
+        ~Holder() {
+            walkingRelease.store(1, std::memory_order_release);
+            if (thread.joinable()) thread.join();
+            SetFreshCollectHook(nullptr);
+        }
+    } holder;
+    SetFreshCollectHook(&HoldFreshWalk);
+    holder.thread = std::thread([&] {
+        BumpCollectEpoch();
+        MarkWritten(walkingBase, 4);
+    });
+    const auto entryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (walkingEntered.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < entryDeadline) std::this_thread::yield();
+    Require(walkingEntered.load(std::memory_order_acquire) != 0, "the walker did not reach the held collect");
+    const auto duringWalk = RecollectWrites(walkingBase, 2 * Block, walkingToken);
+    walkingRelease.store(1, std::memory_order_release);
+    holder.thread.join();
+    SetFreshCollectHook(nullptr);
+    Require(duringWalk == walkingGeneration, "a receipt returned an unpublished generation while another thread walked");
+    const auto afterWalk = RecollectWrites(walkingBase, 2 * Block, walkingToken);
+    Require(afterWalk == TrackerGeneration() && afterWalk > walkingGeneration, "a receipt did not return the generation the walker published");
+#endif
+
+    void* shared = AllocateWatched(2 * Block);
+    const auto sharedBase = reinterpret_cast<std::uint64_t>(shared);
+    std::memset(shared, 0x11, 2 * Block);
+    BumpCollectEpoch();
+    CollectReceipt sharedToken;
+    const auto sharedGeneration = CollectWrites(sharedBase, 2 * Block, sharedToken);
+    Require(sharedToken.memoized, "the shared receipt was not produced");
+    std::atomic<int> step{0};
+    std::thread walker([&] {
+        BumpCollectEpoch();
+        static_cast<volatile std::uint8_t*>(shared)[Block + 4] = 3;
+        CollectWritesUncached(sharedBase, 2 * Block);
+        MarkWritten(sharedBase, 4);
+        step.store(1, std::memory_order_release);
+    });
+    while (step.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+    walker.join();
+    const auto published = RecollectWrites(sharedBase, 2 * Block, sharedToken);
+    Require(published == TrackerGeneration() && published > sharedGeneration, "a receipt did not return the generation another thread published");
+    Require(!UnchangedSinceCollected(sharedBase + Block, Block, sharedGeneration), "the other thread's walk was not included in the published generation");
+}
+
 void CheckNewestStamp() {
     void* memory = AllocateWatched(4 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -2619,6 +2822,7 @@ int main(int argc, char** argv) {
         CheckOwnStore();
         CheckGpuWriteNotListed();
         CheckUnwatch();
+        CheckCollectReceipts();
         CheckNewestStamp();
         CheckPartlyWatchedStore();
 #ifndef _WIN32

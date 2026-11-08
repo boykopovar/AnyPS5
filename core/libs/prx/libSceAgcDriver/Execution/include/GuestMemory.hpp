@@ -78,6 +78,17 @@ void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
+struct CollectReceipt {
+    std::uint64_t first = 0;
+    std::uint64_t stop = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t unwatched = 0;
+    std::uint64_t mapping = 0;
+    std::uint64_t thread = 0;
+    bool memoized = false;
+};
+std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes, CollectReceipt& receipt);
+std::uint64_t RecollectWrites(std::uint64_t address, std::size_t bytes, const CollectReceipt& receipt);
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // UnchangedSince for several ranges under one tracker lock: true only when every one holds.
 struct UnchangedQuery {
@@ -124,6 +135,9 @@ void BreakProofs();
 void MarkProofThread();
 std::uint64_t CollectEpoch();
 std::uint64_t CollectEpochBumps();
+std::uint64_t CollectMemoHits();
+std::uint64_t CollectWalks();
+std::uint64_t ThreadReceiptReuses();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);

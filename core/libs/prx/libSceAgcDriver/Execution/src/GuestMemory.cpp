@@ -125,6 +125,14 @@ void raiseForgetSlot(std::atomic<std::uint64_t>& slot, std::uint64_t serial) {
 }
 std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
+std::atomic<std::uint64_t> collectWalks{0};
+thread_local std::uint64_t receiptReuses = 0;
+
+std::uint64_t collectThreadSerial() {
+    static std::atomic<std::uint64_t> next{1};
+    thread_local const std::uint64_t serial = next.fetch_add(1, std::memory_order_relaxed);
+    return serial;
+}
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
@@ -1787,7 +1795,8 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     return complete;
 }
 
-std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoized) {
+std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoized, GuestMemory::CollectReceipt* receipt = nullptr) {
+    if (receipt != nullptr) *receipt = {};
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
     auto& tracker = Tracker();
     // Whole pages, so a page shared with the next range is collected with either.
@@ -1809,7 +1818,9 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             const auto& map = epochCollectMap(epoch, unwatched, mapping);
             if (map.Covers(first, stop)) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
-                return tracker.stable.load(std::memory_order_acquire);
+                const auto stable = tracker.stable.load(std::memory_order_acquire);
+                if (receipt != nullptr && stable != 0) *receipt = {first, stop, epoch, unwatched, mapping, collectThreadSerial(), true};
+                return stable;
             }
         }
         for (const auto& entry : threadCollectMemo().entries) {
@@ -1834,6 +1845,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             }
         }
     }
+    collectWalks.fetch_add(1, std::memory_order_relaxed);
     const TimedAccess timed(CounterCollect, bytes);
     const auto requestedFirst = first;
     const auto requestedStop = stop;
@@ -1866,6 +1878,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             }
             if (epochal && epochCollectMapEnabled()) {
                 epochCollectMap(epoch, serial, mapping).Record(first, stop);
+                if (receipt != nullptr && useMemo && epochal && !sharedCollectMemo()) *receipt = {first, stop, epoch, serial, mapping, collectThreadSerial(), true};
             }
         }
     }
@@ -1880,6 +1893,24 @@ std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes) {
 
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes) {
     return collectWrites(address, bytes, false);
+}
+
+std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes, CollectReceipt& receipt) {
+    return collectWrites(address, bytes, true, &receipt);
+}
+
+std::uint64_t RecollectWrites(std::uint64_t address, std::size_t bytes, const CollectReceipt& receipt) {
+    if (receipt.memoized && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address && collectMemoEnabled() && epochCollectMapEnabled() && !sharedCollectMemo()) {
+        constexpr std::uint64_t page = 4096;
+        const auto first = address & ~(page - 1);
+        const auto stop = (address + bytes + page - 1) & ~(page - 1);
+        const auto epoch = HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get();
+        if (epoch != 0 && stop > first && epoch == receipt.epoch && receipt.thread == collectThreadSerial() && receipt.first <= first && stop <= receipt.stop && receipt.unwatched == unwatchSerial.load(std::memory_order_acquire) && receipt.mapping == GuestAllocations::GuestAllocationsGeneration_nid_postfix()) {
+            ++receiptReuses;
+            return Tracker().stable.load(std::memory_order_acquire);
+        }
+    }
+    return collectWrites(address, bytes, true);
 }
 
 std::uint64_t WriteGeneration() {
@@ -1975,6 +2006,18 @@ void AdoptLatestCollectEpoch() {
 
 std::uint64_t CollectEpochBumps() {
     return collectEpochBumps.load(std::memory_order_relaxed);
+}
+
+std::uint64_t CollectMemoHits() {
+    return collectMemoHits.load(std::memory_order_relaxed);
+}
+
+std::uint64_t CollectWalks() {
+    return collectWalks.load(std::memory_order_relaxed);
+}
+
+std::uint64_t ThreadReceiptReuses() {
+    return receiptReuses;
 }
 
 namespace {
