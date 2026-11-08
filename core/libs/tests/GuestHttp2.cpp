@@ -2,9 +2,11 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <thread>
 #include <initializer_list>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -236,6 +238,47 @@ int main() {
     int count = 123;
     const KernelUseconds poll = 0;
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &poll) != 0);
+    {
+#ifdef _WIN32
+        _putenv("APS5_NET_DISCONNECTED=1");
+#else
+        setenv("APS5_NET_DISCONNECTED", "1", 1);
+#endif
+        Http2AsyncOption bad_option = option;
+        bad_option.equeue = -1;
+        std::atomic<bool> thread_started{false};
+        std::atomic<bool> waiter_consumed{false};
+        std::thread waiter([&] {
+            thread_started = true;
+            KernelEvent event_wait{};
+            int count_wait = 0;
+            const KernelUseconds poll_wait = 1000000;
+            if (sceKernelWaitEqueue(eq, &event_wait, 1, &count_wait, &poll_wait) == 0 && count_wait == 1) {
+                Http2AsyncResult result_wait{};
+                std::uint32_t timeout_wait = 500;
+                if (sceHttp2WaitAsync(request, &result_wait, &timeout_wait, nullptr) == 0) {
+                    if (result_wait.req_id == request && result_wait.result == static_cast<int>(0x80431063)) {
+                        waiter_consumed = true;
+                    }
+                }
+            }
+        });
+        while (!thread_started) std::this_thread::yield();
+        Require(Throws([&] { sceHttp2SendRequestAsync(request, nullptr, 0, &bad_option, nullptr); }));
+        Require(sceHttp2SendRequestAsync(request, nullptr, 0, &option, nullptr) == 0);
+        waiter.join();
+        Require(waiter_consumed);
+        KernelEvent extra{};
+        int extra_count = 123;
+        Require(sceKernelWaitEqueue(eq, &extra, 1, &extra_count, &poll) != 0);
+        Require(sceHttp2SendRequest(request, nullptr, 0) == static_cast<int>(0x80431063));
+        Require(sceHttp2SendRequest(request + 1000, nullptr, 0) == InvalidId);
+#ifdef _WIN32
+        _putenv("APS5_NET_DISCONNECTED=");
+#else
+        unsetenv("APS5_NET_DISCONNECTED");
+#endif
+    }
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
     const int child = sceHttp2CreateRequestWithURL(sibling, "CONNECT", "https://localhost/", 0);
