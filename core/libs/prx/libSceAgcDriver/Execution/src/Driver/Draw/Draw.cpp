@@ -42,10 +42,18 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
+struct RecycledRingWordsPool {
+    std::vector<std::shared_ptr<ShaderRecompiler::HeapStageWords>> words;
+    std::size_t cursor = 0;
+};
+
+struct RecycledRingWordsStorage {};
+
 std::shared_ptr<ShaderRecompiler::HeapStageWords> RecycledRingWords() {
     constexpr std::size_t PoolSize = 1024, Probes = 16;
-    thread_local std::vector<std::shared_ptr<ShaderRecompiler::HeapStageWords>> pool;
-    thread_local std::size_t cursor = 0;
+    auto& state = HostThreadLocal<RecycledRingWordsPool, RecycledRingWordsStorage>();
+    auto& pool = state.words;
+    auto& cursor = state.cursor;
     for (std::size_t probe = 0; probe < Probes && probe < pool.size(); ++probe) {
         auto& candidate = pool[cursor];
         cursor = cursor + 1 == pool.size() ? 0 : cursor + 1;
