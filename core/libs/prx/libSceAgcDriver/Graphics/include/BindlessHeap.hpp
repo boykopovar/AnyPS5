@@ -91,7 +91,6 @@ public:
         VkDeviceAddress address = 0;
     };
     DataSpan Allocate(std::size_t words, SpanMark& mark);
-    DataSpan RingAllocate(std::size_t words, SpanMark& mark);
     static void Write(const DataSpan& span, std::span<const std::uint32_t> words);
     bool Held(const SpanMark& mark);
     class SpanScope {
@@ -106,36 +105,26 @@ public:
         bool acquired;
     };
     std::optional<DataSpan> KeepOrAllocate(std::size_t words, SpanMark& mark, bool same);
-    static constexpr std::uint32_t BufferSlotBytes = 16u;
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);
-    bool TakeRingPressure();
     bool TakeSlotPressure();
 
     struct Counts {
-        std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
+        std::uint64_t encodes = 0, encodedCopies = 0;
         std::uint64_t slotsFreed = 0, slotsReused = 0, slotsEvicted = 0, evictionWaits = 0;
-        std::uint64_t ringWaits = 0, ringBatchPeakBytes = 0, ringSpanPeakBytes = 0, ringBytes = 0, imageSlotsHeld = 0;
-        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, busyChunksSkipped = 0;
-        std::uint64_t ringPressureSubmits = 0, slotPressureSubmits = 0, samplersEvicted = 0;
+        std::uint64_t spanPeakBytes = 0, imageSlotsHeld = 0;
+        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0;
+        std::uint64_t slotPressureSubmits = 0, samplersEvicted = 0;
         std::uint64_t poolBytes = 0, poolBatchPeakBytes = 0, poolBlocksMade = 0, poolBlocksRecycled = 0, poolBlocksFreed = 0, poolBlocksHeld = 0, poolBlockBytes = 0;
     };
     Counts Statistics() const;
-    std::size_t RingChunkCount() const { return ringChunks.size(); }
 
-    static constexpr std::size_t RingBytes = 64u << 20u;
-    static constexpr std::size_t DefaultRingBytes = 16u << 20u;
     static constexpr std::size_t PoolBlockBytes = 2u << 20u;
     static constexpr std::size_t PoolIdleBytes = 32u << 20u;
-    static constexpr std::size_t RingChunkBytes = 2u << 20u;
 
 private:
     Context context;
-    std::byte* ringData = nullptr;
-    std::size_t ringBytes = 0;
-    VkDeviceSize ringHeapOffset = 0;
-    bool ringInHeap = false;
     std::unique_ptr<Buffer> resourceHeap;
     std::unique_ptr<Buffer> samplerHeap;
     VkDeviceSize imageHeapStride = 0;
@@ -150,18 +139,6 @@ private:
     void writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImageView view, VkImageLayout layout);
     void writeSamplerSlot(std::uint32_t slot, VkSampler sampler);
     void writeBufferDescriptor(VkDeviceSize offset, VkDeviceAddress address, VkDeviceSize bytes, const char* what);
-    struct Chunk {
-        Recorder* recorder = nullptr;
-        std::uint64_t serial = 0;
-        bool open = false;
-        std::uint64_t entered = 0;
-    };
-    std::vector<Chunk> ringChunks;
-    std::uint64_t ringEntries = 0;
-    std::size_t ringChunk = ~std::size_t{0};
-    void enterRingChunk(std::size_t index);
-    std::size_t wrapRingOffset(std::size_t offset, std::size_t bytes);
-    std::size_t ringCursor = 0;
     struct PoolBlock {
         std::unique_ptr<Buffer> buffer;
         std::byte* data = nullptr;
@@ -182,7 +159,6 @@ private:
     DataSpan allocateLocked(std::size_t words, SpanMark& mark);
     bool poolBlockDoneLocked(PoolBlock& block);
     void trimPoolLocked();
-    std::uint32_t ringAlignment = 256;
     mutable std::mutex mutex;
     mutable std::mutex spanMutex;
     mutable std::atomic<std::thread::id> spanOwner{};
@@ -246,8 +222,6 @@ private:
         bool sampler = false;
     };
     std::deque<RetiringSlot> retiring;
-    std::size_t ringBatchBytes = 0;
-    std::atomic<std::uint32_t> ringOpenChunks{0};
     std::size_t retiringAssigned = 0;
     std::size_t retiringSamplers = 0;
     std::size_t samplerRetiringAssigned = 0;

@@ -29,11 +29,6 @@ void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
 }
 
-BindlessHeap::DataSpan ringAllocate(BindlessHeap& heap, std::size_t words) {
-    BindlessHeap::SpanMark mark;
-    return heap.RingAllocate(words, mark);
-}
-
 struct FakeOwner : HeapSlotOwner {
     FakeOwner() = default;
 };
@@ -199,102 +194,6 @@ void sharedOwnerRelease(const Context& context, VkImageView view) {
             "destroying an owner behind another base did not free its slot");
 }
 
-void ringSpans(const Context& context) {
-    BindlessHeap heap(context);
-    BindlessHeap::SpanMark unwritten;
-    require(!heap.Held(unwritten), "a span never written is not held");
-    BindlessHeap::SpanMark first;
-    const auto span = heap.RingAllocate(16u, first);
-    require(first.offset == span.offset && first.words == 16u && heap.Held(first), "a span written in the open chunk is held");
-    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    BindlessHeap::SpanMark filler;
-    static_cast<void>(heap.RingAllocate(chunkWords - 1024u, filler));
-    BindlessHeap::SpanMark crossing;
-    static_cast<void>(heap.RingAllocate(4096u, crossing));
-    require(heap.Held(crossing), "a span over two chunks is kept");
-    require(heap.Held(first), "a span stays held while its batch keeps the chunk open");
-    const auto counts = heap.Statistics();
-    require(counts.spansWritten == 3u && counts.spansKept == 3u, "three spans written and kept");
-    BindlessHeap::SpanMark third;
-    static_cast<void>(heap.RingAllocate(chunkWords, third));
-    Recorder recorder(context, true);
-    heap.Submitted(recorder, 0u);
-    require(heap.Held(first), "a span stays held after its batch is submitted while the ring has not come back to its chunk");
-    BindlessHeap::SpanMark fill;
-    const auto untilWrap = [&] {
-        const auto wraps = heap.Statistics().ringWraps;
-        BindlessHeap::DataSpan last{};
-        while (heap.Statistics().ringWraps == wraps) last = heap.RingAllocate(chunkWords, fill);
-        return last.offset;
-    };
-    require(untilWrap() == AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips a chunk a later batch still reads kept spans from");
-    require(heap.Held(first), "the skipped chunk's kept span is still held");
-    require(heap.Statistics().keptChunksSkipped == 1u, "one kept chunk skipped");
-    heap.Submitted(recorder, 0u);
-    require(untilWrap() == 0u && !heap.Held(first) && heap.Statistics().spansExpired == 1u, "a span the ring wrote over has expired");
-}
-
-bool ringLargeSpans(const Context& context) {
-    BindlessHeap heap(context);
-    if (heap.RingChunkCount() < 5u) return false;
-    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    constexpr std::size_t largeWords = chunkWords + 1024u;
-    BindlessHeap::SpanMark pin;
-    static_cast<void>(heap.RingAllocate(16u, pin));
-    BindlessHeap::SpanMark large;
-    const auto span = heap.RingAllocate(largeWords, large);
-    require(span.words.size() == largeWords && heap.Held(large), "a span over two chunks is written and held");
-    Recorder recorder(context, true);
-    BindlessHeap::SpanMark fill;
-    const auto untilWrap = [&](const BindlessHeap::SpanMark& kept) {
-        const auto wraps = heap.Statistics().ringWraps;
-        BindlessHeap::DataSpan last{};
-        while (heap.Statistics().ringWraps == wraps) {
-            heap.Submitted(recorder, 0u);
-            require(heap.Held(kept), "a kept span stays held while later batches fill the ring");
-            last = heap.RingAllocate(chunkWords, fill);
-        }
-        return last.offset;
-    };
-    require(untilWrap(large) == 2u * AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips every chunk a kept large span covers");
-    require(untilWrap(pin) == AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips only the pinned first chunk");
-    require(!heap.Held(large), "a large span expires once the ring writes over one of its later chunks");
-    require(heap.Held(pin), "the pinned span outlives the large span");
-    bool refused = false;
-    try {
-        static_cast<void>(ringAllocate(heap, heap.RingChunkCount() * AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t) / 4u + 1u));
-    } catch (const std::runtime_error&) {
-        refused = true;
-    }
-    require(refused, "a span over a quarter of the ring is refused");
-    return true;
-}
-
-bool ringPressure(const Context& context) {
-    BindlessHeap heap(context);
-    if (heap.RingChunkCount() < 4u) return false;
-    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    Recorder recorder(context, true);
-    BindlessHeap::SpanMark fill;
-    require(!heap.TakeRingPressure(), "an empty ring is under no pressure");
-    const auto half = heap.RingChunkCount() / 2u;
-    for (std::size_t chunk = 1; chunk < half; ++chunk) static_cast<void>(heap.RingAllocate(chunkWords, fill));
-    require(!heap.TakeRingPressure(), "a batch below half the ring's chunks is under no pressure");
-    static_cast<void>(heap.RingAllocate(chunkWords, fill));
-    require(heap.TakeRingPressure() && heap.Statistics().ringPressureSubmits == 1u, "a batch holding half the ring's chunks asks for a submit");
-    heap.Submitted(recorder, 0u);
-    require(!heap.TakeRingPressure(), "a submit relieves the pressure");
-    BindlessHeap::SpanMark kept;
-    static_cast<void>(heap.RingAllocate(16u, kept));
-    for (std::size_t chunk = 1; chunk < half; ++chunk) {
-        heap.Submitted(recorder, 0u);
-        static_cast<void>(heap.RingAllocate(chunkWords, fill));
-    }
-    heap.Submitted(recorder, 0u);
-    require(heap.Held(kept) && !heap.TakeRingPressure(), "chunks of earlier batches do not count");
-    return true;
-}
-
 void writeTails(const Context& context) {
     BindlessHeap heap(context);
     for (const std::size_t count : {0u, 1u, 3u, 4u, 5u, 7u, 9u}) {
@@ -332,56 +231,6 @@ void spanScope(const Context& context) {
     require(waited, "another thread's span waits while a scope holds the allocator");
     require(allocated.load(std::memory_order_acquire) && heap.Held(first), "the other thread allocates once the scope ends");
     require(heap.Statistics().spansWritten == 2u, "both spans are counted");
-}
-
-void ringCurrentChunk(const Context& context) {
-    BindlessHeap heap(context);
-    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    Recorder recorder(context, true);
-    std::vector<BindlessHeap::SpanMark> pins(heap.RingChunkCount() - 1u);
-    for (auto& pin : pins) {
-        static_cast<void>(heap.RingAllocate(chunkWords, pin));
-        heap.Submitted(recorder, 0u);
-        for (const auto& kept : pins) {
-            if (kept.entry != 0u) require(heap.Held(kept), "every pinned chunk stays held");
-        }
-    }
-    BindlessHeap::SpanMark live;
-    static_cast<void>(heap.RingAllocate(16u, live));
-    bool refused = false;
-    try {
-        static_cast<void>(ringAllocate(heap, chunkWords));
-    } catch (const std::runtime_error&) {
-        refused = true;
-    }
-    require(refused, "a span never wraps onto the current chunk behind data this batch already wrote");
-    require(heap.Held(live), "the current chunk's span is still held");
-}
-
-bool ringBusyChunks(const Context& context) {
-    BindlessHeap heap(context);
-    if (heap.RingChunkCount() < 3u) return false;
-    Recorder recorder(context, true);
-    if (!recorder.HasTimeline()) return false;
-    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
-    const auto unreached = recorder.Submissions() + (1ull << 40u);
-    BindlessHeap::SpanMark busy;
-    static_cast<void>(heap.RingAllocate(16u, busy));
-    static_cast<void>(ringAllocate(heap, chunkWords));
-    heap.Submitted(recorder, unreached);
-    heap.Submitted(recorder, 0u);
-    BindlessHeap::SpanMark fill;
-    const auto wraps = heap.Statistics().ringWraps;
-    BindlessHeap::DataSpan last{};
-    while (heap.Statistics().ringWraps == wraps) {
-        last = heap.RingAllocate(chunkWords, fill);
-        heap.Submitted(recorder, 0u);
-    }
-    require(last.offset >= AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips the chunk a batch still in flight reads");
-    const auto counts = heap.Statistics();
-    require(counts.busyChunksSkipped >= 1u && counts.ringWaits == 0u, "the busy chunk is skipped without a wait");
-    require(heap.Held(busy), "a span in the skipped busy chunk is still held");
-    return true;
 }
 
 bool dataPool(const Context& context) {
@@ -702,9 +551,7 @@ bool samplersEvicted(const Context& context) {
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const bool largeSpans = mode == "ring-large-spans";
-    const bool busyChunks = mode == "ring-busy-chunks";
-    const bool comesBack = !mode.empty() && !largeSpans && !busyChunks;
+    const bool comesBack = !mode.empty();
     try {
         SetTestEnvironment("APS5_GPU_HEAP", "1");
         SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
@@ -713,36 +560,6 @@ int main(int argc, char** argv) {
         if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
-        }
-        if (busyChunks) {
-            bool ran = false;
-            {
-                const auto context = device->graphicsContext();
-                ran = ringBusyChunks(context);
-                device->WaitIdle();
-            }
-            device.reset();
-            if (!ran) {
-                std::printf("skipped, the heap ring has fewer than three chunks or the recorder no timeline\n");
-                return VulkanTestSkipped;
-            }
-            std::cout << "bindless heap ring busy chunk tests passed\n";
-            return 0;
-        }
-        if (largeSpans) {
-            bool ran = false;
-            {
-                const auto context = device->graphicsContext();
-                ran = ringLargeSpans(context);
-                device->WaitIdle();
-            }
-            device.reset();
-            if (!ran) {
-                std::printf("skipped, the heap ring has fewer than five chunks\n");
-                return VulkanTestSkipped;
-            }
-            std::cout << "bindless heap ring large span tests passed\n";
-            return 0;
         }
         if (comesBack) {
             {
@@ -780,16 +597,9 @@ int main(int argc, char** argv) {
             const PlaceholderImages placeholders(context);
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);
-            if (!ringPressure(context)) std::printf("the ring pressure test needs at least four chunks\n");
             if (!dataPool(context)) std::printf("the data pool tests need the recorder timeline\n");
             spanScope(context);
             writeTails(context);
-            if (BindlessHeap(context).RingChunkCount() != 0u) {
-                ringSpans(context);
-                ringCurrentChunk(context);
-            } else {
-                std::printf("the device's resource heap holds no descriptor ring\n");
-            }
             viewSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
             encodedViews(context);
             ownerSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
