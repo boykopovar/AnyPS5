@@ -104,7 +104,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     static_cast<void>(anisoThreshold);
     static_cast<void>(anisoBias);
     const auto reductionMode = toVkReductionMode(filterMode);
-    Require(!disableDegamma, "guest sampler descriptor disables degamma which is not implemented");
+    static_cast<void>(disableDegamma);
     static_cast<void>(lodBiasSec);
     Require(!pointPreclamp, "guest sampler descriptor uses point preclamping which is not implemented");
     static_cast<void>(anisoOverride);
@@ -156,6 +156,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     const std::array compareOps{VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS};
     result.compareOp = compareOps.at(depthCompareFunc);
     result.forceDegamma = forceSrgb;
+    result.disableDegamma = disableDegamma;
     result.nonSeamlessCube = disableCubeWrap;
     if (forceUnormCoords) {
         result.unnormalizedCoordinates = true;
