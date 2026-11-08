@@ -470,3 +470,33 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME guest_libressl3_pkey_lifecycle COMMAND guest_libressl3_pkey_lifecycle_tests ${pkeyLifecycleDirectory})
     set_tests_properties(guest_libressl3_pkey_lifecycle PROPERTIES TIMEOUT 20)
 endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509SetPubkey.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509_set_pubkey_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509SetPubkey.cpp)
+    target_include_directories(guest_libressl3_x509_set_pubkey_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_set_pubkey_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_x509_set_pubkey_tests)
+    add_test(NAME guest_libressl3_x509_set_pubkey COMMAND guest_libressl3_x509_set_pubkey_tests)
+    set_tests_properties(guest_libressl3_x509_set_pubkey PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_set_pubkey PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509V3SetCtx.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_x509v3_set_ctx_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509V3SetCtx.cpp)
+    target_include_directories(guest_libressl3_x509v3_set_ctx_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509v3_set_ctx_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_x509v3_set_ctx_tests)
+    add_test(NAME guest_libressl3_x509v3_set_ctx COMMAND guest_libressl3_x509v3_set_ctx_tests)
+    set_tests_properties(guest_libressl3_x509v3_set_ctx PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509v3_set_ctx PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()

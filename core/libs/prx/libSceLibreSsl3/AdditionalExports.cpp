@@ -177,10 +177,6 @@ int APS5_VABI EVP_chacha20_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_set_pubkey_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_accept_socket_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -392,10 +388,6 @@ int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix() {
 }
 
 int APS5_VABI X509_digest_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509V3_set_ctx_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
