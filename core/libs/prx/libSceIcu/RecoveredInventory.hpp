@@ -75,7 +75,6 @@ int APS5_VABI udtitvfmt_resultAsValue_nid_postfix();
 int APS5_VABI ufieldpositer_close_nid_postfix();
 int APS5_VABI ufieldpositer_next_nid_postfix();
 int APS5_VABI ufieldpositer_open_nid_postfix();
-int APS5_VABI ufmtval_getString_nid_postfix();
 int APS5_VABI ufmtval_nextPosition_nid_postfix();
 int APS5_VABI uidna_close_nid_postfix();
 int APS5_VABI uidna_nameToASCII_nid_postfix();
