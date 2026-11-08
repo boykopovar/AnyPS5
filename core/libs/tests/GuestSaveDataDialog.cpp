@@ -3,6 +3,7 @@
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +40,9 @@ int main() {
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
     Require(sceSaveDataDialogOpen(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with null param");
+    errno = 0;
+    Require(sceSaveDataDialogOpen(reinterpret_cast<void*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with unwritable param");
+    Require(errno == 0, "errno unchanged on unwritable param");
     Require(sceSaveDataDialogClose(nullptr) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "close while initialized not running");
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before open");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc while initialized not running");
@@ -54,6 +58,20 @@ int main() {
     param.mode = SAVE_DATA_DIALOG_MODE_PROGRESS_BAR;
     param.items = &items;
     param.user_data = &context;
+
+    SaveDataDialogParam badItemsParam = param;
+    badItemsParam.items = reinterpret_cast<void*>(0x10);
+    errno = 0;
+    Require(sceSaveDataDialogOpen(&badItemsParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with unwritable items");
+    Require(errno == 0, "errno unchanged on unwritable items");
+
+    SaveDataDialogItems badNamesItems = items;
+    badNamesItems.dir_names = reinterpret_cast<SaveDataDirName*>(0x10);
+    SaveDataDialogParam badNamesParam = param;
+    badNamesParam.items = &badNamesItems;
+    errno = 0;
+    Require(sceSaveDataDialogOpen(&badNamesParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL, "open with unwritable dir_names");
+    Require(errno == 0, "errno unchanged on unwritable dir_names");
 
     for (int save = 0; save < 2; ++save) {
         Require(sceSaveDataDialogOpen(&param) == 0, "open save progress");
