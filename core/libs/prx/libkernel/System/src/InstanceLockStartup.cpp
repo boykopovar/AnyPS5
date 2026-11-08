@@ -40,6 +40,6 @@ const bool InstanceLockChecked = [] {
 
 }
 
-void ReleaseHostInstanceLock() {
+void ReleaseHostInstanceLock_nid_no_patch() {
     HeldBackend().reset();
 }
