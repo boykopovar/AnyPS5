@@ -139,7 +139,7 @@ NidBreakpointTable& NidBreakpoints() {
     return table;
 }
 
-std::size_t AddNidList(std::string_view list, NidBreakpointTable& table) {
+std::size_t AddNidList(std::string_view list, NidBreakpointTable& table, MalformedEntryReport report) {
     std::size_t added = 0;
     while (!list.empty()) {
         const std::size_t comma = list.find(',');
@@ -154,8 +154,11 @@ std::size_t AddNidList(std::string_view list, NidBreakpointTable& table) {
             continue;
 
         std::uint64_t nid = 0;
-        if (!ParseNid(entry, nid))
+        if (!ParseNid(entry, nid)) {
+            if (report != nullptr)
+                report(entry);
             continue;
+        }
         if (table.Add(nid) == NidBreakpointTable::AddResult::Added)
             ++added;
     }
