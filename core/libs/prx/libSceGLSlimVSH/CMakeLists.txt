@@ -19,4 +19,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_glslim_state PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGLSlimVSH>")
     endif()
+    add_test_executable(guest_glslim_ipc_returns_tests tests/IpcReturns.cpp)
+    target_include_directories(guest_glslim_ipc_returns_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_glslim_ipc_returns_tests PRIVATE libSceGLSlimVSH libc)
+    configure_windows_unwind(guest_glslim_ipc_returns_tests)
+    add_test(NAME guest_glslim_ipc_returns COMMAND guest_glslim_ipc_returns_tests)
+    if(WIN32)
+        set_tests_properties(guest_glslim_ipc_returns PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGLSlimVSH>")
+    endif()
 endif()

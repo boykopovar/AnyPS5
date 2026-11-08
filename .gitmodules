@@ -85,3 +85,6 @@
 [submodule "3rdparty/fontconfig"]
 	path = 3rdparty/fontconfig
 	url = https://github.com/fontconfig/fontconfig.git
+[submodule "3rdparty/curl"]
+	path = 3rdparty/curl
+	url = https://github.com/curl/curl.git
