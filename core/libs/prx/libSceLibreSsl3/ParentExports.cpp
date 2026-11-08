@@ -157,7 +157,8 @@ __asm__(APS5_ASM_FUNCTION("ERR_get_error") "jmp *__imp_ERR_get_error_nid_postfix
 
 __asm__(APS5_ASM_FUNCTION("EC_POINT_point2oct") "jmp *__imp_EC_POINT_point2oct_nid_postfix(%rip)\n");
 
-__asm__(APS5_ASM_FUNCTION("sceLibreSslInit") "jmp *__imp_sceLibreSslInit(%rip)\n");
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_sceLibreSslInit_nid_no_patch") "jmp *__imp_sceLibreSslInit(%rip)\n");
+APS5_EXPORT("DWzAHSX9KW8", libreSsl3Forward_sceLibreSslInit_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("UI_method_get_writer") "jmp *__imp_UI_method_get_writer_nid_postfix(%rip)\n");
 
