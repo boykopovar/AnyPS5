@@ -229,6 +229,7 @@ void Relay::Open(const Endpoint& listen) {
     }
     handle = static_cast<std::uintptr_t>(descriptor);
     port = ntohs(bound.sin_port);
+    instance = NewInstanceId();
 }
 
 void Relay::Close() {
