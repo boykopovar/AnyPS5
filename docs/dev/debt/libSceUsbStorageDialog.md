@@ -1,5 +1,9 @@
 # libSceUsbStorageDialog technical debt
 
+### Functional
+
+- [sceUsbStorageDialogOpen](../../../core/libs/prx/libSceUsbStorageDialog/Export.cpp) (libSceUsbStorageDialog) - returning 0x80b8000d (COMMON_DIALOG_ERROR_ARG_NULL) for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [libSceUsbStorageDialog](../../../core/libs/prx/libSceUsbStorageDialog/Export.cpp) (libSceUsbStorageDialog) - the USB storage dialog runs the common-dialog state machine without showing a UI and reports the dialog as canceled by the user (`COMMON_DIALOG_RESULT_USER_CANCELED = 1`). `sceUsbStorageDialogOpen` transitions to `RUNNING` (2), while `sceUsbStorageDialogUpdateStatus` and `sceUsbStorageDialogClose` transition to `FINISHED` (3) before returning results, matching other common dialogs in the repository; Firmware 13.42 checks only for null and accesses the structure directly (read from disassembly, not measured on a console), so the console faults on an inaccessible non-null pointer; AnyPS5 returns COMMON_DIALOG_ERROR_INVALID_ARGUMENT instead.

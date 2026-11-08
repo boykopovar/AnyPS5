@@ -1,5 +1,6 @@
 #include "prx/libSceUsbStorageDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -45,6 +46,9 @@ int main() {
     result.result = kErrBusy;
 
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    errno = 71;
+    Require(sceUsbStorageDialogOpen(reinterpret_cast<const UsbStorageDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogOpen(&param) == kErrNotInitialized);
     Require(sceUsbStorageDialogClose() == kErrNotInitialized);
@@ -57,6 +61,9 @@ int main() {
     Require(sceUsbStorageDialogInitialize() == kErrAlreadyInitialized);
     Require(sceUsbStorageDialogGetStatus() == kStatusInitialized);
 
+    errno = 71;
+    Require(sceUsbStorageDialogOpen(reinterpret_cast<const UsbStorageDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetResult(&result) == kErrNotFinished);
 
@@ -95,6 +102,9 @@ int main() {
     Require(sceUsbStorageDialogClose() == kErrNotRunning);
     Require(sceUsbStorageDialogTerminate() == 0);
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    errno = 71;
+    Require(sceUsbStorageDialogOpen(reinterpret_cast<const UsbStorageDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetStatus() == kStatusNone);
@@ -119,6 +129,9 @@ int main() {
     Require(sceUsbStorageDialogGetResult(&result) == kResultUserCanceled);
     Require(result.size == 0 && result.result == kResultUserCanceled);
     Require(sceUsbStorageDialogTerminate() == 0);
+    errno = 71;
+    Require(sceUsbStorageDialogOpen(reinterpret_cast<const UsbStorageDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
     Require(sceUserServiceTerminate() == 0);
