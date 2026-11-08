@@ -136,7 +136,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulatio
         shaders.push_back({ShaderStage::TessellationControl, &rectangle.control, 0});
         shaders.push_back({ShaderStage::TessellationEvaluation, &rectangle.evaluation, 0});
     } else if (pixelResult.barycentricEmulation.active && emulation == Emulation::Geometry) {
-        geometry = ShaderRecompiler::BuildBarycentricGeometryShader(vertexResult, pixelResult, target, device.GeometryLimits());
+        geometry = ShaderRecompiler::BuildBarycentricGeometryShader(vertexResult, pixelResult, target, device.GeometryLimits(), 0u);
         shaders.push_back({ShaderStage::Geometry, &geometry, 0});
     } else if (pixelResult.barycentricEmulation.active) {
         patches = ShaderRecompiler::BuildBarycentricTessellationShaders(vertexResult, pixelResult, target, device.MaxFragmentInputComponents(), provoking == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? 2u : 0u);

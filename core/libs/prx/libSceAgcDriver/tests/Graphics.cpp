@@ -9363,7 +9363,7 @@ void barycentricEmulationTests() {
     target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     const GeometryStageLimits limits{64u, 128u, 256u, 1024u, 128u};
-    auto geometry = BuildBarycentricGeometryShader(vertex, fragment, target, limits);
+    auto geometry = BuildBarycentricGeometryShader(vertex, fragment, target, limits, 0u);
     const std::array<CompiledShader, 3> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Geometry, &geometry, 0}, {ShaderStage::Fragment, &fragment, 0}}};
     const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     auto state = DecodeState(makeState());
@@ -9385,9 +9385,25 @@ void barycentricEmulationTests() {
     const auto plain = compile(interpolates, false);
     const std::array<CompiledShader, 3> plainShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Geometry, &geometry, 0}, {ShaderStage::Fragment, &plain, 0}}};
     expectFailure([&] { ValidateShaders(plainShaders, state, subgroup, false, false, false, true); }, "only for emulated barycentrics");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, plain, target, limits)); }, "does not emulate barycentrics");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, std::nullopt)); }, "geometry shaders are unavailable");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, GeometryStageLimits{64u, 12u, 256u, 1024u, 128u})); }, "exceeds device limits");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, plain, target, limits, 0u)); }, "does not emulate barycentrics");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, std::nullopt, 0u)); }, "geometry shaders are unavailable");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, GeometryStageLimits{64u, 12u, 256u, 1024u, 128u}, 0u)); }, "exceeds device limits");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits, 1u)); }, "first or the last");
+    Require(VariableBuiltIns(geometry, spv::BuiltInLayer) == 0u, "the generated geometry stage writes a layer the vertex shader does not");
+    {
+        RecompileResult layered;
+        layered.spirv = makeModule({.parameterOutput = true, .layerOutput = true});
+        layered.parameterExports = {0u};
+        const auto first = BuildBarycentricGeometryShader(layered, fragment, target, limits, 0u);
+        const auto last = BuildBarycentricGeometryShader(layered, fragment, target, limits, 2u);
+        Require(first.Identity() != last.Identity(), "the generated geometry stage does not take the layer from the provoking vertex it was built for");
+        for (const auto* built : {&first, &last}) {
+            Require(VariableBuiltIns(*built, spv::BuiltInLayer) == 1u && UintArrayAt(*built, spv::StorageClassInput, 1u) == 3u && !DeclaresCapability(*built, spv::CapabilityShaderViewportIndexLayerEXT), "the generated geometry stage does not read the vertex layer at its location and write it to Layer");
+            const std::array<CompiledShader, 3> layeredShaders{{{ShaderStage::Vertex, &layered, 0}, {ShaderStage::Geometry, built, 0}, {ShaderStage::Fragment, &fragment, 0}}};
+            ValidateShaders(layeredShaders, state, subgroup, false, false, false, true, false, false, false, false, true);
+            expectFailure([&] { ValidateShaders(layeredShaders, state, subgroup, false, false, false, true, false, false, false, false, false); }, "VK_EXT_shader_viewport_index_layer");
+        }
+    }
 
     const std::array<std::uint32_t, 2> tessellationCapabilities{spv::CapabilityShader, spv::CapabilityTessellation};
     SpirvTarget tessellationTarget = target;
@@ -9519,7 +9535,7 @@ void barycentricEmulationTests() {
     }
     vertex.parameterExports.clear();
     expectFailure([&] { static_cast<void>(BuildBarycentricTessellationShaders(vertex, fragment, tessellationTarget, 128u, 0u)); }, "not exported by the vertex shader");
-    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits)); }, "not exported by the vertex shader");
+    expectFailure([&] { static_cast<void>(BuildBarycentricGeometryShader(vertex, fragment, target, limits, 0u)); }, "not exported by the vertex shader");
 }
 
 void copiedWriterIndirectOverlapTests() {
