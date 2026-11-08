@@ -24,6 +24,7 @@ struct StubRelocation {
     std::size_t DisplacementOffset;
     std::size_t InstructionEnd;
     std::int64_t SiteTarget;
+    bool AddressSize32 = false;
 };
 
 struct Amd64OnlyMatch {

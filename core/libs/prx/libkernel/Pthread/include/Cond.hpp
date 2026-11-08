@@ -6,6 +6,8 @@
 class CondOperations {
 public:
     static int AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime);
+    static int SetName(PthreadCond* cond, const char* name);
+    static int LoadAttribute(const PthreadCondattr* attr, PthreadCondattr& handle);
 };
 
 extern "C" {

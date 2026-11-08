@@ -21,4 +21,6 @@ int APS5_VABI scePlayReadyReaderFreeOpaqueContent();
 int APS5_VABI scePlayReadyReaderRetrieveOpaqueContent();
 int APS5_VABI scePlayReadyReinitialize();
 
+int APS5_VABI scePlayReadyApiSetInitParamFlags();
+
 }

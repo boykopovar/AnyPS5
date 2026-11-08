@@ -100,15 +100,31 @@ def unwind_table(text, base, function, size, header, frame):
                      frame - (header + 4), 1, function - header, fde - header)
 
 
-def sce_module():
+def unwind_table_multiple(text, base, functions, header, frame):
+    cie_body = b"\x00\x00\x00\x00\x01zR\x00\x01\x78\x10\x01\x1b\x00\x00\x00"
+    struct.pack_into("<I", text, frame - base, len(cie_body))
+    text[frame - base + 4:frame - base + 4 + len(cie_body)] = cie_body
+    fde = frame + 4 + len(cie_body)
+    struct.pack_into("<BBBBiI", text, header - base, 1, 0x1B, 0x03, 0x3B,
+                     frame - (header + 4), len(functions))
+    for index, (func_addr, func_size) in enumerate(functions):
+        struct.pack_into("<IIiiB3x", text, fde - base, 16, fde + 4 - frame, func_addr - (fde + 8), func_size, 0)
+        struct.pack_into("<ii", text, header - base + 12 + index * 8, func_addr - header, fde - header)
+        fde += 20
+    struct.pack_into("<I", text, fde - base, 0)
+
+
+def sce_module(gap_embedded_data=False, gap_data_then_syscall=False, gap_callback_syscall_undecodable=False,
+               gap_decoded_padding_syscall=False, gap_stub_then_data=False):
     image = bytearray(0xC00)
     tags = [(0x61000035, 0), (0x61000037, 1), (0x61000039, 0x20), (0x6100003B, 24), (0x6100003F, 24), (0, 0)]
+    has_gap = gap_embedded_data or gap_data_then_syscall or gap_callback_syscall_undecodable or gap_decoded_padding_syscall or gap_stub_then_data
     headers = [
         (PT_LOAD, 5, 0x400, 0x1000, 0x100, 0x100, 0x100),
         (PT_LOAD, 6, 0x600, 0x2000, 0x400, 0x400, 0x100),
         (PT_DYNAMIC, 6, 0x600, 0x2000, len(tags) * 16, len(tags) * 16, 8),
         (PT_SCE_DYNLIBDATA, 4, 0xA00, 0, 0x200, 0, 0x10),
-        (PT_GNU_EH_FRAME, 4, 0x480, 0x1080, 20, 20, 4),
+        (PT_GNU_EH_FRAME, 4, 0x480, 0x1080, 48 if has_gap else 20, 48 if has_gap else 20, 4),
     ]
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, 0x1000, 64, 0, 0, 64, 56, len(headers), 64, 0, 0)
@@ -117,21 +133,47 @@ def sce_module():
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x600 + index * 16, *tag)
     text = memoryview(image)[0x400:0x500]
-    text[0:FUNCTION_SIZE] = b"\xc3" + b"\x90" * (FUNCTION_SIZE - 1)
-    text[0x20:0x22] = b"\x0f\x05"
-    unwind_table(text, 0x1000, 0x1000, FUNCTION_SIZE, 0x1080, 0x10A0)
+    if has_gap:
+        text[0:8] = b"\x48\x8d\x05\x19\x00\x00\x00\xc3"
+        table = 0x20
+        if gap_data_then_syscall:
+            text[table:table + 6] = b"\x0f\x78\x11\x22\x33\x44"
+            text[table + 6:table + 16] = b"\xcc" * 10
+            text[table + 16:table + 24] = b"\xb8\x3b\x00\x00\x00\x0f\x05\xc3"
+            text[table + 24:0x40] = b"\x90" * 8
+        elif gap_callback_syscall_undecodable:
+            text[table:table + 14] = b"\xb8\x3b\x00\x00\x00\x0f\x05\x0f\x78\x11\x22\x33\x44\xc3"
+            text[table + 14:0x40] = b"\x90" * 18
+        elif gap_decoded_padding_syscall:
+            text[table:table + 13] = b"\x0f\x78\xcc\xb8\x09\x00\x00\x00\x0f\x05\x00\x01\x90"
+            text[table + 13:0x40] = b"\x90" * (0x40 - (table + 13))
+        elif gap_stub_then_data:
+            text[table:table + 15] = b"\x0f\x78\xcc\xb8\x09\x00\x00\x00\x0f\x05\xc3\x0f\x78\x33\x1e"
+            text[table + 15:0x40] = b"\x90" * (0x40 - (table + 15))
+        else:
+            text[table:0x40] = b"\x0f\x78\x33\x1e" * 8
+        text[0x40:0x48] = b"\xc3" + b"\x90" * 7
+        unwind_table_multiple(text, 0x1000, [(0x1000, 8), (0x1040, 8)], 0x1080, 0x10A0)
+    else:
+        text[0:FUNCTION_SIZE] = b"\xc3" + b"\x90" * (FUNCTION_SIZE - 1)
+        text[0x20:0x22] = b"\x0f\x05"
+        unwind_table(text, 0x1000, 0x1000, FUNCTION_SIZE, 0x1080, 0x10A0)
     return image
 
 
-def run_module(relinker, work, name, module, flags):
+def run_module(relinker, work, name, module, flags, expected_error=None):
     case = work / name
     (case / "sce_module").mkdir(parents=True)
     (case / "input.elf").write_bytes(importing_executable([]))
     (case / "sce_module" / "libExample.prx").write_bytes(module)
     result = subprocess.run([str(relinker), *flags, str(case / "input.elf"), str(case / "output.exe")],
                             capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0 and (case / "app0" / "sce_module" / "libExample.prx.guest.prx").exists(), (
-        name, result.stdout, result.stderr)
+    if expected_error is None:
+        assert result.returncode == 0 and (case / "app0" / "sce_module" / "libExample.prx.guest.prx").exists(), (
+            name, result.stdout, result.stderr)
+    else:
+        assert result.returncode == 2 and expected_error in result.stderr, (
+            name, result.returncode, result.stdout, result.stderr)
 
 
 def run(relinker, work, name, image, flags, expected_error=None):
@@ -154,6 +196,11 @@ def main():
         for system, flags in (("linux", []), ("windows", ["--windows"]), ("macos", ["--macos"])):
             run(relinker, work, "sce-loader-path-without-interp-header-" + system, fixture(rodata_address=False, interp_header=False), flags)
             run_module(relinker, work, "sce-module-data-after-code-" + system, sce_module(), flags)
+            run_module(relinker, work, "sce-module-gap-embedded-data-" + system, sce_module(gap_embedded_data=True), flags)
+            run_module(relinker, work, "sce-module-gap-data-then-syscall-" + system, sce_module(gap_data_then_syscall=True), flags, "Forbidden syscall instruction")
+            run_module(relinker, work, "sce-module-gap-callback-syscall-" + system, sce_module(gap_callback_syscall_undecodable=True), flags, "Forbidden syscall instruction")
+            run_module(relinker, work, "sce-module-gap-decoded-padding-syscall-" + system, sce_module(gap_decoded_padding_syscall=True), flags, "Forbidden syscall instruction")
+            run_module(relinker, work, "sce-module-gap-stub-then-data-" + system, sce_module(gap_stub_then_data=True), flags, "Forbidden syscall instruction")
     print("SCE module code extent tests passed")
 
 

@@ -144,7 +144,14 @@ int main(int argc, char** argv) {
     Require(argc == 2, "expected receive API argument");
     const bool net = std::strncmp(argv[1], "sce", 3) == 0;
     const bool from = std::strstr(argv[1], "from") != nullptr;
-    if (net) Require(sceNetInit_nid_postfix() == 0, "initialize libSceNet");
+    if (net) {
+        Require(sceNetInit_nid_postfix() == 0, "initialize libSceNet");
+        Require(sceNetSocketClose(-1) < 0, "reject invalid descriptor in sceNetSocketClose");
+        Require(*sceNetErrnoLoc() == 9, "bad file descriptor error");
+    } else {
+        Require(close_nid_postfix(-1) < 0, "reject invalid descriptor in close");
+        Require(*__error_nid_postfix() == 9, "bad file descriptor error");
+    }
     Check(net, from, 2);
     Check(net, from, 28);
 }

@@ -11,7 +11,6 @@
 #include <cstdio>
 #include <limits>
 #include <optional>
-#include <set>
 #include <span>
 #include <utility>
 #include <vector>
@@ -128,14 +127,39 @@ inline std::array<char, 160> VertexDescriptorFlagsMessage(const ShaderRecompiler
     return message;
 }
 
+inline bool QueryVertexBufferFormat(const Context& context, VkFormat format) {
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    return (properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0;
+}
+
+class VertexBufferFormats {
+public:
+    bool Supported(const Context& context, VkFormat format) {
+        const auto index = static_cast<std::size_t>(format);
+        if (index >= known.size()) return QueryVertexBufferFormat(context, format);
+        auto state = known[index].load(std::memory_order_relaxed);
+        if (state == 0) {
+            state = QueryVertexBufferFormat(context, format) ? 2 : 1;
+            known[index].store(state, std::memory_order_relaxed);
+        }
+        return state == 2;
+    }
+
+private:
+    std::array<std::atomic<std::uint8_t>, VK_FORMAT_ASTC_12x12_SRGB_BLOCK + 1> known{};
+};
+
 inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::span<const ShaderRecompiler::VertexAttribute> attributes) {
     Require(attributes.size() <= context.limits.maxVertexInputBindings && attributes.size() <= context.limits.maxVertexInputAttributes, "vertex input count exceeds device limits");
     VertexInputLayout result;
-    std::set<std::uint32_t> locations;
+    result.bindings.reserve(attributes.size());
+    result.attributes.reserve(attributes.size());
     for (const auto& attribute : attributes) {
         const auto& fields = attribute.resource.fields;
         const auto format = DecodeVertexFormat(attribute);
-        Require(attribute.location < context.limits.maxVertexInputAttributes && locations.insert(attribute.location).second, "invalid or duplicate vertex attribute location");
+        const auto duplicate = std::any_of(result.attributes.begin(), result.attributes.end(), [&](const auto& described) { return described.location == attribute.location; });
+        Require(attribute.location < context.limits.maxVertexInputAttributes && !duplicate, "invalid or duplicate vertex attribute location");
         Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
         if ((fields[1] & 0x80000000u) != 0 || (fields[3] & 0x00800000u) != 0 || (fields[3] >> 30u) != 0) {
             Require(false, VertexDescriptorFlagsMessage(attribute).data());
@@ -146,9 +170,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
         Require(stride <= context.limits.maxVertexInputBindingStride, "vertex stride exceeds device limits");
         Require(context.formatProperties != nullptr, "missing vertex format property query");
         const auto supported = [&](VkFormat candidate) {
-            VkFormatProperties properties{};
-            context.formatProperties(context.physical, candidate, &properties);
-            return (properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0;
+            return context.vertexFormats != nullptr ? context.vertexFormats->Supported(context, candidate) : QueryVertexBufferFormat(context, candidate);
         };
         auto host = format.format;
         auto hostSupported = supported(host);
@@ -156,7 +178,7 @@ inline VertexInputLayout BuildVertexInputLayout(const Context& context, std::spa
             host = DecodeVertexFormat(attribute, components).format;
             hostSupported = supported(host);
         }
-        Require(hostSupported, "device does not support vertex format " + std::to_string(format.format));
+        if (!hostSupported) Require(false, "device does not support vertex format " + std::to_string(format.format));
         const auto binding = static_cast<std::uint32_t>(result.bindings.size());
         result.bindings.push_back({binding, stride, attribute.fetchIndex == 0 ? VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE});
         result.attributes.push_back({attribute.location, binding, host, 0});
@@ -425,6 +447,32 @@ std::optional<std::uint32_t> HighestDrawIndexOf(std::span<const std::byte> indic
 inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
     return indexSize == 2 ? HighestDrawIndexOf<std::uint16_t>(indices, skipRestart) : HighestDrawIndexOf<std::uint32_t>(indices, skipRestart);
+}
+
+inline std::uint32_t CompactListRestart(std::span<std::byte> indices, std::uint32_t indexSize, std::uint32_t primitiveSize) {
+    Require(indexSize == 2 || indexSize == 4, "unsupported index size");
+    Require(primitiveSize != 0, "invalid list primitive size");
+    const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
+    std::size_t written = 0;
+    std::size_t primitiveStart = 0;
+    for (std::size_t offset = 0; offset + indexSize <= indices.size(); offset += indexSize) {
+        std::uint32_t index = 0;
+        if (indexSize == 2) {
+            std::uint16_t value = 0;
+            std::memcpy(&value, indices.data() + offset, sizeof(value));
+            index = value;
+        } else {
+            std::memcpy(&index, indices.data() + offset, sizeof(index));
+        }
+        if (index == restartIndex) {
+            written = primitiveStart;
+            continue;
+        }
+        std::memmove(indices.data() + written * indexSize, indices.data() + offset, indexSize);
+        ++written;
+        if (written - primitiveStart == primitiveSize) primitiveStart = written;
+    }
+    return static_cast<std::uint32_t>(primitiveStart);
 }
 
 inline std::vector<std::uint32_t> MeshRestartTable(std::span<const std::byte> indices, std::uint32_t indexSize) {

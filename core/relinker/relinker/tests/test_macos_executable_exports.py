@@ -160,7 +160,7 @@ def main():
                 ('tls-size', (('Tls', 0x16, 0, 1, 4, 13),), True, 'exceeds PT_TLS'),
                 ('tls-missing', tls_symbols, False, 'has no PT_TLS segment'),
                 ('reserved', (('Common', 0x11, 0, 0xFFF2, 0, 4),), False, 'Unsupported executable export section'),
-                ('attributes', (('Indirect', 0x1A, 0, 1, 0x210, 6),), False, 'Unsupported macOS executable export attributes')):
+                ('attributes', (('Indirect', 0x1A, 0, 1, 0x210, 6),), False, 'Unsupported executable export attributes: Indirect')):
             run, output = convert(relinker, work, name, executable(symbols, tls))
             assert run.returncode == 2 and error in run.stderr, (name, run.returncode, run.stderr)
             assert not output.exists(), name

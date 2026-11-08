@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_WRITEEVIDENCE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_WRITEEVIDENCE_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WrittenBufferIndex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <atomic>
 #include <chrono>
@@ -11,20 +12,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-inline constexpr std::size_t WrittenBufferRing = 4096;
-
 inline constexpr std::size_t DwordEvidenceEntries = 65536;
-
-struct WrittenBuffer {
-    std::uint64_t program;
-    std::uint64_t begin;
-    std::uint64_t end;
-    std::uint64_t serial;
-    std::uint32_t queue;
-    bool atomic;
-    std::shared_ptr<const std::vector<std::byte>> value;
-    std::uint64_t generation = 0;
-};
 
 struct DwordEvidence {
     std::uint32_t streak = 0;

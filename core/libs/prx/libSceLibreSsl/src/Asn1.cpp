@@ -1,18 +1,34 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <span>
-#include <vector>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
 static_assert(sizeof(Asn1String) == 24);
 static_assert(offsetof(Asn1String, data) == 8);
 static_assert(offsetof(Asn1String, flags) == 16);
+
+constexpr int Asn1Library = 13;
+constexpr int AnyFunction = 0xfff;
+constexpr int MallocFailure = 65;
+constexpr int IllegalCharacters = 124;
+constexpr int InvalidBmpStringLength = 129;
+constexpr int InvalidUniversalStringLength = 133;
+constexpr int InvalidUtf8String = 134;
+
+int Asn1Error(int reason) {
+    LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
+    return -1;
+}
 
 int CharacterWidth(int type) {
     switch (type) {
@@ -52,23 +68,75 @@ bool ReadCharacter(std::span<const unsigned char>& input, int width, std::uint32
     return value <= 0x10ffff && (value < 0xd800 || value > 0xdfff);
 }
 
-void AppendCharacter(std::vector<unsigned char>& output, std::uint32_t value) {
-    const int bytes = value < 0x80 ? 1 : value < 0x800 ? 2 : value < 0x10000 ? 3 : 4;
-    if (output.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max() - bytes))
-        NotImplemented_nid_no_patch("ASN1_STRING_to_UTF8: output length overflow");
+int CharacterBytes(std::uint32_t value) {
+    return value < 0x80 ? 1 : value < 0x800 ? 2 : value < 0x10000 ? 3 : 4;
+}
+
+void WriteCharacter(unsigned char*& output, std::uint32_t value) {
+    const int bytes = CharacterBytes(value);
     if (bytes == 1) {
-        output.push_back(static_cast<unsigned char>(value));
+        *output++ = static_cast<unsigned char>(value);
         return;
     }
     constexpr unsigned char prefix[] = {0, 0, 0xc0, 0xe0, 0xf0};
-    output.push_back(static_cast<unsigned char>(prefix[bytes] | (value >> (6 * (bytes - 1)))));
+    *output++ = static_cast<unsigned char>(prefix[bytes] | (value >> (6 * (bytes - 1))));
     for (int index = bytes - 2; index >= 0; --index)
-        output.push_back(static_cast<unsigned char>(0x80 | ((value >> (6 * index)) & 0x3f)));
+        *output++ = static_cast<unsigned char>(0x80 | ((value >> (6 * index)) & 0x3f));
+}
+
+int TwoDigits(const char* text) {
+    return (text[0] - '0') * 10 + (text[1] - '0');
+}
+
+bool AllDigits(const char* text, int count) {
+    for (int index = 0; index < count; ++index)
+        if (text[index] < '0' || text[index] > '9') return false;
+    return true;
+}
+
+int PrintTime(LibreSsl::Bio* bio, const Asn1String& time) {
+    static constexpr const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const bool generalized = time.type == 24;
+    const int length = time.length;
+    const char* text = reinterpret_cast<const char*>(time.data);
+    const int digits = generalized ? 12 : 10;
+    if ((time.type != 23 && !generalized) || length < digits || !AllDigits(text, digits)) return -1;
+    const int fields = generalized ? 4 : 2;
+    const int year = generalized ? TwoDigits(text) * 100 + TwoDigits(text + 2) : TwoDigits(text) + (TwoDigits(text) < 50 ? 2000 : 1900);
+    const int month = TwoDigits(text + fields);
+    if (month < 1 || month > 12) return -1;
+    const int day = TwoDigits(text + fields + 2);
+    const int hour = TwoDigits(text + fields + 4);
+    const int minute = TwoDigits(text + fields + 6);
+    int second = 0;
+    int fraction = 0;
+    if (length >= digits + 2 && AllDigits(text + digits, 2)) {
+        second = TwoDigits(text + digits);
+        if (generalized && length >= 15 && text[14] == '.') {
+            fraction = 1;
+            while (14 + fraction < length && text[14 + fraction] >= '0' && text[14 + fraction] <= '9') ++fraction;
+        }
+    }
+    const char* zone = text[length - 1] == 'Z' ? " GMT" : "";
+    const char* decimals = fraction ? text + 14 : "";
+    const char* format = "%s %2d %02d:%02d:%02d%.*s %d%s";
+    const int size = std::snprintf(nullptr, 0, format, months[month - 1], day, hour, minute, second, fraction, decimals, year, zone);
+    std::string output(static_cast<std::size_t>(size) + 1, char{});
+    std::snprintf(output.data(), output.size(), format, months[month - 1], day, hour, minute, second, fraction, decimals, year, zone);
+    LibreSslBioWrite_nid_no_patch(bio, output.data(), size);
+    return 1;
 }
 
 } // namespace
 
 extern "C" {
+
+int APS5_VABI ASN1_TIME_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* time) {
+    if (!time || (time->length > 0 && !time->data)) APS5_INVALID_ARG_EX;
+    if (PrintTime(bio, *time) == 1) return 1;
+    LibreSslBioWrite_nid_no_patch(bio, "Bad time value", 14);
+    return 0;
+}
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value) {
     if (!value) return 0;
@@ -81,23 +149,41 @@ std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value) {
     const bool negative = integer.type == 0x102;
     const auto limit = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + negative;
     if (magnitude > limit)
-        NotImplemented_nid_no_patch(__func__);
+        throw std::invalid_argument(std::string(__func__) + ": unrepresentable signed integer");
     if (negative && magnitude != 0) return -static_cast<std::int64_t>(magnitude - 1) - 1;
     return static_cast<std::int64_t>(magnitude);
 }
 
 unsigned char* APS5_VABI ASN1_STRING_data_nid_postfix(Asn1String* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) APS5_INVALID_ARG_EX;
     return value->data;
 }
 
 int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) APS5_INVALID_ARG_EX;
     return value->length;
 }
 
+int APS5_VABI ASN1_STRING_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* value) {
+    if (!value) return 0;
+    if (value->length > 0 && !value->data) APS5_INVALID_ARG_EX;
+    char buffer[80];
+    int used = 0;
+    for (int index = 0; index < value->length; ++index) {
+        const unsigned char character = value->data[index];
+        const bool printable = (character >= ' ' && character <= '~') || character == '\n' || character == '\r';
+        buffer[used++] = printable ? static_cast<char>(character) : '.';
+        if (used == sizeof(buffer)) {
+            if (LibreSslBioWrite_nid_no_patch(bio, buffer, used) <= 0) return 0;
+            used = 0;
+        }
+    }
+    if (used > 0 && LibreSslBioWrite_nid_no_patch(bio, buffer, used) <= 0) return 0;
+    return 1;
+}
+
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) APS5_INVALID_ARG_EX;
     return value->type;
 }
 
@@ -106,23 +192,56 @@ int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String
     const auto& string = *value;
     const int width = CharacterWidth(string.type);
     if (width < 0) return -1;
-    if (!output || (!string.data && string.length != 0)) NotImplemented_nid_no_patch(__func__);
-    std::size_t length = string.length < 0 ? std::strlen(reinterpret_cast<const char*>(string.data))
+    if (!string.data && string.length < 0) throw std::invalid_argument("ASN1_STRING_to_UTF8: null terminated-string data");
+    const std::size_t length = string.length < 0 ? std::strlen(reinterpret_cast<const char*>(string.data))
         : static_cast<std::size_t>(string.length);
-    if (length > static_cast<std::size_t>(std::numeric_limits<int>::max())) NotImplemented_nid_no_patch(__func__);
-    std::span<const unsigned char> input(string.data, length);
-    std::vector<unsigned char> converted;
-    while (!input.empty()) {
+    if (length > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::length_error("ASN1_STRING_to_UTF8: input length overflow");
+    if (width == 2 && length % 2 != 0) return Asn1Error(InvalidBmpStringLength);
+    if (width == 4 && length % 4 != 0) return Asn1Error(InvalidUniversalStringLength);
+    if (!string.data && length != 0) throw std::invalid_argument("ASN1_STRING_to_UTF8: null nonempty string data");
+    const std::span<const unsigned char> characters(string.data, length);
+    std::size_t size = 0;
+    for (auto input = characters; !input.empty();) {
         std::uint32_t character;
-        if (!ReadCharacter(input, width, character)) NotImplemented_nid_no_patch(__func__);
-        AppendCharacter(converted, character);
+        if (!ReadCharacter(input, width, character)) return Asn1Error(width == 0 ? InvalidUtf8String : IllegalCharacters);
+        size += static_cast<std::size_t>(CharacterBytes(character));
+        if (size > static_cast<std::size_t>(std::numeric_limits<int>::max() - 1)) throw std::length_error("ASN1_STRING_to_UTF8: output length overflow");
     }
-    auto* result = static_cast<unsigned char*>(malloc_nid_postfix(converted.size() + 1));
-    if (!result) NotImplemented_nid_no_patch(__func__);
-    if (!converted.empty()) std::memcpy(result, converted.data(), converted.size());
-    result[converted.size()] = 0;
+    if (!output) throw std::invalid_argument("ASN1_STRING_to_UTF8: null output");
+    auto* result = static_cast<unsigned char*>(malloc_nid_postfix(size + 1));
+    if (!result) {
+        if (width == 0) Asn1Error(MallocFailure);
+        return Asn1Error(MallocFailure);
+    }
+    unsigned char* cursor = result;
+    for (auto input = characters; !input.empty();) {
+        std::uint32_t character;
+        ReadCharacter(input, width, character);
+        WriteCharacter(cursor, character);
+    }
+    *cursor = 0;
     *output = result;
-    return static_cast<int>(converted.size());
+    return static_cast<int>(size);
+}
+
+int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(LibreSsl::Bio* bio, const LibreSslAsn1Object* object) {
+    if (!object || !object->data) return LibreSslBioWrite_nid_no_patch(bio, "NULL", 4);
+    int capacity = 256;
+    auto* text = static_cast<char*>(malloc_nid_postfix(capacity));
+    if (!text) return -1;
+    int length = i2t_ASN1_OBJECT_nid_postfix(text, capacity, object);
+    if (length > capacity - 1) {
+        std::memset(text, 0, capacity);
+        free_nid_postfix(text);
+        capacity = length + 1;
+        text = static_cast<char*>(malloc_nid_postfix(capacity));
+        if (!text) return -1;
+        length = i2t_ASN1_OBJECT_nid_postfix(text, capacity, object);
+    }
+    const int written = length <= 0 ? LibreSslBioWrite_nid_no_patch(bio, "<INVALID>", 9) : LibreSslBioWrite_nid_no_patch(bio, text, length);
+    std::memset(text, 0, capacity);
+    free_nid_postfix(text);
+    return written;
 }
 
 }

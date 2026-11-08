@@ -161,13 +161,15 @@ struct Blocker {
     }
 };
 
-void SubmitBehind(Blocker& blocker, std::vector<std::uint32_t>& commands, std::size_t queuedBefore) {
+std::size_t SubmitBehind(Blocker& blocker, std::vector<std::uint32_t>& commands, std::size_t queuedBefore) {
     std::unique_lock gpuLock(AgcDriver::GuestMemory::GpuMutex());
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     const auto start = std::chrono::steady_clock::now();
-    while (DrawPipeline::Queue0().Outstanding() < queuedBefore && std::chrono::steady_clock::now() - start < std::chrono::seconds(60)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    while (DrawPipeline::Queue0().Outstanding() < queuedBefore && std::chrono::steady_clock::now() - start < std::chrono::seconds(10)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto queued = DrawPipeline::Queue0().Outstanding();
     blocker.Enqueue();
+    return queued;
 }
 
 void Finish() {
@@ -205,16 +207,11 @@ void IndirectDrawsQueueBehindTheCommitter() {
     AppendTarget(commands, SecondMemory, Clipped);
     AppendIndirect(commands);
     Blocker blocker;
-    SubmitBehind(blocker, commands, 3);
-    const auto start = std::chrono::steady_clock::now();
-    while (DrawPipeline::Queue0().Outstanding() < 3) {
-        if (std::chrono::steady_clock::now() - start > std::chrono::seconds(10)) {
-            const auto outstanding = DrawPipeline::Queue0().Outstanding();
-            blocker.Release();
-            Finish();
-            Require(false, "the indirect draws drained the pipeline instead of queuing behind it (" + std::to_string(outstanding) + " items outstanding, expected the blocker and two draws)");
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto queued = SubmitBehind(blocker, commands, 3);
+    if (queued < 3) {
+        blocker.Release();
+        Finish();
+        Require(false, "the indirect draws drained the pipeline instead of queuing behind the committer (" + std::to_string(queued) + " items outstanding, expected two draws and the submission's completion)");
     }
     blocker.Release();
     Finish();

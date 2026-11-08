@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -42,7 +43,7 @@ int main() {
         for (int i = 0; i < 20000 && !done.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         if (!done.load()) std::abort();
     });
-    shared = std::tmpfile();
+    shared = TemporaryFile::Open();
     Require(shared != nullptr);
     Require(sceKernelInstallExceptionHandler(SigUsr1, reinterpret_cast<void*>(&Handler)) == 0);
     Pthread writer = nullptr;

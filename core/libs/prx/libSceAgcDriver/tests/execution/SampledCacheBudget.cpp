@@ -125,6 +125,8 @@ public:
     explicit Device(bool enableStorageImageMultisample = true) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -136,6 +138,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -320,6 +328,48 @@ public:
 
     WatchedSurface(const WatchedSurface&) = delete;
     WatchedSurface& operator=(const WatchedSurface&) = delete;
+
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(memory); }
+
+private:
+    const Context& context;
+    std::size_t span = 0;
+    std::uint8_t* memory = nullptr;
+};
+
+class PartialSurface {
+public:
+    explicit PartialSurface(const Context& context, std::size_t bytes = SurfaceBytes) : context(context), span(bytes) {
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        Require(memory != nullptr, "cannot reserve the partial surface");
+        GuestAllocations::Mutation().Add(memory, bytes, true, true, true);
+    }
+
+    ~PartialSurface() {
+        ClearCachedTextures(context.device);
+        GuestAllocations::Mutation().Remove(memory);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, span);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, span);
+        munmap(memory, span);
+#endif
+        GuestArena::GuestArenaRelease_nid_postfix(memory, span);
+    }
+
+    PartialSurface(const PartialSurface&) = delete;
+    PartialSurface& operator=(const PartialSurface&) = delete;
+
+    void Commit(std::size_t offset, std::size_t bytes, std::uint8_t fill) {
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(memory + offset, bytes, PAGE_READWRITE, bytes);
+#else
+        Require(mmap(memory + offset, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot commit a page of the partial surface");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory + offset, bytes);
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(memory + offset), bytes);
+        std::memset(memory + offset, fill, bytes);
+    }
 
     std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(memory); }
 
@@ -609,8 +659,35 @@ bool lookupChangedTests(Context context) {
     Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the lookup-changed template did not take the fast proof");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     Require(first->Revalidate(shader, &report), "the audit refused an unchanged template");
-    Require(report.path == ShaderResources::ProofPath::Full, "a proof past the audit interval did not take the full walk");
     Require(first->SampledTextures().front() == bound, "the audit changed the bound texture");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast && !report.audited, "a proof past the audit interval took the full walk although no host import changed since the last one");
+#ifdef _WIN32
+    Require(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, 65536) != nullptr, "cannot reserve the gap before the unrelated surface");
+#endif
+    WatchedSurface unrelated(context);
+    std::memset(reinterpret_cast<void*>(unrelated.Address()), 0x33, SurfaceBytes);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast && !report.audited, "a guest write outside the template's surfaces made a proof past the audit interval take the full walk although no host import changed");
+    const auto beforeUnrelated = HostImportSetGeneration();
+    if (HostImportFor(context, unrelated.Address(), SurfaceBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the unrelated surface was refused");
+        std::puts("skipped, host imports are unavailable");
+        return false;
+    }
+    Require(HostImportSetGeneration() != beforeUnrelated, "adding a host import did not move the import set generation");
+    const auto* imported = HostImportFor(context, unrelated.Address(), SurfaceBytes);
+    Require(imported != nullptr, "the unrelated host import vanished before the recent-import checks");
+    const auto afterUnrelated = HostImportSetGeneration();
+    const auto afterInsertion = HostImportsIdentity(context);
+    for (unsigned hit = 0; hit < 3; ++hit) {
+        Require(HostImportFor(context, unrelated.Address(), SurfaceBytes) == imported, "a repeated lookup replaced the unrelated host import");
+        Require(HostImportSetGeneration() == afterUnrelated, "a recent-import hit moved the import set generation");
+        Require(HostImportsIdentity(context).inserted == afterInsertion.inserted, "a recent-import hit changed insertion bookkeeping");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(first->Revalidate(shader, &report) && report.audited && report.path == ShaderResources::ProofPath::Full, "a proof past the audit interval after a host import was added did not audit the template");
+    Require(first->SampledTextures().front() == bound, "the audit after an unrelated host import changed the bound texture");
     Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the proof right after an audit did not take the fast proof");
     if (HostImportFor(context, surface.Address(), SurfaceBytes) == nullptr) {
         Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "the host import of the watched surface was refused");
@@ -1000,6 +1077,42 @@ void VKAPI_PTR ReportBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2*
     }
 }
 
+struct BudgetReportAgeProbe {
+    std::uint64_t budget = 8ull << 30u;
+    unsigned queries = 0;
+} budgetReportAge;
+
+void VKAPI_PTR ReportBudgetAge(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    ++budgetReportAge.queries;
+    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        reported->heapBudget[heap] = budgetReportAge.budget;
+        reported->heapUsage[heap] = 0;
+    }
+}
+
+void budgetReportAgeTests(Context context) {
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    const auto heap = LargestDeviceLocalHeap(context.memory);
+    Require(heap.has_value(), "the budget report age fixture needs a device-local heap");
+    context.memory.memoryHeaps[*heap].size = std::max<VkDeviceSize>(context.memory.memoryHeaps[*heap].size, 16 * GiB);
+    context.memoryProperties2 = ReportBudgetAge;
+    Require(StorageTextureCacheBudget(context) == 4 * GiB, "the initial storage limit is not 4 GiB");
+    const auto queries = budgetReportAge.queries;
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    budgetReportAge.budget = 2 * GiB;
+    Require(SampledTextureCacheBudget(context) == 2 * GiB, "sampled did not use the reduced heap budget");
+    Require(budgetReportAge.queries == queries + 1, "reporting the storage limit issued an extra memory budget query");
+    Require(StorageTextureCacheBudget(context) == 4 * GiB, "reporting refreshed the still-active cached storage limit");
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    reported.heapBudget[*heap] = budgetReportAge.budget;
+    Require(StorageTextureBudget(context.memory, &reported, 0, 0) == GiB, "the fresh storage calculation does not differ from the active cached limit");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    Require(StorageTextureCacheBudget(context) == GiB, "storage did not refresh after its own cache interval");
+    Require(budgetReportAge.queries == queries + 2, "storage did not issue exactly one query when its cache interval expired");
+    std::puts("sampled budget report age tests passed");
+}
+
 std::uint64_t ExpectedBudget(const Context& context) {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
@@ -1051,6 +1164,7 @@ void storageMemoryTests(Context context) {
     auto held = Sampled(context, block.Surface(0));
     const auto heap = LargestDeviceLocalHeap(context.memory);
     Require(heap.has_value(), "the device has no device-local heap");
+    context.memory.memoryHeaps[*heap].size = std::max<VkDeviceSize>(context.memory.memoryHeaps[*heap].size, ReportedBudget);
     const auto half = std::min<std::uint64_t>(context.memory.memoryHeaps[*heap].size / 2u, ReportedBudget / 2u);
     Require(ReadStorageBudget(context) == half, "52 GiB free of a 64 GiB budget does not leave the storage image cache half of the heap or of the budget");
     context.memoryProperties2 = &ReportPressure;
@@ -1172,10 +1286,94 @@ void recoveryTests(Context context, const std::string& mode) {
 
 }
 
+ShaderRecompiler::RecompileResult StorageProgram(std::uint64_t address) {
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    const auto words = Descriptor(address);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    return program;
+}
+
+void collectRefusalTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    constexpr std::size_t PageBytes = 4096;
+    constexpr auto collect = static_cast<std::size_t>(ShaderResources::FastFail::Collect);
+    PartialSurface surface(context);
+    surface.Commit(0, SurfaceBytes - PageBytes, 0x5a);
+    ClearCachedTextures(context.device);
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto sampled = std::make_shared<ShaderResources>(context, shader);
+    Require(sampled->Reusable() && sampled->SampledTextures().size() == 1, "the template over the partial surface is not reusable");
+    ShaderResources::ProofReport report{};
+    Require(sampled->Revalidate(shader, &report), "a template over a surface with an uncommitted page did not prove current");
+    Require(report.path == ShaderResources::ProofPath::Full, "a template over a surface with an uncommitted page took the fast proof");
+    const auto before = ShaderResources::CollectRefusalCounts();
+    const auto walksBefore = ShaderResources::FullWalkNanoseconds();
+    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the second proof over the uncommitted page did not take the full walk");
+    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the third proof over the uncommitted page did not take the full walk");
+    const auto after = ShaderResources::CollectRefusalCounts();
+    const auto walksAfter = ShaderResources::FullWalkNanoseconds();
+    Require(after.sampled - before.sampled == 2, "two collect refusals of a sampled surface were not counted");
+    Require(after.uncommitted - before.uncommitted == 2, "collect refusals over an uncommitted page were not counted as uncommitted");
+    Require(after.storage == before.storage && after.unwatched == before.unwatched && after.other == before.other, "a sampled surface's collect refusal was counted under another kind or cause");
+    Require(after.surfaces == 1 && after.bytes == SurfaceBytes, "two refusals of one surface were not counted as one surface of its bytes");
+    Require(walksAfter[collect] > walksBefore[collect], "the full walks after a collect refusal were not timed");
+    const auto storageProgram = StorageProgram(surface.Address());
+    const CompiledShader storageShader{ShaderRecompiler::ShaderStage::Compute, &storageProgram, 0};
+    auto storage = std::make_shared<ShaderResources>(context, storageShader);
+    Require(storage->Reusable() && storage->StorageImages().size() == 1, "the storage template over the partial surface is not reusable");
+    Require(storage->Revalidate(storageShader, &report) && report.path == ShaderResources::ProofPath::Full, "a storage template over a surface with an uncommitted page did not take the full walk");
+    const auto withStorage = ShaderResources::CollectRefusalCounts();
+    Require(withStorage.storage - after.storage == 1 && withStorage.sampled == after.sampled, "a storage image's collect refusal was not counted as a storage one");
+    Require(withStorage.uncommitted - after.uncommitted == 1, "a storage image's collect refusal over an uncommitted page was not counted as uncommitted");
+    Require(withStorage.surfaces == 1 && withStorage.bytes == SurfaceBytes, "a storage refusal of the same surface was counted as another surface");
+    Block block(context);
+    const auto hostProgram = SampledProgram(block.Surface(0));
+    const CompiledShader hostShader{ShaderRecompiler::ShaderStage::Compute, &hostProgram, 0};
+    auto hosted = std::make_shared<ShaderResources>(context, hostShader);
+    Require(hosted->Reusable() && hosted->SampledTextures().size() == 1, "the template over the host-allocated surface is not reusable");
+    Require(hosted->Revalidate(hostShader, &report) && report.path == ShaderResources::ProofPath::Full, "a template over a host-allocated surface did not take the full walk");
+    const auto outside = ShaderResources::CollectRefusalCounts();
+    Require(outside.sampled - withStorage.sampled == 1 && outside.unwatched - withStorage.unwatched == 1, "a host-allocated surface's collect refusal was not counted as unwatched");
+    Require(outside.uncommitted == withStorage.uncommitted && outside.other == withStorage.other, "a host-allocated surface's collect refusal was counted under another cause");
+    Require(outside.surfaces == 2 && outside.bytes == 2 * SurfaceBytes, "the host-allocated surface was not counted as a second surface");
+    hosted.reset();
+    surface.Commit(SurfaceBytes - PageBytes, PageBytes, 0);
+    const auto committed = ShaderResources::CollectRefusalCounts();
+    Require(sampled->Revalidate(shader, &report), "the template did not prove current once the page was committed");
+    Require(storage->Revalidate(storageShader, &report), "the storage template did not prove current once the page was committed");
+    const auto final = ShaderResources::CollectRefusalCounts();
+    Require(final.sampled == committed.sampled && final.storage == committed.storage, "a proof over a committed surface counted a collect refusal");
+    sampled.reset();
+    storage.reset();
+    ClearCachedTextures(context.device);
+    std::puts("collect refusal counters passed");
+}
+
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
+        if (mode == "collect-refusals") {
+#ifdef _WIN32
+            _putenv_s("APS5_PROFILE_DRAW", "1");
+#else
+            setenv("APS5_PROFILE_DRAW", "1", 1);
+#endif
+        }
         if (mode == "device-selection-cpu") {
             deviceSelectionTests();
             return 0;
@@ -1184,10 +1382,10 @@ int main(int argc, char** argv) {
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
 #ifdef _WIN32
-        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
+        if (!memory && mode != "budget-report-age") _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
         if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "250");
 #else
-        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
+        if (!memory && mode != "budget-report-age") setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         std::unique_ptr<Device> device;
@@ -1204,6 +1402,16 @@ int main(int argc, char** argv) {
             return 0;
         }
         auto context = device->GetContext();
+        if (mode == "budget-report-age") {
+            try {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                budgetReportAgeTests(context);
+                return 0;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "FAIL: %s\n", error.what());
+                return 1;
+            }
+        }
         if (disableStorageImageMultisample) {
             PlaceholderImages placeholders(context);
             for (std::uint32_t heap = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
@@ -1237,6 +1445,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!lookupChangedTests(context)) return VulkanTestSkipped;
             std::puts("resource cache lookup-changed tests passed");
+            return 0;
+        }
+        if (mode == "collect-refusals") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            collectRefusalTests(context);
+            std::puts("resource cache collect refusal tests passed");
             return 0;
         }
         if (memory) {

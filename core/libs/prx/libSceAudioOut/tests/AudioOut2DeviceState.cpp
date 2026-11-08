@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
 #include <cstddef>
@@ -34,6 +35,14 @@ void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -84,6 +93,14 @@ void PortStateRejectsBadArguments(AudioOut2ContextHandle context) {
     Require(sceAudioOut2PortGetState(port, &state) == errorInvalidHandle);
 }
 
+void ContextSetAttributesChecksArguments(AudioOut2ContextHandle context) {
+    const AudioOut2Attribute attribute{0, 0, nullptr, 0};
+    Require(sceAudioOut2ContextSetAttributes(0, &attribute, 1) == errorInvalidHandle);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 1) == errorInvalidArgument);
+    Require(sceAudioOut2ContextSetAttributes(context, nullptr, 0) == 0);
+    Require(sceAudioOut2ContextSetAttributes(context, &attribute, 1) == 0);
+}
+
 void SpeakerInfoReportsTheFrontPair() {
     AudioOut2SpeakerInfo info;
     std::memset(&info, 0xAB, sizeof(info));
@@ -114,6 +131,12 @@ void SpeakerInfoAfterAudioOutInit() {
     Require(sceAudioOut2GetSpeakerInfo(&info, 0) == 0);
 }
 
+void RepeatedInitializationAfterAudioOutInit() {
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004));
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004));
+    Require(sceAudioOutInit() == static_cast<int>(0x8026000e));
+}
+
 void SpeakerInfoRejectsBadFlags() {
     AudioOut2SpeakerInfo info;
     std::memset(&info, 0xAB, sizeof(info));
@@ -139,12 +162,14 @@ void SystemStateIsSilentAndRejectsNull() {
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_device_state-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     SpeakerInfoRequiresInitialization();
     SpeakerInfoAfterAudioOutInit();
+    RepeatedInitializationAfterAudioOutInit();
 
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);
@@ -155,6 +180,7 @@ int main() {
 
     PortStateFollowsTheDataFormat(context);
     PortStateRejectsBadArguments(context);
+    ContextSetAttributesChecksArguments(context);
     SpeakerInfoReportsTheFrontPair();
     SpeakerInfoRejectsBadFlags();
     SystemStateIsSilentAndRejectsNull();
