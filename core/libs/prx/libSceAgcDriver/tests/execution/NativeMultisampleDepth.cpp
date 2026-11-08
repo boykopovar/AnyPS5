@@ -3671,7 +3671,7 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused and a stored refill after a draw was accepted\n", samples);
 }
 
-enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind, ShaderBufferRead, TextureRead };
+enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind, ShaderBufferRead, TextureRead, DecidedVertexRead };
 void CheckReusePublication(Context context, ReuseCase use) {
     constexpr std::uint32_t samples = 4u;
     constexpr VkExtent2D extent{256u, 64u};
@@ -3713,11 +3713,12 @@ void CheckReusePublication(Context context, ReuseCase use) {
     const auto drawn = guestStencil();
     const auto serial = DepthSurfacesSerial();
     if (use == ReuseCase::Rebind) Require(DepthSurfaceView(context, target) == view && DepthSurfacesSerial() == serial && guestStencil() == drawn, "rebinding the same native depth identity imported or published it");
-    if (use == ReuseCase::ShaderBufferRead || use == ReuseCase::TextureRead) {
+    if (use == ReuseCase::ShaderBufferRead || use == ReuseCase::TextureRead || use == ReuseCase::DecidedVertexRead) {
         if (use == ReuseCase::ShaderBufferRead) {
             RequireNoResidentDepthRead_nid_no_patch(target.address, depthBytes, std::nullopt);
             RequireNoMultisampleColorTarget(target.address, depthBytes, "a shader buffer access");
-        } else RequireNoMultisampleTarget(target.address, depthBytes, "a texture read");
+        } else if (use == ReuseCase::TextureRead) RequireNoMultisampleTarget(target.address, depthBytes, "a texture read");
+        else RequireNoMultisampleTarget(target.stencilAddress, 4096u, "a vertex buffer read", DepthReadCause::Reuse);
         Require(guestStencil() == host, "a depth read of a host-written native owner did not publish the host's stencil bytes");
         for (std::uint32_t y = 0u; y < extent.height; ++y) {
             for (std::uint32_t x = 0u; x < extent.width; ++x) {
@@ -3728,6 +3729,7 @@ void CheckReusePublication(Context context, ReuseCase use) {
             }
         }
         Require(DepthSurfaceAt(target.address) && DepthSurfaceView(context, target) == view && DepthSurfacesSerial() == serial, "a depth read of a host-written native owner retired or re-imported it");
+        if (use == ReuseCase::DecidedVertexRead) Require(CachedSampledTexture(context, DepthSampleWords(target)) != nullptr, "a native depth owner kept by a reuse that took no guest byte could not be sampled");
         return;
     }
     *reinterpret_cast<volatile std::byte*>(target.stencilAddress + stored) = std::byte{0x77};
@@ -3846,7 +3848,7 @@ int main(int argc, char** argv) {
             CheckDepthPublication(publishing, 4u, PublicationWrite::Completion, true);
             for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
-            for (const auto use : {ReuseCase::VertexRead, ReuseCase::IndexRead, ReuseCase::StorageTexture, ReuseCase::NewDepthTarget, ReuseCase::CpuRead, ReuseCase::DmaCopy, ReuseCase::Rebind, ReuseCase::ShaderBufferRead, ReuseCase::TextureRead}) CheckReusePublication(publishing, use);
+            for (const auto use : {ReuseCase::VertexRead, ReuseCase::IndexRead, ReuseCase::StorageTexture, ReuseCase::NewDepthTarget, ReuseCase::CpuRead, ReuseCase::DmaCopy, ReuseCase::Rebind, ReuseCase::ShaderBufferRead, ReuseCase::TextureRead, ReuseCase::DecidedVertexRead}) CheckReusePublication(publishing, use);
             return 0;
         }
         CheckDrawFeedback();

@@ -990,7 +990,7 @@ public:
         hostWritten->store(true, std::memory_order_release);
     }
 
-    void PublishToGuest(DepthReadCause cause);
+    bool PublishToGuest(DepthReadCause cause);
 
     std::uint64_t written = ++depthWrites;
     std::shared_ptr<std::atomic<bool>> hostWritten = std::make_shared<std::atomic<bool>>(false);
@@ -2411,7 +2411,7 @@ std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImage
     return word;
 }
 
-void DepthSurface::PublishToGuest(DepthReadCause cause) {
+bool DepthSurface::PublishToGuest(DepthReadCause cause) {
     Require(!Recorder::InCompletion(), "native multisample depth publication inside a GPU completion is not implemented");
     Require(!publicationInProgress, "recursive native multisample depth publication is not implemented");
     Require(!publicationFailed, "a previous native multisample depth publication store did not complete");
@@ -2556,17 +2556,20 @@ void DepthSurface::PublishToGuest(DepthReadCause cause) {
     }
     hostWritten->store(false, std::memory_order_release);
     publication.clear();
+    return std::ranges::find(tookGuest, true) != tookGuest.end();
 }
 
-void publishWrittenDepth(std::span<const std::shared_ptr<std::atomic<bool>>> written, DepthReadCause cause) {
+std::vector<std::shared_ptr<std::atomic<bool>>> publishWrittenDepth(std::span<const std::shared_ptr<std::atomic<bool>>> written, DepthReadCause cause) {
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
+    std::vector<std::shared_ptr<std::atomic<bool>>> tookGuest;
     for (const auto& flag : written) {
         if (!flag->load(std::memory_order_acquire)) continue;
         const auto found = std::ranges::find_if(surfaces(), [&](const auto& surface) { return surface->hostWritten == flag && surface->active->load(std::memory_order_acquire); });
         if (found == surfaces().end()) continue;
-        (*found)->PublishToGuest(cause);
+        if ((*found)->PublishToGuest(cause)) tookGuest.push_back((*found)->active);
     }
+    return tookGuest;
 }
 
 std::mutex& htileReadsMutex() {
@@ -3037,10 +3040,11 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
             if (overlaps(range) && range.hostWritten->load(std::memory_order_acquire) && std::ranges::find(written, range.hostWritten) == written.end()) written.push_back(range.hostWritten);
         }
     }
+    std::vector<std::shared_ptr<std::atomic<bool>>> tookGuest;
     if (!written.empty()) {
         Require(allowPublication && !HoldsMultisampleTargetsLock(), "sample-preserving guest publication of native multisample depth is not implemented while a multisampled colour target is being acquired");
         if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::ReadCaptured);
-        publishWrittenDepth(written, cause);
+        tookGuest = publishWrittenDepth(written, cause);
     }
     std::unique_lock lock(depthGuardMutex());
     for (const auto& range : depthGuards()) {
@@ -3048,7 +3052,8 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
     }
     for (const auto& range : depthGuards()) {
         if (!overlaps(range) || !range.active->load(std::memory_order_acquire)) continue;
-        if (cause == DepthReadCause::Reuse || !range.hostEverWritten->load(std::memory_order_acquire)) range.active->store(false, std::memory_order_release);
+        const bool replaced = cause == DepthReadCause::Reuse && std::ranges::find(tookGuest, range.active) != tookGuest.end();
+        if (replaced || !range.hostEverWritten->load(std::memory_order_acquire)) range.active->store(false, std::memory_order_release);
     }
     std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
     anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
