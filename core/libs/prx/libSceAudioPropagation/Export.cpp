@@ -556,8 +556,7 @@ int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagat
             ++registration.activeCalls;
         }
         ActiveReportCall activeCall(state, registration);
-        ReportInfo handlerInfo = info;
-        invocation.handler(&handlerInfo, invocation.userData);
+        invocation.handler(&info, invocation.userData);
     }
 #ifdef _WIN32
     __builtin_sysv_va_end(arguments);
