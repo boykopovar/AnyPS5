@@ -16,6 +16,13 @@ namespace frame_watchdog {
 void Beat() noexcept;
 bool ParseHangSeconds(const char* text, std::uint32_t& seconds, std::string& error);
 
+struct HangState {
+    std::int64_t beat = 0;
+    bool reported = false;
+};
+
+bool HangReportDue(HangState& state, std::int64_t beat, std::int64_t now, std::int64_t thresholdNanoseconds);
+
 }
 
 class DisplayWindow {

@@ -23,11 +23,22 @@ void Values() {
         error.clear();
         Require(!frame_watchdog::ParseHangSeconds(text, seconds, error) && error.find("ANYPS5_HANG_SECONDS") != std::string::npos, text);
     }
+void ReportsOncePerHang() {
+    constexpr std::int64_t Threshold = 1000;
+    frame_watchdog::HangState state;
+    Require(!frame_watchdog::HangReportDue(state, 100, 100 + Threshold - 1, Threshold), "reported before the threshold");
+    Require(frame_watchdog::HangReportDue(state, 100, 100 + Threshold, Threshold), "no report at the threshold");
+    Require(!frame_watchdog::HangReportDue(state, 100, 100 + 5 * Threshold, Threshold), "the same hang was reported again");
+    Require(!frame_watchdog::HangReportDue(state, 100, 100 + 9 * Threshold, Threshold), "the same hang was reported on later checks");
+    Require(!frame_watchdog::HangReportDue(state, 500, 500 + Threshold - 1, Threshold), "a new frame did not reset the hang");
+    Require(frame_watchdog::HangReportDue(state, 500, 500 + Threshold, Threshold), "a second hang was not reported");
+    Require(!frame_watchdog::HangReportDue(state, 500, 500 + 2 * Threshold, Threshold), "the second hang was reported twice");
 }
 
 }
 
 int main() {
     Values();
+    ReportsOncePerHang();
     return 0;
 }

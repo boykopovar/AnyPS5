@@ -167,6 +167,17 @@ std::atomic<std::int64_t> g_lastFrameNanoseconds{0};
 
 }
 
+bool HangReportDue(HangState& state, std::int64_t beat, std::int64_t now, std::int64_t thresholdNanoseconds) {
+    if (beat != state.beat) {
+        state.beat = beat;
+        state.reported = false;
+        return false;
+    }
+    if (state.reported || now - beat < thresholdNanoseconds) return false;
+    state.reported = true;
+    return true;
+}
+
 bool ParseHangSeconds(const char* text, std::uint32_t& seconds, std::string& error) {
     constexpr std::uint32_t Largest = 86400;
     seconds = 0;
