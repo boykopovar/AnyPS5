@@ -1,9 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/Api.hpp"
-
-namespace WebCore {
-class DocumentLoader;
-}
+#include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 
 extern "C" {
 
