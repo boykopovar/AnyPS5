@@ -1,5 +1,7 @@
 # libSceHttp2 technical debt
 
+- [HTTP transport](../../../core/libs/prx/libSceHttp2/Transport.cpp) DNS lookup failures return `0x804101e6`; connection refusals return `0x8041013d`. These codes were measured for WebSocket handshakes on firmware 13.40; applying them to HTTP requests is unverified.
+
 ### Silent stubs
 
 - [sceHttp2RedirectCacheFlush](../../../core/libs/prx/libSceHttp2/Export.cpp) - returns 0 for any argument without checking it, as the 13.42 module does ([#10536](https://github.com/boykopovar/AnyPS5/pull/10536)); redirects are followed without a cache, so there is nothing to flush
