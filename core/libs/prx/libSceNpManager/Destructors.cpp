@@ -1,20 +1,14 @@
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 
-extern "C" {
-
-void APS5_VABI _ZN3sce2np6ObjectdlEPv(void* object);
-void APS5_VABI _sceNpAllocatorExFree(void* allocator, void* pointer);
-
-}
-
 namespace {
 
 struct TicketObject {
     const void* const* vtable;
-    void* allocator;
+    NpAllocatorEx* allocator;
     void* data;
     std::size_t size;
 };
