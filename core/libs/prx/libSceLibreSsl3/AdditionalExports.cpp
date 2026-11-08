@@ -27,10 +27,6 @@ int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_verify_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -274,10 +270,6 @@ int APS5_VABI ERR_load_PEM_strings_nid_postfix() {
 }
 
 int APS5_VABI OpenSSL_add_all_digests_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_PKEY_base_id_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
