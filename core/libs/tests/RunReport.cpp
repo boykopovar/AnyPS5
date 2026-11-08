@@ -1267,6 +1267,22 @@ void RecipeSerializeTest() {
     Require(!Contains(RunReport::SerializeRecipe(recipe, host), "hidden"), "a secret variable value reached the recipe");
 }
 
+void RecipeFileTest() {
+    Directory executable, user;
+    auto settings = Covered(executable.path, user.path, IdA);
+    settings.arguments = {"/home/alice/game.elf", "--aps5-report=on"};
+    settings.environment = {{"ANYPS5_GPU", "AMD"}, {"ANYPS5_API_KEY", "hidden"}};
+    settings.configFiles = {"pad.json"};
+    RunReport::Collector collector(settings);
+    Require(collector.Start(), "the collector did not start");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const auto recipePath = collector.ReportPath().parent_path() / "anyps5-recipe.json";
+    Require(fs::exists(recipePath), "the recipe was not written next to the report");
+    const auto text = Read(recipePath);
+    Require(Contains(text, "\"ANYPS5_GPU\": \"AMD\"") && Contains(text, "\"pad.json\"") && Contains(text, "[redacted]"), "the recipe lacks its captured fields: " + text);
+    Require(!Contains(text, "hidden") && !Contains(text, "ANYPS5_API_KEY"), "a secret reached the recipe file");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1536,6 +1552,7 @@ int main(int argc, char** argv) {
         Run("recipe-redaction", RecipeRedactionTest);
         Run("recipe-environment", RecipeEnvironmentTest);
         Run("recipe-serialize", RecipeSerializeTest);
+        Run("recipe-file", RecipeFileTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
