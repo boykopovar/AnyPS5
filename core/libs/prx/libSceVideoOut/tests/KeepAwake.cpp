@@ -58,8 +58,16 @@ void TestAcquireRelease() {
 
 }
 
+void TestSdlBackendWithoutVideo() {
+    const auto& backend = SdlKeepAwakeBackend();
+    backend.disable();
+    backend.enable();
+    Require(backend.isEnabled(), "SDL reported the screen saver suspended with no video subsystem");
+}
+
 int main() {
     TestParser();
     TestAcquireRelease();
+    TestSdlBackendWithoutVideo();
     return 0;
 }
