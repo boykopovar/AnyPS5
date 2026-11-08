@@ -41,8 +41,10 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -56,6 +58,16 @@ WebRtcVideoFrameBuilder& Checked(WebRtcVideoFrameBuilder* builder, const char* f
 }
 
 extern "C" {
+
+void APS5_VABI _ZN6webrtc10VideoFrame7BuilderC1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder) {
+    std::memset(&Checked(builder, "VideoFrame::Builder constructor requires a builder"), 0, sizeof(WebRtcVideoFrameBuilder));
+}
+
+void APS5_VABI _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(WebRtcVideoFrameBuilder* builder) {
+    const WebRtcVideoFrameBuilder& checked = Checked(builder, "VideoFrame::Builder destructor requires a builder");
+    if (checked.packetInfos || checked.videoFrameBuffer)
+        NotImplemented_nid_no_patch("VideoFrame::Builder destructor with a buffer or packet infos: releasing guest references");
+}
 
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder16set_timestamp_msEl_nid_postfix(WebRtcVideoFrameBuilder* builder, std::int64_t timestampMs) {
     Checked(builder, "VideoFrame::Builder::set_timestamp_ms requires a builder").timestampUs =
@@ -76,6 +88,12 @@ WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder15set_ntp_time_
 WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(WebRtcVideoFrameBuilder* builder, std::uint16_t id) {
     Checked(builder, "VideoFrame::Builder::set_id requires a builder").id = id;
     return builder;
+}
+
+std::int64_t APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(const WebRtcVideoFrame* frame) {
+    if (!frame)
+        throw std::invalid_argument("VideoFrame::render_time_ms requires a frame");
+    return frame->timestampUs / 1000;
 }
 
 }
