@@ -84,6 +84,8 @@ The full build also requires Python 3 for glslang and Git for Windows with Bash 
 
 For MSYS2, install `mingw-w64-ucrt-x86_64-gcc` with `pacman -S mingw-w64-ucrt-x86_64-gcc` and use `C:\msys64\ucrt64\bin` in PowerShell. Adjust the prefix for a Scoop installation of MSYS2. Use a separate build directory for each toolchain, and select both `gcc` and `g++` from the same installation.
 
+Configuration rejects MinGW libstdc++ builds that combine atomic `weak_ptr::lock()` with mutex-based reference-count updates ([GCC PR125312](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=125312)). Concurrent ownership changes can otherwise destroy live objects. Use a corrected distribution or the supported WinLibs GCC 15.2.0 release above, and configure in a new build directory.
+
 The [Windows MSYS2 workflow](../../.github/workflows/windows-msys2.yml) builds and tests the full runtime nightly at 08:23 UTC and can be started manually with `workflow_dispatch`. The regular Windows build uses WinLibs.
 
 Scoop's standalone GCC 15.2.0 package cannot build the runtime: disabling SEH selects SjLj exceptions, and its SEH backend cannot compile System V ABI catch handlers. Use MSYS2 UCRT64 or a DWARF-capable WinLibs distribution. This restriction does not apply to relinker-only builds.
