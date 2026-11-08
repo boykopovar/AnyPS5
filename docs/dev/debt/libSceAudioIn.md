@@ -24,12 +24,12 @@
 
 - 6 additional pending imports in [InventoryExports.cpp](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) are listed in the local PS5 3.20 export inventory `libSceAudioIn.c`. Their signatures and behavior are unverified; each uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`, for import resolution only.
 
-- `sceAudioInExtClose` — NID `kFKJ3MVcDuo` — [`sceAudioInPending_001_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInExtInput` — NID `KpBKoHKVKEc` — [`sceAudioInPending_002_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInExtOpen` — NID `YZ+3seW7CyY` — [`sceAudioInPending_003_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInExtSetAecMode` — NID `FVGWf8JaHOE` — [`sceAudioInPending_004_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInSetConnectionsForUser` — NID `thLNHvkWSeg` — [`sceAudioInPending_005_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInSetFocusForUser` — NID `iN3KqF-8R-w` — [`sceAudioInPending_006_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- [`sceAudioInExtClose`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `kFKJ3MVcDuo`
+- [`sceAudioInExtInput`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `KpBKoHKVKEc`
+- [`sceAudioInExtOpen`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `YZ+3seW7CyY`
+- [`sceAudioInExtSetAecMode`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `FVGWf8JaHOE`
+- [`sceAudioInSetConnectionsForUser`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `thLNHvkWSeg`
+- [`sceAudioInSetFocusForUser`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `iN3KqF-8R-w`
 
 ### Functional
 

@@ -1602,6 +1602,36 @@ void ComputeScratchTests() {
     Require(back.request.context.compute->scratchDwords == 24u, "the compute scratch size did not survive serialization");
 }
 
+void ComputeSharedVgprTests() {
+    auto queue = makeState();
+    auto& shader = queue.shader;
+    shader[0x207] = 128u;
+    shader[0x208] = 1u;
+    shader[0x209] = 1u;
+    shader[0x213] = 0u;
+    shader.erase(0x212);
+    shader.erase(0x228);
+    const auto withoutShared = AgcDriver::Graphics::DecodeComputeStageInfo(shader, {});
+    Require(withoutShared.sharedVgprBlocks == 0u && withoutShared.granulatedVgprCount == 0u, "a dispatch without COMPUTE_PGM_RSRC3 got wave-shared VGPRs");
+    shader[0x228] = 0x2u;
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeComputeStageInfo(shader, {})); }, "missing register at DWORD 0x212");
+    shader[0x212] = 0x402c000du;
+    const auto compute = AgcDriver::Graphics::DecodeComputeStageInfo(shader, {});
+    Require(compute.sharedVgprBlocks == 2u && compute.granulatedVgprCount == 13u, "COMPUTE_PGM_RSRC3.SHARED_VGPR_CNT and COMPUTE_PGM_RSRC1.VGPRS were not decoded");
+    ShaderRecompiler::RecompileRequest request{};
+    const std::array<std::uint32_t, 1> code{0xbf810000u};
+    request.shader = {ShaderRecompiler::ShaderStage::Compute, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.compute = compute;
+    const ShaderRecompiler::RequestSerializer serializer;
+    const auto back = serializer.Deserialize(serializer.Serialize(request));
+    Require(back.request.context.compute->sharedVgprBlocks == 2u && back.request.context.compute->granulatedVgprCount == 13u, "the wave-shared VGPR allocation did not survive serialization");
+    const auto shared = ShaderRecompiler::GuestSharedVectorRegisters(request.context);
+    Require(shared.base == 56u && shared.count == 16u, "a wave64 program with 56 private VGPRs did not place 16 wave-shared VGPRs at v56");
+    request.context.waveSize = 32;
+    expectFailure([&] { static_cast<void>(ShaderRecompiler::GuestSharedVectorRegisters(request.context)); }, "wave32 program");
+}
+
 void shaderUserDataTailPaddingTests() {
     constexpr std::size_t userDataOffset = 288;
     constexpr auto userDataBytes = offsetof(ShaderUserData, sharp_resource_count) + sizeof(ShaderUserData{}.sharp_resource_count);
@@ -2088,7 +2118,7 @@ void TuningFieldTests() {
 }
 
 void ShadersWriteMemoryTests() {
-    const auto binding = [](ShaderRecompiler::DescriptorKind kind, ShaderRecompiler::DescriptorRole role, std::vector<bool> written) {
+    const auto binding = [](ShaderRecompiler::DescriptorKind kind, ShaderRecompiler::DescriptorRole role, ShaderRecompiler::ElementFlags written) {
         ShaderRecompiler::DescriptorBinding result{};
         result.kind = kind;
         result.role = role;
@@ -2129,6 +2159,22 @@ void ReversedComponentOrderTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "constant color factor");
         queue.context[0x1e0] = (1u << 30u) | (2u << 5u) | 13u;
         Require(AgcDriver::Graphics::DecodeState(queue).blends[0].colorBlendOp == VK_BLEND_OP_MIN, "a constant color factor of a MIN blend into an 8_8 SWAP_ALT target was rejected");
+    }
+    for (const auto& [number, format] : {std::pair{0u, VK_FORMAT_R16G16_UNORM}, std::pair{1u, VK_FORMAT_R16G16_SNORM}, std::pair{4u, VK_FORMAT_R16G16_UINT}, std::pair{7u, VK_FORMAT_R16G16_SFLOAT}}) {
+        auto queue = makeState();
+        const auto info = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (5u << 2u) | (number << 8u);
+        for (const auto swap : {0u, 1u}) {
+            queue.context[0x31c] = info | (swap << 11u);
+            const auto state = AgcDriver::Graphics::DecodeState(queue);
+            Require(state.colors.size() == 1 && state.colors[0].format == format && state.colors[0].elementBytes == 4 && state.colors[0].componentMapping == (swap == 1u ? 0xecu : 0xe4u), "a 16_16 target did not store the x and y exports, or with SWAP_ALT the x and w exports, in its two channels");
+        }
+        if (number == 7u) {
+            queue.context[0x31c] = info | (1u << 11u);
+            for (const auto offset : {0x105u, 0x106u, 0x107u, 0x108u}) queue.context[offset] = 0;
+            queue.context[0x1e0] = 0x60000001u;
+            Require(AgcDriver::Graphics::SplitsAlternateAlpha(AgcDriver::Graphics::DecodeState(queue)), "a separate alpha blend into a 16_16 SWAP_ALT target did not split its second channel");
+            queue.context[0x1e0] = 0;
+        }
     }
     for (const auto& [swap, mapping] : {std::pair{2u, 0x1bu}, std::pair{3u, 0x93u}}) {
         auto queue = makeState();
@@ -13927,6 +13973,7 @@ int main(int argc, char** argv) {
         HeaderlessVertexStageTests();
         HiddenUserWordVertexTablesTests();
         ComputeScratchTests();
+        ComputeSharedVgprTests();
         shaderUserDataTailPaddingTests();
         InitialContextTests();
         AlphaToCoverageTests();
