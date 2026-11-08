@@ -1,3 +1,4 @@
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
@@ -361,6 +362,48 @@ void CheckIdMapperLookup(const char* name, decltype(&sceNpIdMapperNpIdToAccountI
     Require(std::memcmp(output, untouched, sizeof(output)) == 0, name);
 }
 
+struct TicketReleaseRecord {
+    void* pointer;
+    int calls;
+};
+
+void APS5_VABI ReleaseTicket(void* pointer, void* context) {
+    auto* record = static_cast<TicketReleaseRecord*>(context);
+    record->pointer = pointer;
+    record->calls += 1;
+}
+
+struct TicketStorage {
+    const void* const* vtable;
+    NpAllocatorEx* allocator;
+    void* data;
+    std::size_t size;
+};
+
+void CheckTicketTeardown() {
+    TicketReleaseRecord record{};
+    NpAllocatorEx allocator{};
+    allocator.allocator.release = ReleaseTicket;
+    allocator.allocator.context = &record;
+    std::uint8_t data[4] {};
+    TicketStorage ticket{};
+    ticket.allocator = &allocator;
+    ticket.data = data;
+    ticket.size = sizeof(data);
+    _ZN3sce2np8NpTicket5ClearEv(&ticket);
+    Require(record.calls == 1 && record.pointer == data, "NpTicket::Clear must release the stored data");
+    Require(ticket.data == nullptr && ticket.size == 0, "NpTicket::Clear must clear the data and size");
+    ticket.data = data;
+    ticket.size = sizeof(data);
+    _ZN3sce2np8NpTicketD1Ev(&ticket);
+    Require(record.calls == 2 && record.pointer == data, "the NpTicket destructor must release the stored data");
+    Require(ticket.vtable != nullptr, "the NpTicket destructor must restore the vtable");
+    ticket.data = nullptr;
+    ticket.size = 0;
+    _ZN3sce2np8NpTicket5ClearEv(&ticket);
+    Require(record.calls == 2, "NpTicket::Clear must not release an empty ticket");
+}
+
 struct SentinelBuffer {
     unsigned char bytes[64];
     SentinelBuffer() { std::memset(bytes, 0x5a, sizeof(bytes)); }
@@ -371,6 +414,57 @@ struct SentinelBuffer {
         return true;
     }
 };
+
+void CheckPushLifecycle() {
+    constexpr int PushAlreadyInitialized = static_cast<int>(0x8055A001u);
+    constexpr int PushNotInitialized = static_cast<int>(0x8055A002u);
+    constexpr int PushInvalidArgument = static_cast<int>(0x8055A003u);
+    constexpr int Push2NotInitialized = static_cast<int>(0x8055C002u);
+    constexpr int Push2InvalidArgument = static_cast<int>(0x8055C003u);
+    constexpr int Push2NoSlot = static_cast<int>(0x8055C005u);
+
+    Require(sceNpPushCheckCallback() == PushNotInitialized, "sceNpPushCheckCallback must refuse an uninitialized library");
+    Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse an uninitialized library");
+    Require(sceNpPushInit() == 0, "sceNpPushInit must initialize the library");
+    Require(sceNpPushInit() == PushAlreadyInitialized, "sceNpPushInit must refuse a second initialization");
+    std::int32_t connectionState = 0x5a5a5a5a;
+    Require(sceNpPushIntGetConnectionState(&connectionState) == 0 && connectionState == 0, "sceNpPushIntGetConnectionState must report the offline state");
+    Require(sceNpPushIntGetConnectionState(nullptr) == PushInvalidArgument, "sceNpPushIntGetConnectionState must refuse a null output");
+    Require(sceNpPushCheckCallback() == 0, "sceNpPushCheckCallback must answer an initialized library");
+    Require(sceNpPushTerm() == 0, "sceNpPushTerm must terminate the library");
+    Require(sceNpPushTerm() == PushNotInitialized, "sceNpPushTerm must refuse a second termination");
+
+    Require(!sceNpPush2IsInit(), "sceNpPush2IsInit must be false before initialization");
+    Require(sceNpPush2OptionalCheckCallback() == Push2NotInitialized, "sceNpPush2OptionalCheckCallback must refuse an uninitialized library");
+    Require(sceNpPush2TriggerEmptyUserEvent() == PushNotInitialized, "sceNpPush2TriggerEmptyUserEvent must report the uninitialized error");
+    Require(sceNpPush2Init(nullptr) == Push2InvalidArgument, "sceNpPush2Init must refuse a null parameter");
+    std::uint8_t parameter[0x18] {};
+    Require(sceNpPush2Init(parameter) == Push2InvalidArgument, "sceNpPush2Init must refuse a zero mode");
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x10) = 2;
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x14) = 1;
+    Require(sceNpPush2Init(parameter) == Push2InvalidArgument, "sceNpPush2Init must refuse an allocator kind above 1");
+    *reinterpret_cast<std::uint32_t*>(parameter + 0x10) = 0;
+    const int firstContext = sceNpPush2Init(parameter);
+    const int secondContext = sceNpPush2Init(parameter);
+    Require(firstContext == 1 && secondContext == 2, "sceNpPush2Init must return consecutive context ids");
+    Require(sceNpPush2IsInit(), "sceNpPush2IsInit must be true after initialization");
+    Require(sceNpPush2OptionalCheckCallback() == 0, "sceNpPush2OptionalCheckCallback must answer an initialized library");
+    Require(sceNpPush2TriggerEmptyUserEvent() == 0, "sceNpPush2TriggerEmptyUserEvent must answer an initialized library");
+    Require(sceNpPush2SetGlobalMutex(nullptr) == Push2InvalidArgument, "sceNpPush2SetGlobalMutex must refuse a null mutex");
+    int mutexToken = 0;
+    Require(sceNpPush2SetGlobalMutex(&mutexToken) == 0, "sceNpPush2SetGlobalMutex must accept a mutex");
+    Require(sceNpPush2Term(firstContext) == 0, "sceNpPush2Term must terminate a context");
+    Require(sceNpPush2IsInit(), "sceNpPush2IsInit must stay true while a context is live");
+    Require(sceNpPush2Term(secondContext) == 0, "sceNpPush2Term must terminate the second context");
+    Require(!sceNpPush2IsInit(), "sceNpPush2IsInit must be false after every context is terminated");
+    Require(sceNpPush2OptionalCheckCallback() == Push2NotInitialized, "sceNpPush2OptionalCheckCallback must refuse a terminated library");
+    for (int expected = 1; expected <= 32; ++expected) {
+        Require(sceNpPush2Init(parameter) == expected, "sceNpPush2Init must hand out every context slot");
+    }
+    Require(sceNpPush2Init(parameter) == Push2NoSlot, "sceNpPush2Init must refuse a full context table");
+    for (int contextId = 1; contextId <= 32; ++contextId) sceNpPush2Term(contextId);
+    Require(!sceNpPush2IsInit(), "sceNpPush2Term must empty the context table");
+}
 
 void CheckManagerIntProfileGetters() {
     const int live = sceNpManagerIntCreateRequest();
@@ -943,6 +1037,8 @@ int main() {
     CheckAsmLifecycle();
     CheckEmptyDestructors();
     CheckSandboxInfo();
+    CheckTicketTeardown();
+    CheckPushLifecycle();
     CheckValueClasses();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
