@@ -65,11 +65,47 @@ void Tee::toTerminal(Stream& stream, const char* data, std::size_t length) {
     if (!WriteAll(stream.terminal, data, length)) stream.terminalBroken.store(true, std::memory_order_relaxed);
 }
 
-void Tee::toFile(const char* data, std::size_t length) {
-    if (length == 0 || _fileFailed.load(std::memory_order_relaxed)) return;
-    if (WriteAll(_file, data, length)) return;
+void Tee::failFile() {
     _fileFailed.store(true, std::memory_order_relaxed);
     toTerminal(_streams[1], WriteFailure, sizeof(WriteFailure) - 1);
+}
+
+bool Tee::rotate() {
+    if (_keep == 0) {
+        RemoveFile(_path);
+    } else {
+        RemoveFile(RotatedName(_path, _keep));
+        for (unsigned index = _keep; index > 1; --index) RenameFile(RotatedName(_path, index - 1), RotatedName(_path, index));
+        RenameFile(_path, RotatedName(_path, 1));
+    }
+    Close(_file);
+    _file = NoHandle;
+    Handle file = NoHandle;
+    std::string error;
+    if (!OpenAppend(_path, file, error)) return false;
+    _file = file;
+    _fileBytes = FileSize(_file);
+    return true;
+}
+
+void Tee::toFile(const char* data, std::size_t length) {
+    if (length == 0 || _fileFailed.load(std::memory_order_relaxed)) return;
+    if (RotationNeeded(_fileBytes, length, _maxBytes) && !rotate()) {
+        failFile();
+        return;
+    }
+    if (WriteAll(_file, data, length)) {
+        _fileBytes += length;
+        return;
+    }
+    failFile();
+}
+
+void Tee::SetRotation(const std::string& path, std::uint64_t maxBytes, unsigned keep) {
+    _path = path;
+    _maxBytes = maxBytes;
+    _keep = keep;
+    _fileBytes = maxBytes != 0 ? FileSize(_file) : 0;
 }
 
 void Tee::flushCarry(Stream& stream) {
