@@ -19,6 +19,7 @@ namespace {
 
 constexpr const char VariableName[] = "ANYPS5_LOG_FILE";
 constexpr const char MaxBytesName[] = "ANYPS5_LOG_MAX_BYTES";
+constexpr const char KeepName[] = "ANYPS5_LOG_KEEP";
 constexpr const char WriteFailure[] = "[log] ANYPS5_LOG_FILE: the file can no longer be written; it stops here and the terminal output goes on\n";
 
 std::atomic<Session*> g_session{nullptr};
@@ -191,6 +192,28 @@ bool ParseMaxBytes(const char* text, std::uint64_t& value, std::string& error) {
     }
     if (parsed != 0 && (parsed < Smallest || parsed > Largest)) {
         error = std::string(MaxBytesName) + ": " + text + " is outside 65536 to 1099511627776 bytes; use 0 to turn the limit off";
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+bool ParseKeep(const char* text, unsigned& value, std::string& error) {
+    constexpr unsigned Default = 3;
+    constexpr unsigned Largest = 100;
+    value = Default;
+    error.clear();
+    if (text == nullptr || *text == '\0') return true;
+    unsigned parsed = 0;
+    for (const char* digit = text; *digit != '\0'; ++digit) {
+        if (*digit < '0' || *digit > '9' || parsed > Largest) {
+            error = std::string(KeepName) + ": \"" + text + "\" is not a count of files between 0 and 100";
+            return false;
+        }
+        parsed = parsed * 10 + static_cast<unsigned>(*digit - '0');
+    }
+    if (parsed > Largest) {
+        error = std::string(KeepName) + ": \"" + text + "\" is not a count of files between 0 and 100";
         return false;
     }
     value = parsed;
