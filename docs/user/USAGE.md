@@ -627,11 +627,17 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 - An empty value is the same as an unset variable. A path that cannot be opened (a missing directory, a directory, no permission) stops the executable before it runs, with status 1 and a message that names `ANYPS5_LOG_FILE`, the path and the operating system error.
 - A line produced by one `write` call is written to the file whole: a line of standard output never lands inside a line of standard error. Two threads writing lines longer than the pipe's atomic size (512 bytes on macOS, 4096 on Linux) to the same stream can still interleave, as they do on a terminal. The two streams are copied by two threads, so lines of one stream can come out a few lines before or after lines of the other that were written at nearly the same time. A last line without a newline gets one in the file when the process ends.
 - A crash or abort report, and the lines written before it, are written to the file before the process ends. A process ended from outside, by `SIGKILL` or `TerminateProcess` for example, loses what it had written in the last milliseconds.
-- The file has no size limit and grows for as long as the title logs.
+- The file has no size limit unless `ANYPS5_LOG_MAX_BYTES` is set (see above), and grows for as long as the title logs.
 - If the file can no longer be written, for example because the disk is full, the executable prints one line saying so and goes on with the terminal output only.
 - While the variable is set the executable runs two extra threads and holds the standard streams in two pipes. A child process the title starts keeps its output in the same pipes, so output it writes after the title exits is lost, and on Linux and macOS the `SIGPIPE` of that write ends it unless it ignores the signal. When the title replaces itself with another executable through `sceSystemServiceLoadExec`, the real streams are handed over first.
 - With no console, for example a Windows executable started without one, only the file receives the log.
 - On Windows the file was checked with a console, with the output redirected to a file or read through a pipe, and with no console, and the crash report path and the handover to a replacement executable are run by the tests.
+
+### Frame watchdog
+
+`ANYPS5_HANG_SECONDS=<seconds>` (default 0, off; from 1 to 86400) starts a watchdog thread in the executable's window. When no frame has reached the window for that many seconds, it writes one line to standard error, and so to `ANYPS5_LOG_FILE` when that is set: `no frame for <N> s; last stage: frame presented to the window; shader compilation can take seconds, so this line is a warning and not a hang report`. It writes once for each run of missing frames and again only after a new frame arrives. It never stops, pauses or kills the title. A value that is not a number of seconds in that range is reported on standard error and the watchdog stays off. The watchdog stops when the window is destroyed.
+
+Shader compilation and loading can keep a title without frames for seconds. The line therefore means that no frame came, not that the title is stuck.
 
 ### Controller status panel
 
