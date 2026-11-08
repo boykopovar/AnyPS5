@@ -297,6 +297,14 @@ static void StartsWhenConfigured() {
     Require(relay != nullptr && relay->IsOpen() && relay->Port() != 0, "a listen address starts the relay");
 }
 
+static void RecognisesMulticastGroups() {
+    Require(LanRelay::IsMulticast(0xE0000001u), "224.0.0.1 is a multicast group");
+    Require(LanRelay::IsMulticast(0xEFFFFFFFu), "239.255.255.255 is a multicast group");
+    Require(!LanRelay::IsMulticast(0xDFFFFFFFu), "223.255.255.255 is not a multicast group");
+    Require(!LanRelay::IsMulticast(0xF0000000u), "240.0.0.0 is not a multicast group");
+    Require(!LanRelay::IsMulticast(0xFFFFFFFFu), "255.255.255.255 is a broadcast, not a group");
+}
+
 static void MatchesLimitedAndInterfaceBroadcasts() {
     const std::vector<LanRelay::Ipv4Interface> lan{{0xC0A80114u, 0xFFFFFF00u}};
     Require(LanRelay::IsBroadcast(0xFFFFFFFFu, {}), "255.255.255.255 is a broadcast without any interface");
