@@ -51,8 +51,19 @@ static void RejectsInvalidEndpoints() {
     Rejects("127..0.1:47000", "an empty octet is refused", parse);
 }
 
+static void ParsesPeerList() {
+    Require(LanRelay::ParsePeers("").empty(), "an empty list has no peers");
+    const auto single = LanRelay::ParsePeers("127.0.0.1:47001");
+    Require(single.size() == 1 && single[0].Port == 47001, "one peer parses");
+    const auto peers = LanRelay::ParsePeers("127.0.0.1:47001,10.0.0.2:47002");
+    Require(peers.size() == 2, "two peers parse");
+    Require(peers[0].Host == "127.0.0.1" && peers[0].Port == 47001, "the first peer keeps its order");
+    Require(peers[1].Host == "10.0.0.2" && peers[1].Port == 47002, "the second peer keeps its order");
+}
+
 int main() {
     ParsesValidEndpoint();
+    ParsesPeerList();
     RejectsInvalidEndpoints();
     return 0;
 }
