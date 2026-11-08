@@ -3,6 +3,7 @@
 ### Functional
 
 - [sce::Np::CppWebApi::Common::IntrusivePtr body of ParameterToSubmitTicket](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - host-side fallback, not console behaviour: `InitializeParameterWithBody` returns `ParameterBodyMissing` (0x80553512) for a null body pointer and leaves the parameter uninitialized. The console module dereferences a null body in `ParameterToSubmitTicket::initialize` (NID `4TiZy24yFoQ`) without a check, so a null body faults there. The host check only prevents a host crash; `guest_np_cpp_web_api_matchmaking` pins the host behaviour, not a console result.
+- [SessionManager::V1 model accessors](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `LeaderWithOnlineId::getAccountId` reads the 64-bit word at +0x10 in both measured bundled SDK modules. Other model fields remain unsupported: `PlayerSessionForRead::customData1IsSet` is at +0x1a0 and +0x1e0 in those builds, so one fixed offset does not cover both layouts. Model creation and online response production are not supplied by this accessor.
 - [Matches factory output release](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) - releasing the last reference of an occupied output with a null deleter still throws through the shared `IntrusivePtr` release path. The bundled modules instead use the stored `LibContext` allocator and model destructor in that case; the host allocator remains in use, and that fallback is unimplemented.
 
 ### Silent stubs
