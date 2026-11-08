@@ -160,8 +160,12 @@ int main() {
         void* library = SDL_LoadObject("libvulkan.so.1");
 #endif
         const auto resolve = library != nullptr ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr")) : nullptr;
-        if (resolve == nullptr || !headlessSurfaces(resolve)) {
-            std::printf("skipped, no Vulkan loader with %s\n", VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME);
+        if (resolve == nullptr) {
+            std::printf("skipped, no usable Vulkan device\n");
+            return VulkanTestSkipped;
+        }
+        if (!headlessSurfaces(resolve)) {
+            std::printf("skipped, the device lacks %s\n", VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME);
             return VulkanTestSkipped;
         }
         Headless headless{1084, 610, resolve};
