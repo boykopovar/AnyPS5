@@ -229,6 +229,7 @@ target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/libfvad ${CMAKE_CURRENT_BINARY_DIR}/webrtc-fvad EXCLUDE_FROM_ALL)
 set_target_properties(fvad PROPERTIES C_VISIBILITY_PRESET hidden)
+target_compile_options(fvad PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fno-sanitize=shift>)
 
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.cpp)
 target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
@@ -1195,6 +1196,7 @@ if(BUILD_TESTING)
     endif()
 
     add_test_executable(guest_kernel_sys_ksem_tests tests/GuestKernelSysKsem.cpp)
+    target_compile_definitions(guest_kernel_sys_ksem_tests PRIVATE ANYPS5_KSEM_TESTING)
     target_include_directories(guest_kernel_sys_ksem_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_ksem_tests PRIVATE libkernel_sys libkernel libc)
     configure_windows_unwind(guest_kernel_sys_ksem_tests)

@@ -26,8 +26,10 @@ constexpr int IdMapperRefusedArgument = static_cast<int>(0x80553083u);
 constexpr int IdMapperRefusedRequestId = static_cast<int>(0x80553085u);
 constexpr int ManagerIntTableFull = static_cast<int>(0x80559D05u);
 constexpr int ManagerIntNotInTable = static_cast<int>(0x80559D0Au);
+constexpr int InGameMessageInvalidArgument = static_cast<int>(0x80552B02u);
 constexpr int InGameMessageContextNotFound = static_cast<int>(0x80552B03u);
 constexpr int InGameMessageHandleNotFound = static_cast<int>(0x80552B05u);
+constexpr int InGameMessageNotConnected = static_cast<int>(0x80552B08u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -388,6 +390,34 @@ void CheckManagerIntProfileGetters() {
     Require(sceNpManagerIntGetAccountCountryA(-1, out.bytes) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetAccountCountryA must refuse user id -1");
     Require(sceNpManagerIntGetAccountCountryA(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountCountryA must refuse a null output");
     Require(sceNpManagerIntGetAccountCountryA(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetAccountCountryA must report NP as signed out and write nothing");
+    std::uint64_t accountId = 0x5a5a5a5a5a5a5a5a;
+    Require(sceNpManagerIntGetAccountId(-1, &accountId) == InvalidArgument && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountId must refuse user id -1");
+    Require(sceNpManagerIntGetAccountId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountId must refuse a null output");
+    Require(sceNpManagerIntGetAccountId(InitialUserId, &accountId) == SignedOut && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetAccountIdSdk(-1, &accountId) == InvalidArgument && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetAccountIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetAccountIdSdk(InitialUserId, &accountId) == SignedOut && accountId == 0x5a5a5a5a5a5a5a5a, "sceNpManagerIntGetAccountIdSdk must report NP as signed out and write nothing");
+    for (const auto getter : {sceNpManagerIntGetAccountCountrySdk, sceNpManagerIntGetAccountDateOfBirthSdk, sceNpManagerIntGetAccountNpEnv, sceNpManagerIntGetActiveSigninState, sceNpManagerIntGetAuthServerErrorFlag, sceNpManagerIntGetOnlineIdChangeFlag, sceNpManagerIntGetPlusMemberTypeNB, sceNpManagerIntGetServerError, sceNpManagerIntGetSigninState, sceNpManagerIntGetUserNum}) {
+        Require(getter(-1, out.bytes) == InvalidArgument && out.Untouched(), "an NpManagerInt profile getter must refuse user id -1");
+        Require(getter(InitialUserId, nullptr) == InvalidArgument, "an NpManagerInt profile getter must refuse a null output");
+        Require(getter(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "an NpManagerInt profile getter must report NP as signed out and write nothing");
+    }
+    std::int32_t accountType = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetAccountType(-1, &accountType) == InvalidArgument && accountType == 0x5a5a5a5a, "sceNpManagerIntGetAccountType must refuse user id -1");
+    Require(sceNpManagerIntGetAccountType(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountType must refuse a null output");
+    Require(sceNpManagerIntGetAccountType(InitialUserId, &accountType) == SignedOut && accountType == 0, "sceNpManagerIntGetAccountType must zero the account type");
+    SentinelBuffer npEnv;
+    Require(sceNpManagerIntGetNpEnv(nullptr) == InvalidArgument, "sceNpManagerIntGetNpEnv must refuse a null output");
+    Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
+    for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
+    for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
+    Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
+    std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
+    bool offlineFlag = true;
+    Require(sceNpManagerIntGetOfflineAccountId(-1, &offlineAccountId, &offlineFlag) == InvalidArgument && offlineAccountId == 0x5a5a5a5a5a5a5a5a && offlineFlag, "sceNpManagerIntGetOfflineAccountId must refuse user id -1");
+    Require(sceNpManagerIntGetOfflineAccountId(InitialUserId, &offlineAccountId, &offlineFlag) == SignedOut && offlineAccountId == 0x5a5a5a5a5a5a5a5a && offlineFlag, "sceNpManagerIntGetOfflineAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetOfflineAccountId(InitialUserId, nullptr, nullptr) == SignedOut, "sceNpManagerIntGetOfflineAccountId must accept null outputs");
     NpId* npId = reinterpret_cast<NpId*>(out.bytes);
     Require(sceNpManagerIntGetNpId(-1, npId) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetNpId must refuse user id -1");
     Require(sceNpManagerIntGetNpId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpId must refuse a null output");
@@ -412,6 +442,28 @@ void CheckManagerIntUserLookups() {
     Require(sceNpManagerIntGetUserIdByNpId(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must refuse a null NpId");
     Require(sceNpManagerIntGetUserIdByNpId(&npId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByNpId must refuse a null output");
     Require(sceNpManagerIntGetUserIdByNpId(&npId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineIdSdk must refuse a null online id");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByOnlineIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(&onlineId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineIdSdk must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetNpIdByOnlineId(nullptr, &npId) == InvalidArgument, "sceNpManagerIntGetNpIdByOnlineId must refuse a null online id");
+    Require(sceNpManagerIntGetNpIdByOnlineId(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpIdByOnlineId must refuse a null output");
+    Require(sceNpManagerIntGetNpIdByOnlineId(&onlineId, &npId) == SignedOut, "sceNpManagerIntGetNpIdByOnlineId must report NP as signed out");
+    Require(sceNpManagerIntGetUserIdByAccountId(0, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByAccountId must refuse a zero account id");
+    Require(sceNpManagerIntGetUserIdByAccountId(1, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByAccountId must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByAccountId(1, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(0, &onlineId) == InvalidArgument, "sceNpManagerIntGetOnlineIdByAccountId must refuse a zero account id");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(1, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineIdByAccountId must refuse a null output");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(1, &onlineId) == SignedOut, "sceNpManagerIntGetOnlineIdByAccountId must report NP as signed out");
+    Require(sceNpManagerIntGetNpIdSdk(-1, &npId) == InvalidArgument, "sceNpManagerIntGetNpIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetNpIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetNpIdSdk(InitialUserId, &npId) == SignedOut, "sceNpManagerIntGetNpIdSdk must report NP as signed out");
+    Require(sceNpManagerIntGetOnlineIdSdk(-1, &onlineId) == InvalidArgument, "sceNpManagerIntGetOnlineIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetOnlineIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetOnlineIdSdk(InitialUserId, &onlineId) == SignedOut, "sceNpManagerIntGetOnlineIdSdk must report NP as signed out");
+    SentinelBuffer parentalFlag;
+    Require(sceNpManagerIntGetParentalControlFlag(-1, parentalFlag.bytes) == InvalidArgument && parentalFlag.Untouched(), "sceNpManagerIntGetParentalControlFlag must refuse user id -1");
+    Require(sceNpManagerIntGetParentalControlFlag(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetParentalControlFlag must refuse a null output");
+    Require(sceNpManagerIntGetParentalControlFlag(InitialUserId, parentalFlag.bytes) == SignedOut && parentalFlag.Untouched(), "sceNpManagerIntGetParentalControlFlag must report NP as signed out and write nothing");
 }
 
 void CheckManagerIntAuthorization() {
@@ -906,6 +958,8 @@ int main() {
     CheckManagerIntRequests();
     CheckIdMapperLookup("sceNpIdMapperNpIdToAccountId", sceNpIdMapperNpIdToAccountId);
     CheckIdMapperLookup("sceNpIdMapperOnlineIdToAccountId", sceNpIdMapperOnlineIdToAccountId);
+    CheckIdMapperLookup("sceNpIdMapperAccountIdToNpId", sceNpIdMapperAccountIdToNpId);
+    CheckIdMapperLookup("sceNpIdMapperAccountIdToOnlineId", sceNpIdMapperAccountIdToOnlineId);
     CheckManagerIntProfileGetters();
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
@@ -986,7 +1040,44 @@ int main() {
     Require(sceNpInGameMessageAbortHandle(-1, messageHandle) == InGameMessageContextNotFound, "sceNpInGameMessageAbortHandle must reject an unknown context");
     Require(sceNpInGameMessageAbortHandle(messageContext, -1) == InGameMessageHandleNotFound, "sceNpInGameMessageAbortHandle must reject an unknown handle");
     Require(sceNpInGameMessageAbortHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageAbortHandle must accept a live handle");
+    std::uint8_t statistics[0x20];
+    std::memset(statistics, 0x5a, sizeof(statistics));
+    Require(sceNpInGameMessageGetMemoryPoolStatistics(-1, statistics) == InGameMessageContextNotFound, "GetMemoryPoolStatistics must reject an unknown context");
+    Require(sceNpInGameMessageGetMemoryPoolStatistics(messageContext, nullptr) == InGameMessageInvalidArgument, "GetMemoryPoolStatistics must reject a null output");
+    Require(sceNpInGameMessageGetMemoryPoolStatistics(messageContext, statistics) == 0, "GetMemoryPoolStatistics must answer a live context");
+    for (const std::uint8_t byte : statistics) Require(byte == 0, "GetMemoryPoolStatistics must zero the statistics block");
+    Require(sceNpInGameMessageCheckCallback() == 0, "CheckCallback must answer without queued messages");
+    int callbackUserdata = 0;
+    Require(sceNpInGameMessagePrepare(-1, messageHandle, 0, 0x1234, &callbackUserdata) == InGameMessageContextNotFound, "Prepare must reject an unknown context");
+    Require(sceNpInGameMessagePrepare(messageContext, -1, 0, 0x1234, &callbackUserdata) == InGameMessageHandleNotFound, "Prepare must reject an unknown handle");
+    Require(sceNpInGameMessagePrepare(messageContext, messageHandle, 0, 0, &callbackUserdata) == InGameMessageInvalidArgument, "Prepare must reject a null callback");
+    Require(sceNpInGameMessagePrepare(messageContext, messageHandle, 0, 0x1234, &callbackUserdata) == 0, "Prepare must register the callback");
+    Require(sceNpInGameMessagePrepareA(-1, messageHandle, 0, 0x1234, &callbackUserdata) == InGameMessageContextNotFound, "PrepareA must reject an unknown context");
+    Require(sceNpInGameMessagePrepareA(messageContext, -1, 0, 0x1234, &callbackUserdata) == InGameMessageHandleNotFound, "PrepareA must reject an unknown handle");
+    Require(sceNpInGameMessagePrepareA(messageContext, messageHandle, 0, 0, nullptr) == InGameMessageInvalidArgument, "PrepareA must reject a null callback");
+    Require(sceNpInGameMessagePrepareA(messageContext, messageHandle, 0, 0x5678, &callbackUserdata) == 0, "PrepareA must register the callback");
+    std::uint8_t message[0x88] {};
+    *reinterpret_cast<std::uint64_t*>(message + 0x80) = 4;
+    std::uint8_t destination[0x18] {};
+    std::uint8_t source[0x18] {};
+    Require(sceNpInGameMessageSendData(-1, destination, source, message) == InGameMessageContextNotFound, "SendData must reject an unknown context");
+    Require(sceNpInGameMessageSendData(messageContext, nullptr, source, message) == InGameMessageInvalidArgument, "SendData must reject a null destination");
+    Require(sceNpInGameMessageSendData(messageContext, destination, nullptr, message) == InGameMessageInvalidArgument, "SendData must reject a null source");
+    Require(sceNpInGameMessageSendData(messageContext, destination, source, nullptr) == InGameMessageInvalidArgument, "SendData must reject a null message");
+    *reinterpret_cast<std::uint64_t*>(message + 0x80) = 0;
+    Require(sceNpInGameMessageSendData(messageContext, destination, source, message) == InGameMessageInvalidArgument, "SendData must reject an empty message");
+    *reinterpret_cast<std::uint64_t*>(message + 0x80) = 4;
+    Require(sceNpInGameMessageSendData(messageContext, destination, source, message) == InGameMessageNotConnected, "SendData must report the offline transport");
+    std::uint8_t messageA[0x208] {};
+    *reinterpret_cast<std::uint64_t*>(messageA + 0x200) = 4;
+    Require(sceNpInGameMessageSendDataA(-1, destination, source, messageA) == InGameMessageContextNotFound, "SendDataA must reject an unknown context");
+    Require(sceNpInGameMessageSendDataA(messageContext, nullptr, source, messageA) == InGameMessageInvalidArgument, "SendDataA must reject a null destination");
+    *reinterpret_cast<std::uint64_t*>(messageA + 0x200) = 0;
+    Require(sceNpInGameMessageSendDataA(messageContext, destination, source, messageA) == InGameMessageInvalidArgument, "SendDataA must reject an empty message");
+    *reinterpret_cast<std::uint64_t*>(messageA + 0x200) = 4;
+    Require(sceNpInGameMessageSendDataA(messageContext, destination, source, messageA) == InGameMessageNotConnected, "SendDataA must report the offline transport");
     Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the handle");
+    Require(sceNpInGameMessagePrepare(messageContext, messageHandle, 0, 0x1234, nullptr) == InGameMessageHandleNotFound, "Prepare must reject a deleted handle");
     Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == InGameMessageHandleNotFound, "a deleted handle must not be found");
     Require(sceNpInGameMessageTerminate(messageContext) == 0, "sceNpInGameMessageTerminate must end the context");
     Require(sceNpInGameMessageTerminate(messageContext) == InGameMessageContextNotFound, "a terminated context must not be found");
