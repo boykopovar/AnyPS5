@@ -25,18 +25,8 @@ std::int64_t JxrDecodeGetColorContext_nid_no_patch(void* decoder, std::uint8_t* 
 std::int64_t JxrDecodeGetDescriptiveMetadata_nid_no_patch(void* decoder, void* metadata);
 std::int64_t JxrDecodeRelease_nid_no_patch(void** decoder);
 std::int64_t JxrDecodeCreateGuest_nid_no_patch(void** decoder, const JxrDecodeCallbacks* callbacks);
-std::int32_t JxrDecodeHasGetPosGuest_nid_no_patch(void* stream);
-std::int32_t JxrDecodeHasCloseGuest_nid_no_patch(void* decoder);
-std::int64_t JxrDecodeInitializeNative_nid_no_patch(void* decoder, void* stream);
-std::int64_t JxrDecodeGetPixelFormatNative_nid_no_patch(void* decoder, void* format);
-std::int64_t JxrDecodeGetSizeNative_nid_no_patch(void* decoder, std::int32_t* width, std::int32_t* height);
-std::int64_t JxrDecodeGetResolutionNative_nid_no_patch(void* decoder, float* x, float* y);
-std::int64_t JxrDecodeGetColorContextNative_nid_no_patch(void* decoder, std::uint8_t* buffer, std::uint32_t* size);
-std::int64_t JxrDecodeGetDescriptiveMetadataNative_nid_no_patch(void* decoder, void* metadata);
-std::int64_t JxrDecodeCopyNative_nid_no_patch(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride);
-std::int64_t JxrDecodeGetFrameCountNative_nid_no_patch(void* decoder, std::uint32_t* count);
-std::int64_t JxrDecodeSelectFrameNative_nid_no_patch(void* decoder, std::uint32_t frame);
-std::int64_t JxrDecodeReleaseNative_nid_no_patch(void** decoder);
+std::int64_t JxrDecodeCopy_nid_no_patch(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride);
+std::int64_t JxrDecodeSelectFrame_nid_no_patch(void* decoder, std::uint32_t frame);
 
 void* JxrGuestCalloc_nid_no_patch(std::size_t count, std::size_t size) {
     return calloc_nid_postfix(count, size);
@@ -68,64 +58,20 @@ std::int64_t StoreIid(std::int64_t (*lookup)(const char*, std::uint32_t*), const
 }
 
 std::int64_t APS5_VABI DecodeInitializeGuest(void* decoder, void* stream) {
-    if (!decoder || !stream) throw std::invalid_argument("PKImageDecode Initialize requires a decoder and stream");
-    if (!JxrDecodeHasGetPosGuest_nid_no_patch(stream)) throw std::invalid_argument("PKImageDecode Initialize requires GetPos");
-    return JxrDecodeInitializeNative_nid_no_patch(decoder, stream);
+    return PKImageDecode_Initialize_nid_postfix(decoder, static_cast<Jxr::Stream*>(stream));
 }
 
 std::int64_t APS5_VABI DecodeGetPixelFormatGuest(void* decoder, void* format) {
-    if (!decoder || !format) throw std::invalid_argument("PKImageDecode GetPixelFormat requires a decoder and output");
-    return JxrDecodeGetPixelFormatNative_nid_no_patch(decoder, format);
-}
-
-std::int64_t APS5_VABI DecodeGetSizeGuest(void* decoder, std::int32_t* width, std::int32_t* height) {
-    if (!decoder || !width || !height) throw std::invalid_argument("PKImageDecode GetSize requires a decoder and outputs");
-    return JxrDecodeGetSizeNative_nid_no_patch(decoder, width, height);
-}
-
-std::int64_t APS5_VABI DecodeGetResolutionGuest(void* decoder, float* x, float* y) {
-    if (!decoder || !x || !y) throw std::invalid_argument("PKImageDecode GetResolution requires a decoder and outputs");
-    return JxrDecodeGetResolutionNative_nid_no_patch(decoder, x, y);
-}
-
-std::int64_t APS5_VABI DecodeGetColorContextGuest(void* decoder, std::uint8_t* buffer, std::uint32_t* size) {
-    return JxrDecodeGetColorContextNative_nid_no_patch(decoder, buffer, size);
-}
-
-std::int64_t APS5_VABI DecodeGetDescriptiveMetadataGuest(void* decoder, void* metadata) {
-    return JxrDecodeGetDescriptiveMetadataNative_nid_no_patch(decoder, metadata);
+    return PKImageDecode_GetPixelFormat_nid_postfix(decoder, static_cast<JxrGuestGuid*>(format));
 }
 
 std::int64_t APS5_VABI DecodeCopyGuest(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
-    return JxrDecodeCopyNative_nid_no_patch(decoder, rectangle, buffer, stride);
-}
-
-std::int64_t APS5_VABI DecodeGetFrameCountGuest(void* decoder, std::uint32_t* count) {
-    if (!decoder || !count) throw std::invalid_argument("PKImageDecode GetFrameCount requires a decoder and output");
-    return JxrDecodeGetFrameCountNative_nid_no_patch(decoder, count);
+    return JxrDecodeCopy_nid_no_patch(decoder, rectangle, buffer, stride);
 }
 
 std::int64_t APS5_VABI DecodeSelectFrameGuest(void* decoder, std::uint32_t frame) {
-    return JxrDecodeSelectFrameNative_nid_no_patch(decoder, frame);
+    return JxrDecodeSelectFrame_nid_no_patch(decoder, frame);
 }
-
-std::int64_t APS5_VABI DecodeReleaseGuest(void** decoder) {
-    if (!decoder || !*decoder) throw std::invalid_argument("PKImageDecode Release requires a decoder");
-    if (!JxrDecodeHasCloseGuest_nid_no_patch(*decoder)) throw std::invalid_argument("PKImageDecode Release requires a stream Close callback when it owns the stream");
-    return JxrDecodeReleaseNative_nid_no_patch(decoder);
-}
-
-const JxrDecodeCallbacks DecodeCallbacks{
-    DecodeInitializeGuest,
-    DecodeGetPixelFormatGuest,
-    DecodeGetSizeGuest,
-    DecodeGetResolutionGuest,
-    DecodeGetColorContextGuest,
-    DecodeGetDescriptiveMetadataGuest,
-    DecodeCopyGuest,
-    DecodeGetFrameCountGuest,
-    DecodeSelectFrameGuest,
-    DecodeReleaseGuest};
 
 } // namespace
 
@@ -203,8 +149,19 @@ std::int64_t APS5_VABI PKImageDecode_Release_nid_postfix(void** decoder) {
 }
 
 std::int64_t APS5_VABI PKImageDecode_Create_nid_postfix(void** decoder) {
+    static const JxrDecodeCallbacks callbacks{
+        DecodeInitializeGuest,
+        DecodeGetPixelFormatGuest,
+        PKImageDecode_GetSize_nid_postfix,
+        PKImageDecode_GetResolution_nid_postfix,
+        PKImageDecode_GetColorContext_nid_postfix,
+        PKImageDecode_GetDescriptiveMetadata_nid_postfix,
+        DecodeCopyGuest,
+        PKImageDecode_GetFrameCount_nid_postfix,
+        DecodeSelectFrameGuest,
+        PKImageDecode_Release_nid_postfix};
     if (!decoder) throw std::invalid_argument("PKImageDecode_Create requires an output");
-    return JxrDecodeCreateGuest_nid_no_patch(decoder, &DecodeCallbacks);
+    return JxrDecodeCreateGuest_nid_no_patch(decoder, &callbacks);
 }
 
 }
