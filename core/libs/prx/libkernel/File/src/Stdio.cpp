@@ -1369,9 +1369,6 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
         if (WithoutParameterHandler([fd] { return ::_get_osfhandle(fd); }) == -1) return SceErrorFromErrno(GUEST_EBADF);
         return SceErrorFromErrno(GUEST_EINVAL);
     }
-    const GuestArena::HostWrite destination(buf, static_cast<std::size_t>(nbytes));
-    const GuestArena::HostWrite baseDestination(basep, basep == nullptr ? 0 : sizeof(*basep));
-    if (!destination.Open() || !baseDestination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
     return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
 }
 
@@ -1418,10 +1415,10 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
+    if (File::IsDirectoryDescriptor(fd)) return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
     const GuestArena::HostWrite destination(buf, static_cast<std::size_t>(nbytes));
     const GuestArena::HostWrite baseDestination(basep, basep == nullptr ? 0 : sizeof(*basep));
     if (!destination.Open() || !baseDestination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
-    if (File::IsDirectoryDescriptor(fd)) return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
     struct stat status{};
     if (::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
     if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
@@ -1496,12 +1493,12 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
-    const GuestArena::HostWrite destination(buf, static_cast<std::size_t>(nbytes));
-    const GuestArena::HostWrite baseDestination(basep, basep == nullptr ? 0 : sizeof(*basep));
-    if (!destination.Open() || !baseDestination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
     if (File::IsDirectoryDescriptor(fd)) {
         return File::ReadDirectoryDescriptor(fd, buf, nbytes, basep);
     }
+    const GuestArena::HostWrite destination(buf, static_cast<std::size_t>(nbytes));
+    const GuestArena::HostWrite baseDestination(basep, basep == nullptr ? 0 : sizeof(*basep));
+    if (!destination.Open() || !baseDestination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
     struct stat status{};
     if (::fstat(fd, &status) != 0) return SceErrorFromErrno(errno);
     if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
