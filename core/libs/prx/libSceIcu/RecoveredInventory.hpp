@@ -21,7 +21,6 @@ int APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix();
 int APS5_VABI ucal_getDayOfWeekType_nid_postfix();
 int APS5_VABI ucal_getDefaultTimeZone_nid_postfix();
 int APS5_VABI ucal_getKeywordValuesForLocale_nid_postfix();
-int APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix();
 int APS5_VABI ucal_open_nid_postfix();
 int APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix();
 int APS5_VABI ucal_openTimeZones_nid_postfix();
