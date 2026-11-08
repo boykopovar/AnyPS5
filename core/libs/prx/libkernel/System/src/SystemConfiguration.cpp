@@ -150,17 +150,21 @@ std::string WithoutTrailingDot(const char* name) {
     return std::string(view);
 }
 
+struct MeasuredAbsentName {
+    const char* name;
+    int mib[3];
+    std::uint32_t length;
+};
+
+constexpr MeasuredAbsentName MeasuredAbsentNames[] = {
+    {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+    {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+    {"kern.stackprot", {1, 2147483151}, 2},
+    {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
+};
+
 bool IsMeasuredAbsentMib(const int* name, std::uint32_t nameLength) {
-    static constexpr struct {
-        int mib[3];
-        std::uint32_t length;
-    } absent[] = {
-        {{1, 2147482816, 2147482814}, 3},
-        {{1, 2147483151}, 2},
-        {{1, 2147483182, 2147483181}, 3},
-        {{1, 2147482838, 2147482834}, 3},
-    };
-    for (const auto& entry : absent) {
+    for (const auto& entry : MeasuredAbsentNames) {
         if (nameLength == entry.length && std::memcmp(name, entry.mib, entry.length * sizeof(int)) == 0) return true;
     }
     return false;
@@ -629,7 +633,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         return CopyOut(block, sizeof(block), oldValue, oldLength);
     }
     if (std::strcmp(name, "vm.overcommit") == 0) {
-        if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": setting vm.overcommit");
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
         static constexpr int overcommit = 0;
         return CopyOut(&overcommit, sizeof(overcommit), oldValue, oldLength);
     }
@@ -837,6 +844,9 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     };
     if (const int node = TopLevelNode(trimmed); node >= 0) return copyMib(&node, 1);
     for (const auto& entry : known) {
+        if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, entry.length);
+    }
+    for (const auto& entry : MeasuredAbsentNames) {
         if (std::strcmp(name, entry.name) == 0) return copyMib(entry.mib, entry.length);
     }
     for (const auto& entry : SystemStrings) {

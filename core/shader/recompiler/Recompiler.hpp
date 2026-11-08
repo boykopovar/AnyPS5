@@ -129,7 +129,9 @@ enum class ColorExportPacking : std::uint8_t {
     Unorm10_11_11,
     Float11_11_10,
     Unorm4_4_4_4,
-    Uint
+    Uint,
+    UintClamp8,
+    UintClamp16
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -183,8 +185,13 @@ struct TargetBlend {
 
 struct TargetMerge {
     std::uint8_t target = 0;
-    std::uint16_t mask = 0;
+    std::uint32_t mask = 0;
     std::uint8_t samples = 1;
+    ColorExportPacking packing = ColorExportPacking::None;
+    std::uint32_t blendControl = 0;
+    bool layered = false;
+    std::uint32_t firstSlice = 0;
+    std::uint32_t lastSlice = 0;
     std::array<std::uint32_t, 8> descriptor{};
     bool depthStencilWrites = false;
     bool depthStencilTests = false;
@@ -360,6 +367,8 @@ struct SpirvTarget {
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
     bool shaderImageMinLod = false;
+    bool float16WidenNans = false;
+    bool float16NarrowNans = false;
 };
 
 struct BindingLayout {
@@ -560,7 +569,7 @@ struct DescriptorBinding {
     std::vector<bool> samplerCoordinatesIgnored;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
-    std::vector<std::uint32_t> imageSamplers;
+    std::vector<std::uint64_t> imageSamplers;
     std::vector<bool> bufferRead;
     std::vector<std::uint32_t> bufferExtent;
 };

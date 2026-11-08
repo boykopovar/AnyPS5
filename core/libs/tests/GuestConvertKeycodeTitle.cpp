@@ -55,5 +55,6 @@ int main(int argc, char** argv) {
         if (sceConvertKeycodeGetCharacter(28, 0, 39, &character) != rejected) return 1;
         setSdkVersion(sdkVersion);
     }
+    if (sceConvertKeycodeGetImeKeyboardType(-1, &type) != static_cast<int>(0x80BC0010u)) return 1;
     return sceConvertKeycodeGetImeKeyboardType(0x10000000, &type) == 0 && type == 4 ? 0 : 1;
 }

@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>

@@ -61,7 +61,7 @@
 namespace AgcDriver::DriverDetail {
 
 
-std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address, const std::shared_ptr<const ShaderSnapshot>& retained) {
     const auto drain = [](std::uint64_t first, std::size_t bytes) {
         if (!DrawPipeline::Active()) return;
         auto& pipeline = DrawPipeline::Queue0();
@@ -70,8 +70,8 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
     static std::size_t cacheBytes = 0;
-    std::shared_ptr<const ShaderSnapshot> cached;
-    {
+    std::shared_ptr<const ShaderSnapshot> cached = retained != nullptr && retained->codeAddress == address && retained->header.empty() && !retained->code.empty() ? retained : nullptr;
+    if (cached == nullptr) {
         std::lock_guard lock(cacheMutex);
         const auto found = std::find_if(cache.begin(), cache.end(), [address](const auto& entry) { return entry->codeAddress == address; });
         if (found != cache.end()) cached = *found;
@@ -1018,10 +1018,17 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     constexpr std::uint64_t limitBytes = 64u << 20u;
     constexpr std::size_t limitCallees = 64u;
     const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
-    const auto pointer = call.constantPointer ? *call.constantPointer : static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
-    const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
     ShaderRecompiler::ShaderBufferResource descriptor{};
-    std::memcpy(descriptor.fields.data(), words.data(), words.size());
+    if (call.descriptorInUserData) {
+        if (slot + 4u > request.context.userData.size()) throw std::runtime_error("its call table descriptor is outside the user data");
+        std::uint32_t words[4]{};
+        for (std::size_t index = 0u; index < 4u; ++index) words[index] = request.context.userData[slot + index];
+        std::memcpy(descriptor.fields.data(), words, sizeof(words));
+    } else {
+        const auto pointer = call.constantPointer ? *call.constantPointer : static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+        const auto words = ReadGuestBytes(pointer + call.descriptorOffset, 16u, "call table descriptor");
+        std::memcpy(descriptor.fields.data(), words.data(), words.size());
+    }
     const auto bytes = descriptor.GetSize();
     if (bytes > limitBytes) throw std::runtime_error("its call table of " + std::to_string(bytes) + " bytes is larger than the " + std::to_string(limitBytes) + " bytes that are searched for callees");
     const auto table = bytes == 0u ? std::vector<std::uint8_t>{} : ReadGuestBytes(descriptor.Base48(), bytes, "call table");
@@ -2315,6 +2322,10 @@ std::uint64_t DepthCopyPixelProgramAddress(bool multisampled) {
 
 std::uint32_t DepthCopyPixelUserWords(bool multisampled) {
     return multisampled ? 9u : 8u;
+}
+
+bool DriverOwnedProgram(std::uint64_t codeAddress) {
+    return codeAddress == NullPixelProgramAddress() || codeAddress == DepthCopyPixelProgramAddress(false) || codeAddress == DepthCopyPixelProgramAddress(true);
 }
 
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
