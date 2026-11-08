@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -232,12 +233,16 @@ void Copy(AgcDriver::VulkanDevice& device, std::uint64_t source, const OutputBlo
     Run(device, CopyCode, userData);
 }
 
-void StoreImage(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+void StoreImage(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint64_t keys = 0) {
     std::vector<std::uint32_t> userData(16, 0u);
     userData[8] = static_cast<std::uint32_t>(address >> 8u);
     userData[9] = static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((ImageSide - 1u) & 3u) << 30u);
     userData[10] = ((ImageSide - 1u) >> 2u) | ((ImageSide - 1u) << 14u);
     userData[11] = 0xfacu | (TileR64KBX << 20u) | (Type2D << 28u);
+    if (keys != 0) {
+        userData[14] = (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u);
+        userData[15] = static_cast<std::uint32_t>(keys >> 16u);
+    }
     Run(device, StoreCode, userData);
 }
 
@@ -313,20 +318,107 @@ void StagingChunkTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
-void StorageImageTests(AgcDriver::VulkanDevice& device) {
-    GuestHeap heap(true);
-    GuestHeap written(true);
-    const OutputBlock output;
-    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
-    Dispatch(device, heap, written, output);
-    Require(output.Data()[0] == 0u, "resident heap mirror: the first texel read " + Hex(output.Data()[0]) + " before any image store");
-    StoreImage(device, heap.Address());
-    Dispatch(device, heap, written, output);
-    Require(output.Data()[0] == Stored, "resident heap mirror: an address-based read after an image store inside the mirror read " + Hex(output.Data()[0]));
-    StoreImage(device, heap.Address() + UnreadBlock);
+constexpr std::uint32_t CpuWord = 0x0c0ffee0u;
+constexpr std::uint32_t BlockThread = static_cast<std::uint32_t>(Block / ThreadStride);
+
+std::uint32_t ReadGuest(const GuestHeap& heap, std::uint64_t offset) {
     std::uint32_t texel = 0;
-    AgcDriver::GuestMemory::Read(heap.Address() + UnreadBlock, std::as_writable_bytes(std::span(&texel, 1)));
-    Require(texel == Stored, "resident heap mirror: a CPU read after an image store inside the mirror read " + Hex(texel));
+    AgcDriver::GuestMemory::Read(heap.Address() + offset, std::as_writable_bytes(std::span(&texel, 1)));
+    return texel;
+}
+
+void StorageImageTests(AgcDriver::VulkanDevice& device, bool published, bool copied) {
+    using AgcDriver::Graphics::StorageTexture;
+    const auto mode = std::string(published ? "published" : "stored") + " storage image: ";
+    {
+        GuestHeap heap(true);
+        GuestHeap written(true);
+        std::memset(heap.Data(), 0, HeapBytes);
+        const OutputBlock output;
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        Dispatch(device, heap, written, output);
+        Require(output.Data()[0] == 0u, mode + "the first texel read " + Hex(output.Data()[0]) + " before any image store");
+        StoreImage(device, heap.Address());
+        const auto before = StorageTexture::MirrorPublishTotals();
+        Dispatch(device, heap, written, output);
+        Require(output.Data()[0] == Stored, mode + "an address-based read after an image store inside the mirror read " + Hex(output.Data()[0]));
+        if (copied && StorageTexture::MirrorPublishEnabled()) {
+            const auto index = static_cast<std::size_t>(StorageTexture::MirrorFallback::Copied);
+            Require(StorageTexture::MirrorPublishTotals().reasons[index] > before.reasons[index], mode + "a build over a copied heap mirror did not count the copied fallback");
+        }
+        if (published) {
+            Require(heap.Load(0) == 0u, mode + "the address-based build stored the pending image to guest memory (raw guest word " + Hex(heap.Load(0)) + ") instead of publishing it into the heap mirror");
+            Require(StorageTexture::AnyPending(), mode + "the address-based build left no storage results pending");
+            Require(StorageTexture::MirrorPublishTotals().published > before.published, mode + "the address-based build published nothing into the heap mirror");
+            const auto first = StorageTexture::MirrorPublishTotals();
+            Dispatch(device, heap, written, output);
+            const auto again = StorageTexture::MirrorPublishTotals();
+            Require(output.Data()[0] == Stored, mode + "an unchanged second build read " + Hex(output.Data()[0]));
+            Require(again.published == first.published && again.skipped > first.skipped, mode + "an unchanged second build published the image again (" + std::to_string(again.published - first.published) + " publishes, " + std::to_string(again.skipped - first.skipped) + " skips)");
+            StoreImage(device, heap.Address());
+            Dispatch(device, heap, written, output);
+            const auto restored = StorageTexture::MirrorPublishTotals();
+            Require(output.Data()[0] == Stored && restored.published > again.published, mode + "a build after a second image store did not publish the image again (" + std::to_string(restored.published - again.published) + " publishes, " + std::to_string(restored.skipped - again.skipped) + " skips)");
+            heap.Store(Block, CpuWord);
+            Dispatch(device, heap, written, output);
+            Require(output.Data()[0] == Stored && output.Data()[BlockThread] == CpuWord, mode + "after a CPU write into another block of the image an address-based build read " + Hex(output.Data()[0]) + " and " + Hex(output.Data()[BlockThread]) + ", expected the texel and the CPU word");
+        }
+        Require(ReadGuest(heap, 0) == Stored, mode + "a CPU read through the hook after the address-based builds read " + Hex(ReadGuest(heap, 0)));
+        StoreImage(device, heap.Address() + UnreadBlock);
+        Require(ReadGuest(heap, UnreadBlock) == Stored, mode + "a CPU read after an image store inside the mirror read " + Hex(ReadGuest(heap, UnreadBlock)));
+    }
+    if (!published) return;
+    {
+        GuestHeap heap(true);
+        GuestHeap written(true);
+        std::memset(heap.Data(), 0, HeapBytes);
+        const OutputBlock output;
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        Dispatch(device, heap, written, output);
+        StoreImage(device, heap.Address());
+        heap.Store(0, CpuWord);
+        Dispatch(device, heap, written, output);
+        Require(output.Data()[0] == CpuWord, mode + "a CPU write over the pending texel after the image store lost to the image: the address-based build read " + Hex(output.Data()[0]));
+        Require(ReadGuest(heap, 0) == CpuWord, mode + "a CPU write over the pending texel lost to the image in guest memory: " + Hex(ReadGuest(heap, 0)));
+    }
+    {
+        GuestHeap heap(true);
+        std::memset(heap.Data(), 0, HeapBytes);
+        const OutputBlock output;
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        Dispatch(device, heap, heap, output);
+        StoreImage(device, heap.Address());
+        const auto before = StorageTexture::MirrorPublishTotals();
+        Dispatch(device, heap, heap, output);
+        const auto after = StorageTexture::MirrorPublishTotals();
+        const auto writtenReason = static_cast<std::size_t>(StorageTexture::MirrorFallback::Written);
+        Require(after.reasons[writtenReason] > before.reasons[writtenReason], mode + "a build writing the image's range of a writable heap mirror did not fall back to storing the image for that reason (" + std::to_string(after.fallbacks - before.fallbacks) + " fallbacks of any reason)");
+        Require(output.Data()[0] == Stored && heap.Load(0) == Stored, mode + "the writable-heap fallback read " + Hex(output.Data()[0]) + " and left " + Hex(heap.Load(0)) + " in guest memory, expected the texel in both");
+        CheckStores(heap, "writable-heap fallback");
+    }
+    {
+        constexpr std::uint64_t ImageOffset = 4 * Block;
+        constexpr std::uint64_t KeysOffset = 8 * Block;
+        constexpr std::uint32_t ImageThread = static_cast<std::uint32_t>(ImageOffset / ThreadStride);
+        constexpr std::size_t ImageBytes = static_cast<std::size_t>(ImageSide) * ImageSide * sizeof(std::uint32_t);
+        GuestHeap heap(true);
+        GuestHeap written(true);
+        std::memset(heap.Data(), 0, HeapBytes);
+        std::memset(heap.Data() + KeysOffset, 0xff, ImageBytes / 256u);
+        const OutputBlock output;
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        Dispatch(device, heap, written, output);
+        StoreImage(device, heap.Address() + ImageOffset, heap.Address() + KeysOffset);
+        const auto image = StorageTexture::FindPending(heap.Address() + ImageOffset, ImageBytes);
+        Require(image != nullptr && image->Descriptor().dccAddress == heap.Address() + KeysOffset && image->UploadedKeys() == AgcDriver::Graphics::DccKeys::Uncompressed, mode + "the image store with uncompressed DCC keys left no pending DCC image uploaded under uncompressed keys (pending " + std::to_string(image != nullptr) + ", keys at " + Hex(image != nullptr ? image->Descriptor().dccAddress : 0u) + ", key state " + std::to_string(image != nullptr ? static_cast<int>(image->UploadedKeys()) : -1) + ")");
+        const auto index = static_cast<std::size_t>(StorageTexture::MirrorFallback::DccKeys);
+        const auto before = StorageTexture::MirrorPublishTotals();
+        Dispatch(device, heap, written, output);
+        const auto after = StorageTexture::MirrorPublishTotals();
+        Require(output.Data()[ImageThread] == Stored, mode + "an address-based read after a DCC image store with uncompressed keys read " + Hex(output.Data()[ImageThread]));
+        Require(after.published > before.published && after.reasons[index] == before.reasons[index] && heap.Load(ImageOffset) == 0u, mode + "a DCC image whose keys read uncompressed was not published into the heap mirror (" + std::to_string(after.published - before.published) + " publishes, " + std::to_string(after.reasons[index] - before.reasons[index]) + " DCC key fallbacks, raw guest word " + Hex(heap.Load(ImageOffset)) + ")");
+        Require(ReadGuest(heap, ImageOffset) == Stored, mode + "a CPU read through the hook after the DCC image publish read " + Hex(ReadGuest(heap, ImageOffset)));
+    }
 }
 
 struct AddressSpaceLimit {
@@ -594,6 +686,10 @@ int main() {
         }
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         const bool sparse = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
+        if (!sparse && std::getenv("ANYPS5_TEST_EXPECT_MIRROR_PUBLISH") != nullptr) {
+            std::puts("skipped, the device has no sparse residency: the publish negative control needs resident heap mirrors");
+            return VulkanTestSkipped;
+        }
         if (sparse) {
             ResidentTests(*device);
             StagingChunkTests(*device);
@@ -604,7 +700,11 @@ int main() {
         }
         CopiedTests(*device);
         BudgetEvictionTests(*device, sparse);
-        StorageImageTests(*device);
+        if (sparse) StorageImageTests(*device, AgcDriver::Graphics::StorageTexture::MirrorPublishEnabled() || std::getenv("ANYPS5_TEST_EXPECT_MIRROR_PUBLISH") != nullptr, false);
+        {
+            const AddressSpaceLimit limit(1);
+            StorageImageTests(*device, false, true);
+        }
         for (const bool copied : {false, true}) {
             if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
