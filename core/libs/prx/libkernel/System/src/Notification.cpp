@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/System/include/HostNotify.hpp"
 #include <string>
 #include <array>
 #include <cerrno>
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string_view>
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -88,5 +90,6 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
 #endif
         written += static_cast<std::size_t>(count);
     }
+    SendHostNotification("AnyPS5", std::string_view(message, static_cast<std::size_t>(end - message)));
     return 0;
 }
