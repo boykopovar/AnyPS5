@@ -1014,6 +1014,8 @@ void TestBatchContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::uint32_t other = 0;
+    std::uint32_t refused = 0xdeadbeefu;
+    Require(sceAjmInitialize(reinterpret_cast<std::intptr_t>(&refused), &refused) == static_cast<int>(0x80930005) && refused == 0xdeadbeefu);
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
@@ -2621,6 +2623,10 @@ int main(int argc, char** argv) {
     std::uint32_t context = 0;
     Require(sceAjmInitialize(0, nullptr) == invalidParameter);
     Require(sceAjmInitialize(0, &context) == 0 && context != 0);
+    Require(sceAjmModuleRegister(context, 0, 1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 0, -1) == invalidParameter);
+    Require(sceAjmModuleRegister(context, 0, 0) == 0);
+    Require(sceAjmModuleUnregister(context, 0) == 0);
 
     const std::uint8_t stereo48k[4] = {0xFE, 0x72, 0x1F, 0xF0};
     AjmDecAt9ConfigDataInfo info{};

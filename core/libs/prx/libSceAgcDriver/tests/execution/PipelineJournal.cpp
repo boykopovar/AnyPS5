@@ -246,6 +246,15 @@ std::vector<std::uint32_t> ComputeCode(std::uint32_t salt) {
     return code;
 }
 
+constexpr std::uint32_t ReplayedFirstSalt = 8;
+constexpr std::uint32_t ReplayedPrograms = 16;
+
+std::vector<std::vector<std::uint32_t>> ReplayedCodes() {
+    std::vector<std::vector<std::uint32_t>> codes;
+    for (std::uint32_t salt = ReplayedFirstSalt; salt < ReplayedFirstSalt + ReplayedPrograms; ++salt) codes.push_back(ComputeCode(salt));
+    return codes;
+}
+
 ShaderRecompiler::RecompileResult CompileCompute(AgcDriver::VulkanDevice& device, const std::vector<std::uint32_t>& code, std::span<const std::uint32_t> userData, std::uint32_t waveSize) {
     using namespace ShaderRecompiler;
     const std::span<const std::uint32_t> words(code);
@@ -391,11 +400,10 @@ void JournalTests() {
 
 void HeldModuleTests() {
     using namespace NarrowConstantStoreFixture;
-    constexpr std::uint32_t programs = 16;
+    constexpr std::uint32_t programs = ReplayedPrograms;
     Block compute(BlockBytes);
     const auto words = AddressWords(compute);
-    std::vector<std::vector<std::uint32_t>> codes;
-    for (std::uint32_t salt = 1; salt <= programs; ++salt) codes.push_back(ComputeCode(salt));
+    const auto codes = ReplayedCodes();
     {
         const auto device = OpenVulkanTestDevice();
         Require(device != nullptr, "no device to record the compute programs");
@@ -530,11 +538,9 @@ std::vector<ShaderRecompiler::PipelineIdentity> ReadJournalComputeIdentities(con
 
 void ReplayRacesDispatchTests() {
     using namespace NarrowConstantStoreFixture;
-    constexpr std::uint32_t Pipelines = 32;
     Block compute(BlockBytes);
     const auto words = AddressWords(compute);
-    std::vector<std::vector<std::uint32_t>> codes;
-    for (std::uint32_t salt = 16; salt < 16 + Pipelines; ++salt) codes.push_back(ComputeCode(salt));
+    const auto codes = ReplayedCodes();
     const auto path = AgcDriver::Graphics::PipelineJournalPath();
     const std::filesystem::path aside = path.string() + ".aside";
     AgcDriver::Graphics::FlushPipelineJournal();
@@ -556,7 +562,7 @@ void ReplayRacesDispatchTests() {
     }
     const auto journaled = ReadJournalComputeIdentities(path);
     const auto held = std::ranges::count_if(raced, [&](const ShaderRecompiler::PipelineIdentity& identity) { return std::ranges::find(journaled, identity) != journaled.end(); });
-    Require(held == Pipelines, "the journal holds " + std::to_string(held) + " of the " + std::to_string(Pipelines) + " raced compute pipelines under its cap, so the replay cannot race the others");
+    Require(held == ReplayedPrograms, "the journal holds " + std::to_string(held) + " of the " + std::to_string(ReplayedPrograms) + " raced compute pipelines under its cap, so the replay cannot race the others");
     const auto before = Snapshot();
     {
         const auto device = OpenVulkanTestDevice();

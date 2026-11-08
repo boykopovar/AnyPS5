@@ -292,6 +292,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
     ++counters.donors;
     auto relocated = std::make_shared<DrawEntry>();
     relocated->decode = donor->decode;
+    relocated->donor = donor->donor != nullptr ? donor->donor : donor;
     relocated->stages.resize(donor->stages.size());
     for (std::size_t i = 0; i < donor->stages.size(); ++i) {
         const bool moved = std::any_of(moves.begin(), moves.end(), [&](const Move& move) { return move.program == i; });
@@ -314,6 +315,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
             copy->valueSlots = variant->valueSlots;
             copy->calleeWords = variant->calleeWords;
             copy->calleeReads = variant->calleeReads;
+            copy->donor = variant->donor != nullptr ? variant->donor : variant;
             copy->words = variant->words;
             copy->forgetSerial = variant->forgetSerial;
             copy->compiled = variant->compiled;
