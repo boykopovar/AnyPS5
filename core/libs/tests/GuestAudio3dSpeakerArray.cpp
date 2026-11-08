@@ -43,6 +43,15 @@ int main() {
     AudioOut2SpeakerArrayHandle handle = nullptr;
     Require(sceAudio3dCreateSpeakerArray(nullptr, &parameters) == INVALID_PARAMETER, "null handle is an invalid parameter");
     Require(sceAudio3dCreateSpeakerArray(&handle, nullptr) == INVALID_PARAMETER, "null parameters are an invalid parameter");
+    Audio3dSpeakerArrayParameters zeroSpeakers = parameters;
+    zeroSpeakers.numSpeakers = 0;
+    RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &zeroSpeakers); }, "zero speakers parameter is rejected");
+    Audio3dSpeakerArrayParameters nullPositions = parameters;
+    nullPositions.positions = nullptr;
+    RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &nullPositions); }, "null positions parameter is rejected");
+    Audio3dSpeakerArrayParameters nullMemory = parameters;
+    nullMemory.memory = nullptr;
+    RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &nullMemory); }, "null memory parameter is rejected");
     Require(handle == nullptr, "a rejected create leaves the handle");
     Require(sceAudio3dCreateSpeakerArray(&handle, &parameters) == 0, "create succeeds without ambisonics parameters");
     Require(handle != nullptr, "create stores the handle");

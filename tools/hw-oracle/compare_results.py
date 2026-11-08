@@ -61,7 +61,7 @@ def read_report(path):
     return report
 
 
-def compare(before, after):
+def compare_limited(before, after, max_differences):
     for name in SETTINGS:
         if before[name] != after[name]:
             raise ValueError(f"incompatible reports: {name} differs")
@@ -71,11 +71,18 @@ def compare(before, after):
         if left["input"] != right["input"]:
             raise ValueError(f"incompatible reports: row {index} input differs")
     differences = []
+    difference_count = 0
     for index, (left, right) in enumerate(zip(before["rows"], after["rows"]), 1):
         for register, old, new in zip(before["output_registers"], left["output"], right["output"]):
             if old != new:
-                differences.append((index, register, old, new))
-    return differences
+                difference_count += 1
+                if max_differences is None or len(differences) < max_differences:
+                    differences.append((index, register, old, new))
+    return difference_count, differences
+
+
+def compare(before, after):
+    return compare_limited(before, after, None)[1]
 
 
 def nonnegative_integer(value):
@@ -98,18 +105,21 @@ def main():
     args = parser.parse_args()
     try:
         before, after = read_report(args.before), read_report(args.after)
-        differences = compare(before, after)
+        if args.max_differences is None:
+            differences = compare(before, after)
+            difference_count = len(differences)
+        else:
+            difference_count, differences = compare_limited(before, after, args.max_differences)
     except (OSError, UnicodeError, ValueError) as error:
         parser.error(str(error))
     print(f"Assembly targets: {before['assembly_target']} -> {after['assembly_target']}")
     print(f"Compared {len(before['rows'])} rows x {len(before['output_registers'])} registers: "
-          f"{len(differences)} differing words")
-    visible = differences if args.max_differences is None else differences[:args.max_differences]
-    for row, register, old, new in visible:
+          f"{difference_count} differing words")
+    for row, register, old, new in differences:
         print(f"row {row}, {register}: 0x{old:08x} -> 0x{new:08x}")
-    if len(visible) < len(differences):
-        print(f"{len(differences) - len(visible)} additional differing words omitted")
-    return int(bool(differences))
+    if len(differences) < difference_count:
+        print(f"{difference_count - len(differences)} additional differing words omitted")
+    return int(bool(difference_count))
 
 
 if __name__ == "__main__":

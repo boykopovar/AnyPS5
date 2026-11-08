@@ -4,6 +4,8 @@
 
 extern "C" {
 
+int APS5_VABI sceGnmIsDebugResetAvailable();
+
 int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload);
 int APS5_VABI sceGnmComputeWaitOnAddress(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference);
 int APS5_VABI sceGnmComputeWaitSemaphore(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t semaphoreAddress, std::uint32_t flags);

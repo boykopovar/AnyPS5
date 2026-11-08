@@ -10,6 +10,18 @@ struct MouseOpenParam {
     std::uint8_t reserved[7];
 };
 
+struct MouseAbsoluteData {
+    std::uint64_t timestamp;
+    std::uint8_t connected;
+    std::uint8_t padding[3];
+    std::uint32_t buttons;
+    std::uint16_t x;
+    std::uint16_t y;
+    std::int32_t wheel;
+    std::int32_t tilt;
+    std::uint8_t reserved[12];
+};
+
 constexpr int MOUSE_OK = 0;
 constexpr int MOUSE_ERROR_INVALID_ARG = static_cast<int>(0x80df0001u);
 constexpr int MOUSE_ERROR_INVALID_HANDLE = static_cast<int>(0x80df0003u);
@@ -17,9 +29,17 @@ constexpr int MOUSE_ERROR_ALREADY_OPENED = static_cast<int>(0x80df0004u);
 constexpr int MOUSE_ERROR_NOT_INITIALIZED = static_cast<int>(0x80df0005u);
 constexpr int MOUSE_MAX_DATA_NUM = 64;
 constexpr int MOUSE_HANDLE = 1;
+constexpr int MOUSE_DEVICE_ID = 1;
 constexpr std::uint8_t MOUSE_OPEN_PARAM_MERGED = 1;
 
 static_assert(sizeof(MouseOpenParam) == 8);
+static_assert(sizeof(MouseAbsoluteData) == 40);
+static_assert(offsetof(MouseAbsoluteData, connected) == 8);
+static_assert(offsetof(MouseAbsoluteData, buttons) == 12);
+static_assert(offsetof(MouseAbsoluteData, x) == 16);
+static_assert(offsetof(MouseAbsoluteData, y) == 18);
+static_assert(offsetof(MouseAbsoluteData, wheel) == 20);
+static_assert(offsetof(MouseAbsoluteData, tilt) == 24);
 static_assert(sizeof(MouseData) == 40);
 static_assert(alignof(MouseData) == 8);
 static_assert(offsetof(MouseData, timestamp) == 0);
@@ -30,5 +50,12 @@ static_assert(offsetof(MouseData, y_axis) == 20);
 static_assert(offsetof(MouseData, wheel) == 24);
 static_assert(offsetof(MouseData, tilt) == 28);
 static_assert(offsetof(MouseData, reserved) == 32);
+
+constexpr int MOUSE_ERROR_NO_HANDLE = static_cast<int>(0x80df0008u);
+constexpr std::uint32_t MOUSE_MAX_HAND_TYPE = 1;
+constexpr std::uint32_t MOUSE_MAX_POINTER_SPEED = 8;
+constexpr std::uint32_t MOUSE_EXTENSION_DATA_SIZE = 0x30;
+constexpr std::uint32_t MOUSE_EXTENSION_STATE_SIZE = 0x40;
+constexpr std::size_t MOUSE_EXTENSION_CONFIG_SIZE = 0x20;
 
 #endif

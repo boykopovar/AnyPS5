@@ -1,12 +1,14 @@
 #include "prx/libSceNpAuthAuthorizedAppDialog/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 
 namespace {
 
@@ -46,6 +48,7 @@ int APS5_VABI sceNpAuthAuthorizedAppDialogOpen(const NpAuthAuthorizedAppDialogPa
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
+    PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return 0;
 }
 
@@ -62,7 +65,11 @@ int APS5_VABI sceNpAuthAuthorizedAppDialogGetResult(std::int32_t* result) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    *result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const std::int32_t canceled = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &canceled, sizeof(canceled));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 

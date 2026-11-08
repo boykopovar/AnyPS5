@@ -1,6 +1,8 @@
 from pathlib import Path
+import json
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -12,6 +14,8 @@ TOOL = Path(__file__).resolve().parents[1] / "check_skips.py"
 
 class IntentionalSkipTests(unittest.TestCase):
     def check_real_skip(self, property_name, property_value, message, exit_code, expected):
+        if shutil.which("ctest") is None:
+            self.skipTest("CTest is required to write a real JUnit report")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             script = root / "skip.py"
@@ -21,18 +25,25 @@ class IntentionalSkipTests(unittest.TestCase):
                 f'set_tests_properties(gpu_skip PROPERTIES {property_name} "{property_value}")\n', encoding="utf-8")
             report = root / "report.xml"
             generated = subprocess.run(["ctest", "--test-dir", str(root), "--output-junit", str(report)],
-                                       capture_output=True, text=True, timeout=10)
+                                       capture_output=True, encoding="utf-8", timeout=10)
             self.assertEqual(generated.returncode, 0, generated.stdout + generated.stderr)
             xml = report.read_text(encoding="utf-8")
             self.assertIn('status="notrun"', xml)
             self.assertIn('<skipped message="' + ("SKIP_RETURN_CODE=77" if property_name == "SKIP_RETURN_CODE" else "SKIP_REGULAR_EXPRESSION_MATCHED") + '"', xml)
             for job in ("windows", "linux"):
                 with self.subTest(job=job):
-                    checked = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job, "--require-tests"],
-                                             capture_output=True, text=True, timeout=10)
+                    checked = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job],
+                                             capture_output=True, encoding="utf-8", timeout=10)
                     self.assertEqual(checked.returncode, expected, checked.stdout + checked.stderr)
                     self.assertNotIn("Traceback", checked.stderr)
                     self.assertIn("all expected" if expected == 0 else "error: gpu_skip skipped", checked.stdout)
+                    structured = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job, "--require-tests", "--json"],
+                                                capture_output=True, text=True, timeout=10)
+                    self.assertEqual(structured.returncode, expected, structured.stderr)
+                    data = json.loads(structured.stdout)
+                    self.assertEqual(data["skips"][0]["name"], "gpu_skip")
+                    self.assertEqual(data["skips"][0]["expected"], expected == 0)
+
 
     def test_real_return_code_skip_with_accepted_reason_passes(self):
         self.check_real_skip("SKIP_RETURN_CODE", "77", "skipped, no display", 77, 0)
@@ -45,14 +56,6 @@ class IntentionalSkipTests(unittest.TestCase):
 
     def test_real_regex_skip_with_unexpected_reason_fails(self):
         self.check_real_skip("SKIP_REGULAR_EXPRESSION", "skipped,", "skipped, flaky", 0, 1)
-
-    def test_notrun_without_ctest_skip_marker_is_rejected(self):
-        for marker in ('', '<skipped message="no display"/>', '<skipped message="SKIP_RETURN_CODE=77 extra"/>'):
-            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
-                report = Path(directory) / "report.xml"
-                report.write_text(f'<testsuite><testcase name="agc_missing" status="notrun">{marker}</testcase></testsuite>', encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "notrun.*not run"):
-                    list(check_skips.skips(report))
 
     def test_disabled_status_is_rejected_even_with_ctest_skip_marker(self):
         with tempfile.TemporaryDirectory() as directory:

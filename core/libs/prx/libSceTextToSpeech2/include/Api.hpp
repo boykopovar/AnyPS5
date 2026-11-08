@@ -34,5 +34,11 @@ int APS5_VABI sceTextToSpeech2GetSpeechStatus(std::int32_t* status);
 int APS5_VABI sceTextToSpeech2Open(const TextToSpeechOpenParameter* parameter);
 int APS5_VABI sceTextToSpeech2Speak(const TextToSpeechSpeakParameter* parameter);
 int APS5_VABI sceTextToSpeech2Terminate();
+int APS5_VABI sceTextToSpeech2ConvertTextInt();
+int APS5_VABI sceTextToSpeech2GetAudioInt();
+int APS5_VABI sceTextToSpeech2InitializeInt();
+int APS5_VABI sceTextToSpeech2OpenInt();
+int APS5_VABI sceTextToSpeech2RegisterTextConversionItem();
+int APS5_VABI sceTextToSpeech2SynthesizeInt();
 
 }
