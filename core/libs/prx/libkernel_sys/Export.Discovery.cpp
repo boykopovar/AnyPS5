@@ -132,11 +132,6 @@ int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
     return static_cast<int>(static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsGeneration_nid_postfix()));
 }
 
-int APS5_VABI getfsstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ipmimgr_call_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -887,8 +882,9 @@ int APS5_VABI sceKernelGetKnobs(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetKqueueFromEqueue(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetKqueueFromEqueue(KernelEqueue eq, int* kq) {
+    if (!kq) return SCE_KERNEL_ERROR_EINVAL;
+    *kq = static_cast<int>(static_cast<std::uint32_t>(eq));
     return 0;
 }
 
