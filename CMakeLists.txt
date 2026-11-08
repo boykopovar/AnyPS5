@@ -498,6 +498,9 @@ if(BUILD_TESTING)
         add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         set_tests_properties(sanitizer_report PROPERTIES TIMEOUT 20)
+        add_test(NAME sanitizer_comparison COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_compare_sanitizer_runs.py)
+        set_tests_properties(sanitizer_comparison PROPERTIES TIMEOUT 20)
         add_test(NAME relinker_fuzz_fixture_warnings COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_fixture_warnings.py)
         set_tests_properties(relinker_fuzz_fixture_warnings PROPERTIES TIMEOUT 20)
