@@ -1756,12 +1756,18 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     const auto unwatched = unwatchSerial.load(std::memory_order_acquire);
     const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const bool useMemo = memoized && collectMemoEnabled() && bytes != 0;
-    if (useMemo && !sharedCollectMemo()) {
+    const bool epochal = HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0;
+    if (useMemo && epochal && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
         if (epochCollectMapEnabled()) {
             const auto& map = epochCollectMap(epoch);
-            if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == mapping && stop <= found->second.end) {
+            const auto blockFirst = first & ~(WriteBlockBytes - 1);
+            const auto reusable = [&](std::uintptr_t key) {
+                const auto found = map.ranges.find(key);
+                return found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == mapping && stop <= found->second.end;
+            };
+            if (reusable(first) || (blockFirst != first && reusable(blockFirst))) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
                 return tracker.stable.load(std::memory_order_acquire);
             }
@@ -1814,9 +1820,11 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
         if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial, mapping};
         else {
-            auto& memo = threadCollectMemo();
-            memo.entries[memo.next++ % memo.entries.size()] = {first, stop, epoch, serial, mapping};
-            if (epochCollectMapEnabled()) {
+            if (useMemo && epochal) {
+                auto& memo = threadCollectMemo();
+                memo.entries[memo.next++ % memo.entries.size()] = {first, stop, epoch, serial, mapping};
+            }
+            if (epochal && epochCollectMapEnabled()) {
                 auto& entry = epochCollectMap(epoch).ranges[first];
                 if (entry.unwatched != serial || entry.mapping != mapping || entry.end < stop) entry = {first, stop, epoch, serial, mapping};
             }
