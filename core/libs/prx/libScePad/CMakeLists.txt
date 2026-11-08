@@ -33,6 +33,18 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_pad_tilt_correction_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadTiltCorrection.cpp)
+    target_include_directories(guest_pad_tilt_correction_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_tilt_correction_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_tilt_correction_tests)
+    add_test(NAME guest_pad_tilt_correction COMMAND guest_pad_tilt_correction_tests)
+    if(WIN32)
+        set_tests_properties(guest_pad_tilt_correction PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_pad_trigger_effects_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadTriggerEffects.cpp)
     target_include_directories(guest_pad_trigger_effects_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_pad_trigger_effects_tests PRIVATE libScePad libc)
