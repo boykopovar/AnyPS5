@@ -56,7 +56,10 @@ std::vector<Endpoint> ParsePeers(const std::string& text) {
     std::size_t start = 0;
     while (true) {
         const auto comma = text.find(',', start);
-        peers.push_back(ParseEndpoint(text.substr(start, comma == std::string::npos ? std::string::npos : comma - start)));
+        const auto entry = ParseEndpoint(text.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+        bool duplicate = false;
+        for (const auto& peer : peers) duplicate = duplicate || (peer.Host == entry.Host && peer.Port == entry.Port);
+        if (!duplicate) peers.push_back(entry);
         if (comma == std::string::npos) break;
         start = comma + 1;
     }
