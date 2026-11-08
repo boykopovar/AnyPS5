@@ -164,3 +164,21 @@ debt entry, never in code or test names.
 - `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
 - `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
 - `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.
+
+## Breakpoints by NID
+
+`ANYPS5_DEBUG_NIDS` lists NIDs to arm, comma-separated, as `ComputeNid` prints them. A thread that calls an armed NID
+pauses at the call and reads commands from the file named by `ANYPS5_DEBUG_CMD`, one per line: `list`, `args`,
+`add NID`, `remove NID`, `continue`. The file is read again at every stop, so overwrite it to change what happens next.
+
+`tools/debug_nids.py` writes that file. It takes NIDs or symbol names, hashes names the same way the tables do, and
+refuses anything else:
+
+    ANYPS5_DEBUG_CMD=/tmp/cmd.txt python3 tools/debug_nids.py add sceKernelWrite
+    ANYPS5_DEBUG_CMD=/tmp/cmd.txt python3 tools/debug_nids.py continue
+
+- `--print` shows the lines without writing them. `--name` treats a target as a name even when it looks like a NID.
+- Argument values are printed as raw integers and pointers. The relinker does not know the PS5 types of a function's
+  arguments, so `args` shows what the call passed, not what it means.
+- A paused thread stops the title until the command file says `continue`. Pausing a thread that holds a lock another
+  thread needs can freeze the whole title. Known gaps are in the [libc debt file](debt/libc.md).
