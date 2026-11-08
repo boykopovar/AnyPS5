@@ -173,7 +173,7 @@ void APS5_VABI WKRenderLayerGetTypeID();
 void APS5_VABI WKRenderObjectGetTypeID();
 std::uint32_t APS5_VABI WKResourceCacheManagerGetTypeID();
 const void* APS5_VABI WKRetain(const void* object);
-typedef void (*WKRunLoopFunction)(void* context);
+typedef void (APS5_VABI *WKRunLoopFunction)(void* context);
 void APS5_VABI WKRunLoopCallOnMainThread(WKRunLoopFunction function, void* context);
 void APS5_VABI WKRunLoopInitializeMain();
 void APS5_VABI WKRunLoopRunMain();

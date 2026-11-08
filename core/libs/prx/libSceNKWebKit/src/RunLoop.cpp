@@ -29,7 +29,6 @@ void APS5_VABI WKRunLoopInitializeMain() {
 
 void APS5_VABI WKRunLoopRunMain() {
     s_isRunning.store(true, std::memory_order_release);
-    s_stopRequested.store(false, std::memory_order_release);
     while (!s_stopRequested.load(std::memory_order_acquire)) {
         std::pair<WKRunLoopFunction, void*> task{nullptr, nullptr};
         {

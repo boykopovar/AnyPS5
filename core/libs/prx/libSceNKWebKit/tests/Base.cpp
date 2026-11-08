@@ -1526,40 +1526,49 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWithinPageEv();
 }
 
+static int s_runLoopCallCount = 0;
+static void* s_runLoopReceivedContext = nullptr;
+
+static void APS5_VABI RunLoopCallback1(void* ctx) {
+    s_runLoopCallCount++;
+    s_runLoopReceivedContext = ctx;
+    WKRunLoopStopMain();
+}
+
+static void APS5_VABI RunLoopCallback2(void* ctx) {
+    auto* count = static_cast<int*>(ctx);
+    (*count) += 10;
+    WKRunLoopStopMain();
+}
+
 static void TestRunLoop() {
     WKRunLoopInitializeMain();
-    static int callCount = 0;
-    static void* receivedContext = nullptr;
-    callCount = 0;
-    receivedContext = nullptr;
+    WKRunLoopStopMain();
+    WKRunLoopRunMain();
+
+    WKRunLoopInitializeMain();
+    s_runLoopCallCount = 0;
+    s_runLoopReceivedContext = nullptr;
 
     WKRunLoopCallOnMainThread(nullptr, nullptr);
 
     int testContext = 42;
-    WKRunLoopCallOnMainThread([](void* ctx) {
-        callCount++;
-        receivedContext = ctx;
-        WKRunLoopStopMain();
-    }, &testContext);
+    WKRunLoopCallOnMainThread(RunLoopCallback1, &testContext);
 
     WKRunLoopRunMain();
 
-    Require(callCount == 1);
-    Require(receivedContext == &testContext);
+    Require(s_runLoopCallCount == 1);
+    Require(s_runLoopReceivedContext == &testContext);
 
     std::thread backgroundThread([] {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        WKRunLoopCallOnMainThread([](void* ctx) {
-            auto* count = static_cast<int*>(ctx);
-            (*count) += 10;
-            WKRunLoopStopMain();
-        }, &callCount);
+        WKRunLoopCallOnMainThread(RunLoopCallback2, &s_runLoopCallCount);
     });
 
     WKRunLoopRunMain();
     backgroundThread.join();
 
-    Require(callCount == 11);
+    Require(s_runLoopCallCount == 11);
 }
 
 int main() {
