@@ -541,10 +541,12 @@ void OpaqueJSContextGroup::DrainMicrotasks(OpaqueJSContext* ctx) {
 }
 
 void OpaqueJSContextGroup::RefreshDeadline() {
-    if (timeLimitSeconds <= 0.0) {
+    constexpr double maxTimeLimitSeconds = 1.0e9;
+    if (!(timeLimitSeconds > 0.0)) {
         deadline = std::chrono::steady_clock::now();
     } else {
-        deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(timeLimitSeconds));
+        const double seconds = std::min(timeLimitSeconds, maxTimeLimitSeconds);
+        deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
     }
 }
 

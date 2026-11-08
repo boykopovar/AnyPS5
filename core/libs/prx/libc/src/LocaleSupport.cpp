@@ -914,6 +914,62 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
     self->locale = nullptr;
 }
 
+namespace {
+
+constexpr std::size_t SceV2FlagsOffset = 0x18;
+constexpr std::size_t SceV2PrecisionOffset = 0x20;
+
+std::uint32_t SceV2Flags(const GuestLocale::SceV2IosBase* stream) {
+    std::uint32_t flags;
+    std::memcpy(&flags, reinterpret_cast<const unsigned char*>(stream) + SceV2FlagsOffset, sizeof(flags));
+    return flags;
+}
+
+void SetSceV2Flags(GuestLocale::SceV2IosBase* stream, std::uint32_t flags) {
+    std::memcpy(reinterpret_cast<unsigned char*>(stream) + SceV2FlagsOffset, &flags, sizeof(flags));
+}
+
+void APS5_VABI ResetSceV2Flags_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t mask) {
+    if (stream == nullptr) throw std::invalid_argument("resetiosflags: null stream");
+    SetSceV2Flags(stream, SceV2Flags(stream) & ~static_cast<std::uint32_t>(mask));
+}
+
+void APS5_VABI SetSceV2FlagBits_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t mask) {
+    if (stream == nullptr) throw std::invalid_argument("setiosflags: null stream");
+    const auto bits = static_cast<std::uint32_t>(mask);
+    SetSceV2Flags(stream, (SceV2Flags(stream) & ~bits) | (bits & 0xffffu));
+}
+
+void APS5_VABI SetSceV2Base_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t base) {
+    if (stream == nullptr) throw std::invalid_argument("setbase: null stream");
+    const auto value = static_cast<std::int32_t>(base);
+    const std::uint32_t field = value == 8 ? 0x400u : value == 10 ? 0x200u : value == 16 ? 0x800u : 0u;
+    SetSceV2Flags(stream, (SceV2Flags(stream) & 0xfffff1ffu) | field);
+}
+
+void APS5_VABI SetSceV2Precision_nid_no_patch(GuestLocale::SceV2IosBase* stream, std::uint64_t precision) {
+    if (stream == nullptr) throw std::invalid_argument("setprecision: null stream");
+    std::memcpy(reinterpret_cast<unsigned char*>(stream) + SceV2PrecisionOffset, &precision, sizeof(precision));
+}
+
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v213resetiosflagsEi_nid_postfix(std::int32_t mask) {
+    return {&ResetSceV2Flags_nid_no_patch, static_cast<std::uint32_t>(mask)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v211setiosflagsEi_nid_postfix(std::int32_t mask) {
+    return {&SetSceV2FlagBits_nid_no_patch, static_cast<std::uint32_t>(mask)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v27setbaseEi_nid_postfix(std::int32_t base) {
+    return {&SetSceV2Base_nid_no_patch, static_cast<std::uint32_t>(base)};
+}
+
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v212setprecisionEx_nid_postfix(std::int64_t precision) {
+    return {&SetSceV2Precision_nid_no_patch, static_cast<std::uint64_t>(precision)};
+}
+
 void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet) {
     std::lock_guard<std::mutex> lock(g_localeInitMutex);
     g_sceV2RegisteredFacets.push_back(facet);
