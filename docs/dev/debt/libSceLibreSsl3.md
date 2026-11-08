@@ -4,6 +4,7 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
+- [BIO_meth_set_write, set_read, set_create, set_ctrl and set_destroy](../../../core/libs/prx/libSceLibreSsl3/src/BioMethodSetters.cpp) - store the guest callbacks at offsets 16, 24, 56, 48 and 64 of the 80-byte LibreSSL 3.8.4 `BIO_METHOD` and return 1; a null method returns 0. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
 - [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
@@ -71,7 +72,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 125 still-unimplemented callable exports: 116 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 120 still-unimplemented callable exports: 111 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -91,12 +92,9 @@
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
-| `BIO_meth_set_write` | `5DhOJmgra8E` |
-| `BIO_meth_set_create` | `5NBoRJYLH0U` |
 | `X509_CRL_free` | `5PWK0cYOpHs` |
 | `i2d_SSL_SESSION` | `5aSlVeVSKVc` |
 | `tls_read` | `7RvDjfy4gUA` |
-| `BIO_meth_set_read` | `8A-gU2xQfjY` |
 | `EC_POINT_set_affine_coordinates_GFp` | `8AGfaSvdDq4` |
 | `SSL_CTX_set_max_early_data` | `8kct4CSWwOA` |
 | `X509_STORE_CTX_get0_param` | `8wroYNJAQpo` |
@@ -111,7 +109,6 @@
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `TLS_server_method` | `EtM5Jwx4EFo` |
 | `ERR_lib_error_string` | `F7jknWesBTY` |
-| `BIO_meth_set_ctrl` | `GFEaREp1UFw` |
 | `EVP_PKEY_get0_EC_KEY` | `GY2X+VHs568` |
 | `unknown` | `GjO5Ap3E-t4` |
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
@@ -168,7 +165,6 @@
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
 | `X509V3_set_ctx` | `kO-jQ3HS9kE` |
-| `BIO_meth_set_destroy` | `kPCJUQuguzE` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `SSL_set_alpn_protos` | `lyk0UDADPAc` |
 | `RSA_pkey_ctx_ctrl` | `mKlCMgWMU84` |
