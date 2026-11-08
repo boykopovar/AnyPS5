@@ -8,6 +8,7 @@
 namespace Debug {
 
 bool ParseNid(std::string_view text, std::uint64_t& nid);
+std::string FormatNid(std::uint64_t nid);
 
 }
 
