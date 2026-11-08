@@ -3,6 +3,7 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -107,6 +108,14 @@ int main() {
 
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    errno = 71;
+    Require(sceWebBrowserDialogOpen(reinterpret_cast<const void*>(0x10)) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(errno == 71);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(reinterpret_cast<const void*>(0x10), &allowList) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, reinterpret_cast<const WebBrowserDialogAllowList*>(0x10)) == COMMON_DIALOG_ERROR_PARAMETER);
+    Require(errno == 71);
     Require(sceWebBrowserDialogOpen(param) == 0);
     Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_INVALID_STATE);
     Require(sceWebBrowserDialogResetCookie(&badReset) == COMMON_DIALOG_ERROR_INVALID_STATE);
@@ -128,11 +137,19 @@ int main() {
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogOpenForPredeterminedContent(nullptr, &allowList) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    errno = 71;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, reinterpret_cast<const WebBrowserDialogAllowList*>(0x10)) == COMMON_DIALOG_ERROR_PARAMETER);
+    Require(errno == 71);
     WebBrowserDialogAllowList badSizeAllowList = allowList;
     badSizeAllowList.size = sizeof(badSizeAllowList) - 1;
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &badSizeAllowList) == static_cast<int>(0x80B8000Au));
     allowList.addresses[0] = nullptr;
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));
+    allowList.addresses[0] = reinterpret_cast<const char*>(0x10);
+    errno = 71;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == COMMON_DIALOG_ERROR_PARAMETER);
+    Require(errno == 71);
+    allowList.addresses[0] = nullptr;
     allowList.addresses[19] = "test.invalid";
     allowList.reserved[255] = 1;
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));

@@ -13,6 +13,8 @@
 
 - [sceWebBrowserDialogGetEvent, sceWebBrowserDialogNavigate, sceWebBrowserDialogSetZoom](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - return `COMMON_DIALOG_ERROR_NOT_INITIALIZED` (`0x80B80003`) when status is `NONE` before initialization and after termination, with both the error code and state-first check order inferred from the existing dialog lifecycle rather than export-specific evidence. Signatures, argument validation, error precedence and initialized behavior remain unknown and unmodelled; initialized calls throw through `NotImplemented_nid_no_patch`. Not measured on a console.
 
+- [sceWebBrowserDialogOpen, sceWebBrowserDialogOpenForPredeterminedContent](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp) (libSceWebBrowserDialog) - returning `COMMON_DIALOG_ERROR_ARG_NULL` (`0x80B8000D`) for unmapped parameter pointers and `COMMON_DIALOG_ERROR_PARAMETER` (`0x80B8000A`) for unmapped allow-lists or address strings are host-safety fallbacks; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Additional callable exports
 
 - [Additional callable export](../../../core/libs/prx/libSceWebBrowserDialog/Export.cpp): `8r4EJ3FiX4w#H#A` is a function record in `libSceWebBrowserDialog.sprx` from images labelled 3.20 and 13.60. The dynamic metadata maps library ID 7 to `libSceWebBrowserDialogLimited` and module ID 0 to `libSceWebBrowserDialog`. The labels do not authenticate retail firmware provenance. The name, parameter list, return type and behavior are unverified; this import-resolution placeholder throws through `NotImplemented_nid_no_patch`.

@@ -2,6 +2,7 @@
 #include "prx/libSceWebBrowserDialog/include/InventoryExports.hpp"
 #include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -101,6 +102,11 @@ int APS5_VABI sceWebBrowserDialogOpen(const void* param) {
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+ std::uint8_t dummy = 0;
+ const int savedErrno = errno;
+ const bool readable = GuestCopyIn_nid_no_patch(&dummy, param, sizeof(dummy));
+ errno = savedErrno;
+ if (!readable) return COMMON_DIALOG_ERROR_ARG_NULL;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
  g_open = true;
  PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::GenericFeature);
@@ -127,17 +133,41 @@ int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, 
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (allowList == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (allowList->size != sizeof(*allowList)) return COMMON_DIALOG_ERROR_PARAMETER;
+    WebBrowserDialogAllowList localAllowList{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localAllowList, allowList, sizeof(localAllowList));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_PARAMETER;
+    if (localAllowList.size != sizeof(localAllowList)) return COMMON_DIALOG_ERROR_PARAMETER;
     bool hasAddress = false;
-    for (const char* address : allowList->addresses) {
+    for (const char* address : localAllowList.addresses) {
         if (address == nullptr) continue;
         hasAddress = true;
+        char addressBuffer[256]{};
         std::size_t length = 0;
-        while (length < 256 && address[length] != '\0') ++length;
-        if (length == 0 || length == 256) return COMMON_DIALOG_ERROR_PARAMETER;
+        bool nullTerminated = false;
+        for (std::size_t i = 0; i < 256; ++i) {
+            char ch = 0;
+            const int savedErrnoAddr = errno;
+            const bool copiedCh = GuestCopyIn_nid_no_patch(&ch, address + i, sizeof(ch));
+            errno = savedErrnoAddr;
+            if (!copiedCh) return COMMON_DIALOG_ERROR_PARAMETER;
+            if (ch == '\0') {
+                nullTerminated = true;
+                length = i;
+                break;
+            }
+            addressBuffer[i] = ch;
+        }
+        if (!nullTerminated || length == 0) return COMMON_DIALOG_ERROR_PARAMETER;
     }
-    if (!hasAddress || std::any_of(std::begin(allowList->reserved), std::end(allowList->reserved), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
+    if (!hasAddress || std::any_of(std::begin(localAllowList.reserved), std::end(localAllowList.reserved), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
     if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    std::uint8_t dummy = 0;
+    const int savedErrnoParam = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&dummy, param, sizeof(dummy));
+    errno = savedErrnoParam;
+    if (!readable) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
     g_open = true;
