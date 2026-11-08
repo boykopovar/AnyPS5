@@ -565,5 +565,68 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
 
 
+class RunReportTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def report(self, **changes):
+        document = {"format": "anyps5-report", "version": 1,
+                    "coverage": {"milestones": True, "missing": True, "shaders": True, "unsupported": True, "imageFormats": True, "descriptors": True},
+                    "truncated": {"functions": 0, "unsupported": 0, "imageFormats": 0, "descriptors": 0},
+                    "run": {"averageFps": 59.9, "fpsWindowSeconds": 12.5, "framesPresented": 750},
+                    "missing": {"functions": [{"library": "libSceNet", "name": "sceNetFoo", "calls": 3}]},
+                    "shaders": {"compiled": 12, "failed": 1, "cacheHits": 40,
+                                "unsupported": [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "count": 2}]}}
+        document.update(changes)
+        return document
+
+    def read(self, document):
+        path = self.root / "anyps5-report.json"
+        if isinstance(document, str):
+            path.write_text(document, encoding="utf-8")
+        else:
+            path.write_text(json.dumps(document), encoding="utf-8")
+        return title_run.read_report(path)
+
+    def test_full_report(self):
+        report = self.read(self.report())
+        self.assertEqual(report["averageFps"], 59.9)
+        self.assertEqual(report["shaders"], {"compiled": 12, "failed": 1, "cacheHits": 40})
+        self.assertEqual(report["missing"], [{"library": "libSceNet", "name": "sceNetFoo", "calls": 3}])
+        self.assertEqual(report["unsupported"][0]["opcode"], "V_FOO")
+        self.assertEqual(report["truncated"], {"functions": 0, "unsupported": 0})
+
+    def test_cache_hits_are_optional(self):
+        document = self.report()
+        del document["shaders"]["cacheHits"]
+        self.assertEqual(self.read(document)["shaders"], {"compiled": 12, "failed": 1, "cacheHits": None})
+
+    def test_coverage_off_is_not_recorded(self):
+        document = self.report(coverage={"milestones": True, "missing": False, "shaders": False, "unsupported": False, "imageFormats": True, "descriptors": True})
+        report = self.read(document)
+        self.assertIsNone(report["shaders"])
+        self.assertIsNone(report["missing"])
+        self.assertIsNone(report["unsupported"])
+
+    def test_null_fps_is_kept_as_null(self):
+        document = self.report()
+        document["run"]["averageFps"] = None
+        self.assertIsNone(self.read(document)["averageFps"])
+
+    def test_unreadable_reports_are_not_recorded(self):
+        self.assertIsNone(title_run.read_report(self.root / "missing.json"))
+        self.assertIsNone(self.read("{not json"))
+        self.assertIsNone(self.read([1, 2]))
+        self.assertIsNone(self.read(self.report(format="other")))
+
+    def test_wrong_shapes_are_not_recorded(self):
+        report = self.read(self.report(missing={"functions": "many"}, shaders=[1]))
+        self.assertIsNone(report["missing"])
+        self.assertEqual(report["shaders"], {"compiled": None, "failed": None, "cacheHits": None})
+        self.assertIsNone(report["unsupported"])
+
+
 if __name__ == "__main__":
     unittest.main()
