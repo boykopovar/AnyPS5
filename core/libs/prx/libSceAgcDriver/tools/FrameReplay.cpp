@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -280,6 +281,18 @@ void restoreSnapshot(const FrameCaptureReader& reader, const Skipped& skipped) {
     }
 }
 
+#ifdef __linux__
+void requireWatch(const FrameMemoryChunk& chunk) {
+    const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+    const auto first = chunk.address & ~(page - 1);
+    const auto last = (chunk.address + chunk.bytes + page - 1) & ~(page - 1);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first)), static_cast<std::size_t>(last - first));
+    if (GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(last - first))) return;
+    const char* reason = GuestWriteWatch::GuestWriteWatchUnavailableReason_nid_postfix();
+    throw std::runtime_error("frame replay: the guest write watch does not cover the captured range at " + std::to_string(chunk.address) + " of " + std::to_string(chunk.bytes) + " bytes: " + (*reason != '\0' ? reason : "registration did not take effect"));
+}
+#endif
+
 Skipped restoreMemory(const FrameCaptureReader& reader) {
     std::uintptr_t base = 0;
     std::size_t size = 0;
@@ -297,8 +310,14 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
             if (chunk.kind != FrameMemoryKind::Range || chunk.rangeKind == FrameRangeKind::Host) continue;
             const bool gpu = (chunk.access & FrameRangeAccess::Gpu) != 0;
             if (owned[index]) {
-                if (!gpu) skipped.Add(chunk);
-                else std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address)), 0, static_cast<std::size_t>(chunk.bytes));
+                if (!gpu) {
+                    skipped.Add(chunk);
+                } else {
+                    std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address)), 0, static_cast<std::size_t>(chunk.bytes));
+#ifdef __linux__
+                    if (chunk.rangeKind == FrameRangeKind::Watched) requireWatch(chunk);
+#endif
+                }
                 continue;
             }
             auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
@@ -311,6 +330,9 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
                 continue;
             }
             commit(chunk);
+#ifdef __linux__
+            if (chunk.rangeKind == FrameRangeKind::Watched) requireWatch(chunk);
+#endif
             mutation.Add(pointer, bytes, (chunk.access & FrameRangeAccess::Readable) != 0, (chunk.access & FrameRangeAccess::Writable) != 0, gpu);
         }
     }

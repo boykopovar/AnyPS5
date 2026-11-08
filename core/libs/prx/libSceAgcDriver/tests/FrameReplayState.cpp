@@ -116,6 +116,35 @@ void testSharedPage(const std::filesystem::path& directory) {
     const auto skipped = restoreMemory(reader);
     check(skipped.bytes == 0, "a range sharing a page with an earlier one was skipped");
     check(std::equal(gpu.begin(), gpu.end(), page + 0x20) && std::equal(cpu.begin(), cpu.end(), page + 0x40), "ranges sharing a page were not restored");
+    check(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address(page), static_cast<std::size_t>(sysconf(_SC_PAGESIZE))), "a watched range inside a page left the page that holds it unwatched");
+#else
+    static_cast<void>(directory);
+#endif
+}
+
+void testWatchedExisting(const std::filesystem::path& directory) {
+#ifdef __linux__
+    constexpr std::size_t Size = 3u * 65536u;
+    auto* bytes = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Size, 65536));
+    check(bytes != nullptr, "guest allocation failed");
+    GuestArena::GuestArenaCommit_nid_postfix(bytes, Size, 0x04, Size);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(bytes, Size, true, true, true);
+    }
+    const auto watched = bytes + 65536 + 0x30;
+    const std::size_t watchedBytes = 0x100;
+    check(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address(watched), watchedBytes), "the writable mapping was already write-watched");
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(address(watched), watchedBytes, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0, "a watched range on a writable mapping was skipped");
+    check(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address(watched), watchedBytes), "a watched range on an already writable mapping was not write-watched");
 #else
     static_cast<void>(directory);
 #endif
@@ -555,6 +584,7 @@ int main(int argc, char** argv) {
         else if (mode == "zero") testReusedMemory(directory);
         else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
         else if (mode == "shared_page") testSharedPage(directory);
+        else if (mode == "watched_existing") testWatchedExisting(directory);
         else if (mode == "host_neighbors") testHostNeighbors(directory);
         else if (mode == "unwatched") testUnwatched();
         else if (mode == "trace_window") testTraceWindow(directory);
