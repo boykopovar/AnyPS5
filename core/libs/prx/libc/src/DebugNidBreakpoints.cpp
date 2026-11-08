@@ -85,6 +85,17 @@ bool NidBreakpointTable::Add(std::uint64_t nid) {
     return true;
 }
 
+bool NidBreakpointTable::Remove(std::uint64_t nid) {
+    std::lock_guard lock(mutex_);
+    const std::size_t count = count_.load(std::memory_order_relaxed);
+    const std::size_t index = IndexOf(nid);
+    if (index == count)
+        return false;
+    nids_[index].store(nids_[count - 1].load(std::memory_order_relaxed), std::memory_order_relaxed);
+    count_.store(count - 1, std::memory_order_release);
+    return true;
+}
+
 std::size_t NidBreakpointTable::IndexOf(std::uint64_t nid) const {
     const std::size_t count = count_.load(std::memory_order_relaxed);
     for (std::size_t i = 0; i < count; ++i) {
