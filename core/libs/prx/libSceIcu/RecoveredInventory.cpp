@@ -299,10 +299,6 @@ int APS5_VABI ufmtval_getString_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ufmtval_nextPosition_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uidna_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
