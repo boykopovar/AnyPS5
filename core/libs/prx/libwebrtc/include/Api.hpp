@@ -18,6 +18,7 @@
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
 #include "prx/libwebrtc/include/RtcError.hpp"
+#include "prx/libwebrtc/include/AudioOptions.hpp"
 #include "prx/libwebrtc/include/SocketAddress.hpp"
 #include "prx/libwebrtc/include/RaceChecker.hpp"
 #include "prx/libwebrtc/include/RtcpTransportFeedback.hpp"
@@ -75,7 +76,7 @@ void APS5_VABI _ZN6webrtc13CryptoOptionsC1ERKS0__nid_postfix(WebRtcCryptoOptions
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(void);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(void);
+WebRtcAudioOptions* APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(WebRtcAudioOptions* result, const void* source);
 bool APS5_VABI _ZNK3rtc9IPAddresseqERKS0__nid_postfix(const WebRtcIpAddress* address, const WebRtcIpAddress* other);
 const char* APS5_VABI _ZNK6webrtc8RTCError7messageEv_nid_postfix(const WebRtcRtcError* error);
 int APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(void);
