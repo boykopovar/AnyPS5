@@ -132,6 +132,17 @@ void ZeroPercentSendsNothing() {
     Require(Simulate(scheduler, start, 65000, 0, Never).empty(), "0 percent never sends a pulse, not even a stop");
 }
 
+void FocusedWindowKeepsTheIdentifyPattern() {
+    for (unsigned player = 1; player <= Pad::kIdentifyMaxPlayer; ++player) {
+        Pad::IdentifyScheduler scheduler;
+        const auto start = Clock::now();
+        scheduler.Bind(start, player, Pad::IdentifyMode::Connect);
+        const bool focused = !Pad::RumbleSuppressed(true, true);
+        const auto calls = Simulate(scheduler, start, 65000, 100, [focused](std::int64_t) { return !focused; });
+        Require(focused && calls.size() == player, "a focused window sends the identify pattern for player N");
+    }
+}
+
 void UserScaleAppliesToThePulse() {
     Pad::IdentifyScheduler half;
     const auto start = Clock::now();
@@ -176,6 +187,7 @@ int main() {
     ConnectSendsEachPlayersPatternOnceAfterTheQuietWindow();
     TitleRumbleDelaysTheStartAndCancelsThePattern();
     TitleRumbleIsNeverOverlapped();
+    FocusedWindowKeepsTheIdentifyPattern();
     AlwaysRepeatsThirtySecondsAfterTheLastPulse();
     ZeroPercentSendsNothing();
     UserScaleAppliesToThePulse();
