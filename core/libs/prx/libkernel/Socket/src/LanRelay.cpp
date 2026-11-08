@@ -1,5 +1,7 @@
 #include "prx/libkernel/Socket/include/LanRelay.hpp"
 #include <cerrno>
+#include <cstdio>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -176,6 +178,25 @@ bool Relay::IsOpen() const {
 
 std::uint16_t Relay::Port() const {
     return port;
+}
+
+std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log) {
+    Settings settings;
+    try {
+        settings = ReadSettings(listen, peers);
+    } catch (const std::invalid_argument& error) {
+        if (log != nullptr) std::fprintf(log, "%s, LAN relay is off\n", error.what());
+        return nullptr;
+    }
+    if (!settings.Listen) return nullptr;
+    auto relay = std::make_unique<Relay>();
+    try {
+        relay->Open(*settings.Listen);
+    } catch (const std::exception& error) {
+        if (log != nullptr) std::fprintf(log, "%s, LAN relay is off\n", error.what());
+        return nullptr;
+    }
+    return relay;
 }
 
 }

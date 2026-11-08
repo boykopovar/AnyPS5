@@ -2,6 +2,8 @@
 #define CORE_LIBS_PRX_LIBKERNEL_SOCKET_INCLUDE_LANRELAY_HPP
 
 #include <cstdint>
+#include <cstdio>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -39,6 +41,8 @@ private:
     std::uintptr_t handle = ~std::uintptr_t(0);
     std::uint16_t port = 0;
 };
+
+std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log);
 
 }
 
