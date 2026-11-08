@@ -220,6 +220,14 @@ bool ParseKeep(const char* text, unsigned& value, std::string& error) {
     return true;
 }
 
+bool RotationNeeded(std::uint64_t size, std::uint64_t length, std::uint64_t maxBytes) {
+    return maxBytes != 0 && size != 0 && length <= maxBytes && size + length > maxBytes;
+}
+
+std::string RotatedName(const std::string& path, unsigned index) {
+    return path + "." + std::to_string(index);
+}
+
 std::unique_ptr<Session> StartFromValue(const char* value, Factory& factory, std::string& error) {
     error.clear();
     if (value == nullptr || *value == '\0') return nullptr;
