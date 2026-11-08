@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <random>
 #include <string>
 #include <string_view>
@@ -592,6 +594,77 @@ void CheckReportHandlers() {
     Require(sceAudio3dPortGetStatus(0, nullptr, nullptr, 0) == INVALID_PORT && g_reports.empty(), "no reports without a call handler");
 }
 
+struct ReportBarrier {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool entered = false;
+    bool release = false;
+    bool unregister_started = false;
+    bool unregister_finished = false;
+    bool reporter_finished = false;
+    int unregister_result = -1;
+    int callbacks = 0;
+};
+
+void APS5_VABI HoldReport(const Audio3dReport*, void* user_data) {
+    auto& barrier = *static_cast<ReportBarrier*>(user_data);
+    std::unique_lock lock(barrier.mutex);
+    ++barrier.callbacks;
+    barrier.entered = true;
+    barrier.condition.notify_all();
+    barrier.condition.wait(lock, [&] { return barrier.release; });
+}
+
+void CheckReportUnregisterBarrierAttempt() {
+    ReportBarrier barrier;
+    std::uint64_t handle = 0;
+    Require(sceAudio3dReportRegisterHandler(0, HoldReport, &barrier, &handle) == 0, "register a blocking call report handler");
+    std::thread reporter([&] {
+        Require(sceAudio3dPortGetStatus(1, nullptr, nullptr, 0) == INVALID_PORT, "the blocking call report returns the original status");
+        {
+            std::lock_guard lock(barrier.mutex);
+            barrier.reporter_finished = true;
+            barrier.condition.notify_all();
+        }
+    });
+    {
+        std::unique_lock lock(barrier.mutex);
+        Require(barrier.condition.wait_for(lock, std::chrono::seconds(5), [&] { return barrier.entered; }), "report callback must start");
+    }
+    std::thread unregisterer([&] {
+        {
+            std::lock_guard lock(barrier.mutex);
+            barrier.unregister_started = true;
+            barrier.condition.notify_all();
+        }
+        const int result = sceAudio3dReportUnregisterHandler(handle);
+        {
+            std::lock_guard lock(barrier.mutex);
+            barrier.unregister_result = result;
+            barrier.unregister_finished = true;
+            barrier.condition.notify_all();
+        }
+    });
+    bool blocked = false;
+    {
+        std::unique_lock lock(barrier.mutex);
+        Require(barrier.condition.wait_for(lock, std::chrono::seconds(5), [&] { return barrier.unregister_started; }), "unregister must start while the callback is active");
+        blocked = !barrier.condition.wait_for(lock, std::chrono::milliseconds(100), [&] { return barrier.unregister_finished; });
+        barrier.release = true;
+        barrier.condition.notify_all();
+        Require(barrier.condition.wait_for(lock, std::chrono::seconds(5), [&] { return barrier.reporter_finished && barrier.unregister_finished; }), "report and unregister must both finish after callback release");
+    }
+    reporter.join();
+    unregisterer.join();
+    Require(blocked, "unregister must wait for an in-flight report callback");
+    Require(barrier.unregister_result == 0 && barrier.callbacks == 1, "unregister must finish after exactly one callback");
+    Require(sceAudio3dPortGetStatus(1, nullptr, nullptr, 0) == INVALID_PORT && barrier.callbacks == 1, "no report callback may start after unregister returns");
+}
+
+void CheckReportUnregisterBarrier() {
+    for (int attempt = 0; attempt < 6; ++attempt) CheckReportUnregisterBarrierAttempt();
+}
+
 void CheckTerminate() {
     std::uint32_t id = 7;
     const Audio3dOpenParameters parameters = Defaults();
@@ -698,6 +771,7 @@ int main(int argc, char** argv) {
     CheckBed();
     CheckBedQueue();
     CheckReportHandlers();
+    CheckReportUnregisterBarrier();
     CheckTerminate();
     Require(RunAsPs4Process(argv[0]) == 0, "the PS4 process checks must pass");
 }

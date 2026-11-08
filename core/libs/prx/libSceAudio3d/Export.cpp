@@ -261,12 +261,8 @@ void APS5_VABI DispatchReport_nid_no_patch(std::uint32_t type, std::uint32_t por
     static_assert(sizeof(arguments) == sizeof(Audio3dReportArguments));
     Audio3dReport report{sizeof(Audio3dReport), port_id, object_id, type, result, function, argument_types, {}};
     std::memcpy(&report.arguments, arguments, sizeof(report.arguments));
-    Audio3dReportSlot slots[AUDIO3D_REPORT_SLOTS];
-    {
-        std::lock_guard lock(g_report_mutex);
-        std::copy(std::begin(g_report_slots[type]), std::end(g_report_slots[type]), slots);
-    }
-    for (const Audio3dReportSlot& slot : slots) {
+    std::lock_guard lock(g_report_mutex);
+    for (const Audio3dReportSlot& slot : g_report_slots[type]) {
         if (slot.handler != nullptr) slot.handler(&report, slot.user_data);
     }
 #ifdef _WIN32
