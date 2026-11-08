@@ -460,11 +460,6 @@ int APS5_VABI libwebrtcUnknown19(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3rtc17AsyncPacketSocketD2Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
