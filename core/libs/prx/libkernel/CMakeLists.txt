@@ -56,6 +56,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/AddressConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketConnect.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/LanRelay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/EventFlag/src/EventFlag.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Module.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/DynamicLoader.cpp
@@ -1933,6 +1934,10 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_socket_stream_options_tests)
     add_test(NAME guest_socket_stream_options COMMAND guest_socket_stream_options_tests)
     set_tests_properties(guest_socket_stream_options PROPERTIES TIMEOUT 20)
+    add_test_executable(lan_relay_tests ${LIBS_INCLUDE_DIR}/tests/LanRelayHost.cpp ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/LanRelay.cpp)
+    target_include_directories(lan_relay_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(lan_relay_tests)
+    add_test(NAME lan_relay COMMAND lan_relay_tests)
     if(WIN32)
         set_tests_properties(guest_socket_stream_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")

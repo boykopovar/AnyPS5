@@ -11,6 +11,8 @@ struct Endpoint {
     std::uint16_t Port = 0;
 };
 
+Endpoint ParseEndpoint(const std::string& text);
+
 }
 
 #endif
