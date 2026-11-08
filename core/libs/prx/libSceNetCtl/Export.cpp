@@ -25,6 +25,7 @@
 #endif
 #endif
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -127,8 +128,11 @@ static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCall
     std::lock_guard lock(g_callbackLock);
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
         if (!callbacks[index].func) {
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(cid, &index, sizeof(index));
+            errno = savedErrno;
+            if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
             callbacks[index] = {func, arg, 0};
-            *cid = index;
             return 0;
         }
     }
