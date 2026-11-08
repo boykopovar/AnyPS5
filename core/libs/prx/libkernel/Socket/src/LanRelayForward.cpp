@@ -53,17 +53,20 @@ std::vector<Ipv4Interface> HostIpv4Interfaces() {
 
 }
 
-void ForwardBroadcastSend(std::uintptr_t native, const sockaddr* destination, const void* buffer, std::size_t length) {
+void ForwardLanSend(std::uintptr_t native, const sockaddr* destination, const void* buffer, std::size_t length) {
     if (destination == nullptr || destination->sa_family != AF_INET) return;
     const auto* target = reinterpret_cast<const sockaddr_in*>(destination);
     const std::uint16_t destinationPort = ntohs(target->sin_port);
     if (destinationPort == 0 || length > MaxFramePayload) return;
     WithActiveRelay([&](Relay& relay) {
         if (relay.Peers().empty()) return;
-        if (!IsBroadcast(ntohl(target->sin_addr.s_addr), HostIpv4Interfaces())) return;
-        int enabled = 0;
-        socklen_t enabledSize = sizeof enabled;
-        if (getsockopt(static_cast<SocketHandle>(native), SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char*>(&enabled), &enabledSize) != 0 || enabled == 0) return;
+        const std::uint32_t address = ntohl(target->sin_addr.s_addr);
+        if (!IsMulticast(address)) {
+            if (!IsBroadcast(address, HostIpv4Interfaces())) return;
+            int enabled = 0;
+            socklen_t enabledSize = sizeof enabled;
+            if (getsockopt(static_cast<SocketHandle>(native), SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char*>(&enabled), &enabledSize) != 0 || enabled == 0) return;
+        }
         sockaddr_in local{};
         socklen_t localSize = sizeof local;
         if (getsockname(static_cast<SocketHandle>(native), reinterpret_cast<sockaddr*>(&local), &localSize) != 0) return;
