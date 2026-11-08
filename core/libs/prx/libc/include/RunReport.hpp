@@ -48,6 +48,7 @@ inline constexpr std::size_t MaxListedFunctions = 200;
 inline constexpr std::size_t MaxListedFormats = 100;
 inline constexpr std::size_t MaxTextCharacters = 300;
 inline constexpr std::size_t FrameTimeWindow = 2048;
+inline constexpr long long SlowCompileNanoseconds = 100000000LL;
 
 template <typename TValue, std::size_t TCapacity>
 class FixedRing {
@@ -142,6 +143,7 @@ struct Observations {
     std::int64_t shadersCompiled = 0, shadersFailed = 0;
     std::optional<std::int64_t> cacheHits;
     std::optional<double> shaderCompileMs;
+    std::optional<std::int64_t> slowCompiles;
     std::vector<FunctionEntry> functions;
     std::vector<UnsupportedEntry> unsupported;
     std::vector<FormatEntry> imageFormats;
@@ -300,7 +302,7 @@ private:
     FixedRing<double, FrameTimeWindow> frameTimes;
     std::atomic<std::int64_t> firstFrameNanos{-1};
     std::atomic<std::int64_t> lastFrameNanos{-1};
-    std::atomic<std::int64_t> compiled{0}, failedShaders{0}, cacheHitCount{0}, compileNanos{0};
+    std::atomic<std::int64_t> compiled{0}, failedShaders{0}, cacheHitCount{0}, compileNanos{0}, slowCompileCount{0};
     std::atomic<int> lost[4];
     std::atomic<const std::atomic<unsigned long long>*> descriptorCounters{nullptr};
     std::atomic<const std::atomic<unsigned long long>*> formatCounters{nullptr};
