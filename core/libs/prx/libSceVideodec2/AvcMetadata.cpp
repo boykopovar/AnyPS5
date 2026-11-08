@@ -47,6 +47,7 @@ private:
 
 struct Slice {
     unsigned pps = 0;
+    unsigned sps = 0;
     std::uint32_t frameNum = 0;
     std::uint32_t field = 0;
     std::uint32_t bottom = 0;
@@ -293,12 +294,7 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
             } else if (type == 8) {
                 flags.pictureParameterSetPresentFlag = 1;
                 const auto id = bits.Unsigned(255);
-                Pps pps{bits.Unsigned(31), bytes, {}};
-                if (state.pps[id]) {
-                    pps.unsupported = state.pps[id]->unsupported;
-                    if (state.pps[id]->bytes != bytes && state.pps[id]->sps != pps.sps) pps.unsupported = "H.264 PPS replacement naming another SPS is unsupported until decoder recreation";
-                }
-                state.pps[id] = std::move(pps);
+                state.pps[id] = bits.Unsigned(31);
             } else if (type == 6) Sei(bytes, flags, timing);
             else if (type == 9) {
                 if (flags.auDelimiterPresentFlag) throw std::runtime_error("multiple H.264 access unit delimiters");
@@ -311,11 +307,11 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
                 bits.Unsigned(9);
                 const auto ppsId = bits.Unsigned(255);
                 if (!state.pps[ppsId]) throw std::runtime_error("H.264 picture parameter set is unavailable");
-                const auto& pps = *state.pps[ppsId];
-                if (!state.sps[pps.sps]) throw std::runtime_error("H.264 sequence parameter set is unavailable");
-                const auto& sps = *state.sps[pps.sps];
+                const auto spsId = *state.pps[ppsId];
+                if (!state.sps[spsId]) throw std::runtime_error("H.264 sequence parameter set is unavailable");
+                const auto& sps = *state.sps[spsId];
                 if (sps.separateColourPlanes) bits.Skip(2);
-                Slice current{ppsId, bits.Read(sps.frameNumBits), 0, 0, type == 5, (annexB[start] & 0x60) != 0};
+                Slice current{ppsId, spsId, bits.Read(sps.frameNumBits), 0, 0, type == 5, (annexB[start] & 0x60) != 0};
                 if (!sps.info.frameMbsOnlyFlag) {
                     current.field = bits.Read(1);
                     if (current.field) current.bottom = bits.Read(1);
@@ -325,7 +321,6 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
                 } else {
                     first = current;
                     selected = sps;
-                    if (!pps.unsupported.empty() && metadata.unsupported.empty()) metadata.unsupported = pps.unsupported;
                 }
             } else throw std::runtime_error("H.264 NAL unit type " + std::to_string(type) + " metadata is unsupported");
         } catch (const std::runtime_error& error) {
@@ -337,6 +332,8 @@ Metadata Parse_nid_no_patch(State& state, std::span<const std::uint8_t> annexB) 
         if (metadata.unsupported.empty()) metadata.unsupported = "H.264 access unit carries no picture";
         return metadata;
     }
+    if (first->idr || !state.activeSps) state.activeSps = first->sps;
+    else if (*state.activeSps != first->sps && metadata.unsupported.empty()) metadata.unsupported = "H.264 sequence parameter set changed without an IDR picture";
     auto& info = metadata.info;
     info = selected->info;
     if (!selected->unsupported.empty() && metadata.unsupported.empty()) metadata.unsupported = selected->unsupported;
