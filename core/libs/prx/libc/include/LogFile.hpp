@@ -104,6 +104,8 @@ Factory& SystemFactory();
 
 bool ParseMaxBytes(const char* text, std::uint64_t& value, std::string& error);
 bool ParseKeep(const char* text, unsigned& value, std::string& error);
+bool RotationNeeded(std::uint64_t size, std::uint64_t length, std::uint64_t maxBytes);
+std::string RotatedName(const std::string& path, unsigned index);
 
 bool Active();
 void Flush();
