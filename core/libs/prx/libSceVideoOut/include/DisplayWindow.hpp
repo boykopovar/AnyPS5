@@ -10,6 +10,12 @@ inline constexpr std::uint32_t DisplayWindowMinimumWidth = 320;
 inline constexpr std::uint32_t DisplayWindowMinimumHeight = 180;
 inline constexpr std::uint32_t DisplayWindowInitialSizePercent = 60;
 
+namespace frame_watchdog {
+
+void Beat() noexcept;
+
+}
+
 class DisplayWindow {
 public:
     DisplayWindow() = default;

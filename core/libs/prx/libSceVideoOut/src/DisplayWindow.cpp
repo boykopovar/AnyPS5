@@ -6,6 +6,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "Decoder/Png.hpp"
 #include "SDL_vulkan.h"
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -158,6 +159,21 @@ void DisplayWindow::DrawableSize(std::uint32_t& width, std::uint32_t& height) co
     height = drawableHeight > 0 ? static_cast<std::uint32_t>(drawableHeight) : 0;
 }
 
+namespace frame_watchdog {
+
+namespace {
+
+std::atomic<std::int64_t> g_lastFrameNanoseconds{0};
+
+}
+
+void Beat() noexcept {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    g_lastFrameNanoseconds.store(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), std::memory_order_relaxed);
+}
+
+}
+
 void DisplayWindow::UpdateTitle() {
     require(window != nullptr, "window must exist before updating title");
     static const AppTitle title = GetAppTitle_nid_postfix();
@@ -165,6 +181,7 @@ void DisplayWindow::UpdateTitle() {
     static std::uint64_t fpsFrames = 0;
     static double currentFps = 0.0;
     const auto now = std::chrono::steady_clock::now();
+    frame_watchdog::Beat();
     frameNum++;
     fpsFrames++;
     const double elapsed = std::chrono::duration<double>(now - fpsStart).count();
