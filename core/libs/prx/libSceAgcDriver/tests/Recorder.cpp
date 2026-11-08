@@ -616,6 +616,14 @@ public:
                 robustness.pNext = address.pNext;
                 address.pNext = &robustness;
             }
+            VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+            if (hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                extensionsEnabled.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+                portabilityFeatures.pNext = address.pNext;
+                address.pNext = &portabilityFeatures;
+            }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
@@ -6176,6 +6184,96 @@ bool unitShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool idlePublishDmaBufWaitTests(const Device& device, Recorder& recorder) {
+#ifndef __linux__
+    static_cast<void>(device);
+    static_cast<void>(recorder);
+    std::cout << "skipped, dma-buf imports require Linux\n";
+    return false;
+#else
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    if (!UnitShadowEnabled() || !context.dmaBufImport) {
+        std::cout << "skipped, unit shadows or host imports are unavailable (no dma-buf import)\n";
+        return false;
+    }
+    const int fd = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        std::cout << "skipped, host imports are unavailable: /dev/udmabuf cannot be opened\n";
+        return false;
+    }
+    close(fd);
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 8 * unit;
+    struct Backing {
+        const Context& context;
+        Recorder& recorder;
+        void* block = nullptr;
+        std::int64_t physical = -1;
+        ~Backing() {
+            try {
+                recorder.Sync();
+                ClearHostImports(context.device);
+            } catch (const std::exception& error) {
+                std::cerr << "dma-buf idle publish cleanup did not finish: " << error.what() << '\n';
+                return;
+            }
+            if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), bytes);
+            if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
+        }
+    } backing{context, recorder};
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, unit, 0, &backing.physical) == 0, "allocate the idle publish dma-buf backing");
+    Require(sceKernelMapDirectMemory(&backing.block, bytes, 0x33, 0, backing.physical, unit) == 0, "map the idle publish dma-buf backing");
+    auto* words = static_cast<std::uint8_t*>(backing.block);
+    std::memset(words, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(words);
+    const auto* import = HostImportFor(context, address, bytes);
+    Require(import != nullptr && import->dmaBuf, "the direct memory did not use a dma-buf import");
+    Require(!import->unwatched && Watched(address, bytes), "the dma-buf import did not stay watched");
+    recorder.Sync();
+    CollectWritesUncached(address, bytes);
+    const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    const auto retile = [&](std::uint64_t begin, std::uint8_t value) {
+        auto destination = ShadowDestinationFor(context, *import, begin, begin + unit);
+        Require(destination.has_value() && destination->seedUnits.empty(), "the dma-buf retile has no whole-unit shadow destination");
+        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(pattern->Bytes().data(), value, pattern->Bytes().size());
+        const auto commands = recorder.Commands();
+        recorder.Keep(pattern);
+        recorder.Keep(destination->slab);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy piece{0, destination->offset, unit};
+        copyBuffer(commands, pattern->Handle(), destination->buffer, 1, &piece);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{begin, begin + unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+        Require(AnyShadowedOverlaps(begin, unit), "the dma-buf retile is not shadowed");
+    };
+    retile(address + 2 * unit, 0x22);
+    retile(address + 3 * unit, 0x33);
+    StorageTexture::FlushAllPending("idle");
+    Require(!AnyShadowedOverlaps(address + 2 * unit, 2 * unit), "the idle flush did not publish the dma-buf shadows");
+    Require(!recorder.PendingWriteOverlaps(address + 2 * unit, 2 * unit), "the idle flush returned before its dma-buf publish completed");
+    words[2 * unit] = 0x44;
+    words[4 * unit - 1] = 0x45;
+    recorder.Sync();
+    for (std::size_t offset = 0; offset < bytes; ++offset) {
+        const auto expected = offset == 2 * unit ? 0x44 : offset == 4 * unit - 1 ? 0x45 : offset >= 2 * unit && offset < 3 * unit ? 0x22 : offset >= 3 * unit && offset < 4 * unit ? 0x33 : 0x11;
+        Require(words[offset] == expected, "the idle dma-buf publish overwrote a later CPU store or changed another byte");
+    }
+    CollectWritesUncached(address, bytes);
+    retile(address + 5 * unit, 0x55);
+    StorageTexture::FlushAllPending("label");
+    const bool pending = recorder.PendingWriteOverlaps(address + 5 * unit, unit);
+    recorder.Sync();
+    Require(pending, "the non-idle dma-buf publish was waited");
+    Require(std::all_of(words + 5 * unit, words + 6 * unit, [](std::uint8_t value) { return value == 0x55; }), "the non-idle dma-buf publish did not land");
+    std::cout << "dma-buf idle publish wait and later CPU stores verified\n";
+    return true;
+#endif
+}
+
 void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
@@ -9611,6 +9709,33 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
         Require(proved() == landed, "the proof over the pending key store held after its batch retired");
         image->Refresh();
         Require(proved() == landed + 1, "the proof was not taken again over the landed keys");
+        const auto* import = HostImportFor(base, address, bytes);
+        Require(import != nullptr, "the pending key store block lost its import");
+        const auto waits = KeyWaitCounts();
+        {
+            const auto commands = recorder.Commands();
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, resource.dccAddress - import->base, keyCount, 0xffffffffu);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+            recorder.NotePendingWrite(resource.dccAddress + keyCount / 2, keyCount / 2);
+            recorder.NotePendingFill(resource.dccAddress, keyCount / 2, 0xff);
+        }
+        texels[0] = 0x22;
+        image->Refresh();
+        const auto answered = KeyWaitCounts();
+        Require(answered.fillsUncompressed > waits.fillsUncompressed, "the refresh over a pending uncompressed key fill was not answered by the key writers (" + std::to_string(answered.calls - waits.calls) + " waits: " + std::to_string(answered.known - waits.known) + " known, " + std::to_string(answered.noPending - waits.noPending) + " with no pending write, " + std::to_string(answered.synced - waits.synced) + " synced)");
+        Require(image->KeyProof().pendingNote != 0, "the refresh over a pending uncompressed key fill took no proof of its write note");
+        image->Refresh();
+        const auto filling = proved();
+        image->Refresh();
+        Require(proved() == filling + 1, "a refresh of the unchanged target over its pending uncompressed key fill was not answered from the proof");
+        recorder.NotePendingFill(resource.dccAddress, keyCount / 2, 0xff);
+        const auto renoted = proved();
+        image->Refresh();
+        Require(proved() == renoted, "a refresh over a newer pending write of the keys was answered from the proof of an older one");
+        recorder.Sync();
+        const auto retired = proved();
+        image->Refresh();
+        Require(proved() == retired, "the proof over the pending uncompressed key fill held after its batch retired");
     }
     recorder.Sync();
     return true;
@@ -11540,7 +11665,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     Require(replaced != other && sample(second) == replaced && sample(first) == remade, "the cache does not answer with the replacements");
     const auto firstWords = linearTextureWords(reinterpret_cast<std::uint64_t>(first), width, height, 56);
     const auto secondWords = linearTextureWords(reinterpret_cast<std::uint64_t>(second), width, height, 56);
-    const auto bindElements = [&](std::initializer_list<std::array<std::uint32_t, 8>> elements, std::vector<bool> depthCompare) {
+    const auto bindElements = [&](std::initializer_list<std::array<std::uint32_t, 8>> elements, ShaderRecompiler::ElementFlags depthCompare) {
         program.bindings[0].count = static_cast<std::uint32_t>(elements.size());
         program.bindings[0].guestDescriptor.clear();
         for (const auto& words : elements) program.bindings[0].guestDescriptor.insert(program.bindings[0].guestDescriptor.end(), words.begin(), words.end());
@@ -15169,6 +15294,9 @@ int main(int argc, char** argv) {
             gpu.unlock();
             windowImportUnmapTests(device);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-dmabuf-wait-only") {
+            return idlePublishDmaBufWaitTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-wait-only") {
             if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {

@@ -123,6 +123,10 @@ extern "C" void AgcDriverRequestScreenshot_nid_postfix() {
     AgcDriver::Screenshot::Request();
 }
 
+extern "C" void AgcDriverTracePresent_nid_postfix(std::uint32_t width, std::uint32_t height) {
+    AgcDriver::DriverDetail::Driver::Get().TracePresent(width, height);
+}
+
 extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     AgcDriver::RegisterShader(shader);
 } catch (const ProcessShutdown&) {
@@ -159,6 +163,10 @@ extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait*
     const auto count = std::min(capacity, awaited.size());
     std::copy_n(awaited.begin(), count, waits);
     return count;
+}
+
+extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
 }
 
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed) {
