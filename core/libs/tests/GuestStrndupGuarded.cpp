@@ -63,7 +63,7 @@ int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(ApplicationHeapDefault_nid_no_patch());
     Guarded memory;
-    for (const std::size_t length : {0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 255}) {
+    for (const std::size_t length : {0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 128, 255, 512}) {
         auto* input = memory.data + memory.size - std::max<std::size_t>(length, 1);
         std::fill_n(input, std::max<std::size_t>(length, 1), static_cast<unsigned char>('x'));
         for (const bool terminated : {false, true}) {
@@ -77,4 +77,25 @@ int main() {
             Require(std::equal(before.begin(), before.end(), input));
         }
     }
+
+    for (const std::size_t limit : {0u, 1u, 10u, 100u, 1024u}) {
+        char* emptyResult = strndup_nid_postfix("", limit);
+        Require(emptyResult != nullptr && std::strlen(emptyResult) == 0 && emptyResult[0] == '\0');
+        free_nid_postfix(emptyResult);
+    }
+
+    const char sample[] = "playstation";
+    for (const std::size_t limit : {11u, 12u, 50u, 1000u}) {
+        char* sampleResult = strndup_nid_postfix(sample, limit);
+        Require(sampleResult != nullptr && std::strcmp(sampleResult, sample) == 0);
+        free_nid_postfix(sampleResult);
+    }
+
+    char* dupEmpty = strdup_nid_postfix("");
+    Require(dupEmpty != nullptr && std::strlen(dupEmpty) == 0);
+    free_nid_postfix(dupEmpty);
+
+    char* dupSample = strdup_nid_postfix(sample);
+    Require(dupSample != nullptr && std::strcmp(dupSample, sample) == 0);
+    free_nid_postfix(dupSample);
 }
