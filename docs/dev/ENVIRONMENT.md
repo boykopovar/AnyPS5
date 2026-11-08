@@ -699,6 +699,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_HOST_NOTIFY` | string | `core/libs/prx/libkernel/System/src/HostNotify.cpp` | off | `1` sends each console notice (`sceSysUtilSendSystemNotificationWithText`, and the PSN dialog notices of `ANYPS5_PSN_DIALOGS=show`) to the desktop through `notify-send` on Linux, `osascript` on macOS or PowerShell on Windows, in addition to standard error; `0`, unset or empty keeps the stderr line only; any other value logs one line and stays off. The text is passed as one argument, never through a shell, and only the notice text is shown, with the title `AnyPS5` |
 | `ANYPS5_LOADEXEC_ARGV_SKIP` | string | `core/libs/prx/libkernel/System/src/Process.cpp` |  | on Windows, set to `1` to drop the first process argument and clear the variable |
 | `APS5_COARSE_TIMED_WAITS` | presence | `core/libs/prx/libkernel/Time/TimedWait.cpp` |  | on Windows, rounds timed waits up to the scheduler tick |
 | `APS5_DIRECT_MEMORY_FROM_FLEXIBLE` | presence | `core/libs/prx/libkernel/DirectMemory/Export.cpp` |  | reports 12736 MiB less the configured flexible-memory size as the direct-memory size, and stops direct-memory allocation there, instead of 13824 MiB |
