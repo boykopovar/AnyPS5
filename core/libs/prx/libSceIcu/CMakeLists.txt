@@ -308,3 +308,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
+
+target_sources(libSceIcu PRIVATE DateFormatSymbols.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_date_format_symbols_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DateFormatSymbols.cpp)
+    target_include_directories(guest_icu_date_format_symbols_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_date_format_symbols_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_date_format_symbols_tests)
+    add_test(NAME guest_icu_date_format_symbols COMMAND guest_icu_date_format_symbols_tests)
+    set_tests_properties(guest_icu_date_format_symbols PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_date_format_symbols PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
