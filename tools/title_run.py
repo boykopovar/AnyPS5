@@ -247,12 +247,17 @@ def report_field(run, name):
     return (run.get("report") or {}).get(name)
 
 
+def shader_count(run, name):
+    return (report_field(run, "shaders") or {}).get(name)
+
+
 def compare_runs(summary, previous):
     compared = {}
     for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
         before, now = last_run(previous["titles"][title_id]), last_run(summary["titles"][title_id])
         compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
-                              "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps"))}
+                              "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
+                              "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS}}
     return compared
 
 
