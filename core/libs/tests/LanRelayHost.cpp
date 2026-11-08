@@ -120,6 +120,23 @@ static void NamesTheVariableInErrors() {
         [] { LanRelay::ReadSettings(nullptr, "127.0.0.1:47001"); });
 }
 
+static void OpensAndClosesOnEphemeralPort() {
+    LanRelay::Relay relay;
+    Require(!relay.IsOpen() && relay.Port() == 0, "a new relay is closed");
+    relay.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    Require(relay.IsOpen() && relay.Port() != 0, "the relay opens on an OS-chosen port");
+    bool refused = false;
+    try {
+        relay.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    } catch (const std::logic_error&) {
+        refused = true;
+    }
+    Require(refused, "a second Open on an open relay is refused");
+    relay.Close();
+    Require(!relay.IsOpen() && relay.Port() == 0, "Close leaves the relay closed");
+    relay.Close();
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
@@ -128,5 +145,6 @@ int main() {
     RejectsInvalidEndpoints();
     ReadsSettings();
     NamesTheVariableInErrors();
+    OpensAndClosesOnEphemeralPort();
     return 0;
 }
