@@ -88,11 +88,22 @@ static void KeepsOneCopyOfDuplicatePeers() {
     Require(LanRelay::ParsePeers("127.0.0.1:47001,127.0.0.1:47002").size() == 2, "the same host on another port is another peer");
 }
 
+static void ReadsSettings() {
+    const auto off = LanRelay::ReadSettings(nullptr, nullptr);
+    Require(!off.Listen && off.Peers.empty(), "both unset leaves the feature off");
+    Require(!LanRelay::ReadSettings("", "").Listen, "empty variables leave the feature off");
+    const auto listenOnly = LanRelay::ReadSettings("127.0.0.1:47000", nullptr);
+    Require(listenOnly.Listen && listenOnly.Listen->Port == 47000 && listenOnly.Peers.empty(), "a listen address alone is valid");
+    const auto both = LanRelay::ReadSettings("127.0.0.1:47000", "127.0.0.1:47001");
+    Require(both.Listen && both.Peers.size() == 1 && both.Peers[0].Port == 47001, "listen and peers are read together");
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
     RejectsEmptyPeerEntries();
     KeepsOneCopyOfDuplicatePeers();
     RejectsInvalidEndpoints();
+    ReadsSettings();
     return 0;
 }
