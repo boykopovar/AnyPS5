@@ -700,6 +700,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_LAN_LISTEN` | string | `core/libs/prx/libkernel/Socket/src/LanRelayStartup.cpp` |  | IPv4 `host:port` (UDP) the LAN relay listens on for frames from peers, opened at start; unset or empty keeps the feature off; a bad value prints one line naming the variable and stays off |
+| `ANYPS5_LAN_PEERS` | string | `core/libs/prx/libkernel/Socket/src/LanRelayStartup.cpp` |  | comma-separated list of IPv4 `host:port` peers the LAN relay sends to; needs `ANYPS5_LAN_LISTEN`; repeated entries count once, an empty entry or a bad one prints one line naming the variable and keeps the feature off |
 | `ANYPS5_LOADEXEC_ARGV_SKIP` | string | `core/libs/prx/libkernel/System/src/Process.cpp` |  | on Windows, set to `1` to drop the first process argument and clear the variable |
 | `APS5_COARSE_TIMED_WAITS` | presence | `core/libs/prx/libkernel/Time/TimedWait.cpp` |  | on Windows, rounds timed waits up to the scheduler tick |
 | `APS5_DIRECT_MEMORY_FROM_FLEXIBLE` | presence | `core/libs/prx/libkernel/DirectMemory/Export.cpp` |  | reports 12736 MiB less the configured flexible-memory size as the direct-memory size, and stops direct-memory allocation there, instead of 13824 MiB |
