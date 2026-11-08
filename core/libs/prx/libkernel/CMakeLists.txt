@@ -1943,6 +1943,17 @@ if(BUILD_TESTING)
         target_link_libraries(lan_relay_tests PRIVATE ws2_32)
     endif()
     add_test(NAME lan_relay COMMAND lan_relay_tests)
+    add_test_executable(guest_udp_broadcast_relay_tests ${LIBS_INCLUDE_DIR}/tests/GuestUdpBroadcastRelay.cpp)
+    target_include_directories(guest_udp_broadcast_relay_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_udp_broadcast_relay_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_udp_broadcast_relay_tests)
+    add_test(NAME guest_udp_broadcast_relay COMMAND guest_udp_broadcast_relay_tests)
+    set_tests_properties(guest_udp_broadcast_relay PROPERTIES TIMEOUT 20
+        ENVIRONMENT "ANYPS5_LAN_LISTEN=127.0.0.1:47391;ANYPS5_LAN_PEERS=127.0.0.1:47392")
+    if(WIN32)
+        set_tests_properties(guest_udp_broadcast_relay PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_socket_stream_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
