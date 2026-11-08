@@ -1,6 +1,7 @@
 #include "prx/libScePlayGoDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,9 @@ int main() {
     Require(scePlayGoDialogClose() == notInitialized);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
+    errno = 0;
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
+    Require(errno == 0);
 
     const int openParam = 1;
     Require(scePlayGoDialogOpen(&openParam) == notInitialized);
@@ -59,6 +63,9 @@ int main() {
     Require(scePlayGoDialogOpen(&openParam) == 0);
 
     PlayGoDialogResult result{};
+    errno = 0;
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
+    Require(errno == 0);
     Require(scePlayGoDialogGetResult(&result) == 0);
     Require(result.result == 0 && result.errorCode == 0);
     result.errorCode = 7;
