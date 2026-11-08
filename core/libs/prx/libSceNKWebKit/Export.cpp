@@ -140,10 +140,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown__minus_MlTHMZSyok_nid_no_patch() {
 }
 APS5_EXPORT("-MlTHMZSyok", libSceNKWebKitLegacyUnknown__minus_MlTHMZSyok_nid_no_patch);
 
-int APS5_VABI _ZN7WebCore9GLContextnwEmPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore8Document10setBgColorERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6213,10 +6209,6 @@ int APS5_VABI WKBundleSetAllowStorageAccessFromFileURLS() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore9GLContextdaEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore5Frame6createEPNS_4PageEPNS_21HTMLFrameOwnerElementEON3WTF9UniqueRefINS_17FrameLoaderClientEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6345,10 +6337,6 @@ int APS5_VABI _ZN7WebCore11DisplayList9DrawImageD2Ev() {
 }
 
 int APS5_VABI _ZN7WebCore11DisplayList11DrawingItemD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9GLContextnaEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -7626,10 +7614,6 @@ int APS5_VABI _ZN7WebCore11MessagePort37isExistingMessagePortLocallyReachableERK
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore9GLContextdlEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore24DeprecatedGlobalSettings38setLowPowerVideoAudioBufferSizeEnabledEb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7928,10 +7912,6 @@ int APS5_VABI _ZNK7WebCore12ISOWebVTTCue2idEv() {
 }
 
 int APS5_VABI WKCookieManagerSetCookieForHostname() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9GLContextnaEmPv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9892,10 +9872,6 @@ int APS5_VABI _ZN7WebCore4Node16addEventListenerERKN3WTF10AtomStringEONS1_3RefIN
 }
 
 int APS5_VABI _ZN7WebCore18TextureMapperLayer14paintRecursiveERKNS_25TextureMapperPaintOptionsE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9GLContextnwEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
