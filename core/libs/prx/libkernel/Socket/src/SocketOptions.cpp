@@ -13,6 +13,7 @@
 #endif
 #endif
 #include "prx/libkernel/Socket/include/SocketError.hpp"
+#include "prx/libkernel/Socket/include/LanRelay.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
