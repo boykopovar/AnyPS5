@@ -879,7 +879,7 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) descriptorVariables.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
-        if ((op == spv::OpAccessChain || op == spv::OpInBoundsAccessChain || op == spv::OpPtrAccessChain || op == spv::OpInBoundsPtrAccessChain || op == spv::OpLoad || op == spv::OpCopyObject) && count >= 4u) usedDescriptors.insert(materialized[cursor + 3u]);
+        if ((op == spv::OpAccessChain || op == spv::OpInBoundsAccessChain || op == spv::OpPtrAccessChain || op == spv::OpInBoundsPtrAccessChain || op == spv::OpLoad || op == spv::OpCopyObject || op == spv::OpArrayLength) && count >= 4u) usedDescriptors.insert(materialized[cursor + 3u]);
         cursor += count;
     }
     const auto unused = [&](std::uint32_t id) { return descriptorVariables.contains(id) && !usedDescriptors.contains(id); };
@@ -1910,6 +1910,11 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(merge.target);
             mix(merge.mask);
             mix(merge.samples);
+            mix(static_cast<std::uint64_t>(merge.packing));
+            mix(merge.blendControl);
+            mix(merge.layered);
+            mix(merge.firstSlice);
+            mix(merge.lastSlice);
             for (const auto word : merge.descriptor) mix(word);
             if (!merge.blend.enabled) continue;
             mix(merge.blend.snorm);
@@ -1996,6 +2001,10 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     }
     result->cacheHit = cacheHit;
     std::shared_ptr<const RecompileResult> shared = std::move(result);
+    if (donor != nullptr) {
+        reportResultMemo();
+        return shared;
+    }
     const auto bytes = resultBytes(*shared);
     const auto insert = [&](std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t key, std::shared_ptr<const MemoPatch> recipe, bool count) {
         if (table == nullptr) {
