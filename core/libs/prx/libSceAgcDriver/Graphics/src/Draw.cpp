@@ -3480,6 +3480,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(rangeBytes <= std::numeric_limits<std::size_t>::max(), "indirect draw record range overflow");
         if (!gpuIndirectDraws) indirect.path = IndirectDrawPath::Disabled;
         else if (inputs.listRestartPrimitive != 0) indirect.path = IndirectDrawPath::FeatureGap;
+        else if (draw.indexed && !context.indexedIndirectPatches && std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::TessellationControl; })) indirect.path = IndirectDrawPath::FeatureGap;
         else indirect.path = decide(args->arguments, static_cast<std::size_t>(rangeBytes), indirect.argumentImport);
         if (indirect.path == IndirectDrawPath::Gpu && args->countIndirect) {
             Require(context.drawIndirectCount, "indirect draw count without VK_KHR_draw_indirect_count must be resolved by the driver");

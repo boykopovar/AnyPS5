@@ -4702,6 +4702,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.pipelineCacheSynchronization = state->pipelineCache ? &state->pipelineCache->Synchronization() : nullptr;
     context.individuallyFreeDescriptorSets = state->individuallyFreeDescriptorSets;
     context.tessellationPipelineCache = state->tessellationPipelineCache;
+    context.indexedIndirectPatches = state->indexedIndirectPatches;
     context.dmaBufImport = state->dmaBufImport;
     context.sparseBinding = state->sparseBinding;
     context.sparseResidencyBuffer = state->sparseResidencyBuffer;
