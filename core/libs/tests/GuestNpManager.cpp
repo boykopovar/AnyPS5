@@ -1,6 +1,7 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
@@ -25,8 +26,10 @@ constexpr int IdMapperRefusedArgument = static_cast<int>(0x80553083u);
 constexpr int IdMapperRefusedRequestId = static_cast<int>(0x80553085u);
 constexpr int ManagerIntTableFull = static_cast<int>(0x80559D05u);
 constexpr int ManagerIntNotInTable = static_cast<int>(0x80559D0Au);
+constexpr int InGameMessageInvalidArgument = static_cast<int>(0x80552B02u);
 constexpr int InGameMessageContextNotFound = static_cast<int>(0x80552B03u);
 constexpr int InGameMessageHandleNotFound = static_cast<int>(0x80552B05u);
+constexpr int InGameMessageNotConnected = static_cast<int>(0x80552B08u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -663,6 +666,167 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckValueClasses() {
+    constexpr int OnlineIdTooLong = static_cast<int>(0x80559E11u);
+    constexpr int UserInvalid = static_cast<int>(0x80559E2Au);
+    constexpr int AccountIdMissing = static_cast<int>(0x80559E2Bu);
+    constexpr int GuestUser = 0x20000000;
+
+    NpOnlineIdObject onlineId;
+    _ZN3sce2np10NpOnlineIdC1Ev(&onlineId);
+    Require(_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a default online id must be empty");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "player") == 0, "a short online id must be accepted");
+    Require(!_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a set online id must not be empty");
+    Require(std::strcmp(onlineId.data, "player") == 0, "the online id text must be stored");
+    Require(onlineId.data[6] == '\0' && onlineId.data[15] == '\0', "the online id must be zero padded");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdef") == 0, "a 16-character online id must be accepted");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdefg") == OnlineIdTooLong, "a longer online id must be refused");
+    Require(std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0, "a refused online id must leave the text untouched");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, nullptr) == InvalidArgument, "a null online id text must be refused");
+
+    NpOnlineIdObject onlineIdCopy;
+    _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
+    Require(_ZN3sce2npeqERKNS0_10NpOnlineIdES3_(&onlineId, &onlineIdCopy), "an online id must equal its copy");
+    Require(!_ZN3sce2npneERKNS0_10NpOnlineIdES3_(&onlineId, &onlineIdCopy), "an online id must not differ from its copy");
+    SceNpOnlineId sdkOnlineId {};
+    std::memcpy(sdkOnlineId.data, onlineId.data, sizeof(sdkOnlineId.data));
+    sdkOnlineId.term = onlineId.term;
+    Require(_ZN3sce2npeqERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(&sdkOnlineId, &onlineId), "an SDK online id must equal the matching object");
+    Require(_ZN3sce2npeqERKNS0_10NpOnlineIdERK13SceNpOnlineId(&onlineId, &sdkOnlineId), "the object must equal the matching SDK online id");
+    sdkOnlineId.data[0] = 'x';
+    Require(_ZN3sce2npneERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(&sdkOnlineId, &onlineId), "a different SDK online id must differ");
+    Require(_ZN3sce2npneERKNS0_10NpOnlineIdERK13SceNpOnlineId(&onlineId, &sdkOnlineId), "the object must differ from a different SDK online id");
+    _ZN3sce2np10NpOnlineId5ClearEv(&onlineId);
+    Require(_ZNK3sce2np10NpOnlineId7IsEmptyEv(&onlineId), "a cleared online id must be empty");
+
+    NpIdObject npId;
+    _ZN3sce2np4NpIdC1Ev(&npId);
+    SceNpId sdkNpId {};
+    std::memcpy(sdkNpId.handle.data, "player", 6);
+    sdkNpId.opt[0] = 1;
+    sdkNpId.reserved[0] = 2;
+    NpIdObject npIdFromSdk;
+    _ZN3sce2np4NpIdC1ERK7SceNpId(&npIdFromSdk, &sdkNpId);
+    Require(std::memcmp(&npIdFromSdk.id, &sdkNpId, sizeof(sdkNpId)) == 0, "an NpId must copy the SDK block");
+    NpIdObject npIdCopy;
+    _ZN3sce2np4NpIdC1ERKS1_(&npIdCopy, &npIdFromSdk);
+    Require(std::memcmp(&npIdCopy.id, &sdkNpId, sizeof(sdkNpId)) == 0, "an NpId must copy another NpId");
+    _ZN3sce2np4NpId5ClearEv(&npIdCopy);
+    Require(npIdCopy.id.handle.data[0] == '\0', "a cleared NpId must drop the handle");
+
+    UserObject user;
+    _ZN3sce2np4UserC1Ev(&user);
+    Require(_ZNK3sce2np4User7IsEmptyEv(&user), "a default user must be empty");
+    Require(_ZNK3sce2np4User9GetUserIdEv(&user) == USER_SERVICE_USER_ID_INVALID, "a default user must have the invalid id");
+    UserObject guestUser;
+    _ZN3sce2np4UserC1Ei(&guestUser, GuestUser);
+    Require(_ZNK3sce2np4User7IsGuestEv(&guestUser), "a guest id must be reported as a guest");
+    Require(!_ZNK3sce2np4User7IsGuestEv(&user), "an invalid id must not be reported as a guest");
+    Require(!_ZNK3sce2np4User10IsLoggedInEv(&user), "an invalid id must not be logged in");
+    std::uint64_t accountId = 0x5a5a;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&user, &accountId) < 0 && accountId == 0, "a missing user must not report an account id");
+    bool hasAccountId = true;
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&user, &hasAccountId) < 0, "a missing user must not answer an account id query");
+    Require(_ZNK3sce2np4User25GetAccountIdFromRegistoryEPm(&user, &accountId) < 0, "a missing user must not read the registry");
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&user, nullptr) == InvalidArgument, "a null account id output must be refused");
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&user, nullptr) == InvalidArgument, "a null account id flag must be refused");
+
+    UserObject userCopy;
+    _ZN3sce2np4UserC1ERKS1_(&userCopy, &guestUser);
+    Require(_ZN3sce2npeqERKNS0_4UserES3_(&userCopy, &guestUser), "a user must equal its copy");
+    const int guestId = GuestUser;
+    Require(_ZN3sce2npeqERKNS0_4UserERKi(&userCopy, &guestId), "a user must equal its id");
+    Require(!_ZN3sce2npneERKNS0_4UserES3_(&userCopy, &guestUser), "a user must not differ from its copy");
+    Require(!_ZN3sce2npneERKNS0_4UserERKi(&userCopy, &guestId), "a user must not differ from its id");
+    _ZN3sce2np4User5ClearEv(&userCopy);
+    Require(_ZNK3sce2np4User7IsEmptyEv(&userCopy), "a cleared user must be empty");
+
+    UserObject initialUser;
+    _ZN3sce2np4UserC1Ei(&initialUser, USER_SERVICE_INITIAL_USER_ID);
+    Require(_ZNK3sce2np4User10IsLoggedInEv(&initialUser), "the initial user must be logged in");
+    Require(!_ZNK3sce2np4User7IsGuestEv(&initialUser), "the initial user must not be a guest");
+    accountId = 0x5a5a;
+    Require(_ZNK3sce2np4User12GetAccountIdEPm(&initialUser, &accountId) == AccountIdMissing && accountId == 0, "a user without an account id must report the missing id");
+    hasAccountId = true;
+    Require(_ZNK3sce2np4User12HasAccountIdEPb(&initialUser, &hasAccountId) == 0 && !hasAccountId, "a user without an account id must report no account");
+    Require(_ZNK3sce2np4User25GetAccountIdFromRegistoryEPm(&initialUser, &accountId) == 0 && accountId == 0, "the registry lookup must return the empty account id");
+
+    UserObject fetchedUser;
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_USER_ID_INVALID, &fetchedUser) == UserInvalid, "GetUser must refuse the invalid id");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(123, &fetchedUser) == UserInvalid, "GetUser must refuse a user that is not registered");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, &fetchedUser) == 0 && fetchedUser.userId == USER_SERVICE_INITIAL_USER_ID, "GetUser must return the registered user");
+    Require(_ZN3sce2np4User7GetUserEiPS1_(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "GetUser must refuse a null output");
+
+    SceNpOnlineId onlineIdOut {};
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    NpOnlineIdObject onlineIdObjectOut;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+
+    NpTitleTokenObject titleToken;
+    _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
+    Require(_ZNK3sce2np12NpTitleToken6GetStrEv(&titleToken) == titleToken.data, "GetStr must point at the token storage");
+    Require(titleToken.data[0] == '\0' && titleToken.data[0x40f] == '\0', "a default title token must be empty");
+    NpTitleTokenObject titleTokenCopy;
+    _ZN3sce2np12NpTitleTokenC1ERKS1_(&titleTokenCopy, &titleToken);
+    Require(std::memcmp(titleTokenCopy.data, titleToken.data, sizeof(titleToken.data)) == 0, "a title token must copy the full block");
+    _ZN3sce2np12NpTitleToken5ClearEv(&titleTokenCopy);
+    Require(titleTokenCopy.data[0] == '\0', "a cleared title token must be empty");
+
+    NpAccessTokenObject accessToken;
+    _ZN3sce2np13NpAccessTokenC1Ev(&accessToken);
+    Require(_ZNK3sce2np13NpAccessToken7IsEmptyEv(&accessToken), "a default access token must be empty");
+    accessToken.data[0] = 1;
+    Require(!_ZNK3sce2np13NpAccessToken7IsEmptyEv(&accessToken), "a set access token must not be empty");
+    NpAccessTokenObject accessTokenCopy;
+    _ZN3sce2np13NpAccessTokenC1ERKS1_(&accessTokenCopy, &accessToken);
+    Require(std::memcmp(accessTokenCopy.data, accessToken.data, sizeof(accessToken.data)) == 0, "an access token must copy the full block");
+    _ZN3sce2np13NpAccessToken5ClearEv(&accessTokenCopy);
+    Require(_ZNK3sce2np13NpAccessToken7IsEmptyEv(&accessTokenCopy), "a cleared access token must be empty");
+
+    NpTicketObject ticket {};
+    std::uint8_t ticketData[4] {};
+    ticket.data = ticketData;
+    ticket.size = sizeof(ticketData);
+    Require(_ZNK3sce2np8NpTicket13GetTicketDataEv(&ticket) == ticketData, "GetTicketData must return the stored data");
+    Require(_ZNK3sce2np8NpTicket13GetTicketSizeEv(&ticket) == sizeof(ticketData), "GetTicketSize must return the stored size");
+    ticket.data = nullptr;
+    try {
+        _ZNK3sce2np8NpTicket13GetTicketDataEv(&ticket);
+        Require(false, "GetTicketData must throw without data");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "NpTicket data is empty", "GetTicketData threw");
+    }
+}
+
+void CheckNpOfflineGetters() {
+    const char accountId[16] = {};
+    char language[8];
+    char untouchedLanguage[8];
+    std::memset(language, 0x5a, sizeof(language));
+    std::memset(untouchedLanguage, 0x5a, sizeof(untouchedLanguage));
+    Require(sceNpManagerIntGetAccountLanguage(-1, accountId, language) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject user -1");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, nullptr, language) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject a null account id");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, accountId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountLanguage must reject a null output");
+    Require(sceNpManagerIntGetAccountLanguage(0x10000, accountId, language) == SignedOut, "sceNpManagerIntGetAccountLanguage must report NP as signed out");
+    Require(std::memcmp(language, untouchedLanguage, sizeof(language)) == 0, "sceNpManagerIntGetAccountLanguage must leave the output untouched");
+    std::uint32_t status = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, -1, &status) == InvalidArgument, "sceNpManagerIntGetCommunicationRestrictionStatus must reject -1");
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, 0, nullptr) == InvalidArgument, "sceNpManagerIntGetCommunicationRestrictionStatus must reject a null output");
+    Require(sceNpManagerIntGetCommunicationRestrictionStatus(0x10000, 0, &status) == SignedOut, "sceNpManagerIntGetCommunicationRestrictionStatus must report NP as signed out");
+    Require(status == 0x5a5a5a5a, "sceNpManagerIntGetCommunicationRestrictionStatus must leave the output untouched");
+    int flag = 0x5a5a5a5a;
+    Require(sceNpManagerIntIsSubAccount(-1, &flag) == InvalidArgument, "sceNpManagerIntIsSubAccount must reject user -1");
+    Require(sceNpManagerIntIsSubAccount(0x10000, nullptr) == InvalidArgument, "sceNpManagerIntIsSubAccount must reject a null output");
+    Require(sceNpManagerIntIsSubAccount(0x10000, &flag) == SignedOut, "sceNpManagerIntIsSubAccount must report NP as signed out");
+    Require(flag == 0x5a5a5a5a, "sceNpManagerIntIsSubAccount must leave the output untouched");
+    Require(sceNpManagerIntIsTemporarySignout(0x10000, nullptr) == InvalidArgument, "sceNpManagerIntIsTemporarySignout must reject a null output");
+    Require(sceNpManagerIntIsTemporarySignout(0x10000, &flag) == SignedOut, "sceNpManagerIntIsTemporarySignout must report NP as signed out");
+    Require(flag == 0x5a5a5a5a, "sceNpManagerIntIsTemporarySignout must leave the output untouched");
+}
+
 void CheckAsmLifecycle() {
     constexpr int AsmAlreadyInitialized = static_cast<int>(0x8055A201u);
     constexpr int AsmNotInitialized = static_cast<int>(0x8055A202u);
@@ -725,9 +889,11 @@ void CheckEmptyDestructors() {
 }
 
 int main() {
+    CheckNpOfflineGetters();
     CheckAsmLifecycle();
     CheckEmptyDestructors();
     CheckSandboxInfo();
+    CheckValueClasses();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
@@ -742,6 +908,8 @@ int main() {
     CheckManagerIntRequests();
     CheckIdMapperLookup("sceNpIdMapperNpIdToAccountId", sceNpIdMapperNpIdToAccountId);
     CheckIdMapperLookup("sceNpIdMapperOnlineIdToAccountId", sceNpIdMapperOnlineIdToAccountId);
+    CheckIdMapperLookup("sceNpIdMapperAccountIdToNpId", sceNpIdMapperAccountIdToNpId);
+    CheckIdMapperLookup("sceNpIdMapperAccountIdToOnlineId", sceNpIdMapperAccountIdToOnlineId);
     CheckManagerIntProfileGetters();
     CheckManagerIntUserLookups();
     CheckManagerIntAuthorization();
@@ -757,8 +925,10 @@ int main() {
     std::memset(countryCode, 0x5a, sizeof(countryCode));
     char untouchedCountryCode[4]{};
     std::memset(untouchedCountryCode, 0x5a, sizeof(untouchedCountryCode));
-    Require(sceNpGetAccountCountryA(0x10000, countryCode) == SignedOut, "sceNpGetAccountCountryA must report the user as signed out");
+    Require(sceNpGetAccountCountryA(InitialUserId, countryCode) == SignedOut, "sceNpGetAccountCountryA must report the user as signed out");
     Require(std::memcmp(countryCode, untouchedCountryCode, sizeof(countryCode)) == 0, "sceNpGetAccountCountryA must leave the country code untouched");
+    Require(sceNpGetAccountCountryA(0x10000, countryCode) == UserNotFound, "sceNpGetAccountCountryA must find no user with an id that is not registered");
+    Require(std::memcmp(countryCode, untouchedCountryCode, sizeof(countryCode)) == 0, "sceNpGetAccountCountryA must leave the country code untouched for an unknown user");
     Require(sceNpGetAccountCountryA(0x10000, nullptr) == InvalidArgument, "sceNpGetAccountCountryA must reject a null country code");
     NpOnlineId onlineId{};
     std::memset(&onlineId, 0x5a, sizeof(onlineId));
@@ -820,7 +990,44 @@ int main() {
     Require(sceNpInGameMessageAbortHandle(-1, messageHandle) == InGameMessageContextNotFound, "sceNpInGameMessageAbortHandle must reject an unknown context");
     Require(sceNpInGameMessageAbortHandle(messageContext, -1) == InGameMessageHandleNotFound, "sceNpInGameMessageAbortHandle must reject an unknown handle");
     Require(sceNpInGameMessageAbortHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageAbortHandle must accept a live handle");
+    std::uint8_t statistics[0x20];
+    std::memset(statistics, 0x5a, sizeof(statistics));
+    Require(sceNpInGameMessageGetMemoryPoolStatistics(-1, statistics) == InGameMessageContextNotFound, "GetMemoryPoolStatistics must reject an unknown context");
+    Require(sceNpInGameMessageGetMemoryPoolStatistics(messageContext, nullptr) == InGameMessageInvalidArgument, "GetMemoryPoolStatistics must reject a null output");
+    Require(sceNpInGameMessageGetMemoryPoolStatistics(messageContext, statistics) == 0, "GetMemoryPoolStatistics must answer a live context");
+    for (const std::uint8_t byte : statistics) Require(byte == 0, "GetMemoryPoolStatistics must zero the statistics block");
+    Require(sceNpInGameMessageCheckCallback() == 0, "CheckCallback must answer without queued messages");
+    int callbackUserdata = 0;
+    Require(sceNpInGameMessagePrepare(-1, messageHandle, 0, 0x1234, &callbackUserdata) == InGameMessageContextNotFound, "Prepare must reject an unknown context");
+    Require(sceNpInGameMessagePrepare(messageContext, -1, 0, 0x1234, &callbackUserdata) == InGameMessageHandleNotFound, "Prepare must reject an unknown handle");
+    Require(sceNpInGameMessagePrepare(messageContext, messageHandle, 0, 0, &callbackUserdata) == InGameMessageInvalidArgument, "Prepare must reject a null callback");
+    Require(sceNpInGameMessagePrepare(messageContext, messageHandle, 0, 0x1234, &callbackUserdata) == 0, "Prepare must register the callback");
+    Require(sceNpInGameMessagePrepareA(-1, messageHandle, 0, 0x1234, &callbackUserdata) == InGameMessageContextNotFound, "PrepareA must reject an unknown context");
+    Require(sceNpInGameMessagePrepareA(messageContext, -1, 0, 0x1234, &callbackUserdata) == InGameMessageHandleNotFound, "PrepareA must reject an unknown handle");
+    Require(sceNpInGameMessagePrepareA(messageContext, messageHandle, 0, 0, nullptr) == InGameMessageInvalidArgument, "PrepareA must reject a null callback");
+    Require(sceNpInGameMessagePrepareA(messageContext, messageHandle, 0, 0x5678, &callbackUserdata) == 0, "PrepareA must register the callback");
+    std::uint8_t message[0x88] {};
+    *reinterpret_cast<std::uint64_t*>(message + 0x80) = 4;
+    std::uint8_t destination[0x18] {};
+    std::uint8_t source[0x18] {};
+    Require(sceNpInGameMessageSendData(-1, destination, source, message) == InGameMessageContextNotFound, "SendData must reject an unknown context");
+    Require(sceNpInGameMessageSendData(messageContext, nullptr, source, message) == InGameMessageInvalidArgument, "SendData must reject a null destination");
+    Require(sceNpInGameMessageSendData(messageContext, destination, nullptr, message) == InGameMessageInvalidArgument, "SendData must reject a null source");
+    Require(sceNpInGameMessageSendData(messageContext, destination, source, nullptr) == InGameMessageInvalidArgument, "SendData must reject a null message");
+    *reinterpret_cast<std::uint64_t*>(message + 0x80) = 0;
+    Require(sceNpInGameMessageSendData(messageContext, destination, source, message) == InGameMessageInvalidArgument, "SendData must reject an empty message");
+    *reinterpret_cast<std::uint64_t*>(message + 0x80) = 4;
+    Require(sceNpInGameMessageSendData(messageContext, destination, source, message) == InGameMessageNotConnected, "SendData must report the offline transport");
+    std::uint8_t messageA[0x208] {};
+    *reinterpret_cast<std::uint64_t*>(messageA + 0x200) = 4;
+    Require(sceNpInGameMessageSendDataA(-1, destination, source, messageA) == InGameMessageContextNotFound, "SendDataA must reject an unknown context");
+    Require(sceNpInGameMessageSendDataA(messageContext, nullptr, source, messageA) == InGameMessageInvalidArgument, "SendDataA must reject a null destination");
+    *reinterpret_cast<std::uint64_t*>(messageA + 0x200) = 0;
+    Require(sceNpInGameMessageSendDataA(messageContext, destination, source, messageA) == InGameMessageInvalidArgument, "SendDataA must reject an empty message");
+    *reinterpret_cast<std::uint64_t*>(messageA + 0x200) = 4;
+    Require(sceNpInGameMessageSendDataA(messageContext, destination, source, messageA) == InGameMessageNotConnected, "SendDataA must report the offline transport");
     Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the handle");
+    Require(sceNpInGameMessagePrepare(messageContext, messageHandle, 0, 0x1234, nullptr) == InGameMessageHandleNotFound, "Prepare must reject a deleted handle");
     Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == InGameMessageHandleNotFound, "a deleted handle must not be found");
     Require(sceNpInGameMessageTerminate(messageContext) == 0, "sceNpInGameMessageTerminate must end the context");
     Require(sceNpInGameMessageTerminate(messageContext) == InGameMessageContextNotFound, "a terminated context must not be found");
