@@ -517,6 +517,7 @@ static const struct iovec* NativeIovecs(const KernelIovec* iov) {
 
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ENOENT = 2;
+static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EIO = 5;
 static constexpr int GUEST_EBADF = 9;
 static constexpr int GUEST_EFAULT = 14;
@@ -965,6 +966,16 @@ int APS5_VABI dup_nid_postfix(int d) {
     if (File::IsRandomDevice(d)) File::RememberRandomDevice(duplicate);
     File::ShareDescriptor(d, duplicate);
     DuplicateJitSharedMemory(d, duplicate);
+    return duplicate;
+}
+
+int APS5_VABI sceKernelRdup(int pid, int fd) {
+    if (pid != 0 && pid != getpid_nid_postfix()) {
+        *__error_nid_postfix() = GUEST_ESRCH;
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
+    const int duplicate = dup_nid_postfix(fd);
+    if (duplicate < 0) return SceKernelError(*__error_nid_postfix());
     return duplicate;
 }
 

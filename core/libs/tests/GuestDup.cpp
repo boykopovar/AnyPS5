@@ -206,6 +206,59 @@ static void DuplicatesShareStatusFlags() {
     for (const int descriptor : {pipe[0], pipe[1], other[0], other[1], duplicate}) Require(close_nid_postfix(descriptor) == 0);
 }
 
+static void RdupOutlivesOriginal() {
+    const int self = getpid_nid_postfix();
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    const int duplicate = sceKernelRdup(self, pipe[1]);
+    Require(duplicate >= 0 && duplicate != pipe[1]);
+    Require(close_nid_postfix(pipe[1]) == 0);
+    RequirePipeCarries(duplicate, pipe[0], "rdup");
+    Require(close_nid_postfix(duplicate) == 0);
+    char end = 0;
+    Require(read_nid_postfix(pipe[0], &end, 1) == 0);
+    Require(close_nid_postfix(pipe[0]) == 0);
+}
+
+static void RdupSocketWithZeroPid() {
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const int duplicate = sceKernelRdup(0, pair[0]);
+    Require(duplicate >= 0 && duplicate != pair[0] && duplicate != pair[1]);
+    Require(close_nid_postfix(pair[0]) == 0);
+    RequireSocketCarries(duplicate, pair[1], "rdup_sock");
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
+}
+
+static void RdupErrors() {
+    constexpr int SceKernelErrorEsrch = static_cast<int>(0x80020003u);
+    constexpr int SceKernelErrorEbadf = static_cast<int>(0x80020009u);
+    constexpr int GuestEsrch = 3;
+    const int self = getpid_nid_postfix();
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+
+    *__error_nid_postfix() = 0;
+    Require(sceKernelRdup(-1, pipe[0]) == SceKernelErrorEsrch);
+    Require(*__error_nid_postfix() == GuestEsrch);
+
+    *__error_nid_postfix() = 0;
+    Require(sceKernelRdup(self + 1, pipe[0]) == SceKernelErrorEsrch);
+    Require(*__error_nid_postfix() == GuestEsrch);
+
+    *__error_nid_postfix() = 0;
+    Require(sceKernelRdup(self, -1) == SceKernelErrorEbadf);
+    Require(*__error_nid_postfix() == GuestEbadf);
+
+    *__error_nid_postfix() = 0;
+    Require(sceKernelRdup(0, Unopened) == SceKernelErrorEbadf);
+    Require(*__error_nid_postfix() == GuestEbadf);
+
+    Require(close_nid_postfix(pipe[0]) == 0);
+    Require(close_nid_postfix(pipe[1]) == 0);
+}
+
 int main() {
     DupOutlivesOriginal();
     Dup2ReplacesTarget();
@@ -213,4 +266,7 @@ int main() {
     SocketDuplicates();
     RandomDeviceDuplicates();
     DuplicatesShareStatusFlags();
+    RdupOutlivesOriginal();
+    RdupSocketWithZeroPid();
+    RdupErrors();
 }
