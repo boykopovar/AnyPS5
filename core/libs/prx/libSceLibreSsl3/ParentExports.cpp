@@ -556,7 +556,8 @@ __asm__(APS5_ASM_FUNCTION("UI_method_get_closer") "jmp *__imp_UI_method_get_clos
 
 __asm__(APS5_ASM_FUNCTION("CRYPTO_free") "jmp *__imp_CRYPTO_free_nid_postfix(%rip)\n");
 
-__asm__(APS5_ASM_FUNCTION("sceLibreSslInitEx") "jmp *__imp_sceLibreSslInitEx(%rip)\n");
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_sceLibreSslInitEx_nid_no_patch") "jmp *__imp_sceLibreSslInitEx(%rip)\n");
+APS5_EXPORT("jri3LyXhEGw", libreSsl3Forward_sceLibreSslInitEx_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("X509_STORE_CTX_get_error_depth") "jmp *__imp_X509_STORE_CTX_get_error_depth_nid_postfix(%rip)\n");
 
@@ -598,7 +599,8 @@ __asm__(APS5_ASM_FUNCTION("MD5_Init") "jmp *__imp_MD5_Init_nid_postfix(%rip)\n")
 
 __asm__(APS5_ASM_FUNCTION("CMAC_CTX_new") "jmp *__imp_CMAC_CTX_new_nid_postfix(%rip)\n");
 
-__asm__(APS5_ASM_FUNCTION("sceLibreSslTerm") "jmp *__imp_sceLibreSslTerm(%rip)\n");
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_sceLibreSslTerm_nid_no_patch") "jmp *__imp_sceLibreSslTerm(%rip)\n");
+APS5_EXPORT("n2fSRzuTEY4", libreSsl3Forward_sceLibreSslTerm_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("PKCS12_PBE_add") "jmp *__imp_PKCS12_PBE_add_nid_postfix(%rip)\n");
 
@@ -685,7 +687,8 @@ __asm__(APS5_ASM_FUNCTION("BN_CTX_free") "jmp *__imp_BN_CTX_free_nid_postfix(%ri
 
 __asm__(APS5_ASM_FUNCTION("SSL_CTX_set_info_callback") "jmp *__imp_SSL_CTX_set_info_callback_nid_postfix(%rip)\n");
 
-__asm__(APS5_ASM_FUNCTION("sceLibreSslGetMemoryPoolStats") "jmp *__imp_sceLibreSslGetMemoryPoolStats(%rip)\n");
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_sceLibreSslGetMemoryPoolStats_nid_no_patch") "jmp *__imp_sceLibreSslGetMemoryPoolStats(%rip)\n");
+APS5_EXPORT("rJFDhypHYaY", libreSsl3Forward_sceLibreSslGetMemoryPoolStats_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("EVP_aes_128_cbc") "jmp *__imp_EVP_aes_128_cbc_nid_postfix(%rip)\n");
 
@@ -761,7 +764,8 @@ __asm__(APS5_ASM_FUNCTION("AES_set_decrypt_key") "jmp *__imp_AES_set_decrypt_key
 
 __asm__(APS5_ASM_FUNCTION("HMAC_Final") "jmp *__imp_HMAC_Final_nid_postfix(%rip)\n");
 
-__asm__(APS5_ASM_FUNCTION("sceLibreSslInitEx2") "jmp *__imp_sceLibreSslInitEx2(%rip)\n");
+__asm__(APS5_ASM_FUNCTION("libreSsl3Forward_sceLibreSslInitEx2_nid_no_patch") "jmp *__imp_sceLibreSslInitEx2(%rip)\n");
+APS5_EXPORT("xoRfQxAhHjk", libreSsl3Forward_sceLibreSslInitEx2_nid_no_patch);
 
 __asm__(APS5_ASM_FUNCTION("SHA224_Init") "jmp *__imp_SHA224_Init_nid_postfix(%rip)\n");
 
