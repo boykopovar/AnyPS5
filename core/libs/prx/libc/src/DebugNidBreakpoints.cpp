@@ -52,4 +52,27 @@ bool ParseNid(std::string_view text, std::uint64_t& nid) {
     return true;
 }
 
+std::string FormatNid(std::uint64_t nid) {
+    std::array<std::uint8_t, 8> bytes{};
+    for (std::size_t i = 0; i < bytes.size(); ++i)
+        bytes[i] = static_cast<std::uint8_t>(nid >> (56 - 8 * i));
+
+    std::string text;
+    text.reserve(11);
+    for (std::size_t group = 0; group < 2; ++group) {
+        const auto triple = (static_cast<std::uint32_t>(bytes[group * 3]) << 16) |
+                            (static_cast<std::uint32_t>(bytes[group * 3 + 1]) << 8) |
+                            static_cast<std::uint32_t>(bytes[group * 3 + 2]);
+        text.push_back(kAlphabet[(triple >> 18) & 0x3F]);
+        text.push_back(kAlphabet[(triple >> 12) & 0x3F]);
+        text.push_back(kAlphabet[(triple >> 6) & 0x3F]);
+        text.push_back(kAlphabet[triple & 0x3F]);
+    }
+    const auto tail = (static_cast<std::uint32_t>(bytes[6]) << 16) | (static_cast<std::uint32_t>(bytes[7]) << 8);
+    text.push_back(kAlphabet[(tail >> 18) & 0x3F]);
+    text.push_back(kAlphabet[(tail >> 12) & 0x3F]);
+    text.push_back(kAlphabet[(tail >> 6) & 0x3F]);
+    return text;
+}
+
 }
