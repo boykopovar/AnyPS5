@@ -1017,6 +1017,8 @@ void TestBatchContextOwnership(std::uint32_t context) {
     std::uint32_t refused = 0xdeadbeefu;
     Require(sceAjmInitialize(reinterpret_cast<std::intptr_t>(&refused), &refused) == static_cast<int>(0x80930005) && refused == 0xdeadbeefu);
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
+    std::uint32_t highHalf = 0;
+    Require(sceAjmInitialize(0x300000000, &highHalf) == 0 && highHalf != other && highHalf != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
