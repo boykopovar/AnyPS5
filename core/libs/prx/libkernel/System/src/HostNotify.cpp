@@ -91,6 +91,32 @@ HostNotifyArgv HostNotifyArgvFor(HostNotifyBackend backend, std::string_view tit
     return {};
 }
 
+bool ExecutableInPath(std::string_view name, std::string_view pathList, const HostNotifyIsExecutable& isExecutable) {
+    std::size_t start = 0;
+    while (start <= pathList.size()) {
+        auto end = pathList.find(':', start);
+        if (end == std::string_view::npos) end = pathList.size();
+        const auto directory = pathList.substr(start, end - start);
+        if (!directory.empty() && isExecutable(std::string(directory) + "/" + std::string(name))) return true;
+        start = end + 1;
+    }
+    return false;
+}
+
+HostNotifyBackend SelectHostNotifyBackend(std::string_view pathList, const HostNotifyIsExecutable& isExecutable) {
+#if defined(__APPLE__)
+    (void)pathList;
+    (void)isExecutable;
+    return HostNotifyBackend::Osascript;
+#elif defined(_WIN32)
+    (void)pathList;
+    (void)isExecutable;
+    return HostNotifyBackend::PowerShell;
+#else
+    return ExecutableInPath("notify-send", pathList, isExecutable) ? HostNotifyBackend::NotifySend : HostNotifyBackend::None;
+#endif
+}
+
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;
     HostNotifyLog("ANYPS5_HOST_NOTIFY must be 0 or 1, not '" + std::string(text) + "'; host notifications stay off");

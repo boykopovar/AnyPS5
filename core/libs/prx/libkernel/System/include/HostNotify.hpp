@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_SYSTEM_INCLUDE_HOSTNOTIFY_HPP
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -27,5 +28,10 @@ HostNotifyArgv MacNotifyArgv(std::string_view title, std::string_view text);
 std::string HostNotifyBase64(std::string_view bytes);
 HostNotifyArgv WindowsNotifyArgv(std::string_view title, std::string_view text);
 HostNotifyArgv HostNotifyArgvFor(HostNotifyBackend backend, std::string_view title, std::string_view text);
+
+using HostNotifyIsExecutable = std::function<bool(const std::string&)>;
+
+bool ExecutableInPath(std::string_view name, std::string_view pathList, const HostNotifyIsExecutable& isExecutable);
+HostNotifyBackend SelectHostNotifyBackend(std::string_view pathList, const HostNotifyIsExecutable& isExecutable);
 
 #endif

@@ -124,7 +124,30 @@ void ArgvForBackendMatchesItsBuilder() {
     Require(HostNotifyArgvFor(HostNotifyBackend::None, "AnyPS5", "x").empty(), "no backend still builds an argv");
 }
 
+void ExecutableInPathFindsOnlyExecutableDirectories() {
+    const auto onlyInB = [](const std::string& candidate) { return candidate == "/b/notify-send"; };
+    Require(ExecutableInPath("notify-send", "/a:/b", onlyInB), "a later PATH directory was not searched");
+    Require(!ExecutableInPath("notify-send", "/a:/c", onlyInB), "a missing command was found");
+    Require(!ExecutableInPath("notify-send", "", onlyInB), "an empty PATH found a command");
+    Require(ExecutableInPath("notify-send", ":/b:", onlyInB), "empty PATH entries stop the search");
+    Require(!ExecutableInPath("notify-send", "/a/notify-send-extra:/b/notify-send-extra", onlyInB), "a different name matched");
+}
+
+#if defined(__linux__)
+void LinuxSelectsNotifySendOnlyWhenPresent() {
+    const auto everything = [](const std::string&) { return true; };
+    const auto nothing = [](const std::string&) { return false; };
+    Require(SelectHostNotifyBackend("/usr/bin", everything) == HostNotifyBackend::NotifySend, "notify-send in PATH was not selected");
+    Require(SelectHostNotifyBackend("/usr/bin", nothing) == HostNotifyBackend::None, "a missing notify-send was selected");
+    Require(SelectHostNotifyBackend("", everything) == HostNotifyBackend::None, "an empty PATH selected notify-send");
+}
+#endif
+
 int main() {
+    ExecutableInPathFindsOnlyExecutableDirectories();
+#if defined(__linux__)
+    LinuxSelectsNotifySendOnlyWhenPresent();
+#endif
     ArgvForBackendMatchesItsBuilder();
     WindowsArgvCarriesTextOnlyAsBase64();
     Base64MatchesRfc4648Vectors();
