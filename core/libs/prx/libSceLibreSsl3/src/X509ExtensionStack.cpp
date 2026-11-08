@@ -12,7 +12,6 @@ namespace {
 constexpr std::int32_t ObjectDynamic = 0x01;
 constexpr std::int32_t DynamicStrings = 0x04;
 constexpr std::int32_t DynamicData = 0x08;
-constexpr std::int32_t BorrowedData = 0x10;
 
 struct X509Extension {
     Asn1Object_nid_no_patch* object;
@@ -85,7 +84,7 @@ Asn1String* DuplicateString_nid_no_patch(const Asn1String* source) {
         ASN1_OCTET_STRING_free_nid_postfix(copy);
         throw std::invalid_argument("X509_EXTENSION_dup: negative string length");
     }
-    if (source->data && source->length != 0 && !(source->flags & BorrowedData)) {
+    if (source->data && source->length != 0) {
         auto* data = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(source->length)));
         if (!data) {
             ASN1_OCTET_STRING_free_nid_postfix(copy);

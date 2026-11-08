@@ -103,6 +103,18 @@ Extension* MakeExtension(unsigned char byte) {
     return extension;
 }
 
+Extension* MakeBorrowedExtension(unsigned char* data) {
+    auto* extension = static_cast<Extension*>(Callocate_nid_no_patch(1, sizeof(Extension)));
+    extension->object = MakeObject();
+    extension->critical = 1;
+    extension->value = static_cast<Asn1String*>(Callocate_nid_no_patch(1, sizeof(Asn1String)));
+    extension->value->length = 2;
+    extension->value->type = 4;
+    extension->value->data = data;
+    extension->value->flags = 0x10;
+    return extension;
+}
+
 }
 
 int main() {
@@ -134,14 +146,25 @@ int main() {
     Require(reinterpret_cast<Extension*>(stack->data[0])->value->data[0] == 2);
     Require(reinterpret_cast<Extension*>(stack->data[1])->value->data[0] == 1);
 
+    std::array<unsigned char, 2> borrowedData{0x33, 0x44};
+    Extension* borrowed = MakeBorrowedExtension(borrowedData.data());
+    Require(X509_add_ext_nid_postfix(&x509, borrowed, 1) == 1);
+    Require(stack->num == 3);
+    auto* borrowedCopy = reinterpret_cast<Extension*>(stack->data[1]);
+    Require(borrowedCopy->value->data != nullptr && borrowedCopy->value->data != borrowedData.data());
+    Require(borrowedCopy->value->data[0] == 0x33 && borrowedCopy->value->data[1] == 0x44);
+    Require((borrowedCopy->value->flags & 0x10) == 0);
+
     X509_EXTENSION_free_nid_postfix(first);
     X509_EXTENSION_free_nid_postfix(second);
+    X509_EXTENSION_free_nid_postfix(borrowed);
     X509_EXTENSION_free_nid_postfix(nullptr);
     Require(X509_add_ext_nid_postfix(nullptr, nullptr, 0) == 0);
     Require(X509_add_ext_nid_postfix(&x509, nullptr, 0) == 0);
 
     X509_EXTENSION_free_nid_postfix(stack->data[0]);
     X509_EXTENSION_free_nid_postfix(stack->data[1]);
+    X509_EXTENSION_free_nid_postfix(stack->data[2]);
     sk_free_nid_postfix(stack);
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509 extension stack tests passed");
