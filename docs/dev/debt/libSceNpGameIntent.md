@@ -1,5 +1,9 @@
 # libSceNpGameIntent technical debt
 
+### Functional
+
+- [sceNpGameIntentInitParamInit, sceNpGameIntentInfoInit, sceNpGameIntentReceiveIntent](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) - safely copying guest memory and refusing unmapped or unreadable pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Silent stubs
 
 - [sceNpGameIntentVshInitialize, sceNpGameIntentVshTerminate](../../../core/libs/prx/libSceNpGameIntent/Export.cpp) (libSceNpGameIntent) - VSH initialization and termination return 0 without performing shell operations, matching `sceNpGameIntentInitialize` and `sceNpGameIntentTerminate`

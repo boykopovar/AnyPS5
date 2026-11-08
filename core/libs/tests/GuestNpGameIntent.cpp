@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +38,10 @@ int main() {
 
     Require(Throws<std::invalid_argument>([] { sceNpGameIntentInitParamInit(nullptr); }),
             "null param init did not throw");
+    errno = 71;
+    Require(Throws<std::invalid_argument>([] { sceNpGameIntentInitParamInit(reinterpret_cast<NpGameIntentInitParam*>(0x10)); }),
+            "unmapped param init did not throw");
+    Require(errno == 71, "errno preserved on unmapped param init");
 
     NpGameIntentInitParam initParam{};
     Require(sceNpGameIntentInitParamInit(&initParam) == 0, "param init failed");
@@ -44,6 +49,10 @@ int main() {
 
     Require(Throws<std::invalid_argument>([] { sceNpGameIntentInfoInit(nullptr); }),
             "null info init did not throw");
+    errno = 71;
+    Require(Throws<std::invalid_argument>([] { sceNpGameIntentInfoInit(reinterpret_cast<NpGameIntentInfo*>(0x10)); }),
+            "unmapped info init did not throw");
+    Require(errno == 71, "errno preserved on unmapped info init");
 
     NpGameIntentInfo info{};
     Require(sceNpGameIntentInfoInit(&info) == 0, "info init failed");
@@ -57,6 +66,10 @@ int main() {
             "uninitialized get property string with valid data must report not-initialized");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kNotInitialized,
             "uninitialized receive intent with null pointer must report not-initialized");
+    errno = 71;
+    Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kNotInitialized,
+            "uninitialized receive intent with unmapped pointer must report not-initialized");
+    Require(errno == 71, "errno preserved on unmapped receive intent before init");
     Require(sceNpGameIntentReceiveIntent(&info) == kNotInitialized,
             "uninitialized receive intent with valid pointer must report not-initialized");
     Require(sceNpGameIntentGetUdsNpComId() == kNotInitialized,
@@ -70,6 +83,9 @@ int main() {
 
     Require(sceNpGameIntentInitialize(&initParam) == 0, "initialization failed");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kInvalidArgument, "null receive intent did not fail");
+    errno = 71;
+    Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kInvalidArgument, "unmapped receive intent did not fail");
+    Require(errno == 71, "errno preserved on unmapped receive intent after init");
     Require(sceNpGameIntentReceiveIntent(&info) == kInvalidArgument, "mismatched struct size must report invalid argument");
     info.size = 0;
     Require(sceNpGameIntentReceiveIntent(&info) == kInvalidArgument, "zero size must report invalid argument");
@@ -123,6 +139,10 @@ int main() {
             "post-terminate get property value must report not-initialized");
     Require(sceNpGameIntentReceiveIntent(&info) == kNotInitialized,
             "post-terminate receive intent must report not-initialized");
+    errno = 71;
+    Require(sceNpGameIntentReceiveIntent(reinterpret_cast<NpGameIntentInfo*>(0x10)) == kNotInitialized,
+            "post-terminate receive intent with unmapped pointer must report not-initialized");
+    Require(errno == 71, "errno preserved on unmapped receive intent after terminate");
     Require(sceNpGameIntentGetUdsNpComId() == kNotInitialized,
             "post-terminate get uds np com id must report not-initialized");
     Require(sceNpGameIntentLaunchApp() == kNotInitialized,
