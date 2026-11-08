@@ -320,6 +320,7 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             case InputControl::VolumeUp: break;
             case InputControl::VolumeDown: break;
             case InputControl::ToggleMute: break;
+            case InputControl::ReloadInputMapping: break;
         }
     }
     const auto input = stickInput();
