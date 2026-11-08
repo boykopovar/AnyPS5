@@ -182,6 +182,65 @@ static void GivesEachOpenRelayItsOwnInstance() {
     second.Close();
 }
 
+static void RecognisesOwnFrames() {
+    LanRelay::Frame frame;
+    frame.Instance = 7;
+    Require(LanRelay::IsOwnFrame(frame, 7), "a frame with this instance is own");
+    Require(!LanRelay::IsOwnFrame(frame, 8), "a frame with another instance is not own");
+}
+
+static void DeliversFrameOnceBetweenRelays() {
+    LanRelay::Relay a;
+    LanRelay::Relay b;
+    a.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    b.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    const LanRelay::Endpoint toA{"127.0.0.1", a.Port()};
+    const LanRelay::Endpoint toB{"127.0.0.1", b.Port()};
+    Require(a.SendFrame(toB, 5000, 47000, {9, 8, 7}), "a frame is sent to a peer");
+    const auto received = b.Receive(2000);
+    Require(received.has_value(), "the peer receives the frame");
+    Require(received->Payload == std::vector<std::uint8_t>({9, 8, 7}) && received->SourcePort == 5000 && received->DestinationPort == 47000
+            && received->Instance == a.Instance(), "the frame keeps its ports, payload and sender instance");
+    Require(!b.Receive(200).has_value(), "the frame is delivered once");
+    Require(b.SendDatagram(toA, LanRelay::EncodeFrame(*received)), "the peer sends the frame back");
+    Require(!a.Receive(500).has_value(), "a frame that carries this instance is dropped when it returns");
+    a.Close();
+    b.Close();
+}
+
+static void SkipsMalformedDatagrams() {
+    LanRelay::Relay a;
+    LanRelay::Relay b;
+    a.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    b.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    const LanRelay::Endpoint toB{"127.0.0.1", b.Port()};
+    LanRelay::Frame frame;
+    frame.DestinationPort = 47000;
+    frame.Payload = {4};
+    auto otherVersion = LanRelay::EncodeFrame(frame);
+    otherVersion[0] = LanRelay::FrameVersion + 1;
+    auto truncated = LanRelay::EncodeFrame(frame);
+    truncated.pop_back();
+    Require(a.SendDatagram(toB, otherVersion), "a datagram with another version is sent");
+    Require(a.SendDatagram(toB, truncated), "a truncated frame is sent");
+    Require(a.SendDatagram(toB, {1, 2}), "a datagram shorter than the header is sent");
+    Require(a.SendFrame(toB, 5000, 47000, {4}), "a valid frame is sent after them");
+    const auto received = b.Receive(2000);
+    Require(received.has_value() && received->Payload == std::vector<std::uint8_t>({4}),
+        "the malformed datagrams are skipped and the valid frame is returned");
+    Require(!b.Receive(200).has_value(), "no other frame is delivered");
+    a.Close();
+    b.Close();
+}
+
+static void ClosedRelayNeitherSendsNorReceives() {
+    LanRelay::Relay relay;
+    const LanRelay::Endpoint peer{"127.0.0.1", 47000};
+    Require(!relay.SendFrame(peer, 5000, 47000, {1}), "a closed relay sends no frame");
+    Require(!relay.SendDatagram(peer, {1}), "a closed relay sends no datagram");
+    Require(!relay.Receive(10).has_value(), "a closed relay receives nothing");
+}
+
 static std::size_t OpenDescriptorCount() {
 #ifdef __linux__
     std::size_t count = 0;
