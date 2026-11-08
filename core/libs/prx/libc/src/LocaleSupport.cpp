@@ -1341,9 +1341,33 @@ template<typename Text> const SceV2MoneypunctVtable<Text> g_sceV2MoneypunctVtabl
     SceV2MoneypunctCurrencySymbol_nid_no_patch<Text>, SceV2MoneypunctPositiveSign_nid_no_patch<Text>, SceV2MoneypunctNegativeSign_nid_no_patch<Text>,
     SceV2MoneypunctFractionDigits_nid_no_patch<Text>, SceV2MoneypunctPositiveFormat_nid_no_patch<Text>, SceV2MoneypunctNegativeFormat_nid_no_patch<Text>};
 
+template<typename Text> struct SceV2MessagesVtable {
+    GuestLocale::FacetVtable facet;
+    int (APS5_VABI *open)(const GuestLocale::Facet* self, const SceV2String* name, const void* locale);
+    SceV2BasicString<Text>* (APS5_VABI *get)(SceV2BasicString<Text>* result, const GuestLocale::Facet* self, int catalog, int set, int message, const SceV2BasicString<Text>* fallback);
+    void (APS5_VABI *close)(const GuestLocale::Facet* self, int catalog);
+};
+
+int APS5_VABI SceV2MessagesOpen_nid_no_patch(const GuestLocale::Facet*, const SceV2String*, const void*) {
+    return -1;
+}
+
+template<typename Text> SceV2BasicString<Text>* APS5_VABI SceV2MessagesGet_nid_no_patch(SceV2BasicString<Text>* result, const GuestLocale::Facet*, int, int, int, const SceV2BasicString<Text>* fallback) {
+    constexpr std::size_t InlineCapacity = SceV2BasicString<Text>::InlineCapacity;
+    const Text* source = fallback->capacity > InlineCapacity ? fallback->pointer : fallback->buffer;
+    const std::size_t length = fallback->size;
+    Text* data = ReserveSceV2String(result, length);
+    std::memcpy(data, source, length > InlineCapacity ? (length + 1) * sizeof(Text) : sizeof(result->buffer));
+    return result;
+}
+
+void APS5_VABI SceV2MessagesClose_nid_no_patch(const GuestLocale::Facet*, int) {}
+
+template<typename Text> const SceV2MessagesVtable<Text> g_sceV2MessagesVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2MessagesOpen_nid_no_patch, SceV2MessagesGet_nid_no_patch<Text>, SceV2MessagesClose_nid_no_patch};
+
 constexpr auto g_sceV2CollateUshortVtable = MakeSceV2FacetVtable<3, g_sceV2CollateFamily>();
-constexpr auto g_sceV2MessagesCharVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
-constexpr auto g_sceV2MessagesWideVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
 constexpr auto g_sceV2MessagesUshortVtable = MakeSceV2FacetVtable<3, g_sceV2MessagesFamily>();
 constexpr auto g_sceV2MoneyGetCharVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
 constexpr auto g_sceV2MoneyGetWideVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyGetFamily>();
@@ -2077,7 +2101,7 @@ SceV2FacetKind g_sceV2NumPutChar{&_ZNSt8__sce_v27num_putIcNS_19ostreambuf_iterat
 SceV2FacetKind g_sceV2NumpunctChar{&_ZNSt8__sce_v28numpunctIcE2idE_nid_postfix, sizeof(GuestLocale::NumpunctFacet), &g_sceV2NumpunctCharVtable.facet, InitializeSceV2NumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtChar{&_ZNSt8__sce_v27codecvtIcc9_MbstatetE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CodecvtCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2CollateChar{&_ZNSt8__sce_v27collateIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MessagesChar{&_ZNSt8__sce_v28messagesIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MessagesChar{&_ZNSt8__sce_v28messagesIcE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneyGetChar{&_ZNSt8__sce_v29money_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneyPutChar{&_ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutCharVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneypunctChar{&_ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<false>, nullptr};
@@ -2089,7 +2113,7 @@ SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iterat
 SceV2FacetKind g_sceV2NumPutWide{&_ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumpunctWide{&_ZNSt8__sce_v28numpunctIwE2idE_nid_postfix, sizeof(GuestLocale::WideNumpunctFacet), &g_sceV2NumpunctWideVtable.facet, InitializeSceV2WideNumpunctFacet, nullptr};
 SceV2FacetKind g_sceV2CollateWide{&_ZNSt8__sce_v27collateIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2CollateVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
-SceV2FacetKind g_sceV2MessagesWide{&_ZNSt8__sce_v28messagesIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
+SceV2FacetKind g_sceV2MessagesWide{&_ZNSt8__sce_v28messagesIwE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MessagesVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneyGetWide{&_ZNSt8__sce_v29money_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyGetWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneyPutWide{&_ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutWideVtable.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneypunctWide{&_ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<false>, nullptr};
