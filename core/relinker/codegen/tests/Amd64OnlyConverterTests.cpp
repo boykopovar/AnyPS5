@@ -1209,6 +1209,11 @@ void converterAvxShortSites() {
     require(returned.Trampolines.size() == 1 && returned.Reports.size() == 1 && returned.Reports[0].InstructionName == "MOVBE" && returned.Trampolines[0].Length == 5, "A 4-byte MOVBE before a return was not lowered with the return");
     const auto rosetta = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     require(convert(rosetta, count).Reports.empty() && convert(rosetta, movbe).Reports.empty(), "The Rosetta target lowered TZCNT or MOVBE");
+    const Bytes rosettaOnly = {0xC5, 0xFC, 0x11, 0x07, 0x0F, 0xC7, 0xF8, 0x0F, 0xAE, 0x37, 0xC3};
+    require(convert(avx, rosettaOnly).Reports.empty(), "The AVX target applied a Rosetta workaround to a 256-bit store, RDSEED or XSAVEOPT");
+    const Bytes rdpid = {0xF3, 0x0F, 0xC7, 0xF9, 0x48, 0x83, 0xC1, 0x01, 0xC3};
+    const auto processor = convert(avx, rdpid);
+    require(processor.Reports.size() == 1 && processor.Reports[0].InstructionName == "RDPID", "The AVX target did not lower RDPID");
 }
 
 void converterRosetta() {
