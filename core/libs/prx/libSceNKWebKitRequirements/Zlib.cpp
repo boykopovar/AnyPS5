@@ -183,7 +183,6 @@ int End(GuestZStream* guest, bool inflating, TEnd end) {
 extern "C" {
 
 int APS5_VABI deflateInit2__nid_postfix(GuestZStream* stream, int level, int method, int windowBits, int memLevel, int strategy, const char* version, int streamSize) {
-    if (windowBits >= 25 && windowBits <= 31) throw std::runtime_error("deflateInit2_: gzip wrapper is not implemented");
     return Initialize(stream, version, streamSize, false, [&](z_stream& host) {
         return deflateInit2(&host, level, method, windowBits, memLevel, strategy);
     });
@@ -209,8 +208,6 @@ std::uint64_t APS5_VABI deflateBound_nid_postfix(GuestZStream* stream, std::uint
 }
 
 int APS5_VABI inflateInit2__nid_postfix(GuestZStream* stream, int windowBits, const char* version, int streamSize) {
-    if (windowBits >= 16 && windowBits < 48 && ((windowBits & 15) == 0 || (windowBits & 15) >= 8))
-        throw std::runtime_error("inflateInit2_: gzip decoding is not implemented");
     return Initialize(stream, version, streamSize, true, [windowBits](z_stream& host) {
         return inflateInit2(&host, windowBits);
     });
