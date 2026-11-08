@@ -69,7 +69,6 @@ int main() {
     Require(WKContextResumeDownload() == 0);
     Require(WKFrameCanShowMIMEType() == 0);
     Require(WKFrameCreateFrameInfo() == 0);
-    Require(WKFrameGetCertificateInfo() == 0);
     Require(WKFrameIsFrameSet() == 0);
     Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
     Require(WKIconDatabaseCopyIconURLForPageURL() == 0);

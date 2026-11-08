@@ -222,10 +222,6 @@ int APS5_VABI WKFrameCreateFrameInfo() {
     return 0;
 }
 
-int APS5_VABI WKFrameGetCertificateInfo() {
-    return 0;
-}
-
 int APS5_VABI WKFrameIsFrameSet() {
     return 0;
 }

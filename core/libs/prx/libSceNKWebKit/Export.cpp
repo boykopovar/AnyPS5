@@ -11479,6 +11479,10 @@ int APS5_VABI WKFrameCreateFrameHandle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI WKFrameGetCertificateInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI WKFrameGetFrameLoadState() {
     NotImplemented_nid_no_patch(__func__);
 }
