@@ -19,6 +19,7 @@ public:
     static constexpr std::size_t kCapacity = 256;
 
     bool Add(std::uint64_t nid);
+    bool Remove(std::uint64_t nid);
 
 private:
     std::size_t IndexOf(std::uint64_t nid) const;
