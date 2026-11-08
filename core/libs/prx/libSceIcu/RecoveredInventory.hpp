@@ -118,7 +118,6 @@ int APS5_VABI unumsys_isAlgorithmic_nid_postfix();
 int APS5_VABI unumsys_open_nid_postfix();
 int APS5_VABI unumsys_openAvailableNames_nid_postfix();
 int APS5_VABI unumsys_openByName_nid_postfix();
-int APS5_VABI uplrules_close_nid_postfix();
 int APS5_VABI uplrules_getKeywords_nid_postfix();
 int APS5_VABI uplrules_openForType_nid_postfix();
 int APS5_VABI uplrules_selectWithFormat_nid_postfix();
