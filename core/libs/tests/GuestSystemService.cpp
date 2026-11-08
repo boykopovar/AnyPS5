@@ -94,10 +94,10 @@ void TestRunningBigApp() {
 void TestRemoteSharePlayCpuBudget() {
     Require(Throws(sceShellCoreUtilAcquireRemotePlayCpuBudget));
     Require(Throws(sceShellCoreUtilReleaseRemotePlayCpuBudget));
-    Require(Throws(sceShellCoreUtilIsRemotePlayCpuBudgetAcquired));
+    Require(!sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() && !sceShellCoreUtilIsRemotePlayCpuBudgetAcquired());
     Require(Throws(sceShellCoreUtilAcquireSharePlayCpuBudget));
     Require(Throws(sceShellCoreUtilReleaseSharePlayCpuBudget));
-    Require(Throws(sceShellCoreUtilIsSharePlayCpuBudgetAcquired));
+    Require(!sceShellCoreUtilIsSharePlayCpuBudgetAcquired() && !sceShellCoreUtilIsSharePlayCpuBudgetAcquired());
 }
 
 void TestPlayerDialogParam() {
