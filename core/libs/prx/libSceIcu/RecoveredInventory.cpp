@@ -379,10 +379,6 @@ int APS5_VABI unum_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI unum_formatDecimal_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI unum_formatDouble_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

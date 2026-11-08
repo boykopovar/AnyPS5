@@ -96,7 +96,6 @@ int APS5_VABI ulistfmt_openResult_nid_postfix();
 int APS5_VABI ulistfmt_resultAsValue_nid_postfix();
 int APS5_VABI unum_clone_nid_postfix();
 int APS5_VABI unum_close_nid_postfix();
-int APS5_VABI unum_formatDecimal_nid_postfix();
 int APS5_VABI unum_formatDouble_nid_postfix();
 int APS5_VABI unum_formatDoubleForFields_nid_postfix();
 int APS5_VABI unum_getSymbol_nid_postfix();
