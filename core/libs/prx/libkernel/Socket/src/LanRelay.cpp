@@ -280,6 +280,20 @@ std::uint32_t Relay::Instance() const {
     return instance;
 }
 
+const std::vector<Endpoint>& Relay::Peers() const {
+    return peers;
+}
+
+void Relay::SetPeers(std::vector<Endpoint> value) {
+    peers = std::move(value);
+}
+
+bool Relay::SendToPeers(std::uint16_t sourcePort, std::uint16_t destinationPort, const std::vector<std::uint8_t>& payload) {
+    bool sent = true;
+    for (const auto& peer : peers) sent = SendFrame(peer, sourcePort, destinationPort, payload) && sent;
+    return sent;
+}
+
 bool Relay::SendDatagram(const Endpoint& peer, const std::vector<std::uint8_t>& datagram) {
     if (!IsOpen()) return false;
     sockaddr_in address{};
