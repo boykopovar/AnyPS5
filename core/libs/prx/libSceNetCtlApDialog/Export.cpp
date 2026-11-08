@@ -41,8 +41,13 @@ int APS5_VABI sceNetCtlApDialogTerminate(void) {
 
 int APS5_VABI sceNetCtlApDialogOpen(const NetCtlApDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- if (!ValidateCommonDialogBaseParam(param->base)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
- if (param->size != sizeof(*param) || param->reserved60 != 0 || std::find(std::begin(param->option), std::end(param->option), '\0') == std::end(param->option) || !std::all_of(std::begin(param->reserved), std::end(param->reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ NetCtlApDialogParam localParam{};
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
+ if (localParam.base.size != sizeof(localParam.base) || localParam.base.magic != static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(param)) - 1060003575u || !std::all_of(std::begin(localParam.base.reserved), std::end(localParam.base.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ if (localParam.size != sizeof(localParam) || localParam.reserved60 != 0 || std::find(std::begin(localParam.option), std::end(localParam.option), '\0') == std::end(localParam.option) || !std::all_of(std::begin(localParam.reserved), std::end(localParam.reserved), [](std::uint8_t value) { return value == 0; })) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  const int status = g_status.load();
  if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
