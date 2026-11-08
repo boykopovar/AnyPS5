@@ -38,7 +38,9 @@ private:
 
 NidBreakpointTable& NidBreakpoints();
 
-std::size_t AddNidList(std::string_view list, NidBreakpointTable& table);
+using MalformedEntryReport = void (*)(std::string_view entry);
+
+std::size_t AddNidList(std::string_view list, NidBreakpointTable& table, MalformedEntryReport report);
 
 }
 

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <string_view>
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -104,18 +105,37 @@ static void CheckArmedLockFree() {
     Check(!table.IsArmed(a));
 }
 
+static std::string reportedEntries;
+
+static void RecordMalformed(std::string_view entry) {
+    reportedEntries.append(entry);
+    reportedEntries.push_back('|');
+}
+
+static void CheckMalformedReport() {
+    Debug::NidBreakpointTable table;
+    reportedEntries.clear();
+    Check(Debug::AddNidList("4J2sUJmuHZQ,AAAAAAAAAA!, bad ,AAAAAAAAAAB,hcuQgD53UxM", table, RecordMalformed) == 2);
+    Check(reportedEntries == "AAAAAAAAAA!|bad|AAAAAAAAAAB|");
+    Check(table.Size() == 2);
+    reportedEntries.clear();
+    Check(Debug::AddNidList("4J2sUJmuHZQ", table, RecordMalformed) == 0);
+    Check(reportedEntries.empty());
+    Check(Debug::AddNidList("AAAAAAAAAAE,", table, nullptr) == 1);
+}
+
 static void CheckEnvironmentList() {
     Debug::NidBreakpointTable table;
-    Check(Debug::AddNidList("", table) == 0);
-    Check(Debug::AddNidList(",,", table) == 0);
+    Check(Debug::AddNidList("", table, nullptr) == 0);
+    Check(Debug::AddNidList(",,", table, nullptr) == 0);
     Check(table.Empty());
-    Check(Debug::AddNidList(" 4J2sUJmuHZQ , hcuQgD53UxM,Q3VBxCXhUHs ", table) == 3);
+    Check(Debug::AddNidList(" 4J2sUJmuHZQ , hcuQgD53UxM,Q3VBxCXhUHs ", table, nullptr) == 3);
     Check(table.Size() == 3);
     Check(table.IsArmed(0) == false);
     std::uint64_t nid = 0;
     Check(Debug::ParseNid("hcuQgD53UxM", nid));
     Check(table.IsArmed(nid));
-    Check(Debug::AddNidList("4J2sUJmuHZQ,AAAAAAAAAA!,hcuQgD53UxM", table) == 0);
+    Check(Debug::AddNidList("4J2sUJmuHZQ,AAAAAAAAAA!,hcuQgD53UxM", table, nullptr) == 0);
     Check(table.Size() == 3);
     Check(table.DuplicateCount() == 2);
 }
@@ -129,5 +149,6 @@ int main() {
     CheckCapacity();
     CheckArmedLockFree();
     CheckEnvironmentList();
+    CheckMalformedReport();
     return 0;
 }
