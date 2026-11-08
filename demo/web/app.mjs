@@ -103,24 +103,57 @@ function update() {
       : release ? translate(locale, "readyLibraries", { tag: release.tag, mode: multi ? translate(locale, "readyModeBatch") : $("save").value === "disk" ? translate(locale, "readyModeDisk") : translate(locale, "readyModeZip") })
       : translate(locale, "readyLoading"))
     : translate(locale, "readyChooseInput");
+  renderError();
 }
 
 function lock(value) {
   for (const id of ["choose", "choose-folder", "change", "target", "save", "intel"]) $(id).disabled = value || !supported || (id === "choose-folder" && !("webkitdirectory" in $("folder")));
 }
 
-async function fail(message) {
+let errorState = null;
+
+function messageText(value) {
+  if (typeof value === "function") return value();
+  if (value instanceof Error) return value.localized ? value.localized() : value.message;
+  return value;
+}
+
+function localizedError(render) {
+  const error = new Error(render());
+  Object.defineProperty(error, "localized", { value: render, enumerable: false });
+  return error;
+}
+
+function renderError() {
+  if (!errorState || $("error").hidden) return;
+  const message = [messageText(errorState.message), ...errorState.appended].join("\n");
+  const report = failureReport({ ...errorState.context, message, locale });
+  if (report === message) $("error").replaceChildren(document.createTextNode(message));
+  else {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = translate(locale, "failureDetails");
+    const text = document.createElement("pre");
+    text.textContent = report;
+    details.append(summary, text);
+    $("error").replaceChildren(document.createTextNode(message), details);
+  }
+}
+
+async function fail(value) {
   if (failing) return;
   failing = true;
-  const report = failureReport({
-    message,
-    phase: $("phase").textContent,
-    input: $("current-file").textContent,
-    target: document.querySelector('input[name="target"]:checked').value,
-    release,
-    log: logs,
-    locale
-  });
+  errorState = {
+    message: value,
+    appended: [],
+    context: {
+      phase: $("phase").textContent,
+      input: $("current-file").textContent,
+      target: document.querySelector('input[name="target"]:checked').value,
+      release,
+      log: logs
+    }
+  };
   worker?.terminate();
   worker = null;
   working = true;
@@ -136,17 +169,7 @@ async function fail(message) {
   }
   const activeSink = sink;
   sink = null;
-  for (const failure of await abortAndDiscardOutput(transaction, activeSink, locale)) message += `\n${failure}`;
-  if (report === message) $("error").textContent = message;
-  else {
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = translate(locale, "failureDetails");
-    const text = document.createElement("pre");
-    text.textContent = report;
-    details.append(summary, text);
-    $("error").replaceChildren(document.createTextNode(message), details);
-  }
+  errorState.appended = await abortAndDiscardOutput(transaction, activeSink, locale);
   $("error").hidden = false;
   $("status").hidden = true;
   $("cancel").hidden = true;
@@ -216,9 +239,9 @@ async function onMessage({ data }, currentWorker) {
       lock(false);
       update();
     } else if (data.type === "directory" || data.type === "open-file") {
-      if (!outputDirectory) throw new Error(translate(locale, "noOutputFolderOpen"));
+      if (!outputDirectory) throw localizedError(() => translate(locale, "noOutputFolderOpen"));
       const parts = data.name.replace(/\/$/u, "").split("/");
-      if (parts.some(part => !part || part === "." || part === ".." || part.includes("\\"))) throw new Error(translate(locale, "invalidOutputPath"));
+      if (parts.some(part => !part || part === "." || part === ".." || part.includes("\\"))) throw localizedError(() => translate(locale, "invalidOutputPath"));
       const filename = data.type === "open-file" ? parts.pop() : null;
       let parent = outputDirectory;
       for (const part of parts) {
@@ -236,18 +259,18 @@ async function onMessage({ data }, currentWorker) {
           }
           sink = writable;
         } catch (error) {
-          throw new Error(translate(locale, "cannotWriteFile", { name: data.name, message: error.message }));
+          throw localizedError(() => translate(locale, "cannotWriteFile", { name: data.name, message: error.message }));
         }
       }
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "close-file") {
-      if (!sink) throw new Error(translate(locale, "noOutputFileOpen"));
+      if (!sink) throw localizedError(() => translate(locale, "noOutputFileOpen"));
       await sink.close();
       if (currentWorker !== worker) return;
       sink = null;
       currentWorker.postMessage({ type: "written" });
     } else if (data.type === "write") {
-      if (!sink) throw new Error(translate(locale, "noOutputFileOpen"));
+      if (!sink) throw localizedError(() => translate(locale, "noOutputFileOpen"));
       await sink.write(data.bytes);
       if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
@@ -289,14 +312,14 @@ async function onMessage({ data }, currentWorker) {
       update();
     } else if (data.type === "error") await fail(data.message);
   } catch (error) {
-    if (currentWorker === worker) await fail(error.message);
+    if (currentWorker === worker) await fail(error);
   }
 }
 
 async function selectInputs(inputs) {
   if (working || !supported || !inputs.length) return;
   if (inputs.some(input => !input.files && !input.name.toLowerCase().endsWith(".zip")) || (inputs.length > 1 && inputs.some(input => input.files))) {
-    await fail(translate(locale, "batchZipOnly"));
+    await fail(() => translate(locale, "batchZipOnly"));
     return;
   }
   worker?.terminate();
@@ -321,7 +344,7 @@ async function selectInputs(inputs) {
   worker = currentWorker;
   currentWorker.onmessage = event => onMessage(event, currentWorker);
   currentWorker.onerror = event => {
-    if (currentWorker === worker) return fail(event.message || translate(locale, "workerStopped"));
+    if (currentWorker === worker) return fail(event.message || (() => translate(locale, "workerStopped")));
   };
   currentWorker.postMessage({ type: "inspect", inputs, locale });
 }
@@ -362,7 +385,7 @@ $("drop").ondrop = event => {
   selectInputs([...event.dataTransfer.files].map(file => ({ name: file.name, file })));
 };
 for (const id of ["save", "target", "acknowledge"]) $(id).addEventListener("change", update);
-$("cancel").onclick = () => fail(translate(locale, "cancelled"));
+$("cancel").onclick = () => fail(() => translate(locale, "cancelled"));
 $("convert").onclick = async () => {
   if ($("convert").disabled) return;
   const currentWorker = worker;
@@ -400,7 +423,7 @@ $("convert").onclick = async () => {
   } catch (error) {
     if (currentWorker !== worker) return;
     if (error.name === "AbortError") { working = false; lock(false); update(); }
-    else await fail(error.message);
+    else await fail(error);
   }
 };
 $("theme").onclick = () => {
@@ -417,11 +440,11 @@ $("locale").onclick = () => {
 updateLocaleButton();
 update();
 lock(false);
-if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw new Error(translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
-  if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw new Error(translate(locale, "invalidReleaseInfo"));
+if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => { if (!response.ok) throw localizedError(() => translate(locale, "cannotLoadReleaseInfo", { status: response.status, hint: response.status === 404 ? translate(locale, "cannotLoadReleaseInfoHint") : "" })); return response.json(); }).then(value => {
+  if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw localizedError(() => translate(locale, "invalidReleaseInfo"));
   release = value;
   update();
-}).catch(error => fail(error instanceof TypeError ? translate(locale, "cannotReachReleaseInfo") : error.message));
+}).catch(error => fail(error instanceof TypeError ? () => translate(locale, "cannotReachReleaseInfo") : error));
 
 if (!("webkitdirectory" in $("folder"))) {
   $("choose-folder").disabled = true;
