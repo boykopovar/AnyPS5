@@ -279,6 +279,11 @@ std::uint64_t vectorBytes(const std::vector<bool>& values) {
     return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
 }
 
+// ElementFlags keeps up to 64 flags inline; larger sets spill every flag into a std::vector<bool>.
+std::uint64_t vectorBytes(const ShaderRecompiler::ElementFlags& flags) {
+    return flags.size() > 64u ? (static_cast<std::uint64_t>(flags.size()) + 7u) / 8u : 0u;
+}
+
 template <typename TValue>
 std::uint64_t sharedBytes(const ShaderRecompiler::SharedValues<TValue>& values) {
     return static_cast<std::uint64_t>(values.size()) * sizeof(TValue);
