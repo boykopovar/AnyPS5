@@ -1,4 +1,5 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
 
 #include <csignal>
@@ -14,9 +15,6 @@
 #define CURSOR_TEST_EXPORT [[gnu::visibility("default")]]
 #endif
 
-extern "C" _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument);
-extern "C" std::uintptr_t APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context);
-extern "C" std::uintptr_t APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Context* context);
 extern "C" [[gnu::noinline]] CURSOR_TEST_EXPORT std::uintptr_t UnwindCursorProbe(int mode);
 extern "C" [[gnu::noinline]] CURSOR_TEST_EXPORT std::uintptr_t UnwindCursorCaller(int mode);
 
