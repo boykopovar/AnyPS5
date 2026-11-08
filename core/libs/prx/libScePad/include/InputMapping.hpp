@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <istream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -91,6 +93,19 @@ inline constexpr std::array InputMapping{
 InputConfiguration LoadInputMapping(std::string_view titleId = {});
 void ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source);
 std::string InputProfileName(std::string_view titleId);
+class InputMappingStore {
+public:
+    explicit InputMappingStore(InputConfiguration initial);
+    std::shared_ptr<const InputConfiguration> Snapshot() const;
+    std::uint64_t Generation() const;
+    void Publish(InputConfiguration configuration);
+
+private:
+    mutable std::mutex mutex;
+    std::shared_ptr<const InputConfiguration> current;
+    std::uint64_t generation = 0;
+};
+
 std::array<std::uint8_t, 2> StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent);
 
 }
