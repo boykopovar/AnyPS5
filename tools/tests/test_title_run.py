@@ -670,6 +670,23 @@ class CompareTests(unittest.TestCase):
         self.assertIsNone(title["unsupportedInstructions"])
         self.assertEqual(title["missingFunctionsCount"], {"before": 1, "now": 0})
 
+    def test_summaries_from_before_the_report_are_not_recorded_everywhere(self):
+        old = {"outcome": "rendering", "fps": 20.0}
+        document = json.loads(title_run.compare_json(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
+        title = document["titles"]["PPSA00001"]
+        self.assertEqual(title["averageFps"], {"before": None, "now": None})
+        self.assertEqual(title["missingFunctionsCount"], {"before": None, "now": None})
+        self.assertIsNone(title["missingFunctions"])
+        self.assertIsNone(title["unsupportedInstructions"])
+        lines = title_run.render_compare(title_run.compare_runs(self.summary(PPSA00001=[old]), self.summary(PPSA00001=[old])))
+        self.assertIn("| Game PPSA00001 | PPSA00001 | Shaders compiled | not recorded | not recorded |", lines)
+
+    def test_a_run_that_never_started_records_nothing(self):
+        failed = {"outcome": "relink-failed", "fps": 0.0, "report": None}
+        compared = title_run.compare_runs(self.summary(PPSA00001=[failed]), self.summary(PPSA00001=[{"outcome": "rendering", "fps": 9.0, "report": None}]))
+        self.assertEqual(compared["PPSA00001"]["fps"], {"before": 9.0, "now": None})
+        self.assertEqual(compared["PPSA00001"]["shaders"]["compiled"], {"before": None, "now": None})
+
     def test_json_needs_a_comparison(self):
         with self.assertRaises(SystemExit):
             title_run.main(["--games", str(title_run.ROOT), "--json"])
