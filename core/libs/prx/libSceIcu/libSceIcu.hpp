@@ -30,3 +30,5 @@
 #include "Configuration.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "BreakIterator.hpp"
+#include "Data.hpp"

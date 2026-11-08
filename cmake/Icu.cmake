@@ -84,3 +84,5 @@ set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VIS
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(icu_common INTERFACE LINKER:--exclude-libs,libicu_common.a)
 endif()
+
+include(${CMAKE_CURRENT_LIST_DIR}/IcuData.cmake)

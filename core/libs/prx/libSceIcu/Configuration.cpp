@@ -1,5 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/Status.hpp"
+#include "unicode/uclean.h"
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -16,6 +18,26 @@ struct MemoryFunctions {
 
 std::mutex MemoryLock;
 MemoryFunctions Memory;
+MemoryFunctions Snapshot() {
+    const std::lock_guard lock(MemoryLock);
+    return Memory;
+}
+
+void* U_CALLCONV Allocate(const void*, std::size_t size) {
+    const auto memory = Snapshot();
+    return memory.allocate(memory.context, size);
+}
+
+void* U_CALLCONV Reallocate(const void*, void* pointer, std::size_t size) {
+    const auto memory = Snapshot();
+    return memory.reallocate(memory.context, pointer, size);
+}
+
+void U_CALLCONV Release(const void*, void* pointer) {
+    const auto memory = Snapshot();
+    memory.release(memory.context, pointer);
+}
+
 std::mutex DirectoryLock;
 std::string DataDirectory;
 std::string TimeZoneDirectory;
@@ -41,7 +63,10 @@ void APS5_VABI u_setMemoryFunctions_nid_postfix(const void* context, Icu::Memory
         return;
     }
     const std::lock_guard lock(MemoryLock);
-    Memory = {context, allocate, reallocate, release};
+    auto nativeStatus = static_cast<UErrorCode>(*status);
+    u_setMemoryFunctions(nullptr, Allocate, Reallocate, Release, &nativeStatus);
+    *status = nativeStatus;
+    if (U_SUCCESS(nativeStatus)) Memory = {context, allocate, reallocate, release};
 }
 
 
@@ -76,6 +101,7 @@ void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::in
 
 
 void APS5_VABI u_cleanup_nid_postfix() {
+    u_cleanup();
     {
         const std::lock_guard lock(MemoryLock);
         Memory = {};
