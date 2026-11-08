@@ -1612,15 +1612,42 @@ ThreadCollectMemo& threadCollectMemo() {
 
 struct EpochCollectMap {
     std::uint64_t epoch = 0;
-    std::unordered_map<std::uintptr_t, WriteTracker::Memo> ranges;
+    std::uint64_t unwatched = 0;
+    std::uint64_t mapping = 0;
+    std::map<std::uintptr_t, std::uintptr_t> ranges;
+
+    bool Covers(std::uintptr_t begin, std::uintptr_t end) const {
+        if (end <= begin) return false;
+        const auto next = ranges.upper_bound(begin);
+        return next != ranges.begin() && std::prev(next)->second >= end;
+    }
+
+    void Record(std::uintptr_t begin, std::uintptr_t end) {
+        auto next = ranges.lower_bound(begin);
+        if (next != ranges.begin()) {
+            const auto previous = std::prev(next);
+            if (previous->second >= begin) {
+                begin = previous->first;
+                end = std::max(end, previous->second);
+                next = ranges.erase(previous);
+            }
+        }
+        while (next != ranges.end() && next->first <= end) {
+            end = std::max(end, next->second);
+            next = ranges.erase(next);
+        }
+        ranges.emplace_hint(next, begin, end);
+    }
 };
 
-EpochCollectMap& epochCollectMap(std::uint64_t epoch) {
+EpochCollectMap& epochCollectMap(std::uint64_t epoch, std::uint64_t unwatched, std::uint64_t mapping) {
     struct Slot {};
     auto& map = ThreadScratch<EpochCollectMap, Slot>();
-    if (map.epoch != epoch) {
+    if (map.epoch != epoch || map.unwatched != unwatched || map.mapping != mapping) {
         map.ranges.clear();
         map.epoch = epoch;
+        map.unwatched = unwatched;
+        map.mapping = mapping;
     }
     return map;
 }
@@ -1763,13 +1790,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
         if (epochCollectMapEnabled()) {
-            const auto& map = epochCollectMap(epoch);
-            const auto blockFirst = first & ~(WriteBlockBytes - 1);
-            const auto reusable = [&](std::uintptr_t key) {
-                const auto found = map.ranges.find(key);
-                return found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == mapping && stop <= found->second.end;
-            };
-            if (reusable(first) || (blockFirst != first && reusable(blockFirst))) {
+            const auto& map = epochCollectMap(epoch, unwatched, mapping);
+            if (map.Covers(first, stop)) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
                 return tracker.stable.load(std::memory_order_acquire);
             }
@@ -1827,8 +1849,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
                 memo.entries[memo.next++ % memo.entries.size()] = {first, stop, epoch, serial, mapping};
             }
             if (epochal && epochCollectMapEnabled()) {
-                auto& entry = epochCollectMap(epoch).ranges[first];
-                if (entry.unwatched != serial || entry.mapping != mapping || entry.end < stop) entry = {first, stop, epoch, serial, mapping};
+                epochCollectMap(epoch, serial, mapping).Record(first, stop);
             }
         }
     }

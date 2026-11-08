@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -285,6 +286,8 @@ void CheckCoverageGapsAndInvalidations() {
     Require(CollectWrites(Base + 3 * Block, 2 * Block) != 0, "the right collection failed");
     Require(Walked(Base + Block, 3 * Block, Base + 2 * Block + Page), "a hole between observations was treated as observed");
     Require(CollectWrites(Base, 0) == 0, "an empty range acquired a coverage proof");
+    Require(CollectWrites(std::numeric_limits<std::uint64_t>::max() - 31, 8) == 0, "page rounding wrapped an invalid address into observed memory");
+    Require(CollectWrites(std::numeric_limits<std::uint64_t>::max() - 31, 64) == 0, "an overflowing range acquired a coverage proof");
 
     BumpCollectEpoch();
     const auto probe = Base + 2 * Block + Page;
