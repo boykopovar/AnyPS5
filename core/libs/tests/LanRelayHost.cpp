@@ -199,6 +199,11 @@ static void LeavesNoDescriptorsBehind() {
 #endif
 }
 
+static void StaysOffByDefault() {
+    Require(LanRelay::StartRelay(nullptr, nullptr, nullptr) == nullptr, "both variables unset starts no relay");
+    Require(LanRelay::StartRelay("", "", nullptr) == nullptr, "empty variables start no relay");
+}
+
 static void StartsWhenConfigured() {
     auto relay = LanRelay::StartRelay("127.0.0.1:47123", "", nullptr);
     Require(relay != nullptr && relay->IsOpen() && relay->Port() != 0, "a listen address starts the relay");
@@ -216,6 +221,7 @@ int main() {
     RefusesBusyPort();
     OpensAndClosesTwoRelaysWithoutLeaks();
     LeavesNoDescriptorsBehind();
+    StaysOffByDefault();
     StartsWhenConfigured();
     return 0;
 }
