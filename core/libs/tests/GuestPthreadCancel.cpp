@@ -8,6 +8,7 @@
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
@@ -211,10 +212,15 @@ int main() {
     Require(scePthreadSetcancelstate(7, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadSetcanceltype(1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_setcanceltype_nid_postfix(1, nullptr) == GUEST_EINVAL);
+    errno = 0;
     Require(scePthreadSetcancelstate(CANCEL_DISABLE, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 0);
     Require(scePthreadSetcanceltype(CANCEL_ASYNCHRONOUS, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 0);
     Require(pthread_setcancelstate_nid_postfix(CANCEL_DISABLE, reinterpret_cast<int*>(0x10)) == 14);
+    Require(errno == 0);
     Require(pthread_setcanceltype_nid_postfix(CANCEL_ASYNCHRONOUS, reinterpret_cast<int*>(0x10)) == 14);
+    Require(errno == 0);
     int cancelState = -1;
     Require(scePthreadSetcancelstate(CANCEL_ENABLE, &cancelState) == SCE_OK && cancelState == CANCEL_ENABLE);
     int cancelType = -1;
