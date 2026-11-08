@@ -485,6 +485,7 @@ inline std::FILE* GetNativeStream(FileStream* stream) {
 }
 
 extern "C" {
+extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
