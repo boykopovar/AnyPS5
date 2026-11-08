@@ -368,6 +368,12 @@ int main() {
         for (int round = 0; round < 3; ++round) Require(Submit(unmoved) == BufferAlphaByte, "the draw of the template's own buffer did not read it");
         const std::array<std::size_t, 1> movedOnly{Moved};
         for (int round = 0; round < 3; ++round) Require(Submit(movedOnly) == SecondAlphaByte, "a draw whose buffer moved after a recipe without moves was recorded did not read the moved buffer");
+        constexpr std::size_t Aligned = First + 64;
+        const std::array<std::size_t, 2> alignedSlices{First, Aligned};
+        BufferMemory[Aligned] = SecondAlpha;
+        const auto alignedAlpha = Submit(alignedSlices);
+        Require(alignedAlpha == SecondAlphaByte, "a draw whose buffer moved by a whole number of 256-byte blocks drew another buffer's contents (alpha " + std::to_string(alignedAlpha) + ")");
+        BufferMemory[Aligned] = 0.0f;
         std::puts("draws whose read-only buffer moved from their template's replayed recipes that read the buffer's current contents");
         AgcDriverShutdown_nid_postfix();
         return 0;

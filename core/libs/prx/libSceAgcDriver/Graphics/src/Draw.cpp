@@ -4358,7 +4358,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         return miss(DrawRecipeMiss::Proof);
     }
     std::vector<ShaderResources::MovedBuffer> moved;
-    if (recipe.movedBuffers) {
+    if (recipe.movedBuffers || resources->HeapStage()) {
         auto found = resources->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
         if (!found.has_value()) {
             timer.phase(PhaseLookup);
