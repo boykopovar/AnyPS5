@@ -827,13 +827,17 @@ int APS5_VABI pause_nid_postfix(void) {
 }
 
 int APS5_VABI sigsuspend_nid_postfix(const GuestSignalSet* set) {
-    if (set == nullptr) throw std::invalid_argument("sigsuspend: null mask");
+    GuestSignalSet requested{};
+    if (set == nullptr || !GuestCopyIn_nid_no_patch(&requested, set, sizeof(requested))) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     GuestSignalSet previous{{0, 0, 0, 0}};
     {
         std::lock_guard lock(registration);
         auto& self = CurrentSignals();
-        previous.bits[0] = self.blocked[0].exchange(set->bits[0] & ~UnblockableSignals);
-        for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(set->bits[word]);
+        previous.bits[0] = self.blocked[0].exchange(requested.bits[0] & ~UnblockableSignals);
+        for (int word = 1; word < 4; ++word) previous.bits[word] = self.blocked[word].exchange(requested.bits[word]);
     }
     WaitForDeliverableSignal();
     ChangeBlockedMask(GuestSigsetmask, &previous, nullptr, false);
