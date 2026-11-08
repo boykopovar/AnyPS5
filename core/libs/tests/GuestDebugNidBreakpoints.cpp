@@ -76,11 +76,25 @@ static void CheckDuplicates() {
     Check(table.DuplicateCount() == 2);
 }
 
+static void CheckCapacity() {
+    Debug::NidBreakpointTable table;
+    for (std::uint64_t i = 0; i < Debug::NidBreakpointTable::kCapacity; ++i)
+        Check(table.Add(i << 2) == Debug::NidBreakpointTable::AddResult::Added);
+    Check(table.Size() == Debug::NidBreakpointTable::kCapacity);
+    Check(table.Add(0xFFFFFFFFFFFFFFFCULL) == Debug::NidBreakpointTable::AddResult::Full);
+    Check(table.Size() == Debug::NidBreakpointTable::kCapacity);
+    Check(table.Add(0) == Debug::NidBreakpointTable::AddResult::Duplicate);
+    Check(table.Remove(4));
+    Check(table.Add(0xFFFFFFFFFFFFFFFCULL) == Debug::NidBreakpointTable::AddResult::Added);
+    Check(table.Size() == Debug::NidBreakpointTable::kCapacity);
+}
+
 int main() {
     CheckParseKnownValues();
     CheckParseRejectsMalformed();
     CheckRoundTrip();
     CheckAddRemove();
     CheckDuplicates();
+    CheckCapacity();
     return 0;
 }
