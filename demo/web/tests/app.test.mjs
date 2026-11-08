@@ -40,13 +40,15 @@ async function setup(t, name, windowOptions = {}) {
   }
   const globals = {
     document: {
+      documentElement: { lang: "", dir: "" },
       getElementById: get,
       createElement: () => new Element(),
       createTextNode: text => ({ textContent: text }),
       querySelector: selector => {
         assert.equal(selector, 'input[name="target"]:checked');
         return { value: "linux" };
-      }
+      },
+      querySelectorAll: () => []
     },
     window: { isSecureContext: true, Worker, WebAssembly, ReadableStream, WritableStream, crypto: { subtle: {} }, ...windowOptions },
     Worker,
