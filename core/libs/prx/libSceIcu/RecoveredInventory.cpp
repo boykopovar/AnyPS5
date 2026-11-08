@@ -199,10 +199,6 @@ int APS5_VABI ucsdet_setText_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udat_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI udat_countSymbols_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

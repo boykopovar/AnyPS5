@@ -51,7 +51,6 @@ int APS5_VABI ucsdet_getConfidence_nid_postfix();
 int APS5_VABI ucsdet_getName_nid_postfix();
 int APS5_VABI ucsdet_open_nid_postfix();
 int APS5_VABI ucsdet_setText_nid_postfix();
-int APS5_VABI udat_close_nid_postfix();
 int APS5_VABI udat_countSymbols_nid_postfix();
 int APS5_VABI udat_format_nid_postfix();
 int APS5_VABI udat_formatForFields_nid_postfix();
