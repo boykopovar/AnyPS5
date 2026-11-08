@@ -631,6 +631,9 @@ int APS5_VABI scePadDisableVibration(std::int32_t handle, bool disabled) {
 }
 
 int APS5_VABI scePadSetVibrationStrength(std::int32_t handle, std::uint32_t strength) {
+    (void)strength;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -661,11 +664,16 @@ int APS5_VABI scePadGetControllerIdleCount(std::int32_t handle, std::uint64_t* c
 }
 
 int APS5_VABI scePadSetPowerSavingState(std::int32_t handle, std::uint8_t state) {
+    (void)state;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI scePadSetAutoPowerOffCount(std::int32_t count) {
+    (void)count;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -691,6 +699,8 @@ int APS5_VABI scePadDisableTrackingLedBatterySaver(bool disabled) {
 }
 
 int APS5_VABI scePadSetLoginUserNumber(std::int32_t number) {
+    (void)number;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -753,6 +763,8 @@ int APS5_VABI scePadSetProcessPrivilegeOfButtonRemapping(bool enabled) {
 }
 
 int APS5_VABI scePadSetForceIntercepted(bool enabled) {
+    (void)enabled;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -777,6 +789,9 @@ int APS5_VABI scePadDisableTriggerEffect(std::int32_t handle, bool disabled) {
 }
 
 int APS5_VABI scePadSetTriggerEffectStrength(std::int32_t handle, std::uint32_t strength) {
+    (void)strength;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -787,6 +802,9 @@ int APS5_VABI scePadGetTriggerEffectInternalState(std::int32_t handle, PadTrigge
 }
 
 int APS5_VABI scePadSetUserNumber(std::int32_t handle, std::int32_t number) {
+    (void)number;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -998,6 +1016,9 @@ int APS5_VABI scePadIsCoPilot(std::int32_t handle) {
 }
 
 int APS5_VABI scePadSetIsCoPilot(std::int32_t handle, bool enabled) {
+    (void)enabled;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1172,6 +1193,8 @@ int APS5_VABI scePadGetDeviceInfo(std::int32_t deviceId, PadDeviceInfo* info) {
 }
 
 int APS5_VABI scePadSetProcessFocus(const PadProcessFocusParameter* parameter) {
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
