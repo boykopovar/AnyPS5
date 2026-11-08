@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [Process shutdown of an abandoned host thread](../../../core/libs/prx/libc/src/Process.cpp) (libc) - a host thread that cannot unwind `ProcessShutdown` out of the host thread start keeps the mutex it holds, so joining it or locking that mutex at exit never returns. Shutdown notices that thread, skips the end flush, and ends the process with the stored status instead of joining. Any other unhandled exception still reaches terminate. A title reaching this hang has not been measured.
+
 - [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) is a host-only byte-change proof, not console ABI. Tokens cover whole 64 KiB blocks; writes outside the requested subrange can invalidate them. Callers must synchronize stores around the snapshot they cache.
 - [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) accepts only fully committed writable write-watched blocks queryable as one Windows allocation. Private commits require flag 1. Shared, pinned, host-open, unwatched and incomplete blocks refuse; other platforms refuse.
 - [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) bounds token and pending maps to 65,536 blocks each. Full pending capacity refuses new blocks before resetting writes; token pressure invalidates lowest-address proofs. Impact on titles is unmeasured.
