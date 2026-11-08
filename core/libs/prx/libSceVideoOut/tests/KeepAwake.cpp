@@ -15,10 +15,11 @@ namespace {
 int disables = 0;
 int enables = 0;
 bool enabled = true;
+bool refuseDisable = false;
 
 void FakeDisable() {
     ++disables;
-    enabled = false;
+    if (!refuseDisable) enabled = false;
 }
 
 void FakeEnable() {
@@ -58,6 +59,17 @@ void TestAcquireRelease() {
 
 }
 
+void TestRefusedInhibitOnlyLogs() {
+    refuseDisable = true;
+    HostKeepAwake keepAwake(fakeBackend);
+    const int before = enables;
+    keepAwake.Acquire();
+    Require(disables == 3 && enabled, "the refused inhibit was not attempted");
+    keepAwake.Release();
+    refuseDisable = false;
+    Require(enables == before + 1, "a refused inhibit was not released afterwards");
+}
+
 void TestSdlBackendWithoutVideo() {
     const auto& backend = SdlKeepAwakeBackend();
     backend.disable();
@@ -68,6 +80,7 @@ void TestSdlBackendWithoutVideo() {
 int main() {
     TestParser();
     TestAcquireRelease();
+    TestRefusedInhibitOnlyLogs();
     TestSdlBackendWithoutVideo();
     return 0;
 }
