@@ -7,7 +7,7 @@
   "required": ["format", "version", "generated", "anyps5", "game", "system", "run", "coverage", "truncated", "missing", "shaders", "stop"],
   "properties": {
     "format": { "const": "anyps5-report" },
-    "version": { "const": 2 },
+    "version": { "const": 1 },
     "generated": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
     "anyps5": {
       "type": "object",
