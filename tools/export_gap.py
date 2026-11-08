@@ -152,7 +152,7 @@ def macro_definitions(texts):
     for _, text in texts:
         for match in DEFINE.finditer(joined_lines(text)):
             macro, param, body = match.group(1), match.group(2), match.group(3)
-            if re.search(r"\bAPS5_VABI\s+" + re.escape(param) + r"\b", body) is not None:
+            if any(definition.group(1) == param for definition in nid_names.DEFINITION.finditer(mask_code(body))):
                 macros.setdefault(macro, param)
     return macros
 
@@ -181,11 +181,9 @@ def collect_provided(module_dir):
     macros = macro_definitions(texts)
     provided = {}
     for _, text in texts:
-        for line in mask_code(joined_lines(text)).split("\n"):
-            if line.lstrip().startswith("#"):
-                continue
-            for match in VABI.finditer(line):
-                record_provided(provided, match.group(1))
+        code = "\n".join(line for line in mask_code(joined_lines(text)).split("\n") if not line.lstrip().startswith("#"))
+        for match in nid_names.DEFINITION.finditer(code):
+            record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
         for nid, helper in nid_names.source_aliases(text):

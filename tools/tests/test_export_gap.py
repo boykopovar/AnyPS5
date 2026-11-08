@@ -142,6 +142,19 @@ class ExportGapTests(unittest.TestCase):
     def test_postfix_name_provides_hashed_base_nid(self):
         self.assertTrue(provides("sceExampleBase_nid_postfix", nid_of("sceExampleBase")))
 
+    def test_declarations_do_not_hide_missing_exports(self):
+        nid = nid_of("sceExampleMissing")
+        for source in (
+            "int APS5_VABI sceExampleMissing_nid_postfix(void);\n",
+            "#define DECLARE(NAME) int APS5_VABI NAME(void);\nDECLARE(sceExampleMissing_nid_postfix)\n",
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(provides_with(source, nid))
+
+    def test_multiline_definition_counts_as_provided(self):
+        source = "int APS5_VABI\nsceExamplePresent_nid_postfix(\n    int value)\n{ return value; }\n"
+        self.assertTrue(provides_with(source, nid_of("sceExamplePresent")))
+
     def test_disambig_postfix_provides_hashed_base_nid(self):
         self.assertTrue(provides("alias_nid_disambig12_nid_postfix", nid_of("alias")))
 
