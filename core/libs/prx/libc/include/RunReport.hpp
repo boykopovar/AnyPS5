@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_RUNREPORT_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_RUNREPORT_HPP
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,6 +72,10 @@ private:
     std::size_t head = 0;
     std::size_t count = 0;
 };
+
+inline double FramePercentile(std::span<const double> sorted, double fraction) noexcept {
+    return sorted.empty() ? 0.0 : sorted[std::min(sorted.size() - 1u, static_cast<std::size_t>(fraction * static_cast<double>(sorted.size())))];
+}
 
 enum class Kind { None, MissingFunction, UnsupportedShader, UnsupportedFormat, Crash, Assert, Other };
 enum class Reason { GuestExit, QuitRequested, RuntimeStop, Crash, UncleanUnknown, Other };
