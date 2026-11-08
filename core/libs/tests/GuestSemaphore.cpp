@@ -6,6 +6,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <mutex>
+#include <thread>
 
 static constexpr int SCE_OK = 0;
 
@@ -59,6 +61,43 @@ static void RequireInvalidArguments() {
     Require(sceKernelDeleteSema(sem) == SCE_OK);
     Require(ksem_wait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
     Require(ksem_trywait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
+}
+
+static int WaiterCount(KernelSema sem) {
+    std::lock_guard<std::mutex> lock(sem->mutex);
+    return sem->waiterCount;
+}
+
+static void RequireZeroTimeout() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "zero_timeout", 0, 1, 3, nullptr) == SCE_OK);
+
+    KernelUseconds timeout = 0;
+    Require(sceKernelWaitSema(sem, 1, &timeout) == SCE_OK && timeout == 0);
+    Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+
+    timeout = 0;
+    Require(sceKernelWaitSema(sem, 1, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && timeout == 0);
+    Require(WaiterCount(sem) == 0);
+    Require(sceKernelSignalSema(sem, 1) == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_OK);
+
+    timeout = 0;
+    Require(sceKernelWaitSema(sem, 4, &timeout) == SCE_KERNEL_ERROR_EINVAL && timeout == 0);
+
+    Waiter blocked{sem, false};
+    Pthread blockedThread = nullptr;
+    Require(scePthreadCreate(&blockedThread, nullptr, Wait, &blocked, nullptr) == SCE_OK);
+    for (int i = 0; i < 5000 && WaiterCount(sem) != 1; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(WaiterCount(sem) == 1);
+    timeout = 0;
+    Require(sceKernelWaitSema(sem, 1, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && timeout == 0);
+    Require(WaiterCount(sem) == 1);
+    Require(sceKernelSignalSema(sem, 1) == SCE_OK);
+    Require(scePthreadJoin(blockedThread, nullptr) == SCE_OK);
+    Require(blocked.result == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
 
 int main() {
@@ -127,4 +166,5 @@ int main() {
     Require(ksem_trywait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
 
     RequireInvalidArguments();
+    RequireZeroTimeout();
 }
