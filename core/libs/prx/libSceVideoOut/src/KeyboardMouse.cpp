@@ -277,6 +277,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (binding.control == InputControl::VolumeDown && keyboard && down && !pressed[index]) requests.volumeDown = true;
         if (binding.control == InputControl::ToggleMute && keyboard && down && !pressed[index]) requests.toggleMute = true;
         if (binding.control == InputControl::ToggleMouse && down && !pressed[index]) requests.toggleMouse = true;
+        if (binding.control == InputControl::ReloadInputMapping && keyboard && down && !pressed[index]) requests.reloadInputMapping = true;
         pressed[index] = down;
     }
     return requests;
