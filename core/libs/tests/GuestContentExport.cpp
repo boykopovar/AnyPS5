@@ -4,6 +4,7 @@
 #include "ProcessParametersFixture.hpp"
 #include <array>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstddef>
@@ -159,6 +160,9 @@ int main() {
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
 
     Require(Throws([] { sceContentExportInit2(nullptr); }));
+    errno = 71;
+    Require(Throws([] { sceContentExportInit2(reinterpret_cast<const ContentExportInitParam2*>(0x10)); }));
+    Require(errno == 71);
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
     Require(Throws([] { sceContentExportFinish(1); }));

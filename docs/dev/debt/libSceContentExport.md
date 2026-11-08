@@ -11,6 +11,8 @@
 
 - [sceContentExportTerm](../../../core/libs/prx/libSceContentExport/Export.cpp) (libSceContentExport) returns 0 without waiting for ongoing operations, tearing down threads, or verifying that all resources have been released.
 
+- [sceContentExportInit2](../../../core/libs/prx/libSceContentExport/Export.cpp) (libSceContentExport) - throwing std::invalid_argument for unmapped or unreadable parameter pointers is a host-safety fallback; whether console hardware faults or returns an argument error on unmapped memory is unmeasured.
+
 ### Unknown function info
 
 - [sceContentExportDataProvideFunction, sceContentExportFree, sceContentExportFrom and sceContentExportMalloc](../../../core/libs/prx/libSceContentExport/Export.cpp): their signatures remain unresolved; these names have no matching exports in the supplied module's C or assembly listing.
