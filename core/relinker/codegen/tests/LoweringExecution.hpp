@@ -53,8 +53,6 @@ inline State InitialState() {
 #if LOWERING_EXECUTION_AVAILABLE
 
 #if defined(_WIN32)
-using Entry = void(__attribute__((sysv_abi)) *)(void*);
-
 inline std::uint8_t* AllocatePages(std::size_t size) {
     return static_cast<std::uint8_t*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
 }
@@ -69,8 +67,6 @@ inline void FreePages(std::uint8_t* pages, std::size_t) {
     if (pages) VirtualFree(pages, 0, MEM_RELEASE);
 }
 #else
-using Entry = void (*)(void*);
-
 inline std::uint8_t* AllocatePages(std::size_t size) {
     void* pages = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return pages == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(pages);
@@ -86,7 +82,21 @@ inline void FreePages(std::uint8_t* pages, std::size_t size) {
 }
 #endif
 
-inline void Call(const std::uint8_t* code, void* argument) { reinterpret_cast<Entry>(const_cast<std::uint8_t*>(code))(argument); }
+inline std::size_t AppendHostEntry(Bytes& bytes) {
+#if defined(_WIN32)
+    const auto entry = bytes.size();
+    bytes.insert(bytes.end(), {0x56, 0x57, 0x48, 0x83, 0xEC, 0x08, 0x48, 0x89, 0xCF, 0xE8});
+    const auto displacement = static_cast<std::int32_t>(0 - static_cast<std::int64_t>(bytes.size() + 4));
+    for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> shift));
+    bytes.insert(bytes.end(), {0x48, 0x83, 0xC4, 0x08, 0x5F, 0x5E, 0xC3});
+    return entry;
+#else
+    (void)bytes;
+    return 0;
+#endif
+}
+
+inline void Call(const std::uint8_t* code, std::size_t entry, void* argument) { reinterpret_cast<void (*)(void*)>(const_cast<std::uint8_t*>(code + entry))(argument); }
 
 #if defined(_WIN32)
 inline std::uint8_t*& ProbeCode() {
@@ -235,6 +245,7 @@ public:
         memory(0x8D, 4, 4, 128);
         for (auto reg : {15, 14, 13, 12, 5, 3}) pop(static_cast<std::uint8_t>(reg));
         bytes.push_back(0xC3);
+        entry = AppendHostEntry(bytes);
         if (bytes.size() >= 4096) throw std::runtime_error("Execution wrapper exceeded its code page");
         code = AllocatePages(8192);
         if (!code) throw std::runtime_error("Cannot allocate execution test pages");
@@ -247,12 +258,13 @@ public:
     Execution(const Execution&) = delete;
     Execution& operator=(const Execution&) = delete;
 
-    void Run(State& state) const { Call(code, &state); }
+    void Run(State& state) const { Call(code, entry, &state); }
     const void* Memory() const { return code + 4096 + 24; }
 
 private:
     Bytes bytes;
     std::uint8_t* code = nullptr;
+    std::size_t entry = 0;
 
     void append32(std::int32_t value) {
         for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
