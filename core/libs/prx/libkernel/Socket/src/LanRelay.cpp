@@ -1,9 +1,25 @@
 #include "prx/libkernel/Socket/include/LanRelay.hpp"
+#include <cerrno>
 #include <stdexcept>
+#include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+using SocketHandle = SOCKET;
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+using SocketHandle = int;
+#endif
 
 namespace LanRelay {
 namespace {
+
+constexpr std::uintptr_t NoSocket = ~std::uintptr_t(0);
 
 void CheckIPv4(const std::string& host) {
     if (host.empty()) throw std::invalid_argument("missing host");
@@ -36,6 +52,32 @@ std::uint16_t ParsePort(const std::string& text) {
     }
     if (value == 0) throw std::invalid_argument("port out of range");
     return static_cast<std::uint16_t>(value);
+}
+
+int LastError() {
+#ifdef _WIN32
+    return WSAGetLastError();
+#else
+    return errno;
+#endif
+}
+
+void EnsureNetworking() {
+#ifdef _WIN32
+    static const int startup = [] {
+        WSADATA data{};
+        return WSAStartup(MAKEWORD(2, 2), &data);
+    }();
+    if (startup != 0) throw std::runtime_error("LAN relay: WSAStartup failed, error " + std::to_string(startup));
+#endif
+}
+
+void CloseNative(SocketHandle socket) {
+#ifdef _WIN32
+    closesocket(socket);
+#else
+    close(socket);
+#endif
 }
 
 }
@@ -85,6 +127,55 @@ Settings ReadSettings(const char* listen, const char* peers) {
         throw std::invalid_argument(std::string("ANYPS5_LAN_PEERS: ") + error.what());
     }
     return settings;
+}
+
+Relay::~Relay() {
+    Close();
+}
+
+void Relay::Open(const Endpoint& listen) {
+    if (IsOpen()) throw std::logic_error("LAN relay: already open");
+    EnsureNetworking();
+    CheckIPv4(listen.Host);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(listen.Port);
+    if (inet_pton(AF_INET, listen.Host.c_str(), &address.sin_addr) != 1) {
+        throw std::invalid_argument("LAN relay: host is not an IPv4 address");
+    }
+    const SocketHandle descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (descriptor == static_cast<SocketHandle>(-1)) {
+        throw std::runtime_error("LAN relay: socket failed, error " + std::to_string(LastError()));
+    }
+    if (bind(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof address) != 0) {
+        const int error = LastError();
+        CloseNative(descriptor);
+        throw std::runtime_error("LAN relay: bind failed, error " + std::to_string(error));
+    }
+    sockaddr_in bound{};
+    socklen_t length = sizeof bound;
+    if (getsockname(descriptor, reinterpret_cast<sockaddr*>(&bound), &length) != 0) {
+        const int error = LastError();
+        CloseNative(descriptor);
+        throw std::runtime_error("LAN relay: getsockname failed, error " + std::to_string(error));
+    }
+    handle = static_cast<std::uintptr_t>(descriptor);
+    port = ntohs(bound.sin_port);
+}
+
+void Relay::Close() {
+    if (!IsOpen()) return;
+    CloseNative(static_cast<SocketHandle>(handle));
+    handle = NoSocket;
+    port = 0;
+}
+
+bool Relay::IsOpen() const {
+    return handle != NoSocket;
+}
+
+std::uint16_t Relay::Port() const {
+    return port;
 }
 
 }
