@@ -4,6 +4,11 @@
 #include "SceTypes.hpp"
 #include <streambuf>
 
+namespace LibcException {
+struct SystemErrorObject;
+struct ErrorCode;
+}
+
 extern "C" {
 
 int APS5_VABI libSceLibcInternalInventory_000_nid_no_patch();
@@ -24,7 +29,7 @@ int APS5_VABI libSceLibcInternalInventory_014_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_015_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_016_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_017_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_019_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_019_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
 int APS5_VABI libSceLibcInternalInventory_020_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_021_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_022_nid_no_patch(void* self);
@@ -57,10 +62,6 @@ int APS5_VABI libSceLibcInternalInventory_049_nid_no_patch();
 std::streamsize APS5_VABI libSceLibcInternalInventory_050_nid_no_patch(std::basic_streambuf<wchar_t>*);
 int APS5_VABI libSceLibcInternalInventory_052_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_053_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_054_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_055_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_056_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_057_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_058_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_061_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_062_nid_no_patch();
@@ -242,7 +243,6 @@ int APS5_VABI libSceLibcInternalInventory_238_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_239_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_240_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_241_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_242_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_243_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_244_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_245_nid_no_patch();
