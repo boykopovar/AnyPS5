@@ -56,8 +56,8 @@ int main() {
     FT_UInt actualPointCapacity = 0;
     FT_UInt actualContourCapacity = 0;
     FT_Stroker_GetCounts(actualStroker, &actualPointCapacity, &actualContourCapacity);
-    std::fprintf(stderr, "reference capacity=%u/%u guest capacity=%u/%u\n", points, contours,
-                 actualPointCapacity, actualContourCapacity);
+    Require(actualPointCapacity == points && actualContourCapacity == contours,
+            "both strokers have the same export capacity");
     Output expected(points, contours);
     Output actual(points, contours);
     FT_Stroker_Export(expectedStroker, &expected.outline);
@@ -67,9 +67,6 @@ int main() {
         actual.tags.data(), actual.contours.data(), 0};
     sceFreeTypeOtStrokerExport_nid_no_patch(actualStroker, &guestOutline);
 
-    std::fprintf(stderr, "expected points=%d contours=%d actual points=%u contours=%u\n",
-                 expected.outline.n_points, expected.outline.n_contours,
-                 guestOutline.n_points, guestOutline.n_contours);
     Require(guestOutline.n_points == expected.outline.n_points, "point count matches FreeType");
     Require(guestOutline.n_contours == expected.outline.n_contours, "contour count matches FreeType");
     Require(guestOutline.n_points > 0 && guestOutline.n_contours > 0, "stroke produced geometry");
