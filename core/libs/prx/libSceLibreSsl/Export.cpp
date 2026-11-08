@@ -132,11 +132,6 @@ int APS5_VABI EC_KEY_set_private_key_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EC_POINT_mul_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ENGINE_get_id_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
