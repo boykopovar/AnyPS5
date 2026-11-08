@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
@@ -11,14 +13,26 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
 constexpr std::uint64_t Block = 65536;
 constexpr std::uint64_t Page = 4096;
-constexpr std::uint64_t Base = std::uint64_t{1} << 32;
+constexpr std::uint64_t Span = 128 * Block;
+std::uint64_t Base = std::uint64_t{1} << 32;
 constexpr std::chrono::seconds Patience{10};
 
+void Require(bool condition, const std::string& message) {
+    if (!condition) throw std::runtime_error(message);
+}
+
+#ifndef _WIN32
 struct FakeWatch {
     std::mutex mutex;
     std::condition_variable changed;
@@ -27,19 +41,19 @@ struct FakeWatch {
     bool holding = false;
     bool released = false;
     bool timedOut = false;
+    bool failWalks = false;
+    std::size_t walks = 0;
 };
 
 FakeWatch& Fake() {
     static FakeWatch fake;
     return fake;
 }
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
+#endif
 
 }
 
+#ifndef _WIN32
 namespace GuestWriteWatch {
 
 extern "C" {
@@ -48,8 +62,12 @@ bool GuestWriteWatchAvailable_nid_postfix() {
     return true;
 }
 
+bool GuestWriteWatchUnregister_nid_postfix(const void*, std::size_t) {
+    return true;
+}
+
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes) {
-    return address >= Base && bytes <= 2 * Block && address - Base <= 2 * Block - bytes;
+    return address >= Base && bytes <= Span && address - Base <= Span - bytes;
 }
 
 bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
@@ -58,6 +76,8 @@ bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t byte
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
     {
         std::unique_lock lock(fake.mutex);
+        ++fake.walks;
+        if (fake.failWalks) return false;
         if (fake.holdNextWalk) {
             fake.holdNextWalk = false;
             fake.holding = true;
@@ -78,11 +98,13 @@ bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t byte
 }
 
 }
+#endif
 
 namespace {
 
 using namespace AgcDriver::GuestMemory;
 
+#ifndef _WIN32
 void CheckMemoHitDuringWalk() {
     auto& fake = Fake();
     BumpCollectEpoch();
@@ -113,11 +135,139 @@ void CheckMemoHitDuringWalk() {
     Require(CollectWrites(Base, Block) > memoized && !UnchangedSince(Base, Block, memoized), "a later epoch trusts the write stamped by the walk in progress");
 }
 
+std::size_t Walks() {
+    auto& fake = Fake();
+    const std::lock_guard lock(fake.mutex);
+    return fake.walks;
+}
+
+void SetFailing(bool failing) {
+    auto& fake = Fake();
+    const std::lock_guard lock(fake.mutex);
+    fake.failWalks = failing;
+}
+
+void CheckFailedWalkIsRetried() {
+    BumpCollectEpoch();
+    const auto address = Base + 11 * Page + 16;
+    SetFailing(true);
+    Require(CollectWrites(address, Page) == 0, "a failed walk returned a generation");
+    SetFailing(false);
+    const auto before = Walks();
+    Require(CollectWrites(address, Page) != 0 && Walks() > before, "a failed walk was memoized");
+}
+
+void Store(std::uint64_t address) {
+    auto& fake = Fake();
+    const std::lock_guard lock(fake.mutex);
+    fake.written.emplace_back(address & ~(Page - 1), (address & ~(Page - 1)) + Page);
+}
+#else
+struct Arena {
+    static constexpr std::size_t Bytes = 96 * Block;
+    void* memory = nullptr;
+    Arena() {
+        memory = GuestArena::GuestArenaAllocate_nid_postfix(Bytes, Block);
+        Require(memory != nullptr, "the guest arena allocation failed");
+        GuestArena::GuestArenaCommit_nid_postfix(memory, Bytes, PAGE_READWRITE, Bytes);
+        std::memset(memory, 0x11, Bytes);
+        Base = reinterpret_cast<std::uint64_t>(memory);
+    }
+    ~Arena() {
+        GuestArena::GuestArenaReset_nid_postfix(memory, Bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, Bytes);
+    }
+};
+
+void Store(std::uint64_t address) {
+    auto* byte = reinterpret_cast<volatile std::uint8_t*>(address);
+    *byte = static_cast<std::uint8_t>(*byte + 1);
+}
+#endif
+
+bool Walked(std::uint64_t address, std::size_t bytes, std::uint64_t probe, bool cached = true) {
+    const auto before = TrackerGeneration();
+    Store(probe);
+    Require((cached ? CollectWrites(address, bytes) : CollectWritesUncached(address, bytes)) != 0, "a collect failed");
+    return !UnchangedSince(probe & ~(Page - 1), Page, before);
+}
+
+void CheckUnalignedRepeatReachesKernelOnce() {
+    BumpCollectEpoch();
+    const auto address = Base + 3 * Page + 100;
+    const auto probe = Base + 5 * Page;
+    Require(Walked(address, 2 * Page, probe), "the first collect did not reach the write watch");
+    for (std::uint64_t i = 0; i < 70; ++i) Require(CollectWrites(Base + (16 + i) * Block + 5 * Page + 8, Page) != 0, "a filler collect failed");
+    Require(!Walked(address, 2 * Page, probe), "an identical unaligned request in the same epoch reached the write watch again");
+    Require(!Walked(Base + 9 * Page, Page, probe), "a request inside the widened block reached the write watch again");
+}
+
+void CheckUncachedWalksKeepCachedEntries() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base, 2 * Block) != 0, "the large collect failed");
+    const auto sub = Base + Block + Page;
+    Require(!Walked(sub, Page, sub), "a request inside the large walk reached the write watch");
+    for (int i = 0; i < 80; ++i) Require(CollectWritesUncached(Base, Page) != 0, "an uncached collect failed");
+    Require(!Walked(sub, Page, sub), "uncached walks evicted a cached entry");
+}
+
+void CheckNeighbouringBlockStoreIsFound() {
+    BumpCollectEpoch();
+    Require(CollectWrites(Base + 24 * Block + 5 * Page + 8, Page) != 0, "the block was not collected");
+    const auto across = Base + 25 * Block - Page - 100;
+    Require(Walked(across, 2 * Page, Base + 25 * Block + 3 * Page), "a request reaching past the retained block trusted it");
+}
+
+void CheckInvalidationReachesBlockKeyedEntry() {
+    BumpCollectEpoch();
+    const auto address = Base + 30 * Block + 3 * Page + 100;
+    const auto probe = Base + 30 * Block + 5 * Page;
+    Require(Walked(address, Page, probe), "the first collect did not reach the write watch");
+    Require(!Walked(address, Page, probe), "the retained entry was not reused");
+    Unwatch(Base + 90 * Block, Page);
+    Require(Walked(address, Page, probe), "an unwatch did not invalidate the retained entry");
+}
+
+void CheckThreadWithoutEpochWalksEveryTime() {
+    bool first = false;
+    bool second = false;
+    const auto address = Base + 35 * Block + 3 * Page + 100;
+    std::thread worker([&] {
+        first = Walked(address, Page, address);
+        second = Walked(address, Page, address);
+    });
+    worker.join();
+    Require(first && second, "a thread that never bumped its epoch reused an entry");
+}
+
+void CheckStoreInNewEpochIsFound() {
+    BumpCollectEpoch();
+    const auto address = Base + 7 * Page + 8;
+    Require(Walked(address, Page, address), "the first collect did not reach the write watch");
+    BumpCollectEpoch();
+    Require(Walked(address, Page, address), "a store in a new epoch was not found");
+}
+
 }
 
 int main() {
     try {
+#ifdef _WIN32
+        if (!WriteWatched()) {
+            std::cout << "collect memo generation test skipped: the guest arena is not write watched\n";
+            return 77;
+        }
+        const Arena arena;
+#else
         CheckMemoHitDuringWalk();
+        CheckFailedWalkIsRetried();
+#endif
+        CheckUnalignedRepeatReachesKernelOnce();
+        CheckUncachedWalksKeepCachedEntries();
+        CheckNeighbouringBlockStoreIsFound();
+        CheckInvalidationReachesBlockKeyedEntry();
+        CheckThreadWithoutEpochWalksEveryTime();
+        CheckStoreInNewEpochIsFound();
     } catch (const std::exception& error) {
         std::cerr << "collect memo generation test failed: " << error.what() << "\n";
         return 1;
