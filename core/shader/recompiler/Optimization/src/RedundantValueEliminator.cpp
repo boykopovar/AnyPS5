@@ -318,6 +318,7 @@ std::vector<std::vector<IrBlock*>> DominatorChildren(const std::vector<IrBlock*>
 RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& program) const {
     RedundantValueEliminationStats stats;
     if (program.BlockOrder().empty()) return stats;
+    std::unordered_map<const IrValue*, IrValue*> replacements;
     std::vector<std::pair<IrValue*, IrValue*>> lifted;
     for (const auto& block : program.Blocks()) {
         for (IrValue* inst : block->Instructions()) {
@@ -329,6 +330,7 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     }
     for (const auto& [inst, predicate] : lifted) {
         inst->ReplaceAllUsesWith(predicate);
+        replacements.emplace(inst, predicate);
         ++stats.replacedValues;
     }
 
@@ -379,7 +381,6 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     }
     std::unordered_map<ValueKey, IrValue*, ValueKeyHash> available;
     std::vector<const ValueKey*> added;
-    std::unordered_map<const IrValue*, IrValue*> replacements;
     const auto visit = [&](std::size_t position) {
         std::uint64_t epoch = entryEpoch[position];
         std::uint64_t nextClobber = firstClobber[position];

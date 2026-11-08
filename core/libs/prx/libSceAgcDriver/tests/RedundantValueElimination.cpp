@@ -755,12 +755,16 @@ int main() {
             auto& payload = mismatch ? raw : extra;
             auto& repaired = b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &payload, &canonical});
             auto& query = isNan(repaired);
+            BlockInfo info;
+            info.condition = &query;
+            b.program.Metadata().blockInfo.push_back(info);
             auto& observer = b.emit(IrOpcode::ReferenceU32, IrType::Void, {&query});
             b.keep(repaired);
             b.eliminate();
             if (mismatch) { if (!query.HasUses()) return false; }
             else {
                 auto* combined = observer.Argument(0)->Resolve();
+                if (b.program.Metadata().blockInfo.front().condition != combined) return false;
                 if (query.HasUses() || combined->Opcode() != IrOpcode::LogicalOr || combined->Argument(0)->Resolve() != base.Resolve() || combined->Argument(1)->Resolve() != condition.Resolve()) return false;
             }
             if (!repaired.HasUses()) return false;
