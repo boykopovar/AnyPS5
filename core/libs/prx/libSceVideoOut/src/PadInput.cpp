@@ -52,6 +52,7 @@ static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status 
 
 PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
+    static_cast<void>(Pad::RumblePausesOnFocusLoss());
     identifyMode = Pad::IdentifyModeFromEnvironment();
     openAvailableControllers();
     port0 = Port0Presence::Presence(port0Mode, slots[0].controller != nullptr);
