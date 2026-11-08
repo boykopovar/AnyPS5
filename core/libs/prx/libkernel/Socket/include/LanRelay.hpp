@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBKERNEL_SOCKET_INCLUDE_LANRELAY_HPP
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,13 @@ struct Endpoint {
 
 Endpoint ParseEndpoint(const std::string& text);
 std::vector<Endpoint> ParsePeers(const std::string& text);
+
+struct Settings {
+    std::optional<Endpoint> Listen;
+    std::vector<Endpoint> Peers;
+};
+
+Settings ReadSettings(const char* listen, const char* peers);
 
 }
 

@@ -66,4 +66,17 @@ std::vector<Endpoint> ParsePeers(const std::string& text) {
     return peers;
 }
 
+Settings ReadSettings(const char* listen, const char* peers) {
+    Settings settings;
+    const std::string listenText = listen != nullptr ? listen : "";
+    const std::string peersText = peers != nullptr ? peers : "";
+    if (listenText.empty()) {
+        if (!peersText.empty()) throw std::invalid_argument("ANYPS5_LAN_PEERS needs ANYPS5_LAN_LISTEN");
+        return settings;
+    }
+    settings.Listen = ParseEndpoint(listenText);
+    settings.Peers = ParsePeers(peersText);
+    return settings;
+}
+
 }
