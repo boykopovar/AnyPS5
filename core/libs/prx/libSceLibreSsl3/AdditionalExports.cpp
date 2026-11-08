@@ -220,10 +220,6 @@ int APS5_VABI X509_cmp_current_time_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_get_ext_by_NID_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_check_akid_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
