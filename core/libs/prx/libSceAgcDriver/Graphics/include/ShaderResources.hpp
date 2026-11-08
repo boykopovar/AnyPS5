@@ -241,6 +241,8 @@ public:
         std::uint64_t address;
         std::size_t size;
         std::span<const std::uint32_t> words;
+        bool inPlace = false;
+        VkDeviceAddressRangeEXT view{};
     };
     struct DrawUse {
         DrawUse() = default;
@@ -346,6 +348,7 @@ public:
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
     static std::uint64_t DepthGuardRefusals();
+    static std::uint64_t MovedBehindGpuWrites();
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     static std::size_t LookupLogCapacity();
     bool ChecksFaults() const { return bda != nullptr; }

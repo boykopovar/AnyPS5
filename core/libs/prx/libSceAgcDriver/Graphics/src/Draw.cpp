@@ -2826,6 +2826,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const auto touches = [&](std::uint64_t begin, std::uint64_t end) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (resources.WritesOverlap(begin, bytes) || resources.ReadsOverlap(begin, bytes)) return true;
+        if (std::any_of(record.moved.begin(), record.moved.end(), [&](const ShaderResources::MovedBuffer& moved) { return moved.words.empty() && moved.address < end && begin < moved.address + moved.size; })) return true;
         if (!gpuIndirect) return false;
         return (begin < args->arguments + args->RangeBytes() && args->arguments < end) || (args->countIndirect && begin < args->countAddress + 4 && args->countAddress < end);
     };
@@ -2860,9 +2861,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     for (const auto image : record.multisampleImages) passAttachments.emplace_back(image, true);
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
-    static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)); }, unknownMemory));
+    static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)) || std::any_of(record.moved.begin(), record.moved.end(), [&](const ShaderResources::MovedBuffer& moved) { return moved.words.empty() && moved.address < end && begin < moved.address + moved.size; }); }, unknownMemory));
     const auto drawUse = resources.BeginDrawUse(*recorder);
     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved, false, drawUse != nullptr ? drawUse->record.get() : nullptr);
+    if (drawBindings != nullptr) passReads.insert(passReads.end(), drawBindings->movedReads.begin(), drawBindings->movedReads.end());
     static const bool addressReadPasses = std::getenv("APS5_NO_ADDRESS_READ_PASSES") == nullptr;
     const bool readOnlyBda = addressReadPasses && resources.BdaReadOnly();
     outcome.addressDraw = addressBased;
@@ -3044,6 +3046,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr);
+    if (drawBindings != nullptr && !drawBindings->movedReads.empty()) recorder->NotePendingReads(drawBindings->movedReads, Recorder::ReadKind::DrawInput);
     timer.phase(PhaseKeep);
     if (!record.staged.empty()) {
         const auto merged = recorder->Commands();

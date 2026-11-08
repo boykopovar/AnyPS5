@@ -100,7 +100,20 @@ constexpr float BufferAlpha = 0.2f;
 constexpr std::uint8_t BufferAlphaByte = 51u;
 constexpr float SecondAlpha = 0.6f;
 constexpr std::uint8_t SecondAlphaByte = 153u;
+constexpr float FilledAlpha = 0.8f;
+constexpr std::uint8_t FilledAlphaByte = 204u;
+constexpr std::size_t FillSource = 512;
 alignas(4096) std::array<float, 1024> BufferMemory{};
+alignas(4096) std::array<float, 1024> OtherMemory{};
+constexpr std::size_t OtherSlices = 1024;
+
+float* SliceAt(std::size_t slice) {
+    return slice >= OtherSlices ? OtherMemory.data() + (slice - OtherSlices) : BufferMemory.data() + slice;
+}
+
+std::size_t SliceBytes(std::size_t slice) {
+    return (slice >= OtherSlices ? sizeof(OtherMemory) - (slice - OtherSlices) * sizeof(float) : sizeof(BufferMemory) - slice * sizeof(float));
+}
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 
 std::span<std::byte> MergedTarget(std::size_t index) {
@@ -227,7 +240,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* memory, std::size_t by
 
 alignas(256) std::array<std::uint8_t, 1024> SampledTexture{};
 
-std::vector<std::uint32_t> Frame(std::span<const std::size_t> slices) {
+std::vector<std::uint32_t> Frame(std::span<const std::size_t> slices, std::optional<std::size_t> filled = std::nullopt) {
     const auto color = reinterpret_cast<std::uintptr_t>(MergedTarget(0).data());
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000},
@@ -296,10 +309,15 @@ std::vector<std::uint32_t> Frame(std::span<const std::size_t> slices) {
     Append(commands, 0x76, {0x8c, 0});
     const auto pixel = reinterpret_cast<std::uintptr_t>(BufferPixelCode.data());
     for (const auto slice : slices) {
+        if (filled.has_value() && slice == *filled) {
+            const auto source = reinterpret_cast<std::uintptr_t>(BufferMemory.data() + FillSource);
+            const auto destination = reinterpret_cast<std::uintptr_t>(SliceAt(slice));
+            Append(commands, 0x50, {0u, static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32u), static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), 16u});
+        }
         std::array<std::uint32_t, 16> words{};
         const auto image = ImageDescriptor(SampledTexture.data());
         std::copy(image.begin(), image.end(), words.begin());
-        const auto descriptor = BufferDescriptor(BufferMemory.data() + slice, sizeof(BufferMemory) - slice * sizeof(float));
+        const auto descriptor = BufferDescriptor(SliceAt(slice), SliceBytes(slice));
         std::copy(descriptor.begin(), descriptor.end(), words.begin() + 12);
         Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(pixel >> 8u)});
         Append(commands, 0x76, {0x009, static_cast<std::uint32_t>(pixel >> 40u)});
@@ -319,9 +337,9 @@ unsigned DrawnAlpha() {
     throw std::runtime_error("the draws covered no pixel");
 }
 
-unsigned Submit(std::span<const std::size_t> slices) {
+unsigned Submit(std::span<const std::size_t> slices, std::optional<std::size_t> filled = std::nullopt) {
     std::ranges::fill(MergedTarget(0), Kept);
-    auto commands = Frame(slices);
+    auto commands = Frame(slices, filled);
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
@@ -339,6 +357,7 @@ int main() {
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(BufferMemory.data(), sizeof(BufferMemory), true, true, true);
+            mutation.Add(OtherMemory.data(), sizeof(OtherMemory), true, true, true);
         }
         for (std::size_t offset = 0; offset < SampledTexture.size(); offset += Texel.size()) std::memcpy(SampledTexture.data() + offset, Texel.data(), Texel.size());
         BufferMemory.fill(0.0f);
@@ -368,12 +387,34 @@ int main() {
         for (int round = 0; round < 3; ++round) Require(Submit(unmoved) == BufferAlphaByte, "the draw of the template's own buffer did not read it");
         const std::array<std::size_t, 1> movedOnly{Moved};
         for (int round = 0; round < 3; ++round) Require(Submit(movedOnly) == SecondAlphaByte, "a draw whose buffer moved after a recipe without moves was recorded did not read the moved buffer");
+        std::fill(BufferMemory.begin() + FillSource, BufferMemory.begin() + FillSource + 4, FilledAlpha);
+        const auto behindBefore = AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites();
         constexpr std::size_t Aligned = First + 64;
         const std::array<std::size_t, 2> alignedSlices{First, Aligned};
         BufferMemory[Aligned] = SecondAlpha;
-        const auto alignedAlpha = Submit(alignedSlices);
-        Require(alignedAlpha == SecondAlphaByte, "a draw whose buffer moved by a whole number of 256-byte blocks drew another buffer's contents (alpha " + std::to_string(alignedAlpha) + ")");
+        const auto cpuAlpha = Submit(alignedSlices);
+        Require(cpuAlpha == SecondAlphaByte, "a draw whose buffer moved by a whole number of 256-byte blocks drew another buffer's contents (alpha " + std::to_string(cpuAlpha) + ")");
         BufferMemory[Aligned] = 0.0f;
+        const auto alignedAlpha = Submit(alignedSlices, Aligned);
+        Require(alignedAlpha == FilledAlphaByte, "a draw whose buffer moved onto a range a GPU copy wrote earlier in its batch did not read the copied value (alpha " + std::to_string(alignedAlpha) + ")");
+        if (AgcDriver::Graphics::DescriptorHeapEnabled())
+            Require(AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites() > behindBefore, "a heap draw whose buffer moved onto a range with a pending GPU write did not reuse its template by reading the buffer in place");
+        std::fill(BufferMemory.begin() + Aligned, BufferMemory.begin() + Aligned + 4, 0.0f);
+        constexpr std::size_t Elsewhere = OtherSlices + First;
+        const std::array<std::size_t, 2> elsewhereSlices{First, Elsewhere};
+        const auto elsewhereBefore = AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites();
+        const auto elsewhereAlpha = Submit(elsewhereSlices, Elsewhere);
+        Require(elsewhereAlpha == FilledAlphaByte, "a draw whose buffer moved into other guest memory a GPU copy wrote earlier in its batch did not read the copied value (alpha " + std::to_string(elsewhereAlpha) + ")");
+        if (AgcDriver::Graphics::DescriptorHeapEnabled())
+            Require(AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites() > elsewhereBefore, "a heap draw whose buffer moved into other guest memory with a pending GPU write did not reuse its template by reading the buffer in place");
+        OtherMemory.fill(0.0f);
+        constexpr std::size_t Shifted = Elsewhere + 1;
+        const std::array<std::size_t, 2> shiftedSlices{First, Shifted};
+        const auto shiftedBefore = AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites();
+        const auto shiftedAlpha = Submit(shiftedSlices, Shifted);
+        Require(shiftedAlpha == FilledAlphaByte, "a draw whose buffer moved to another view alignment behind a GPU copy did not read the copied value (alpha " + std::to_string(shiftedAlpha) + ")");
+        Require(AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites() == shiftedBefore, "a draw whose buffer moved to another view alignment was read in place through its template's view");
+        OtherMemory.fill(0.0f);
         std::puts("draws whose read-only buffer moved from their template's replayed recipes that read the buffer's current contents");
         AgcDriverShutdown_nid_postfix();
         return 0;

@@ -6854,6 +6854,21 @@ std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint
     return VkDescriptorBufferInfo{handle, offset - adjustment, range};
 }
 
+std::optional<VkDeviceAddressRangeEXT> GuestBufferMemory::ImportedView(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return std::nullopt;
+    const auto* import = ExistingHostImportFor(context, address, bytes);
+    if (import == nullptr || import->address == 0) return std::nullopt;
+    const auto offset = HostImportOffset(*import, address);
+    adjustment = static_cast<std::uint32_t>(offset % viewAlignment());
+    const auto start = offset - adjustment;
+    const auto end = import->lead + import->bytes;
+    auto range = (ViewBytes(bytes, adjustment) + 3u) & ~std::uint64_t{3};
+    if (bytes <= context.limits.maxStorageBufferRange) range = std::min<std::uint64_t>(range, context.limits.maxStorageBufferRange & ~std::uint64_t{3});
+    range = std::min<std::uint64_t>(range, end - start);
+    if (range < adjustment + bytes || range > context.limits.maxStorageBufferRange) return std::nullopt;
+    return VkDeviceAddressRangeEXT{import->address - import->lead + start, range};
+}
+
 std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {
     if (adjustment % 4 == 0) return bytes + adjustment;
     const auto dwords = adjustment / 4 + bytes / 4 + (adjustment % 4 + bytes % 4 + 3) / 4;

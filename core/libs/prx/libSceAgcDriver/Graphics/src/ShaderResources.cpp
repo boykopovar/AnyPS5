@@ -3012,6 +3012,14 @@ void ShaderResources::noteReusable() {
     reusable = true;
 }
 
+namespace {
+std::atomic<std::uint64_t> movedBehindGpuWrites{0};
+}
+
+std::uint64_t ShaderResources::MovedBehindGpuWrites() {
+    return movedBehindGpuWrites.load(std::memory_order_relaxed);
+}
+
 std::uint64_t ShaderResources::DepthGuardRefusals() {
     return depthGuardRefusals.load(std::memory_order_relaxed);
 }
@@ -6335,19 +6343,36 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 if (written || empty || item.written || size > context.limits.maxStorageBufferRange) return std::nullopt;
                 const auto begin = address - item.adjustment;
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
-                const bool copied = !(usesBda && heapStage);
-                if (copied && bytes > maxDrawSnapshotBytes - movedBytes) return std::nullopt;
+                const bool behind = recorder.PendingWriteOverlaps(begin, bytes);
+                const bool inPlace = (usesBda && heapStage) || (behind && heapShader && addressedBuffers);
+                if (behind && !inPlace) return std::nullopt;
+                if (!inPlace && bytes > maxDrawSnapshotBytes - movedBytes) return std::nullopt;
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
-                if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
-                if (usesBda && heapStage) {
+                if (guestMemory.WritesOverlap(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
+                if (behind) {
+                    const auto overlaps = [&](const std::shared_ptr<ShaderResources>& writer) { return writer != nullptr && writer->WritesOverlap(begin, bytes); };
+                    if (context.copiedWriters != nullptr && std::any_of(context.copiedWriters->begin(), context.copiedWriters->end(), overlaps)) return std::nullopt;
+                    const auto drawWriters = DrawCopiedWriters();
+                    if (std::any_of(drawWriters->begin(), drawWriters->end(), overlaps)) return std::nullopt;
+                }
+                VkDeviceAddressRangeEXT view{};
+                if (inPlace) {
                     std::uint32_t adjustment = 0;
-                    const auto inPlace = guestMemory.TryDescriptor(address, static_cast<std::size_t>(size), adjustment);
+                    bool found = false;
+                    if (behind) {
+                        const auto imported = guestMemory.ImportedView(address, static_cast<std::size_t>(size), adjustment);
+                        if (imported.has_value()) view = *imported;
+                        found = view.address != 0;
+                    } else {
+                        VkDeviceAddress handle = 0;
+                        found = guestMemory.TryDescriptor(address, static_cast<std::size_t>(size), adjustment, nullptr, &handle).has_value() && handle != 0;
+                    }
                     const bool classic = std::any_of(bindings.begin(), bindings.end(), [&](const Binding& other) { return !(other.heap && other.addressed) && std::find(other.allocations.begin(), other.allocations.end(), index) != other.allocations.end(); });
-                    if (!inPlace.has_value() || adjustment != item.adjustment || classic) return std::nullopt;
+                    if (!found || adjustment != item.adjustment || classic) return std::nullopt;
                 }
                 if (moved.empty()) moved.reserve(allocations.size());
-                moved.push_back({index, address, static_cast<std::size_t>(size)});
-                if (copied) movedBytes += bytes;
+                moved.push_back({index, address, static_cast<std::size_t>(size), {}, inPlace, view});
+                if (!inPlace) movedBytes += bytes;
             }
         }
     }
@@ -6455,7 +6480,12 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         if (override != moved.end() && override->words.empty()) result->movedReads.emplace_back(override->address, override->address + override->size);
-        if (override != moved.end() && override->words.empty() && readsInPlace) {
+        if (override != moved.end() && override->words.empty() && (readsInPlace || override->inPlace)) {
+            if (!readsInPlace || override->view.address != 0) movedBehindGpuWrites.fetch_add(1, std::memory_order_relaxed);
+            if (override->view.address != 0) {
+                inPlace.push_back({index, override->view});
+                continue;
+            }
             std::uint32_t adjustment = 0;
             VkDeviceAddress handle = 0;
             const auto info = wholeDwordRange(guestMemory.Descriptor(override->address, override->size, adjustment, &handle));
