@@ -1,10 +1,15 @@
 #include "prx/libSceVideoOut/include/KeepAwake.hpp"
 #include "SDL.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 bool KeepAwakeEnabledFromValue(const char* value) {
     return value == nullptr || std::strcmp(value, "0") != 0;
+}
+
+bool KeepAwakeEnabled() {
+    return KeepAwakeEnabledFromValue(std::getenv("ANYPS5_KEEP_AWAKE"));
 }
 
 HostKeepAwake::HostKeepAwake(const KeepAwakeBackend& backend) : backend(backend) {
