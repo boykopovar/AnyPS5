@@ -63,6 +63,44 @@ void Driver::noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t
     for (const auto& store : stores) take(store.address, store.bytes);
 }
 
+bool Driver::findWaitProducer(std::uint64_t address, std::size_t bytes, std::uint64_t& token) {
+    std::lock_guard lock(mutex);
+    token = 0;
+    std::vector<std::uint64_t> frontier{address};
+    std::unordered_set<std::uint32_t> visited;
+    bool found = false;
+    for (std::size_t depth = 0; depth < 8 && !frontier.empty(); ++depth) {
+        const std::size_t span = depth == 0 ? bytes : 8;
+        std::vector<std::uint64_t> next;
+        for (const auto current : frontier) {
+            for (const auto& [queue, worker] : workers) {
+                bool holds = false;
+                for (std::size_t offset = 0; offset < span; offset += 4) {
+                    if (worker.unfinishedWrites.contains(current + offset)) {
+                        holds = true;
+                        break;
+                    }
+                }
+                if (!holds || !visited.insert(queue).second) continue;
+                found = true;
+                std::uint64_t motion = worker.executingPacket.load(std::memory_order_relaxed) & 0xffffffffull;
+                motion |= static_cast<std::uint64_t>(worker.pending.size() & 0xffu) << 32;
+                motion |= static_cast<std::uint64_t>(queue & 0xffu) << 40;
+                motion *= 0x9e3779b97f4a7c15ull + 2ull * queue;
+                const auto shift = depth * 8;
+                token ^= shift == 0 ? motion : ((motion << shift) | (motion >> (64 - shift)));
+                if (queue != 0 && (queue < 0x20 || queue > SubmissionQueueEnd)) continue;
+                const auto slot = queue == 0 ? 0 : queue - 0x20 + 1;
+                if (const auto awaited = awaitedSlots[slot].address.load(std::memory_order_acquire); awaited != 0) next.push_back(awaited);
+            }
+        }
+        std::sort(next.begin(), next.end());
+        next.erase(std::unique(next.begin(), next.end()), next.end());
+        frontier = std::move(next);
+    }
+    return found;
+}
+
 bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {
     std::lock_guard lock(labelStoresMutex);
     const auto low = labelStores.find(address);
