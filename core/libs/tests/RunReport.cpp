@@ -1205,6 +1205,19 @@ void CompileTimeReportTest() {
     Require(!Contains(Read(off.ReportPath()), "compileMs"), "a build that does not collect shaders must not report compile time");
 }
 
+void SlowCompileTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteCompileTime(99000000);
+    collector.NoteCompileTime(100000000);
+    Require(RunReport::SlowCompileNanoseconds == 100000000LL, "the slow threshold is 100 ms");
+    collector.NoteCompileTime(100000001);
+    collector.NoteCompileTime(250000000);
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(Contains(Read(collector.ReportPath()), "\"slowCompiles\": 2"), "compiles above 100 ms must be counted, exactly 100 ms is not slow");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1470,6 +1483,7 @@ int main(int argc, char** argv) {
         Run("frame-times-report", FrameTimesReportTest);
         Run("compile-time-total", CompileTimeTest);
         Run("compile-time-report", CompileTimeReportTest);
+        Run("slow-compile-count", SlowCompileTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
