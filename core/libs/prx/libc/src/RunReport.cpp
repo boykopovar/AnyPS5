@@ -1405,7 +1405,14 @@ void Collector::NoteFramePresented() {
         firstFrameNanos = now;
         NoteMilestone(3);
     }
+    std::lock_guard guard(frameMutex);
+    if (lastFrameNanos >= 0) frameTimes.Push(static_cast<double>(now - lastFrameNanos) / 1.0e6);
     lastFrameNanos = now;
+}
+
+std::vector<double> Collector::FrameTimesMilliseconds() const {
+    std::lock_guard guard(frameMutex);
+    return frameTimes.Values();
 }
 
 void Collector::NoteShader(int what) {

@@ -46,6 +46,7 @@ inline constexpr std::size_t MaxBytes = 65536;
 inline constexpr std::size_t MaxListedFunctions = 200;
 inline constexpr std::size_t MaxListedFormats = 100;
 inline constexpr std::size_t MaxTextCharacters = 300;
+inline constexpr std::size_t FrameTimeWindow = 2048;
 
 template <typename TValue, std::size_t TCapacity>
 class FixedRing {
@@ -250,6 +251,7 @@ public:
     void NoteQuitRequested() noexcept;
     void NoteMilestone(int milestone);
     void NoteFramePresented();
+    std::vector<double> FrameTimesMilliseconds() const;
     void NoteMissingFunction(std::string_view library, std::string_view name, std::string_view source);
     void NoteShader(int what);
     void NoteUnsupportedInstruction(std::optional<std::string> encoding, std::optional<std::string> opcode, std::optional<std::int64_t> opcodeValue, std::string_view source);
@@ -285,6 +287,8 @@ private:
     std::shared_ptr<Tables> tables;
     std::atomic<std::int64_t> milestoneNanos[4];
     std::atomic<std::int64_t> frames{0};
+    mutable std::mutex frameMutex;
+    FixedRing<double, FrameTimeWindow> frameTimes;
     std::atomic<std::int64_t> firstFrameNanos{-1};
     std::atomic<std::int64_t> lastFrameNanos{-1};
     std::atomic<std::int64_t> compiled{0}, failedShaders{0}, cacheHitCount{0};
