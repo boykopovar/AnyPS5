@@ -185,11 +185,12 @@ int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
 
 int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
     if (!sem) throw std::invalid_argument("sem_setname: null semaphore");
-    if (!name) throw std::invalid_argument("sem_setname: null name");
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(GUEST_EAGAIN);
     std::lock_guard lock(semaphore->lock);
     if (semaphore->named) return Fail(GUEST_EAGAIN);
+    if (!name) return Fail(PosixThread::GUEST_EINVAL);
+    if (strnlen(name, 32) > 31) return Fail(63);
     semaphore->named = true;
     return 0;
 }
