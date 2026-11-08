@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
+#ifdef _WIN32
+#include <stdlib.h>
+#endif
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -161,6 +164,44 @@ void CheckSessionLineEndingsAndLongLines() {
     Check(longLine.output == "line too long, ignored\nstop 1 nid 4J2sUJmuHZQ args\ncontinued 1\n");
 }
 
+void SetCommandFile(const char* path) {
+#ifdef _WIN32
+    _putenv_s("ANYPS5_DEBUG_CMD", path != nullptr ? path : "");
+#else
+    if (path != nullptr)
+        setenv("ANYPS5_DEBUG_CMD", path, 1);
+    else
+        unsetenv("ANYPS5_DEBUG_CMD");
+#endif
+}
+
+void CheckCommandFileFallbacks() {
+    Debug::NidBreakpointTable table;
+    Debug::NidStopRegistry registry;
+    const std::uint64_t armed = NidOf("4J2sUJmuHZQ");
+    Check(table.Add(armed) == Debug::NidBreakpointTable::AddResult::Added);
+
+    SetCommandFile(nullptr);
+    Check(registry.Hit(table, armed, nullptr, 0, Debug::CommandFileSession()) == 1);
+    Check(registry.Size() == 0);
+
+    SetCommandFile("debug_nid_commands_missing.txt");
+    Check(registry.Hit(table, armed, nullptr, 0, Debug::CommandFileSession()) == 2);
+    Check(registry.Size() == 0);
+
+    const char* path = "debug_nid_commands_test.txt";
+    std::FILE* file = std::fopen(path, "w");
+    Require(file != nullptr, __LINE__);
+    std::fputs("add Q3VBxCXhUHs\ncontinue\n", file);
+    std::fclose(file);
+    SetCommandFile(path);
+    Check(registry.Hit(table, armed, nullptr, 0, Debug::CommandFileSession()) == 3);
+    Check(registry.Size() == 0);
+    Check(table.IsArmed(NidOf("Q3VBxCXhUHs")));
+    std::remove(path);
+    SetCommandFile(nullptr);
+}
+
 void CheckUnknownWords() {
     Check(Debug::ParseCommand("frob").kind == Debug::CommandKind::Unknown);
     Check(Debug::ParseCommand("frob 4J2sUJmuHZQ").kind == Debug::CommandKind::Unknown);
@@ -180,5 +221,6 @@ int main() {
     CheckSessionCommands();
     CheckSessionEndOfInputContinues();
     CheckSessionLineEndingsAndLongLines();
+    CheckCommandFileFallbacks();
     return 0;
 }
