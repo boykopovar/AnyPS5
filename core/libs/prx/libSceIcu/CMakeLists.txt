@@ -295,6 +295,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceIcu PRIVATE ConverterHelpers.cpp)
+target_sources(libSceIcu PRIVATE CalendarGet.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_converter_helpers_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuConverterHelpers.cpp)
@@ -305,6 +306,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_icu_converter_helpers PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_icu_converter_helpers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_calendar_get_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CalendarGet.cpp)
+    target_include_directories(guest_icu_calendar_get_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_calendar_get_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_calendar_get_tests)
+    add_test(NAME guest_icu_calendar_get COMMAND guest_icu_calendar_get_tests)
+    set_tests_properties(guest_icu_calendar_get PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_calendar_get PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()

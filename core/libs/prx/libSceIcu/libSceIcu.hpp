@@ -26,5 +26,6 @@
 #include "Search.hpp"
 #include "Character.hpp"
 #include "Configuration.hpp"
+#include "CalendarGet.hpp"
 
 #include "ConverterHelpers.hpp"

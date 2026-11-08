@@ -55,10 +55,6 @@ int APS5_VABI ucal_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucal_get_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucal_getAttribute_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
