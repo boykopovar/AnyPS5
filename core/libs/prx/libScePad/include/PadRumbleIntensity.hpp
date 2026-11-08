@@ -72,6 +72,10 @@ inline bool RumblePausesOnFocusLoss() {
     return pause;
 }
 
+constexpr bool RumbleSuppressed(bool pauseOnFocusLoss, bool focused) {
+    return pauseOnFocusLoss && !focused;
+}
+
 inline unsigned RumblePercent() {
     static const unsigned percent = ParseRumblePercent(std::getenv("ANYPS5_RUMBLE"));
     return percent;
