@@ -26,5 +26,6 @@
 #include "Search.hpp"
 #include "Character.hpp"
 #include "Configuration.hpp"
+#include "DateFormat.hpp"
 
 #include "ConverterHelpers.hpp"

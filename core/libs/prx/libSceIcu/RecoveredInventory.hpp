@@ -53,7 +53,6 @@ int APS5_VABI ucsdet_open_nid_postfix();
 int APS5_VABI ucsdet_setText_nid_postfix();
 int APS5_VABI udat_close_nid_postfix();
 int APS5_VABI udat_countSymbols_nid_postfix();
-int APS5_VABI udat_format_nid_postfix();
 int APS5_VABI udat_formatForFields_nid_postfix();
 int APS5_VABI udat_getCalendar_nid_postfix();
 int APS5_VABI udat_getSymbols_nid_postfix();
