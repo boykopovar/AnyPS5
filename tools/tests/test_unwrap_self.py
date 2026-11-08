@@ -69,11 +69,11 @@ def default_segments():
     ]
 
 
-def default_records():
+def default_records(read_only_index=1):
     return [
         (0x2804, 0x800, 0x100),
         (0x310004, 0x910, 0x20),
-        (0x102804, 0xA00, 0x80),
+        ((read_only_index << unwrap_self.RECORD_SEGMENT_SHIFT) | 0x2804, 0xA00, 0x80),
     ]
 
 
@@ -226,7 +226,7 @@ class UnwrapTest(unittest.TestCase):
             with self.subTest(align=align, size=size, memory=memory):
                 segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
                 segments += default_segments()[1:]
-                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                container = bytearray(build_container(segments, default_records(read_only_index=2), default_payloads()))
                 struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
                 source = Path(self.directory) / "input.self"
                 output = Path(self.directory) / "output.elf"
@@ -245,7 +245,7 @@ class UnwrapTest(unittest.TestCase):
             with self.subTest(align=align, size=size, memory=memory):
                 segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
                 segments += default_segments()[1:]
-                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                container = bytearray(build_container(segments, default_records(read_only_index=2), default_payloads()))
                 struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
                 result, output = self.convert(bytes(container))
                 self.assertEqual(result.returncode, 0, result.stderr)
