@@ -1125,6 +1125,7 @@ char* APS5_VABI strncat_nid_postfix(char* destination, const char* source, std::
 char* APS5_VABI strpbrk_nid_postfix(const char* text, const char* accept);
 std::size_t APS5_VABI strcspn_nid_postfix(const char* text, const char* reject);
 std::size_t APS5_VABI strlcat_nid_postfix(char* destination, const char* source, std::size_t capacity);
+void APS5_VABI strmode_nid_postfix(int mode, char* buffer);
 char* APS5_VABI stpcpy_nid_postfix(char* destination, const char* source);
 char* APS5_VABI stpncpy_nid_postfix(char* destination, const char* source, std::size_t count);
 char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** state);
@@ -1336,6 +1337,7 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time);
 int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base);
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time);
 Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target);
+std::int64_t APS5_VABI _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(const Xtime* target, const Xtime* now);
 const void* APS5_VABI __std_find_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value);
 const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
@@ -1437,6 +1439,8 @@ LibcException::ErrorCode APS5_VABI _ZNKSt14error_category23default_error_conditi
 bool APS5_VABI _ZNKSt14error_category10equivalentEiRKSt15error_condition_nid_postfix(const LibcException::CategoryObject* self, int value, const LibcException::ErrorCode* condition);
 bool APS5_VABI _ZNKSt14error_category10equivalentERKSt10error_codei_nid_postfix(const LibcException::CategoryObject* self, const LibcException::ErrorCode* code, int value);
 void APS5_VABI _ZNSt14error_categoryD2Ev_nid_postfix(LibcException::CategoryObject* self);
+void APS5_VABI _ZNSt14error_categoryD1Ev_nid_postfix(LibcException::CategoryObject* self);
+[[noreturn]] void APS5_VABI _ZNSt14error_categoryD0Ev_nid_postfix(LibcException::CategoryObject* self);
 void APS5_VABI _ZNSt9exceptionD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt9exceptionD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt9exceptionD0Ev_nid_postfix(LibcException::ExceptionObject* self);
