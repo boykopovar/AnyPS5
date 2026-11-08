@@ -280,6 +280,14 @@ def truncated_functions(run):
     return (report_field(run, "truncated") or {}).get("functions")
 
 
+def unsupported_instructions(run):
+    return report_field(run, "unsupported")
+
+
+def truncated_unsupported(run):
+    return (report_field(run, "truncated") or {}).get("unsupported")
+
+
 def compare_runs(summary, previous):
     compared = {}
     for title_id in sorted(set(summary["titles"]) & set(previous["titles"])):
@@ -288,7 +296,10 @@ def compare_runs(summary, previous):
                               "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
                               "shaders": {name: pair(shader_count(before, name), shader_count(now, name)) for name in SHADER_COUNTS},
                               "missingFunctions": diff_entries(missing_functions(before), missing_functions(now), ("library", "name"), "calls"),
-                              "missingFunctionsTruncated": pair(truncated_functions(before), truncated_functions(now))}
+                              "missingFunctionsTruncated": pair(truncated_functions(before), truncated_functions(now)),
+                              "unsupportedInstructions": diff_entries(unsupported_instructions(before), unsupported_instructions(now),
+                                                                      ("encoding", "opcode", "opcodeValue", "modifiers"), "count"),
+                              "unsupportedInstructionsTruncated": pair(truncated_unsupported(before), truncated_unsupported(now))}
     return compared
 
 
