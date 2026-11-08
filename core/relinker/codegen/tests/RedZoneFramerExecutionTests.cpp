@@ -6,6 +6,7 @@
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #if defined(__linux__) && defined(__x86_64__)
 #include <signal.h>
@@ -33,6 +35,9 @@ void require(const bool condition, const std::string& message) {
 constexpr std::size_t kArenaBytes = 0x10000;
 constexpr std::size_t kStubBase = 0x4000;
 constexpr std::size_t kRunnerBase = 0xc000;
+constexpr std::size_t kCalibrationBase = 0xf000;
+constexpr int kCalibrationInstructions = 64;
+constexpr int kSteppingAttempts = 20;
 constexpr std::uint8_t kClobber = 0xa5;
 constexpr std::uint64_t kA = 0x1111, kB = 0x2222, kC = 0x3333, kD = 0x4444;
 
@@ -362,6 +367,8 @@ Framing load(const Image& image, const bool frame) {
 #endif
     require(runner.size() <= kArenaBytes - kRunnerBase, "the runner does not fit in the executable arena");
     std::copy(runner.begin(), runner.end(), arena + kRunnerBase);
+    std::fill_n(arena + kCalibrationBase, kCalibrationInstructions, 0x90);
+    arena[kCalibrationBase + kCalibrationInstructions] = 0xc3;
     Framing framing;
     if (!frame) return framing;
     const auto base = reinterpret_cast<std::uint64_t>(arena);
@@ -413,6 +420,22 @@ Run run(const std::size_t start, const bool clobber) {
     return {result, static_cast<int>(steps)};
 }
 
+struct SteppingUnavailable {};
+
+bool stepsEveryInstruction() {
+    return run(kCalibrationBase, true).Steps >= kCalibrationInstructions;
+}
+
+Run runClobbered(const std::size_t start) {
+    for (int attempt = 0; attempt < kSteppingAttempts; ++attempt) {
+        if (attempt != 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!stepsEveryInstruction()) continue;
+        const auto clobbered = run(start, true);
+        if (stepsEveryInstruction()) return clobbered;
+    }
+    throw SteppingUnavailable{};
+}
+
 std::string hex(const std::uint64_t value) {
     std::ostringstream text;
     text << "0x" << std::hex << value;
@@ -430,7 +453,7 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
             continue;
         }
         plain.push_back(run(image.Starts[index], false));
-        clobbered.push_back(run(image.Starts[index], true));
+        clobbered.push_back(runClobbered(image.Starts[index]));
         require(plain.back().Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf returned " + hex(plain.back().Result) + " without the clobber, not " + hex(leaves[index].Expected));
         require(clobbered.back().Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run");
         require(clobbered.back().Result != leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf survived writes below rsp, so the case proves nothing");
@@ -443,7 +466,7 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
             continue;
         }
         const auto calm = run(image.Starts[index], false);
-        const auto framed = run(image.Starts[index], true);
+        const auto framed = runClobbered(image.Starts[index]);
         require(calm.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(calm.Result) + " without the clobber, not " + hex(leaves[index].Expected));
         require(framed.Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run over the framed leaf");
         require(framed.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(framed.Result) + " under writes below rsp, not " + hex(leaves[index].Expected));
@@ -471,6 +494,9 @@ int main() {
         require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
         std::cout << "red-zone framer execution tests passed\n";
         return 0;
+    } catch (const SteppingUnavailable&) {
+        std::cout << "skipped: single-stepping on this host kept skipping instructions, so the clobber cannot reach every one\n";
+        return 77;
     } catch (const std::exception& error) {
         std::cerr << "red-zone framer execution tests failed: " << error.what() << '\n';
         return 1;
