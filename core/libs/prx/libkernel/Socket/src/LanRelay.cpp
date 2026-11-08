@@ -1,5 +1,6 @@
 #include "prx/libkernel/Socket/include/LanRelay.hpp"
 #include <stdexcept>
+#include <vector>
 
 namespace LanRelay {
 namespace {
@@ -47,6 +48,19 @@ Endpoint ParseEndpoint(const std::string& text) {
     CheckIPv4(endpoint.Host);
     endpoint.Port = ParsePort(text.substr(colon + 1));
     return endpoint;
+}
+
+std::vector<Endpoint> ParsePeers(const std::string& text) {
+    std::vector<Endpoint> peers;
+    if (text.empty()) return peers;
+    std::size_t start = 0;
+    while (true) {
+        const auto comma = text.find(',', start);
+        peers.push_back(ParseEndpoint(text.substr(start, comma == std::string::npos ? std::string::npos : comma - start)));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return peers;
 }
 
 }

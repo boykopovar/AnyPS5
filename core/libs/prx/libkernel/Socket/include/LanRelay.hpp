@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace LanRelay {
 
@@ -12,6 +13,7 @@ struct Endpoint {
 };
 
 Endpoint ParseEndpoint(const std::string& text);
+std::vector<Endpoint> ParsePeers(const std::string& text);
 
 }
 
