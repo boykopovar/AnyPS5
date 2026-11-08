@@ -224,6 +224,20 @@ void Close(Handle handle) {
     if (handle != NoHandle) CloseHandle(reinterpret_cast<HANDLE>(handle));
 }
 
+std::uint64_t FileSize(Handle file) {
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(reinterpret_cast<HANDLE>(file), &size)) return 0;
+    return static_cast<std::uint64_t>(size.QuadPart);
+}
+
+bool RenameFile(const std::string& from, const std::string& to) {
+    return MoveFileExW(Widen(from).c_str(), Widen(to).c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+}
+
+bool RemoveFile(const std::string& path) {
+    return DeleteFileW(Widen(path).c_str()) != FALSE || GetLastError() == ERROR_FILE_NOT_FOUND;
+}
+
 #else
 
 bool OpenAppend(const std::string& path, Handle& file, std::string& error) {
@@ -344,6 +358,20 @@ bool WriteAll(Handle destination, const char* data, std::size_t length) {
 
 void Close(Handle handle) {
     if (handle != NoHandle) ::close(static_cast<int>(handle));
+}
+
+std::uint64_t FileSize(Handle file) {
+    struct stat information{};
+    if (::fstat(static_cast<int>(file), &information) != 0) return 0;
+    return static_cast<std::uint64_t>(information.st_size);
+}
+
+bool RenameFile(const std::string& from, const std::string& to) {
+    return ::rename(from.c_str(), to.c_str()) == 0;
+}
+
+bool RemoveFile(const std::string& path) {
+    return ::unlink(path.c_str()) == 0 || errno == ENOENT;
 }
 
 #endif

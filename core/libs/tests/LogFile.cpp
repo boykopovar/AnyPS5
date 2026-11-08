@@ -217,6 +217,24 @@ void AppendKeepsEarlierRuns() {
     Require(Slurp(path) == "first run\nsecond run\n", "opening the file again did not append");
 }
 
+void FilePrimitives() {
+    const auto path = g_directory / "primitives.log";
+    const auto moved = g_directory / "primitives.log.1";
+    Handle file = NoHandle;
+    std::string error;
+    Require(OpenAppend(path.string(), file, error), "open for the size check");
+    Require(WriteAll(file, "twelve bytes", 12), "write for the size check");
+    Require(FileSize(file) == 12, "the size of an open file differs");
+    Require(RenameFile(path.string(), moved.string()), "rename an open file");
+    Require(!std::filesystem::exists(path) && std::filesystem::exists(moved), "the rename left the old name behind");
+    Require(WriteAll(file, "!", 1), "write after the rename");
+    Close(file);
+    Require(Slurp(moved) == "twelve bytes!", "the open file did not follow the rename");
+    Require(RemoveFile(moved.string()), "remove a file");
+    Require(RemoveFile(moved.string()), "removing a missing file is not success");
+    Require(!std::filesystem::exists(moved), "the file is still there after removal");
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -654,6 +672,7 @@ int main(int argc, char** argv) {
     PartialLineAtExit();
     LongLines();
     AppendKeepsEarlierRuns();
+    FilePrimitives();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();
