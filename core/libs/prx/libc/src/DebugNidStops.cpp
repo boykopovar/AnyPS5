@@ -4,13 +4,13 @@
 
 namespace Debug {
 
-std::uint64_t NidStopRegistry::Hit(const NidBreakpointTable& table, std::uint64_t nid, const std::uint64_t* args, std::size_t argCount) {
+std::uint64_t NidStopRegistry::Hit(NidBreakpointTable& table, std::uint64_t nid, const std::uint64_t* args, std::size_t argCount, const Session& session) {
     if (!table.IsArmed(nid))
         return 0;
 
     const std::size_t copied = std::min(argCount, kMaxArgs);
     Slot* slot = nullptr;
-    std::uint64_t id = 0;
+    Stop stop;
     {
         std::lock_guard lock(mutex_);
         if (count_ == kCapacity) {
@@ -18,8 +18,7 @@ std::uint64_t NidStopRegistry::Hit(const NidBreakpointTable& table, std::uint64_
             return 0;
         }
         slot = FindFreeSlot();
-        id = nextId_++;
-        slot->stop.id = id;
+        slot->stop.id = nextId_++;
         slot->stop.nid = nid;
         slot->stop.argCount = copied;
         for (std::size_t i = 0; i < copied; ++i)
@@ -27,7 +26,11 @@ std::uint64_t NidStopRegistry::Hit(const NidBreakpointTable& table, std::uint64_
         slot->released.store(false, std::memory_order_relaxed);
         slot->inUse = true;
         ++count_;
+        stop = slot->stop;
     }
+
+    if (session)
+        session(table, *this, stop);
 
     slot->released.wait(false, std::memory_order_acquire);
 
@@ -35,7 +38,7 @@ std::uint64_t NidStopRegistry::Hit(const NidBreakpointTable& table, std::uint64_
     slot->inUse = false;
     slot->stop = Stop{};
     --count_;
-    return id;
+    return stop.id;
 }
 
 bool NidStopRegistry::Continue(std::uint64_t id) {
