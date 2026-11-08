@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdlib>
 #include <unordered_map>
 
@@ -43,7 +44,8 @@ void Driver::bumpWaitEpoch(std::uint64_t address, std::size_t bytes) {
         std::uint64_t value = 0;
         std::uint64_t generation = 0;
     };
-    static thread_local std::unordered_map<std::uint64_t, Ordered> ordered;
+    struct OrderedStorage {};
+    auto& ordered = HostThreadLocal<std::unordered_map<std::uint64_t, Ordered>, OrderedStorage>();
     static const bool memo = std::getenv("APS5_NO_ORDERED_WAITS") == nullptr;
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) {
         bumpEpoch(&EpochBumps::waits);
