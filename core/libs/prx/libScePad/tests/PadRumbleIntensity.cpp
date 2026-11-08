@@ -156,6 +156,17 @@ void EnvironmentIsReadOnceAndInvalidValuesKeepFailing() {
     Require(Pad::RumblePercent() == 30, "the value is read once for the lifetime of the process");
 }
 
+void RumbleOnFocusLossParserAcceptsOnlyZeroOrOne() {
+    Require(Pad::ParseRumbleOnFocusLoss(nullptr), "an unset variable pauses rumble on focus loss");
+    Require(Pad::ParseRumbleOnFocusLoss("1"), "1 pauses rumble on focus loss");
+    Require(!Pad::ParseRumbleOnFocusLoss("0"), "0 keeps rumble on without focus");
+    for (const char* bad : {"", " 1", "1 ", "00", "true", "yes", "-1", "2"}) {
+        bool refused = false;
+        try { Pad::ParseRumbleOnFocusLoss(bad); } catch (const std::runtime_error&) { refused = true; }
+        Require(refused, "a value other than 0 or 1 is refused");
+    }
+}
+
 }
 
 int main() {
@@ -167,5 +178,6 @@ int main() {
     IntermediateIntensityScalesBothMotors();
     ParserAcceptsAndRefuses();
     EnvironmentIsReadOnceAndInvalidValuesKeepFailing();
+    RumbleOnFocusLossParserAcceptsOnlyZeroOrOne();
     return 0;
 }
