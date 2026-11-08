@@ -11,6 +11,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPeFormat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsLoadImage.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsTlsBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestGs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsTrampolineBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsTlsTemplateBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsRelocationBuilder.cpp
@@ -691,6 +692,39 @@ if(BUILD_TESTING)
         add_test(NAME gs_trap_entry_roots COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_gs_trap_entry_roots.py $<TARGET_FILE:relinker>)
         set_tests_properties(gs_trap_entry_roots PROPERTIES TIMEOUT 30)
+        if((MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux") AND CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|amd64|x86_64")
+            add_test_executable(guest_gs_runner relinker/tests/GuestGsRunner.cpp)
+            target_include_directories(guest_gs_runner PRIVATE ../libs)
+            if(WIN32)
+                target_sources(guest_gs_runner PRIVATE ../libs/prx/libc/src/specifics/windows/GuestGs.cpp)
+            endif()
+        endif()
+        if(TARGET guest_gs_runner AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+            set(guestGsMode)
+            if(NOT WIN32)
+                set(guestGsMode --native)
+            endif()
+            add_test(NAME windows_guest_gs COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_gs.py
+                $<TARGET_FILE:relinker> $<TARGET_FILE:guest_gs_runner> ${guestGsMode})
+            set_tests_properties(windows_guest_gs PROPERTIES TIMEOUT 30)
+        endif()
+        if(MINGW AND TARGET libc)
+            add_subdirectory(relinker/tests/windows_runtime)
+            add_test(NAME windows_guest_gs_runtime COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_gs.py
+                $<TARGET_FILE:relinker> $<TARGET_FILE:guest_gs_runtime_runner> --runtime)
+            set_tests_properties(windows_guest_gs_runtime PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            get_filename_component(guestGsCompilerDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            add_test(NAME windows_guest_gs_startup COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_gs_integration.py
+                $<TARGET_FILE:relinker> --runtime $<TARGET_FILE:libc> --state-runtime $<TARGET_FILE:guest_gs_state_only_runtime> --dll-directory ${guestGsCompilerDirectory})
+            set_tests_properties(windows_guest_gs_startup PROPERTIES TIMEOUT 30)
+        endif()
+        add_test(NAME windows_guest_gs_relocations COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_guest_gs_integration.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_guest_gs_relocations PROPERTIES TIMEOUT 30)
         foreach(group IN ITEMS executable module rejected)
             add_test(NAME function_symbol_roots_${group} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_function_symbol_roots.py $<TARGET_FILE:relinker> ${group})
