@@ -1177,6 +1177,19 @@ void FrameTimesReportTest() {
     Require(Contains(RunReport::Serialize(report, RunReport::HostIdentifiers{}), "\"p99\": 3.000"), "covered frame percentiles must be written");
 }
 
+void CompileTimeTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    collector.NoteCompileTime(5000000);
+    Require(collector.CompileMilliseconds() == 0.0, "compile time before the collector starts must be ignored");
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteCompileTime(2000000);
+    collector.NoteCompileTime(2500000);
+    collector.NoteCompileTime(-1);
+    Require(collector.CompileMilliseconds() == 4.5, "compile times must add up in milliseconds, got " + std::to_string(collector.CompileMilliseconds()));
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1440,6 +1453,7 @@ int main(int argc, char** argv) {
         Run("frame-percentile", FramePercentileTest);
         Run("frame-ring-wiring", FrameRingWiringTest);
         Run("frame-times-report", FrameTimesReportTest);
+        Run("compile-time-total", CompileTimeTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
