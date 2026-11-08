@@ -792,8 +792,8 @@ void testAvcPictureMetadata() {
     auto wideSpsAndPps = secondSpsAndPps;
     wideSpsAndPps[11] = 14;
     auto& idr = newSequence.front();
-    check(idr[10] == 0x67 && idr[34] == 0x68 && idr[42] == 0x65, "the IPPP fixture's IDR does not follow its SPS and PPS");
-    idr.erase(idr.begin() + 6, idr.begin() + 39);
+    check(idr[10] == 0x67 && idr[35] == 0x68 && idr[43] == 0x65, "the IPPP fixture's IDR does not follow its SPS and PPS");
+    idr.erase(idr.begin() + 6, idr.begin() + 40);
     idr.insert(idr.begin() + 6, wideSpsAndPps.begin(), wideSpsAndPps.end());
     auto sequenceSwitches = ippp;
     sequenceSwitches.insert(sequenceSwitches.end(), newSequence.begin(), newSequence.end());
