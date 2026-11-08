@@ -41,8 +41,28 @@ void SinkReceivesTitleAndTextAsGiven() {
     Require(recording.titles[1] == "AnyPS5" && recording.texts[1].empty(), "an empty text was changed");
 }
 
+void LinuxArgvIsOneArgumentPerPart() {
+    const auto argv = LinuxNotifyArgv("AnyPS5", "Hello");
+    Require(argv == HostNotifyArgv({"notify-send", "--", "AnyPS5", "Hello"}), "the Linux argv is not notify-send -- title text");
+}
+
+void LinuxArgvKeepsShellSyntaxAsData() {
+    const std::string text = "$(touch /tmp/x) `id` \"quoted\"; rm -rf ~ | 'x' & \\n";
+    const auto argv = LinuxNotifyArgv("AnyPS5", text);
+    Require(argv.size() == 4, "shell syntax changed the argument count");
+    Require(argv[3] == text, "shell syntax in the text was changed");
+}
+
+void LinuxArgvKeepsLeadingDashAsText() {
+    const auto argv = LinuxNotifyArgv("AnyPS5", "--urgency=critical");
+    Require(argv.size() == 4 && argv[1] == "--" && argv[3] == "--urgency=critical", "a text starting with a dash is read as an option");
+}
+
 int main() {
     SinkReceivesTitleAndTextAsGiven();
+    LinuxArgvIsOneArgumentPerPart();
+    LinuxArgvKeepsShellSyntaxAsData();
+    LinuxArgvKeepsLeadingDashAsText();
     Require(ParseHostNotifyMode(nullptr) == HostNotifyMode::Off, "an unset variable is not off");
     Require(ParseHostNotifyMode("") == HostNotifyMode::Off, "an empty value is not off");
     Require(ParseHostNotifyMode("0") == HostNotifyMode::Off, "0 is not off");

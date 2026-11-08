@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 enum class HostNotifyMode : std::uint8_t { Off, On };
 
@@ -14,7 +15,11 @@ public:
     virtual void Notify(std::string_view title, std::string_view text) = 0;
 };
 
+using HostNotifyArgv = std::vector<std::string>;
+
 std::optional<HostNotifyMode> ParseHostNotifyMode(const char* text);
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text);
+
+HostNotifyArgv LinuxNotifyArgv(std::string_view title, std::string_view text);
 
 #endif
