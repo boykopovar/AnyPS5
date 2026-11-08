@@ -33,5 +33,8 @@ XmlNodeId* DocumentNode(XmlNodeId* result, const XmlHandle* document, NodeQuery 
 XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQuery query, XmlNodeId node);
 XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNodeId node, const XmlString* name);
 std::uint32_t DocumentNumber(const XmlHandle* document, NumberQuery query, XmlNodeId node);
+int DocumentChildNodes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
+int DocumentAttributes(const XmlHandle* document, XmlNodeId node, XmlHandle* list);
+int DocumentElementsByTagName(const XmlHandle* document, XmlNodeId node, const XmlString* name, XmlHandle* list);
 
 }
