@@ -136,11 +136,12 @@ static void CheckProgramImageStaysRegistered() {
     {
         GuestAllocations::Mutation mutation;
         mutation.RegisterImage(reinterpret_cast<const void*>(base));
+        Require(mutation.Overlaps(reinterpret_cast<const void*>(base), 1));
     }
     void* self = dlopen_nid_postfix(nullptr, 2);
     Require(self != nullptr && dlclose_nid_postfix(self) == 0);
     GuestAllocations::Mutation mutation;
-    Require(mutation.Covers(reinterpret_cast<const void*>(base), 1));
+    Require(mutation.Overlaps(reinterpret_cast<const void*>(base), 1));
 }
 #endif
 int main(int argc, char** argv) {
