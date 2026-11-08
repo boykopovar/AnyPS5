@@ -1,6 +1,7 @@
 #include "prx/libScePlayGoDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,9 @@ int main() {
     Require(scePlayGoDialogClose() == notInitialized);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
+    errno = 71;
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
+    Require(errno == 71);
 
     const int openParam = 1;
     Require(scePlayGoDialogOpen(&openParam) == notInitialized);
@@ -33,6 +37,9 @@ int main() {
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogUpdateStatus() == 1);
     Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
+    errno = 71;
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
+    Require(errno == 71);
 
     PlayGoDialogResult unfinishedResult;
     std::memset(&unfinishedResult, 0x5a, sizeof(unfinishedResult));
@@ -61,6 +68,9 @@ int main() {
     PlayGoDialogResult result{};
     Require(scePlayGoDialogGetResult(&result) == 0);
     Require(result.result == 0 && result.errorCode == 0);
+    errno = 71;
+    Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
+    Require(errno == 71);
     result.errorCode = 7;
     result.result = 9;
     result.reserved[0] = 1;

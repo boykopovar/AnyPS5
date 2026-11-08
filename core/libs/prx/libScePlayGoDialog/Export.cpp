@@ -1,4 +1,5 @@
 #include "prx/libScePlayGoDialog/include/Api.hpp"
+#include <cerrno>
 #include <atomic>
 #include <algorithm>
 #include <iterator>
@@ -76,11 +77,20 @@ int APS5_VABI scePlayGoDialogUpdateStatus(void) {
 
 int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result) {
     if (result == nullptr) return ERROR_ARG_NULL;
-    if (!std::all_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value == 0; })) return ERROR_PARAM_INVALID;
+    PlayGoDialogResult localResult{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrno;
+    if (!read) return ERROR_ARG_NULL;
+    if (!std::all_of(std::begin(localResult.reserved), std::end(localResult.reserved), [](std::uint8_t value) { return value == 0; })) return ERROR_PARAM_INVALID;
     if (g_status.load() == STATUS_NONE) return ERROR_NOT_INITIALIZED;
     if (g_status.load() != STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    *result = {};
-    result->result = RESULT_OK;
+    PlayGoDialogResult outResult{};
+    outResult.result = RESULT_OK;
+    const int savedErrno2 = errno;
+    const bool written = GuestCopyOut_nid_no_patch(result, &outResult, sizeof(outResult));
+    errno = savedErrno2;
+    if (!written) return ERROR_ARG_NULL;
     return 0;
 }
 
