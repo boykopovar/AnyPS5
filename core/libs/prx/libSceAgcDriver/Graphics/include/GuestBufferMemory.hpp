@@ -315,8 +315,6 @@ struct AddressCopy {
 };
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit);
 
-// The start alignment of a guest buffer view and of every copy that stands in for one: storage buffer
-// offset alignment, and the uniform one too while pushed buffers may be read as uniform buffers.
 VkDeviceSize GuestBufferViewAlignment(const VkPhysicalDeviceLimits& limits);
 
 class AddressCopyCounters {

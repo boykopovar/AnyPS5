@@ -521,11 +521,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     return variable;
                 };
                 const bool aliased = state.requirements.coherentBufferAlias || state.requirements.bufferU64View;
-                // vkd3d-proton's heap mode maps root constant buffers as uniform buffers, which NVIDIA
-                // reads through its constant path. A guest buffer qualifies when every access is
-                // a non-coherent scalar load at a constant offset, so its highest word is known here; the
-                // view's start adjustment (below the uniform offset alignment, at most 63 bytes) and a
-                // misaligned base's second word are added to that bound.
                 std::vector<std::uint32_t> uniformWords(count, 0u);
                 if (state.uniformConstantBuffers) {
                     std::vector<bool> eligible(count, true);
@@ -557,7 +552,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 }
                 for (std::uint32_t element = 0; element < count; ++element) {
                     if (uniformWords[element] != 0u) {
-                        // A block of dwords (std430 uniform layout, uniformBufferStandardLayout).
                         const auto array = state.module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, TypeU32(state), ConstantU32(state, uniformWords[element]));
                         const auto block = state.module.DecoratedType(spv::OpTypeStruct, {{spv::OpDecorate, {spv::DecorationBlock}}, {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}}, array);
                         const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniform, block), spv::StorageClassUniform);
