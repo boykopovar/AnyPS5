@@ -581,6 +581,16 @@ class CompareTests(unittest.TestCase):
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 12.0}])
         self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["fps"], {"before": None, "now": 12.0})
 
+    def test_average_fps_comes_from_the_report(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0, "report": {"averageFps": 58.0}}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": {"averageFps": 61.5}}])
+        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["averageFps"], {"before": 58.0, "now": 61.5})
+
+    def test_average_fps_without_a_report_is_not_recorded(self):
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 20.0}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 25.0, "report": None}])
+        self.assertEqual(title_run.compare_runs(summary, previous)["PPSA00001"]["averageFps"], {"before": None, "now": None})
+
     def test_only_titles_in_both_runs_are_compared(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
