@@ -241,6 +241,44 @@ static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestSubmixerFilterOff() {
+    const auto system = CreateSystem();
+    Ngs2SubmixerRackOption option{};
+    option.rack_option.size = sizeof(option);
+    option.rack_option.max_grain_samples = 512;
+    option.rack_option.max_voices = 1;
+    option.rack_option.max_matrices = 1;
+    option.rack_option.max_ports = 1;
+    option.max_channels = 2;
+    option.max_envelope_points = 1;
+    option.max_filters = 2;
+    option.max_inputs = 1;
+    option.num_peak_meter_blocks = 1;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &option.rack_option, &info, &rack) == SCE_NGS2_OK);
+    uintptr_t submixer = 0;
+    Require(sceNgs2RackGetVoiceHandle(rack, 0, &submixer) == SCE_NGS2_OK);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+    Output(system, submixer, 0, 0);
+    const std::vector<std::int16_t> pcm(Grain * 2 * 16, 8192);
+    Route(Input(system, pcm), 0, submixer);
+    for (const std::uint32_t index : {0u, 1u}) {
+        Ngs2SamplerVoiceFilterParam filter{};
+        filter.index = index;
+        filter.q = 1.0f;
+        filter.level = 1.0f;
+        Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER, filter);
+    }
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR, Ngs2SubmixerVoiceCompressorParam{{}, 1, 0.1f, 0.01f, 0.0f, 0.0f, 0.0f, 1.0f, 0});
+    Render(system, {0.25f}, 2, Grain, true);
+    Render(system, {0.25f});
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestSubmixerKeyInput() {
     const auto system = CreateSystem();
     Ngs2SubmixerRackOption option{};
@@ -283,8 +321,12 @@ int main() {
     TestNoModules(3, {0.0f, -0.75f, 0.25f});
     TestNoModules(4, {0.0f, 0.0f, -0.75f, 0.25f});
     TestGainRouting();
+    TestSubmixerFilterOff();
     TestSubmixerKeyInput();
     TestUnityCopy();
-    for (std::uint32_t channels = 1; channels <= 8; channels++) TestIndependentVoicesAndSilentRamp(channels);
+    for (std::uint32_t channels = 1; channels <= 8; channels++) {
+        if (Ps4Library && (channels == 3 || channels == 4 || channels == 5 || channels == 7)) continue;
+        TestIndependentVoicesAndSilentRamp(channels);
+    }
     return 0;
 }

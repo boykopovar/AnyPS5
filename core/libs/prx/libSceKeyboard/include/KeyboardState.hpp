@@ -13,6 +13,7 @@ struct KeyboardInputEvent {
 };
 
 namespace Keyboard {
+bool IsInitialized();
 int Initialize();
 int Open(int userId, std::int32_t type, std::int32_t index);
 int Close(std::int32_t handle);
