@@ -341,9 +341,12 @@ void PadInput::applyOutput() {
             if (effectPending || ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh)) slots[slot].outputPending = true;
             else continue;
         }
-        slots[slot].outputPending = false;
-        slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
-        SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
+        if (!suppressed) {
+            slots[slot].outputPending = false;
+            slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
+            SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
+            slots[slot].rumbleLive = rumbling || triggerRumble;
+        }
         if (slot == 0 && haptics != nullptr) {
             if (hapticsRumbled && !rumbling) hapticsReconfigureAt = (now + DualSenseHaptics::RumbleSettle).time_since_epoch().count();
             hapticsRumbled = rumbling;
