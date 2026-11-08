@@ -1,6 +1,6 @@
 {
   "format": "anyps5-report",
-  "version": 1,
+  "version": 2,
   "generated": "2026-10-29T12:00:00Z",
   "anyps5": {
     "commit": "40f2a9c3d1b7e5864a0c9d2e7f13b5a8c6d49e01",

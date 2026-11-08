@@ -27,7 +27,7 @@ DESCRIPTOR_TYPES = ("UniformBuffer", "StorageBuffer", "UniformTexelBuffer", "Sto
 
 TRUNCATED_BASE = {
     "format": "anyps5-report",
-    "version": 1,
+    "version": 2,
     "generated": "2026-10-29T12:00:00Z",
     "anyps5": {
         "commit": "40f2a9c3d1b7e5864a0c9d2e7f13b5a8c6d49e01",
@@ -396,7 +396,7 @@ class RejectionTests(ReportTests):
     def test_malformed_values_are_rejected(self):
         cases = [(("run", "id"), "3F9A1C07B2D84E5F9A6C0D1E2B3A4F56"), (("run", "id"), "3f9a"), (("game", "titleId"), "ppsa12345"),
                  (("game", "titleId"), "PPSA1234"), (("game", "titleId"), "PPSA123456"), (("anyps5", "commit"), "abc123"),
-                 (("generated",), "2026-10-29 12:00:00"), (("generated",), "2026-10-29T12:00:00+13:00"), (("version",), 2),
+                 (("generated",), "2026-10-29 12:00:00"), (("generated",), "2026-10-29T12:00:00+13:00"), (("version",), 1),
                  (("format",), "anyps5-run"), (("run", "seconds"), -1), (("run", "seconds"), float("inf")), (("run", "seconds"), 1e12),
                  (("run", "framesPresented"), 1.5), (("run", "exitCode"), 1.5), (("system", "ramGiB"), 0), (("system", "gpu", "vulkan"), "1.3"),
                  (("stop", "message"), "x" * 301), (("stop", "message"), ""), (("stop", "message"), "line one\nline two"),
