@@ -1014,6 +1014,8 @@ void TestBatchContextOwnership(std::uint32_t context) {
     constexpr int invalidContext = static_cast<int>(0x80930002);
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::uint32_t other = 0;
+    std::uint32_t refused = 0xdeadbeefu;
+    Require(sceAjmInitialize(reinterpret_cast<std::intptr_t>(&refused), &refused) == static_cast<int>(0x80930005) && refused == 0xdeadbeefu);
     Require(sceAjmInitialize(0, &other) == 0 && other != context);
     std::vector<std::uint8_t> storage(256);
     AjmBatchInfo info{};
