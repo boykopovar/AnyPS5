@@ -148,6 +148,7 @@ int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsi
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
 int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name);
+int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name);
 int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
