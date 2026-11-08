@@ -584,6 +584,28 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(tls[2], read_only[2] + 0x80)
         self.assertEqual(tls[5], 0)
 
+    def test_indexed_records_are_not_reused_for_another_load(self):
+        first = pattern(1, 0x80)
+        unrelated = pattern(2, 0x80)
+        second = pattern(3, 0x80)
+        indexed = [(0x800, 0x800, len(first)), (0x800, 0x900, len(unrelated))]
+        for source_offset, records in (
+            (0xA00, indexed),
+            (0x2000, indexed + [(0, 0xA00, len(second))]),
+        ):
+            with self.subTest(source_offset=source_offset):
+                segments = [
+                    (PT_LOAD, 5, 0x1000, 0, len(first), PAGE),
+                    (PT_LOAD, 4, source_offset, PAGE, len(second), PAGE),
+                ]
+                container = build_container(segments, records, {0x800: first, 0x900: unrelated, 0xA00: second})
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                for header, expected in zip(headers, (first, second)):
+                    offset, size = header[2], header[5]
+                    self.assertEqual(data[offset:offset + size], expected)
+
     def test_contained_segments_keep_stronger_alignment_than_their_load(self):
         payload = b"TLS template data" * 16
         for kind in (PT_DYNAMIC, PT_TLS):
