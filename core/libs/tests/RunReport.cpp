@@ -196,8 +196,11 @@ void FinishTests() {
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Read(collector.ReportPath()) == report, "a second finish changed the report");
     std::size_t files = 0;
-    for (const auto& entry : fs::directory_iterator(executable.path)) { static_cast<void>(entry); ++files; }
-    Require(files == 1, "a temporary file was left behind");
+    for (const auto& entry : fs::directory_iterator(executable.path)) {
+        Require(entry.path().extension() != ".tmp", "a temporary file was left behind: " + entry.path().string());
+        ++files;
+    }
+    Require(files == 2 && fs::exists(executable.path / "anyps5-recipe.json"), "the finish must leave only the report and the recipe");
 }
 
 void ConcurrentFinishTests() {
