@@ -97,7 +97,7 @@ extern Array* _ZN3sce4Json5Value11s_nullarrayE;
 extern Object* _ZN3sce4Json5Value12s_nullobjectE;
 
 
-int APS5_VABI _ZN3sce4Json12MemAllocatorD0Ev(void);
+[[noreturn]] void APS5_VABI _ZN3sce4Json12MemAllocatorD0Ev(void* self);
 extern std::size_t _ZN3sce4Json6String4nposE;
 
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void* self);

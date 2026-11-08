@@ -25,6 +25,10 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 
+[[noreturn]] void APS5_VABI JsonMemAllocatorPureVirtual_nid_no_patch() {
+    throw std::runtime_error("sce::Json::MemAllocator: pure virtual function called");
+}
+
 namespace {
 
 using namespace SceJson2;
@@ -2547,15 +2551,11 @@ int ParseValue(Value* out, Parser& parser) {
     return parsedOk ? 0 : parser.Error();
 }
 
-[[noreturn]] void APS5_VABI JsonMemAllocatorPureVirtual() {
-    throw std::runtime_error("sce::Json::MemAllocator: pure virtual function called");
-}
-
 void* const JsonMemAllocatorVtable[] = {
     nullptr, nullptr,
-    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
-    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
-    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual_nid_no_patch), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual_nid_no_patch),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual_nid_no_patch), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual_nid_no_patch),
+    reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual_nid_no_patch), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual_nid_no_patch),
 };
 
 }

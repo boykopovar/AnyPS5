@@ -1,14 +1,10 @@
 #include "prx/libSceJson2/include/Api.hpp"
-#include <cstddef>
-#include <cstdint>
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
+
+[[noreturn]] void APS5_VABI JsonMemAllocatorPureVirtual_nid_no_patch();
 
 extern "C" {
 
-int APS5_VABI _ZN3sce4Json12MemAllocatorD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+[[noreturn]] void APS5_VABI _ZN3sce4Json12MemAllocatorD0Ev(void*) { JsonMemAllocatorPureVirtual_nid_no_patch(); }
 
 }

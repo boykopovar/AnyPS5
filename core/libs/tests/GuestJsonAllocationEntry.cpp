@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <stdexcept>
 #include <vector>
 
 using namespace SceJson2;
@@ -58,6 +59,18 @@ int main() {
     Require(allocatorBytes[0] == first && allocatorBytes[1] == second, "Base allocator destruction must not rewrite the vtable or adjacent bytes");
     _ZN3sce4Json12MemAllocatorD1Ev(allocatorBytes);
     Require(allocatorBytes[0] == first && allocatorBytes[1] == second, "Both non-deleting allocator destructors must leave the complete object unchanged");
+    std::uint64_t deletingAllocatorBytes[]{UINT64_C(0), UINT64_C(0x8877665544332211)};
+    _ZN3sce4Json12MemAllocatorC2Ev(deletingAllocatorBytes);
+    const auto deletingVtable = deletingAllocatorBytes[0];
+    const auto deletingAdjacent = deletingAllocatorBytes[1];
+    bool deletingDestructorTrapped = false;
+    try {
+        _ZN3sce4Json12MemAllocatorD0Ev(deletingAllocatorBytes);
+    } catch (const std::runtime_error& error) {
+        deletingDestructorTrapped = std::strcmp(error.what(), "sce::Json::MemAllocator: pure virtual function called") == 0;
+    }
+    Require(deletingDestructorTrapped, "Deleting the abstract base allocator must preserve the reference pure-virtual trap");
+    Require(deletingAllocatorBytes[0] == deletingVtable && deletingAllocatorBytes[1] == deletingAdjacent, "The deleting destructor trap must leave the object and adjacent bytes unchanged");
     constexpr int notInitialized = static_cast<int>(0x80848110);
     Require(InfoState() == notInitialized && _ZN3sce4Json6MallocEm(17) == nullptr, "Allocation entry points must expose missing context before initialization");
     _ZN3sce4Json4FreeEPv(nullptr);
