@@ -38,7 +38,7 @@ RULES = {
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
     "debt-labels": ("warning", "docs/dev/TechnicalDebt.md", "Unknown label in a technical debt entry's Labels: trailer, which ends the entry; the labels are console, firmware, gpu, title, code, no-test, tested, windows, macos and linux"),
-    "debt-fragment": ("error", "CONTRIBUTING.md#documentation", "A debt fragment in docs/dev/debt/changes/ must apply: each '## change' or '## remove' names text that occurs in exactly one entry of its '# <library>' file, and no other fragment changes the same entry; check with python3 tools/debt_fold.py --check"),
+    "debt-fragment": ("error", "docs/dev/TechnicalDebt.md#fragments", "A debt fragment in docs/dev/debt/changes/ must apply: each '## change' or '## remove' names text that occurs in exactly one entry of its '# <library>' file, and no other fragment changes the same entry; check with python3 tools/debt_fold.py --check"),
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
