@@ -32,7 +32,7 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     Asn1String* time = ASN1_TIME_new_nid_postfix();
     Require(time != nullptr);
-    Require(time->type == 23 && time->length == 0 && time->data == nullptr && time->flags == 0);
+    Require(time->type == -1 && time->length == 0 && time->data == nullptr && time->flags == 0x40);
     ASN1_OCTET_STRING_free_nid_postfix(time);
     std::puts("libSceLibreSsl3 ASN1_TIME_new tests passed");
 }
