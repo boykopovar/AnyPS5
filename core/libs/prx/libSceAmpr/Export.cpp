@@ -603,6 +603,7 @@ int APS5_VABI sceAmprCommandBufferWriteAddressFromTimeCounter_04_00(Apr::Command
 }
 
 int APS5_VABI sceAmprCommandBufferWriteAddress_04_00(Apr::CommandBufferObject* buffer, uint64_t* address, uint64_t value, uint32_t flags) {
+    if ((reinterpret_cast<std::uintptr_t>(address) & 7u) != 0u) return SCE_KERNEL_ERROR_EINVAL;
     Apr::WriteAddressCommand command{};
     command.header = {Apr::Opcode::WriteAddress, sizeof(command)};
     command.address = reinterpret_cast<uint64_t>(address);
@@ -991,8 +992,8 @@ double APS5_VABI sceAmprSinh(double x, double y) {
 }
 
 APS5_EXPORT("-vXEQdRADLI", sceAmprStrtokS);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context) {
-    return SonyStrtokS(str, delim, context);
+char* APS5_VABI sceAmprStrtokS(char* str, std::size_t* remaining, const char* delimiters, char** context) {
+    return SonyStrtokS(str, remaining, delimiters, context);
 }
 
 APS5_EXPORT("2UFh+YKfuzk", sceAmprCtimeS);
