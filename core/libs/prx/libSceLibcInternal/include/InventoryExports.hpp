@@ -4,6 +4,11 @@
 #include "SceTypes.hpp"
 #include <streambuf>
 
+namespace LibcException {
+struct SystemErrorObject;
+struct ErrorCode;
+}
+
 extern "C" {
 
 int APS5_VABI libSceLibcInternalInventory_000_nid_no_patch();
@@ -24,7 +29,7 @@ int APS5_VABI libSceLibcInternalInventory_014_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_015_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_016_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_017_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_019_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_019_nid_no_patch(LibcException::SystemErrorObject* self, LibcException::ErrorCode code, const char* message);
 int APS5_VABI libSceLibcInternalInventory_020_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_021_nid_no_patch(void* self);
 void APS5_VABI libSceLibcInternalInventory_022_nid_no_patch(void* self);
@@ -262,7 +267,6 @@ int APS5_VABI libSceLibcInternalUnknown_GdwuPYbVpP4_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_263_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_264_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_265_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_266_nid_no_patch();
 void APS5_VABI libSceLibcInternalInventory_268_nid_no_patch(void);
 std::uint64_t APS5_VABI libSceLibcInternalInventory_269_nid_no_patch(void);
 int APS5_VABI libSceLibcInternalInventory_270_nid_no_patch();
