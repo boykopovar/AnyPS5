@@ -160,6 +160,9 @@ void TestSuspendConfirmationDialog() {
     for (std::thread& thread : threads) thread.join();
     Require(sceSystemServiceEnableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
     Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    for (const std::int32_t other : {runningAppId + 1, runningAppId - 1, -1, std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()}) {
+        Require(Throws([other] { return sceShellCoreUtilGetSuspendConfirmationDialogFlag(other); }));
+    }
 }
 
 void TestGpuLoadEmulationMode() {

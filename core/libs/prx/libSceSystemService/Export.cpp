@@ -294,7 +294,7 @@ int APS5_VABI sceSystemServiceDisableSuspendConfirmationDialog() {
 }
 
 bool APS5_VABI sceShellCoreUtilGetSuspendConfirmationDialogFlag(std::int32_t appId) {
-    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilGetSuspendConfirmationDialogFlag: application other than the running title");
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error("sceShellCoreUtilGetSuspendConfirmationDialogFlag: application other than the running title");
     return SuspendConfirmationDialogEnabled.load(std::memory_order_relaxed);
 }
 
