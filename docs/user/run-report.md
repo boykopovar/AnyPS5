@@ -39,6 +39,7 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean`, `crash`, `abort` or `killed`. A non-zero exit code from the game is not automatically a crash. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `averageFps`, `fpsWindowSeconds` | Frames per second measured from the first presented frame to the last, and the length of that window. Both are null with fewer than two presented frames. |
+| `frameMs` | Frame-time percentiles in milliseconds: `p50`, `p90` and `p99` of the intervals between presented frames, over the most recent 2,048 intervals. Null with fewer than two presented frames, or when milestones are not covered. The percentile is nearest-rank, the same math the optional performance trace uses. |
 | `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
 
 ## Stop
