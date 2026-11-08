@@ -89,6 +89,21 @@ static void CheckCapacity() {
     Check(table.Size() == Debug::NidBreakpointTable::kCapacity);
 }
 
+static void CheckArmedLockFree() {
+    Debug::NidBreakpointTable table;
+    std::uint64_t a = 0;
+    Check(Debug::ParseNid("4J2sUJmuHZQ", a));
+    Check(table.Empty());
+    Check(!table.IsArmed(a));
+    Check(table.Add(a) == Debug::NidBreakpointTable::AddResult::Added);
+    Check(!table.Empty());
+    Check(table.IsArmed(a));
+    Check(!table.IsArmed(a + 4));
+    Check(table.Remove(a));
+    Check(table.Empty());
+    Check(!table.IsArmed(a));
+}
+
 int main() {
     CheckParseKnownValues();
     CheckParseRejectsMalformed();
@@ -96,5 +111,6 @@ int main() {
     CheckAddRemove();
     CheckDuplicates();
     CheckCapacity();
+    CheckArmedLockFree();
     return 0;
 }
