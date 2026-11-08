@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_KEEPAWAKE_HPP
 
 bool KeepAwakeEnabledFromValue(const char* value);
+bool KeepAwakeEnabled();
 
 struct KeepAwakeBackend {
     void (*disable)();
