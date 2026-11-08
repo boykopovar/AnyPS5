@@ -2,7 +2,25 @@
 
 Entries about one library or component are in [debt](debt/), one file per library or component, under the same sections as this page. Entries that belong to none stay here. An entry may end with `Closes when:` and the measurement, title or test that would close it, such as `Closes when: measured on a PS5`, so the entries a contributor can re-check are found by searching for it. It may also end with `Labels:` and labels that replace what [`tools/debt_report.py`](../../tools/debt_report.py) infers for that family: `console`, `firmware`, `gpu`, `title` or `code` for what would close it, `no-test` or `tested`, and `windows`, `macos` or `linux`.
 
-Pull requests add, change and remove entries through fragments in `debt/changes/`, which [`tools/debt_fold.py`](../../tools/debt_fold.py) applies to these files; the format is in [CONTRIBUTING](../../CONTRIBUTING.md#documentation).
+#### Fragments
+
+A pull request does not edit the debt files to add, change or remove entries. It adds its own fragment, `docs/dev/debt/changes/<branch>.md`, with a `# <name>` line per debt file (`TechnicalDebt` for this page) and these operations under it:
+
+  ```markdown
+  # libc
+
+  ## add Silent stubs
+
+  - [sceFoo](../../../core/libs/prx/libc/Export.cpp) (libc) - returns 0 without reading its argument
+
+  ## change [sceBar]
+
+  - [sceBar](../../../core/libs/prx/libc/Export.cpp) (libc) - clears the pool, as the 4.03 module does
+
+  ## remove [sceBaz]
+  ```
+
+`add` puts entries after the last entry of that `###` section that links the same file, or at the end of the section, creating it if needed. `change` and `remove` name text that occurs in exactly one entry of the file, usually its link; table rows count as entries. Links are written as in the debt file. [`tools/debt_fold.py`](../../tools/debt_fold.py) `--show <name>` prints a debt file with the pending fragments applied and `--check` validates them, as the Conventions check does. Without options it applies every fragment and deletes it, and it refuses two fragments that change the same entry. Headings and text outside entries are still edited in place.
 
 ### Build
 
