@@ -1003,7 +1003,7 @@ std::string SerializeRecipe(const Recipe& recipe, const HostIdentifiers& host) {
     json.String("id", std::string_view(recipe.runId));
     json.EndObject();
     json.BeginObject("anyps5");
-    json.String("commit", recipe.build.commit ? std::optional<std::string>(RedactedValue(*recipe.build.commit, host)) : std::nullopt);
+    json.String("commit", recipe.build.commit && std::regex_match(*recipe.build.commit, std::regex("[0-9a-f]{40}")) ? recipe.build.commit : std::nullopt);
     json.EndObject();
     json.BeginArray("argv");
     for (const auto& argument : recipe.arguments) json.String(nullptr, std::string_view(RedactedValue(argument, host)));
