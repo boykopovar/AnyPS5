@@ -4,6 +4,7 @@
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "IntermediateRepresentation/IrOpcode.hpp"
+#include "StorageImageFormat.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
 #include <cstdint>
 #include <limits>
@@ -124,6 +125,7 @@ struct ImageResource {
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
     bool targetMerge = false;
+    StorageImageFormat storageFormat = StorageImageFormat::Unknown;
 
     bool operator==(const ImageResource& other) const = default;
 };

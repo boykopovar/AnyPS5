@@ -2029,6 +2029,24 @@ bool DepthStencilTests(const State& state) {
     return state.depth.has_value() && (state.depthTest || state.stencilTest || state.depthBoundsTest);
 }
 
+static ShaderRecompiler::StorageImageFormat NormalizedStorageImageFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_UNORM: return ShaderRecompiler::StorageImageFormat::R8;
+        case VK_FORMAT_R8_SNORM: return ShaderRecompiler::StorageImageFormat::R8Snorm;
+        case VK_FORMAT_R8G8_UNORM: return ShaderRecompiler::StorageImageFormat::Rg8;
+        case VK_FORMAT_R8G8_SNORM: return ShaderRecompiler::StorageImageFormat::Rg8Snorm;
+        case VK_FORMAT_R8G8B8A8_UNORM: return ShaderRecompiler::StorageImageFormat::Rgba8;
+        case VK_FORMAT_R8G8B8A8_SNORM: return ShaderRecompiler::StorageImageFormat::Rgba8Snorm;
+        case VK_FORMAT_R16_UNORM: return ShaderRecompiler::StorageImageFormat::R16;
+        case VK_FORMAT_R16_SNORM: return ShaderRecompiler::StorageImageFormat::R16Snorm;
+        case VK_FORMAT_R16G16_UNORM: return ShaderRecompiler::StorageImageFormat::Rg16;
+        case VK_FORMAT_R16G16_SNORM: return ShaderRecompiler::StorageImageFormat::Rg16Snorm;
+        case VK_FORMAT_R16G16B16A16_UNORM: return ShaderRecompiler::StorageImageFormat::Rgba16;
+        case VK_FORMAT_R16G16B16A16_SNORM: return ShaderRecompiler::StorageImageFormat::Rgba16Snorm;
+        default: return ShaderRecompiler::StorageImageFormat::Unknown;
+    }
+}
+
 std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state) {
     static_assert(VK_BLEND_FACTOR_ZERO == 0 && VK_BLEND_FACTOR_SRC_ALPHA_SATURATE == 14 && VK_BLEND_OP_ADD == 0 && VK_BLEND_OP_MAX == 4);
     std::vector<ShaderRecompiler::TargetMerge> merges;
@@ -2054,6 +2072,7 @@ std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state
         auto& blend = merge.blend;
         blend.enabled = true;
         blend.snorm = SignedNormalizedFormat(color.format);
+        merge.storageFormat = NormalizedStorageImageFormat(color.format);
         blend.colorSource = static_cast<std::uint8_t>(attachment.srcColorBlendFactor);
         blend.colorDestination = static_cast<std::uint8_t>(attachment.dstColorBlendFactor);
         blend.colorOperation = static_cast<std::uint8_t>(attachment.colorBlendOp);

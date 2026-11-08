@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "StorageImageFormat.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
@@ -198,6 +199,7 @@ struct TargetMerge {
     bool depthStencilWrites = false;
     bool depthStencilTests = false;
     TargetBlend blend{};
+    StorageImageFormat storageFormat = StorageImageFormat::Unknown;
 
     bool operator==(const TargetMerge&) const = default;
 };

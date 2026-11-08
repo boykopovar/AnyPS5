@@ -63,6 +63,8 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
 std::uint32_t ImageScalarType(SpirvEmitterState& state, IrTextureNumericClass numericClass);
 std::uint32_t ImageVectorType(SpirvEmitterState& state, IrTextureNumericClass numericClass, std::uint32_t components);
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image);
+std::uint32_t ImageSpirvFormat(const SpirvEmitterState& state, const ImageResource& image);
+std::uint32_t ImageVariableFor(const SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t format);
 std::uint32_t ImageViewSizeType(SpirvEmitterState& state, RdnaImageDimension dimension);
 std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource);
 std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t sampler);
