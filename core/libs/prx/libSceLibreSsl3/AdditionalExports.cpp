@@ -63,10 +63,6 @@ int APS5_VABI HMAC_CTX_new_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI OPENSSL_init_ssl_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PEM_read_bio_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -303,10 +299,6 @@ int APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix() {
 }
 
 int APS5_VABI RSAPublicKey_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI AES_unwrap_key_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
