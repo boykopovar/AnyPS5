@@ -359,10 +359,6 @@ int APS5_VABI ulistfmt_formatStringsToResult_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ulistfmt_openForType_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ulistfmt_openResult_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
