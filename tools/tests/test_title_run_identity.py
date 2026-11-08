@@ -94,14 +94,14 @@ class TitleRunIdentityTests(unittest.TestCase):
         with mock.patch.object(self.runner.PathChecks, "directory", directory):
             yield
 
-    def refuse_layout(self, reason=r"overlap|mount boundary|ambiguous"):
+    def refuse_layout(self, reason=r"overlap|mount boundary|ambiguous", extra_args=()):
         before = snapshot(self.root)
         errors, output = io.StringIO(), io.StringIO()
         with mock.patch.object(self.runner, "reset_work", wraps=self.runner.reset_work) as cleanup, \
                 mock.patch.object(self.runner, "lock_work", side_effect=AssertionError("unsafe identity alias reached lock creation")) as locking, \
                 contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output):
             try:
-                code = self.runner.main(self.arguments())
+                code = self.runner.main([*self.arguments(), *extra_args])
             except SystemExit as error:
                 code = error.code
         diagnostic = output.getvalue() + errors.getvalue()
@@ -121,6 +121,35 @@ class TitleRunIdentityTests(unittest.TestCase):
         work.mkdir(parents=True)
         (work / "previous-run.bin").write_bytes(b"preserve stale work until every input is protected")
         return work
+
+    def test_content_file_below_work_is_refused_before_cleanup(self):
+        self.package(self.root / "games" / TITLE)
+        content = self.stale_work() / "content"
+        (content / "media").mkdir(parents=True)
+        (content / "media/asset.bin").write_bytes(b"preserve external content")
+        self.titles.write_text(json.dumps({TITLE: {"files": {"app0/asset.bin": {"content": "media/asset.bin"}}}}), encoding="utf-8")
+        self.refuse_layout(r"overlap", ("--content", str(content)))
+
+    def test_content_directory_identity_alias_is_refused_before_cleanup(self):
+        self.package(self.root / "games" / TITLE)
+        work = self.stale_work()
+        (work / "asset.bin").write_bytes(b"preserve aliased content")
+        alias = self.root / "content-view"
+        self.titles.write_text(json.dumps({TITLE: {"files": {"app0/asset.bin": {"content": "asset.bin"}}}}), encoding="utf-8")
+        with self.equivalent_stat(alias, work):
+            self.refuse_layout(r"overlap", ("--content", str(alias)))
+
+    def test_content_root_containing_work_allows_disjoint_consumed_files(self):
+        package = self.package(self.root / "games" / TITLE)
+        work = self.stale_work()
+        (self.root / "external.bin").write_bytes(b"disjoint original content")
+        before = snapshot(self.root)
+        for relative in ("external.bin", "missing.bin"):
+            with self.subTest(relative=relative):
+                args = self.runner.argparse.Namespace(titles=self.titles, build=self.build, out=self.out, compare=None, content=self.root)
+                titles = {TITLE: {"files": {"app0/asset.bin": {"content": relative}, "data/config.txt": {"text": str(work / "inline.txt")}}}}
+                self.runner.validate_layout(args, {TITLE: {"package": package}}, [TITLE], titles, self.root / "source", "windows" if os.name == "nt" else "linux")
+        self.assertEqual(snapshot(self.root), before)
 
     @unittest.skipUnless(os.name == "posix", "POSIX spelling model requires POSIX paths")
     def test_case_alias_of_package_is_refused_before_cleanup(self):
