@@ -41,6 +41,7 @@ private:
         std::uint32_t outputSequence = 0;
         PadOutputState outputState{};
         bool outputPending = false;
+        bool rumbleLive = false;
         std::chrono::steady_clock::time_point nextRumbleRefresh{};
         LightBarPacer lightBar;
         TriggerEffectCache triggerEffect;

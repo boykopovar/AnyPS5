@@ -105,6 +105,7 @@ void PadInput::openController(int deviceIndex) {
     slots[slot].outputSequence = 0;
     slots[slot].outputState = {};
     slots[slot].outputPending = true;
+    slots[slot].rumbleLive = false;
     slots[slot].nextRumbleRefresh = {};
     slots[slot].lightBar.Reset();
     slots[slot].triggerEffect.Reset();
