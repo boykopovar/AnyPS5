@@ -761,7 +761,7 @@ void NormalizeObservations(Observations& o, const HostIdentifiers& host) {
         if (!valid(o.frameMs->p50) || !valid(o.frameMs->p90) || !valid(o.frameMs->p99)) o.frameMs.reset();
     }
     if (!o.coverage.missing) o.functions.clear(), o.truncated.functions = 0;
-    if (!o.coverage.shaders) o.shadersCompiled = o.shadersFailed = 0, o.cacheHits.reset();
+    if (!o.coverage.shaders) o.shadersCompiled = o.shadersFailed = 0, o.cacheHits.reset(), o.shaderCompileMs.reset();
     if (!o.coverage.unsupported) o.unsupported.clear(), o.truncated.unsupported = 0;
     if (!o.coverage.imageFormats) o.imageFormats.clear(), o.truncated.imageFormats = 0;
     if (!o.coverage.descriptors) o.descriptors.clear(), o.truncated.descriptors = 0;
@@ -867,6 +867,7 @@ std::string RenderReport(const Report& report) {
     json.Int("compiled", o.shadersCompiled);
     json.Int("failed", o.shadersFailed);
     if (o.cacheHits) json.Int("cacheHits", o.cacheHits);
+    if (o.shaderCompileMs) json.Number("compileMs", *o.shaderCompileMs);
     json.BeginArray("unsupported");
     for (const auto& entry : o.unsupported) {
         json.BeginObject();
@@ -1560,7 +1561,10 @@ Observations Collector::Observe() const {
     }
     o.shadersCompiled = compiled;
     o.shadersFailed = failedShaders;
-    if (settings.coverage.shaders) o.cacheHits = cacheHitCount.load();
+    if (settings.coverage.shaders) {
+        o.cacheHits = cacheHitCount.load();
+        o.shaderCompileMs = CompileMilliseconds();
+    }
     if (const auto* counters = descriptorCounters.load()) {
         for (int type = 0; type < 7; ++type) {
             for (int usage = 0; usage < 4; ++usage) {

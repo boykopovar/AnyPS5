@@ -141,6 +141,7 @@ struct Observations {
     std::optional<FrameTimes> frameMs;
     std::int64_t shadersCompiled = 0, shadersFailed = 0;
     std::optional<std::int64_t> cacheHits;
+    std::optional<double> shaderCompileMs;
     std::vector<FunctionEntry> functions;
     std::vector<UnsupportedEntry> unsupported;
     std::vector<FormatEntry> imageFormats;
