@@ -11,6 +11,21 @@
 
 namespace {
 std::atomic<std::uint8_t> g_decompressorThreads{0};
+std::atomic<std::uint8_t> g_decompressorLimit{0};
+
+void SetDecompressorLimit(std::uint8_t count) {
+    g_decompressorLimit.store(count, std::memory_order_relaxed);
+    g_decompressorThreads.store(count, std::memory_order_relaxed);
+}
+
+std::uint8_t DecompressorThreadsFromParams(const SceFiosParams* params) {
+    std::array<std::uint8_t, 0x19> head{};
+    if (params == nullptr || !GuestCopyIn_nid_no_patch(head.data(), params, sizeof(std::uint32_t))) return 2;
+    std::uint32_t first = 0;
+    std::memcpy(&first, head.data(), sizeof(first));
+    if (((first >> 1) & 0x7fff) < head.size() || !GuestCopyIn_nid_no_patch(head.data(), params, head.size())) return 2;
+    return head[0x18] == 0 ? 2 : std::min<std::uint8_t>(head[0x18], 3);
+}
 
 struct IOFilter {
     SceFiosIOFilterCallback callback{};
@@ -117,11 +132,8 @@ int APS5_VABI sceFiosArchiveGetDecompressorThreadCount() {
 }
 
 int APS5_VABI sceFiosArchiveSetDecompressorThreadCount(std::uint8_t count) {
-    auto current = g_decompressorThreads.load(std::memory_order_relaxed);
-    std::uint8_t updated = 0;
-    do {
-        updated = count == 0 ? 1 : std::min(current, count);
-    } while (!g_decompressorThreads.compare_exchange_weak(current, updated, std::memory_order_relaxed));
+    const std::uint8_t updated = count == 0 ? 1 : std::min(g_decompressorLimit.load(std::memory_order_relaxed), count);
+    g_decompressorThreads.store(updated, std::memory_order_relaxed);
     return updated;
 }
 
@@ -199,12 +211,15 @@ int APS5_VABI sceFiosIOFilterPsarcDearchiver(void* descriptor, std::int32_t mode
 }
 
 int APS5_VABI sceFiosInitialize(const SceFiosParams* params) {
-    return Fios::Initialize(params) ? SCE_FIOS_OK : SCE_FIOS_ERROR_BAD_PTR;
+    if (!Fios::Initialize(params)) return SCE_FIOS_ERROR_BAD_PTR;
+    SetDecompressorLimit(DecompressorThreadsFromParams(params));
+    return SCE_FIOS_OK;
 }
 
 void APS5_VABI sceFiosTerminate() {
     Fios::Terminate();
     ClearIOFilters();
+    SetDecompressorLimit(0);
 }
 
 bool APS5_VABI sceFiosIsInitialized(SceFiosParams* outParams) {
@@ -266,6 +281,7 @@ void APS5_VABI sceFiosCancelAllOps() {
 void APS5_VABI sceFiosShutdownAndCancelOps() {
     Fios::Terminate();
     ClearIOFilters();
+    SetDecompressorLimit(0);
 }
 
 void APS5_VABI sceFiosCloseAllFiles() {

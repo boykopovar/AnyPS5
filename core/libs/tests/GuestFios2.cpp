@@ -98,6 +98,12 @@ static void CheckInitialization() {
     params[3] = 0xfeedbeef;
     REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
     REQUIRE(sceFiosIsInitialized(nullptr));
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(5) == 2);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(1) == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(0) == 1);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(2) == 2);
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 2);
     std::uint32_t copy[16] = {};
     REQUIRE(sceFiosIsInitialized(reinterpret_cast<SceFiosParams*>(copy)));
     REQUIRE(copy[3] == 0xfeedbeef);
@@ -730,6 +736,13 @@ int main() {
     CheckBadPointers(file);
     sceFiosTerminate();
     REQUIRE(!sceFiosIsInitialized(nullptr));
+    REQUIRE(sceFiosArchiveGetDecompressorThreadCount() == 0);
+    std::uint32_t params[16] = {};
+    params[0] = sizeof(params) << 1;
+    params[6] = 7;
+    REQUIRE(sceFiosInitialize(reinterpret_cast<const SceFiosParams*>(params)) == SCE_FIOS_OK);
+    REQUIRE(sceFiosArchiveSetDecompressorThreadCount(9) == 3);
+    sceFiosTerminate();
     std::filesystem::remove_all(directory);
     std::puts("guest_fios2 ok");
     return 0;
