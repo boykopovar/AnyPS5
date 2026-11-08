@@ -2,7 +2,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceSystemService/Export.cpp) - 32 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceSystemService/Export.cpp) - 28 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 [Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/3fbb1a4a6f95a936b4cd58e9c3d8c50c/5e3af709224ed8235af11337309af0725e5685cb) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled image. The extract SHA-256 is `02ab27f12bcd0cc9fa03fa33f55fc201110f0d54a86bbbaa093d55d0a8cf262d`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. This is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior.
 
@@ -13,12 +13,10 @@
 | `Unknown` | `7eu2qjQGigw` |
 | `Unknown` | `90unWbnI0qE` |
 | `Unknown` | `E-bXVJqwGZw` |
-| `Unknown` | `G3oPdw3lkps` |
 | `Unknown` | `KgiwSrROsIQ` |
 | `Unknown` | `LxGOxroprpg` |
 | `Unknown` | `NXFtO8BfVeo` |
 | `Unknown` | `Oxh0CSsTZ78` |
-| `Unknown` | `OyTwhCKWXi4` |
 | `Unknown` | `U0HutHWnMBM` |
 | `Unknown` | `VDs9VSjSJh0` |
 | `Unknown` | `ZWNP+-dWr8E` |
@@ -29,10 +27,8 @@
 | `Unknown` | `fBGD-HNimSk` |
 | `Unknown` | `fPAZ5DBsDxo` |
 | `Unknown` | `ifJiF5witJ4` |
-| `Unknown` | `kDGjRMtUDxo` |
 | `Unknown` | `lgpIdZ8T0xg` |
 | `Unknown` | `pj1SzIAxPlk` |
-| `Unknown` | `qdTPJWjquDc` |
 | `Unknown` | `rIqPq0oWlrg` |
 | `Unknown` | `sgYo-zXHQRE` |
 | `Unknown` | `tPMOYbbviYs` |
@@ -40,6 +36,8 @@
 | `Unknown` | `xn-HgPW29x4` |
 | `Unknown` | `y16IXiJfafA` |
 | `Unknown` | `yOiZq+9-ZMQ` |
+
+- [`kDGjRMtUDxo`, `qdTPJWjquDc`, `OyTwhCKWXi4` and `G3oPdw3lkps`](../../../core/libs/prx/libSceSystemService/InventoryExports.cpp) (libSceSystemService) - their names and signatures are unverified; they keep the no-parameter declarations, and the ones whose firmware body is a lone `ret` return `void`. In firmware 13.42 `libSceSystemService.sprx` each body returns at once without reading an argument: `kDGjRMtUDxo` and `qdTPJWjquDc` return nothing; `OyTwhCKWXi4` and `G3oPdw3lkps` return `0x80F50013`. Read from disassembly, not measured on a console.
 
 ### Silent stubs
 
@@ -168,6 +166,7 @@
 ### Functional
 
 - [Suspend notification](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - `sceSystemServiceEnableSuspendNotification`, `sceSystemServiceDisableSuspendNotification` and their `sceLncUtil` twins return success and change nothing: AnyPS5 never suspends the running title (`sceSystemServiceGetStatus` never reports background execution and `sceSystemServiceReceiveEvent` has no event to deliver), so no suspend notification is ever due
+- [sceSystemServiceReceiveEvent](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - returns `NO_EVENT` (0x80A10004) for a null event pointer as for any other, as [obSCEne's run](https://github.com/project-oops/obSCEne/blob/de5efc406319ade18df00654025494804405a7fb/reports/hardware/report-20261013-172400.log#L26541-L26567) measured with no event pending in its own title on a PS5 with system software 12.40, writing nothing. AnyPS5 never queues a system event, so what a null pointer does when one is pending is not measured
 - [Absent streaming and sharing](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - `sceShellCoreUtilGetRemotePlayStatus` (and `sceSystemServiceGetRemoteplayStatus`, which forwards to it), `sceShellCoreUtilGetSharePlayStatus`, `sceShellCoreUtilGetGameLiveStreamingStatus` and both `IsGameLiveStreamingOnAir` report no session: libSceRemoteplay reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT`, libSceSharePlay neither a host nor a visitor and libSceGameLiveStreaming a status with `isOnAir` false, and the ShellCore setters that would change these answers (`sceShellCoreUtilSet*Status`, `sceShellCoreUtilSetGameLiveStreamingOnAirFlag`) throw
 - [Shell UI and PS VR](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - AnyPS5 has no shell UI and no PS VR. The shell UI never takes the foreground, overlays the impose screen, runs a screen saver or shuts down (`sceSystemServiceGetStatus` never reports a system UI overlay or background execution, and the host has no auto power-off timer), so `IsShellUiFgAndGameBgCpuMode`, `sceShellCoreUtilIsImposeScreenOverlaid`, both `IsScreenSaverOn` and `sceSystemStateMgrIsShellUIShutdownInProgress` are false. libSceHmd detects no headset (`DeviceStatus::NotDetected`), so `sceShellCoreUtilGetSocialScreenStatus` reports no social screen and the logged-in user's eye-to-eye distance was never adjusted. The `sceSystemService` twins forward to their `sceShellCoreUtil` and `sceLncUtil` targets, and the ShellCore setters that would change the answers (`sceShellCoreUtilSetImposeStatusFlag`, `sceShellCoreUtilSetSocialScreenStatus`, `sceShellCoreUtilTurnOffScreenSaver`) throw
 - [Absent disc drive, USB storage, app moves and PS2 emulator](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - AnyPS5 runs the title from its folder as `/app0` and models no Blu-ray drive (libSceDiscId and `sceKernelHwGetBdDriveInfo` throw), so `sceSystemStateMgrIsBdDriveReady` is false, as on a PS5 without a drive. `sceShellCoreUtilIsUsbMassStorageMounted` is false at every index, even for a libSceUsbStorage passthrough device: a known gap with no sourced answer. It moves no application between storages (`sceShellCoreUtilDeclareBeginOfExternalStorageAppMove` throws), so `sceShellCoreUtilIsExternalStorageAppMoveInProgress` is false. It runs one process, the title's own PS5 executable, and starts no PS2 emulator (`sceSystemServiceAddLocalProcessForPs2Emu` throws), so `sceLncUtilIsPs2Emu` writes false

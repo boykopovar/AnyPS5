@@ -159,6 +159,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
                     }
                     fx.flags |= 3;
                 }
+                for (auto& port : ports) port.mixed = false;
             }
             break;
         case SCE_NGS2_VOICE_EVENT_STOP:
@@ -337,6 +338,7 @@ struct Ngs2SamplerShape {
     const std::uint8_t* end;
     std::uintptr_t lastUserData;
     bool decodePending;
+    std::uint32_t tailBytes;
 };
 
 static bool IsAddBlocks(const Ngs2Voice& voice, std::uint32_t id) {
@@ -358,10 +360,12 @@ void Ngs2PublishBlockCount(Ngs2Voice& voice) {
 void Ngs2PublishBlockQueue(Ngs2Voice& voice) {
     voice.queuedTailEnd = nullptr;
     voice.queuedTailUserData = 0;
+    voice.queuedTailBytes = 0;
     if (!voice.blocks.empty()) {
         const auto& last = voice.blocks.back();
         voice.queuedTailEnd = last.data != nullptr ? last.data + last.info.data_size : nullptr;
         voice.queuedTailUserData = last.info.user_data;
+        voice.queuedTailBytes = last.info.data_size;
     }
     Ngs2PublishBlockCount(voice);
 }
@@ -370,7 +374,7 @@ static Ngs2SamplerShape CurrentShape(const Ngs2Voice& voice) {
     const bool jobs = voice.rack->system != nullptr && voice.rack->system->jobsExecuting;
     return {voice.channels, voice.waveformType, {voice.atrac9.frameSamples, voice.atrac9.framesInSuperframe, voice.atrac9.superframeBytes},
             std::atomic_ref<std::uint32_t>(voice.queuedBlocks).load(std::memory_order_acquire), voice.acceptsBlocks, voice.queuedTailEnd, voice.queuedTailUserData,
-            jobs ? voice.decodePendingAtGrain : Ngs2DecodePending(voice)};
+            jobs ? voice.decodePendingAtGrain : Ngs2DecodePending(voice), voice.queuedTailBytes};
 }
 
 static bool QueueBlocks(Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWaveformBlocksParam& blocks, std::uint32_t maxBlocks) {
@@ -379,13 +383,18 @@ static bool QueueBlocks(Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWaveformB
     std::size_t size = reset ? 0 : shape.blocks;
     const auto* end = size != 0 ? shape.end : nullptr;
     auto lastUserData = size != 0 ? shape.lastUserData : 0;
+    std::uint32_t tailBytes = size != 0 ? shape.tailBytes : 0;
+    const auto superframeBytes = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 ? shape.frame.superframeBytes : 0;
     for (std::uint32_t i = 0; blocks.blocks != nullptr && i < blocks.num_blocks; ++i) {
         const auto& block = blocks.blocks[i];
         const auto* data = blocks.data == nullptr ? nullptr : static_cast<const std::uint8_t*>(blocks.data) + block.data_offset;
         if (block.data_size == 0 && block.num_samples == 0) continue;
-        if ((blocks.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == 0 || data != end || block.user_data != lastUserData) {
+        if ((blocks.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == 0 || data != end || block.user_data != lastUserData ||
+            (superframeBytes != 0 && tailBytes % superframeBytes == 0)) {
             ++size;
+            tailBytes = 0;
         }
+        tailBytes += block.data_size;
         end = data == nullptr ? nullptr : data + block.data_size;
         lastUserData = block.user_data;
     }
@@ -394,6 +403,7 @@ static bool QueueBlocks(Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWaveformB
     shape.accepts = (blocks.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
     shape.end = end;
     shape.lastUserData = lastUserData;
+    shape.tailBytes = tailBytes;
     return true;
 }
 
@@ -468,8 +478,8 @@ static Ngs2SamplerShape PendingShape(const Ngs2Voice& voice) {
             if (IsSamplerSetup(voice, param.id) && shape.channels != 0) {
                 const auto& format = reinterpret_cast<const Ngs2SamplerVoiceSetupParam&>(param).format;
                 if (format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2Atrac9FrameInfo(format, frame);
-                shape = {shape.channels, format.waveform_type, frame, 0, true, nullptr, 0, false};
-            } else shape = {shape.channels, 0, frame, 0, true, nullptr, 0, false};
+                shape = {shape.channels, format.waveform_type, frame, 0, true, nullptr, 0, false, 0};
+            } else shape = {shape.channels, 0, frame, 0, true, nullptr, 0, false, 0};
         } else if (IsAddBlocks(voice, param.id)) {
             auto blocks = reinterpret_cast<const Ngs2SamplerVoiceWaveformBlocksParam&>(param);
             if (blocks.blocks != nullptr) blocks.blocks = value->blocks.data();
@@ -550,6 +560,15 @@ static int ControlUserFx2(Ngs2Voice& voice, std::uint32_t index, const Ngs2Custo
 
 static Ngs2Voice* PatchDest(const Ngs2Voice& voice, const Ngs2VoicePatchParam& patch);
 
+static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
+    if (param.index >= voice.rack->maxFilters) APS5_INVALID_ARG_EX;
+    if (param.type != 0) throw std::runtime_error("NGS2: submixer filter type " + std::to_string(param.type) + " is not implemented");
+}
+
+static void CheckSubmixerCompressor(const Ngs2SubmixerVoiceCompressorParam& param) {
+    if ((param.flags & 0x1u) == 0) throw std::runtime_error("NGS2: an enabled submixer compressor (flags " + Ngs2Hex(param.flags) + ") is not implemented");
+}
+
 static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     if (param.header.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
     if (param.index >= voice.rack->maxFilters) throw Ngs2ReturnCode{PS4_LIBRARY ? SCE_NGS2_ERROR_PS4_INVALID_FILTER_INDEX : SCE_NGS2_ERROR_INVALID_PARAM_ID};
@@ -622,6 +641,14 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX)
         return ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
+    if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER) {
+        CheckSubmixerFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param));
+        return CopyParam(param);
+    }
+    if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
+        CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
+        return CopyParam(param);
+    }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
         const auto& value = ParamAs<Ngs2SubmixerVoiceSetupParam>(param);
         if (value.flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
@@ -707,7 +734,6 @@ static Ngs2PendingControl CaptureCommandControl(Ngs2Voice& voice, const Ngs2Voic
 static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 
 void Ngs2Voice::ApplyPendingControls() {
-    Ngs2PrepareControlMix(*this);
     bool restart = false, stop = false, kill = false;
     std::uint32_t pause = 0;
     const auto applyEvents = [&] {
@@ -772,7 +798,6 @@ void Ngs2Voice::ApplyPendingControls() {
                         port.detachedDest = 0;
                         port.destInput = patch.dest_input_id;
                     } else ApplyParam(*this, param);
-                    if (param.id == SCE_NGS2_VOICE_PARAM_PATCH) ports[reinterpret_cast<const Ngs2VoicePatchParam&>(param).port].rampFrom.clear();
                 } else Ngs2ApplyCustomParam(*this, value.header);
             }, control);
             ++applied;
@@ -874,7 +899,9 @@ static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlo
         auto info = param.blocks[i];
         if (info.data_size == 0) continue;
         const auto* data = static_cast<const std::uint8_t*>(param.data) + info.data_offset;
-        if (!voice.blocks.empty() && voice.blocks.back().data + voice.blocks.back().info.data_size == data && voice.blocks.back().info.user_data == info.user_data) {
+        const bool midSuperframe = voice.waveformType != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 || voice.atrac9.superframeBytes == 0 ||
+            (!voice.blocks.empty() && voice.blocks.back().info.data_size % voice.atrac9.superframeBytes != 0);
+        if (midSuperframe && !voice.blocks.empty() && voice.blocks.back().data + voice.blocks.back().info.data_size == data && voice.blocks.back().info.user_data == info.user_data) {
             voice.blocks.back().info.data_size += info.data_size;
             if (!voice.samplerReplayBlocks.empty()) {
                 const auto last = voice.samplerWritePosition == 0 ? voice.samplerReplayBlocks.size() - 1 : voice.samplerWritePosition - 1;
@@ -1036,6 +1063,16 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_SUBMIXER:
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER) {
                 SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type);
+                return;
+            }
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER) {
+                const auto& filter = ParamAs<Ngs2SamplerVoiceFilterParam>(param);
+                CheckSubmixerFilter(voice, filter);
+                if (filter.index < voice.filters.size()) voice.filters[filter.index] = {};
+                return;
+            }
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
+                CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
