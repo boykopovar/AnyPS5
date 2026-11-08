@@ -90,4 +90,10 @@ WebRtcVideoFrameBuilder* APS5_VABI _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_p
     return builder;
 }
 
+std::int64_t APS5_VABI _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(const WebRtcVideoFrame* frame) {
+    if (!frame)
+        throw std::invalid_argument("VideoFrame::render_time_ms requires a frame");
+    return frame->timestampUs / 1000;
+}
+
 }
