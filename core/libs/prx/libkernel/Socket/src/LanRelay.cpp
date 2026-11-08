@@ -289,6 +289,33 @@ void Relay::SetPeers(std::vector<Endpoint> value) {
     peers = std::move(value);
 }
 
+bool Relay::StartDelivery() {
+    if (!IsOpen() || receiver.joinable()) return false;
+    auto sender = std::make_unique<Relay>();
+    try {
+        sender->Open(Endpoint{"127.0.0.1", 0});
+    } catch (const std::exception&) {
+        return false;
+    }
+    localSender = std::move(sender);
+    delivering = true;
+    receiver = std::thread([this] { Deliver(); });
+    return true;
+}
+
+void Relay::StopDelivery() {
+    delivering = false;
+    if (receiver.joinable()) receiver.join();
+    localSender.reset();
+}
+
+void Relay::Deliver() {
+    while (delivering) {
+        const auto frame = Receive(100);
+        if (frame) localSender->SendDatagram(Endpoint{"127.0.0.1", frame->DestinationPort}, frame->Payload);
+    }
+}
+
 bool Relay::SendToPeers(std::uint16_t sourcePort, std::uint16_t destinationPort, const std::vector<std::uint8_t>& payload) {
     bool sent = true;
     for (const auto& peer : peers) sent = SendFrame(peer, sourcePort, destinationPort, payload) && sent;
