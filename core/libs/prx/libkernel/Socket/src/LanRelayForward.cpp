@@ -10,6 +10,7 @@ using SocketHandle = SOCKET;
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
