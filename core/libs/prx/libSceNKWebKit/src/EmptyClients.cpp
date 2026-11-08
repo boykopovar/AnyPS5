@@ -9,7 +9,7 @@ void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidChangeLocationWit
 void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient35dispatchDidClearWindowObjectInWorldERNS_15DOMWrapperWorldE(WebCore::DOMWrapperWorld&) {
 }
 
-void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE(std::uint32_t) {
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE(std::uint16_t) {
 }
 
 }
