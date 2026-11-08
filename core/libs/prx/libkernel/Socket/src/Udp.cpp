@@ -1741,6 +1741,9 @@ static int NoteConnectError(Socket& socket) {
 #endif
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
+    std::array<unsigned char, 255> addressCopy;
+    if (!GuestCopyIn_nid_no_patch(addressCopy.data(), address, length)) return Fail(14);
+    address = addressCopy.data();
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if (const int error = forwards->connect(descriptor, address, length)) return Fail(error);
         return 0;
@@ -1911,6 +1914,9 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
 }
 int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
+    std::array<unsigned char, 255> addressCopy;
+    if (!GuestCopyIn_nid_no_patch(addressCopy.data(), address, length)) return Fail(14);
+    address = addressCopy.data();
     if (const auto [forwards, family] = ForwardsFor(descriptor); forwards != nullptr) {
         sockaddr_storage checked{};
         socklen_t checkedSize;
