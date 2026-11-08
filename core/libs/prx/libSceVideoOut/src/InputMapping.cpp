@@ -10,6 +10,7 @@
 #include <fstream>
 #include <istream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -350,6 +351,25 @@ void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem
 
 void Pad::ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source) {
     applyInputStream(configuration, input, source);
+}
+
+Pad::InputMappingStore::InputMappingStore(InputConfiguration initial) : current(std::make_shared<const InputConfiguration>(std::move(initial))) {}
+
+std::shared_ptr<const Pad::InputConfiguration> Pad::InputMappingStore::Snapshot() const {
+    const std::lock_guard lock(mutex);
+    return current;
+}
+
+std::uint64_t Pad::InputMappingStore::Generation() const {
+    const std::lock_guard lock(mutex);
+    return generation;
+}
+
+void Pad::InputMappingStore::Publish(InputConfiguration configuration) {
+    auto next = std::make_shared<const InputConfiguration>(std::move(configuration));
+    const std::lock_guard lock(mutex);
+    current = std::move(next);
+    ++generation;
 }
 
 std::array<std::uint8_t, 2> Pad::StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent) {
