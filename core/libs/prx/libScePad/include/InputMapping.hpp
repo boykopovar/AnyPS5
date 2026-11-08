@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <istream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -88,6 +89,7 @@ inline constexpr std::array InputMapping{
 };
 
 InputConfiguration LoadInputMapping(std::string_view titleId = {});
+void ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source);
 std::string InputProfileName(std::string_view titleId);
 std::array<std::uint8_t, 2> StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent);
 
