@@ -1,6 +1,7 @@
 # libc technical debt
 
-- [NID breakpoint table: pause, command input and name lookup](../../../core/libs/prx/libc/src/DebugNidBreakpoints.cpp) (libc): the table only records NIDs from `ANYPS5_DEBUG_NIDS`. Nothing pauses a guest thread, no command channel is read, no name is resolved through a name table, and the table is not consulted on any call path. The stop and command parts are not built; they are follow-up pull requests.
+- [NID breakpoint table: command input and name lookup](../../../core/libs/prx/libc/src/DebugNidBreakpoints.cpp) (libc): the table only records NIDs from `ANYPS5_DEBUG_NIDS`. No call path consults it, no command channel is read, and no name is resolved through a name table. The command and name parts are not built; they are follow-up pull requests.
+- [NID stop registry](../../../core/libs/prx/libc/src/DebugNidStops.cpp) (libc): `Hit` blocks the calling thread until `Continue` with its id, and holds no registry or table lock while it waits. Nothing checks that the caller holds no host lock, no call path calls `Hit` yet, and there is no timeout, so a stopped thread that another thread waits for stalls the title. The registry holds 64 stops; a full registry returns at once and counts the skipped hit. It keeps at most six argument words, because the relinker does not record how many arguments an import takes.
 ### Debugger breakpoints
 ### Silent stubs
 
