@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/LegacyExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
 
@@ -24,6 +25,30 @@ void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size) {
 
 void APS5_VABI _ZN3WTF8fastFreeEPv(void* ptr) {
     NKWebKit::Deallocate(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnwEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnaEm(std::size_t size) {
+    return _ZN3WTF10fastMallocEm(size);
+}
+
+void APS5_VABI _ZN7WebCore6ISOBoxdlEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void APS5_VABI _ZN7WebCore6ISOBoxdaEPv(void* ptr) {
+    _ZN3WTF8fastFreeEPv(ptr);
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnwEmPv(std::size_t, void* location) {
+    return location;
+}
+
+void* APS5_VABI _ZN7WebCore6ISOBoxnaEmPv(std::size_t, void* location) {
+    return location;
 }
 
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size) {
