@@ -148,6 +148,7 @@ int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsi
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
 int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name);
+int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name);
 int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
@@ -158,6 +159,11 @@ void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFutureErrorCategoryDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSystemErrorCategoryDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalSystemErrorCategoryDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalGenericErrorCategoryDestructor_nid_no_patch(void* self);
+[[noreturn]] void APS5_VABI sceLibcInternalXoverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI _ZNKSs5_XranEv_nid_postfix(const GuestLocale::String* self);
 [[noreturn]] void APS5_VABI _ZNKSs5_XlenEv_nid_postfix(const GuestLocale::String* self);
 GuestLocale::String* APS5_VABI _ZNSs5eraseEmm_nid_postfix(GuestLocale::String* self, std::size_t position, std::size_t count);

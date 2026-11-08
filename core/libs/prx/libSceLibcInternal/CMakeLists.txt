@@ -174,6 +174,21 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libc_internal_exception_destructors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
+    if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        enable_language(ASM)
+        add_test_executable(guest_libc_internal_libc_forwards_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalLibcForwards.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
+        target_include_directories(guest_libc_internal_libc_forwards_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_libc_internal_libc_forwards_tests PRIVATE libSceLibcInternal libkernel libc)
+        configure_windows_unwind(guest_libc_internal_libc_forwards_tests)
+        add_test(NAME guest_libc_internal_libc_forwards COMMAND guest_libc_internal_libc_forwards_tests)
+        set_tests_properties(guest_libc_internal_libc_forwards PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_libc_internal_libc_forwards PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+        endif()
+    endif()
 endif()
 target_sources(libSceLibcInternal PRIVATE UnversionedFilesystemCalls.cpp)
 if(BUILD_TESTING)
