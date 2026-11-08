@@ -11,6 +11,7 @@
 #include "Set.hpp"
 #include "Version.hpp"
 #include "RecoveredInventory.hpp"
+#include "Calendar.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"
 #include "prx/libSceIcu/include/InventoryExports.hpp"
