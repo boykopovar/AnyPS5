@@ -8,6 +8,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if LOWERING_EXECUTION_AVAILABLE
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -150,9 +153,39 @@ void execution() {
     }
 }
 
+void pageEndMemory() {
+    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* area = static_cast<std::uint8_t*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(area != MAP_FAILED, "cannot allocate the guarded operand pages");
+    require(mprotect(area + pageSize, pageSize, PROT_NONE) == 0, "cannot protect the page after the operand");
+    const auto memory = VectorExecution::Initial().Memory;
+    const auto runAtPageEnd = [&](const Bytes& instruction, unsigned width, std::uint8_t dst, const Vector& wanted, const std::string& describe) {
+        auto* operand = area + pageSize - width;
+        std::memcpy(operand, memory.data(), width);
+        Bytes body{0x48, 0xB8};
+        const auto address = reinterpret_cast<std::uintptr_t>(operand);
+        for (unsigned shift = 0; shift < 64; shift += 8) body.push_back(static_cast<std::uint8_t>(address >> shift));
+        const auto stub = lowered(instruction);
+        body.insert(body.end(), stub.begin(), stub.end());
+        auto machine = VectorExecution::Initial();
+        const auto start = machine;
+        Runner(body).Run(machine);
+        verify(start, machine, dst, wanted, describe + " at the end of a page");
+    };
+    constexpr std::array<std::pair<unsigned, unsigned>, 6> sizes{{{1, 2}, {1, 4}, {1, 8}, {2, 4}, {2, 8}, {4, 8}}};
+    for (const auto opcode : kWidenOpcodes) {
+        const auto [in, out] = sizes[opcode & 7];
+        runAtPageEnd(memorySite(opcode, true, 5), 32 / out * in, 5, widened(opcode, memory), "widen " + std::to_string(opcode) + " from memory");
+    }
+    for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 4>{{{0x78, false}, {0x78, true}, {0x79, false}, {0x79, true}}})
+        runAtPageEnd(memorySite(opcode, wide, 6), broadcastSize(opcode), 6, broadcast(memory, broadcastSize(opcode), wide), "broadcast " + std::to_string(opcode) + " from memory");
+    munmap(area, pageSize * 2);
+}
+
 #else
 
 void execution() { std::cout << "widen/broadcast execution checks require a Linux/macOS x86-64 build\n"; }
+void pageEndMemory() {}
 
 #endif
 
@@ -163,6 +196,7 @@ int main() {
         decoding();
         matching();
         execution();
+        pageEndMemory();
         std::cout << "widen/broadcast lowering checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
