@@ -12,6 +12,8 @@
 
 ### Functional
 
+- [sceMouseExtensionScalePosition](../../../core/libs/prx/libSceMouse/Export.cpp) returns `MOUSE_ERROR_INVALID_ARG` for unreadable or unwritable position memory through guarded copies. This is a host-safety fallback; console behavior for non-null invalid pointers is unmeasured. Initialization and null/zero-scale checks precede the memory access; a failed input copy does not write.
+
 - [sceMouseGetHandle, sceMouseExtensionSetConfig and sceMouseExtensionScalePosition](../../../core/libs/prx/libSceMouse/src/mouse_impl.cpp) (libSceMouse) - follow the same [13.42 disassembly](https://github.com/boykopovar/AnyPS5/issues/15088#issuecomment-6580877653), not a console; none reaches the driver.
   - `GetHandle(userId, type, index)` returns the handle `sceMouseOpen` gave that user and type, or 0x80df0008. The console skips slots whose +0xc8 field is 1 when `index` is non-zero; that field's meaning is unknown, and no slot here has it.
   - `ExtensionSetConfig(handle, config)` refuses a null or a non-zero byte in 5..0x1f, then stores the u32 at 0 and the byte at 4; nothing here reads them yet.

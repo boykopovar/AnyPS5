@@ -2,6 +2,7 @@
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 
@@ -147,8 +148,16 @@ int APS5_VABI sceMouseExtensionGetCursor(std::int32_t handle, void* cursor) {
 int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint16_t scale) {
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (position == nullptr || scale == 0) return MOUSE_ERROR_INVALID_ARG;
-    const std::uint32_t scaled = static_cast<std::uint32_t>(*position) * (scale - 1u);
-    *position = static_cast<std::uint16_t>((scaled + 0xfffeu) / 0xffffu);
+    std::uint16_t value = 0;
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&value, position, sizeof(value));
+    errno = savedErrno;
+    if (!read) return MOUSE_ERROR_INVALID_ARG;
+    const std::uint32_t scaled = static_cast<std::uint32_t>(value) * (scale - 1u);
+    value = static_cast<std::uint16_t>((scaled + 0xfffeu) / 0xffffu);
+    const bool written = GuestCopyOut_nid_no_patch(position, &value, sizeof(value));
+    errno = savedErrno;
+    if (!written) return MOUSE_ERROR_INVALID_ARG;
     return MOUSE_OK;
 }
 
