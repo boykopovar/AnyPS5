@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
+#include "prx/libSceNKWebKit/src/FrameHandle.hpp"
 #include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
@@ -1534,6 +1535,39 @@ static void TestPermissionRequests() {
     Require(threw);
 }
 
+static void TestFrameHandle() {
+    auto* handle = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>(0x0123456789ABCDEFull));
+    Require(WKGetTypeID(handle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(handle) == 0x0123456789ABCDEFull);
+    WKRelease(handle);
+
+    auto* zero = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>());
+    Require(WKFrameHandleGetFrameID(zero) == 0);
+    WKRelease(zero);
+
+    auto* maximum = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::FrameHandle>(UINT64_MAX));
+    Require(WKFrameHandleGetFrameID(maximum) == UINT64_MAX);
+    WKRelease(maximum);
+
+    auto* notHandle = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a frame handle"));
+    bool threw = false;
+    try {
+        WKFrameHandleGetFrameID(notHandle);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    WKRelease(notHandle);
+
+    threw = false;
+    try {
+        WKFrameHandleGetFrameID(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 template<typename Function>
 static bool ThrowsOpenPanel(Function function, const void* ref) {
     try {
@@ -1723,6 +1757,7 @@ int main() {
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();
+    TestFrameHandle();
     TestOpenPanelParameters();
     TestCertificateInfo();
 TestEmptyFrameLoaderClient();

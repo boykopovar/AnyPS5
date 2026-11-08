@@ -65,7 +65,7 @@ bool DrawFaultTokens() {
     return enabled;
 }
 
-void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, bool indirect) {
+void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuffer commands, std::span<const CompiledShader> shaders, const Pm4::DrawParameters& draw, std::uint32_t stage, const Pm4::DrawParameters::IndirectDraw* args) {
     try {
         if (!DrawFaultTokens()) return;
         const auto queue = GuestMemory::GpuLockThreadTag();
@@ -80,7 +80,29 @@ void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuf
                 if (shader.program != nullptr && (variant == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) variant = shader.program->variantId;
             }
             entry->variantId = variant;
-            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", indirect ? " indirect" : "", draw.indexCount, draw.instanceCount);
+            entry->stage = stage;
+            entry->argBuffer = 0;
+            entry->argOffset = 0;
+            entry->argStride = 0;
+            entry->argCount = 0;
+            for (auto& word : entry->argWords) word = 0;
+            if (args != nullptr) {
+                entry->argBuffer = args->arguments;
+                entry->argOffset = 0;
+                entry->argStride = args->stride;
+                try {
+                    constexpr std::uint32_t argWordLimit = 4;
+                    const auto first = Pm4::ReadDrawArgumentsUnsynced(*args, 0);
+                    entry->argWords[0] = first.count;
+                    entry->argWords[1] = first.instances;
+                    entry->argWords[2] = first.firstVertexOrIndex;
+                    entry->argWords[3] = draw.indexed ? first.vertexOffset : first.firstInstance;
+                    entry->argCount = argWordLimit;
+                } catch (...) {
+                    entry->argCount = 0;
+                }
+            }
+            std::snprintf(entry->desc, sizeof(entry->desc), "draw%s%s c=%u i=%u", draw.indexed ? " indexed" : "", args != nullptr ? " indirect" : "", draw.indexCount, draw.instanceCount);
             recorder.NoteFaultToken(faultToken);
             std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
         }
@@ -2900,7 +2922,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
-    noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
+    noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), record.indirect != nullptr ? record.indirect->args : nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
@@ -3888,7 +3910,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), inputs.meshLayerStride);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     std::uint32_t subdraw = 0;
-    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
+    if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, static_cast<std::uint32_t>(state.stages.mesh.has_value() ? AgcDriver::FaultStage::mesh : AgcDriver::FaultStage::graphics), args);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
         recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
