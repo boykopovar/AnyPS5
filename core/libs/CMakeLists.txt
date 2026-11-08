@@ -223,6 +223,8 @@ if(WIN32)
     file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/release-implibs.txt CONTENT "${RELEASE_IMPLIBS}")
 endif()
 
+include(prx/libSceFreeType/PostScriptPrivate.cmake)
+
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/libfvad ${CMAKE_CURRENT_BINARY_DIR}/webrtc-fvad EXCLUDE_FROM_ALL)
@@ -1161,6 +1163,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_rudp_poll PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRudp>")
     endif()
+    add_test_executable(guest_rudp_poll_drain_tests tests/GuestRudpPollDrain.cpp)
+    target_include_directories(guest_rudp_poll_drain_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_rudp_poll_drain_tests PRIVATE libSceRudp libc)
+    configure_windows_unwind(guest_rudp_poll_drain_tests)
+    add_test(NAME guest_rudp_poll_drain COMMAND guest_rudp_poll_drain_tests)
+    set_tests_properties(guest_rudp_poll_drain PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_rudp_poll_drain PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRudp>")
+    endif()
     if(WIN32)
         add_test_executable(rudp_poll_wait_exception_tests tests/RudpPollWaitException.cpp
             prx/libSceRudp/Export.cpp prx/libkernel/Time/TimedWait.cpp)
@@ -1183,6 +1195,7 @@ if(BUILD_TESTING)
     endif()
 
     add_test_executable(guest_kernel_sys_ksem_tests tests/GuestKernelSysKsem.cpp)
+    target_compile_definitions(guest_kernel_sys_ksem_tests PRIVATE ANYPS5_KSEM_TESTING)
     target_include_directories(guest_kernel_sys_ksem_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_ksem_tests PRIVATE libkernel_sys libkernel libc)
     configure_windows_unwind(guest_kernel_sys_ksem_tests)

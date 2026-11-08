@@ -9,6 +9,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -167,7 +168,7 @@ static void CheckTouchContact(int handle) {
     Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
     for (const int invalid : {-1, 0, handle + 1, 9999}) {
-        Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
         Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_HANDLE);
     }
     PadInputState touch;
@@ -1173,6 +1174,36 @@ static void CheckPortZeroWithdrawn() {
     if (!wasOpen) Require(scePadClose_nid_postfix(handle) == PAD_OK);
 }
 
+static void CheckQueuedMotionSampleTimes(int handle) {
+    PadData drained[64]{};
+    PadData queued[4]{};
+    Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
+    Require(scePadResetOrientation(handle) == PAD_OK);
+    scePadRead_nid_postfix(handle, drained, 64);
+    for (int i = 0; i < 4; ++i) {
+        PadInputState moving;
+        moving.hasMotion = true;
+        moving.gyro = {0.0f, 0.0f, 1.0f + 0.01f * static_cast<float>(i)};
+        PadPublishInput_nid_postfix(moving);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    Require(scePadRead_nid_postfix(handle, queued, 4) == 4);
+    Require(std::fabs(queued[3].orientation_z - queued[1].orientation_z) > 1e-4f);
+    Require(scePadSetMotionSensorState(handle, false) == PAD_OK);
+}
+
+static void CheckSecondPortConnection(int user) {
+    PadControllerInformation info{};
+    const int second = scePadOpen_nid_postfix(user + 1, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+    Require(second > 0);
+    PadSetPortConnected_nid_postfix(1, false);
+    Require(scePadGetControllerInformation(second, &info) == PAD_OK && !info.connected && info.connectedCount == 0);
+    PadSetPortConnected_nid_postfix(1, true);
+    Require(scePadGetControllerInformation(second, &info) == PAD_OK && info.connected && info.connectedCount == 1);
+    PadSetPortConnected_nid_postfix(1, false);
+    Require(scePadClose_nid_postfix(second) == PAD_OK);
+}
+
 int main() {
     CheckConcurrentSpecialOpens();
     CheckInputCommands();
@@ -1266,6 +1297,16 @@ int main() {
     Require(scePadGetHandle(user, PAD_PORT_TYPE_SPECIAL, 0) == earlySpecial);
     Require(scePadClose_nid_postfix(earlySpecial) == PAD_OK);
     Require(scePadGetHandle(user, PAD_PORT_TYPE_SPECIAL, 0) == noHandle);
+    const int earlyPad = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+    Require(earlyPad > 0);
+    PadData earlyPadData{};
+    Require(scePadRead_nid_postfix(0x999, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadRead_nid_postfix(earlyPad, &earlyPadData, 1) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadReadState(earlyPad, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadReadState(0x999, &earlyPadData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadReadState(0x999, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadReadState(earlyPad, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadClose_nid_postfix(earlyPad) == PAD_OK);
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadInit_nid_postfix() == 0);
     PadInfo initInfo{};
@@ -1291,6 +1332,7 @@ int main() {
     CheckExtControllerInformation(handle);
     CheckPartialTrigger();
     CheckReadQueue(handle);
+    CheckQueuedMotionSampleTimes(handle);
     CheckTapBetweenReads();
     CheckCaptureHidesEarlierInput();
     CheckLatchedPressLifetime(handle);
@@ -1489,4 +1531,5 @@ int main() {
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
     CheckPortZeroWithdrawn();
+    CheckSecondPortConnection(user);
 }
