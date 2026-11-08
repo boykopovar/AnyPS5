@@ -39,6 +39,7 @@ struct Frame {
 
 std::vector<std::uint8_t> EncodeFrame(const Frame& frame);
 std::optional<Frame> DecodeFrame(const std::vector<std::uint8_t>& datagram);
+bool IsOwnFrame(const Frame& frame, std::uint32_t instance);
 
 class Relay {
 public:
