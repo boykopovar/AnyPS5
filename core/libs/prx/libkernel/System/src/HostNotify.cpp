@@ -198,6 +198,31 @@ bool SpawnHostNotifyCommand(const HostNotifyArgv& argv) {
 }
 #endif
 
+#ifdef _WIN32
+bool SpawnHostNotifyCommand(const HostNotifyArgv& argv) {
+    if (argv.empty()) return false;
+    std::wstring commandLine;
+    for (const auto& argument : argv) {
+        if (argument.find('"') != std::string::npos) return false;
+        if (!commandLine.empty()) commandLine += L' ';
+        commandLine += L'"';
+        for (const char character : argument) commandLine += static_cast<wchar_t>(static_cast<unsigned char>(character));
+        commandLine += L'"';
+    }
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) return false;
+    CloseHandle(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD code = 1;
+    const bool succeeded = GetExitCodeProcess(process.hProcess, &code) && code == 0;
+    CloseHandle(process.hProcess);
+    return succeeded;
+}
+#endif
+
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;
     HostNotifyLog("ANYPS5_HOST_NOTIFY must be 0 or 1, not '" + std::string(text) + "'; host notifications stay off");
