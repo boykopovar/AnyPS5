@@ -1,4 +1,4 @@
-add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeType/src/OutlineBorders.cpp
+add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp StrokerExport.cpp ../libSceFreeType/src/OutlineBorders.cpp
         ../libSceFreeType/src/OutlineDecompose.cpp ../libSceFreeType/src/OutlineOrientation.cpp ../libSceFreeType/src/Trigonometry.cpp
         ../libSceFreeType/src/MemoryRecord.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})

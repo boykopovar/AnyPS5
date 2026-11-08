@@ -319,8 +319,8 @@ int APS5_VABI sceFreeTypeOtUnknown_iruPsrXCN7U_nid_no_patch() {
 }
 APS5_EXPORT("iruPsrXCN7U", sceFreeTypeOtUnknown_iruPsrXCN7U_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtStrokerExport_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceFreeTypeOtStrokerExport_nid_no_patch(void* stroker, FreeType::GuestOutline* outline) {
+    FreeTypeOtStrokerExport(stroker, outline);
 }
 APS5_EXPORT("2rcvKZfm5rI", sceFreeTypeOtStrokerExport_nid_no_patch);
 
