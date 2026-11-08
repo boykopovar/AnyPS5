@@ -4,6 +4,7 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
+- [BIO_meth_new and BIO_meth_free](../../../core/libs/prx/libSceLibreSsl3/src/BioMethodLifecycle.cpp) - allocate a zeroed 80-byte LibreSSL 3.8.4 `BIO_METHOD` with the type at offset 0 and the borrowed name pointer at offset 8, or free it; a null allocation returns null and freeing null is a no-op. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
 - [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
@@ -71,7 +72,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 125 still-unimplemented callable exports: 116 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 123 still-unimplemented callable exports: 114 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -79,7 +80,6 @@
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `tls_config_set_cert_mem` | `+bQfpiUHRVk` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
-| `BIO_meth_free` | `13BHMSblVyY` |
 | `tls_handshake` | `27Fuliv3Om8` |
 | `AUTHORITY_KEYID_free` | `2bIZM-OfE8Y` |
 | `X509V3_EXT_d2i` | `2l+JidqxyZQ` |
@@ -175,7 +175,6 @@
 | `SSL_set_info_callback` | `mOQe5RQATT4` |
 | `ASN1_get_object` | `mXrusLhI3CI` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
-| `BIO_meth_new` | `o0dpw6ZZ6K0` |
 | `d2i_PUBKEY` | `o3Q8yQAMT-k` |
 | `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
 | `unknown` | `pdxCm9+CCc4` |

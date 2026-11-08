@@ -152,10 +152,6 @@ int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -436,10 +432,6 @@ int APS5_VABI ASN1_get_object_nid_postfix() {
 }
 
 int APS5_VABI SSL_provide_quic_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI BIO_meth_new_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
