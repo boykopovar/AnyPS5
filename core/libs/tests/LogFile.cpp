@@ -235,6 +235,20 @@ void FilePrimitives() {
     Require(!std::filesystem::exists(moved), "the file is still there after removal");
 }
 
+void MaxBytesValues() {
+    std::uint64_t value = 7;
+    std::string error;
+    Require(ParseMaxBytes(nullptr, value, error) && value == 0 && error.empty(), "an unset limit is not off");
+    Require(ParseMaxBytes("", value, error) && value == 0 && error.empty(), "an empty limit is not off");
+    Require(ParseMaxBytes("0", value, error) && value == 0 && error.empty(), "zero does not turn the limit off");
+    Require(ParseMaxBytes("65536", value, error) && value == 65536, "the smallest limit was refused");
+    Require(ParseMaxBytes("1099511627776", value, error) && value == (std::uint64_t{1} << 40), "the largest limit was refused");
+    for (const char* text : {"-1", "+5", " 5", "1k", "65535", "1099511627777", "99999999999999999999999", "0x10"}) {
+        error.clear();
+        Require(!ParseMaxBytes(text, value, error) && error.find("ANYPS5_LOG_MAX_BYTES") != std::string::npos, text);
+    }
+}
+
 void RelativePathUsesWorkingDirectory() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(g_directory);
@@ -673,6 +687,7 @@ int main(int argc, char** argv) {
     LongLines();
     AppendKeepsEarlierRuns();
     FilePrimitives();
+    MaxBytesValues();
     RelativePathUsesWorkingDirectory();
     UnopenablePath();
     UnsetCreatesNothing();
