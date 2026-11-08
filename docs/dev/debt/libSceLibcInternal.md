@@ -277,13 +277,11 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_malloc_postfork` | `V94pLruduLg` |
 | `_malloc_prefork` | `aLYyS4Kx6rQ` |
 | `_new_setup` | `KNNNbyRieqQ` |
-| `_readdir_unlocked` | `-u3XfqNumMU` |
 | `_rtld_atfork_pre` | `i-7v8+UGglc` |
 | `_rtld_error` | `dmHEVUqDYGw` |
 | `_rtld_get_stack_prot` | `AdYYKgtPlqg` |
 | `_rtld_thread_init` | `gRw4XrztJ4Q` |
 | `_sceLibcGetMallocParam` | `1nZ4Xfnyp38` |
-| `_seekdir` | `Do3zPpsXj1o` |
 | `backtrace_game` | `jFSmlgyyEUg` |
 | `clock_1700` | `n8onIBR4Qdk` |
 | `malloc_initialize` | `owT6zLJxrTs` |
@@ -347,6 +345,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [setprogname](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) follows FreeBSD 11.4 `lib/libc/gen/setprogname.c`: finds the last `/` and strips leading path components; a null name throws
 - [__inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) was not measured on the console: it runs `inet_ntoa_r`, as FreeBSD 11.4 names the function `__inet_ntoa_r` ([arpa/inet.h](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/include/arpa/inet.h#L129)) and makes `inet_ntoa_r` a weak alias of it ([inet_ntoa.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_ntoa.c#L62-L76))
 - [inet_netof, inet_lnaof, inet_makeaddr and inet_network](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal, NIDs `UXEIr+tUsM4`, `4y7OKpbXUDs`, `5YaIoLorY8A`, `-Qdf3rmtqRA`, and aliases `3R15U5X00nY`, `bD39ou3sn7w`, `9cf7QE7cmto`, `xDCABmswhcM`) follow FreeBSD 11.4 [inet_netof.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_netof.c), [inet_lnaof.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_lnaof.c), [inet_makeaddr.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_makeaddr.c) and [inet_network.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_network.c) (`8c639945a4`). `inet_network` components are bounded to 0xff with a 32-bit accumulator. A null text throws std::invalid_argument. Console unverified.
+- [_readdir_unlocked, _seekdir](../../../core/libs/prx/libSceLibcInternal/Directory.cpp) (libSceLibcInternal, NIDs `-u3XfqNumMU`, `Do3zPpsXj1o`) follow FreeBSD 11.4 libc ([readdir.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/readdir.c) and [telldir.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/telldir.c)): `_readdir_unlocked(dirp, skip)` traverses entries without locking, skipping zero inodes (`fileNumber == 0`) when `skip` is non-zero (also adopted for `readdir`/`readdir_r`) and returning them when `skip == 0`. `_seekdir(dirp, loc)` seeks without locking; invalid offsets set `EINVAL` (indexed), forward to seek callbacks (descriptor), or pass to host `seekdir` (native) rather than silently ignored. A null pointer returns `EBADF` (9)
 - [std::_MP_Get, _MP_Add, _MP_Mul and _MP_Rem](../../../core/libs/prx/libSceLibcInternal/MultiPrecision.cpp) (libSceLibcInternal, NIDs `lrQSsTRMMr4`, `QfPuSqhub7o`, `Gav1Xt1Ce+c` and `Ozk+Z6QnlTY`) are unverified on the console: firmware 13.42's `libSceLibcInternal.sprx` exports all four ([#14936](https://github.com/boykopovar/AnyPS5/pull/14936#pullrequestreview-5731406143)), but their code was not run and no title was seen calling them. Parameters come from the mangled names, the rest from the first MSVC STL release's [multprec.cpp](https://github.com/microsoft/STL/blob/219514876ea86491de191ceaa88632616bbc0f19/stl/src/multprec.cpp), Dinkumware's code: five 64-bit words of base 2^32 digits, with its results for words wider than a digit, a carry into the fifth word and a borrow past the top digit. A null array throws, and `_MP_Rem` throws where that code reads outside its arrays: a zero divisor or value, a nonzero fifth word, or a nonzero quotient digit for a divisor below 2^32
 
 

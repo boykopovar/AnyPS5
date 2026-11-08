@@ -19,6 +19,8 @@ struct GuestOption {
     int value;
 };
 
+struct GuestDirectoryEntry;
+
 struct LibcUtimbuf {
     std::int64_t actime;
     std::int64_t modtime;
@@ -33,6 +35,8 @@ int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
+GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip);
+void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location);
 int APS5_VABI __fflush_nid_postfix(FileStream* stream);
 int APS5_VABI __vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);

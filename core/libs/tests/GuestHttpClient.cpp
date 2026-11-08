@@ -117,6 +117,15 @@ void CheckBodies(const std::string& base) {
     }
 }
 
+void CheckEmpty(const std::string& base) {
+    auto client = Create();
+    Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/empty.bin").c_str()) == 1, "empty source open failed");
+    Check(Aps5HttpClient_GetSize_nid_postfix(client.get()) == 0, "empty source size differs");
+    End(client.get());
+    Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/range/alternate.bin").c_str()) == 1, "reopen after empty source failed");
+    Read(client.get(), 0, 777, true);
+}
+
 void CheckCacheAndReopen(const std::string& base) {
     auto client = Create();
     Check(Aps5HttpClient_Open_nid_postfix(client.get(), (base + "/cache/payload.bin").c_str()) == 1, "cache source open failed");
@@ -191,9 +200,11 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories("app0");
         Write("payload.bin", 100000);
         Write("alternate.bin", 777, true);
+        Write("empty.bin", 0);
         const std::string base = argv[1];
         CheckInputValidation(base);
         CheckBodies(base);
+        CheckEmpty(base);
         CheckCacheAndReopen(base);
         CheckFailures(base);
         CheckCancellation(base);
