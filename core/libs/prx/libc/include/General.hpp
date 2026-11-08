@@ -65,6 +65,10 @@ extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle);
 struct KernelTimespec;
 using ClockGetresFn_nid_no_patch = int (APS5_VABI*)(std::int32_t, KernelTimespec*);
 extern "C" void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn);
+using SyncWakeFn_nid_no_patch = int (APS5_VABI*)(void*, std::int32_t);
+using SyncWait32Fn_nid_no_patch = int (APS5_VABI*)(std::uint32_t*, std::uint32_t, unsigned int*, const char*);
+using SyncWait64Fn_nid_no_patch = int (APS5_VABI*)(std::uint64_t*, std::uint64_t, unsigned int*, const char*);
+extern "C" void RegisterSyncOnAddress_nid_no_patch(SyncWakeFn_nid_no_patch wake, SyncWait32Fn_nid_no_patch wait32, SyncWait64Fn_nid_no_patch wait64);
 
 using PthreadCreateFn_nid_no_patch = int (APS5_VABI*)(void**, const void*, void* (APS5_VABI*)(void*), void*);
 using PthreadJoinFn_nid_no_patch = int (APS5_VABI*)(void*, void**);

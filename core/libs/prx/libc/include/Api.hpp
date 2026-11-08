@@ -215,6 +215,10 @@ void APS5_VABI _Atomic_copy_nid_postfix(volatile unsigned char* flag, std::size_
 void APS5_VABI _Atomic_exchange_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, volatile void* value, int);
 int APS5_VABI _Atomic_compare_exchange_strong_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, void* expected, const void* desired, int, int);
 int APS5_VABI _Atomic_compare_exchange_weak_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, void* expected, const void* desired, int, int);
+void APS5_VABI __std_atomic_notify_one_direct_nid_postfix(void* address);
+void APS5_VABI __std_atomic_notify_all_direct_nid_postfix(void* address);
+bool APS5_VABI __std_atomic_wait_direct_32_nid_postfix(const void* address, std::uint32_t expected, unsigned int timeoutMilliseconds);
+bool APS5_VABI __std_atomic_wait_direct_64_nid_postfix(const void* address, std::uint64_t expected, unsigned int timeoutMilliseconds);
 double APS5_VABI _Stod_nid_postfix(const char* text, char** end, std::int64_t pten);
 long long APS5_VABI _Stoll_nid_postfix(const char* text, char** end, int base);
 double APS5_VABI _Sin_nid_postfix(double x, unsigned int quadrant);

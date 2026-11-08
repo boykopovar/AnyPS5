@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -8,6 +9,21 @@
 namespace {
 
 constexpr int MemoryOrderSeqCst = 5;
+
+std::atomic<SyncWakeFn_nid_no_patch> registeredSyncWake{nullptr};
+std::atomic<SyncWait32Fn_nid_no_patch> registeredSyncWait32{nullptr};
+std::atomic<SyncWait64Fn_nid_no_patch> registeredSyncWait64{nullptr};
+
+constexpr std::int32_t WakeOneCount = 1;
+constexpr std::int32_t WakeAllCount = 0x7FFFFFFF;
+constexpr unsigned int InfiniteTimeoutMilliseconds = 0xFFFFFFFFu;
+constexpr unsigned int LongestFiniteTimeoutMilliseconds = 0x418938u;
+
+unsigned int* WaitTimeout(unsigned int milliseconds, unsigned int& storage) {
+    if (milliseconds == InfiniteTimeoutMilliseconds) return nullptr;
+    storage = milliseconds < LongestFiniteTimeoutMilliseconds ? milliseconds * 1000u : InfiniteTimeoutMilliseconds;
+    return &storage;
+}
 
 template<typename TValue>
 void Store(volatile TValue* target, TValue value) {
@@ -246,5 +262,39 @@ std::uint8_t APS5_VABI __atomic_fetch_xor_1_nid_postfix(volatile std::uint8_t* t
 std::uint16_t APS5_VABI __atomic_fetch_xor_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
 std::uint32_t APS5_VABI __atomic_fetch_xor_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
 std::uint64_t APS5_VABI __atomic_fetch_xor_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+
+void RegisterSyncOnAddress_nid_no_patch(SyncWakeFn_nid_no_patch wake, SyncWait32Fn_nid_no_patch wait32, SyncWait64Fn_nid_no_patch wait64) {
+    registeredSyncWake.store(wake, std::memory_order_release);
+    registeredSyncWait32.store(wait32, std::memory_order_release);
+    registeredSyncWait64.store(wait64, std::memory_order_release);
+}
+
+void APS5_VABI __std_atomic_notify_one_direct_nid_postfix(void* address) {
+    const auto wake = registeredSyncWake.load(std::memory_order_acquire);
+    if (wake == nullptr) NotImplemented_nid_no_patch(__func__);
+    wake(address, WakeOneCount);
+}
+
+void APS5_VABI __std_atomic_notify_all_direct_nid_postfix(void* address) {
+    const auto wake = registeredSyncWake.load(std::memory_order_acquire);
+    if (wake == nullptr) NotImplemented_nid_no_patch(__func__);
+    wake(address, WakeAllCount);
+}
+
+bool APS5_VABI __std_atomic_wait_direct_32_nid_postfix(const void* address, std::uint32_t expected, unsigned int timeoutMilliseconds) {
+    const auto wait = registeredSyncWait32.load(std::memory_order_acquire);
+    if (wait == nullptr) NotImplemented_nid_no_patch(__func__);
+    unsigned int storage = 0;
+    (void)wait(const_cast<std::uint32_t*>(static_cast<const std::uint32_t*>(address)), expected, WaitTimeout(timeoutMilliseconds, storage), nullptr);
+    return true;
+}
+
+bool APS5_VABI __std_atomic_wait_direct_64_nid_postfix(const void* address, std::uint64_t expected, unsigned int timeoutMilliseconds) {
+    const auto wait = registeredSyncWait64.load(std::memory_order_acquire);
+    if (wait == nullptr) NotImplemented_nid_no_patch(__func__);
+    unsigned int storage = 0;
+    (void)wait(const_cast<std::uint64_t*>(static_cast<const std::uint64_t*>(address)), expected, WaitTimeout(timeoutMilliseconds, storage), nullptr);
+    return true;
+}
 
 }

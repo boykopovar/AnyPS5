@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -890,3 +891,5 @@ int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t va
 }
 
 }
+
+const bool syncOnAddressRegistered = (RegisterSyncOnAddress_nid_no_patch(&sceKernelSyncOnAddressWake, &sceKernelSyncOnAddressWait32, &sceKernelSyncOnAddressWait64), true);
