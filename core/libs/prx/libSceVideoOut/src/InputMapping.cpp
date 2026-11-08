@@ -310,13 +310,13 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
         if (separator == std::string_view::npos) invalidLine(source, lineNumber, "expected Action = TYPE:VALUE");
 
         const auto actionName = trim(content.substr(0, separator));
-        const auto source = trim(content.substr(separator + 1));
+        const auto value = trim(content.substr(separator + 1));
         if (const auto* setting = findSetting(actionName)) {
             auto& configured = configuredSettings[static_cast<std::size_t>(setting->setting)];
             if (configured) invalidLine(source, lineNumber, std::string(setting->name) + " is set more than once");
             configured = true;
             try {
-                applySetting(configuration.settings, setting->setting, source);
+                applySetting(configuration.settings, setting->setting, value);
             } catch (const std::runtime_error& error) {
                 invalidLine(source, lineNumber, error.what());
             }
@@ -324,10 +324,10 @@ void applyInputStream(Pad::InputConfiguration& configuration, std::istream& file
         }
         const auto* action = findAction(actionName);
         if (action == nullptr) invalidLine(source, lineNumber, "unknown action '" + std::string(actionName) + "'");
-        if (source.empty()) invalidLine(source, lineNumber, "source is empty");
+        if (value.empty()) invalidLine(source, lineNumber, "source is empty");
 
         try {
-            auto binding = parseBinding(*action, source);
+            auto binding = parseBinding(*action, value);
             const auto normalizedAction = upper(action->name);
             if (overriddenActions.insert(normalizedAction).second) {
                 std::erase_if(bindings, [action](const Pad::InputBinding& existing) { return matchesAction(existing, *action); });
