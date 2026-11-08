@@ -1126,6 +1126,15 @@ void FixedRingTest() {
     Require(ring.Values() == std::vector<int>({4, 5, 6}), "the ring wrapped incorrectly");
 }
 
+void FramePercentileTest() {
+    const std::vector<double> ten{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    Require(RunReport::FramePercentile(ten, 0.5) == 6.0, "p50 of ten sorted values is the sixth");
+    Require(RunReport::FramePercentile(ten, 0.9) == 10.0, "p90 of ten sorted values is the tenth");
+    Require(RunReport::FramePercentile(ten, 0.99) == 10.0, "p99 must not index past the last value");
+    Require(RunReport::FramePercentile(std::vector<double>{4.5}, 0.99) == 4.5, "one value is every percentile");
+    Require(RunReport::FramePercentile(std::vector<double>{}, 0.5) == 0.0, "no frames give zero");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1386,6 +1395,7 @@ int main(int argc, char** argv) {
         Run("search-only-ancestor", SearchOnlyAncestorTest);
         Run("dropped-entries-are-distinct", DroppedEntriesAreDistinctTest);
         Run("fixed-ring", FixedRingTest);
+        Run("frame-percentile", FramePercentileTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
