@@ -443,10 +443,6 @@ int APS5_VABI unumf_resultToString_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI unumsys_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI unumsys_getName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

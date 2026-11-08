@@ -112,7 +112,6 @@ int APS5_VABI unumf_openForSkeletonAndLocale_nid_postfix();
 int APS5_VABI unumf_openResult_nid_postfix();
 int APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix();
 int APS5_VABI unumf_resultToString_nid_postfix();
-int APS5_VABI unumsys_close_nid_postfix();
 int APS5_VABI unumsys_getName_nid_postfix();
 int APS5_VABI unumsys_isAlgorithmic_nid_postfix();
 int APS5_VABI unumsys_open_nid_postfix();
