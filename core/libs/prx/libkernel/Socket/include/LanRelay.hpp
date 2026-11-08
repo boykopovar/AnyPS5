@@ -23,6 +23,23 @@ struct Settings {
 
 Settings ReadSettings(const char* listen, const char* peers);
 
+class Relay {
+public:
+    Relay() = default;
+    Relay(const Relay&) = delete;
+    Relay& operator=(const Relay&) = delete;
+    ~Relay();
+
+    void Open(const Endpoint& listen);
+    void Close();
+    bool IsOpen() const;
+    std::uint16_t Port() const;
+
+private:
+    std::uintptr_t handle = ~std::uintptr_t(0);
+    std::uint16_t port = 0;
+};
+
 }
 
 #endif
