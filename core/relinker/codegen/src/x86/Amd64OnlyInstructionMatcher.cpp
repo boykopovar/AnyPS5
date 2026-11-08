@@ -26,6 +26,7 @@
 #include <codegen/x86/CountLowering.hpp>
 #include <codegen/x86/MovbeLowering.hpp>
 #include <codegen/x86/Avx2TwinLowering.hpp>
+#include <codegen/x86/LaneSplitLowering.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
@@ -306,6 +307,10 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
         EmitAvx2Twin(body, *twin);
         return twin->Name;
     }
+    if (const auto split = _target == Amd64OnlyTarget::Avx ? DecodeLaneSplit(instr.Data, instr.Length) : std::nullopt) {
+        EmitLaneSplit(body, *split);
+        return "256-bit integer";
+    }
     if (instr.IsExtrq() || instr.IsInsertq()) {
         const auto operands = DecodeSse4a(instr.Data, instr.Length);
         _lowering.EmitOutOfLine(body, operands);
@@ -503,6 +508,9 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
 
     if (auto twin = _target == Amd64OnlyTarget::Avx ? DecodeAvx2Twin(data, length) : std::nullopt)
         return Amd64OnlyMatch{twin->Name, length, Amd64OnlyLowering::InPlace, std::move(twin->Replacement), {}, 0};
+
+    if (const auto split = _target == Amd64OnlyTarget::Avx ? DecodeLaneSplit(data, length) : std::nullopt)
+        return _trampoline("256-bit integer", length, _outOfLine(length, trailing, [&](StubBodyBuilder& body) { EmitLaneSplit(body, *split); }), false, true);
 
     return _matchRosetta(instr, trailing);
 }
