@@ -4,7 +4,7 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
-- [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1, matching OpenSSL; null key, input or output throws where OpenSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
+- [AES_wrap_key](../../../core/libs/prx/libSceLibreSsl3/src/AesWrap.cpp) - follows [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394) with the default IV `A6A6A6A6A6A6A6A6`, six rounds and the 64-bit counter XORed into the A block; it encrypts through libSceLibreSsl's `AES_encrypt`. Inputs below 16 bytes or not a multiple of 8 return -1 as LibreSSL does (OpenSSL 1.1 returns 0); null key, input or output throws where LibreSSL dereferences it. The PS5 ABI, custom-IV handling and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
 - [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
@@ -23,6 +23,7 @@
 
 - [ASN.1 value mutation and octet-string lifetime](../../../core/libs/prx/libSceLibreSsl3/src/Asn1Values.cpp) - `ASN1_STRING_set`, `ASN1_INTEGER_set`, `ASN1_OCTET_STRING_cmp` and `ASN1_OCTET_STRING_free` follow the LP64 contracts of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1), using the existing 24-byte `Asn1String` and application heap. Console layouts, validation order and allocator/error equivalence are unverified. Integer allocation uses one eight-byte application-heap allocation rather than LibreSSL's CBB allocation chain. A null object that upstream dereferences, negative owned-data lengths, comparison arithmetic overflow and string input overlapping the owned data or its terminator byte that replacement releases throw instead of invoking undefined behavior. Closes when: compared with the console.
 - [ASN.1 integer decoding](../../../core/libs/prx/libSceLibreSsl3/src/IntegerDecoder.cpp) - nothing is checked on a console, and the console's application-heap ABI is unverified. Rejections, allocation failures, their error codes and the old output follow [13.42 native-PC evidence](https://github.com/boykopovar/AnyPS5/pull/10948#issuecomment-6412137728) from a recording allocator. Nonnegative null input faults natively and throws here. A negative length in the old output throws rather than erasing out of bounds, as the parent library does. Error combinations the evidence does not cover and content over `INT_MAX` bytes follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1). Closes when: compared with the console.
+- [ASN1_TYPE_free, ECDSA_SIG_new, ECDSA_SIG_set0 and ECDSA_SIG_free](../../../core/libs/prx/libSceLibreSsl3/src/EcdsaSig.cpp) - follow LibreSSL 4.0.0 [`a_type.c`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/asn1/a_type.c), [`tasn_fre.c`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/asn1/tasn_fre.c) and [`ecs_lib.c`](https://github.com/libressl/openbsd/blob/078b3d1df8ca2011c1605cd40418c58fa0f5b143/src/lib/libcrypto/ecdsa/ecs_lib.c): the type teardown frees object, string or nested values by type under the no-free and object dynamic flags; the constructor allocates a 16-byte object with null components, the setter frees replaced BIGNUMs through `BN_free`, and the destructor releases both components and the object. A null signature throws and a null component returns 0 unchanged. The PS5 ABI and console behaviour are unverified. Closes when: compared with the console.
 - [CRYPTO_memcmp](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) follows the public [LibreSSL signature and equality contract](https://man.openbsd.org/CRYPTO_memcmp.3), without PS5 verification. The exact nonzero result for unequal buffers is unspecified by that contract. Content-independent execution of its volatile byte reads still depends on the compiler; inspect optimized code when changing toolchains. Closes when: measured on a PS5 and the supported toolchains' generated code is checked.
 - [ASN1_OBJECT_free](../../../core/libs/prx/libSceLibreSsl3/src/Asn1Object.cpp) - the structure layout and ownership flags follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/asn1_local.h) and its [free routine](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_object.c); nothing is checked on the console. Dynamic names and OID data use the guest heap, and dynamic OID data is erased before it is freed. A negative data length with non-null dynamic data throws rather than passing an oversized length to the erase operation.
 - [MD5 and SHA1](../../../core/libs/prx/libSceLibreSsl3/src/Digest.cpp) (libSceLibreSsl3) - follow LibreSSL's [md5.c, sha1.c](https://github.com/libressl/openbsd/tree/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto) and hash through libSceLibreSsl's `MD5_*` and `SHA1_*`. A null digest buffer, which LibreSSL 4.0.0 does not check, throws. Nothing is checked on the console
@@ -54,7 +55,10 @@
 - [X509_getm_notBefore, X509_getm_notAfter, X509_get0_notBefore, X509_get0_notAfter, X509_get0_signature](../../../core/libs/prx/libSceLibreSsl3/src/X509Validity.cpp) (libSceLibreSsl3) - nothing is checked on the console. The `X509`, `X509_CINF` and `X509_VAL` layouts and the results follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `x509_local.h`, `x509_set.c` and `x_x509.c`, the version in the [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). No export of this module creates a certificate yet, so only certificates the caller builds reach them. A null certificate in `X509_get0_signature` throws when an output is requested, where LibreSSL dereferences it; with both outputs null the call returns without reading the certificate, as in LibreSSL
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
+- [BIO_get_data, BIO_set_data, BIO_set_init, BIO_get_shutdown, BIO_set_shutdown, BIO_set_flags and BIO_clear_flags](../../../core/libs/prx/libSceLibreSsl3/src/BioFields.cpp) (libSceLibreSsl3) - nothing is checked on the console. They read or write `ptr`, `init`, `shutdown` and `flags` as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_lib.c#L205-L266) `bio_lib.c` does. This port's BIOs come from libSceLibreSsl's forwarded `BIO_new`, so the fields are at their 2.5.4 offsets in the 104-byte `LibreSsl::Bio`; 4.0.0 adds `callback_ex` before them, which moves them 8 bytes, but its `BIO` is opaque to titles. A null BIO, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [BN_div](../../../core/libs/prx/libSceLibreSsl3/src/BignumDivide.cpp) (libSceLibreSsl3) - nothing is checked on the console. It follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bn/bn_div.c) `bn_div.c` on libSceLibreSsl's 24-byte BIGNUM: truncated quotient, remainder with the numerator's sign, either output optional, the same order of writes when outputs alias, `BN_R_DIV_BY_ZERO`, `BN_R_NOT_INITIALIZED` and the expansion errors, and an ignored remainder expansion failure. Output words come from the guest heap. The `BN_CTX` is not used, so its temporary allocations and their failures are not reproduced. A null numerator, divisor or context, which LibreSSL dereferences, and a divisor with a zero top word throw. Closes when: compared with the console.
 - [OPENSSL_init_ssl](../../../core/libs/prx/libSceLibreSsl3/src/InitSsl.cpp) (libSceLibreSsl3) - `OPENSSL_INIT_LOAD_CONFIG` before the configuration is settled, which loads the console's configuration file, throws `NotImplemented_nid_no_patch`; nothing is checked on the console. Otherwise it returns 1, as [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl/ssl_init.c#L29-L58) `ssl_init.c` does: its once-only step runs only `SSL_load_error_strings`, empty in the [firmware 13.42 module](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914), and `SSL_library_init` calls it, not the reverse. As in `crypto_init.c` and `conf_sap.c`, `OPENSSL_INIT_NO_LOAD_CONFIG` settles the configuration and a later `OPENSSL_INIT_LOAD_CONFIG` is a no-op. `OPENSSL_cpuid_setup` is not modelled. Closes when: compared with the console.
+- [X509_ALGOR_get0](../../../core/libs/prx/libSceLibreSsl3/src/X509Algor.cpp) (libSceLibreSsl3) - nothing is checked on the console. It follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_algor.c#L239-L264) `x_algor.c`: the value output is cleared first, a missing parameter reports `V_ASN1_UNDEF` and a null value, and the identifier is read only for the outputs requested. 2.5.4 left the value untouched in both cases. `X509_ALGOR` and `ASN1_TYPE` are the 16-byte public structures, the same in 2.5.4 and 4.0.0. A null identifier with an object or type output, which LibreSSL dereferences, throws. Closes when: compared with the console.
 
 - [SSL_SESSION_get_timeout, SSL_SESSION_set_time and SSL_SESSION_get_protocol_version](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - forwarded session lifecycle interoperability, independent console execution, resumption, serialization and expiry remain unverified. The fields follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libssl). [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libssl/ssl.h) instead puts timeout/time at 144/152; these accessors must not receive that older layout. Tests use caller-owned storage. A null protocol-version input throws instead of dereferencing it.
 - [Session metadata fields](../../../core/libs/prx/libSceLibreSsl3/src/SessionMetadata.cpp) - other firmware revisions are unverified. [BunnyFl reports disassembly only](https://github.com/boykopovar/AnyPS5/pull/15119#pullrequestreview-5742135511) of firmware 13.42 `system/common/lib/libSceLibreSsl3.sprx` (SHA256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`): getter `0xf2130` reads 64-bit timeout at 168 with null returning zero; setter `0xf2150` writes 64-bit creation time at 176 and returns it, with null returning zero; getter `0xf2170` reads 32-bit version at 0 without a null check. The module and listing have not been independently acquired or executed here.
@@ -68,12 +72,11 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 137 still-unimplemented callable exports: 129 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 124 still-unimplemented callable exports: 116 named and 8 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_KEY_set_asn1_flag` | `++b0FizBrJk` |
-| `BIO_set_init` | `+STC2BUY9vY` |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `tls_config_set_cert_mem` | `+bQfpiUHRVk` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
@@ -84,10 +87,8 @@
 | `TLS_method` | `31eWdro1jqs` |
 | `unknown` | `3KZ-L4y1gak` |
 | `EVP_chacha20_poly1305` | `3m4CmAyOXwQ` |
-| `BIO_clear_flags` | `3sypCuBDdQs` |
 | `EVP_chacha20` | `3tGgkjBQ82A` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
-| `BIO_get_shutdown` | `44M+SEbpNdQ` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
@@ -113,7 +114,6 @@
 | `ERR_lib_error_string` | `F7jknWesBTY` |
 | `BIO_meth_set_ctrl` | `GFEaREp1UFw` |
 | `EVP_PKEY_get0_EC_KEY` | `GY2X+VHs568` |
-| `unknown` | `HE-vihq-KKw` |
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `X509_set_version` | `IOutZPRNNPo` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
@@ -133,14 +133,12 @@
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
 | `EVP_PKEY_sign` | `QhYzE+Jdvuk` |
 | `X509_get_signature_nid` | `QnjD8S6Rgk4` |
-| `ECDSA_SIG_new` | `R3NyckUcClU` |
 | `BN_dup` | `RMhEgJs6KLI` |
 | `EVP_sha512_256` | `Sea+FOS2GOI` |
 | `EVP_PKEY_derive_init` | `Ssfu1yw4Em4` |
 | `X509V3_EXT_conf_nid` | `TKGJOgbeyuA` |
 | `X509_sign` | `TpBvY92mrSM` |
 | `SSL_get_peer_quic_transport_params` | `U1dQZ1rXHdA` |
-| `BIO_get_data` | `U3AsZ-9e2MI` |
 | `SSL_CTX_set0_chain` | `UHkYqkyfwOs` |
 | `EVP_PKEY2PKCS8` | `UT6E1YgI8mw` |
 | `ASN1_TIME_new` | `UmAPG5bxYYk` |
@@ -161,21 +159,16 @@
 | `SSL_get_version` | `dL2V0os4TZ4` |
 | `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
 | `i2d_X509` | `e2ReciVG21w` |
-| `BIO_set_data` | `f6Pa2rYH-dw` |
 | `SSL_CTX_set_keylog_callback` | `fR2Wat3ssHs` |
 | `d2i_X509_CRL` | `fVos2kAqfMI` |
 | `tls_write` | `fZJr2OF+KGw` |
-| `X509_ALGOR_get0` | `fdvZNUHm-dE` |
-| `BIO_set_shutdown` | `fq1vAGKJNrI` |
 | `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
 | `EVP_PKEY_assign` | `gp5dGS14-pI` |
 | `i2d_PKCS8_PRIV_KEY_INFO` | `iFlkTGEbE9k` |
-| `BN_div` | `iHetf873n+4` |
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
 | `X509V3_set_ctx` | `kO-jQ3HS9kE` |
 | `BIO_meth_set_destroy` | `kPCJUQuguzE` |
-| `BIO_set_flags` | `lLHlEb1nt5U` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `SSL_set_alpn_protos` | `lyk0UDADPAc` |
 | `RSA_pkey_ctx_ctrl` | `mKlCMgWMU84` |
@@ -201,8 +194,6 @@
 | `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
-| `ASN1_TYPE_free` | `whL1IRBxFZA` |
-| `ECDSA_SIG_set0` | `xVv3qlSRldc` |
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
 | `X509_get0_pubkey` | `xj7cFYOV4+Y` |
