@@ -516,7 +516,7 @@ bool Driver::enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint
         DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::EndOfPipe, [this, queue, opcode, address, bytes = std::move(bytes), interrupt] {
             GuestMemory::SetCurrentPacket(opcode, queue);
             commitLabel(queue, address, bytes, interrupt);
-            if (interrupt.has_value()) wakeQueueZeroForCompletions();
+            wakeQueueZeroForCompletions();
         }, std::move(writes), address, std::move(stored));
     };
     if (queue == 0 && DrawFinisher::Overlap() && DrawFinisher::Busy()) {
