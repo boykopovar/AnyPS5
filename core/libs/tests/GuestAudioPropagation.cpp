@@ -102,6 +102,18 @@ void APS5_VABI CaptureMixedReport(const AudioPropagation::ReportInfo* report, vo
     ++probe.calls;
 }
 
+struct CursorReportProbe {
+    std::uint32_t calls = 0;
+    int integer = 0;
+};
+
+void APS5_VABI CaptureCursorReport(const AudioPropagation::ReportInfo* report, void* userData) {
+    auto& probe = *static_cast<CursorReportProbe*>(userData);
+    auto& arguments = ReportArguments(const_cast<AudioPropagation::ReportInfo*>(report));
+    probe.integer = va_arg(arguments, int);
+    ++probe.calls;
+}
+
 struct FloatingReportProbe {
     std::uint32_t calls = 0;
     std::array<double, 9> values{};
@@ -661,18 +673,23 @@ int main() {
     Require(sceAudioPropagationReportUnregisterHandler(nullptr) == -1, "null report registration");
     Require(sceAudioPropagationReportUnregisterHandler(reinterpret_cast<AudioPropagation::ReportRegistration*>(0xdeadbeef)) == -1, "invalid pointer report registration");
 
-    MixedReportProbe firstMixed{};
-    MixedReportProbe secondMixed{};
-    AudioPropagation::ReportRegistration* firstMixedRegistration = nullptr;
-    AudioPropagation::ReportRegistration* secondMixedRegistration = nullptr;
-    Require(sceAudioPropagationReportRegisterHandler(0, CaptureMixedReport, &firstMixed, &firstMixedRegistration) == 0, "first mixed report registration");
-    Require(sceAudioPropagationReportRegisterHandler(0, CaptureMixedReport, &secondMixed, &secondMixedRegistration) == 0, "second mixed report registration");
+    MixedReportProbe mixed{};
+    AudioPropagation::ReportRegistration* mixedRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureMixedReport, &mixed, &mixedRegistration) == 0, "mixed report registration");
     Require(sceAudioPropagationReportApi(0, 0, 0, 0, "mixed", "%d %f %s", 27, 6.5, "independent") == 0, "mixed report dispatch");
-    for (const auto* probeValue : {&firstMixed, &secondMixed}) {
-        Require(probeValue->calls == 1 && probeValue->integer == 27 && probeValue->floating == 6.5 && std::strcmp(probeValue->text, "independent") == 0, "handlers did not receive independent mixed varargs state");
-    }
-    Require(sceAudioPropagationReportUnregisterHandler(firstMixedRegistration) == 0, "first mixed report unregister");
-    Require(sceAudioPropagationReportUnregisterHandler(secondMixedRegistration) == 0, "second mixed report unregister");
+    Require(mixed.calls == 1 && mixed.integer == 27 && mixed.floating == 6.5 && std::strcmp(mixed.text, "independent") == 0, "mixed varargs state");
+    Require(sceAudioPropagationReportUnregisterHandler(mixedRegistration) == 0, "mixed report unregister");
+
+    CursorReportProbe firstCursor{};
+    CursorReportProbe secondCursor{};
+    AudioPropagation::ReportRegistration* firstCursorRegistration = nullptr;
+    AudioPropagation::ReportRegistration* secondCursorRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureCursorReport, &firstCursor, &firstCursorRegistration) == 0, "first cursor report registration");
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureCursorReport, &secondCursor, &secondCursorRegistration) == 0, "second cursor report registration");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "cursor", "%d %d", 11, 22) == 0, "cursor report dispatch");
+    Require(firstCursor.calls == 1 && firstCursor.integer == 11 && secondCursor.calls == 1 && secondCursor.integer == 22, "handlers must share one advancing argument cursor");
+    Require(sceAudioPropagationReportUnregisterHandler(firstCursorRegistration) == 0, "first cursor report unregister");
+    Require(sceAudioPropagationReportUnregisterHandler(secondCursorRegistration) == 0, "second cursor report unregister");
 
     FloatingReportProbe floatingProbe{};
     AudioPropagation::ReportRegistration* floatingRegistration = nullptr;
