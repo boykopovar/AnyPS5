@@ -123,6 +123,12 @@ void ReportHostImports();
 // address)` in the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+struct HostImportCopy {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkDeviceSize bytes;
+};
+std::vector<HostImportCopy> ExistingHostImportCopies(const Context& context, std::uint64_t address, std::size_t bytes);
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);

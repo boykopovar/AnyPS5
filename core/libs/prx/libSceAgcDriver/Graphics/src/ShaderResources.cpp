@@ -1233,8 +1233,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
     static const bool sampledImport = std::getenv("APS5_NO_SAMPLED_IMPORT") == nullptr;
     const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
-    const HostImport* gpuSource = gpuWritten ? ExistingHostImportFor(context, address, bytes) : nullptr;
-    if (source != nullptr || clear.has_value() || gpuSource != nullptr) parkSnapshot(cache, recycled);
+    const auto gpuSources = gpuWritten ? ExistingHostImportCopies(context, address, bytes) : std::vector<HostImportCopy>{};
+    if (source != nullptr || clear.has_value() || !gpuSources.empty()) parkSnapshot(cache, recycled);
     CachedTexture entry{key, address, std::vector<std::byte>{}, nullptr, *keys, snapshotGeneration};
     entry.committed = std::move(committed);
     entry.surfaceBytes = bytes;
@@ -1267,8 +1267,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
         entry.accounted = entry.texture->AllocationBytes();
         counters.cleared.fetch_add(1, std::memory_order_relaxed);
-    } else if (gpuSource != nullptr) {
-        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, std::nullopt, gpuSource);
+    } else if (!gpuSources.empty()) {
+        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, std::nullopt, std::span<const HostImportCopy>(gpuSources));
         entry.accounted = entry.texture->AllocationBytes();
         counters.imported.fetch_add(1, std::memory_order_relaxed);
     } else {
