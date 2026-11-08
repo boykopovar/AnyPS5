@@ -215,6 +215,15 @@ bool IsOwnFrame(const Frame& frame, std::uint32_t instance) {
     return frame.Instance == instance;
 }
 
+bool IsBroadcast(std::uint32_t destination, const std::vector<Ipv4Interface>& interfaces) {
+    if (destination == 0xFFFFFFFFu) return true;
+    for (const auto& entry : interfaces) {
+        if (entry.Netmask == 0xFFFFFFFFu) continue;
+        if ((entry.Address | ~entry.Netmask) == destination) return true;
+    }
+    return false;
+}
+
 Relay::~Relay() {
     Close();
 }
