@@ -1434,6 +1434,15 @@ void Collector::NoteShader(int what) {
     (what == 0 ? compiled : what == 1 ? failedShaders : cacheHitCount).fetch_add(1, std::memory_order_relaxed);
 }
 
+void Collector::NoteCompileTime(long long nanoseconds) {
+    if (!started_ || nanoseconds < 0) return;
+    compileNanos.fetch_add(nanoseconds, std::memory_order_relaxed);
+}
+
+double Collector::CompileMilliseconds() const {
+    return static_cast<double>(compileNanos.load(std::memory_order_relaxed)) / 1.0e6;
+}
+
 void Collector::NoteUnsupportedInstruction(std::optional<std::string> encoding, std::optional<std::string> opcode, std::optional<std::int64_t> opcodeValue, std::string_view) {
     if (!started_) return;
     std::unique_lock guard(tables->mutex, std::defer_lock);
@@ -1776,6 +1785,10 @@ extern "C" void LibcRunReportFramePresented_nid_no_patch() noexcept {
 
 extern "C" void LibcRunReportShader_nid_no_patch(int what) noexcept {
     if (collector != nullptr) collector->NoteShader(what);
+}
+
+extern "C" void LibcRunReportShaderCompileTime_nid_no_patch(long long nanoseconds) noexcept {
+    if (collector != nullptr) collector->NoteCompileTime(nanoseconds);
 }
 
 extern "C" void LibcRunReportUnsupportedInstruction_nid_no_patch(const char* encoding, const char* opcode, long long opcodeValue, const char* file, int line) noexcept {

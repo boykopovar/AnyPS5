@@ -33,6 +33,7 @@ extern "C" bool LibcRunReportEnabled_nid_no_patch() noexcept;
 extern "C" void LibcRunReportMilestone_nid_no_patch(int milestone) noexcept;
 extern "C" void LibcRunReportFramePresented_nid_no_patch() noexcept;
 extern "C" void LibcRunReportShader_nid_no_patch(int what) noexcept;
+extern "C" void LibcRunReportShaderCompileTime_nid_no_patch(long long nanoseconds) noexcept;
 extern "C" void LibcRunReportUnsupportedInstruction_nid_no_patch(const char* encoding, const char* opcode, long long opcodeValue, const char* file, int line) noexcept;
 extern "C" void LibcRunReportImageFormat_nid_no_patch(unsigned format, const char* name, int status, int usage) noexcept;
 extern "C" void LibcRunReportDescriptor_nid_no_patch(int type, int status, int usage) noexcept;
@@ -259,6 +260,8 @@ public:
     std::vector<double> FrameTimesMilliseconds() const;
     void NoteMissingFunction(std::string_view library, std::string_view name, std::string_view source);
     void NoteShader(int what);
+    void NoteCompileTime(long long nanoseconds);
+    double CompileMilliseconds() const;
     void NoteUnsupportedInstruction(std::optional<std::string> encoding, std::optional<std::string> opcode, std::optional<std::int64_t> opcodeValue, std::string_view source);
     void NoteImageFormat(std::int64_t format, std::optional<std::string> name, Status status, int usage);
     void NoteDescriptor(int type, Status status, int usage);
@@ -296,7 +299,7 @@ private:
     FixedRing<double, FrameTimeWindow> frameTimes;
     std::atomic<std::int64_t> firstFrameNanos{-1};
     std::atomic<std::int64_t> lastFrameNanos{-1};
-    std::atomic<std::int64_t> compiled{0}, failedShaders{0}, cacheHitCount{0};
+    std::atomic<std::int64_t> compiled{0}, failedShaders{0}, cacheHitCount{0}, compileNanos{0};
     std::atomic<int> lost[4];
     std::atomic<const std::atomic<unsigned long long>*> descriptorCounters{nullptr};
     std::atomic<const std::atomic<unsigned long long>*> formatCounters{nullptr};
