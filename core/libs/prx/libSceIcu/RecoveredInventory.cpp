@@ -227,10 +227,6 @@ int APS5_VABI udat_open_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI udat_toPattern_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI udatpg_close_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
