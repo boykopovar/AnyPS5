@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -27,7 +28,22 @@ void RefusesNamingVariable(const char* text) {
 
 }
 
+void HostTextMatchesTheDialogMessages() {
+    const auto psnRequest = PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature);
+    const auto genericRequest = PsnDialogNoticeRequest(PsnDialogNoticeKind::GenericFeature);
+    const auto matches = [](const std::u16string& wide, std::string_view narrow) {
+        if (wide.size() != narrow.size()) return false;
+        for (std::size_t index = 0; index < wide.size(); ++index) {
+            if (wide[index] != static_cast<char16_t>(narrow[index])) return false;
+        }
+        return true;
+    };
+    Require(matches(psnRequest.message, PsnDialogNoticeHostText(PsnDialogNoticeKind::PsnFeature)), "the PSN host text differs from the dialog");
+    Require(matches(genericRequest.message, PsnDialogNoticeHostText(PsnDialogNoticeKind::GenericFeature)), "the generic host text differs from the dialog");
+}
+
 int main() {
+    HostTextMatchesTheDialogMessages();
     Require(ParsePsnDialogNoticeMode(nullptr) == PsnDialogNoticeMode::Silent, "an unset variable is not silent");
     Require(ParsePsnDialogNoticeMode("") == PsnDialogNoticeMode::Silent, "an empty value is not the same as unset");
     Require(ParsePsnDialogNoticeMode("silent") == PsnDialogNoticeMode::Silent, "silent is not silent");

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "prx/libSceIme/include/ModalDialog.hpp"
 
@@ -33,6 +34,11 @@ inline ModalDialogRequest PsnDialogNoticeRequest(PsnDialogNoticeKind kind) {
     request.focus = 0;
     request.cancel = 0;
     return request;
+}
+
+inline std::string_view PsnDialogNoticeHostText(PsnDialogNoticeKind kind) {
+    if (kind == PsnDialogNoticeKind::PsnFeature) return "This feature needs PlayStation Network, which AnyPS5 does not provide, so it is not available.";
+    return "This system feature is not available in AnyPS5.";
 }
 
 extern "C" void PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode mode);

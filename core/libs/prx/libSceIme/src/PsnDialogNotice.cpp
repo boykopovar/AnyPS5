@@ -1,4 +1,5 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include "prx/libkernel/System/include/HostNotify.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -39,6 +40,7 @@ bool PsnDialogNoticeOfferAt_nid_postfix(PsnDialogNoticeKind kind, std::uint64_t 
     if (!ModalDialogOpen_nid_postfix(PsnDialogNoticeRequest(kind))) return false;
     g_shown = true;
     g_lastShown = nowMilliseconds;
+    SendHostNotification("AnyPS5", PsnDialogNoticeHostText(kind));
     return true;
 }
 
