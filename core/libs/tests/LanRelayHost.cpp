@@ -98,6 +98,28 @@ static void ReadsSettings() {
     Require(both.Listen && both.Peers.size() == 1 && both.Peers[0].Port == 47001, "listen and peers are read together");
 }
 
+template <typename Function>
+static void RejectsNaming(const char* message, const char* name, Function function) {
+    try {
+        function();
+    } catch (const std::invalid_argument& error) {
+        if (std::string(error.what()).find(name) != std::string::npos) return;
+        std::fprintf(stderr, "%s: the error does not name %s: %s\n", message, name, error.what());
+        std::exit(1);
+    }
+    std::fprintf(stderr, "%s\n", message);
+    std::exit(1);
+}
+
+static void NamesTheVariableInErrors() {
+    RejectsNaming("a bad listen address is refused", "ANYPS5_LAN_LISTEN",
+        [] { LanRelay::ReadSettings("127.0.0.1:0", nullptr); });
+    RejectsNaming("a bad peer is refused", "ANYPS5_LAN_PEERS",
+        [] { LanRelay::ReadSettings("127.0.0.1:47000", "127.0.0.1:70000"); });
+    RejectsNaming("peers without a listen address are refused", "ANYPS5_LAN_LISTEN",
+        [] { LanRelay::ReadSettings(nullptr, "127.0.0.1:47001"); });
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
@@ -105,5 +127,6 @@ int main() {
     KeepsOneCopyOfDuplicatePeers();
     RejectsInvalidEndpoints();
     ReadsSettings();
+    NamesTheVariableInErrors();
     return 0;
 }
