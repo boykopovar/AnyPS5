@@ -90,6 +90,12 @@ inline constexpr std::uint32_t GpuSamplerHeapSlots = 2048u;
 inline constexpr std::uint32_t GpuDataSet = 2u;
 inline constexpr std::uint32_t GpuGdsSet = 4u;
 inline constexpr std::uint32_t EmbeddedSamplerSet = 6u;
+inline constexpr std::uint32_t PushedBufferSet = 7u;
+// A pushed buffer read as a uniform buffer: the largest view (maxUniformBufferRange's guaranteed
+// minimum) and the most its start may sit below the guest address (minUniformBufferOffsetAlignment
+// is at most 256 by the Vulkan limits; NVIDIA reports 64).
+inline constexpr std::uint32_t UniformConstantBufferBytes = 65536u;
+inline constexpr std::uint32_t UniformViewAdjustmentLimit = 255u;
 inline constexpr std::uint32_t NoEmbeddedSampler = ~0u;
 inline constexpr std::uint32_t GdsBytes = 0x10000u;
 inline constexpr std::uint32_t PushDataDwords = 64u;

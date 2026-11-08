@@ -305,8 +305,10 @@ private:
 bool GpuHeapEnabled();
 void SetDescriptorHeapDevice(bool available);
 bool DescriptorHeapEnabled();
-bool ChoosePushedBufferAddresses(std::uint32_t vendorId);
+bool ChoosePushedBufferAddresses();
 bool PushedBufferAddressesEnabled();
+bool ChooseUniformConstantBuffers(bool pushed, const VkPhysicalDeviceLimits& limits);
+bool UniformConstantBuffersEnabled();
 bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
                             std::pair<std::uint32_t, std::uint32_t>* refused = nullptr);
 void NoteHeapComputeStage();

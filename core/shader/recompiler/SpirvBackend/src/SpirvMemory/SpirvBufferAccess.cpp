@@ -463,13 +463,14 @@ std::uint32_t LdsStorageDwords(const SpirvEmitterState& state) {
 bool LoadsSelectable(const SpirvEmitterState& state, const MemoryResourceAccess& access) {
     if (access.kind == ResourceKind::Scratch) return true;
     if (access.physical) return access.clampedPhysical;
+    if (access.softwareBounds) return true;
     if (access.kind == ResourceKind::Lds) return false;
     return state.robustBufferAccess2;
 }
 
 std::uint32_t GuardedElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t condition, std::uint32_t index) {
     if (access.kind == ResourceKind::Lds) FailEmit("LDS loads keep their branch and have no guarded element");
-    const auto fallback = access.kind == ResourceKind::Scratch || access.physical ? 0u : 0xfffffffeu;
+    const auto fallback = access.kind == ResourceKind::Scratch || access.physical || access.softwareBounds ? 0u : 0xfffffffeu;
     return Select(state, TypeU32(state), condition, index, ConstantU32(state, fallback));
 }
 
@@ -493,6 +494,13 @@ std::uint32_t EmitMemoryElementPointer(SpirvEmitterState& state, const MemoryRes
 }
 
 std::uint32_t EmitStorageBufferElementPointer(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t index, std::uint32_t pointerType) {
+    if (access.uniform) {
+        if (pointerType != TypeStorageBufferElementPointer(state)) FailEmit("a pushed constant buffer is read wider than a dword");
+        const auto u32 = TypeU32(state);
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassUniform, u32), pointer, access.objectPointer, ConstantU32(state, 0), index);
+        return pointer;
+    }
     if (access.physical) {
         if (pointerType == TypeStorageBufferU64ElementPointer(state)) pointerType = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeScalarU64(state));
         else pointerType = TypePhysicalU32Pointer(state);

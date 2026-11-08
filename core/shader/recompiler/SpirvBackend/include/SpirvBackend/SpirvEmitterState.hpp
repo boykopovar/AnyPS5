@@ -73,6 +73,8 @@ struct MemoryResourceAccess {
     std::uint32_t misalignment = 0;
     bool physical = false;
     bool clampedPhysical = false;
+    bool softwareBounds = false;
+    bool uniform = false;
 };
 
 struct SpirvTableImageVariable {
@@ -118,8 +120,13 @@ struct SpirvEmitterState {
     bool registrationModules = false;
     bool gpuResolvedImages = false;
     std::uint32_t heapDataUniformDwords = 0;
+    bool uniformConstantBuffers = false;
     bool heapBufferDescriptors = false;
     bool addressedBuffers = false;
+    std::vector<std::uint32_t> pushedBufferVariables;
+    std::vector<std::uint32_t> pushedBufferCoherentVariables;
+    std::vector<std::uint32_t> pushedBufferU64Variables;
+    std::vector<std::uint32_t> pushedBufferUniformVariables;
     std::optional<bool> guestBuffersWritten;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;

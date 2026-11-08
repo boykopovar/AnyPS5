@@ -3326,7 +3326,7 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
 }
 
 Recorder::UploadSlice Recorder::DrawUpload(std::size_t bytes) {
-    const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16);
+    const VkDeviceSize alignment = std::max<VkDeviceSize>(GuestBufferViewAlignment(context.limits), 16);
     auto offset = (drawUploadUsed + alignment - 1) & ~(alignment - 1);
     if (drawUpload == nullptr || offset + bytes > drawUpload->Bytes().size()) {
         drawUpload = std::make_shared<Buffer>(context, std::max(DrawUploadChunk, bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -3385,7 +3385,7 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
 }
 
 std::shared_ptr<Buffer> Recorder::containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset) {
-    const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const VkDeviceSize alignment = GuestBufferViewAlignment(context.limits);
     const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     auto entry = drawSnapshots.upper_bound({address, SnapshotUse::Storage, std::numeric_limits<std::size_t>::max()});
     for (std::size_t probe = 0; probe < ContainingSnapshotProbes && entry != drawSnapshots.begin(); ++probe) {

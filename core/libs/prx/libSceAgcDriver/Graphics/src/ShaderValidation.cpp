@@ -642,6 +642,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             } else {
                 Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
             }
+        } else if (variable.storage == spv::StorageClassUniform && decoration.set && *decoration.set == ShaderRecompiler::RuntimeAbi::PushedBufferSet) {
+            Require(shader.gpuResolvedImages && shader.dataAddressPush, "a pushed constant buffer outside a heap stage");
         } else if (variable.storage == spv::StorageClassUniform) {
             namespace Abi = ShaderRecompiler::RuntimeAbi;
             constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
@@ -653,6 +655,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
             if (*decoration.set == ShaderRecompiler::MeshWindowDescriptorSet) {
                 Require(mesh && *decoration.binding == 0u, "mesh window buffer binding is wrong");
+                continue;
+            }
+            if (*decoration.set == ShaderRecompiler::RuntimeAbi::PushedBufferSet) {
+                Require(shader.gpuResolvedImages && shader.dataAddressPush, "a pushed buffer outside a heap stage");
                 continue;
             }
             const bool gpuData = shader.gpuResolvedImages && key.first == ShaderRecompiler::RuntimeAbi::GpuDataSet &&

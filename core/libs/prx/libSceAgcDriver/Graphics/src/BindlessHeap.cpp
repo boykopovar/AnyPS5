@@ -151,14 +151,16 @@ bool DescriptorHeapEnabled() {
 
 namespace {
 
-constexpr std::uint32_t NvidiaVendorId = 0x10deu;
 std::atomic<bool> pushedBufferAddresses{false};
 
 }
 
-bool ChoosePushedBufferAddresses(std::uint32_t vendorId) {
+// vkd3d-proton's heap mode passes root descriptors as addresses in push data on every vendor and maps
+// them as real buffers (dxil.c heap lowering). Heap stages do the same with their guest buffers;
+// APS5_PUSHED_BUFFERS=0 reads them through heap buffer descriptors written per draw instead.
+bool ChoosePushedBufferAddresses() {
     const char* forced = std::getenv("APS5_PUSHED_BUFFERS");
-    const bool chosen = forced != nullptr && *forced != '\0' ? std::strcmp(forced, "0") != 0 : vendorId == NvidiaVendorId;
+    const bool chosen = forced == nullptr || *forced == '\0' || std::strcmp(forced, "0") != 0;
     pushedBufferAddresses.store(chosen, std::memory_order_relaxed);
     return chosen;
 }
@@ -173,6 +175,28 @@ std::uint32_t PushedBufferRecordCap() {
 
 bool PushedBufferAddressesEnabled() {
     return DescriptorHeapEnabled() && pushedBufferAddresses.load(std::memory_order_relaxed);
+}
+
+namespace {
+
+std::atomic<bool> uniformConstantBuffers{false};
+
+}
+
+// vkd3d-proton's heap mode maps every root constant buffer as a uniform buffer, on every vendor.
+// Pushed guest buffers that a stage only reads with scalar loads at constant offsets follow it;
+// APS5_UNIFORM_CONSTANT_BUFFERS=0 keeps them storage buffers.
+bool ChooseUniformConstantBuffers(bool pushed, const VkPhysicalDeviceLimits& limits) {
+    const char* forced = std::getenv("APS5_UNIFORM_CONSTANT_BUFFERS");
+    const bool wanted = forced == nullptr || *forced == '\0' || std::strcmp(forced, "0") != 0;
+    const bool chosen = wanted && pushed && limits.maxUniformBufferRange >= ShaderRecompiler::RuntimeAbi::UniformConstantBufferBytes &&
+                        limits.minUniformBufferOffsetAlignment <= ShaderRecompiler::RuntimeAbi::UniformViewAdjustmentLimit + 1u;
+    uniformConstantBuffers.store(chosen, std::memory_order_relaxed);
+    return chosen;
+}
+
+bool UniformConstantBuffersEnabled() {
+    return PushedBufferAddressesEnabled() && uniformConstantBuffers.load(std::memory_order_relaxed);
 }
 
 namespace {
@@ -1097,6 +1121,7 @@ struct HeapBindingUse {
     std::vector<std::uint32_t> ringBuffers;
     std::vector<std::uint32_t> srtAddresses;
     std::vector<std::uint32_t> embeddedSamplers;
+    std::vector<std::uint32_t> pushedBuffers;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
 };
 
@@ -1160,6 +1185,10 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             use.embeddedSamplers.push_back(binding);
             continue;
         }
+        if (set == Abi::PushedBufferSet) {
+            if (std::ranges::find(use.pushedBuffers, binding) == use.pushedBuffers.end()) use.pushedBuffers.push_back(binding);
+            continue;
+        }
         const bool stageBinding = binding / bindingCount < Abi::StageCount;
         if (roots.gdsAddress && stageBinding && set == Abi::DescriptorSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers)) {
             if (std::ranges::find(use.ringBuffers, binding) == use.ringBuffers.end()) use.ringBuffers.push_back(binding);
@@ -1221,6 +1250,26 @@ VkDescriptorSetAndBindingMappingEXT ringBufferMapping(std::uint32_t binding, VkD
     mapping.sourceData.pushIndex.pushOffset = rootItemOffset(placement, Abi::RootItem::FlattenedSrt);
     mapping.sourceData.pushIndex.heapIndexStride = BindlessHeap::BufferSlotBytes;
     mapping.sourceData.pushIndex.heapArrayStride = BindlessHeap::BufferSlotBytes;
+    return mapping;
+}
+
+VkDescriptorSetAndBindingMappingEXT pushedBufferMapping(std::uint32_t binding, const ShaderRecompiler::StagePushPlacement* placement) {
+    Require(placement != nullptr && binding < placement->pushedBuffers, "a heap mapping reads a pushed buffer its pipeline's push layout does not count");
+    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+    mapping.descriptorSet = Abi::PushedBufferSet;
+    mapping.firstBinding = binding;
+    mapping.bindingCount = 1;
+    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
+    const auto root = binding < Abi::PushedBufferLimit ? placement->bufferRoots[binding] : Abi::NoPushPosition;
+    if (root != Abi::NoPushPosition) {
+        mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
+        mapping.sourceData.pushAddressOffset = root * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        return mapping;
+    }
+    Require(placement->bufferOverflow != Abi::NoPushPosition, "a pushed buffer outside the push data has no overflow block");
+    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_INDIRECT_ADDRESS_EXT;
+    mapping.sourceData.indirectAddress.pushOffset = placement->bufferOverflow * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+    mapping.sourceData.indirectAddress.addressOffset = binding * Abi::OverflowRecordWords * static_cast<std::uint32_t>(sizeof(std::uint32_t));
     return mapping;
 }
 
@@ -1360,6 +1409,8 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         mappings.push_back(*mapping);
     }
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, placement));
+    std::ranges::sort(use.pushedBuffers);
+    for (const auto binding : use.pushedBuffers) mappings.push_back(pushedBufferMapping(binding, placement));
     std::ranges::sort(use.ringBuffers);
     for (const auto binding : use.ringBuffers) mappings.push_back(ringBufferMapping(binding, ringHeapOffset, placement));
     std::ranges::sort(use.srtAddresses);
