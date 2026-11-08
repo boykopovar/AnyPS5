@@ -1216,6 +1216,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_service_unknown_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemService>")
     endif()
+
+    add_test_executable(guest_user_service_user_name_tests tests/GuestUserServiceUserName.cpp)
+    target_include_directories(guest_user_service_user_name_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_user_service_user_name_tests PRIVATE libSceUserService libc)
+    configure_windows_unwind(guest_user_service_user_name_tests)
+    add_test(NAME guest_user_service_user_name COMMAND guest_user_service_user_name_tests)
+    if(WIN32)
+        set_tests_properties(guest_user_service_user_name PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
     add_test_executable(guest_system_gesture_tests tests/GuestSystemGesture.cpp)
     target_include_directories(guest_system_gesture_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_system_gesture_tests PRIVATE libSceSystemGesture libc)
