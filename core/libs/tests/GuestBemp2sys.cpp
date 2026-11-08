@@ -15,13 +15,21 @@ void* Reallocate(void*, std::size_t) { return nullptr; }
 
 int main() {
     Require(bemp2sys_logprintf_getlevel_nid_postfix() == 0);
-    bemp2sys_logprintf_setlevel_nid_postfix(3);
-    Require(bemp2sys_logprintf_getlevel_nid_postfix() == 3);
+    for (int level = 0; level <= 3; ++level) {
+        bemp2sys_logprintf_setlevel_nid_postfix(level);
+        Require(bemp2sys_logprintf_getlevel_nid_postfix() == level);
+    }
     bemp2sys_logprintf_setlevel_nid_postfix(4);
+    Require(bemp2sys_logprintf_getlevel_nid_postfix() == 3);
+    bemp2sys_logprintf_setlevel_nid_postfix(100);
     Require(bemp2sys_logprintf_getlevel_nid_postfix() == 3);
     bemp2sys_logprintf_setlevel_nid_postfix(-1);
     Require(bemp2sys_logprintf_getlevel_nid_postfix() == 3);
+    bemp2sys_logprintf_setlevel_nid_postfix(1);
+    Require(bemp2sys_logprintf_getlevel_nid_postfix() == 1);
     bemp2sys_logprintf_setfunc_nid_postfix(reinterpret_cast<void*>(&LogFunction));
+    bemp2sys_logprintf_setfunc_nid_postfix(nullptr);
     bemp2sys_memmanager_set_nid_postfix(reinterpret_cast<void*>(&Allocate), reinterpret_cast<void*>(&Deallocate), reinterpret_cast<void*>(&Reallocate));
+    bemp2sys_memmanager_set_nid_postfix(nullptr, nullptr, nullptr);
     return 0;
 }
