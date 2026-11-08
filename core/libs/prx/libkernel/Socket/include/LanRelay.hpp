@@ -54,6 +54,10 @@ public:
     std::uint16_t Port() const;
     std::uint32_t Instance() const;
 
+    bool SendDatagram(const Endpoint& peer, const std::vector<std::uint8_t>& datagram);
+    bool SendFrame(const Endpoint& peer, std::uint16_t sourcePort, std::uint16_t destinationPort, const std::vector<std::uint8_t>& payload);
+    std::optional<Frame> Receive(int timeoutMilliseconds);
+
 private:
     std::uintptr_t handle = ~std::uintptr_t(0);
     std::uint16_t port = 0;
