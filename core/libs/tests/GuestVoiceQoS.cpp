@@ -204,6 +204,9 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSDisableChat() == notInitialized);
     Require(sceVoiceQoSInitHQ(nullptr, 0x40000, appType) == argumentInvalid);
     Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == 0);
+    Require(sceVoiceQoSEnd() == 0);
+    Require(sceVoiceQoSEnd() == notInitialized);
+    Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == 0);
     Require(sceVoiceQoSTerminate() == 0);
     Require(sceVoiceQoSTerminate() == notInitialized);
     Require(sceVoiceQoSEnableChat() == notInitialized);
