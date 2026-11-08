@@ -14,6 +14,9 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -177,6 +180,30 @@ const TUnit* TwoWaySearch(const TUnit* haystack, const TUnit* needle, size_t len
     }
     return nullptr;
 }
+
+#if defined(__SSE2__)
+[[gnu::no_sanitize("address")]] unsigned MatchBytes(uintptr_t block, __m128i target) {
+    const __m128i bytes = _mm_load_si128(reinterpret_cast<const __m128i*>(block));
+    return static_cast<unsigned>(_mm_movemask_epi8(_mm_cmpeq_epi8(bytes, target)));
+}
+
+const unsigned char* FindLastByte(const unsigned char* s, unsigned char value, size_t n) {
+    const __m128i target = _mm_set1_epi8(static_cast<char>(value));
+    const auto start = reinterpret_cast<uintptr_t>(s);
+    const uintptr_t last = start + n - 1;
+    uintptr_t block = last & ~uintptr_t{15};
+    unsigned mask = MatchBytes(block, target) & ((2u << (last - block)) - 1);
+    for (;;) {
+        if (block <= start) {
+            mask &= ~0u << (start - block);
+            return mask == 0 ? nullptr : reinterpret_cast<const unsigned char*>(block + 31 - std::countl_zero(mask));
+        }
+        if (mask != 0) return reinterpret_cast<const unsigned char*>(block + 31 - std::countl_zero(mask));
+        block -= 16;
+        mask = MatchBytes(block, target);
+    }
+}
+#endif
 
 std::string AsciiPrefix(const char16_t* text) {
     std::string prefix;
@@ -473,6 +500,11 @@ const void* APS5_VABI memchr_nid_postfix(const void* s, int c, size_t n) {
 void* APS5_VABI memrchr_nid_postfix(const void* s, int c, size_t n) {
     const auto* bytes = static_cast<const unsigned char*>(s);
     const auto value = static_cast<unsigned char>(c);
+#if defined(__SSE2__)
+    if (n != 0 && n <= UINTPTR_MAX - reinterpret_cast<uintptr_t>(bytes)) {
+        return const_cast<unsigned char*>(FindLastByte(bytes, value, n));
+    }
+#endif
     while (n != 0) {
         --n;
         if (bytes[n] == value) return const_cast<unsigned char*>(bytes + n);
@@ -483,12 +515,11 @@ void* APS5_VABI memrchr_nid_postfix(const void* s, int c, size_t n) {
 void* APS5_VABI memccpy_nid_postfix(void* dest, const void* src, int c, size_t n) {
     auto* d = static_cast<unsigned char*>(dest);
     const auto* s = static_cast<const unsigned char*>(src);
-    const auto target = static_cast<unsigned char>(c);
-    for (size_t i = 0; i < n; ++i) {
-        d[i] = s[i];
-        if (s[i] == target) return d + i + 1;
-    }
-    return nullptr;
+    if (n == 0) return nullptr;
+    const auto* found = static_cast<const unsigned char*>(std::memchr(s, static_cast<unsigned char>(c), n));
+    const size_t count = found == nullptr ? n : static_cast<size_t>(found - s) + 1;
+    std::memmove(d, s, count);
+    return found == nullptr ? nullptr : d + count;
 }
 
 void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen) {
