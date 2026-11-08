@@ -14,6 +14,14 @@
 
 namespace AgcDriver::Graphics {
 
+struct VkDrawCounts {
+    std::uint64_t direct = 0;
+    std::uint64_t indexed = 0;
+    std::uint64_t indirect = 0;
+    std::uint64_t mesh = 0;
+};
+VkDrawCounts TakeVkDrawCounts();
+
 struct HostImport;
 
 struct DrawTraceContext {
