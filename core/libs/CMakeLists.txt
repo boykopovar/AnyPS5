@@ -1031,6 +1031,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_abstract_storage_trivial_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAbstractStorage>")
     endif()
+
+    add_test_executable(guest_relinker_relative_reloc_tests tests/GuestRelinkerRelativeReloc.cpp)
+    target_include_directories(guest_relinker_relative_reloc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_relinker_relative_reloc_tests PRIVATE libc)
+    configure_windows_unwind(guest_relinker_relative_reloc_tests)
+    add_test(NAME guest_relinker_relative_reloc COMMAND guest_relinker_relative_reloc_tests)
+    if(WIN32)
+        set_tests_properties(guest_relinker_relative_reloc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
     target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_context_state_internal_tests PRIVATE libSceGnmDriverForNeoMode libc)
