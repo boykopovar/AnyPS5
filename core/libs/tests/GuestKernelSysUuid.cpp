@@ -44,7 +44,7 @@ int main() {
     for (const auto& uuid : first) {
         Require((uuid.timeHiAndVersion >> 12) == 1);
         Require((uuid.clockSeqHiAndReserved & 0xc0) == 0x80);
-        Require((uuid.node[0] & 0x01) != 0);
+        Require((uuid.node[0] & 0x01) == 0);
         Require(std::memcmp(uuid.node, first[0].node, sizeof(uuid.node)) == 0);
         Require(Sequence(uuid) == Sequence(first[0]));
     }
