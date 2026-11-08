@@ -122,6 +122,14 @@ const Pad::InputConfiguration& Pad::KeyboardMouse::Configuration() const {
     return configuration;
 }
 
+void Pad::KeyboardMouse::Replace(InputConfiguration next) {
+    Release();
+    configuration = std::move(next);
+    pressed.assign(configuration.bindings.size(), false);
+    wheelReleaseTimes.assign(configuration.bindings.size(), Clock::time_point{});
+    mouse = MouseStick(configuration.settings);
+}
+
 bool Pad::KeyboardMouse::MouseMode() const {
     return mouseMode;
 }
