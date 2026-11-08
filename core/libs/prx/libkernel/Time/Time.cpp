@@ -54,6 +54,7 @@ static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_EIO = 5;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
+static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
@@ -760,7 +761,10 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    static_cast<void>(clockId);
+    if (clockId != GUEST_CLOCK_REALTIME || time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     *__error_nid_postfix() = GUEST_EPERM;
     return -1;
 }
