@@ -51,6 +51,17 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_user_service_user_color_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceUserColor.cpp)
+    target_include_directories(guest_user_service_user_color_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_user_color_tests PRIVATE libSceUserService libSceSystemService)
+    add_test(NAME guest_user_service_user_color COMMAND guest_user_service_user_color_tests)
+    if(WIN32)
+        set_tests_properties(guest_user_service_user_color PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_user_service_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceLifecycle.cpp)
     target_include_directories(guest_user_service_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_user_service_lifecycle_tests PRIVATE libSceSystemService libc libkernel)
