@@ -71,6 +71,7 @@ static void TestParameterLifecycles() {
             const int result = present ? _ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer10initializeEPNS1_6Common10LibContextE(parameter, context) : ParameterInvalidArgument;
             Require(_ZNK3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer13isInitializedEv(parameter) == (before || result == 0), "isInitialized disagrees with initialize");
             Require(_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer15setserviceLabelEi(parameter, 1) == 0, "setserviceLabel failed");
+            Require(_ZN3sce2Np9CppWebApi13InGameCatalog2V512ContainerApi23ParameterToGetContainer15setserviceLabelEj(parameter, 1u) == 0, "setserviceLabel(unsigned) failed");
             return result;
         });
     TestParameterLifecycle(
