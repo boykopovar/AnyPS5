@@ -24,9 +24,6 @@ int main() {
     std::memcpy(untouchedContext, context, sizeof(context));
     std::memcpy(untouchedSsl, ssl, sizeof(ssl));
 
-    ERR_load_PEM_strings_nid_postfix();
-    ERR_load_X509_strings_nid_postfix();
-    OpenSSL_add_all_digests_nid_postfix();
     Require(SSL_CTX_set_max_early_data_nid_postfix(context, 0x4000) == 1, "SSL_CTX_set_max_early_data must return 1");
     Require(SSL_CTX_set_max_early_data_nid_postfix(nullptr, 0) == 1, "SSL_CTX_set_max_early_data must return 1 for a null context");
     SSL_CTX_set_post_handshake_auth_nid_postfix(context, 1);

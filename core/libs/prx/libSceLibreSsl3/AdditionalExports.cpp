@@ -178,7 +178,8 @@ int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch() {
 }
 APS5_EXPORT("A-Hs-8mau+8", Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch);
 
-void APS5_VABI ERR_load_X509_strings_nid_postfix(void) {
+int APS5_VABI ERR_load_X509_strings_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI Unknown_AiNud8LR8B4_nid_no_patch() {
@@ -236,10 +237,12 @@ int APS5_VABI X509_CRL_get0_by_cert_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-void APS5_VABI ERR_load_PEM_strings_nid_postfix(void) {
+int APS5_VABI ERR_load_PEM_strings_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
-void APS5_VABI OpenSSL_add_all_digests_nid_postfix(void) {
+int APS5_VABI OpenSSL_add_all_digests_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch() {
