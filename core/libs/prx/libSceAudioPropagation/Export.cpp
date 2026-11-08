@@ -580,9 +580,14 @@ int APS5_VABI sceAudioPropagationResetAttributes(Attribute* attributes, std::uin
             if (!handle && attribute.id - 0x10002 >= 4) return ErrorInvalidArgument;
             if (attribute.valueSize != (attribute.id == 0x20000 ? 8 : 16)) return ErrorInvalidArgument;
             if (handle) {
-                const auto room = *reinterpret_cast<const AudioPropagationHandle*>(attribute.value);
-                const auto found = state.objects.find(room);
-                if (found == state.objects.end() || found->second.kind != Kind::Room || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+                const auto* rooms = reinterpret_cast<const AudioPropagationHandle*>(attribute.value);
+                const std::size_t roomCount = attribute.id == 0x10001 ? 2 : 1;
+                for (std::size_t slot = 0; slot < roomCount; ++slot) {
+                    const auto room = rooms[slot];
+                    if (attribute.id == 0x20000 && room == 0) continue;
+                    const auto found = state.objects.find(room);
+                    if (found == state.objects.end() || found->second.kind != Kind::Room || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
+                }
             }
         } else if (attribute.id <= 7) {
             constexpr std::array<std::size_t, 8> sizes{16, 16, 16, 16, 24, 8, 16, 8};

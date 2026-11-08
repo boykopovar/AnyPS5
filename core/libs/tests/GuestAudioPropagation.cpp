@@ -309,6 +309,8 @@ int main() {
     }
     resetValues[8][0] = static_cast<std::uint32_t>(rooms[0]);
     resetValues[8][1] = static_cast<std::uint32_t>(rooms[0] >> 32);
+    resetValues[8][2] = static_cast<std::uint32_t>(rooms[1]);
+    resetValues[8][3] = static_cast<std::uint32_t>(rooms[1] >> 32);
     Require(sceAudioPropagationResetAttributes(resets, 12) == 0, "reset of all writable attributes");
     constexpr std::size_t resetWritten[12]{12, 12, 16, 16, 16, 4, 8, 8, 16, 12, 12, 12};
     constexpr std::uint32_t resetExpected[][6]{{0, 0, 0}, {0, 0, 0x3f800000}, {3, 0x42c80000, 0x3f800000, 0x3f800000}, {0x3f800000, 0x41f00000, 0x3f333333, 0x43870000}, {0, 0, 0, 0}, {0}, {0, 0}, {0, 0}, {0, 0, 0, 0}, {0x3f000000, 0x3f000000, 0x3f000000}, {0, 0, 0x3f800000}, {0, 0x3f800000, 0}};
@@ -332,6 +334,19 @@ int main() {
     resetValues[0][0] = static_cast<std::uint32_t>(source);
     resetValues[0][1] = static_cast<std::uint32_t>(source >> 32);
     Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a non-room handle");
+    resetValues[0][0] = 0;
+    resetValues[0][1] = 0;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset rejected a null 0x20000 handle");
+    resets[0].id = 0x10001;
+    resets[0].valueSize = 16;
+    resetValues[0][0] = static_cast<std::uint32_t>(rooms[0]);
+    resetValues[0][1] = static_cast<std::uint32_t>(rooms[0] >> 32);
+    resetValues[0][2] = 0;
+    resetValues[0][3] = 0;
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a null second room handle");
+    resetValues[0][2] = static_cast<std::uint32_t>(source);
+    resetValues[0][3] = static_cast<std::uint32_t>(source >> 32);
+    Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidHandle, "reset accepted a non-room second handle");
     resets[0].id = 8;
     Require(sceAudioPropagationResetAttributes(resets, 1) == AudioPropagation::ErrorInvalidArgument, "reset accepted an unknown attribute");
 
