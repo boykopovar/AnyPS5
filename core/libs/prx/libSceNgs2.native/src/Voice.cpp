@@ -159,6 +159,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
                     }
                     fx.flags |= 3;
                 }
+                for (auto& port : ports) port.mixed = false;
             }
             break;
         case SCE_NGS2_VOICE_EVENT_STOP:
@@ -550,6 +551,15 @@ static int ControlUserFx2(Ngs2Voice& voice, std::uint32_t index, const Ngs2Custo
 
 static Ngs2Voice* PatchDest(const Ngs2Voice& voice, const Ngs2VoicePatchParam& patch);
 
+static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
+    if (param.index >= voice.rack->maxFilters) APS5_INVALID_ARG_EX;
+    if (param.type != 0) throw std::runtime_error("NGS2: submixer filter type " + std::to_string(param.type) + " is not implemented");
+}
+
+static void CheckSubmixerCompressor(const Ngs2SubmixerVoiceCompressorParam& param) {
+    if ((param.flags & 0x1u) == 0) throw std::runtime_error("NGS2: an enabled submixer compressor (flags " + Ngs2Hex(param.flags) + ") is not implemented");
+}
+
 static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     if (param.header.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
     if (param.index >= voice.rack->maxFilters) throw Ngs2ReturnCode{PS4_LIBRARY ? SCE_NGS2_ERROR_PS4_INVALID_FILTER_INDEX : SCE_NGS2_ERROR_INVALID_PARAM_ID};
@@ -622,6 +632,14 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX)
         return ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
+    if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER) {
+        CheckSubmixerFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param));
+        return CopyParam(param);
+    }
+    if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
+        CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
+        return CopyParam(param);
+    }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
         const auto& value = ParamAs<Ngs2SubmixerVoiceSetupParam>(param);
         if (value.flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
@@ -707,7 +725,6 @@ static Ngs2PendingControl CaptureCommandControl(Ngs2Voice& voice, const Ngs2Voic
 static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 
 void Ngs2Voice::ApplyPendingControls() {
-    Ngs2PrepareControlMix(*this);
     bool restart = false, stop = false, kill = false;
     std::uint32_t pause = 0;
     const auto applyEvents = [&] {
@@ -772,7 +789,6 @@ void Ngs2Voice::ApplyPendingControls() {
                         port.detachedDest = 0;
                         port.destInput = patch.dest_input_id;
                     } else ApplyParam(*this, param);
-                    if (param.id == SCE_NGS2_VOICE_PARAM_PATCH) ports[reinterpret_cast<const Ngs2VoicePatchParam&>(param).port].rampFrom.clear();
                 } else Ngs2ApplyCustomParam(*this, value.header);
             }, control);
             ++applied;
@@ -1036,6 +1052,16 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_SUBMIXER:
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER) {
                 SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type);
+                return;
+            }
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER) {
+                const auto& filter = ParamAs<Ngs2SamplerVoiceFilterParam>(param);
+                CheckSubmixerFilter(voice, filter);
+                if (filter.index < voice.filters.size()) voice.filters[filter.index] = {};
+                return;
+            }
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR) {
+                CheckSubmixerCompressor(ParamAs<Ngs2SubmixerVoiceCompressorParam>(param));
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {

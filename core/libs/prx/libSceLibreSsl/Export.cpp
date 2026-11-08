@@ -219,17 +219,7 @@ int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void) {
 }
 
 
-int APS5_VABI OBJ_nid2sn_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OBJ_obj2nid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OBJ_sn2nid_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
