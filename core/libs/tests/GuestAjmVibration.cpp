@@ -123,6 +123,8 @@ void Parse() {
     std::memset(&info, 0xAA, sizeof(info));
     Require(sceAjmDecAt9ParseConfigData(invalid.data(), &info) == static_cast<int>(0x80930005), "invalid version accepted");
     Require(info.superframe_size == 0xAAAAAAAAu, "invalid parse changed output");
+    Require(sceAjmDecAt9ParseConfigData(nullptr, &info) == static_cast<int>(0x80930005), "null config data accepted");
+    Require(sceAjmDecAt9ParseConfigData(invalid.data(), nullptr) == static_cast<int>(0x80930005), "null config info accepted");
 }
 }
 
@@ -131,6 +133,11 @@ int main() {
         Parse();
         std::uint32_t context = 0;
         Require(sceAjmInitialize(0, &context) == 0, "initialize AJM");
+        Require(sceAjmInstanceCreate(context, 1, 0, nullptr) == static_cast<int>(0x80930005), "null instance pointer accepted");
+        Require(sceAjmInstanceDestroy(context, 0x99999) == static_cast<int>(0x80930003), "destroy invalid instance succeeded");
+        AjmBatchInfo batchInfo{};
+        Require(sceAjmBatchInitialize(nullptr, 1024, &batchInfo) == static_cast<int>(0x80930005), "null batch buffer accepted");
+        Require(sceAjmBatchInitialize(&batchInfo, 1024, nullptr) == static_cast<int>(0x80930005), "null batch info accepted");
         const auto left = Decode<float>(context, 1, 2, {1});
         const auto right = Decode<float>(context, 1, 2, {2});
         const auto stereo = Decode<float>(context, 2, 2, {1, 2}, 7, true, true);
