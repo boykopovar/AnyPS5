@@ -1,5 +1,6 @@
 add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeType/src/OutlineBorders.cpp
-        ../libSceFreeType/src/OutlineDecompose.cpp ../libSceFreeType/src/OutlineOrientation.cpp ../libSceFreeType/src/Trigonometry.cpp)
+        ../libSceFreeType/src/OutlineDecompose.cpp ../libSceFreeType/src/OutlineOrientation.cpp ../libSceFreeType/src/Trigonometry.cpp
+        ../libSceFreeType/src/MemoryRecord.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
 target_link_libraries(libSceFreeTypeOt PRIVATE freetype)
@@ -58,7 +59,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceFreeTypeOt PRIVATE src/Memory.cpp)
+target_sources(libSceFreeTypeOt PRIVATE src/Memory.cpp src/Outline.cpp)
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_ot_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtMemory.cpp)
     target_include_directories(guest_freetype_ot_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -89,5 +90,27 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_freetype_ot_raccess PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_ot_outline_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOtOutline.cpp)
+    target_include_directories(guest_freetype_ot_outline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_ot_outline_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_freetype_ot_outline_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_ot_outline_tests)
+    add_custom_target(guest_freetype_ot_outline_libraries DEPENDS
+        libSceFreeTypeOt ${PATCHED_DIR}/libSceFreeTypeOt.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_freetype_ot_outline_tests guest_freetype_ot_outline_libraries)
+    add_test(NAME guest_freetype_ot_outline COMMAND guest_freetype_ot_outline_tests $<TARGET_FILE:libSceFreeTypeOt> raw)
+    add_test(NAME guest_freetype_ot_outline_patched COMMAND guest_freetype_ot_outline_tests ${PATCHED_DIR}/libSceFreeTypeOt.prx patched)
+    set_tests_properties(guest_freetype_ot_outline guest_freetype_ot_outline_patched PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_ot_outline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
+        set_tests_properties(guest_freetype_ot_outline_patched PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
     endif()
 endif()

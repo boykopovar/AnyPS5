@@ -32,7 +32,6 @@
 #include "prx/libc/include/HostExecutable.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
-#include "prx/libkernel/System/include/InstanceLockHost.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
 #include "prx/libSceUserService/UserService.hpp"
@@ -145,7 +144,6 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
 
 void StartHostExecutable(HostLaunch& launch) {
     LogFileRelease_nid_no_patch();
-    ReleaseHostInstanceLock_nid_no_patch();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
