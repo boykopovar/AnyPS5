@@ -36,6 +36,7 @@
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
+- [libScePad feature toggles](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - undocumented family, so the ladder is inferred. Ten toggles whose state the host does not model - `scePadDisableActiveProfileChange` and its device-id variant, the controller and profile indicators, the tracking-LED battery saver, transport buttons, auto detect, USB connection and play/pause emulation - check initialization (and the handle where one is taken) and answer PAD_OK without storing anything; device-id validation is unknown, so any id is accepted. `scePadDisableDataConversion` and `scePadEnablePs4CompatibleMode` refuse the changing direction and treat the no-change direction as a no-op, per the `scePadSetAngularVelocityBiasCorrectionState` precedent. For `scePadEnableSpecificDeviceClass`, firmware 13.42's libScePad.sprx (disassembly, not a console) accepts only class 9: every other class gets INVALID_ARG, and class 9 throws because its flag is not modelled
 - [scePadSetLightBarBaseBrightness](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns success for known handles without changing the hardware state. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
 
 ### Unknown function info
