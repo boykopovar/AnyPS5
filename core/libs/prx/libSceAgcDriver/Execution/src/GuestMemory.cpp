@@ -1623,13 +1623,16 @@ struct EpochCollectMap {
     }
 
     void Record(std::uintptr_t begin, std::uintptr_t end) {
-        auto next = ranges.lower_bound(begin);
+        auto next = ranges.upper_bound(begin);
         if (next != ranges.begin()) {
             const auto previous = std::prev(next);
             if (previous->second >= begin) {
-                begin = previous->first;
-                end = std::max(end, previous->second);
-                next = ranges.erase(previous);
+                previous->second = std::max(end, previous->second);
+                while (next != ranges.end() && next->first <= previous->second) {
+                    previous->second = std::max(previous->second, next->second);
+                    next = ranges.erase(next);
+                }
+                return;
             }
         }
         while (next != ranges.end() && next->first <= end) {
@@ -1779,6 +1782,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     constexpr std::uint64_t page = 4096;
     auto first = address & ~(page - 1);
     auto stop = (address + bytes + page - 1) & ~(page - 1);
+    if (stop <= first) return 0;
     // One epoch for the lookup and the entry made after the walk: an unbumped thread's fresh epoch
     // must not differ between them.
     const auto epoch = currentCollectEpoch();
