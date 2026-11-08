@@ -79,6 +79,11 @@ struct StreamManipulator {
     std::int32_t argument;
 };
 
+struct SceV2StreamManipulator {
+    void (APS5_VABI* function)(GuestLocale::SceV2IosBase*, std::uint64_t);
+    std::uint64_t argument;
+};
+
 using Uint128 = unsigned __int128;
 
 struct Xtime {
@@ -109,7 +114,7 @@ extern "C" {
 
 int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg);
 void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info);
-int APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char* expression, const char* function);
 void APS5_VABI libc___cxa_finalize(void* dsoHandle);
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit);
 char* APS5_VABI strdup_nid_postfix(const char* source);
@@ -284,6 +289,7 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream);
 int APS5_VABI malloc_stats_fast_nid_postfix(void* stats);
 size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer);
 void* APS5_VABI malloc_nid_postfix(size_t size);
+void APS5_VABI __std_free_crt_nid_postfix(void* ptr);
 void APS5_VABI free_nid_postfix(void* ptr);
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize);
 void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize);
@@ -635,6 +641,10 @@ GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale5_InitEb_nid_postfix
 GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale16_GetgloballocaleEv_nid_postfix();
 void APS5_VABI _ZNSt8__sce_v28ios_base7_AddstdEPS0__nid_postfix(GuestLocale::SceV2IosBase* self);
 void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLocale::SceV2IosBase* self);
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v213resetiosflagsEi_nid_postfix(std::int32_t mask);
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v211setiosflagsEi_nid_postfix(std::int32_t mask);
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v27setbaseEi_nid_postfix(std::int32_t base);
+SceV2StreamManipulator APS5_VABI _ZNSt8__sce_v212setprecisionEx_nid_postfix(std::int64_t precision);
 void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet);
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_ctorEPS1_RKS1__nid_postfix(GuestLocale::Implementation* self, const GuestLocale::Implementation* source);
 void APS5_VABI _ZNSt8__sce_v26locale7_Locimp12_Locimp_dtorEPS1__nid_postfix(GuestLocale::Implementation* self);
@@ -1300,6 +1310,8 @@ int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, i
 void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();
 void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix();
 int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target);
+void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime* now);
+Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target);
 int APS5_VABI _Smtx_init_nid_postfix(void** smtx);
 int APS5_VABI _Smtx_init_with_name_nid_postfix(void** smtx, const char* name);
 int APS5_VABI _Smtx_destroy_nid_postfix(void** smtx);
@@ -1706,6 +1718,7 @@ std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value);
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName);
 void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLocale::SceV2Locinfo* self);
+const char* APS5_VABI _ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(int value);
 int APS5_VABI feupdateenv_nid_postfix(const GuestFloatingPointEnvironment* environment);
 int APS5_VABI feholdexcept_nid_postfix(GuestFloatingPointEnvironment* environment);
 extern const GuestFloatingPointEnvironment __fe_dfl_env_nid_postfix;
