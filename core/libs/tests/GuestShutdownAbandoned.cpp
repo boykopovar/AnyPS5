@@ -39,7 +39,7 @@ static int LateJoinCase() {
         held.lock();
         held.lock();
     });
-    JoinWhenReturnedOrEndIfAbandoned(worker, returned, LibcExitCode_nid_no_patch());
+    JoinWhenReturnedOrEndIfAbandoned(worker, returned, 42);
     return 2;
 }
 
