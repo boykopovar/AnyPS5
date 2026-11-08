@@ -191,10 +191,22 @@ int CondOperations::LoadAttribute(const PthreadCondattr* attr, PthreadCondattr& 
 int CondOperations::SetName(PthreadCond* cond, const char* name) {
     if (!name)
         throw std::invalid_argument("Condition variable name is null");
+    if (!cond)
+        throw std::invalid_argument("Condition variable pointer is null");
+    PthreadCond probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, cond, sizeof(probe)))
+        return SCE_KERNEL_ERROR_EFAULT;
     std::lock_guard lock(InitializationMutex());
-    const auto current = resolveLocked(cond);
-    if (!current)
+    const auto current = std::atomic_ref<PthreadCond>(*cond).load(std::memory_order_acquire);
+    if (current == destroyedCond())
         return SCE_KERNEL_ERROR_EINVAL;
+    if (!current) {
+        auto created = std::make_unique<PthreadCondPrivate>();
+        PthreadCond handle = created.get();
+        if (!GuestCopyOut_nid_no_patch(cond, &handle, sizeof(handle)))
+            return SCE_KERNEL_ERROR_EFAULT;
+        created.release();
+    }
     return 0;
 }
 
@@ -229,24 +241,36 @@ int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid cl
 int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char*) {
     if (!cond)
         throw std::invalid_argument("Condition variable pointer is null");
+    PthreadCondattr attribute = nullptr;
+    if (attr && !GuestCopyIn_nid_no_patch(&attribute, attr, sizeof(attribute)))
+        return SCE_KERNEL_ERROR_EFAULT;
     auto replacement = std::make_unique<PthreadCondPrivate>();
-    if (attr && *attr)
-        replacement->_clockid = (*attr)->_clockid;
+    if (attribute)
+        replacement->_clockid = attribute->_clockid;
+    PthreadCond handle = replacement.get();
     std::lock_guard lock(InitializationMutex());
-    std::atomic_ref<PthreadCond>(*cond).store(replacement.release(), std::memory_order_release);
+    if (!GuestCopyOut_nid_no_patch(cond, &handle, sizeof(handle)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    replacement.release();
     return 0;
 }
 
 int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) {
     if (!cond)
         throw std::invalid_argument("Condition variable pointer is null");
+    PthreadCond probe = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&probe, cond, sizeof(probe)))
+        return SCE_KERNEL_ERROR_EFAULT;
     std::lock_guard lock(InitializationMutex());
     if (*cond == destroyedCond())
         return SCE_KERNEL_ERROR_EINVAL;
     if (*cond == nullptr)
         return 0;
-    delete *cond;
-    std::atomic_ref<PthreadCond>(*cond).store(destroyedCond(), std::memory_order_release);
+    PthreadCond released = *cond;
+    PthreadCond destroyed = destroyedCond();
+    if (!GuestCopyOut_nid_no_patch(cond, &destroyed, sizeof(destroyed)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    delete released;
     return 0;
 }
 
