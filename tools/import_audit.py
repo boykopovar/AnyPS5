@@ -119,8 +119,10 @@ def elf_program_dynamic_symbols(path, data):
             break
         if tag == 1:
             needed_offsets.append(value)
-        elif tag in ELF_SYMBOL_TAGS and dynamic.setdefault(tag, value) != value:
+        elif tag in ELF_SYMBOL_TAGS and dynamic.get(tag, value) != value:
             raise AuditError(f"{path}: conflicting duplicate {ELF_SYMBOL_TAGS[tag]} at 0x{dynamic_offset + position:x}")
+        else:
+            dynamic[tag] = value
     if not terminated:
         raise AuditError(f"{path}: dynamic segment is not terminated by DT_NULL")
     string_address = dynamic.get(5)
