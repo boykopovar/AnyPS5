@@ -290,20 +290,27 @@ def select(graph, changed, reasons=None):
                 reasons[name] += ["registration: " + path for path in sorted(files & set(test["registered"]))]
                 reasons[name] += ["directory: " + directory for directory in dirs
                                   if any(path.startswith(directory) for path in scope | set(test["registered"]))]
-    setups = collections.defaultdict(set)
+    setups, consumers = collections.defaultdict(set), collections.defaultdict(set)
     for name, test in tests.items():
         for fixture in test["sets"]:
             setups[fixture].add(name)
+        for fixture in test["requires"]:
+            consumers[fixture].add(name)
     todo = list(picked)
     while todo:
         name = todo.pop()
         test = tests[name]
-        for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"])):
+        for extra in set(test["depends"]).union(*(setups[f] for f in test["requires"]),
+                                               *(consumers[f] for f in test["sets"])):
             if extra not in tests:
                 continue
             if reasons is not None:
-                fixture = set(test["requires"]) & set(tests[extra]["sets"])
-                kind = "fixture setup for: " if fixture else "dependency of: "
+                if set(test["requires"]) & set(tests[extra]["sets"]):
+                    kind = "fixture setup for: "
+                elif set(test["sets"]) & set(tests[extra]["requires"]):
+                    kind = "fixture consumer of: "
+                else:
+                    kind = "dependency of: "
                 reasons.setdefault(extra, []).append(kind + name)
             if extra not in picked:
                 picked.add(extra)
