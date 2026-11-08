@@ -354,6 +354,18 @@ void PadInput::applyMappingSnapshot() {
     keyboardMouse.Replace(*snapshot);
 }
 
+void PadInput::reloadInputMapping() {
+    Pad::InputConfiguration configuration;
+    std::string error;
+    if (!Pad::TryLoadInputMapping(appTitleId(), configuration, error)) {
+        APS5_LOG_ERR("Pad: input mapping reload failed, keeping the previous mapping: %s", error.c_str());
+        return;
+    }
+    mappings.Publish(std::move(configuration));
+    applyMappingSnapshot();
+    APS5_LOG_OUT("Pad: input mapping reloaded");
+}
+
 void PadInput::setMouseMode(bool enabled) {
     SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, "0");
     SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "0");
@@ -484,6 +496,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
+    if (requests.reloadInputMapping) reloadInputMapping();
     if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
     if (requests.togglePerformanceOverlay && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverTogglePerformanceOverlay_nid_postfix();
     if (requests.screenshot && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) AgcDriverRequestScreenshot_nid_postfix();

@@ -56,6 +56,7 @@ private:
     explicit PadInput(Pad::InputConfiguration configuration);
     void publish(std::uint64_t frame);
     void applyMappingSnapshot();
+    void reloadInputMapping();
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();

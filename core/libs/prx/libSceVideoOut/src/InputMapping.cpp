@@ -376,6 +376,16 @@ void Pad::InputMappingStore::Publish(InputConfiguration configuration) {
     ++generation;
 }
 
+bool Pad::TryLoadInputMapping(std::string_view titleId, InputConfiguration& configuration, std::string& error) {
+    try {
+        configuration = LoadInputMapping(titleId);
+    } catch (const std::runtime_error& failure) {
+        error = failure.what();
+        return false;
+    }
+    return true;
+}
+
 std::array<std::uint8_t, 2> Pad::StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent) {
     if (deadzonePercent < 0 || deadzonePercent > MaxStickDeadzonePercent) throw std::invalid_argument("Pad: stick deadzone out of range");
     if (deadzonePercent == 0) return {stickByte(x), stickByte(y)};

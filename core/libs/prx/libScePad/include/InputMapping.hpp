@@ -94,6 +94,7 @@ inline constexpr std::array InputMapping{
 InputConfiguration LoadInputMapping(std::string_view titleId = {});
 void ApplyInputMapping(InputConfiguration& configuration, std::istream& input, std::string_view source);
 std::string InputProfileName(std::string_view titleId);
+bool TryLoadInputMapping(std::string_view titleId, InputConfiguration& configuration, std::string& error);
 class InputMappingStore {
 public:
     explicit InputMappingStore(InputConfiguration initial);
