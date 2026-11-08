@@ -462,6 +462,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_debt_length COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
         set_tests_properties(conventions_debt_length PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_debt_fragments COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_fragments.py)
+        set_tests_properties(conventions_debt_fragments PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
@@ -602,6 +605,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
+        add_test(NAME debt_fold COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_fold.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
