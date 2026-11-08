@@ -297,9 +297,20 @@ private:
     Tee _tee;
 };
 
+bool ReadLimits(std::uint64_t& maxBytes, unsigned& keep, std::string& error) {
+    std::string text;
+    const bool setMax = ReadVariable(MaxBytesName, text);
+    if (!ParseMaxBytes(setMax ? text.c_str() : nullptr, maxBytes, error)) return false;
+    const bool setKeep = ReadVariable(KeepName, text);
+    return ParseKeep(setKeep ? text.c_str() : nullptr, keep, error);
+}
+
 class SystemFactoryImpl final : public Factory {
 public:
     std::unique_ptr<Session> Create(const std::string& path, std::string& error) override {
+        std::uint64_t maxBytes = 0;
+        unsigned keep = 0;
+        if (!ReadLimits(maxBytes, keep, error)) return nullptr;
         Handle file = NoHandle;
         std::string reason;
         if (!OpenAppend(path, file, reason)) {
@@ -332,6 +343,7 @@ public:
 #endif
         }
         auto session = std::make_unique<SystemSession>(file, originalOutput, originalError, output, errors);
+        session->Output().SetRotation(path, maxBytes, keep);
         const std::string note = std::string("[log] ANYPS5_LOG_FILE: appending to this file, process ") + std::to_string(static_cast<long>(
 #ifdef _WIN32
             _getpid()
