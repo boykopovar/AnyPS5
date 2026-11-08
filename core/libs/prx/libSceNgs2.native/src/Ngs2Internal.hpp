@@ -195,6 +195,7 @@ struct Ngs2Voice {
     alignas(std::atomic_ref<std::uint32_t>::required_alignment) mutable std::uint32_t queuedBlocks = 0;
     const std::uint8_t* queuedTailEnd = nullptr;
     std::uintptr_t queuedTailUserData = 0;
+    std::uint32_t queuedTailBytes = 0;
     bool decodePendingAtGrain = false;
     std::vector<Ngs2PendingControl> pendingControls;
     bool pendingPlay = false;
