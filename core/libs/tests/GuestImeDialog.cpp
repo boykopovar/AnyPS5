@@ -4,6 +4,7 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -216,6 +217,12 @@ int main() {
     panelWidth = 0;
     panelHeight = 0;
     Require(sceImeDialogGetPanelSizeExtended(nullptr, nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
+    errno = 71;
+    Require(sceImeDialogInit(reinterpret_cast<const Param*>(0x10), nullptr) == ErrorInvalidAddress);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceImeDialogInit(&param, reinterpret_cast<const ExtendedParam*>(0x10)) == ErrorInvalidAddress);
+    Require(errno == 71);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     const Param empty = DialogParam(buffer, 0);
     Require(sceImeDialogInit(&empty, nullptr) == ErrorInvalidMaxTextLength);
@@ -230,18 +237,27 @@ int main() {
     const auto starAddress = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&star));
     Require(sceImeDialogGetCurrentStarState(starAddress) == ErrorNotInUse && star == 0xa5a5a5a5u);
     Require(sceImeDialogSetPanelPosition(640, 360) == ErrorNotInUse);
+    errno = 71;
+    Require(sceImeDialogInitInternal(reinterpret_cast<const Param*>(0x10), nullptr) == ErrorInvalidAddress);
+    Require(errno == 71);
     Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
     Require(sceImeDialogInitInternal(&empty, nullptr) == ErrorInvalidMaxTextLength);
     Require(sceImeDialogGetStatus() == StatusNone);
     Require(sceImeDialogInitInternal(&param, nullptr) == 0);
     Require(sceImeDialogGetStatus() == StatusRunning && ImeCapturesKeyboard_nid_postfix());
     Require(sceImeDialogInitInternal(&param, nullptr) == ErrorBusy);
+    errno = 71;
+    Require(sceImeDialogInitInternal(reinterpret_cast<const Param*>(0x10), nullptr) == ErrorBusy);
+    Require(errno == 71);
     Require(sceImeDialogGetCurrentStarState(0) == ErrorInvalidAddress);
     Require(sceImeDialogGetCurrentStarState(starAddress) == 0 && star == 0);
     Require(sceImeDialogSetPanelPosition(640, 360) == ErrorSuspending);
     Require(sceImeDialogAbort() == 0);
     Require(sceImeDialogSetPanelPosition(0, 0) == ErrorSuspending);
     Close();
+    errno = 71;
+    Require(sceImeDialogInit(reinterpret_cast<const Param*>(0x10), nullptr) == ErrorInvalidAddress);
+    Require(errno == 71);
 
     Require(!ImeCapturesPad_nid_postfix());
     buffer[0] = u'\0';

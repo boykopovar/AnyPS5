@@ -1,6 +1,7 @@
 #include "prx/libSceImeDialog/include/Api.hpp"
 #include "prx/libSceImeDialog/include/PadKeyboard.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -278,16 +279,43 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     std::lock_guard lock(g_mutex);
     if (g_dialog.status != StatusNone) return ErrorBusy;
     if (param == nullptr) return ErrorInvalidAddress;
-    if (param->max_text_length == 0 || param->max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
-    if (param->input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    Param localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidAddress;
+    if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
+    if (localParam.input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
+    ExtendedParam localExtended{};
+    const ExtendedParam* extendedPtr = nullptr;
+    if (extended != nullptr) {
+        const int savedErrnoExt = errno;
+        const bool copiedExt = GuestCopyIn_nid_no_patch(&localExtended, extended, sizeof(localExtended));
+        errno = savedErrnoExt;
+        if (!copiedExt) return ErrorInvalidAddress;
+        extendedPtr = &localExtended;
+    }
     g_dialog = Dialog{};
-    g_dialog.buffer = param->input_text_buffer;
-    g_dialog.maxLength = param->max_text_length;
+    g_dialog.buffer = localParam.input_text_buffer;
+    g_dialog.maxLength = localParam.max_text_length;
     std::size_t length = 0;
-    while (length < param->max_text_length && param->input_text_buffer[length] != u'\0') ++length;
-    g_dialog.text.assign(param->input_text_buffer, length);
+    while (length < localParam.max_text_length) {
+        char16_t ch = u'\0';
+        const int savedErrnoCh = errno;
+        const bool copiedCh = GuestCopyIn_nid_no_patch(&ch, &localParam.input_text_buffer[length], sizeof(ch));
+        errno = savedErrnoCh;
+        if (!copiedCh || ch == u'\0') break;
+        ++length;
+    }
+    std::u16string initialText(length, u'\0');
+    if (length > 0) {
+        const int savedErrnoText = errno;
+        GuestCopyIn_nid_no_patch(initialText.data(), localParam.input_text_buffer, length * sizeof(char16_t));
+        errno = savedErrnoText;
+    }
+    g_dialog.text = std::move(initialText);
     g_dialog.caret = length;
-    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(*param, extended));
+    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extendedPtr));
     g_dialog.status = StatusRunning;
     ImeSetHostTextSink_nid_no_patch(&Receive);
     ImeSetHostPreeditSink_nid_no_patch(&ReceivePreedit);
