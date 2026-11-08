@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(vector_half_double_output_modifiers_tests ${LIBS_INCLUDE_DIR}/tests/VectorHalfDoubleOutputModifiers.cpp)
+    target_link_libraries(vector_half_double_output_modifiers_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(vector_half_double_output_modifiers_tests)
+    add_test(NAME vector_half_double_output_modifiers COMMAND vector_half_double_output_modifiers_tests)
+    if(WIN32)
+        set_tests_properties(vector_half_double_output_modifiers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <ios>
 #include <stdexcept>
@@ -21,6 +22,16 @@ void RequireGood(const std::ofstream& output, const char* operation, const std::
     if (!output) throw std::ios_base::failure(std::string(operation) + " " + path.string() + " failed");
 }
 
+}
+
+std::filesystem::path TraceFile::Directory() {
+#ifdef _WIN32
+    const wchar_t* directory = _wgetenv(L"APS5_TRACE_DIR");
+    return std::filesystem::path(directory != nullptr ? directory : L".");
+#else
+    const char* directory = std::getenv("APS5_TRACE_DIR");
+    return std::filesystem::path(directory != nullptr ? directory : ".");
+#endif
 }
 
 void TraceFile::WriteGzip(const std::filesystem::path& path, std::string_view text) {

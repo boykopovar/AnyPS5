@@ -20,7 +20,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
-#include <vector>
 
 // No network is emulated: contexts, templates and requests can be created, but any request
 // that would touch the network fails with the library's network error.
@@ -192,8 +191,9 @@ int APS5_VABI sceHttpCreateEpoll(int http_ctx_id, HttpEpollHandle* eh) {
     if (!g_contexts.contains(http_ctx_id)) return ERROR_INVALID_ID;
     if (!eh) return ERROR_INVALID_VALUE;
     auto epoll = std::make_shared<HttpEpoll>();
-    *eh = epoll.get();
-    g_epolls.emplace(epoll.get(), std::move(epoll));
+    const auto handle = epoll.get();
+    g_epolls.emplace(handle, std::move(epoll));
+    *eh = handle;
     return 0;
 }
 
@@ -279,10 +279,17 @@ int APS5_VABI sceHttpGetStatusCode(int request_id, int* status_code) {
 int APS5_VABI sceHttpInit_nid_postfix(int memid, int ssl_ctx_id, uint64_t pool_size) {
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_stateMutex);
-    g_contextPoolSizes[id] = pool_size;
-    g_contextRegisteredIds[id] = {memid, ssl_ctx_id};
-    g_contexts.insert(id);
-    AddHttpContext(id);
+    try {
+        g_contextPoolSizes[id] = pool_size;
+        g_contextRegisteredIds[id] = {memid, ssl_ctx_id};
+        g_contexts.insert(id);
+        AddHttpContext(id);
+    } catch (...) {
+        g_contextPoolSizes.erase(id);
+        g_contextRegisteredIds.erase(id);
+        g_contexts.erase(id);
+        throw;
+    }
     return id;
 }
 
@@ -400,7 +407,7 @@ int APS5_VABI sceHttpsSetSslCallback(int id, HttpsCallback cbfunc, void* user_ar
 }
 
 int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
-    std::vector<std::shared_ptr<HttpEpoll>> epolls;
+    decltype(g_epolls) epolls;
     {
         std::lock_guard lock(g_stateMutex);
         g_contextPoolSizes.erase(http_ctx_id);
@@ -409,10 +416,9 @@ int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
         if (g_contexts.erase(http_ctx_id) == 0) return ERROR_INVALID_ID;
         RemoveHttpContext(http_ctx_id);
         if (!g_contexts.empty()) return 0;
-        for (auto& [handle, epoll] : g_epolls) epolls.push_back(std::move(epoll));
-        g_epolls.clear();
+        epolls.swap(g_epolls);
     }
-    for (const auto& epoll : epolls) MarkDestroyed(*epoll);
+    for (const auto& entry : epolls) MarkDestroyed(*entry.second);
     return 0;
 }
 
