@@ -39,7 +39,6 @@ int APS5_VABI ucol_getRules_nid_postfix();
 int APS5_VABI ucol_getStrength_nid_postfix();
 int APS5_VABI ucol_getTailoredSet_nid_postfix();
 int APS5_VABI ucol_open_nid_postfix();
-int APS5_VABI ucol_setAttribute_nid_postfix();
 int APS5_VABI ucol_setStrength_nid_postfix();
 int APS5_VABI ucol_strcoll_nid_postfix();
 int APS5_VABI ucol_strcollIter_nid_postfix();

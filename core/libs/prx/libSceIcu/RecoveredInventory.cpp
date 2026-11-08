@@ -151,10 +151,6 @@ int APS5_VABI ucol_open_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ucol_setAttribute_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ucol_setStrength_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
