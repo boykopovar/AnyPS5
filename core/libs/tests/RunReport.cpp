@@ -1135,6 +1135,23 @@ void FramePercentileTest() {
     Require(RunReport::FramePercentile(std::vector<double>{}, 0.5) == 0.0, "no frames give zero");
 }
 
+void FrameRingWiringTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    Require(collector.FrameTimesMilliseconds().empty(), "a run with no frame has frame times");
+    collector.NoteFramePresented();
+    Require(collector.FrameTimesMilliseconds().empty(), "the first frame has no interval yet");
+    for (int index = 0; index < 3; ++index) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        collector.NoteFramePresented();
+    }
+    const auto times = collector.FrameTimesMilliseconds();
+    Require(times.size() == 3, "three intervals were expected, got " + std::to_string(times.size()));
+    for (const double time : times) Require(time >= 15.0, "an interval is shorter than the sleep between presents");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1396,6 +1413,7 @@ int main(int argc, char** argv) {
         Run("dropped-entries-are-distinct", DroppedEntriesAreDistinctTest);
         Run("fixed-ring", FixedRingTest);
         Run("frame-percentile", FramePercentileTest);
+        Run("frame-ring-wiring", FrameRingWiringTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
