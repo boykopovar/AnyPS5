@@ -379,7 +379,8 @@ struct HttpClientState : Aps5HttpClient {
                 url = Redirect(parsed, headers.at("location"));
                 continue;
             }
-            if (status != 200 && status != 206) throw HttpFailure("HTTP source request was refused");
+            const bool empty = status == 416 && headers.contains("content-range") && headers.at("content-range") == "bytes */0";
+            if (status != 200 && status != 206 && !empty) throw HttpFailure("HTTP source request was refused");
             if (headers.contains("content-encoding") && Lower(headers.at("content-encoding")) != "identity") NotImplemented_nid_no_patch("HTTP client encoded HTTP representations");
             std::vector<std::uint8_t> body;
             if (headers.contains("transfer-encoding")) {
@@ -396,6 +397,7 @@ struct HttpClientState : Aps5HttpClient {
                 }
             } else if (headers.contains("content-length")) connection.Append(body, Number(headers.at("content-length")));
             else connection.UntilClosed(body);
+            if (empty) body.clear();
             std::uint64_t total = body.size();
             std::uint64_t first = 0;
             if (status == 206) {
@@ -403,7 +405,7 @@ struct HttpClientState : Aps5HttpClient {
                 const auto& range = headers.at("content-range");
                 const auto dash = range.find('-');
                 const auto slash = range.find('/');
-                if (!range.starts_with("bytes ") || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
+                if (Lower(range.substr(0, 6)) != "bytes " || dash == std::string::npos || slash <= dash) throw HttpFailure("invalid HTTP content range");
                 first = Number(std::string_view(range).substr(6, dash - 6));
                 const auto last = Number(std::string_view(range).substr(dash + 1, slash - dash - 1));
                 total = Number(std::string_view(range).substr(slash + 1));
