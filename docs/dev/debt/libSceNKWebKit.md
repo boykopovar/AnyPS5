@@ -24,6 +24,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF::Logger exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLogger.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Logger.cpp). A null `self`, a null method name or an oversized string throws instead of reproducing the upstream crash. Closes when: compared with a console module.
 
 ### Functional
+- [EmptyFrameLoaderClient document-loader notifications](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) (libSceNKWebKit) - four wrappers follow the empty `void` bodies in pinned [EmptyClients.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp#L670-L975) for `assignIdentifierToInitialRequest`, `updateCachedDocumentLoader`, `dispatchUnableToImplementPolicy` and `setTitle`. Their exported NIDs remain unchanged; the physical console ABI is unverified.
 - [WTF ICU version queries](../../../core/libs/prx/libSceNKWebKit/src/WtfPrimitives.cpp) (libSceNKWebKit) - `WTF::ICU::majorVersion` and `WTF::ICU::minorVersion` follow [ICUHelpers.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/unicode/icu/ICUHelpers.cpp) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. Both functions query the underlying ICU version via `u_getVersion_nid_postfix` with `std::call_once` synchronization and return version components `[0]` and `[1]`. Runtime version values reflect `libSceIcu`'s reported ICU 78.1 release and have not been measured against console hardware traces.
 
 - [WKURL URL component and comparison helpers](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKURLCopyHostName`, `WKURLCopyPath`, `WKURLCopyScheme`, `WKURLCopyLastPathComponent`, `WKURLCreateWithBaseURL` and `WKURLIsEqual` create and inspect `WKURLRef` host objects, resolving relative URLs against base URLs and comparing canonical URL strings; console execution is unverified.
@@ -3447,7 +3448,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClient25didDisplayInsecureContentEv` | `J7IVFPM6rXM` |
 | `_ZN7WebCore22EmptyFrameLoaderClient25setMainFrameDocumentReadyEb` | `QlFo-lidi-Q` |
 | `_ZN7WebCore22EmptyFrameLoaderClient26didReplaceMultipartContentEv` | `fe-BQU7Mx7Q` |
-| `_ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE` | `WZuPFqNHaW4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient27willReplaceMultipartContentEv` | `cIcJ41juvWI` |
 | `_ZN7WebCore22EmptyFrameLoaderClient29dispatchDidFinishDocumentLoadEv` | `XlIysvPfuNQ` |
 | `_ZN7WebCore22EmptyFrameLoaderClient29dispatchDidPopStateWithinPageEv` | `5aXKyDH-FQs` |
@@ -3458,7 +3458,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidDispatchOnloadEventsEv` | `fZtIw2Exp58` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE` | `SwNTIE7lkj4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidStartProvisionalLoadEv` | `GDxzthIy7Qk` |
-| `_ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE` | `Ctm-m3Y326Q` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31prepareForDataSourceReplacementEv` | `6C8Npd4b2w4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPageEv` | `kxuIic9ejsg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv` | `701xv4i88-g` |
@@ -3468,7 +3467,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE` | `pHmVAreojKs` |
 | `_ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv` | `8RJJo61fpeg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv` | `Oy92GWEKFIQ` |
-| `_ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE` | `2oNey8Gkn4M` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC1ERKS0_` | `E2pRXDTKB68` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC1Ev` | `GcUPkO7ruRw` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC2ERKS0_` | `YQZ9c5jMwJc` |
