@@ -258,14 +258,127 @@ static void InitializeLinuxGuestModule(void* native) {
 }
 #endif
 #ifdef _WIN32
-static void InitializeDeferredModule(HMODULE native) {
+static std::mutex initializedLock;
+static std::condition_variable initializedChanged;
+
+static void InitializeDeferredModule(HMODULE native, const std::string& reason = {});
+
+struct DeferredLists {
+    std::vector<std::string> dependencies;
+    std::vector<std::string> sweep;
+};
+
+static DeferredLists DeferredListNames(const std::uint32_t* table) {
+    constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
+    constexpr std::uint32_t dependenciesMagic = 0x44504541;
+    constexpr std::uint32_t sweepMagic = 0x57534550;
+    constexpr std::uint32_t maximumDependencies = 4096;
+    DeferredLists lists;
+    const auto count = table[1];
+    if (count == initializing) return lists;
+    const auto* cursor = reinterpret_cast<const char*>(table + 2 + count);
+    for (int block = 0; block < 2; ++block) {
+        std::uint32_t header[2];
+        std::memcpy(header, cursor, sizeof(header));
+        if ((header[0] != dependenciesMagic && header[0] != sweepMagic) || header[1] == 0 || header[1] > maximumDependencies) break;
+        auto& names = header[0] == dependenciesMagic ? lists.dependencies : lists.sweep;
+        cursor += sizeof(header);
+        for (std::uint32_t index = 0; index < header[1]; ++index) {
+            names.emplace_back(cursor);
+            cursor += names.back().size() + 1;
+        }
+    }
+    return lists;
+}
+
+static std::string ModuleFileName(HMODULE module) {
+    char buffer[MAX_PATH] = {};
+    const auto length = GetModuleFileNameA(module, buffer, MAX_PATH);
+    return std::string(buffer, length < MAX_PATH ? length : 0);
+}
+
+static void InitializeDeferredModule(HMODULE native, const std::string& reason) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
-    static std::mutex initializedLock;
-    static std::condition_variable initializedChanged;
+    static int sweepState = 0;
+    static DWORD sweepOwner = 0;
+    struct ResolvingStorage {};
+    struct StartedResultsStorage {};
+    auto& resolving = HostThreadLocal<std::vector<HMODULE>, ResolvingStorage>();
+    auto& startedResults = HostThreadLocal<std::map<HMODULE, int>, StartedResultsStorage>();
+    thread_local int depth = 0;
+    struct Depth {
+        int& value;
+        std::map<HMODULE, int>& results;
+        Depth(int& counter, std::map<HMODULE, int>& stored) : value(counter), results(stored) { ++value; }
+        ~Depth() { if (--value == 0) results.clear(); }
+    } scope(depth, startedResults);
+    if (std::find(resolving.begin(), resolving.end(), native) != resolving.end()) return;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
+    DeferredLists lists;
+    {
+        std::lock_guard lock(initializedLock);
+        lists = DeferredListNames(table);
+    }
+    auto* pendingArgs = const_cast<PendingModuleArgs*>(static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch()));
+    const auto initiating = *pendingArgs;
+    const auto startAll = [&](const std::vector<std::string>& names, const std::string& why, const char* kind, const bool sweeping) {
+        if (!sweeping) resolving.push_back(native);
+        try {
+            for (const auto& name : names) {
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && sweeping) {
+                    try {
+                        InitializeDeferredModule(dependency, why);
+                    } catch (const std::exception& error) {
+                        std::fprintf(stderr, "[module] deferred sweep: %s failed: %s\n", name.c_str(), error.what());
+                    } catch (...) {
+                        std::fprintf(stderr, "[module] deferred sweep: %s failed: unknown exception\n", name.c_str());
+                    }
+                } else if (dependency && dependency != native) InitializeDeferredModule(dependency, why);
+                else if (!dependency) std::fprintf(stderr, "[module] deferred %s %s of %s is not mapped and is not started\n", kind, name.c_str(), ModuleFileName(native).c_str());
+                *pendingArgs = initiating;
+            }
+        } catch (...) {
+            *pendingArgs = initiating;
+            if (!sweeping) resolving.pop_back();
+            throw;
+        }
+        if (!sweeping) resolving.pop_back();
+        __aps5_set_module_init_result_nid_no_patch(0);
+    };
+    bool sweeping = false;
+    if (reason.empty() && !lists.sweep.empty()) {
+        const auto thread = GetCurrentThreadId();
+        std::unique_lock lock(initializedLock);
+        while (sweepState == 1 && sweepOwner != thread) initializedChanged.wait(lock);
+        if (sweepState == 0) {
+            sweepState = 1;
+            sweepOwner = thread;
+            sweeping = true;
+        }
+    }
+    if (sweeping) {
+        const auto finishSweep = [&](const int state) {
+            std::lock_guard lock(initializedLock);
+            sweepState = state;
+            sweepOwner = 0;
+            initializedChanged.notify_all();
+        };
+        try {
+            std::string listed;
+            for (const auto& name : lists.sweep) listed += " " + name;
+            const auto trigger = ModuleFileName(native);
+            std::fprintf(stderr, "[module] deferred sweep at the first load of %s, starting what other modules depend on:%s\n", trigger.c_str(), listed.c_str());
+            startAll(lists.sweep, "swept at the first load of " + trigger, "sweep module", true);
+        } catch (...) {
+            finishSweep(0);
+            throw;
+        }
+        finishSweep(2);
+    }
+    if (!lists.dependencies.empty()) startAll(lists.dependencies, "needed by " + ModuleFileName(native), "dependency", false);
     const auto owner = GetCurrentThreadId();
     std::unique_lock lock(initializedLock);
     while (table[1] == initializing) {
@@ -275,7 +388,15 @@ static void InitializeDeferredModule(HMODULE native) {
     }
     const auto entry = table[0];
     const auto count = table[1];
-    if (entry == 0 && count == 0) return;
+    if (entry == 0 && count == 0) {
+        if (reason.empty()) {
+            if (const auto started = startedResults.find(native); started != startedResults.end()) {
+                __aps5_set_module_init_result_nid_no_patch(started->second);
+                startedResults.erase(started);
+            }
+        }
+        return;
+    }
     DWORD protection = 0;
     if (!VirtualProtect(table, 2 * sizeof(*table), PAGE_READWRITE, &protection))
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "open deferred module initialization metadata");
@@ -295,9 +416,14 @@ static void InitializeDeferredModule(HMODULE native) {
         if (!restored) throw std::system_error(static_cast<int>(error), std::system_category(), "restore deferred module initialization metadata");
     };
     try {
+        std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(), reason.empty() ? "loaded by the title" : reason.c_str());
         auto* base = reinterpret_cast<std::uint8_t*>(native);
         const auto* pending = static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
-        if (entry != 0) __aps5_set_module_init_result_nid_no_patch(reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr));
+        if (entry != 0) {
+            const int result = reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr);
+            __aps5_set_module_init_result_nid_no_patch(result);
+            if (!reason.empty()) startedResults[native] = result;
+        }
         for (std::uint32_t index = 0; index < count; ++index) {
             const auto initializer = *reinterpret_cast<Initializer*>(base + table[2 + index]);
             if (initializer) initializer(0, nullptr, nullptr);

@@ -1,6 +1,8 @@
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include <cerrno>
 #include <ctime>
 #include <cstring>
@@ -17,12 +19,15 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" char* tzname_nid_postfix[2];
 extern "C" int64_t timezone_nid_postfix;
 
 namespace {
+
+std::atomic<ClockGetresFn_nid_no_patch> registeredClockGetres{nullptr};
 
 constexpr const char* WEEKDAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -179,6 +184,9 @@ std::recursive_mutex& zoneMutex() {
 
 char** HostZoneNames();
 char* GuestZoneName(int index);
+#ifdef _WIN32
+void refreshGuestZoneNames();
+#endif
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -198,6 +206,7 @@ void applyGuestZone() {
     current = guest;
 #ifdef _WIN32
     _tzset();
+    refreshGuestZoneNames();
 #else
     ::tzset();
 #endif
@@ -394,11 +403,7 @@ bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const Gu
     case 'y': addNumber(buffer, twoDigitYear(year), 100, "%02d"); return true;
     case 'Y': addNumber(buffer, year, 10000, "%04d"); return true;
     case 'z': addZoneOffset(buffer, time); return true;
-    case 'Z': {
-        const char* name = tzname_nid_postfix[time.tm_isdst > 0 ? 1 : 0];
-        addText(buffer, name != nullptr ? name : "");
-        return true;
-    }
+    case 'Z': return true;
     case '%': addText(buffer, "%"); return true;
     default: return false;
     }
@@ -468,11 +473,39 @@ char** HostZoneNames() {
 #endif
 }
 
+#ifdef _WIN32
+std::array<std::string, 2>& guestZoneNamesUtf8() {
+    static std::array<std::string, 2> names;
+    return names;
+}
+
+bool& guestZoneNamesInitialized() {
+    static bool initialized = false;
+    return initialized;
+}
+
+void refreshGuestZoneNames() {
+    char** names = HostZoneNames();
+    auto& utf8Names = guestZoneNamesUtf8();
+    for (std::size_t index = 0; index < utf8Names.size(); ++index) {
+        const auto converted = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
+        if (utf8Names[index] != converted) utf8Names[index] = converted;
+    }
+    guestZoneNamesInitialized() = true;
+}
+#endif
+
 char* GuestZoneName(int index) {
     static char unnamed[] = "   ";
     char** names = HostZoneNames();
 #ifdef _WIN32
+    if (!guestZoneNamesInitialized()) refreshGuestZoneNames();
+    auto& utf8Names = guestZoneNamesUtf8();
     const bool daylightSaving = _daylight != 0;
+    if (index >= 0 && index < 2) {
+        if (index == 1 && !daylightSaving) return unnamed;
+        return utf8Names[static_cast<std::size_t>(index)].data();
+    }
 #else
     const bool daylightSaving = ::daylight != 0;
 #endif
@@ -488,6 +521,9 @@ int daylight_nid_postfix = 0;
 
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
+#ifdef _WIN32
+    refreshGuestZoneNames();
+#endif
     tzname_nid_postfix[0] = GuestZoneName(0);
     tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
@@ -499,6 +535,17 @@ void APS5_VABI tzset_nid_postfix(void) {
 
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
     timezone_nid_postfix = static_cast<int64_t>(libc_difftime_nid_postfix(libc_mktime_nid_postfix(&universal), libc_mktime_nid_postfix(&local)));
+}
+
+void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn) {
+    registeredClockGetres.store(fn, std::memory_order_release);
+}
+
+int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
+    if (base != 1) return 0;
+    const auto clockGetres = registeredClockGetres.load(std::memory_order_acquire);
+    if (clockGetres == nullptr) NotImplemented_nid_no_patch(__func__);
+    return clockGetres(0, result) == 0 ? 1 : 0;
 }
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
@@ -646,17 +693,22 @@ size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* 
     return formatGuestTime(str, count, format, *timeptr);
 }
 
-char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
-    static thread_local char result[ASCTIME_SIZE];
+char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("asctime_r: null buffer");
     if (timeptr == nullptr) {
         errno = EINVAL;
-        std::memcpy(result, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
-        return result;
+        std::memcpy(buffer, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
+        return buffer;
     }
     const std::int64_t year = static_cast<std::int64_t>(timeptr->tm_year) + YEAR_BASE;
-    std::snprintf(result, sizeof(result), "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
+    std::snprintf(buffer, 26, "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
         clampedField(timeptr->tm_mday, 100), clampedField(timeptr->tm_hour, 100), clampedField(timeptr->tm_min, 100), clampedField(timeptr->tm_sec, 100), clampedField(year, 10000));
-    return result;
+    return buffer;
+}
+
+char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
+    static thread_local char result[ASCTIME_SIZE];
+    return asctime_r_nid_postfix(timeptr, result);
 }
 
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer) {

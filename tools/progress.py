@@ -97,7 +97,7 @@ def blank(match):
 
 
 def code(text):
-    return CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", ""))
+    return re.sub(r"\n(?:[ \t]*\n)+", "\n", CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", "")))
 
 def body_end(text, start):
     depth = 0
@@ -169,6 +169,14 @@ def inert_wrappers(text):
         names |= found
 
 
+def shared_source_owners(path):
+    cmake = path / "CMakeLists.txt"
+    texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
+    texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
+    owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
+    return list(dict.fromkeys(owner for owner in owners if owner != path.name and (path.parent / owner).is_dir()))
+
+
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
     texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
@@ -193,11 +201,7 @@ def scan_library(path):
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
              "done_names": sorted(done), "todo_names": sorted(todo), "inert_names": sorted(inert)}
     if not (done or todo):
-        cmake = path / "CMakeLists.txt"
-        texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
-        texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
-        owners = [m[1] for pattern, content in texts for m in pattern.finditer(content)]
-        owners = [o for o in owners if o != path.name and (path.parent / o).is_dir()]
+        owners = shared_source_owners(path)
         if owners:
             group["shared_sources"] = owners[0]
     return group
@@ -691,6 +695,11 @@ def require_distinct_reports(output):
         for other in paths[index + 1:]:
             if other.exists() and path.samefile(other):
                 raise ValueError(f"{path.name} and {other.name} in {output} are the same file")
+    targets = [os.path.normcase(os.path.realpath(path)) for path in paths]
+    for index, target in enumerate(targets):
+        for other in range(index + 1, len(targets)):
+            if targets[other] == target:
+                raise ValueError(f"{paths[index].name} and {paths[other].name} in {output} are the same file")
 
 
 def site_data(libraries, shaders, shader_source):

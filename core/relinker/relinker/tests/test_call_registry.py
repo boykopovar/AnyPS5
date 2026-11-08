@@ -49,6 +49,9 @@ def main():
         for segment in (0x2e, 0x26, 0x36, 0x3e):
             instructions = [
                 (bytes([segment, 0xff, 0x15]), True),
+                (bytes([segment, 0x67, 0xff, 0x15]), True),
+                (bytes([0x67, segment, 0xff, 0x25]), True),
+                (bytes([0x67, segment, 0x48, 0x8b, 0x05]), True),
                 (bytes([segment, 0xff, 0x25]), True),
                 (bytes([segment, 0xff, 0x35]), True),
                 (bytes([segment, 0x48, 0x8b, 0x05]), True),
@@ -136,6 +139,8 @@ def main():
                                            (18, "R_X86_64_TPOFF64")):
             image = make_image(b"\0lib.so\0symbol\0")
             struct.pack_into("<Q", image, 0x708, (1 << 32) | relocation_type)
+            if relocation_type in (16, 17, 18):
+                image[0x63C] = 0x06
             source = work / ("type-" + str(relocation_type) + ".elf")
             source.write_bytes(image)
             output = work / ("type-" + str(relocation_type) + "-linux.out")

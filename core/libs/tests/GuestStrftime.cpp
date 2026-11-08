@@ -39,6 +39,12 @@ void CheckAsctime(const char* name, const GuestTm& time, const char* expected) {
         std::fprintf(stderr, "asctime %s: expected \"%s\", received \"%s\"\n", name, expected, result);
         correct = false;
     }
+    char buffer[26]{};
+    const char* reentrant = asctime_r_nid_postfix(&time, buffer);
+    if (reentrant != buffer || std::strcmp(buffer, expected) != 0) {
+        std::fprintf(stderr, "asctime_r %s: expected \"%s\", received \"%s\"\n", name, expected, buffer);
+        correct = false;
+    }
 }
 
 }
@@ -56,7 +62,7 @@ int main() {
     Check("flags and widths", base, "%-d|%_d|%0e|%^a|%#b|%10Y", "%-d|%_d|%0e|%^a|%#b|%10Y");
     Check("modifier before an unknown conversion", base, "%Ea|%Oa|%EE|%OO|%Ek|%EY", "Fri|Fri|%E|%O|%k|2026");
     Check("trailing percent", base, "ab%", "ab%");
-    Check("zone", base, "%z|%Z", "-0300|UTC");
+    Check("zone", base, "%z|%Z", "-0300|");
 
     GuestTm zone = base;
     zone.tm_isdst = 1;
@@ -69,7 +75,7 @@ int main() {
         std::fprintf(stderr, "gmtime_s did not store tm_isdst -1\n");
         correct = false;
     }
-    Check("zone of a gmtime result", utc, "%z|%Z", "-0300|UTC");
+    Check("zone of a gmtime result", utc, "%z|%Z", "-0300|");
 
     for (int value = -3; value <= 14; ++value) {
         GuestTm time = base;

@@ -1,3 +1,7 @@
+#include <cstdio>
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -8,11 +12,18 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <vector>
+#include <shared_mutex>
+#include <memory>
+#include <condition_variable>
+#include <algorithm>
+#include <thread>
 #include "prx/libSceUserService/UserService.hpp"
 
 namespace {
 
 std::atomic<bool> initialized{false};
+bool terminating{};
 std::mutex userMutex;
 
 struct UserEvent {
@@ -95,34 +106,192 @@ static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)())
  *type = value();
  return USER_SERVICE_OK;
 }
+bool UserGroupSlotExists(int index) {
+    if (index < 0 || index > 128) {
+        return false;
+    }
+    char path[64];
+    std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat.%d", index);
+    FileStat status{};
+    return sceKernelStat(path, &status) == 0;
+}
+
+struct RegisteredEventCallback {
+ UserServiceEventCallback callback;
+ void* userData;
+ std::mutex mutex;
+ std::condition_variable idle;
+ bool active{true};
+ std::size_t inFlight{};
+};
+
+std::vector<std::shared_ptr<RegisteredEventCallback>> eventCallbacks;
+std::shared_mutex eventCallbacksMutex;
+struct CallbackInvocation {
+ const RegisteredEventCallback* entry;
+ CallbackInvocation* previous;
+};
+thread_local CallbackInvocation* callbacksOnThisThread{};
+
+std::size_t CurrentThreadCallbackDepth(const RegisteredEventCallback* entry) {
+ std::size_t depth{};
+ for (auto* invocation = callbacksOnThisThread; invocation != nullptr; invocation = invocation->previous) {
+  depth += invocation->entry == entry;
+ }
+ return depth;
+}
+
+void DeactivateAndWait(const std::shared_ptr<RegisteredEventCallback>& entry) {
+ std::unique_lock lock(entry->mutex);
+ entry->active = false;
+ const std::size_t currentThreadDepth = CurrentThreadCallbackDepth(entry.get());
+ entry->idle.wait(lock, [&] { return entry->inFlight <= currentThreadDepth; });
+}
+
+
+void RemoveDrainedCallbacks();
+
+void DispatchUserEvent(const std::vector<std::shared_ptr<RegisteredEventCallback>>& callbacks,
+                       const SceUserServiceEvent& event) {
+ for (const auto& entry : callbacks) {
+  UserServiceEventCallback callback;
+  void* userData;
+  {
+   std::lock_guard lock(entry->mutex);
+   if (!entry->active) {
+    continue;
+   }
+   ++entry->inFlight;
+   callback = entry->callback;
+   userData = entry->userData;
+  }
+  CallbackInvocation invocation{entry.get(), callbacksOnThisThread};
+  callbacksOnThisThread = &invocation;
+  try {
+   callback(&event, userData);
+  } catch (...) {
+   callbacksOnThisThread = invocation.previous;
+   {
+    std::lock_guard lock(entry->mutex);
+    --entry->inFlight;
+   }
+   entry->idle.notify_all();
+   RemoveDrainedCallbacks();
+   throw;
+  }
+  callbacksOnThisThread = invocation.previous;
+  {
+   std::lock_guard lock(entry->mutex);
+   --entry->inFlight;
+  }
+  entry->idle.notify_all();
+  RemoveDrainedCallbacks();
+ }
+}
+struct CallbackNotification {
+ std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
+ SceUserServiceEvent event;
+};
+
+class EventDispatcher {
+ std::mutex mutex;
+ std::condition_variable changed;
+ std::deque<CallbackNotification> notifications;
+ bool stopping{};
+ std::thread worker;
+public:
+ EventDispatcher() : worker([this] {
+  std::unique_lock lock(mutex);
+  while (true) {
+   changed.wait(lock, [&] { return stopping || !notifications.empty(); });
+   if (stopping) return;
+   auto notification = std::move(notifications.front());
+   notifications.pop_front();
+   lock.unlock();
+   DispatchUserEvent(notification.callbacks, notification.event);
+   lock.lock();
+  }
+ }) {}
+ ~EventDispatcher() {
+  {
+   std::lock_guard lock(mutex);
+   stopping = true;
+  }
+  changed.notify_all();
+  worker.join();
+ }
+ void Enqueue(CallbackNotification notification) {
+  {
+   std::lock_guard lock(mutex);
+   notifications.push_back(std::move(notification));
+  }
+  changed.notify_one();
+ }
+};
+
+void NotifyUserEvent(std::uint32_t eventType, int userId) {
+ std::shared_lock lock(eventCallbacksMutex);
+ if (!initialized.load() || eventCallbacks.empty()) return;
+ static EventDispatcher dispatcher;
+ dispatcher.Enqueue({eventCallbacks, {eventType, userId}});
+}
+
+void RemoveDrainedCallbacks() {
+ std::unique_lock lock(eventCallbacksMutex);
+ std::erase_if(eventCallbacks, [](const auto& entry) {
+  std::lock_guard entryLock(entry->mutex);
+  return !entry->active && entry->inFlight == 0;
+ });
+}
+
+void ClearEventCallbacks() {
+ std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  callbacks = eventCallbacks;
+  for (const auto& entry : callbacks) {
+   std::lock_guard entryLock(entry->mutex);
+   entry->active = false;
+  }
+ }
+ for (const auto& entry : callbacks) {
+  DeactivateAndWait(entry);
+ }
+ RemoveDrainedCallbacks();
+}
 }
 
 extern "C" {
 
 void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected) {
     if (userIndex < 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
-    std::lock_guard lock(userMutex);
-    if (userConnected[userIndex] != connected) {
-        userConnected[userIndex] = connected;
-        if (initialized.load()) {
-            constexpr std::uint32_t EventTypeLogin = 0;
-            constexpr std::uint32_t EventTypeLogout = 1;
-            const std::uint32_t eventType = connected ? EventTypeLogin : EventTypeLogout;
-            const int userId = USER_SERVICE_INITIAL_USER_ID + userIndex;
-            bool collapsed = false;
-            for (auto it = eventQueue.begin(); it != eventQueue.end(); ++it) {
-                if (it->userId == userId) {
-                    if (it->eventType != eventType) {
-                        eventQueue.erase(it);
+    bool notify = false;
+    const std::uint32_t eventType = connected ? 0u : 1u;
+    const int userId = USER_SERVICE_INITIAL_USER_ID + userIndex;
+    {
+        std::lock_guard lock(userMutex);
+        if (userConnected[userIndex] != connected) {
+            userConnected[userIndex] = connected;
+            if (initialized.load()) {
+                notify = true;
+                bool collapsed = false;
+                for (auto it = eventQueue.begin(); it != eventQueue.end(); ++it) {
+                    if (it->userId == userId) {
+                        if (it->eventType != eventType) {
+                            eventQueue.erase(it);
+                        }
+                        collapsed = true;
+                        break;
                     }
-                    collapsed = true;
-                    break;
+                }
+                if (!collapsed) {
+                    eventQueue.push_back({eventType, userId});
                 }
             }
-            if (!collapsed) {
-                eventQueue.push_back({eventType, userId});
-            }
         }
+    }
+    if (notify) {
+        NotifyUserEvent(eventType, userId);
     }
 }
 
@@ -131,6 +300,12 @@ int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32
 }
 
 int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (enabled == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -148,6 +323,12 @@ int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibr
 }
 
 int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (zoom == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -265,7 +446,8 @@ static bool ValidThreadPriority(int priority) {
 }
 
 static int MarkInitialized() {
- if (initialized.exchange(true)) {
+ std::unique_lock lock(eventCallbacksMutex);
+ if (terminating || initialized.exchange(true)) {
   return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
  }
  PopulateInitialLoginEvents();
@@ -289,11 +471,22 @@ int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask aff
 }
 
 int APS5_VABI sceUserServiceTerminate(void) {
- if (!initialized.exchange(false)) {
-  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  if (!initialized.exchange(false)) {
+   return USER_SERVICE_ERROR_NOT_INITIALIZED;
+  }
+  terminating = true;
  }
- std::lock_guard lock(userMutex);
- eventQueue.clear();
+ ClearEventCallbacks();
+ {
+  std::lock_guard lock(userMutex);
+  eventQueue.clear();
+ }
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  terminating = false;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -353,11 +546,11 @@ int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t*
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
- if (!IsUserLoggedIn(user_id)) {
-  return USER_SERVICE_ERROR_UNKNOWN_USER;
- }
  if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  *account_id = 0;
  return USER_SERVICE_OK;
@@ -428,9 +621,31 @@ int APS5_VABI sceUserServiceGetIsHrtfEnabled(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetCurrentUserGroupIndex(std::int32_t* index) {
+    if (index == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    *index = 0;
+    const int descriptor = sceKernelOpen("/system_data/priv/home/user_list.dat", 0, 0);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int64_t seekResult = sceKernelLseek(descriptor, 0x44, 0);
+    if (seekResult != 0x44) {
+        sceKernelClose(descriptor);
+        return static_cast<int>(seekResult);
+    }
+    std::int32_t storedIndex{};
+    const std::int64_t bytesRead = sceKernelRead(descriptor, &storedIndex, sizeof(storedIndex));
+    sceKernelClose(descriptor);
+    if (bytesRead < 0) {
+        return static_cast<int>(bytesRead);
+    }
+    if (bytesRead != sizeof(storedIndex)) {
+        return SCE_KERNEL_ERROR_EIO;
+    }
+    *index = storedIndex;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetPbtcThursdayHoursEnd(void) {
@@ -448,9 +663,23 @@ int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountIdTtl(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetRegisteredHomeUserIdList(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetRegisteredHomeUserIdList(std::int32_t* userIds, std::int32_t* count) {
+    if (userIds == nullptr || count == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    UserServiceRegisteredUserIdList registeredUsers{};
+    const int result = sceUserServiceGetRegisteredUserIdList(&registeredUsers);
+    if (result != USER_SERVICE_OK) {
+        return result;
+    }
+    *count = 0;
+    for (std::size_t index = 0; index < sizeof(registeredUsers.user_id) / sizeof(registeredUsers.user_id[0]); ++index) {
+        userIds[index] = registeredUsers.user_id[index];
+        if (userIds[index] != USER_SERVICE_USER_ID_INVALID) {
+            ++*count;
+        }
+    }
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceSetVolumeForGenericUSB(void) {
@@ -618,9 +847,35 @@ int APS5_VABI sceUserServiceSetKeyRepeatSpeed(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceSetUserGroupName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceSetUserGroupName(int groupIndex, const char* name) {
+    if (name == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (!UserGroupSlotExists(groupIndex)) {
+        int nextGroupIndex = 0;
+        while (nextGroupIndex < 128 && UserGroupSlotExists(nextGroupIndex)) {
+            ++nextGroupIndex;
+        }
+        if (groupIndex != nextGroupIndex) {
+            return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    const std::size_t nameSize = std::strlen(name);
+    if (nameSize > 128) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    char path[64];
+    std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
+    const int descriptor = sceKernelOpen(path, 0x601, 0x180);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int64_t bytesWritten = sceKernelWrite(descriptor, name, nameSize);
+    sceKernelClose(descriptor);
+    if (bytesWritten < 0) {
+        return static_cast<int>(bytesWritten);
+    }
+    return bytesWritten == static_cast<std::int64_t>(nameSize) ? USER_SERVICE_OK : SCE_KERNEL_ERROR_EIO;
 }
 
 int APS5_VABI sceUserServiceGetParentalDvdRegion(void) {
@@ -753,9 +1008,32 @@ int APS5_VABI sceUserServiceSetHearingAssistUsePreset(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetUserGroupName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::size_t size) {
+    if (name == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size < 129) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    if (size != 129) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (!UserGroupSlotExists(groupIndex)) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    std::memset(name, 0, size);
+    char path[64];
+    std::snprintf(path, sizeof(path), "/system_data/priv/home/user_group_name.dat.%d", groupIndex);
+    const int descriptor = sceKernelOpen(path, 0, 0);
+    if (descriptor >= 0) {
+        const std::int64_t bytesRead = sceKernelRead(descriptor, name, 128);
+        sceKernelClose(descriptor);
+        if (bytesRead > 0) {
+            return USER_SERVICE_OK;
+        }
+    }
+    std::snprintf(name, size, "User Group %d", groupIndex + 1);
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceSetAutoLoginEnabled(void) {
@@ -815,7 +1093,6 @@ int APS5_VABI sceUserServiceGetVoiceAgentEnableFeedback(void) {
 
 int APS5_VABI sceUserServiceIsKratosUser(void) {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceUserServiceSetCreatedVersion(void) {
@@ -953,9 +1230,12 @@ int APS5_VABI sceUserServiceSetNotificationSettings_2(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetHomeDirectory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetHomeDirectory(std::uint32_t user_id, char* path, std::size_t size) {
+    if (path == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int result = std::snprintf(path, size, "/user/home/%08x", user_id);
+    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
 }
 
 int APS5_VABI sceUserServiceSetPbtcSundayDuration(void) {
@@ -968,9 +1248,8 @@ int APS5_VABI sceUserServiceSetIPDLeft(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetKratosPrimaryUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetKratosPrimaryUser(int*) {
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUserServiceLogout(void) {
@@ -1149,8 +1428,7 @@ int APS5_VABI sceUserServiceGetSystemLoggerHashedAccountIdClockType(void) {
 }
 
 int APS5_VABI sceUserServiceTerminateForShellCore(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+ return sceUserServiceTerminate();
 }
 
 int APS5_VABI sceUserServiceSetParentalMorpheus(void) {
@@ -1295,7 +1573,6 @@ int APS5_VABI sceUserServiceSetHearingAssistSeparateLR(void) {
 
 int APS5_VABI sceUserServiceIsUserStorageAccountBound(void) {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceUserServiceSetHmd2Brightness(void) {
@@ -1403,9 +1680,11 @@ int APS5_VABI sceUserServiceGetHmd2Vibration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsLoggedIn(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsLoggedIn(int userId) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ return IsUserLoggedIn(userId) ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetPbtcMondayHoursStart(void) {
@@ -1428,9 +1707,8 @@ int APS5_VABI sceUserServiceGetIsQuickSignup(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsKratosPrimaryUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceUserServiceIsKratosPrimaryUser(int) {
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUserServiceSetVoiceAgentEnableWup(void) {
@@ -1453,9 +1731,11 @@ int APS5_VABI sceUserServiceSetGlsHintFlag(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsLoggedInWithoutLock(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsLoggedInWithoutLock(int userId) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ return IsUserLoggedIn(userId) ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceSetShareStatus3(void) {
@@ -1958,9 +2238,21 @@ int APS5_VABI sceUserServiceSetPsCloudFeedbackTime(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceSetUserGroupIndex(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceSetUserGroupIndex(int index) {
+    if (index != -1 && (index < 0 || index > 128 || !UserGroupSlotExists(index))) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int descriptor = sceKernelOpen("/system_data/priv/home/user_list.dat", 2, 0);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int32_t storedIndex = index == -1 ? 0x7fffffff : index;
+    const std::int64_t bytesWritten = sceKernelPwrite(descriptor, &storedIndex, sizeof(storedIndex), 0x44);
+    sceKernelClose(descriptor);
+    if (bytesWritten < 0) {
+        return static_cast<int>(bytesWritten);
+    }
+    return bytesWritten == sizeof(storedIndex) ? USER_SERVICE_OK : SCE_KERNEL_ERROR_EIO;
 }
 
 int APS5_VABI sceUserServiceSetPartyMuteListA(void) {
@@ -1978,7 +2270,7 @@ int APS5_VABI sceUserServiceSetShareStatus2(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceSetForegroundUser(void) {
+int APS5_VABI sceUserServiceSetForegroundUser(int userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2033,9 +2325,8 @@ int APS5_VABI sceUserServiceSetPbtcWednesdayDuration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsGuestUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsGuestUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xe0000000u) == 0x20000000u ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetPadProfileDataHuntList(void) {
@@ -2088,7 +2379,7 @@ int APS5_VABI sceUserServiceGetPbtcTuesdayDuration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetUserWithHearingAssist(void) {
+int APS5_VABI sceUserServiceGetUserWithHearingAssist(std::int32_t* userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2168,9 +2459,8 @@ int APS5_VABI sceUserServiceGetTeamShowAboutTeam(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetEventVsh(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetEventVsh(SceUserServiceEvent* event) {
+ return sceUserServiceGetEvent(event);
 }
 
 int APS5_VABI sceUserServiceGetA11yControllerBName(void) {
@@ -2228,9 +2518,19 @@ int APS5_VABI sceUserServiceGetSaveDataAutoSync(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetDefaultNewUserGroupName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetDefaultNewUserGroupName(char* name, std::size_t size) {
+    if (name == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size < 129) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    int groupIndex = 0;
+    while (groupIndex < 128 && UserGroupSlotExists(groupIndex)) {
+        ++groupIndex;
+    }
+    std::snprintf(name, size, "User Group %d", groupIndex + 1);
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetHmd2Brightness(void) {
@@ -2248,9 +2548,32 @@ int APS5_VABI sceUserServiceSetVibrationStrength(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceUnregisterEventCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceUnregisterEventCallback(UserServiceEventCallback callback, void* userData) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ if (callback == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ std::vector<std::shared_ptr<RegisteredEventCallback>> removed;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  if (!initialized.load()) {
+   return USER_SERVICE_ERROR_NOT_INITIALIZED;
+  }
+  for (const auto& entry : eventCallbacks) {
+   if (entry->callback == callback && entry->userData == userData) {
+    std::lock_guard entryLock(entry->mutex);
+    entry->active = false;
+    removed.push_back(entry);
+   }
+  }
+ }
+ for (const auto& entry : removed) {
+  DeactivateAndWait(entry);
+ }
+ RemoveDrainedCallbacks();
+ return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetTopMenuNotificationFlag(void) {
@@ -2343,9 +2666,12 @@ int APS5_VABI sceUserServiceGetDeletedUserInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetSecureHomeDirectory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetSecureHomeDirectory(std::uint32_t user_id, char* path, std::size_t size) {
+    if (path == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    const int result = std::snprintf(path, size, "/%s/priv/home/%08x", sceKernelGetFsSandboxRandomWord(), user_id);
+    return result >= 0 && static_cast<std::size_t>(result) < size ? USER_SERVICE_OK : USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
 }
 
 int APS5_VABI sceUserServiceGetHearingAssistAdjustmentLevelRight(void) {
@@ -2513,9 +2839,8 @@ int APS5_VABI sceUserServiceSetPbtcAdditionalTime(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsSharePlayClientUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsSharePlayClientUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xf0000000u) == 0x30000000u ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetMonoOutput(void) {
@@ -2558,9 +2883,46 @@ int APS5_VABI sceUserServiceSetGlsMessageFilterLevel(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetUserGroupNameList(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetUserGroupNameList(int groupIndex, char* nameList, std::size_t size,
+                                                std::int32_t* count) {
+    if (nameList == nullptr || count == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (size < 0x110) {
+        return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
+    }
+    if (size != 0x110 || groupIndex < -1 || groupIndex > 128 ||
+        (groupIndex >= 0 && !UserGroupSlotExists(groupIndex))) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    char path[64];
+    if (groupIndex < 0) {
+        std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat");
+    } else {
+        std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat.%d", groupIndex);
+    }
+    std::array<std::int32_t, 16> userIds;
+    userIds.fill(USER_SERVICE_USER_ID_INVALID);
+    const int descriptor = sceKernelOpen(path, 0, 0);
+    if (descriptor < 0) {
+        return descriptor;
+    }
+    const std::int64_t bytesRead = sceKernelRead(descriptor, userIds.data(), 0x40);
+    sceKernelClose(descriptor);
+    if (bytesRead < 0) {
+        return static_cast<int>(bytesRead);
+    }
+    *count = 0;
+    for (std::size_t index = 0; index < userIds.size() && userIds[index] != USER_SERVICE_USER_ID_INVALID; ++index) {
+        char userName[USER_SERVICE_MAX_USER_NAME_LENGTH + 1]{};
+        const int result = sceUserServiceGetUserName(userIds[index], userName, sizeof(userName));
+        if (result != USER_SERVICE_OK) {
+            return result;
+        }
+        std::memcpy(nameList + index * sizeof(userName), userName, sizeof(userName));
+        ++*count;
+    }
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceSetVoiceAgentEnableFeedback(void) {
@@ -2623,9 +2985,8 @@ int APS5_VABI sceUserServiceGetGlsFloatingMessage(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceInitializeForShellCore(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceInitializeForShellCore(void*) {
+ return MarkInitialized();
 }
 
 int APS5_VABI sceUserServiceGetGlsBcTags(void) {
@@ -2788,9 +3149,28 @@ int APS5_VABI sceUserServiceSetHmuBrightness(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceRegisterEventCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceRegisterEventCallback(UserServiceEventCallback callback, void* userData) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ if (callback == nullptr) {
+  return USER_SERVICE_OK;
+ }
+ std::unique_lock lock(eventCallbacksMutex);
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ for (const auto& entry : eventCallbacks) {
+  std::lock_guard entryLock(entry->mutex);
+  if (entry->active && entry->callback == callback && entry->userData == userData) {
+   return USER_SERVICE_OK;
+  }
+ }
+ auto entry = std::make_shared<RegisteredEventCallback>();
+ entry->callback = callback;
+ entry->userData = userData;
+ eventCallbacks.push_back(std::move(entry));
+ return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetParentalMorpheus(void) {
@@ -2913,9 +3293,16 @@ int APS5_VABI sceUserServiceSetNotificationBehavior(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetUserGroupNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetUserGroupNum(std::int32_t* count) {
+    if (count == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    int groupCount = 0;
+    while (groupCount < 128 && UserGroupSlotExists(groupCount)) {
+        ++groupCount;
+    }
+    *count = groupCount;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceSetPartySettingFlags(void) {
@@ -2933,9 +3320,10 @@ int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetIsSpartacusEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
+    if (enabled == nullptr) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    *enabled = true;
+    return USER_SERVICE_OK;
 }
 
 }

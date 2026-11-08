@@ -1,4 +1,5 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -51,6 +52,12 @@ int main(int argc, char** argv) {
         Require(rejected);
         return 0;
     }
-    Require(std::strcmp(GetAppTitleId_nid_postfix().value, mode == "sfo-child" ? "CUSA00000" : "PPSA00000") == 0);
+    const std::string titleId = GetAppTitleId_nid_postfix().value;
+    Require(std::strcmp(titleId.c_str(), mode == "sfo-child" ? "CUSA00000" : "PPSA00000") == 0);
+    const std::string sandboxApp0 = std::string("/mnt/sandbox/") + titleId + "_000/app0";
+    Require(ResolvePath_nid_no_patch(sandboxApp0.c_str()) == (std::filesystem::current_path() / "app0").make_preferred());
+    const std::string metadataFile = mode == "sfo-child" ? "param.sfo" : "param.json";
+    Require(ResolvePath_nid_no_patch((sandboxApp0 + "/sce_sys/" + metadataFile).c_str()) ==
+            (std::filesystem::current_path() / "app0" / "sce_sys" / metadataFile).make_preferred());
     std::filesystem::remove_all("download0");
 }

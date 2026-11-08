@@ -289,11 +289,11 @@ struct TlsScan {
     std::vector<GsTrap> GsTraps;
 };
 
-TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message) {
+TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots) {
     TlsScan scan;
     const Codegen::X64InstructionDecoder decoder;
     std::set<Domain::VirtualAddress> entryRoots;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, &entryRoots, message);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, &entryRoots, message, functionSymbolRoots);
     for (const auto& header : headers) {
         if (header.Type == 7) {
             if (scan.Tls != nullptr) throw Domain::RelinkerException("Multiple ELF TLS segments");
@@ -301,7 +301,7 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
         }
         if (header.Type != 1 || (header.Flags & 1) == 0) continue;
         std::uint64_t decodedEnd = 0;
-        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+        for (auto instruction = std::lower_bound(instructions.begin(), instructions.end(), header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
@@ -457,7 +457,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     auto& image = *input.Image;
     const auto& headers = *input.Headers;
     const auto imageBase = image.GetImageBase();
-    const auto tls = ScanTls(*input.Source, headers, image, input.Message);
+    const auto tls = ScanTls(*input.Source, headers, image, input.Message, input.FunctionSymbolRoots);
     const bool hasTls = tls.Tls != nullptr && (tls.Tls->MemorySize != 0 || !tls.Accesses.empty());
     if (!hasTls && !tls.Accesses.empty()) throw Domain::RelinkerException("Guest TLS access without a non-empty PT_TLS");
     if (!hasTls && !input.TlsModuleSlots.empty()) throw Domain::RelinkerException("Guest TLS module relocation without a non-empty PT_TLS");
@@ -516,7 +516,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto metaSize = MetaHeaders + headers.size() * 56;
     std::vector<std::uint8_t> meta(metaSize, 0);
     Io::WriteU64(meta, 0, MetaVersion);
-    const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1; });
+    const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1 && header.MemorySize != 0; });
     if (firstLoad == headers.end()) throw Domain::RelinkerException("No PT_LOAD segments found");
     Io::WriteU64(meta, MetaLoadBias, imageBase + image.GetRva(firstLoad->MappedAddress) - firstLoad->MappedAddress);
     input.Rebases.push_back(metaRva + MetaLoadBias);
