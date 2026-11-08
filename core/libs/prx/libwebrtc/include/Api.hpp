@@ -30,6 +30,7 @@
 #include "prx/libwebrtc/include/VideoFrame.hpp"
 #include "prx/libwebrtc/include/PlatformThread.hpp"
 #include "prx/libwebrtc/include/I420Buffer.hpp"
+#include "prx/libwebrtc/include/KeyParams.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "prx/libwebrtc/include/VideoFrameDimensions.hpp"
@@ -117,7 +118,7 @@ bool APS5_VABI _ZNK3rtc13SocketAddress5IsNilEv_nid_postfix(const WebRtcSocketAdd
 int APS5_VABI libwebrtcUnknown09(void);
 int APS5_VABI libwebrtcUnknown10(void);
 int APS5_VABI libwebrtcUnknown11(void);
-int APS5_VABI _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(void);
+void APS5_VABI _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(WebRtcKeyParams* params, std::int32_t keyType);
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EPNS_22PeerConnectionObserverE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc33PeerConnectionFactoryDependenciesC1Ev_nid_postfix(void);
