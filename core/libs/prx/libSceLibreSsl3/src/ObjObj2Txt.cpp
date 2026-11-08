@@ -55,19 +55,22 @@ std::string Decimal(Number number) {
 }
 
 extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength, const Asn1Object_nid_no_patch* object, int noName) {
+    if (buffer && bufferLength > 0) buffer[0] = '\0';
     if (!object) return 0;
     if (object->length < 0) throw std::invalid_argument("OBJ_obj2txt: negative encoded length");
     if (object->length > 0 && !object->data) throw std::invalid_argument("OBJ_obj2txt: missing encoded data");
     std::string text;
-    if (!noName && object->longName) {
-        text = object->longName;
+    if (!noName && (object->longName || object->shortName)) {
+        text = object->longName ? object->longName : object->shortName;
     } else {
         Number number;
         bool first = true;
+        bool continued = false;
         for (int index = 0; index < object->length; ++index) {
             const unsigned byte = object->data[index];
+            continued = (byte & 0x80) != 0;
             MultiplyAdd(number, byte & 0x7f);
-            if (byte & 0x80) continue;
+            if (continued) continue;
             if (first) {
                 unsigned leading = 0;
                 if (number.empty())
@@ -86,6 +89,7 @@ extern "C" int APS5_VABI OBJ_obj2txt_nid_postfix(char* buffer, int bufferLength,
             text += Decimal(number);
             number.clear();
         }
+        if (continued) return 0;
     }
     if (buffer && bufferLength > 0) {
         const auto count = text.size() < static_cast<std::size_t>(bufferLength - 1) ? text.size() : static_cast<std::size_t>(bufferLength - 1);
