@@ -974,6 +974,8 @@ std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char
 std::size_t APS5_VABI mbrlen_nid_postfix(const char* source, std::size_t count, void* state);
 int APS5_VABI mbtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count);
 std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void*);
+std::size_t APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
+std::size_t APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count);
 int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value);
 std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void*);
@@ -1629,6 +1631,7 @@ void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] void APS5_VABI _ZSt18_Xinvalid_argumentPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt15_Xruntime_errorPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt13_Xrange_errorPKc_nid_postfix(const char* message);
+[[noreturn]] void APS5_VABI LibcThrowOverflowError_nid_no_patch(const char* message);
 [[noreturn]] void APS5_VABI _ZSt19_Xbad_function_callv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix();

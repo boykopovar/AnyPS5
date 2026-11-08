@@ -242,6 +242,104 @@ void RunConversions(AgcDriver::VulkanDevice& device, bool signedInteger, std::ui
     std::printf("sdwa integer-to-f32 %s wave%u: %u combinations passed\n", signedInteger ? "i32" : "u32", waveSize, ConversionResults);
 }
 
+constexpr std::uint32_t F16ConversionInputs = 2u;
+constexpr std::array<std::uint32_t, 3> F16Sources{4u, 5u, 6u};
+constexpr std::uint32_t F16ConversionResults = F16ConversionInputs * F16Sources.size() * 6u * 3u;
+constexpr std::array<std::uint32_t, 8> F16TestWords{
+    0x3c004000u,
+    0xc1003c04u,
+    0x3400bc00u,
+    0x00008000u,
+    0x7bff3555u,
+    0x42004500u,
+    0xc000c200u,
+    0x38043c08u,
+};
+alignas(256) std::array<std::uint32_t, Threads * F16ConversionInputs> F16ConversionInput{};
+alignas(256) std::array<std::uint32_t, Threads * F16ConversionResults> F16ConversionOutput{};
+
+std::uint32_t HalfToFloatBits(std::uint32_t half) {
+    const std::uint32_t sign = (half & 0x8000u) << 16u;
+    const std::uint32_t exponent = (half >> 10u) & 0x1fu;
+    const std::uint32_t mantissa = half & 0x3ffu;
+    if (exponent == 0x1fu) return sign | 0x7f800000u | (mantissa << 13u);
+    if (exponent != 0u) return sign | ((exponent + 112u) << 23u) | (mantissa << 13u);
+    return sign | std::bit_cast<std::uint32_t>(static_cast<float>(mantissa) * 0x1p-24f);
+}
+
+std::uint32_t SelectF16(std::uint32_t word, std::uint32_t source) {
+    if (source == 5u) return (word >> 16u) & 0xffffu;
+    return word & 0xffffu;
+}
+
+void RunF16Conversions(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+        F16ConversionInput[lane * F16ConversionInputs + 0u] = F16TestWords[lane % F16TestWords.size()];
+        F16ConversionInput[lane * F16ConversionInputs + 1u] = F16TestWords[(lane + 3u) % F16TestWords.size()];
+    }
+    F16ConversionOutput.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> words{
+        0x160200ffu, F16ConversionInputs, 0x160400ffu, F16ConversionResults,
+    };
+    std::uint32_t index = 0u;
+    for (std::uint32_t inputIndex = 0u; inputIndex < F16ConversionInputs; ++inputIndex) {
+        words.insert(words.end(), {0xe0302000u | (inputIndex * 4u), 0x80000401u, 0xbf8c3f70u});
+        for (const auto source : F16Sources) {
+            for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+                for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+                    const auto destinationRegister = 5u + index % 4u;
+                    words.insert(words.end(), {
+                        0x7e0002ffu | (destinationRegister << 17u), Garbage,
+                        0x7e0000f9u | (destinationRegister << 17u) | (11u << 9u),
+                        4u | (destination << 8u) | (unused << 11u) | (source << 16u),
+                    });
+                    if (index % 4u == 3u) words.insert(words.end(), {0xe0782000u | ((index - 3u) * 4u), 0x80010502u});
+                }
+            }
+        }
+    }
+    words.push_back(0xbf810000u);
+    std::vector<std::uint32_t> userData(8u);
+    const auto input = BufferDescriptor(F16ConversionInput.data(), static_cast<std::uint32_t>(F16ConversionInput.size()));
+    const auto output = BufferDescriptor(F16ConversionOutput.data(), static_cast<std::uint32_t>(F16ConversionOutput.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(words);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    index = 0u;
+    for (std::uint32_t inputIndex = 0u; inputIndex < F16ConversionInputs; ++inputIndex) {
+        for (const auto source : F16Sources) {
+            for (std::uint32_t destination = 0u; destination < 6u; ++destination) {
+                for (std::uint32_t unused = 0u; unused < 3u; ++unused, ++index) {
+                    for (std::uint32_t lane = 0u; lane < Threads; ++lane) {
+                        const auto word = F16ConversionInput[lane * F16ConversionInputs + inputIndex];
+                        const auto half = SelectF16(word, source);
+                        const auto bits = HalfToFloatBits(half);
+                        const auto expected = InsertResult(bits, destination, unused);
+                        const auto actual = F16ConversionOutput[lane * F16ConversionResults + index];
+                        Require(actual == expected, "sdwa f16-to-f32: lane " + std::to_string(lane) +
+                            " wave" + std::to_string(waveSize) + " input " + std::to_string(inputIndex) +
+                            " source " + std::to_string(source) + " destination " +
+                            std::to_string(destination) + " unused " + std::to_string(unused) + " is " +
+                            Hex(actual) + ", expected " + Hex(expected));
+                    }
+                }
+            }
+        }
+    }
+    std::printf("sdwa f16-to-f32 wave%u: %u combinations passed\n", waveSize, F16ConversionResults);
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -251,6 +349,7 @@ int main(int argc, char** argv) {
         Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "wave64"), "expected no argument or wave64");
         const auto waveSize = argc == 2 ? 64u : 32u;
         for (const bool signedInteger : {false, true}) RunConversions(*device, signedInteger, waveSize);
+        RunF16Conversions(*device, waveSize);
         FillInput();
         Run(*device);
         Check();
