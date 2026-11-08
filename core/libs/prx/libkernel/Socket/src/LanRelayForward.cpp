@@ -20,38 +20,61 @@ using SocketHandle = int;
 namespace LanRelay {
 namespace {
 
-std::vector<Ipv4Interface> HostIpv4Interfaces() {
-    std::vector<Ipv4Interface> interfaces;
+struct HostEntry {
+    std::uint32_t Index = 0;
+    std::uint32_t Address = 0;
+    std::uint32_t Netmask = 0;
+    std::uint32_t NetworkAddress = 0;
+};
+
+std::vector<HostEntry> HostIpv4Entries() {
+    std::vector<HostEntry> entries;
 #ifdef _WIN32
     const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     ULONG size = 0;
-    if (GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return interfaces;
+    if (GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return entries;
     std::vector<std::uint8_t> storage(size);
     auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
-    if (GetAdaptersAddresses(AF_INET, flags, nullptr, adapters, &size) != NO_ERROR) return interfaces;
+    if (GetAdaptersAddresses(AF_INET, flags, nullptr, adapters, &size) != NO_ERROR) return entries;
     for (const auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next) {
         for (const auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
             if (unicast->Address.lpSockaddr == nullptr || unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
             const auto* address = reinterpret_cast<const sockaddr_in*>(unicast->Address.lpSockaddr);
             const std::uint32_t prefix = unicast->OnLinkPrefixLength;
             const std::uint32_t netmask = prefix == 0 ? 0 : prefix >= 32 ? 0xFFFFFFFFu : ~((1u << (32 - prefix)) - 1u);
-            interfaces.push_back(Ipv4Interface{ntohl(address->sin_addr.s_addr), netmask});
+            entries.push_back(HostEntry{adapter->IfIndex, ntohl(address->sin_addr.s_addr), netmask, address->sin_addr.s_addr});
         }
     }
 #else
     ifaddrs* list = nullptr;
-    if (getifaddrs(&list) != 0) return interfaces;
+    if (getifaddrs(&list) != 0) return entries;
     for (const ifaddrs* entry = list; entry != nullptr; entry = entry->ifa_next) {
         if (entry->ifa_addr == nullptr || entry->ifa_netmask == nullptr || entry->ifa_addr->sa_family != AF_INET) continue;
         const auto* address = reinterpret_cast<const sockaddr_in*>(entry->ifa_addr);
         const auto* netmask = reinterpret_cast<const sockaddr_in*>(entry->ifa_netmask);
-        interfaces.push_back(Ipv4Interface{ntohl(address->sin_addr.s_addr), ntohl(netmask->sin_addr.s_addr)});
+        entries.push_back(HostEntry{if_nametoindex(entry->ifa_name), ntohl(address->sin_addr.s_addr), ntohl(netmask->sin_addr.s_addr), address->sin_addr.s_addr});
     }
     freeifaddrs(list);
 #endif
+    return entries;
+}
+
+std::vector<Ipv4Interface> HostIpv4Interfaces() {
+    std::vector<Ipv4Interface> interfaces;
+    for (const auto& entry : HostIpv4Entries()) interfaces.push_back(Ipv4Interface{entry.Address, entry.Netmask});
     return interfaces;
 }
 
+}
+
+bool HostIpv4AddressOfIndex(std::uint32_t index, std::uint32_t& networkAddress) {
+    if (index == 0) return false;
+    for (const auto& entry : HostIpv4Entries()) {
+        if (entry.Index != index) continue;
+        networkAddress = entry.NetworkAddress;
+        return true;
+    }
+    return false;
 }
 
 void ForwardLanSend(std::uintptr_t native, const sockaddr* destination, const void* buffer, std::size_t length) {
