@@ -8,6 +8,7 @@
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -152,9 +153,150 @@ int main() {
     v6[23] = 1;
     Require(getnameinfo_nid_postfix(v6.data(), v6.size(), host, sizeof(host), nullptr, 0, 10) == 0);
     Require(std::strcmp(host, "::1") == 0);
-    Require(getnameinfo_nid_postfix(v4.data(), 2, host, sizeof(host), nullptr, 0, 10) == 5);
-    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, sizeof(host), nullptr, 0, 32) == 3);
-    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, 1, nullptr, 0, 10) == 14);
+    Require(getnameinfo_nid_postfix(v4.data(), 2, host, sizeof(host), nullptr, 0, 10) == 4);
+    Require(getnameinfo_nid_postfix(nullptr, 16, host, sizeof(host), nullptr, 0, 10) == 4);
+    std::array<unsigned char, 128> storage{};
+    std::memcpy(storage.data(), v4.data(), v4.size());
+    Require(getnameinfo_nid_postfix(storage.data(), storage.size(), host, sizeof(host), nullptr, 0, 10) == 4);
+    std::array<unsigned char, 16> v6Family{16, 28, 0x6d, 0x06, 127, 0, 0, 1};
+    Require(getnameinfo_nid_postfix(v6Family.data(), v6Family.size(), host, sizeof(host), nullptr, 0, 10) == 4);
+    std::array<unsigned char, 16> unspecified{16, 0, 0x6d, 0x06, 127, 0, 0, 1};
+    Require(getnameinfo_nid_postfix(unspecified.data(), unspecified.size(), host, sizeof(host), nullptr, 0, 10) == 5);
+    std::array<unsigned char, 106> local{8, 1, '/', 'v', 'a', 'r', '/', 's'};
+    std::memset(service, 'S', sizeof(service));
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, sizeof(host), service, sizeof(service), 0) == 0);
+    Require(std::strcmp(host, "/var/s") == 0 && service[0] == '\0' && service[1] == 'S');
+    Require(getnameinfo_nid_postfix(local.data(), 3, host, 7, nullptr, 0, 4) == 0);
+    Require(std::strcmp(host, "/var/s") == 0);
+    std::memset(host, 'H', sizeof(host));
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, 6, nullptr, 0, 0) == 6);
+    Require(host[0] == '\0' && host[1] == 'H');
+    Require(getnameinfo_nid_postfix(local.data(), 2, host, sizeof(host), nullptr, 0, 0) == 4);
+    Require(getnameinfo_nid_postfix(local.data(), 107, host, sizeof(host), nullptr, 0, 0) == 4);
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), nullptr, 0, nullptr, 0, 0) == 0);
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), nullptr, 16, nullptr, 0, 0) == 0);
+    std::memset(host, 'H', sizeof(host));
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, std::size_t{1} << 32, nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "/var/s") == 0);
+    local[0] = 5;
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "/va") == 0);
+    local[0] = 106;
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "/var/s") == 0);
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, 50, nullptr, 0, 0) == 6);
+    std::memset(host, 'H', sizeof(host));
+    local[0] = 1;
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(host[0] == 'H');
+    local[0] = 0;
+    Require(getnameinfo_nid_postfix(local.data(), local.size(), host, sizeof(host), nullptr, 0, 0) == 6);
+    Require(host[0] == '\0');
+
+    std::array<unsigned char, 200> link{54, 18, 7, 0};
+    std::memset(service, 'S', sizeof(service));
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, sizeof(host), service, sizeof(service), 0) == 0);
+    Require(std::strcmp(host, "link#7") == 0 && service[0] == '\0');
+    Require(getnameinfo_nid_postfix(link.data(), 9, host, 7, nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "link#7") == 0);
+    Require(getnameinfo_nid_postfix(link.data(), link.size(), host, 6, nullptr, 0, 0) == 6);
+    Require(host[0] == '\0');
+    Require(getnameinfo_nid_postfix(link.data(), 8, host, sizeof(host), nullptr, 0, 0) == 4);
+    std::memset(host, 'H', sizeof(host));
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, 0, nullptr, 0, 0) == 6);
+    Require(host[0] == '\0' && host[1] == 'H');
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, std::size_t{1} << 31, nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "link#7") == 0);
+    errno = 0;
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, (std::size_t{1} << 31) + 1, nullptr, 0, 0) == 6);
+    Require(host[0] == '\0' && errno == 84);
+    for (const unsigned char name : {0, 3}) {
+        link[5] = name;
+        bool nullThrew = false;
+        try {
+            getnameinfo_nid_postfix(link.data(), 54, nullptr, 0, nullptr, 0, 0);
+        } catch (const std::invalid_argument&) {
+            nullThrew = true;
+        }
+        Require(nullThrew);
+    }
+    link[5] = 3;
+    std::memcpy(link.data() + 8, "em0", 3);
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "em0") == 0);
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, 3, nullptr, 0, 0) == 6);
+    Require(host[0] == '\0');
+    link[4] = 6;
+    link[6] = 6;
+    const unsigned char ether[]{0x00, 0x1b, 0x21, 0xaa, 0xbb, 0xcc};
+    std::memcpy(link.data() + 11, ether, sizeof(ether));
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, 18, nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "00:1b:21:aa:bb:cc") == 0);
+    std::memset(host, 'H', sizeof(host));
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, 6, nullptr, 0, 0) == 6);
+    Require(std::memcmp(host, "\0" "0:1b\0H", 7) == 0);
+    errno = 0;
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, ~std::uint32_t{0}, nullptr, 0, 0) == 6);
+    Require(host[0] == '\0' && errno == 84);
+    bool threw = false;
+    try {
+        getnameinfo_nid_postfix(link.data(), 54, nullptr, 0, nullptr, 0, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    link[4] = 0x90;
+    link[6] = 0;
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "em0") == 0);
+    link[6] = 7;
+    Require(getnameinfo_nid_postfix(link.data(), 54, nullptr, 0, nullptr, 0, 0) == 5);
+    link[6] = 16;
+    const unsigned char firewire[]{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xff};
+    std::memcpy(link.data() + 11, firewire, sizeof(firewire));
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(std::strcmp(host, "01:02:03:04:05:06:07:08") == 0);
+    link[4] = 6;
+    link[5] = 0;
+    link[6] = 0;
+    link[7] = 1;
+    std::memset(host, 'H', sizeof(host));
+    Require(getnameinfo_nid_postfix(link.data(), 54, host, sizeof(host), nullptr, 0, 0) == 0);
+    Require(host[0] == '\0' && host[1] == 'H');
+    std::memset(host, 0, sizeof(host));
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, sizeof(host), nullptr, 0, 10 | 32) == 0);
+    Require(std::strcmp(host, "127.0.0.1") == 0);
+    auto unsizedV4 = v4;
+    unsizedV4[0] = 0;
+    std::memset(host, 0, sizeof(host));
+    Require(getnameinfo_nid_postfix(unsizedV4.data(), unsizedV4.size(), host, sizeof(host), nullptr, 0, 10) == 0);
+    Require(std::strcmp(host, "127.0.0.1") == 0);
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), nullptr, 0, nullptr, 0, 10) == 0);
+    std::memset(host, 'H', sizeof(host));
+    std::memset(service, 'S', sizeof(service));
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, sizeof(host), service, 5, 10) == 6);
+    Require(std::all_of(std::begin(host), std::end(host), [](char value) { return value == 'H'; }));
+    Require(std::all_of(std::begin(service), std::end(service), [](char value) { return value == 'S'; }));
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, 1, nullptr, 0, 10) == 6);
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, 9, service, sizeof(service), 10) == 6);
+    Require(std::strcmp(service, "27910") == 0);
+    Require(std::all_of(std::begin(host), std::end(host), [](char value) { return value == 'H'; }));
+    std::memset(service, 'S', sizeof(service));
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, sizeof(host), service, sizeof(service), 2 | 4 | 8) == 8);
+    Require(std::strcmp(service, "27910") == 0);
+    Require(std::all_of(std::begin(host), std::end(host), [](char value) { return value == 'H'; }));
+    std::memset(service, 'S', sizeof(service));
+    Require(getnameinfo_nid_postfix(v4.data(), v4.size(), nullptr, 5, service, sizeof(service), 10) == 0);
+    Require(std::strcmp(service, "27910") == 0);
+    Require(getnameinfo_nid_postfix(v6.data(), v6.size(), host, 3, nullptr, 0, 10) == 14);
+    Require(std::all_of(std::begin(host), std::end(host), [](char value) { return value == 'H'; }));
+    auto scopedV6 = v6;
+    scopedV6[24] = 5;
+    Require(getnameinfo_nid_postfix(scopedV6.data(), scopedV6.size(), host, sizeof(host), nullptr, 0, 10) == 0);
+    Require(std::strncmp(host, "::1%", 4) == 0 && std::strlen(host) > 4);
+    std::memset(host, 'H', sizeof(host));
+    Require(getnameinfo_nid_postfix(scopedV6.data(), scopedV6.size(), host, 4, nullptr, 0, 10) == 14);
+    Require(std::strcmp(host, "::1") == 0);
     Require(std::strcmp(gai_strerror_nid_postfix(0), "Success") == 0);
     Require(std::strcmp(gai_strerror_nid_postfix(3), "Invalid value for ai_flags") == 0);
     Require(std::strcmp(gai_strerror_nid_postfix(8), "hostname nor servname provided, or not known") == 0);
