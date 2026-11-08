@@ -1218,6 +1218,16 @@ void SlowCompileTest() {
     Require(Contains(Read(collector.ReportPath()), "\"slowCompiles\": 2"), "compiles above 100 ms must be counted, exactly 100 ms is not slow");
 }
 
+void RecipeRedactionTest() {
+    RunReport::HostIdentifiers host;
+    host.users.push_back("alice");
+    host.words.push_back("alice");
+    Require(RunReport::RedactedValue("PS5", host) == "PS5", "a plain value is kept");
+    Require(RunReport::RedactedValue("/home/bob/games/x", host) == "[redacted]", "an absolute path is redacted");
+    Require(RunReport::RedactedValue("alice-rig", host) == "[redacted]", "a host user name is redacted");
+    Require(RunReport::RedactedValue("", host) == "[redacted]", "an empty value is redacted");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1484,6 +1494,7 @@ int main(int argc, char** argv) {
         Run("compile-time-total", CompileTimeTest);
         Run("compile-time-report", CompileTimeReportTest);
         Run("slow-compile-count", SlowCompileTest);
+        Run("recipe-redaction", RecipeRedactionTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
