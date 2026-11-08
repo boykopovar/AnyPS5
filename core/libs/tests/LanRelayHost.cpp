@@ -170,6 +170,18 @@ static void OpensAndClosesTwoRelaysWithoutLeaks() {
     reopenedSecond.Close();
 }
 
+static void GivesEachOpenRelayItsOwnInstance() {
+    LanRelay::Relay first;
+    LanRelay::Relay second;
+    Require(first.Instance() == 0, "a closed relay has no instance id");
+    first.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    second.Open(LanRelay::Endpoint{"127.0.0.1", 0});
+    Require(first.Instance() != second.Instance(), "two open relays have different instance ids");
+    first.Close();
+    Require(first.Instance() == 0, "Close clears the instance id");
+    second.Close();
+}
+
 static std::size_t OpenDescriptorCount() {
 #ifdef __linux__
     std::size_t count = 0;
