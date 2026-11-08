@@ -1272,7 +1272,6 @@ int APS5_VABI _Thrd_start_with_attr_nid_postfix(void** thread, void* (APS5_VABI*
 int APS5_VABI _Thrd_start_with_name_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);
 int APS5_VABI _Thrd_create_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument);
 [[noreturn]] void APS5_VABI _Thrd_abort_nid_postfix(const char* message);
-int APS5_VABI _ZNSt8__sce_v211_Thrd_startEPP7pthreadPFPvS3_ES3__nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument);
 int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name);
 int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_attrEPP7pthreadPFPvS3_ES3_PP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, void* attribute);
 int APS5_VABI _ZNSt8__sce_v226_Thrd_start_with_name_attrEPP7pthreadPFPvS3_ES3_PKcPP12pthread_attr_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name, void* attribute);

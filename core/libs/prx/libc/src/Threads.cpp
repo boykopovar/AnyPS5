@@ -942,10 +942,6 @@ void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix() {
     return _Thrd_current_nid_postfix();
 }
 
-int APS5_VABI _ZNSt8__sce_v211_Thrd_startEPP7pthreadPFPvS3_ES3__nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument) {
-    return _Thrd_start_nid_postfix(thread, entry, argument);
-}
-
 int APS5_VABI _ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(void** thread, void* (APS5_VABI* entry)(void*), void* argument, const char* name) {
     return _Thrd_start_with_name_nid_postfix(thread, entry, argument, name);
 }

@@ -113,15 +113,7 @@ static void CreateThread() {
 }
 
 static void CppEntryPoints() {
-    std::atomic<int> started{0};
-    void* thread = nullptr;
-    Require(_ZNSt8__sce_v211_Thrd_startEPP7pthreadPFPvS3_ES3__nid_postfix(&thread, RecordEntry, &started) == success);
-    Require(thread != nullptr);
-    WaitForStart(started);
     int code = 0;
-    Require(_Thrd_join_nid_postfix(thread, &code) == success);
-    Require(code == static_cast<int>(threadResult));
-
     std::atomic<int> namedStarted{0};
     void* named = nullptr;
     Require(_ZNSt8__sce_v221_Thrd_start_with_nameEPP7pthreadPFPvS3_ES3_PKc_nid_postfix(&named, RecordEntry, &namedStarted, "cpp") == success);
