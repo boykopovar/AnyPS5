@@ -1866,7 +1866,10 @@ void ShaderResources::Complete() {
         buildPrepare(shaders, nullptr, 0, 0, 0);
     }
     buildComplete();
-    if (heapStage) RefreshHeapStage(shaders);
+    if (heapStage) {
+        layOutHeapStages(shaders);
+        RefreshHeapStage(shaders);
+    }
     forgetDeferredInputs();
 }
 
@@ -1881,7 +1884,10 @@ void ShaderResources::forgetDeferredInputs() {
 void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
     buildPrepare(shaders, target, colorAttachments, indexAddress, indexBytes);
     buildComplete();
-    if (heapStage) RefreshHeapStage(shaders);
+    if (heapStage) {
+        layOutHeapStages(shaders);
+        RefreshHeapStage(shaders);
+    }
 }
 
 namespace {
@@ -6710,11 +6716,15 @@ PipelineSetLayouts ShaderResources::SetLayouts() const {
 
 void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) {
     resolveBufferAddresses();
+    BindlessHeap* heap = nullptr;
     std::optional<BindlessHeap::SpanScope> spans;
     for (const auto& shader : shaders) {
         if (!HeapShader(shader)) continue;
-        if (!spans) spans.emplace(BindlessHeap::For(context));
-        writeHeapStage(shader);
+        if (!spans) {
+            heap = &BindlessHeap::For(context);
+            spans.emplace(*heap);
+        }
+        writeHeapStage(*spans, *heap, shader);
     }
 }
 
@@ -6743,39 +6753,36 @@ void ShaderResources::resolveBufferAddresses() {
 
 void ShaderResources::bufferRanges(std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides, std::vector<VkDeviceAddressRangeEXT>& ranges) const {
     static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
-    for (const auto& binding : bindings) {
-        if (!binding.addressed || binding.dataStage != dataStage) continue;
-        for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
-            const auto index = binding.allocations[element];
-            const auto& allocation = allocations[index];
-            const bool overridden = overrides != nullptr && (*overrides)[index].buffer != VK_NULL_HANDLE;
-            const bool owned = !overridden && !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
-            const bool resolved = !overridden && index < resolvedAddresses.size() && resolvedAddresses[index].address != 0;
-            VkDeviceAddress address = 0;
-            VkDeviceSize range = 0;
-            if (owned) {
-                address = allocation.buffer->DeviceAddress();
-                range = allocation.size;
-            } else if (resolved) {
-                address = resolvedAddresses[index].address;
-                range = resolvedAddresses[index].size;
-                if (verify) {
-                    const auto fresh = bufferAddress(allocation);
-                    if (fresh.address != address || fresh.size != range) throw std::runtime_error("AGC graphics: a GPU heap buffer address resolved when the draw's resources were built changed");
-                }
-            } else if (overridden) {
-                const auto& info = (*overrides)[index];
-                const auto base = BufferDeviceAddress(context, info.buffer);
-                Require(base != 0, "an addressed buffer has no device address");
-                address = base + info.offset;
-                range = info.range;
-            } else {
+    if (dataStage >= addressedElements.size()) return;
+    for (const auto index : addressedElements[dataStage]) {
+        const auto& allocation = allocations[index];
+        const bool overridden = overrides != nullptr && (*overrides)[index].buffer != VK_NULL_HANDLE;
+        const bool owned = !overridden && !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
+        const bool resolved = !overridden && index < resolvedAddresses.size() && resolvedAddresses[index].address != 0;
+        VkDeviceAddress address = 0;
+        VkDeviceSize range = 0;
+        if (owned) {
+            address = allocation.buffer->DeviceAddress();
+            range = allocation.size;
+        } else if (resolved) {
+            address = resolvedAddresses[index].address;
+            range = resolvedAddresses[index].size;
+            if (verify) {
                 const auto fresh = bufferAddress(allocation);
-                address = fresh.address;
-                range = fresh.size;
+                if (fresh.address != address || fresh.size != range) throw std::runtime_error("AGC graphics: a GPU heap buffer address resolved when the draw's resources were built changed");
             }
-            ranges.push_back({address, std::min<VkDeviceSize>(range, context.limits.maxStorageBufferRange)});
+        } else if (overridden) {
+            const auto& info = (*overrides)[index];
+            const auto base = BufferDeviceAddress(context, info.buffer);
+            Require(base != 0, "an addressed buffer has no device address");
+            address = base + info.offset;
+            range = info.range;
+        } else {
+            const auto fresh = bufferAddress(allocation);
+            address = fresh.address;
+            range = fresh.size;
         }
+        ranges.push_back({address, std::min<VkDeviceSize>(range, context.limits.maxStorageBufferRange)});
     }
 }
 
@@ -6867,10 +6874,11 @@ void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConsta
     Require(ranges.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
     heapPushedStages.fetch_add(1, std::memory_order_relaxed);
     Require(empty != 0u, "a stage with pushed buffers has no shader data to stand in for an empty buffer");
+    const auto uniformAlignment = UniformConstantBuffersEnabled() ? context.limits.minUniformBufferOffsetAlignment : VkDeviceSize{1};
     const auto record = [&](std::size_t index) {
         const auto size = static_cast<std::uint32_t>(std::min<VkDeviceSize>(ranges[index].size, 0xffffffffu));
         const auto address = size != 0u && ranges[index].address != 0u ? ranges[index].address : empty;
-        Require(!UniformConstantBuffersEnabled() || address % context.limits.minUniformBufferOffsetAlignment == 0, "a pushed buffer address is off the uniform buffer offset alignment");
+        Require(address % uniformAlignment == 0, "a pushed buffer address is off the uniform buffer offset alignment");
         return std::array<std::uint32_t, Abi::OverflowRecordWords>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), address == empty ? 0u : size, 0u};
     };
     const auto put = [&](std::uint32_t position, std::span<const std::uint32_t> words) {
@@ -6914,7 +6922,7 @@ VkImageView ShaderResources::heapPlaceholderView(std::uint32_t kind) const {
     return context.nullDescriptors ? VK_NULL_HANDLE : context.placeholderImages->View(kind);
 }
 
-void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_t stageIndex) {
+void ShaderResources::writeHeapTableMap(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader, std::size_t stageIndex) {
     constexpr auto noElement = std::numeric_limits<std::size_t>::max();
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     namespace TableAbi = ShaderRecompiler::ImageTableAbi;
@@ -6927,7 +6935,6 @@ void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable)
             images = &binding;
     }
-    auto& heap = BindlessHeap::For(context);
     struct MapStorage {};
     auto& map = HostThreadLocal<std::vector<std::uint32_t>, MapStorage>();
     map.assign(table->map.begin(), table->map.end());
@@ -7000,13 +7007,12 @@ void ShaderResources::writeHeapTableMap(const CompiledShader& shader, std::size_
             [&](StorageTexture& image, std::size_t index) { return image.UintStorageViewOrDefault(storageMips[index], storageFirstLayer[index]); });
     }
     if (map.size() == base) map.push_back(sampledAbsent);
-    heapTableMaps[stageIndex] = heapSpan(heapStages[stageIndex].map, map);
+    heapTableMaps[stageIndex] = heapSpan(spans, heap, heapStages[stageIndex].map, map);
     heapTableMapSet[stageIndex] = true;
 }
 
-std::uint64_t ShaderResources::heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words) {
-    auto& heap = BindlessHeap::For(context);
-    const auto span = heap.KeepOrAllocate(words.size(), kept.mark, std::ranges::equal(kept.words, words));
+std::uint64_t ShaderResources::heapSpan(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words) {
+    const auto span = heap.KeepOrAllocate(spans, words.size(), kept.mark, std::ranges::equal(kept.words, words));
     if (!span) return kept.mark.address;
     BindlessHeap::Write(*span, words);
     kept.words.assign(words.begin(), words.end());
@@ -7040,43 +7046,79 @@ VkImageView ShaderResources::heapStorageView(std::size_t index, std::uint32_t bi
     return texture->StorageView(storageMips[index], storageFirstLayer[index], UintStorageBinding(binding));
 }
 
-void ShaderResources::appendHeapSlotKey(VkShaderStageFlags stageBit, std::vector<std::uintptr_t>& key) const {
-    constexpr auto absent = std::numeric_limits<std::size_t>::max();
-    key.clear();
+void ShaderResources::layOutHeapStages(std::span<const CompiledShader> shaders) {
+    for (const auto& shader : shaders) {
+        if (!HeapShader(shader)) continue;
+        const VkShaderStageFlags stageBit = VulkanStage(shader.stage);
+        auto& state = heapStages[HeapStageIndex(shader.stage)];
+        state.owned.clear();
+        for (std::size_t index = 0; index < bindings.size(); ++index) {
+            if (ownsHeapBinding(bindings[index], stageBit)) state.owned.push_back(static_cast<std::uint32_t>(index));
+        }
+        state.laidOutFor = stageBit;
+    }
+    for (auto& elements : addressedElements) elements.clear();
     for (const auto& binding : bindings) {
-        if (!ownsHeapBinding(binding, stageBit)) continue;
+        if (!binding.addressed) continue;
+        Require(binding.dataStage < addressedElements.size(), "an addressed buffer binding names no data stage");
+        for (const auto index : binding.allocations) addressedElements[binding.dataStage].push_back(static_cast<std::uint32_t>(index));
+    }
+}
+
+template <class Emit>
+void ShaderResources::visitHeapSlotKey(std::span<const std::uint32_t> owned, Emit&& emit) const {
+    constexpr auto absent = std::numeric_limits<std::size_t>::max();
+    const auto put = [&](std::uintptr_t first, std::uintptr_t view, std::uintptr_t layout) { return emit(first) && emit(view) && emit(layout); };
+    for (const auto bindingIndex : owned) {
+        const auto& binding = bindings[bindingIndex];
         if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
             for (const auto index : binding.imageAllocations) {
                 if (index == absent) {
-                    key.push_back(0u);
+                    if (!emit(0u)) return;
                     continue;
                 }
-                key.insert(key.end(), {reinterpret_cast<std::uintptr_t>(textures[index].get()),
-                                       reinterpret_cast<std::uintptr_t>(heapSampledView(index)),
-                                       static_cast<std::uintptr_t>(textures[index]->Layout())});
+                if (!put(reinterpret_cast<std::uintptr_t>(textures[index].get()), reinterpret_cast<std::uintptr_t>(heapSampledView(index)), static_cast<std::uintptr_t>(textures[index]->Layout()))) return;
             }
         } else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
             for (const auto index : binding.imageAllocations) {
                 if (index != absent && storageTextures[index] == nullptr && heapMultisampleStorageView(index) != VK_NULL_HANDLE) {
-                    key.insert(key.end(), {reinterpret_cast<std::uintptr_t>(heapMultisampleStorageOwner(index)), reinterpret_cast<std::uintptr_t>(heapMultisampleStorageView(index)),
-                                           static_cast<std::uintptr_t>(VK_IMAGE_LAYOUT_GENERAL)});
+                    if (!put(reinterpret_cast<std::uintptr_t>(heapMultisampleStorageOwner(index)), reinterpret_cast<std::uintptr_t>(heapMultisampleStorageView(index)), static_cast<std::uintptr_t>(VK_IMAGE_LAYOUT_GENERAL))) return;
                     continue;
                 }
                 if (index == absent || storageTextures[index] == nullptr) {
-                    key.push_back(0u);
+                    if (!emit(0u)) return;
                     continue;
                 }
-                key.insert(key.end(), {reinterpret_cast<std::uintptr_t>(storageTextures[index].get()),
-                                       reinterpret_cast<std::uintptr_t>(heapStorageView(index, binding.layout.binding)),
-                                       static_cast<std::uintptr_t>(VK_IMAGE_LAYOUT_GENERAL)});
+                if (!put(reinterpret_cast<std::uintptr_t>(storageTextures[index].get()), reinterpret_cast<std::uintptr_t>(heapStorageView(index, binding.layout.binding)), static_cast<std::uintptr_t>(VK_IMAGE_LAYOUT_GENERAL))) return;
             }
         } else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) {
-            for (const auto index : binding.imageAllocations) key.push_back(reinterpret_cast<std::uintptr_t>(samplers[index].get()));
+            for (const auto index : binding.imageAllocations) {
+                if (!emit(reinterpret_cast<std::uintptr_t>(samplers[index].get()))) return;
+            }
         }
     }
 }
 
-void ShaderResources::takeHeapSlots(BindlessHeap& heap, HeapStageState& state, VkShaderStageFlags stageBit,
+void ShaderResources::appendHeapSlotKey(std::span<const std::uint32_t> owned, std::vector<std::uintptr_t>& key) const {
+    key.clear();
+    visitHeapSlotKey(owned, [&](std::uintptr_t word) {
+        key.push_back(word);
+        return true;
+    });
+}
+
+bool ShaderResources::heapSlotKeySame(std::span<const std::uint32_t> owned, std::span<const std::uintptr_t> key) const {
+    std::size_t cursor = 0;
+    bool same = true;
+    visitHeapSlotKey(owned, [&](std::uintptr_t word) {
+        same = cursor < key.size() && key[cursor] == word;
+        ++cursor;
+        return same;
+    });
+    return same && cursor == key.size();
+}
+
+void ShaderResources::takeHeapSlots(BindlessHeap& heap, HeapStageState& state, std::span<const std::uint32_t> owned,
                                     std::span<const std::uintptr_t> key) {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
@@ -7084,8 +7126,8 @@ void ShaderResources::takeHeapSlots(BindlessHeap& heap, HeapStageState& state, V
     for (auto& kindSlots : state.slots) kindSlots.clear();
     state.samplerSlots.clear();
     std::size_t cursor = 0;
-    for (const auto& binding : bindings) {
-        if (!ownsHeapBinding(binding, stageBit)) continue;
+    for (const auto bindingIndex : owned) {
+        const auto& binding = bindings[bindingIndex];
         const auto kind = binding.layout.binding % bindingCount;
         if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
             auto& kindSlots = state.slots[kind];
@@ -7236,11 +7278,9 @@ void ShaderResources::patchHeapSlotWords(const CompiledShader& shader, const Hea
     if (!slotWords) std::copy(samplerSlots.begin(), samplerSlots.end(), patched.begin() + program.samplerSlotDword);
 }
 
-void ShaderResources::writeHeapStage(const CompiledShader& shader) {
+void ShaderResources::writeHeapStage(const BindlessHeap::SpanScope& spans, BindlessHeap& heap, const CompiledShader& shader) {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     HeapCostScope slotsCost(HeapCost::Slots);
-    auto& heap = BindlessHeap::For(context);
-    const BindlessHeap::SpanScope spans(heap);
     const VkShaderStageFlags stageBit = VulkanStage(shader.stage);
     const auto stageIndex = HeapStageIndex(shader.stage);
     auto& stageState = heapStages[stageIndex];
@@ -7248,18 +7288,17 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const auto programIdentity = shader.program->heapTemplateId;
     if (programIdentity != 0 && stageState.inertProgram == programIdentity && !verifySlots) return;
     stageState.inertProgram = 0;
-    struct HeapKeyStorage {};
-    auto& key = HostThreadLocal<std::vector<std::uintptr_t>, HeapKeyStorage>();
-    appendHeapSlotKey(stageBit, key);
-    bool current = key == stageState.key;
+    Require(stageState.laidOutFor == stageBit, "a GPU heap stage was refreshed for a stage its resources were not laid out for");
+    const auto& owned = stageState.owned;
+    bool current = heapSlotKeySame(owned, stageState.key);
     const auto slotSerial = heap.SlotSerial();
     const bool unmoved = current && EpochProofs() && stageState.slotSerial == slotSerial;
     if (!unmoved && current)
         current =
             heap.GenerationsCurrent(stageState.imageSlots, stageState.slotGenerations, stageState.samplerSlots, stageState.samplerGenerations);
     if (!current) {
-        stageState.key = key;
-        takeHeapSlots(heap, stageState, stageBit, key);
+        appendHeapSlotKey(owned, stageState.key);
+        takeHeapSlots(heap, stageState, owned, stageState.key);
         noteHeapSlotGenerations(heap, stageState);
     } else {
         stageState.touchedEpoch = heap.TouchSlots(stageState.imageSlots, stageState.samplerSlots, stageState.touchedEpoch);
@@ -7272,7 +7311,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const std::size_t dataIndex = DataOffsetIndex(stageIndex, Abi::Binding::ShaderData);
     const std::size_t flatIndex = DataOffsetIndex(stageIndex, Abi::Binding::FlattenedSrt);
     const auto& program = *shader.program;
-    if (program.dataAddressPush) writeHeapTableMap(shader, stageIndex);
+    if (program.dataAddressPush) writeHeapTableMap(spans, heap, shader, stageIndex);
     bool dataBindings = false;
     for (const auto& binding : program.bindings) {
         const bool shaderData = binding.role == ShaderRecompiler::DescriptorRole::ShaderData;
@@ -7295,7 +7334,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
             stageState.data.mark.entry = 0;
         }
         if (!shaderData) {
-            heapOffsets[flatIndex] = heapSpan(stageState.flat, words);
+            heapOffsets[flatIndex] = heapSpan(spans, heap, stageState.flat, words);
             heapSrtDwords[stageIndex] = static_cast<std::uint32_t>(words.size());
             continue;
         }
@@ -7312,11 +7351,11 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
         patchHeapSlotWords(shader, stageState, patched, current);
         if (verifySlots && sameInput && !std::ranges::equal(stageState.data.words, patched))
             throw std::runtime_error("AGC graphics: a GPU-mode stage's shader data changed although its inputs and slots did not");
-        heapOffsets[dataIndex] = heapSpan(stageState.data, patched);
+        heapOffsets[dataIndex] = heapSpan(spans, heap, stageState.data, patched);
         stageState.dataInput.assign(words.begin(), words.end());
         stageState.dataInput.insert(stageState.dataInput.end(), userData.begin(), userData.end());
     }
-    const bool unbound = key.empty() && !dataBindings && !heapTableMapSet[stageIndex] && stageState.imageSlots.empty() && stageState.samplerSlots.empty();
+    const bool unbound = stageState.key.empty() && !dataBindings && !heapTableMapSet[stageIndex] && stageState.imageSlots.empty() && stageState.samplerSlots.empty();
     if (unbound && !addressedBuffers) stageState.inertProgram = programIdentity;
 }
 

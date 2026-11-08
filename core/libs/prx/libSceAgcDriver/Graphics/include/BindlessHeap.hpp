@@ -101,10 +101,11 @@ public:
         SpanScope& operator=(const SpanScope&) = delete;
 
     private:
+        friend class BindlessHeap;
         const BindlessHeap& heap;
         bool acquired;
     };
-    std::optional<DataSpan> KeepOrAllocate(std::size_t words, SpanMark& mark, bool same);
+    std::optional<DataSpan> KeepOrAllocate(const SpanScope& held, std::size_t words, SpanMark& mark, bool same);
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);

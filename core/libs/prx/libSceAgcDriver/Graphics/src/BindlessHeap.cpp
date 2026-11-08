@@ -763,8 +763,8 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
     return allocateLocked(words, mark);
 }
 
-std::optional<BindlessHeap::DataSpan> BindlessHeap::KeepOrAllocate(std::size_t words, SpanMark& mark, bool same) {
-    SpanScope scope(*this);
+std::optional<BindlessHeap::DataSpan> BindlessHeap::KeepOrAllocate(const SpanScope& held, std::size_t words, SpanMark& mark, bool same) {
+    Require(&held.heap == this, "a heap span was kept or allocated under another heap's lock");
     if (same && heldLocked(mark)) return std::nullopt;
     return allocateLocked(words, mark);
 }

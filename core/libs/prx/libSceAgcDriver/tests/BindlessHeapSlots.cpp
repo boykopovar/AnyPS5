@@ -218,7 +218,7 @@ void spanScope(const Context& context) {
         const BindlessHeap::SpanScope outer(heap);
         const BindlessHeap::SpanScope inner(heap);
         static_cast<void>(heap.Allocate(16u, first));
-        require(heap.Held(first) && !heap.KeepOrAllocate(16u, first, true), "spans are allocated and kept inside nested scopes");
+        require(heap.Held(first) && !heap.KeepOrAllocate(inner, 16u, first, true), "spans are allocated and kept inside nested scopes");
         other = std::thread([&] {
             BindlessHeap::SpanMark mark;
             static_cast<void>(heap.Allocate(16u, mark));
