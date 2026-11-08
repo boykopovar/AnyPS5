@@ -22,6 +22,7 @@ constexpr short PollIn = 1;
 constexpr std::uint16_t PeerPort = 47392;
 constexpr std::uint16_t SourcePort = 47393;
 constexpr std::uint16_t DestinationPort = 47394;
+constexpr std::uint16_t QuietPort = 47395;
 constexpr std::uint8_t FrameVersion = 1;
 constexpr std::size_t FrameHeaderSize = 11;
 
