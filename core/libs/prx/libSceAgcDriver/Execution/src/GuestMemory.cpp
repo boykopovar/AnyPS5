@@ -1078,7 +1078,7 @@ struct WindowCopy {
     StampKind held = StampKind::ImportWindow;
 
     bool Holds(std::uintptr_t page) const {
-        if (held == StampKind::Driver) return !image.empty() && CompareMapped(page, image.subspan(page - first, WritePageBytes)) == Compare::Equal;
+        if (held == StampKind::Driver) return page >= first && page - first <= image.size() && image.size() - (page - first) >= WritePageBytes && CompareMapped(page, image.subspan(page - first, WritePageBytes)) == Compare::Equal;
         if (page < first || (page - first) / WritePageBytes >= hashes.size()) return false;
         return HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[(page - first) / WritePageBytes];
     }
