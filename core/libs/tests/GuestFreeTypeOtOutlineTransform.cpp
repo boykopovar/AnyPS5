@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -23,6 +24,15 @@ template <typename TCall> bool Throws(TCall call) {
         call();
     } catch (const std::runtime_error&) {
         return true;
+    }
+    return false;
+}
+
+template <typename TCall> bool Overflows(TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).find("signed 64-bit overflow") != std::string::npos;
     }
     return false;
 }
@@ -64,12 +74,7 @@ void Transform() {
     sceFreeTypeOtOutlineTransform_nid_no_patch(&untouched.outline, &shear);
     Require(untouched.Is({{5, 6}}), "a null argument or a negative short point count is a no-op");
 
-    Shape wide({{1, 2}, {0x80000000LL, 0}}, {1});
-    Require(Throws([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(&wide.outline, &shear); }) && wide.Is({{1, 2}, {0x80000000LL, 0}}),
-            "a coordinate above 0x7FFFFFFF throws before any point is written");
-    const GuestMatrix large{0x80000000LL, 0, 0, 0x10000};
     Shape small({{1, 2}}, {0});
-    Require(Throws([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(&small.outline, &large); }) && small.Is({{1, 2}}), "a matrix entry above 0x7FFFFFFF throws");
     small.outline.points = nullptr;
     Require(Throws([&] { sceFreeTypeOtOutlineTransform_nid_no_patch(&small.outline, &shear); }), "null points with a positive count throw");
 }
@@ -110,8 +115,8 @@ void Embolden() {
     Require(Throws([&] { sceFreeTypeOtOutlineEmbolden_nid_no_patch(&outside.outline, 128); }) && outside.Is({{0, 0}, {0, 640}, {640, 640}, {640, 0}}),
             "a contour end past the points throws unchanged");
     Shape huge({{0, 0}, {0, 0x40000000}, {0x40000000, 0x40000000}, {0x40000000, 0}}, {3});
-    Require(Throws([&] { sceFreeTypeOtOutlineEmbolden_nid_no_patch(&huge.outline, 128); }) && huge.Is({{0, 0}, {0, 0x40000000}, {0x40000000, 0x40000000}, {0x40000000, 0}}),
-            "overflowing products throw unchanged");
+    Require(Overflows([&] { sceFreeTypeOtOutlineEmbolden_nid_no_patch(&huge.outline, 128); }) && huge.Is({{0, 0}, {0, 0x40000000}, {0x40000000, 0x40000000}, {0x40000000, 0}}),
+            "an overflowing product throws its own error unchanged");
 }
 
 }

@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 using namespace FreeType;
@@ -50,7 +52,7 @@ std::int64_t MulDiv(std::int64_t a, std::int64_t b, std::int64_t c, const char* 
 
 std::int64_t Narrow(__int128 value, const char* function) {
     if (value < std::numeric_limits<std::int64_t>::min() || value > std::numeric_limits<std::int64_t>::max()) {
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(std::string(function) + ": signed 64-bit overflow, undefined in FreeType 2.4.11, is not implemented");
     }
     return static_cast<std::int64_t>(value);
 }

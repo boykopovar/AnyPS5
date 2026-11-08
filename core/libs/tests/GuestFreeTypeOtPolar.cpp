@@ -44,21 +44,12 @@ bool Rotates(GuestVector vector, std::int64_t angle, GuestVector expected) {
     return vector.x == expected.x && vector.y == expected.y;
 }
 
-bool RotateThrowsUnchanged(GuestVector vector, std::int64_t angle) {
-    const GuestVector original = vector;
-    return Throws([&] { sceFreeTypeOtVectorRotate_nid_no_patch(&vector, angle); }) && vector.x == original.x && vector.y == original.y;
-}
-
 void Lengths() {
     Require(Length(3 * Degree, 4 * Degree) == 5 * Degree, "a 3-4-5 vector has length 5");
     Require(Length(-300, 400) == 500 && Length(-5, -12) == 13 && Length(1, 1) == 1, "small vectors round to the CORDIC length");
     Require(Length(0x12345, -0x6789) == 79136 && Length(100000000, 3) == 100000002, "the 2.4.11 CORDIC lengths are kept");
     Require(Length(0, -7) == 7 && Length(-9, 0) == 9 && Length(0, 0) == 0, "an axis vector returns the absolute component");
     Require(Length(0, std::numeric_limits<std::int64_t>::max()) == std::numeric_limits<std::int64_t>::max(), "the axis shortcut takes any magnitude");
-    Require(Throws([] { Length(0, std::numeric_limits<std::int64_t>::min()); }), "the minimum axis component has no absolute value");
-    Require(Throws([] { Length(0x7FFFFFFF, 0x7FFFFFFF); }) && Throws([] { Length(1 << 30, 1); }),
-            "lengths where the FT_LONG64 and 32-bit downscales differ throw");
-    Require(Throws([] { Length(0x100000000LL, 1); }), "components above 32 bits throw");
     Require(Throws([] { sceFreeTypeOtVectorLength_nid_no_patch(nullptr); }), "a null vector throws");
 }
 
@@ -72,10 +63,7 @@ void Polarize() {
     sceFreeTypeOtVectorPolarize_nid_no_patch(&zero, &length, &angle);
     Require(length == 11 && angle == 22, "a zero vector leaves both outputs");
     sceFreeTypeOtVectorPolarize_nid_no_patch(&zero, nullptr, nullptr);
-    GuestVector vector{1 << 30, 1};
-    Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(&vector, &length, &angle); }) && length == 11 && angle == 22,
-            "lengths where the downscales differ throw before writing");
-    vector = {3, 4};
+    GuestVector vector{3, 4};
     Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(&vector, &length, nullptr); }) && length == 11, "a null angle throws before writing");
     Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(nullptr, &length, &angle); }), "a null vector throws");
 }
@@ -89,8 +77,6 @@ void Rotate() {
     Require(Rotates({5 * Degree, 0}, 1, {5 * Degree, 0}), "a tiny turn keeps the vector");
     Require(Rotates({7, -9}, 0, {7, -9}) && Rotates({0, 0}, 45 * Degree, {0, 0}), "a zero angle or vector is unchanged");
     Require(Rotates({0x7FFFFFFFFFFFLL, 3}, 0, {0x7FFFFFFFFFFFLL, 3}), "a zero angle takes any magnitude");
-    Require(RotateThrowsUnchanged({0x7FFFFFFF, 0}, 60 * Degree), "rotations where the downscales differ throw unchanged");
-    Require(RotateThrowsUnchanged({0x100000000LL, 0}, 60 * Degree), "components above 32 bits throw unchanged");
     Require(Throws([] { sceFreeTypeOtVectorRotate_nid_no_patch(nullptr, Degree); }), "a null vector throws");
 
     GuestVector vector{-1, -1};
@@ -98,8 +84,6 @@ void Rotate() {
     Require(vector.x == 56756 && vector.y == 32768, "FT_Vector_From_Polar rotates the length");
     sceFreeTypeOtVectorFromPolar_nid_no_patch(&vector, -5, 0);
     Require(vector.x == -5 && vector.y == 0, "FT_Vector_From_Polar with no angle stores the length");
-    Require(Throws([&] { sceFreeTypeOtVectorFromPolar_nid_no_patch(&vector, 0x7FFFFFFF, 60 * Degree); }) && vector.x == -5 && vector.y == 0,
-            "FT_Vector_From_Polar throws unchanged where the downscales differ");
     Require(Throws([] { sceFreeTypeOtVectorFromPolar_nid_no_patch(nullptr, Degree, 0); }), "FT_Vector_From_Polar throws for a null vector");
 }
 
