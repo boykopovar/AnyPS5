@@ -122,6 +122,20 @@ std::uint32_t NewInstanceId() {
     return static_cast<std::uint32_t>(seed);
 }
 
+bool WaitReadable(std::uintptr_t handle, int timeoutMilliseconds) {
+#ifdef _WIN32
+    WSAPOLLFD entry{};
+    entry.fd = static_cast<SocketHandle>(handle);
+    entry.events = POLLRDNORM;
+    return WSAPoll(&entry, 1, timeoutMilliseconds) > 0 && (entry.revents & POLLRDNORM) != 0;
+#else
+    pollfd entry{};
+    entry.fd = static_cast<SocketHandle>(handle);
+    entry.events = POLLIN;
+    return poll(&entry, 1, timeoutMilliseconds) > 0 && (entry.revents & POLLIN) != 0;
+#endif
+}
+
 }
 
 Endpoint ParseEndpoint(const std::string& text) {
