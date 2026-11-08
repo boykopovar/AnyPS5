@@ -61,9 +61,29 @@ static void ParsesPeerList() {
     Require(peers[1].Host == "10.0.0.2" && peers[1].Port == 47002, "the second peer keeps its order");
 }
 
+template <typename Function>
+static void RejectsPeers(const char* text, const char* message, Function function) {
+    try {
+        function(text);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    std::fprintf(stderr, "%s: %s\n", message, text);
+    std::exit(1);
+}
+
+static void RejectsEmptyPeerEntries() {
+    const auto parse = [](const char* text) { LanRelay::ParsePeers(text); };
+    RejectsPeers(",", "a list of one empty entry is refused", parse);
+    RejectsPeers("127.0.0.1:47001,", "a trailing comma is refused", parse);
+    RejectsPeers(",127.0.0.1:47001", "a leading comma is refused", parse);
+    RejectsPeers("127.0.0.1:47001,,10.0.0.2:47002", "an empty entry between peers is refused", parse);
+}
+
 int main() {
     ParsesValidEndpoint();
     ParsesPeerList();
+    RejectsEmptyPeerEntries();
     RejectsInvalidEndpoints();
     return 0;
 }
