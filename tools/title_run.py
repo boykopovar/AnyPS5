@@ -160,6 +160,14 @@ def read_report(path):
             "truncated": {"functions": truncated.get("functions", 0), "unsupported": truncated.get("unsupported", 0)}}
 
 
+def take_report(work, run_dir):
+    source = work / REPORT_FILE
+    if not source.is_file():
+        return None
+    shutil.move(str(source), str(run_dir / REPORT_FILE))
+    return read_report(run_dir / REPORT_FILE)
+
+
 def frame_is_uniform(path, tolerance=8):
     data = path.read_bytes()
     try:
@@ -551,6 +559,7 @@ def collect_frames(work, destination):
 
 def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     run_dir.mkdir(parents=True)
+    (work / REPORT_FILE).unlink(missing_ok=True)
     inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE", "APS5_PAD_INPUT_FILE")}
     env = {**inherited, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
@@ -582,13 +591,14 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     text = "".join((run_dir / name).read_text(encoding="utf-8", errors="replace") for name in ("stdout.log", "stderr.log"))
     summary_path = run_dir / "aps5-summary.jsonl"
     summary = read_summary(summary_path)
+    report = take_report(work, run_dir)
     frames = collect_frames(work, run_dir / "frames")
     uniform = frame_is_uniform(run_dir / "frames" / frames[-1]) if frames else None
     age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
     cpu = re.search(r"host CPU (.+?): has", text)
     return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
-            "warnings": warning_counts(text), "frames": frames, "gpu": summary["gpu"], "driver": summary["driver"],
+            "warnings": warning_counts(text), "frames": frames, "report": report, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
 
 
@@ -685,7 +695,7 @@ def main(argv=None):
                 log = (work / "relink.log").read_text(encoding="utf-8", errors="replace")
                 result = {"outcome": "relink-failed", "exit_code": None, "seconds": 0, "presents": 0, "fps": 0.0,
                           "first_error": first_error(log) or last_line(log),
-                          "warnings": {}, "frames": []}
+                          "warnings": {}, "frames": [], "report": None}
             else:
                 result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}), entry.get("pad"))
                 for key in ("os", "gpu", "driver", "cpu"):
