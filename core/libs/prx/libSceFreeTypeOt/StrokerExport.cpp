@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <ft2build.h>
 #include FT_STROKER_H
 
 #include <cstdint>
