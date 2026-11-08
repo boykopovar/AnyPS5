@@ -346,6 +346,7 @@ std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FI
         if (log != nullptr) std::fprintf(log, "%s, LAN relay is off\n", error.what());
         return nullptr;
     }
+    relay->SetPeers(settings.Peers);
     return relay;
 }
 
