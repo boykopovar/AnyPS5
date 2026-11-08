@@ -1675,7 +1675,8 @@ int main() {
     Require(scePadResetLightBar(handle + 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
     Require(scePadSetMotionSensorState(handle, false) == PAD_OK);
-    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+    Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
+    for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
         Require(scePadSetMotionSensorState(invalid, true) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadSetMotionSensorState(invalid, false) == PAD_ERROR_INVALID_HANDLE);
     }
