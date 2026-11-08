@@ -24,6 +24,7 @@ public:
     bool Remove(std::uint64_t nid);
     std::size_t Size() const;
     bool Empty() const;
+    bool IsArmed(std::uint64_t nid) const;
     std::uint64_t DuplicateCount() const;
 
 private:
