@@ -52,6 +52,16 @@ class FoldTests(unittest.TestCase):
                                       f"- [sceExampleE]({LINK}) (libSceExample) - returns 1"])
         self.assertEqual(list((self.root / "docs/dev/debt/changes").glob("*.md")), [])
 
+    def test_add_follows_the_last_entry_that_links_the_same_file(self):
+        inventory = "../../../core/libs/prx/libSceExample/InventoryExports.cpp"
+        self.write(DEBT, f"# libSceExample technical debt\n\n### Unknown function info\n\n- [sceExampleC]({LINK}) (libSceExample) - unknown signature\n"
+                         f"- [`sceExamplePending`]({inventory}) - NID `abc`\n")
+        self.fragment("a", f"# libSceExample\n\n## add Unknown function info\n\n- [sceExampleG]({LINK}) (libSceExample) - unknown signature\n")
+        self.run_fold()
+        self.assertEqual(self.debt().split("\n")[4:7], [f"- [sceExampleC]({LINK}) (libSceExample) - unknown signature",
+                                                        f"- [sceExampleG]({LINK}) (libSceExample) - unknown signature",
+                                                        f"- [`sceExamplePending`]({inventory}) - NID `abc`"])
+
     def test_add_creates_a_missing_section(self):
         self.fragment("a", f"# libSceExample\n\n## add Pending exports\n\n- [sceExampleF]({LINK}) (libSceExample) - throws\n")
         self.run_fold()

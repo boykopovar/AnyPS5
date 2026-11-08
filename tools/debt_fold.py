@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_conventions import DEBT, DEBT_CHANGES, DEBT_DIR, debt_entries
+from check_conventions import DEBT, DEBT_CHANGES, DEBT_DIR, DEBT_TARGET, debt_entries
 
 ROOT = Path(__file__).resolve().parent.parent
 OPERATION = re.compile(r"## (add|change|remove) (.+)")
@@ -77,6 +77,11 @@ def find(text, operation):
     return matches[0]
 
 
+def target(entry):
+    match = DEBT_TARGET.search(entry.split("\n")[0])
+    return match[1] if match else None
+
+
 def apply(text, operation):
     found, lines = spans(text)
     if operation.kind == "add":
@@ -87,13 +92,12 @@ def apply(text, operation):
         start = lines.index(heading)
         stop = next((index for index in range(start + 1, len(lines)) if lines[index].startswith("#")), len(lines))
         row = operation.body.startswith("| ")
-        inside = [(begin, end) for begin, end, entry in found if start < begin < stop and entry.startswith("| ") == row]
+        inside = [(begin, end, entry) for begin, end, entry in found if start < begin < stop and entry.startswith("| ") == row]
         spaced = len(inside) > 1 and inside[-1][0] > inside[-2][1]
-        at = inside[-1][1] if inside else start + 1
+        same = [span for span in inside if target(span[2]) and target(span[2]) == target(operation.body)]
+        at = (same or inside)[-1][1] if inside else start + 1
         new = operation.body.split("\n")
-        if inside and spaced:
-            new = [""] + new
-        elif not inside:
+        if not inside or spaced:
             new = [""] + new
         return "\n".join(lines[:at] + new + lines[at:])
     begin, end = find(text, operation)
