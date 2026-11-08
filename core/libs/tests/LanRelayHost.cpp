@@ -420,6 +420,7 @@ int main() {
     GivesEachOpenRelayItsOwnInstance();
     RecognisesOwnFrames();
     SendsFrameToEveryPeer();
+    StartsAndStopsDelivery();
     DeliversFrameOnceBetweenRelays();
     SkipsMalformedDatagrams();
     ClosedRelayNeitherSendsNorReceives();
