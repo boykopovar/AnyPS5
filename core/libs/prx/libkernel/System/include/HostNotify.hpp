@@ -51,4 +51,6 @@ private:
 
 std::unique_ptr<IHostNotifySink> MakeHostNotifySink(HostNotifyMode mode, HostNotifyBackend backend, HostNotifySpawn spawn);
 
+void SendHostNotification(std::string_view title, std::string_view text);
+
 #endif

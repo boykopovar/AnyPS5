@@ -1,6 +1,7 @@
 #include "prx/libkernel/System/include/HostNotify.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <cerrno>
 #include <cstdio>
@@ -222,6 +223,33 @@ bool SpawnHostNotifyCommand(const HostNotifyArgv& argv) {
     return succeeded;
 }
 #endif
+
+namespace {
+
+bool DefaultIsExecutable(const std::string& path) {
+#ifdef _WIN32
+    return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+#else
+    return ::access(path.c_str(), X_OK) == 0;
+#endif
+}
+
+}
+
+void SendHostNotification(std::string_view title, std::string_view text) {
+    static const std::unique_ptr<IHostNotifySink> sink = [] {
+        const auto mode = HostNotifyModeFromEnvironment(std::getenv("ANYPS5_HOST_NOTIFY"));
+        if (mode == HostNotifyMode::Off) return std::unique_ptr<IHostNotifySink>();
+        const auto path = std::getenv("PATH");
+        const auto backend = SelectHostNotifyBackend(path == nullptr ? std::string_view() : std::string_view(path), DefaultIsExecutable);
+        if (backend == HostNotifyBackend::None) {
+            HostNotifyLog("notify-send is not in PATH; host notifications stay off");
+            return std::unique_ptr<IHostNotifySink>();
+        }
+        return MakeHostNotifySink(mode, backend, SpawnHostNotifyCommand);
+    }();
+    if (sink) sink->Notify(title, text);
+}
 
 HostNotifyMode HostNotifyModeFromEnvironment(const char* text) {
     if (const auto mode = ParseHostNotifyMode(text)) return *mode;
