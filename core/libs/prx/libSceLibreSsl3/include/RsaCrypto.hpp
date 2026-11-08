@@ -38,6 +38,15 @@ int RsaPaddingCheckPkcs1OaepMgf1_nid_no_patch(unsigned char* to, int size, const
     int modulusLength, const unsigned char* label, int labelLength, const DigestMethod* digest,
     const DigestMethod* maskDigest);
 
+int RsaSign_nid_no_patch(int type, const unsigned char* message, unsigned int messageLength, unsigned char* signature,
+    unsigned int* signatureLength, const LibreSsl3Rsa* rsa);
+int RsaVerify_nid_no_patch(int type, const unsigned char* message, unsigned int messageLength,
+    const unsigned char* signature, unsigned int signatureLength, const LibreSsl3Rsa* rsa);
+int RsaPaddingAddPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, unsigned char* encoded, const unsigned char* messageHash,
+    const DigestMethod* digest, const DigestMethod* maskDigest, int saltLength);
+int RsaVerifyPkcs1PssMgf1_nid_no_patch(const LibreSsl3Rsa* rsa, const unsigned char* messageHash, const DigestMethod* digest,
+    const DigestMethod* maskDigest, const unsigned char* encoded, int saltLength);
+
 bool RsaMaskGenerationFunction_nid_no_patch(unsigned char* mask, int length, const unsigned char* seed, int seedLength,
     const DigestMethod* digest);
 bool RsaDigestSpans_nid_no_patch(const DigestMethod* digest, std::span<const unsigned char> first,

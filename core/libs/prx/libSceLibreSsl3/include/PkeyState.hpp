@@ -63,6 +63,7 @@ inline constexpr std::int32_t LibreSsl3RsaPssSaltLengthMaximum = -3;
 inline constexpr std::int32_t LibreSsl3RsaFlagCachePublic = 0x0002;
 inline constexpr std::int32_t LibreSsl3RsaFlagCachePrivate = 0x0004;
 inline constexpr std::int32_t LibreSsl3RsaFlagExternalPrivateKey = 0x0020;
+inline constexpr std::int32_t LibreSsl3RsaFlagSignVerify = 0x0040;
 inline constexpr std::int32_t LibreSsl3RsaFlagNoBlinding = 0x0080;
 
 inline constexpr std::int32_t LibreSsl3MaximumDigestSize = 64;

@@ -15,6 +15,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -607,6 +608,387 @@ void RestrictedPssKey() {
     ReleaseKey(key);
 }
 
+constexpr unsigned char DigestSha1[] {
+    2, 143, 154, 225, 251, 141, 54, 37, 60, 176, 242, 166, 156, 38, 75, 29, 11, 9, 101, 3
+};
+
+constexpr unsigned char DigestSha224[] {
+    141, 232, 75, 114, 125, 142, 232, 40, 218, 153, 99, 248, 121, 68, 42, 102, 70, 207, 163, 152, 32, 3, 255,
+    232, 21, 102, 154, 215
+};
+
+constexpr unsigned char DigestSha256[] {
+    159, 137, 3, 84, 147, 61, 171, 50, 102, 91, 179, 55, 243, 194, 108, 237, 74, 228, 98, 53, 69, 206, 21, 216,
+    3, 0, 173, 128, 130, 189, 76, 120
+};
+
+constexpr unsigned char Pkcs1Sha1Signature[] {
+    93, 96, 74, 143, 12, 220, 18, 48, 178, 233, 56, 115, 7, 175, 68, 84, 251, 4, 114, 147, 116, 93, 19, 250, 193,
+    4, 173, 2, 121, 17, 86, 16, 61, 110, 39, 156, 93, 183, 54, 162, 16, 145, 80, 239, 172, 115, 233, 32, 168, 7,
+    46, 196, 208, 25, 41, 147, 247, 156, 62, 46, 171, 240, 158, 13, 123, 136, 41, 7, 159, 222, 159, 221, 156, 3,
+    131, 74, 242, 144, 133, 215, 36, 217, 42, 23, 69, 56, 197, 194, 35, 205, 202, 21, 139, 248, 5, 242, 240, 179,
+    124, 178, 28, 78, 157, 161, 225, 64, 56, 170, 42, 30, 122, 92, 134, 100, 51, 131, 112, 2, 85, 165, 200, 127,
+    49, 161, 165, 95, 93, 91, 125, 226, 225, 11, 166, 190, 199, 218, 42, 8, 220, 206, 99, 54, 129, 162, 45, 230,
+    40, 44, 201, 70, 120, 116, 226, 64, 142, 65, 87, 213, 122, 40, 233, 147, 106, 16, 28, 102, 223, 28, 220, 217,
+    8, 168, 183, 189, 155, 236, 49, 137, 152, 249, 138, 169, 158, 224, 29, 215, 212, 69, 134, 136, 104, 66, 118, 38,
+    116, 85, 84, 32, 112, 26, 56, 75, 46, 33, 226, 228, 114, 86, 242, 153, 87, 133, 36, 123, 244, 252, 84, 187,
+    77, 106, 102, 112, 190, 74, 78, 49, 239, 141, 43, 173, 244, 228, 102, 2, 91, 240, 232, 26, 151, 164, 34, 247,
+    177, 97, 7, 145, 127, 156, 159, 171, 217, 79, 112, 237, 11, 175
+};
+
+constexpr unsigned char Pkcs1Sha224Signature[] {
+    86, 85, 59, 70, 236, 245, 70, 171, 199, 81, 196, 37, 227, 43, 168, 110, 25, 114, 54, 71, 71, 203, 28, 233,
+    249, 181, 186, 201, 132, 124, 244, 229, 27, 136, 37, 183, 110, 239, 91, 144, 212, 133, 42, 97, 191, 145, 123,
+    99, 7, 70, 153, 55, 234, 63, 119, 85, 161, 120, 9, 212, 18, 18, 226, 105, 26, 45, 117, 34, 239, 144, 49, 137,
+    16, 22, 198, 203, 243, 164, 239, 198, 97, 123, 8, 209, 134, 66, 126, 19, 118, 186, 246, 123, 244, 98, 112, 231,
+    114, 203, 215, 111, 161, 194, 230, 128, 249, 194, 61, 101, 2, 49, 12, 137, 89, 140, 183, 201, 148, 91, 57, 40,
+    244, 49, 170, 48, 101, 123, 121, 218, 103, 62, 21, 71, 250, 25, 60, 147, 43, 124, 118, 226, 144, 84, 226, 251,
+    90, 204, 244, 217, 150, 58, 176, 139, 38, 178, 28, 81, 143, 8, 227, 71, 130, 188, 121, 100, 25, 152, 205, 33,
+    102, 123, 125, 43, 19, 186, 139, 1, 219, 228, 56, 1, 114, 225, 144, 116, 207, 193, 168, 120, 127, 157, 153,
+    159, 255, 83, 164, 148, 128, 169, 133, 50, 229, 180, 194, 65, 54, 65, 239, 94, 236, 144, 107, 105, 185, 152,
+    131, 241, 133, 137, 94, 191, 208, 222, 251, 41, 119, 13, 106, 106, 144, 120, 58, 248, 120, 220, 140, 157, 248,
+    210, 110, 72, 129, 216, 146, 210, 217, 98, 97, 168, 99, 20, 203, 197, 27, 78, 5, 1
+};
+
+constexpr unsigned char Pkcs1Sha256Signature[] {
+    180, 68, 146, 161, 91, 165, 160, 232, 147, 133, 150, 4, 67, 34, 201, 168, 55, 44, 56, 141, 249, 241, 86, 83,
+    99, 48, 140, 86, 141, 128, 24, 203, 219, 106, 140, 216, 202, 232, 190, 139, 23, 89, 214, 252, 124, 240, 93,
+    103, 85, 119, 177, 92, 44, 196, 198, 9, 97, 226, 42, 3, 122, 103, 104, 117, 109, 88, 218, 230, 116, 93, 25,
+    233, 140, 222, 19, 71, 56, 163, 100, 62, 134, 106, 176, 157, 229, 123, 121, 80, 240, 32, 15, 246, 231, 71, 91,
+    43, 96, 206, 141, 123, 54, 241, 246, 182, 209, 171, 112, 255, 229, 160, 30, 134, 132, 228, 183, 20, 136, 233,
+    81, 53, 244, 145, 47, 114, 209, 85, 255, 111, 94, 253, 155, 79, 86, 207, 86, 171, 152, 111, 147, 29, 12, 192,
+    216, 151, 253, 149, 184, 107, 86, 83, 43, 54, 57, 164, 205, 210, 38, 132, 137, 146, 6, 104, 128, 172, 44, 22,
+    73, 27, 201, 32, 54, 16, 140, 240, 128, 49, 118, 2, 193, 159, 21, 104, 188, 84, 128, 53, 146, 53, 160, 149,
+    12, 90, 211, 196, 195, 143, 204, 65, 254, 115, 21, 240, 45, 19, 142, 216, 146, 130, 107, 154, 61, 102, 241,
+    64, 21, 103, 192, 228, 42, 200, 21, 173, 171, 71, 193, 68, 197, 69, 137, 67, 132, 208, 119, 198, 27, 82, 12,
+    172, 205, 5, 236, 1, 101, 69, 188, 212, 71, 31, 7, 119, 73, 175, 75, 2, 178, 242
+};
+
+constexpr unsigned char PssSha256Salt20Signature[] {
+    118, 63, 202, 130, 192, 51, 246, 190, 130, 224, 113, 143, 82, 61, 8, 173, 204, 105, 114, 75, 117, 138, 147,
+    222, 106, 134, 117, 112, 180, 93, 32, 124, 197, 199, 81, 120, 238, 173, 41, 120, 242, 180, 63, 61, 103, 178,
+    204, 183, 124, 69, 145, 135, 160, 111, 48, 47, 17, 37, 185, 208, 188, 145, 68, 58, 41, 54, 140, 234, 16, 122,
+    228, 91, 53, 223, 118, 164, 43, 4, 71, 142, 227, 205, 119, 31, 170, 210, 115, 62, 55, 200, 115, 160, 3, 76, 52,
+    25, 95, 102, 210, 251, 66, 204, 58, 43, 207, 115, 59, 15, 131, 162, 29, 97, 105, 21, 159, 32, 157, 51, 24, 227,
+    175, 187, 89, 91, 84, 37, 105, 246, 179, 110, 86, 0, 45, 97, 226, 152, 69, 54, 129, 105, 10, 212, 252, 64, 196,
+    229, 123, 184, 193, 102, 31, 222, 147, 217, 98, 90, 228, 218, 0, 223, 37, 250, 223, 161, 209, 52, 95, 31, 95,
+    98, 118, 83, 187, 206, 42, 54, 170, 147, 44, 101, 244, 82, 178, 110, 88, 243, 45, 10, 226, 113, 207, 21, 180,
+    35, 80, 204, 215, 82, 19, 101, 60, 227, 102, 240, 233, 196, 23, 154, 168, 207, 102, 126, 215, 78, 50, 214, 162,
+    147, 182, 167, 137, 112, 3, 212, 94, 155, 3, 125, 68, 13, 19, 108, 32, 16, 47, 80, 55, 139, 38, 219, 73, 140,
+    30, 137, 18, 168, 60, 51, 223, 162, 187, 122, 130, 234, 141, 189
+};
+
+LibreSsl3EvpPkey* NewSigningKey(bool factors, bool crt, bool withPrivateExponent) {
+    auto* key = EVP_PKEY_new_nid_disambig1_nid_postfix();
+    Require(key != nullptr);
+    key->type = LibreSsl3PkeyRsa;
+    key->method = FindNativePkeyAsn1Method_nid_no_patch(LibreSsl3PkeyRsa);
+    Require(key->method != nullptr);
+    auto* rsa = RSA_new_nid_disambig1_nid_postfix();
+    Require(rsa != nullptr);
+    key->key = rsa;
+    auto* modulus = LibreSsl3::NewRsaBignum_nid_no_patch(KeyModulus, sizeof(KeyModulus));
+    auto* exponent = LibreSsl3::NewRsaBignum_nid_no_patch(PublicExponent, sizeof(PublicExponent));
+    Require(modulus != nullptr && exponent != nullptr);
+    auto* privateExponent = withPrivateExponent ?
+        LibreSsl3::NewRsaBignum_nid_no_patch(KeyPrivateExponent, sizeof(KeyPrivateExponent)) :
+        nullptr;
+    Require(RSA_set0_key_nid_postfix(rsa, modulus, exponent, privateExponent) == 1);
+    if (factors) {
+        auto* p = LibreSsl3::NewRsaBignum_nid_no_patch(KeyPrimeP, sizeof(KeyPrimeP));
+        auto* q = LibreSsl3::NewRsaBignum_nid_no_patch(KeyPrimeQ, sizeof(KeyPrimeQ));
+        Require(p != nullptr && q != nullptr);
+        Require(RSA_set0_factors_nid_postfix(rsa, p, q) == 1);
+        if (crt) {
+            auto* dmp1 = LibreSsl3::NewRsaBignum_nid_no_patch(KeyExponentP, sizeof(KeyExponentP));
+            auto* dmq1 = LibreSsl3::NewRsaBignum_nid_no_patch(KeyExponentQ, sizeof(KeyExponentQ));
+            auto* iqmp = LibreSsl3::NewRsaBignum_nid_no_patch(KeyCoefficient, sizeof(KeyCoefficient));
+            Require(dmp1 != nullptr && dmq1 != nullptr && iqmp != nullptr);
+            Require(RSA_set0_crt_params_nid_postfix(rsa, dmp1, dmq1, iqmp) == 1);
+        }
+    }
+    return key;
+}
+
+std::array<unsigned char, 256> Flipped(const unsigned char* bytes, std::size_t index) {
+    std::array<unsigned char, 256> result {};
+    std::memcpy(result.data(), bytes, 256);
+    result[index] ^= 0x01;
+    return result;
+}
+
+LibreSsl3PkeyContext* SignatureContext(LibreSsl3EvpPkey* key, bool sign, const void* digest) {
+    auto* context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+    Require(context != nullptr);
+    if (sign) {
+        Require(EVP_PKEY_sign_init_nid_postfix(context) == 1);
+    } else {
+        Require(EVP_PKEY_verify_init_nid_postfix(context) == 1);
+    }
+    if (digest != nullptr) {
+        Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1,
+            LibreSsl3PkeyControlMessageDigest, 0, Pointer(digest)) == 1);
+    }
+    return context;
+}
+
+void Pkcs1Signatures() {
+    struct {
+        const char* name;
+        const void* digest;
+        const unsigned char* digestBytes;
+        std::size_t digestSize;
+        const unsigned char* signature;
+    } tests[] = {
+        {"SHA-1", EVP_sha1_nid_postfix(), DigestSha1, sizeof(DigestSha1), Pkcs1Sha1Signature},
+        {"SHA-224", EVP_sha224_nid_postfix(), DigestSha224, sizeof(DigestSha224), Pkcs1Sha224Signature},
+        {"SHA-256", EVP_sha256_nid_postfix(), DigestSha256, sizeof(DigestSha256), Pkcs1Sha256Signature},
+    };
+    for (const auto& test : tests) {
+        auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+        auto* context = SignatureContext(key, true, test.digest);
+        std::array<unsigned char, 256> buffer {};
+        std::size_t length = buffer.size();
+        Require(EVP_PKEY_sign_nid_postfix(context, nullptr, &length, test.digestBytes, test.digestSize) == 1);
+        Require(length == 256);
+        length = buffer.size();
+        Require(EVP_PKEY_sign_nid_postfix(context, buffer.data(), &length, test.digestBytes, test.digestSize) == 1);
+        Require(length == 256);
+        Require(std::memcmp(buffer.data(), test.signature, 256) == 0);
+        EVP_PKEY_CTX_free_nid_postfix(context);
+        auto* verifyContext = SignatureContext(key, false, test.digest);
+        Require(EVP_PKEY_verify_nid_postfix(verifyContext, test.signature, 256, test.digestBytes,
+            test.digestSize) == 1);
+        EVP_PKEY_CTX_free_nid_postfix(verifyContext);
+        ReleaseKey(key);
+    }
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = SignatureContext(key, true, EVP_sha1_nid_postfix());
+    std::array<unsigned char, 255> shortBuffer {};
+    std::size_t length = 255;
+    Require(EVP_PKEY_sign_nid_postfix(context, shortBuffer.data(), &length, DigestSha1, sizeof(DigestSha1)) == 0);
+    ExpectErrors({EvpCode(155)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    context = SignatureContext(key, true, EVP_sha1_nid_postfix());
+    std::array<unsigned char, 256> signature {};
+    length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, DigestSha1, sizeof(DigestSha1) - 1) == -1);
+    ExpectErrors({RsaCode(143)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+}
+
+void Pkcs1ChineseRemainderSignature() {
+    auto* key = NewSigningKey(true, true, false);
+    auto* context = SignatureContext(key, true, EVP_sha1_nid_postfix());
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, DigestSha1, sizeof(DigestSha1)) == 1);
+    Require(length == 256);
+    Require(std::memcmp(signature.data(), Pkcs1Sha1Signature, 256) == 0);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+}
+
+void Pkcs1VerificationFailures() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = SignatureContext(key, false, EVP_sha1_nid_postfix());
+    auto flipped = Flipped(Pkcs1Sha1Signature, 100);
+    Require(EVP_PKEY_verify_nid_postfix(context, flipped.data(), 256, DigestSha1, sizeof(DigestSha1)) == 0);
+    ExpectRsaQueue();
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    context = SignatureContext(key, false, EVP_sha1_nid_postfix());
+    std::array<unsigned char, 20> digestCopy {};
+    std::memcpy(digestCopy.data(), DigestSha1, sizeof(DigestSha1));
+    digestCopy[0] ^= 0x01;
+    Require(EVP_PKEY_verify_nid_postfix(context, Pkcs1Sha1Signature, 256, digestCopy.data(),
+        digestCopy.size()) == 0);
+    ExpectErrors({RsaCode(104)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    context = SignatureContext(key, false, EVP_sha1_nid_postfix());
+    Require(EVP_PKEY_verify_nid_postfix(context, Pkcs1Sha1Signature, 256, DigestSha1, 19) == 0);
+    ExpectErrors({RsaCode(104)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    context = SignatureContext(key, false, EVP_sha1_nid_postfix());
+    Require(EVP_PKEY_verify_nid_postfix(context, Pkcs1Sha1Signature, 255, DigestSha1, sizeof(DigestSha1)) == 0);
+    ExpectErrors({RsaCode(119)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+}
+
+void PssSignatures() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = SignatureContext(key, true, EVP_sha256_nid_postfix());
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingPss, nullptr) == 1);
+    std::array<unsigned char, 256> first {}, second {};
+    std::size_t length = first.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, first.data(), &length, DigestSha256, sizeof(DigestSha256)) == 1);
+    Require(length == 256);
+    length = second.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, second.data(), &length, DigestSha256, sizeof(DigestSha256)) == 1);
+    Require(length == 256);
+    Require(std::memcmp(first.data(), second.data(), 256) != 0);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    auto* verifyContext = SignatureContext(key, false, EVP_sha256_nid_postfix());
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingPss, nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, first.data(), 256, DigestSha256, sizeof(DigestSha256)) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, second.data(), 256, DigestSha256, sizeof(DigestSha256)) == 1);
+    auto flipped = Flipped(first.data(), 7);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, flipped.data(), 256, DigestSha256, sizeof(DigestSha256)) == 0);
+    ExpectRsaQueue();
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, PssSha256Salt20Signature, 256, DigestSha256,
+        sizeof(DigestSha256)) == 1);
+    std::array<unsigned char, sizeof(DigestSha256)> otherDigest {};
+    std::memcpy(otherDigest.data(), DigestSha256, otherDigest.size());
+    otherDigest[31] ^= 0x01;
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, PssSha256Salt20Signature, 256, otherDigest.data(),
+        otherDigest.size()) == 0);
+    ExpectErrors({RsaCode(104)});
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        LibreSsl3RsaPssSaltLengthDigest, nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, PssSha256Salt20Signature, 256, DigestSha256,
+        sizeof(DigestSha256)) == 0);
+    ExpectErrors({RsaCode(136)});
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength, 20,
+        nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, PssSha256Salt20Signature, 256, DigestSha256,
+        sizeof(DigestSha256)) == 1);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength,
+        LibreSsl3RsaPssSaltLengthAuto, nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, PssSha256Salt20Signature, 256, DigestSha256,
+        sizeof(DigestSha256)) == 1);
+    EVP_PKEY_CTX_free_nid_postfix(verifyContext);
+    ReleaseKey(key);
+}
+
+void PssPaddingBlock() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* rsa = static_cast<LibreSsl3Rsa*>(key->key);
+    std::array<unsigned char, 256> block {};
+    Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256,
+        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix()),
+        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix()), 20) == 1);
+    Require(block[255] == 0xbc);
+    Require((block[0] & 0x80) == 0);
+    auto* context = SignatureContext(key, true, nullptr);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(context, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingNone, nullptr) == 1);
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, block.data(), 256) == 1);
+    Require(length == 256);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    auto* verifyContext = SignatureContext(key, false, EVP_sha256_nid_postfix());
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPadding,
+        LibreSsl3RsaPaddingPss, nullptr) == 1);
+    Require(EVP_PKEY_CTX_ctrl_nid_postfix(verifyContext, LibreSsl3PkeyRsa, -1, LibreSsl3PkeyControlRsaPssSaltLength, 20,
+        nullptr) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, signature.data(), 256, DigestSha256, sizeof(DigestSha256)) == 1);
+    EVP_PKEY_CTX_free_nid_postfix(verifyContext);
+    Require(RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(rsa, block.data(), DigestSha256,
+        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix()),
+        reinterpret_cast<const LibreSsl3::DigestMethod*>(EVP_sha256_nid_postfix()), -4) == 0);
+    ExpectErrors({RsaCode(136)});
+    ReleaseKey(key);
+}
+
+void RawPkcs1Signature() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = SignatureContext(key, true, nullptr);
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, DigestSha1, sizeof(DigestSha1)) == 1);
+    Require(length == 256);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    auto* verifyContext = SignatureContext(key, false, nullptr);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, signature.data(), 256, DigestSha1, sizeof(DigestSha1)) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(verifyContext, signature.data(), 256, DigestSha1, 19) == 0);
+    ExpectErrors({});
+    EVP_PKEY_CTX_free_nid_postfix(verifyContext);
+    ReleaseKey(key);
+}
+
+void SignatureControls() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = SignatureContext(key, true, nullptr);
+    Require(RSA_pkey_ctx_ctrl_nid_postfix(context, LibreSsl3PkeyOperationTypeSignature,
+        LibreSsl3PkeyControlRsaPadding, LibreSsl3RsaPaddingPss, nullptr) == 1);
+    int padding = 0;
+    Require(RSA_pkey_ctx_ctrl_nid_postfix(context, LibreSsl3PkeyOperationTypeSignature,
+        LibreSsl3PkeyControlGetRsaPadding, 0, &padding) == 1);
+    Require(padding == LibreSsl3RsaPaddingPss);
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+}
+
+void SignatureOperationGuards() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+    Require(context != nullptr);
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, DigestSha1, sizeof(DigestSha1)) == -1);
+    ExpectErrors({EvpCode(151)});
+    Require(EVP_PKEY_verify_nid_postfix(context, signature.data(), 256, DigestSha1, sizeof(DigestSha1)) == -1);
+    ExpectErrors({EvpCode(151)});
+    Require(EVP_PKEY_sign_init_nid_postfix(context) == 1);
+    Require(EVP_PKEY_verify_nid_postfix(context, signature.data(), 256, DigestSha1, sizeof(DigestSha1)) == -1);
+    ExpectErrors({EvpCode(151)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    context = EVP_PKEY_CTX_new_nid_postfix(key, nullptr);
+    Require(EVP_PKEY_verify_init_nid_postfix(context) == 1);
+    Require(EVP_PKEY_sign_nid_postfix(context, signature.data(), &length, DigestSha1, sizeof(DigestSha1)) == -1);
+    ExpectErrors({EvpCode(151)});
+    EVP_PKEY_CTX_free_nid_postfix(context);
+    ReleaseKey(key);
+}
+
+void KeyConsistency() {
+    auto* key = NewSigningKey(true, true, true);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key->key)) == 1);
+    ExpectErrors({});
+    ReleaseKey(key);
+    auto* key2 = NewSigningKey(true, false, true);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key2->key)) == 1);
+    ReleaseKey(key2);
+    auto* key3 = NewNativeKey(LibreSsl3PkeyRsa);
+    Require(RSA_check_key_nid_postfix(static_cast<const LibreSsl3Rsa*>(key3->key)) == 0);
+    ExpectErrors({RsaCode(147)});
+    ReleaseKey(key3);
+    auto* key4 = NewSigningKey(true, false, true);
+    auto* rsa4 = static_cast<LibreSsl3Rsa*>(key4->key);
+    std::vector<unsigned char> alteredD(KeyPrivateExponent, KeyPrivateExponent + sizeof(KeyPrivateExponent));
+    alteredD[sizeof(KeyPrivateExponent) - 1] += 2;
+    auto* d = LibreSsl3::NewRsaBignum_nid_no_patch(alteredD.data(), alteredD.size());
+    BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(rsa4->d));
+    rsa4->d = d;
+    Require(RSA_check_key_nid_postfix(rsa4) == 0);
+    ExpectErrors({RsaCode(123)});
+    ReleaseKey(key4);
+    auto* key5 = NewSigningKey(true, true, true);
+    auto* rsa5 = static_cast<LibreSsl3Rsa*>(key5->key);
+    std::vector<unsigned char> alteredIqmp(KeyCoefficient, KeyCoefficient + sizeof(KeyCoefficient));
+    alteredIqmp[sizeof(KeyCoefficient) - 1] += 1;
+    auto* iqmp = LibreSsl3::NewRsaBignum_nid_no_patch(alteredIqmp.data(), alteredIqmp.size());
+    BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(rsa5->iqmp));
+    rsa5->iqmp = iqmp;
+    Require(RSA_check_key_nid_postfix(rsa5) == 0);
+    ExpectErrors({RsaCode(126)});
+    ReleaseKey(key5);
+    auto* key6 = NewSigningKey(true, false, true);
+    auto* rsa6 = static_cast<LibreSsl3Rsa*>(key6->key);
+    std::vector<unsigned char> alteredP(KeyPrimeP, KeyPrimeP + sizeof(KeyPrimeP));
+    alteredP[sizeof(KeyPrimeP) - 1] += 2;
+    auto* p = LibreSsl3::NewRsaBignum_nid_no_patch(alteredP.data(), alteredP.size());
+    BN_clear_free_nid_postfix(static_cast<LibreSsl3Bignum*>(rsa6->p));
+    rsa6->p = p;
+    Require(RSA_check_key_nid_postfix(rsa6) == 0);
+    ExpectErrors({RsaCode(128), RsaCode(127), RsaCode(123)});
+    ReleaseKey(key6);
+}
+
 } // namespace
 
 void ChineseRemainderKey() {
@@ -642,6 +1024,84 @@ void ChineseRemainderKey() {
     ReleaseKey(key);
 }
 
+void DigestSignatures() {
+    struct {
+        const char* name;
+        const void* digest;
+        const unsigned char* digestBytes;
+        std::size_t digestSize;
+        const unsigned char* signature;
+    } tests[] = {
+        {"SHA-256", EVP_sha256_nid_postfix(), DigestSha256, sizeof(DigestSha256), Pkcs1Sha256Signature},
+        {"SHA-1", EVP_sha1_nid_postfix(), DigestSha1, sizeof(DigestSha1), Pkcs1Sha1Signature},
+    };
+    for (const auto& test : tests) {
+        auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+        auto* md = EVP_MD_CTX_new_nid_postfix();
+        Require(md != nullptr);
+        LibreSsl3PkeyContext* pctx = nullptr;
+        Require(EVP_DigestSignInit_nid_postfix(md, &pctx, static_cast<const LibreSsl3::DigestMethod*>(test.digest),
+            nullptr, key) == 1);
+        Require(pctx != nullptr && md->keyContext == pctx && Pointer(md->digest) == Pointer(test.digest));
+        Require(md->update(md, MessageBytes(), MessageLength) == 1);
+        std::size_t length = 0;
+        Require(EVP_DigestSignFinal_nid_postfix(md, nullptr, &length) == 1);
+        Require(length == 256);
+        std::array<unsigned char, 256> buffer {};
+        length = buffer.size();
+        Require(EVP_DigestSignFinal_nid_postfix(md, buffer.data(), &length) == 1);
+        Require(length == 256);
+        Require(std::memcmp(buffer.data(), test.signature, 256) == 0);
+        length = buffer.size();
+        Require(EVP_DigestSignFinal_nid_postfix(md, buffer.data(), &length) == 1);
+        Require(length == 256);
+        Require(std::memcmp(buffer.data(), test.signature, 256) == 0);
+        EVP_MD_CTX_free_nid_postfix(md);
+        ReleaseKey(key);
+    }
+}
+
+void SignFinalVerifyFinal() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    Require(EVP_DigestInit_nid_postfix(md, EVP_sha1_nid_postfix()) == 1);
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    std::array<unsigned char, 256> buffer {};
+    unsigned int length = 0;
+    Require(EVP_SignFinal_nid_postfix(md, buffer.data(), &length, key) == 1);
+    Require(length == 256);
+    Require(std::memcmp(buffer.data(), Pkcs1Sha1Signature, 256) == 0);
+
+    Require(EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha1Signature, 256, key) == 1);
+    auto flipped = Flipped(Pkcs1Sha1Signature, 100);
+    Require(EVP_VerifyFinal_nid_postfix(md, flipped.data(), 256, key) == 0);
+    ExpectRsaQueue();
+    Require(EVP_VerifyFinal_nid_postfix(md, Pkcs1Sha1Signature, 255, key) == 0);
+    ExpectErrors({RsaCode(119)});
+    EVP_MD_CTX_free_nid_postfix(md);
+    ReleaseKey(key);
+}
+
+void DigestSignInitWithoutDigest() {
+    auto* key = NewNativeKey(LibreSsl3PkeyRsa);
+    auto* md = EVP_MD_CTX_new_nid_postfix();
+    Require(md != nullptr);
+    LibreSsl3PkeyContext* pctx = nullptr;
+    Require(EVP_DigestSignInit_nid_postfix(md, &pctx, nullptr, nullptr, key) == 1);
+    Require(pctx != nullptr);
+    Require(md->keyContext == pctx);
+    Require(Pointer(md->digest) == Pointer(EVP_sha256_nid_postfix()));
+    Require(md->update(md, MessageBytes(), MessageLength) == 1);
+    std::array<unsigned char, 256> signature {};
+    std::size_t length = signature.size();
+    Require(EVP_DigestSignFinal_nid_postfix(md, signature.data(), &length) == 1);
+    Require(length == 256);
+    Require(std::memcmp(signature.data(), Pkcs1Sha256Signature, 256) == 0);
+    EVP_MD_CTX_free_nid_postfix(md);
+    ReleaseKey(key);
+}
+
 int main() {
     std::array<void*, 10> api{reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Calloc_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
@@ -657,6 +1117,18 @@ int main() {
     WithoutPadding();
     RsaPaddingControls();
     RestrictedPssKey();
+    Pkcs1Signatures();
+    Pkcs1ChineseRemainderSignature();
+    Pkcs1VerificationFailures();
+    PssSignatures();
+    PssPaddingBlock();
+    RawPkcs1Signature();
+    SignatureControls();
+    SignatureOperationGuards();
+    KeyConsistency();
+    DigestSignatures();
+    SignFinalVerifyFinal();
+    DigestSignInitWithoutDigest();
     Require(allocations.empty());
-    std::puts("LibreSSL3 EVP_PKEY_CTX RSA encryption tests passed");
+    std::puts("LibreSSL3 EVP_PKEY_CTX RSA encryption and signature tests passed");
 }

@@ -39,16 +39,6 @@ int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_DigestSignFinal_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_DigestSignInit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_EncryptInit_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -70,16 +60,6 @@ int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_PKEY_set1_EC_KEY_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_SignFinal_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_VerifyFinal_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -142,16 +122,6 @@ int APS5_VABI PKCS7_free_nid_postfix(void) {
 }
 
 int APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_check_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -3,8 +3,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
@@ -40,11 +43,19 @@ constexpr int ReasonKeyTypeOperationNotSupported = 148;
 constexpr int ReasonInvalidMaskDigest = 156;
 constexpr int ReasonInvalidDigest = 157;
 constexpr int ReasonSaltLengthTooSmall = 164;
+constexpr int ReasonInvalidDigestLength = 143;
+constexpr int ReasonInputNotInitialized = 111;
+constexpr int ReasonNoDefaultDigest = 158;
 
 constexpr int Asn1MethodFlags = 4;
 constexpr int DefaultDigestNid = 672;
 constexpr int DefaultKeyGenerationBits = 2048;
 constexpr int NoSaltLengthLimit = -1;
+
+constexpr std::uint64_t DigestCleanedFlag = 2;
+constexpr std::uint64_t DigestReuseFlag = 4;
+constexpr std::uint64_t DigestKeepKeyContextFlag = 0x400;
+constexpr std::uint64_t DigestNoInitFlag = 0x100;
 
 constexpr int Md4Type = 257;
 constexpr int Md5Type = 4;
@@ -121,6 +132,108 @@ bool SetupTemporaryBuffer(LibreSsl3RsaKeyContext* keyContext, const LibreSsl3Rsa
     }
     keyContext->temporaryBuffer = buffer;
     return true;
+}
+
+std::optional<int> CheckAutomaticLength(LibreSsl3PkeyContext* context, const LibreSsl3PkeyMethod* method,
+    const unsigned char* output, std::size_t* outputLength, const char* function) {
+    if (!outputLength) Reject(std::string(function) + " without an output length");
+    if ((method->flags & LibreSsl3PkeyMethodFlagAutomaticArgumentLength) == 0) return std::nullopt;
+    const auto keySize = static_cast<std::size_t>(EVP_PKEY_size_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->key)));
+    if (!output) {
+        *outputLength = keySize;
+        return 1;
+    }
+    if (*outputLength < keySize) {
+        QueueEvpError(ReasonBufferTooSmall);
+        return 0;
+    }
+    return std::nullopt;
+}
+
+int APS5_VABI RsaSign(LibreSsl3PkeyContext* context, unsigned char* signature, std::size_t* signatureLength,
+    const unsigned char* content, std::size_t contentLength) {
+    auto* keyContext = RsaContextData(context);
+    auto* rsa = RsaKeyOf(context);
+    if (keyContext->digest) {
+        if (contentLength != static_cast<std::size_t>(keyContext->digest->digestSize)) {
+            QueueRsaError(ReasonInvalidDigestLength);
+            return -1;
+        }
+        if (keyContext->padding == LibreSsl3RsaPaddingPkcs1) {
+            unsigned int sltmp = 0;
+            const int ret = LibreSsl3::RsaSign_nid_no_patch(keyContext->digest->type, content,
+                static_cast<unsigned int>(contentLength), signature, &sltmp, rsa);
+            if (ret <= 0) return ret;
+            *signatureLength = sltmp;
+            return 1;
+        } else if (keyContext->padding == LibreSsl3RsaPaddingPss) {
+            if (!SetupTemporaryBuffer(keyContext, rsa)) return -1;
+            const auto* maskDigest = keyContext->maskDigest ? keyContext->maskDigest : keyContext->digest;
+            if (!LibreSsl3::RsaPaddingAddPkcs1PssMgf1_nid_no_patch(rsa, keyContext->temporaryBuffer,
+                    content, keyContext->digest, maskDigest, keyContext->saltLength))
+                return -1;
+            const int ret = LibreSsl3::RsaPrivateEncrypt_nid_no_patch(LibreSsl3::RsaByteCount_nid_no_patch(rsa),
+                keyContext->temporaryBuffer, signature, rsa, LibreSsl3RsaPaddingNone);
+            if (ret < 0) return ret;
+            *signatureLength = ret;
+            return 1;
+        } else if (keyContext->padding == LibreSsl3RsaPaddingX931) {
+            NotImplemented_nid_no_patch("RSA X9.31 signing");
+        } else {
+            return -1;
+        }
+    } else {
+        const int ret = LibreSsl3::RsaPrivateEncrypt_nid_no_patch(static_cast<int>(contentLength), content,
+            signature, rsa, keyContext->padding);
+        if (ret < 0) return ret;
+        *signatureLength = ret;
+        return 1;
+    }
+}
+
+int APS5_VABI RsaVerify(LibreSsl3PkeyContext* context, const unsigned char* signature, std::size_t signatureLength,
+    const unsigned char* content, std::size_t contentLength) {
+    auto* keyContext = RsaContextData(context);
+    auto* rsa = RsaKeyOf(context);
+    std::size_t rslen = 0;
+    if (keyContext->digest) {
+        if (keyContext->padding == LibreSsl3RsaPaddingPkcs1) {
+            return LibreSsl3::RsaVerify_nid_no_patch(keyContext->digest->type, content,
+                static_cast<unsigned int>(contentLength), signature, static_cast<unsigned int>(signatureLength), rsa);
+        } else if (contentLength != static_cast<std::size_t>(keyContext->digest->digestSize)) {
+            QueueRsaError(ReasonInvalidDigestLength);
+            return -1;
+        } else if (keyContext->padding == LibreSsl3RsaPaddingPss) {
+            if (!SetupTemporaryBuffer(keyContext, rsa)) return -1;
+            const int ret = LibreSsl3::RsaPublicDecrypt_nid_no_patch(static_cast<int>(signatureLength),
+                signature, keyContext->temporaryBuffer, rsa, LibreSsl3RsaPaddingNone);
+            if (ret <= 0) return 0;
+            const auto* maskDigest = keyContext->maskDigest ? keyContext->maskDigest : keyContext->digest;
+            const int verified = LibreSsl3::RsaVerifyPkcs1PssMgf1_nid_no_patch(rsa, content,
+                keyContext->digest, maskDigest, keyContext->temporaryBuffer, keyContext->saltLength);
+            if (verified <= 0) return 0;
+            return 1;
+        } else if (keyContext->padding == LibreSsl3RsaPaddingX931) {
+            NotImplemented_nid_no_patch("RSA X9.31 verification");
+        } else {
+            return -1;
+        }
+    } else {
+        if (!SetupTemporaryBuffer(keyContext, rsa)) return -1;
+        const int ret = LibreSsl3::RsaPublicDecrypt_nid_no_patch(static_cast<int>(signatureLength),
+            signature, keyContext->temporaryBuffer, rsa, keyContext->padding);
+        if (ret <= 0) return 0;
+        rslen = ret;
+    }
+    if (rslen != contentLength) return 0;
+    if (CRYPTO_memcmp_nid_postfix(content, keyContext->temporaryBuffer, rslen)) return 0;
+    return 1;
+}
+
+int APS5_VABI RsaPssInitialize(LibreSsl3PkeyContext* context) {
+    if (MethodOf(context)->keyType != LibreSsl3PkeyRsaPss) return 0;
+    if (RsaKeyOf(context)->pss) NotImplemented_nid_no_patch("EVP_PKEY_CTX signature with RSA-PSS key restrictions");
+    return 1;
 }
 
 int APS5_VABI RsaContextInitialize(LibreSsl3PkeyContext* context) {
@@ -424,9 +537,9 @@ const LibreSsl3PkeyMethod RsaMethod {
     nullptr,
     nullptr,
     nullptr,
+    &RsaSign,
     nullptr,
-    nullptr,
-    nullptr,
+    &RsaVerify,
     nullptr,
     nullptr,
     nullptr,
@@ -448,10 +561,10 @@ const LibreSsl3PkeyMethod RsaPssMethod {
     &RsaContextClear,
     nullptr,
     nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
+    &RsaPssInitialize,
+    &RsaSign,
+    &RsaPssInitialize,
+    &RsaVerify,
     nullptr,
     nullptr,
     nullptr,
@@ -536,6 +649,151 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
     nullptr,
     nullptr,
 };
+
+int DigestInitialize(LibreSsl3::DigestContext* context, const DigestMethod* type) {
+    context->flags &= ~DigestCleanedFlag;
+
+    if (context->digest != type) {
+        if (context->digest && context->digest->contextSize && context->data &&
+            !(context->flags & DigestReuseFlag)) {
+            if (context->digest->contextSize > 0) {
+                for (int i = 0; i < context->digest->contextSize; ++i)
+                    static_cast<volatile unsigned char*>(context->data)[i] = 0;
+            }
+            free_nid_postfix(context->data);
+            context->data = nullptr;
+        }
+        context->digest = type;
+        if (!(context->flags & DigestNoInitFlag) && type->contextSize) {
+            context->update = type->update;
+            context->data = calloc_nid_postfix(1, static_cast<std::size_t>(type->contextSize));
+            if (!context->data) {
+                EVP_PKEY_CTX_free_nid_postfix(static_cast<LibreSsl3PkeyContext*>(context->keyContext));
+                context->keyContext = nullptr;
+                QueueEvpError(AllocationFailure);
+                return 0;
+            }
+        }
+    }
+    if (context->keyContext) {
+        const int r = EVP_PKEY_CTX_ctrl_nid_postfix(static_cast<LibreSsl3PkeyContext*>(context->keyContext), -1,
+            LibreSsl3PkeyOperationTypeSignature, LibreSsl3PkeyControlDigestInit, 0, context);
+        if (r <= 0 && r != -2)
+            return 0;
+    }
+    if (context->flags & DigestNoInitFlag) return 1;
+    return type->init(context);
+}
+
+int DigestSignInitialize(LibreSsl3::DigestContext* ctx,
+    LibreSsl3PkeyContext** pctx, const DigestMethod* type, LibreSsl3EvpPkey* pkey) {
+    if (!ctx->keyContext)
+        ctx->keyContext = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
+    if (!ctx->keyContext) return 0;
+
+    const auto* method = MethodOf(static_cast<LibreSsl3PkeyContext*>(ctx->keyContext));
+    const bool hasSignCtxCustom = (method->flags & LibreSsl3PkeyMethodFlagSignatureContextCustom) != 0;
+    if (!hasSignCtxCustom) {
+        if (type == nullptr) {
+            int nid = 0;
+            const auto* keyAsn1 = static_cast<const LibreSsl3PkeyAsn1Method*>(pkey->method);
+            if (!keyAsn1 || keyAsn1->keyControl(pkey, LibreSsl3Asn1PkeyControlDefaultDigestNid, 0,
+                    &nid) <= 0) {
+                QueueEvpError(ReasonNoDefaultDigest);
+                return 0;
+            }
+            if (nid == DefaultDigestNid) {
+                type = reinterpret_cast<const DigestMethod*>(EVP_sha256_nid_postfix());
+            } else {
+                NotImplemented_nid_no_patch("EVP_DigestSignInit default digest lookup for non-SHA256");
+            }
+        }
+    }
+
+    if (method->signatureContextInitialize) NotImplemented_nid_no_patch("EVP_DigestSignInit with a signctx_init method");
+    if (method->digestSignature) NotImplemented_nid_no_patch("EVP_DigestSignInit with a digestsign method");
+    if (EVP_PKEY_sign_init_nid_postfix(static_cast<LibreSsl3PkeyContext*>(ctx->keyContext)) <= 0)
+        return 0;
+
+    if (EVP_PKEY_CTX_ctrl_nid_postfix(static_cast<LibreSsl3PkeyContext*>(ctx->keyContext), -1,
+            LibreSsl3PkeyOperationTypeSignature, LibreSsl3PkeyControlMessageDigest, 0,
+            static_cast<void*>(const_cast<DigestMethod*>(type))) <= 0)
+        return 0;
+
+    if (pctx) *pctx = static_cast<LibreSsl3PkeyContext*>(ctx->keyContext);
+
+    if (!hasSignCtxCustom) {
+        if (!DigestInitialize(ctx, type)) return 0;
+    }
+    return 1;
+}
+
+int DigestCopy(LibreSsl3::DigestContext* out, const LibreSsl3::DigestContext* in) {
+    if (!in || !in->digest) {
+        QueueEvpError(ReasonInputNotInitialized);
+        return 0;
+    }
+
+    unsigned char* tmp_buf;
+    if (out->digest == in->digest) {
+        tmp_buf = static_cast<unsigned char*>(out->data);
+        out->flags |= DigestReuseFlag;
+    } else {
+        tmp_buf = nullptr;
+    }
+
+    if (out->digest && out->digest->cleanup && !(out->flags & DigestCleanedFlag))
+        out->digest->cleanup(out);
+    if (out->digest && out->digest->contextSize && out->data && !(out->flags & DigestReuseFlag)) {
+        if (out->digest->contextSize > 0) {
+            for (int i = 0; i < out->digest->contextSize; ++i)
+                static_cast<volatile unsigned char*>(out->data)[i] = 0;
+        }
+        free_nid_postfix(out->data);
+    }
+
+    std::memcpy(out, in, sizeof(*in));
+    out->data = nullptr;
+    out->keyContext = nullptr;
+    out->flags &= ~DigestKeepKeyContextFlag;
+
+    if (in->data && out->digest->contextSize) {
+        if (tmp_buf) {
+            out->data = tmp_buf;
+        } else {
+            out->data = calloc_nid_postfix(1, static_cast<std::size_t>(out->digest->contextSize));
+            if (!out->data) {
+                QueueEvpError(AllocationFailure);
+                return 0;
+            }
+        }
+        std::memcpy(out->data, in->data, static_cast<std::size_t>(out->digest->contextSize));
+    }
+
+    out->update = in->update;
+
+    if (out->digest->copy) {
+        return out->digest->copy(out, in);
+    }
+
+    return 1;
+}
+
+int DigestFinal(LibreSsl3::DigestContext* ctx, unsigned char* md, unsigned int* mdlen) {
+    if (!ctx->digest) return 0;
+    if (!ctx->digest->finalize) return 0;
+    const int ret = ctx->digest->finalize(ctx, md);
+    if (mdlen) *mdlen = ctx->digest->digestSize;
+    if (ctx->digest->cleanup) {
+        ctx->digest->cleanup(ctx);
+        ctx->flags |= DigestCleanedFlag;
+    }
+    if (ctx->data && ctx->digest->contextSize) {
+        for (int i = 0; i < ctx->digest->contextSize; ++i)
+            static_cast<volatile unsigned char*>(ctx->data)[i] = 0;
+    }
+    return ret;
+}
 
 } // namespace
 
@@ -632,17 +890,8 @@ int APS5_VABI EVP_PKEY_encrypt_nid_postfix(LibreSsl3PkeyContext* context, unsign
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
-    if (!outputLength) Reject("EVP_PKEY_encrypt without an output length");
-    if ((method->flags & LibreSsl3PkeyMethodFlagAutomaticArgumentLength) != 0) {
-        const auto keySize = static_cast<std::size_t>(EVP_PKEY_size_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->key)));
-        if (!output) {
-            *outputLength = keySize;
-            return 1;
-        }
-        if (*outputLength < keySize) {
-            QueueEvpError(ReasonBufferTooSmall);
-            return 0;
-        }
+    if (const auto result = CheckAutomaticLength(context, method, output, outputLength, "EVP_PKEY_encrypt")) {
+        return *result;
     }
     return method->encryption(context, output, outputLength, input, inputLength);
 }
@@ -668,19 +917,167 @@ int APS5_VABI EVP_PKEY_decrypt_nid_postfix(LibreSsl3PkeyContext* context, unsign
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
-    if (!outputLength) Reject("EVP_PKEY_decrypt without an output length");
-    if ((method->flags & LibreSsl3PkeyMethodFlagAutomaticArgumentLength) != 0) {
-        const auto keySize = static_cast<std::size_t>(EVP_PKEY_size_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->key)));
-        if (!output) {
-            *outputLength = keySize;
-            return 1;
-        }
-        if (*outputLength < keySize) {
-            QueueEvpError(ReasonBufferTooSmall);
-            return 0;
-        }
+    if (const auto result = CheckAutomaticLength(context, method, output, outputLength, "EVP_PKEY_decrypt")) {
+        return *result;
     }
     return method->decryption(context, output, outputLength, input, inputLength);
+}
+
+int APS5_VABI EVP_PKEY_sign_init_nid_postfix(LibreSsl3PkeyContext* context) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || !method->signature) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    context->operation = LibreSsl3PkeyOperationSign;
+    if (!method->signatureInitialize) return 1;
+    const int ret = method->signatureInitialize(context);
+    if (ret <= 0) context->operation = LibreSsl3PkeyOperationUndefined;
+    return ret;
+}
+
+int APS5_VABI EVP_PKEY_sign_nid_postfix(LibreSsl3PkeyContext* context, unsigned char* signature,
+    std::size_t* signatureLength, const unsigned char* content, std::size_t contentLength) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || !method->signature) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    if (context->operation != LibreSsl3PkeyOperationSign) {
+        QueueEvpError(ReasonOperationNotInitialized);
+        return -1;
+    }
+    if (const auto result = CheckAutomaticLength(context, method, signature, signatureLength, "EVP_PKEY_sign")) {
+        return *result;
+    }
+    return method->signature(context, signature, signatureLength, content, contentLength);
+}
+
+int APS5_VABI EVP_PKEY_verify_init_nid_postfix(LibreSsl3PkeyContext* context) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || !method->verification) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    context->operation = LibreSsl3PkeyOperationVerify;
+    if (!method->verificationInitialize) return 1;
+    const int ret = method->verificationInitialize(context);
+    if (ret <= 0) context->operation = LibreSsl3PkeyOperationUndefined;
+    return ret;
+}
+
+int APS5_VABI EVP_PKEY_verify_nid_postfix(LibreSsl3PkeyContext* context, const unsigned char* signature,
+    std::size_t signatureLength, const unsigned char* content, std::size_t contentLength) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || !method->verification) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    if (context->operation != LibreSsl3PkeyOperationVerify) {
+        QueueEvpError(ReasonOperationNotInitialized);
+        return -1;
+    }
+    return method->verification(context, signature, signatureLength, content, contentLength);
+}
+
+int APS5_VABI RSA_pkey_ctx_ctrl_nid_postfix(LibreSsl3PkeyContext* context, int operationType, int command,
+    int first, void* second) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (context != nullptr && method != nullptr &&
+        method->keyType != LibreSsl3PkeyRsa && method->keyType != LibreSsl3PkeyRsaPss)
+        return -1;
+    return EVP_PKEY_CTX_ctrl_nid_postfix(context, -1, operationType, command, first, second);
+}
+
+int APS5_VABI EVP_DigestSignInit_nid_postfix(LibreSsl3::DigestContext* ctx,
+    LibreSsl3PkeyContext** pctx, const LibreSsl3::DigestMethod* type, void* engine,
+    LibreSsl3EvpPkey* pkey) {
+    if (engine) NotImplemented_nid_no_patch("EVP_DigestSignInit with engine");
+    return DigestSignInitialize(ctx, pctx, type, pkey);
+}
+
+int APS5_VABI EVP_DigestSignFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
+    unsigned char* sigret, std::size_t* siglen) {
+    auto* pctx = static_cast<LibreSsl3PkeyContext*>(ctx->keyContext);
+    if (!pctx) NotImplemented_nid_no_patch("EVP_DigestSignFinal without an EVP_PKEY_CTX");
+    const auto* method = MethodOf(pctx);
+    if (method->flags & LibreSsl3PkeyMethodFlagSignatureContextCustom)
+        NotImplemented_nid_no_patch("EVP_DigestSignFinal with a custom signature context");
+    if (method->signatureContext) NotImplemented_nid_no_patch("EVP_DigestSignFinal with a signctx method");
+    if (sigret == nullptr) {
+        const auto size = ctx->digest->digestSize;
+        if (size < 0) return 0;
+        return EVP_PKEY_sign_nid_postfix(pctx, nullptr, siglen, nullptr, static_cast<std::size_t>(size)) > 0;
+    }
+    LibreSsl3::DigestContext copy = {};
+    unsigned char digest[LibreSsl3MaximumDigestSize];
+    unsigned int digestLength = 0;
+    auto result = 0;
+    if (DigestCopy(&copy, ctx) && DigestFinal(&copy, digest, &digestLength))
+        result = EVP_PKEY_sign_nid_postfix(pctx, sigret, siglen, digest, digestLength) > 0;
+    if (copy.data) free_nid_postfix(copy.data);
+    for (unsigned int i = 0; i < digestLength; ++i) digest[i] = 0;
+    return result;
+}
+
+int APS5_VABI EVP_SignFinal_nid_postfix(LibreSsl3::DigestContext* ctx, unsigned char* sigret,
+    unsigned int* siglen, LibreSsl3EvpPkey* pkey) {
+    unsigned char digest[LibreSsl3MaximumDigestSize];
+    unsigned int digestLength = 0;
+    LibreSsl3::DigestContext copy = {};
+    LibreSsl3PkeyContext* pkctx = nullptr;
+    std::size_t sltmp = 0;
+    int ret = 0;
+
+    *siglen = 0;
+
+    if (!DigestCopy(&copy, ctx)) goto err;
+    if (!DigestFinal(&copy, digest, &digestLength)) goto err;
+
+    sltmp = EVP_PKEY_size_nid_postfix(pkey);
+
+    pkctx = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
+    if (!pkctx) goto err;
+    if (EVP_PKEY_sign_init_nid_postfix(pkctx) <= 0) goto err;
+    if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
+            LibreSsl3PkeyControlMessageDigest, 0,
+            static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
+        goto err;
+    if (EVP_PKEY_sign_nid_postfix(pkctx, sigret, &sltmp, digest, digestLength) <= 0) goto err;
+    *siglen = static_cast<unsigned int>(sltmp);
+    ret = 1;
+
+err:
+    if (copy.data) free_nid_postfix(copy.data);
+    EVP_PKEY_CTX_free_nid_postfix(pkctx);
+    return ret;
+}
+
+int APS5_VABI EVP_VerifyFinal_nid_postfix(LibreSsl3::DigestContext* ctx,
+    const unsigned char* sigbuf, unsigned int siglen, LibreSsl3EvpPkey* pkey) {
+    unsigned char digest[LibreSsl3MaximumDigestSize];
+    unsigned int digestLength = 0;
+    LibreSsl3::DigestContext copy = {};
+    LibreSsl3PkeyContext* pkctx = nullptr;
+    int ret = 0;
+
+    if (!DigestCopy(&copy, ctx)) goto err;
+    if (!DigestFinal(&copy, digest, &digestLength)) goto err;
+
+    ret = -1;
+    pkctx = EVP_PKEY_CTX_new_nid_postfix(pkey, nullptr);
+    if (!pkctx) goto err;
+    if (EVP_PKEY_verify_init_nid_postfix(pkctx) <= 0) goto err;
+    if (EVP_PKEY_CTX_ctrl_nid_postfix(pkctx, -1, LibreSsl3PkeyOperationTypeSignature,
+            LibreSsl3PkeyControlMessageDigest, 0,
+            static_cast<void*>(const_cast<DigestMethod*>(ctx->digest))) <= 0)
+        goto err;
+    ret = EVP_PKEY_verify_nid_postfix(pkctx, sigbuf, siglen, digest, digestLength);
+
+err:
+    if (copy.data) free_nid_postfix(copy.data);
+    EVP_PKEY_CTX_free_nid_postfix(pkctx);
+    return ret;
 }
 
 }
