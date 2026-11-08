@@ -1,9 +1,11 @@
 #include "prx/libc/include/DebugNidBreakpoints.hpp"
 #include "prx/libc/include/DebugNidCommands.hpp"
+#include "prx/libc/include/DebugNidStops.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <string_view>
 
 static void Require(bool condition, int line) {
@@ -55,6 +57,110 @@ void CheckNidCommands() {
     Check(Debug::ParseCommand("remove AAAAAAAAAAB").kind == Debug::CommandKind::MalformedNid);
 }
 
+struct SessionRun {
+    std::uint64_t id = 0;
+    std::string output;
+};
+
+std::FILE* ScriptFile(const std::string& script) {
+    std::FILE* file = std::tmpfile();
+    Require(file != nullptr, __LINE__);
+    Require(std::fwrite(script.data(), 1, script.size(), file) == script.size(), __LINE__);
+    std::rewind(file);
+    return file;
+}
+
+std::string ReadBack(std::FILE* file) {
+    std::rewind(file);
+    std::string text;
+    char buffer[256];
+    std::size_t count = 0;
+    while ((count = std::fread(buffer, 1, sizeof buffer, file)) > 0)
+        text.append(buffer, count);
+    return text;
+}
+
+SessionRun RunSession(Debug::NidBreakpointTable& table, std::uint64_t nid, const std::string& script, const std::uint64_t* args, std::size_t argCount) {
+    Debug::NidStopRegistry registry;
+    std::FILE* input = ScriptFile(script);
+    std::FILE* output = std::tmpfile();
+    Require(output != nullptr, __LINE__);
+    SessionRun run;
+    run.id = registry.Hit(table, nid, args, argCount, [&](Debug::NidBreakpointTable& t, Debug::NidStopRegistry& r, const Debug::NidStopRegistry::Stop& s) {
+        Debug::RunCommandSession(input, output, t, r, s);
+    });
+    Check(registry.Size() == 0);
+    run.output = ReadBack(output);
+    std::fclose(input);
+    std::fclose(output);
+    return run;
+}
+
+void CheckSessionCommands() {
+    Debug::NidBreakpointTable table;
+    const std::uint64_t armed = NidOf("4J2sUJmuHZQ");
+    const std::uint64_t other = NidOf("hcuQgD53UxM");
+    Check(table.Add(armed) == Debug::NidBreakpointTable::AddResult::Added);
+    const std::uint64_t args[2] = {0x11, 0x22};
+    const SessionRun run = RunSession(table, armed,
+        "list\n"
+        "add 4J2sUJmuHZQ\n"
+        "add hcuQgD53UxM\n"
+        "remove hcuQgD53UxM\n"
+        "remove Q3VBxCXhUHs\n"
+        "frob\n"
+        "add zz\n"
+        "add\n"
+        "list extra\n"
+        "\n"
+        "args\n"
+        "continue\n"
+        "list\n",
+        args, 2);
+    Check(run.id == 1);
+    Check(table.IsArmed(armed));
+    Check(!table.IsArmed(other));
+    const std::string expected =
+        "armed 4J2sUJmuHZQ\n"
+        "already armed 4J2sUJmuHZQ\n"
+        "added hcuQgD53UxM\n"
+        "removed hcuQgD53UxM\n"
+        "not armed Q3VBxCXhUHs\n"
+        "unknown command: frob\n"
+        "malformed NID: add zz\n"
+        "bad arguments: add\n"
+        "bad arguments: list extra\n"
+        "stop 1 nid 4J2sUJmuHZQ args 0x11 0x22\n"
+        "continued 1\n";
+    Check(run.output == expected);
+}
+
+void CheckSessionEndOfInputContinues() {
+    Debug::NidBreakpointTable table;
+    const std::uint64_t armed = NidOf("4J2sUJmuHZQ");
+    Check(table.Add(armed) == Debug::NidBreakpointTable::AddResult::Added);
+    const SessionRun run = RunSession(table, armed, "list\nadd Q3VBxCXhUHs", nullptr, 0);
+    Check(run.id == 1);
+    Check(table.IsArmed(NidOf("Q3VBxCXhUHs")));
+    const std::string expected =
+        "armed 4J2sUJmuHZQ\n"
+        "added Q3VBxCXhUHs\n"
+        "end of commands, continuing 1\n";
+    Check(run.output == expected);
+}
+
+void CheckSessionLineEndingsAndLongLines() {
+    Debug::NidBreakpointTable table;
+    const std::uint64_t armed = NidOf("4J2sUJmuHZQ");
+    Check(table.Add(armed) == Debug::NidBreakpointTable::AddResult::Added);
+    const SessionRun crlf = RunSession(table, armed, "\tcontinue \t\r\n", nullptr, 0);
+    Check(crlf.id == 1);
+    Check(crlf.output == "continued 1\n");
+    const SessionRun longLine = RunSession(table, armed, std::string(300, 'x') + "\nargs\ncontinue\n", nullptr, 0);
+    Check(longLine.id == 1);
+    Check(longLine.output == "line too long, ignored\nstop 1 nid 4J2sUJmuHZQ args\ncontinued 1\n");
+}
+
 void CheckUnknownWords() {
     Check(Debug::ParseCommand("frob").kind == Debug::CommandKind::Unknown);
     Check(Debug::ParseCommand("frob 4J2sUJmuHZQ").kind == Debug::CommandKind::Unknown);
@@ -71,5 +177,8 @@ int main() {
     CheckNoArgumentCommands();
     CheckNidCommands();
     CheckUnknownWords();
+    CheckSessionCommands();
+    CheckSessionEndOfInputContinues();
+    CheckSessionLineEndingsAndLongLines();
     return 0;
 }
