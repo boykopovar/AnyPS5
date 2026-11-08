@@ -38,6 +38,8 @@ private:
 
 NidBreakpointTable& NidBreakpoints();
 
+std::size_t AddNidList(std::string_view list, NidBreakpointTable& table);
+
 }
 
 #endif
