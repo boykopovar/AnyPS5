@@ -97,6 +97,27 @@ void TestModeFlags(void* videoOutMode) {
     Require(!sceAvControlIsModeSystemDefault(videoOutMode), "set system-default bit was accepted");
 }
 
+void TestSetAudioOutModeAny() {
+    std::array<std::uint8_t, 16> buffer{};
+    buffer.fill(0x55);
+    sceAvSettingSetAudioOutModeAny_(nullptr, 8);
+    for (auto b : buffer) {
+        Require(b == 0x55, "null destination was modified");
+    }
+    sceAvSettingSetAudioOutModeAny_(buffer.data(), -1);
+    for (auto b : buffer) {
+        Require(b == 0x55, "negative size modified destination");
+    }
+    sceAvSettingSetAudioOutModeAny_(buffer.data(), 8);
+    Require(*reinterpret_cast<std::int32_t*>(buffer.data()) == 8, "count was not written at start");
+    for (std::size_t i = 4; i < 8; ++i) {
+        Require(buffer[i] == 0xff, "buffer was not filled with 0xff");
+    }
+    for (std::size_t i = 8; i < buffer.size(); ++i) {
+        Require(buffer[i] == 0x55, "trailing bytes were modified");
+    }
+}
+
 }
 
 int main() {
@@ -106,6 +127,7 @@ int main() {
     TestDeepColor(monitorInfo);
     TestHdr(monitorInfo);
     TestModeFlags(videoOutMode);
+    TestSetAudioOutModeAny();
     std::puts("AvSetting predicate tests passed");
     return 0;
 }

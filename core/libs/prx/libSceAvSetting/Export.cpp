@@ -610,8 +610,7 @@ int APS5_VABI sceAvSettingSet2dVrMode() {
 }
 
 void APS5_VABI sceAvSettingSetAudioOutModeAny_(void* out, std::int32_t value) {
-    if (out == nullptr) return;
-    if (value < 0) NotImplemented_nid_no_patch(__func__);
+    if (out == nullptr || value < 0) return;
     std::memset(out, 0xff, static_cast<std::size_t>(value));
     *static_cast<std::int32_t*>(out) = value;
 }
