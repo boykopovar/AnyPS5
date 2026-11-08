@@ -72,7 +72,6 @@ int APS5_VABI ures_open();
 int APS5_VABI uscript_getScript();
 int APS5_VABI uscript_getShortName();
 int APS5_VABI uscript_hasScript();
-int APS5_VABI utext_close();
 int APS5_VABI utext_openConstUnicodeString();
 int APS5_VABI utext_openUChars();
 int APS5_VABI utext_setup();

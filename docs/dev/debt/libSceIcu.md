@@ -2,7 +2,7 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 71 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
 
 - [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
 
@@ -76,7 +76,6 @@
 | `uscript_getScript` | `fiX2RRLQhak` |
 | `uscript_getShortName` | `4cTIrOZw1-0` |
 | `uscript_hasScript` | `PWK6yVIGNuY` |
-| `utext_close` | `2NaZ-stsAv0` |
 | `utext_openConstUnicodeString` | `yc1XEzBopCw` |
 | `utext_openUChars` | `o9+yMOok2Zs` |
 | `utext_setup` | `sEKpfqARKPI` |
@@ -150,6 +149,7 @@
 - [Java modified UTF-8 to UTF-16 conversion](../../../core/libs/prx/libSceIcu/JavaUtf8.cpp) is unverified on a console. `u_strFromJavaModifiedUTF8WithSub` follows ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp) and [utf_impl.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/utf_impl.cpp), including the bytes a malformed sequence swallows and the preflight count of one unit per substituted sequence after the destination fills, even for a supplementary substitution character. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 - [UTF-16 to Java modified UTF-8 conversion](../../../core/libs/prx/libSceIcu/JavaUtf8.cpp) is unverified on a console. `u_strToJavaModifiedUTF8` follows ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp): each code unit is encoded alone (surrogates take three bytes, U+0000 takes two), output stops at the first unit that does not fit, and the result codes follow `u_terminateChars`. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NID comes from the 3.20 inventory and its presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
 - [UTF-16 to UTF-32 conversion](../../../core/libs/prx/libSceIcu/Utf32.cpp) is unverified on a console. `u_strToUTF32` and `u_strToUTF32WithSub` follow ICU 78.1 [ustrtrns.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustrtrns.cpp): only a lead surrogate followed by a trail surrogate is combined, every other surrogate is replaced or fails with `U_INVALID_CHAR_FOUND`, and the result codes follow `u_terminateUChar32s`. A null `UErrorCode` and a result longer than `INT32_MAX` throw. The NIDs come from the 3.20 inventory and their presence on current firmware is unproven (see ICU export availability). Closes when: compared with the console.
+- [UText disposal](../../../core/libs/prx/libSceIcu/UText.cpp) is unverified on a console and throws `NotImplemented_nid_no_patch` for non-null `UText` handles. `utext_close` (NID `2NaZ-stsAv0`) returns `nullptr` for a null handle, following ICU 68.2 [utext.cpp](https://github.com/unicode-org/icu/blob/84e1f26ea77152936e70d53178a816dbfbf69989/icu4c/source/common/utext.cpp#L664-L705). No `UText` setup or opening export is implemented in this module, so magic/flag inspection, provider close callbacks and heap deallocation for non-null handles remain unimplemented. Closes when: non-null `UText` disposal is implemented and compared with the console.
 
 ### Known export names; ABI prototypes unverified
 
