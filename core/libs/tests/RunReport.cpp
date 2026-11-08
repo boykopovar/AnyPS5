@@ -1228,6 +1228,24 @@ void RecipeRedactionTest() {
     Require(RunReport::RedactedValue("", host) == "[redacted]", "an empty value is redacted");
 }
 
+void RecipeEnvironmentTest() {
+    Require(RunReport::RecipeVariableAllowed("ANYPS5_GPU"), "an ANYPS5 variable is kept");
+    Require(!RunReport::RecipeVariableAllowed("PATH"), "a variable outside ANYPS5_ is not recorded");
+    Require(!RunReport::RecipeVariableAllowed("anyps5_gpu"), "the prefix is case sensitive");
+    for (const char* name : {"ANYPS5_API_TOKEN", "ANYPS5_KEYFILE", "ANYPS5_DB_PASSWORD", "ANYPS5_client_secret", "ANYPS5_secret"}) {
+        Require(!RunReport::RecipeVariableAllowed(name), std::string("a secret-named variable was allowed: ") + name);
+    }
+    const RunReport::EnvironmentVariables all{{"ANYPS5_ZETA", "1"}, {"ANYPS5_API_TOKEN", "x"}, {"HOME", "/root"}, {"ANYPS5_ALPHA", "0"}};
+    const auto kept = RunReport::RecipeEnvironment(all);
+    Require(kept == RunReport::EnvironmentVariables({{"ANYPS5_ALPHA", "0"}, {"ANYPS5_ZETA", "1"}}), "the recipe keeps sorted ANYPS5 variables only");
+    for (const auto& [name, value] : RunReport::ProcessEnvironment()) {
+        Require(RunReport::RecipeVariableAllowed(name), "the captured environment holds a name the recipe may not record: " + name);
+    }
+    Require(RunReport::ConfigFileNames({{"ANYPS5_INPUT_CONFIG", "/home/a/pad/input.json"}, {"ANYPS5_GPU", "x"}}) == std::vector<std::string>({"input.json"}),
+            "only the input config is recorded, by file name");
+    Require(RunReport::ConfigFileNames({{"ANYPS5_INPUT_CONFIG", ""}}).empty(), "an empty config path names no file");
+}
+
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1495,6 +1513,7 @@ int main(int argc, char** argv) {
         Run("compile-time-report", CompileTimeReportTest);
         Run("slow-compile-count", SlowCompileTest);
         Run("recipe-redaction", RecipeRedactionTest);
+        Run("recipe-environment", RecipeEnvironmentTest);
 #ifndef _WIN32
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
