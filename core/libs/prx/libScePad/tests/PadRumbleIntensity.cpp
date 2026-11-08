@@ -175,6 +175,13 @@ void FocusSequenceResumesWithTheNextPulse() {
     }
 }
 
+void FocusGateSuppressesOnlyWhileUnfocusedWithThePauseOn() {
+    Require(!Pad::RumbleSuppressed(true, true), "a focused window with the pause on keeps rumble");
+    Require(Pad::RumbleSuppressed(true, false), "an unfocused window with the pause on drops rumble");
+    Require(!Pad::RumbleSuppressed(false, true), "a focused window with the pause off keeps rumble");
+    Require(!Pad::RumbleSuppressed(false, false), "an unfocused window with the pause off keeps rumble");
+}
+
 }
 
 int main() {
@@ -187,6 +194,7 @@ int main() {
     ParserAcceptsAndRefuses();
     EnvironmentIsReadOnceAndInvalidValuesKeepFailing();
     RumbleOnFocusLossParserAcceptsOnlyZeroOrOne();
+    FocusGateSuppressesOnlyWhileUnfocusedWithThePauseOn();
     FocusSequenceResumesWithTheNextPulse();
     return 0;
 }
