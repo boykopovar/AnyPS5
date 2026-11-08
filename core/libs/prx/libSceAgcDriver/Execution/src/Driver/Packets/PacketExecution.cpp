@@ -564,7 +564,7 @@ void Driver::execute(const Submission& submission) {
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
                     if (const auto localDevice = device.Load()) localDevice->SealPassWriteOnly();
                 };
-                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(seal, {});
+                if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Seal, seal, {});
                 else seal();
             }
         } else if (opcode != 0x42 && opcode != 0x46 && opcode != 0x58) {
@@ -619,7 +619,7 @@ void Driver::execute(const Submission& submission) {
         }
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(submission.rewindTail - 1)).load(std::memory_order_acquire) & 0x80000000u) != 0) {
             const bool holdsFlip = std::exchange(flipHold.working, false);
-            DrawPipeline::Queue0().Enqueue([this, holdsFlip, progress = submission.progress] {
+            DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::SubmitEnd, [this, holdsFlip, progress = submission.progress] {
                 if (holdsFlip) finishFlipWork(submitFlipWork(0));
                 else submitOpenWork(progress);
                 wakeQueueZeroForCompletions();
