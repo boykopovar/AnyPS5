@@ -465,10 +465,6 @@ int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI OBJ_obj2txt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_set_quic_transport_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
