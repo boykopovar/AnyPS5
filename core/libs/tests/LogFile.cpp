@@ -89,7 +89,7 @@ struct Rig {
 
     ~Rig() {
         tee.reset();
-        for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write, file}) Close(handle);
+        for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write}) Close(handle);
     }
 };
 
@@ -386,7 +386,7 @@ void FullDiskKeepsTerminal() {
     Require(Drain(terminalOutput.read) == "after the disk is full\n", "the terminal lost output after the file failed");
     const std::string notice = Drain(terminalError.read);
     Require(notice.find("ANYPS5_LOG_FILE") != std::string::npos && notice.find("can no longer be written") != std::string::npos, "the failure was not reported once on the terminal");
-    for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write, full}) Close(handle);
+    for (const Handle handle : {output.read, output.write, errors.read, errors.write, terminalOutput.read, terminalOutput.write, terminalError.read, terminalError.write}) Close(handle);
 }
 
 #ifdef _WIN32
