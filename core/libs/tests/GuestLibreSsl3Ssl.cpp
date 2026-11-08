@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <algorithm>
 #include <array>
@@ -412,6 +413,8 @@ void CheckKeylogCallback() {
 } // namespace
 
 int main() {
+    void* api[10]{};
+    ApplicationHeapRegister_nid_no_patch(api);
     CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
     CheckVersionName();
