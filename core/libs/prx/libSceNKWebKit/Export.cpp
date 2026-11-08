@@ -11677,30 +11677,6 @@ int APS5_VABI WKInspectorHide() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKInspectorIsAttached() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorIsConnected() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorIsElementSelectionActive() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorIsFront() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorIsProfilingPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKInspectorIsVisible() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKInspectorShowConsole() {
     NotImplemented_nid_no_patch(__func__);
 }

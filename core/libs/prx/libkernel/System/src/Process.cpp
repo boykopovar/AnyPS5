@@ -62,6 +62,10 @@
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <mach/mach.h>
+#endif
 
 extern char** environ;
 namespace {
@@ -107,7 +111,10 @@ bool StoreGuestId(std::uint32_t* output) {
 #elif defined(__linux__)
     iovec local{const_cast<std::uint32_t*>(&zero), sizeof(zero)};
     iovec remote{output, sizeof(zero)};
-    return ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(sizeof(zero));
+    const int saved = errno;
+    const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno == EFAULT) errno = saved;
+    return copied == static_cast<ssize_t>(sizeof(zero));
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(output),
         reinterpret_cast<vm_offset_t>(const_cast<std::uint32_t*>(&zero)), sizeof(zero)) == KERN_SUCCESS;
@@ -132,8 +139,10 @@ bool ReadGuest(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -155,8 +164,10 @@ bool WriteGuest(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("credentials: process_vm_writev failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
@@ -200,6 +211,11 @@ public:
             if (_wputenv_s(L"ANYPS5_LOADEXEC_ARGV_SKIP", L"") != 0 || !SetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", nullptr))
                 throw std::runtime_error("LoadExec: cannot clear the argument marker");
         }
+#elif defined(__APPLE__)
+        const int count = *_NSGetArgc();
+        char** values = *_NSGetArgv();
+        for (int index = 0; index < count; ++index)
+            arguments.push_back(values[index]);
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
@@ -533,6 +549,12 @@ int APS5_VABI getpid_nid_postfix(void) {
     return static_cast<int>(pid);
 }
 
+int APS5_VABI sceKernelGetProcessAbiType(int pid) {
+    if (pid == -1 || pid == getpid_nid_postfix()) return 1;
+    if (pid == 0) return 0;
+    throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
+}
+
 int APS5_VABI getsid_nid_postfix(int pid) {
     const int self = getpid_nid_postfix();
     if (pid == 0 || pid == self) return self;
@@ -853,6 +875,11 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
+#elif defined(__APPLE__)
+    std::size_t cpu = 0;
+    if (const int error = ::pthread_cpu_number_np(&cpu); error != 0)
+        throw std::system_error(error, std::generic_category(), "Reading current processor");
+    const auto index = static_cast<unsigned>(cpu);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
@@ -1040,8 +1067,27 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
+#ifdef __APPLE__
+    if (who == 0) {
+        if (::getrusage(RUSAGE_SELF, &native) != 0)
+            throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+    } else {
+        thread_basic_info_data_t info{};
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        const mach_port_t thread = mach_thread_self();
+        const kern_return_t status = thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count);
+        mach_port_deallocate(mach_task_self(), thread);
+        if (status != KERN_SUCCESS)
+            throw std::runtime_error("getrusage: thread_info failed");
+        native.ru_utime.tv_sec = info.user_time.seconds;
+        native.ru_utime.tv_usec = info.user_time.microseconds;
+        native.ru_stime.tv_sec = info.system_time.seconds;
+        native.ru_stime.tv_usec = info.system_time.microseconds;
+    }
+#else
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
+#endif
     result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
     result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
     result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
