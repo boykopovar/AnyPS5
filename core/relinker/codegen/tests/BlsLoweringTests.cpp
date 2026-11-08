@@ -152,7 +152,7 @@ void execution() {
     }
 }
 #else
-void execution() { std::cout << "BLS execution checks require a Linux/macOS x86-64 build\n"; }
+void execution() { std::cout << "BLS execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 #endif
 
 }
