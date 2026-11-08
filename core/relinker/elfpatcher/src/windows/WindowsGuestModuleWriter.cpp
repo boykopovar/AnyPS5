@@ -84,7 +84,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     std::array<PeDirectory, 16> directories{};
     std::uint32_t tlsIndex = 0;
     try {
-        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message);
+        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message, guest.FunctionSymbolRoots);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(guest.SourcePath);
         throw;
@@ -140,7 +140,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             Io::AppendU64(tlsExports.Data, ImageBase + tlsIndex);
             Io::AppendU64(tlsExports.Data, symbol.Value);
             relocations.push_back(rva);
-        } else rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
+        } else rva = image.GetRva(symbol.Value, guest.FunctionSymbolRoots && (symbol.Info & 15) == 2 ? 1 : std::max<std::uint64_t>(symbol.Size, 1));
         if (!exports.emplace(symbol.Name, rva).second) throw Domain::RelinkerException("Duplicate guest export: " + symbol.Name);
         if ((symbol.Info & 15) == 2 && returnsZero(symbol.Value)) runtime.ZeroReturnExports.insert(symbol.Name);
     }

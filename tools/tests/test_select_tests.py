@@ -775,11 +775,39 @@ class MissingCommandTests(unittest.TestCase):
 
     def test_looping_subdirectory_is_skipped_when_recovering_commands(self):
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            loop = root / "first"
+            (root / "nested").mkdir()
+            (root / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
+            (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            original_resolve = Path.resolve
+
+            def resolve(path):
+                if path == loop:
+                    raise RuntimeError("Symlink loop")
+                return original_resolve(path)
+
+            for directory, expected in ((root, {"kept": {("/bin/kept",)}}), (loop, {})):
+                build.path = str(directory)
+                with self.subTest(root=directory), mock.patch.object(Path, "resolve", autospec=True, side_effect=resolve) as resolving:
+                    self.assertEqual(dict(build.test_commands({"kept"})), expected)
+                    resolving.assert_any_call(loop)
+
+    def test_real_looping_subdirectory_is_skipped_when_recovering_commands_where_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "nested").mkdir()
-            os.symlink("second", root / "first")
-            os.symlink("first", root / "second")
-            (root / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            try:
+                os.symlink("second", root / "first", target_is_directory=True)
+                os.symlink("first", root / "second", target_is_directory=True)
+            except NotImplementedError as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest(f"symbolic link privilege is unavailable: {error}")
+                raise
+            (root / "CTestTestfile.cmake").write_text('subdirs("nested" "first")\n', encoding="utf-8")
             (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
             build = object.__new__(select_tests.Build)
             build.path = str(root)
