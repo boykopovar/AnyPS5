@@ -285,8 +285,11 @@ int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength(std::int64_t requestId
 }
 
 int APS5_VABI sceNpWebApiGetHttpStatusCode(std::int64_t requestId, int* statusCode) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!statusCode) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findRequest(requestId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE;
 }
 
 int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize) {

@@ -217,6 +217,19 @@ static int TrailingSlashCreationError(const std::filesystem::path& native, int f
     return status.type() == std::filesystem::file_type::not_found ? 2 : 0;
 }
 
+#ifdef _WIN32
+static int CreationThroughSeparatorError(const std::filesystem::path& native, int flags) {
+    if ((flags & SCE_KERNEL_O_CREAT) == 0 || native.has_filename() || !native.has_relative_path()) return 0;
+    auto target = native;
+    while (!target.has_filename() && target.has_relative_path()) target = target.parent_path();
+    std::error_code error;
+    const auto status = std::filesystem::status(target, error);
+    if (status.type() == std::filesystem::file_type::not_found) return 2;
+    if (error) return FilesystemError(error);
+    return std::filesystem::is_directory(status) ? 0 : 20;
+}
+#endif
+
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
@@ -253,17 +266,23 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     if ((flags & SCE_KERNEL_O_NOFOLLOW) != 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) != (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) {
         constexpr int GuestEmlink = 31;
         std::error_code error;
-        if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
 #ifdef _WIN32
+        if (std::filesystem::is_symlink(openNative, error)) return SceErrorFromErrno(GuestEmlink);
         const DWORD attributes = GetFileAttributesW(openNative.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
             if (File::WindowsSymbolicLink::ReadJunction(openNative, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
         }
+#else
+        if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
 #endif
     }
 #ifdef _WIN32
-    int fd = NativeOpen(openNative, MapFlags(flags), mode);
+    const int separatorError = CreationThroughSeparatorError(native, flags);
+    if (separatorError != 0 && separatorError != 2) return SceKernelError(separatorError);
+    int fd = -1;
+    if (separatorError == 2) errno = ENOENT;
+    else fd = NativeOpen(openNative, MapFlags(flags), mode);
 #else
     int fd = NativeOpen(native, MapFlags(flags), mode);
 #endif
@@ -283,7 +302,9 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         auto directory = native;
         while (!directory.has_filename() && directory.has_relative_path()) directory = directory.parent_path();
         std::error_code error;
-        if (std::filesystem::is_directory(directory, error)) {
+        std::error_code directoryPathError;
+        const auto directoryOpenPath = NativeMetadataPath(directory, directoryPathError);
+        if (std::filesystem::is_directory(directoryPathError ? directory : directoryOpenPath, error)) {
             if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) errno = EEXIST;
             else if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC))) errno = EISDIR;
             else fd = File::OpenDirectoryDescriptor(directory);

@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <fstream>
 #include <array>
+#include <stdexcept>
+#include <string>
 #include "ProcessParametersFixture.hpp"
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
@@ -30,6 +32,11 @@ int main() {
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == notInitialized);
     Require(sceAppContentGetEntitlementKey(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentAppParamGetInt(0, nullptr) == notInitialized);
+    char appParam[8]{};
+    Require(sceAppContentAppParamGetString(0, appParam, sizeof(appParam)) == notInitialized);
+    Require(sceAppContentDownloadDataGetBlockSize(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentGetRegion(nullptr) == notInitialized);
+    Require(sceAppContentRequestPatchInstall(nullptr) == notInitialized);
     AppContentMountPoint uninitializedMount{};
     Require(sceAppContentTemporaryDataMount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataMount(&uninitializedMount) == notInitialized);
@@ -87,6 +94,29 @@ int main() {
     Require(sceAppContentInitialize(nullptr, &boot) == 0);
     AppContentMountPoint download{};
     std::memcpy(download.data, "/download0", 11);
+    const auto reachesService = [](auto call) {
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    Require(sceAppContentAppParamGetString(0, nullptr, sizeof(appParam)) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentAppParamGetString(0, appParam, sizeof(appParam)); }));
+    size_t blockSize = 12345;
+    Require(sceAppContentDownloadDataGetBlockSize(nullptr, &blockSize) == ErrorParameter);
+    Require(sceAppContentDownloadDataGetBlockSize(&download, nullptr) == ErrorParameter);
+    Require(blockSize == 12345);
+    Require(reachesService([&] { sceAppContentDownloadDataGetBlockSize(&download, &blockSize); }));
+    std::uint32_t region = 0;
+    Require(sceAppContentGetRegion(nullptr) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentGetRegion(&region); }));
+    const std::string longest(255, 'a');
+    const std::string tooLong(256, 'a');
+    Require(sceAppContentRequestPatchInstall(nullptr) == ErrorParameter);
+    Require(sceAppContentRequestPatchInstall(tooLong.c_str()) == ErrorParameter);
+    Require(reachesService([&] { sceAppContentRequestPatchInstall(longest.c_str()); }));
     size_t availableKb = 12345;
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 0);
