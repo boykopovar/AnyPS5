@@ -625,6 +625,18 @@ class CompareTests(unittest.TestCase):
         self.assertIsNone(compared["missingFunctions"])
         self.assertEqual(compared["missingFunctionsTruncated"], {"before": None, "now": None})
 
+    def test_unsupported_instructions_are_diffed_by_encoding_opcode_and_modifiers(self):
+        before = {"unsupported": [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "count": 2},
+                                  {"encoding": None, "opcode": None, "opcodeValue": 9, "modifiers": None, "count": 1}]}
+        now = {"unsupported": [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "count": 7},
+                               {"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}]}
+        previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": before}])
+        summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0, "report": now}])
+        diff = title_run.compare_runs(summary, previous)["PPSA00001"]["unsupportedInstructions"]
+        self.assertEqual(diff["onlyBefore"], [{"encoding": None, "opcode": None, "opcodeValue": 9, "modifiers": None, "count": 1}])
+        self.assertEqual(diff["onlyNow"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": None, "count": 1}])
+        self.assertEqual(diff["both"], [{"encoding": "VOP3", "opcode": "V_FOO", "opcodeValue": 4, "modifiers": ["clamp"], "before": 2, "now": 7}])
+
     def test_only_titles_in_both_runs_are_compared(self):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
