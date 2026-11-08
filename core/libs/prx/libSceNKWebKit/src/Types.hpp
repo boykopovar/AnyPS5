@@ -3,6 +3,7 @@
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -101,6 +102,17 @@ public:
     bool valid = false;
 };
 
+class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
+public:
+    URLRequest() = default;
+    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {}
+
+    Retained<URL> url;
+    Retained<URL> firstPartyForCookies;
+    std::string httpMethod = "GET";
+    Retained<Data> httpBody;
+};
+
 class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
 public:
     URLResponse() = default;
@@ -126,6 +138,25 @@ public:
     std::u16string lookupText;
     RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
     bool isContentEditable = false;
+};
+
+class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
+public:
+    Retained<String> name;
+    static BundleScriptWorld* NormalWorld() {
+        static auto world = Make<BundleScriptWorld>();
+        return world.Get();
+    }
+};
+
+class BundleHitTestResult final : public ObjectOf<ObjectType::BundleHitTestResult> {
+public:
+    Retained<URL> absoluteImageURL;
+    Retained<URL> absoluteLinkURL;
+    Retained<URL> absoluteMediaURL;
+    Retained<URL> absolutePDFURL;
+    Retained<String> linkLabel;
+    Retained<String> linkTitle;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {
@@ -155,6 +186,72 @@ class OpenPanelResultListener final : public ObjectOf<ObjectType::OpenPanelResul
 public:
     bool cancelled = false;
     std::vector<Retained<String>> chosenFiles;
+};
+
+class GeolocationPermissionRequest final : public ObjectOf<ObjectType::GeolocationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    GeolocationPermissionRequest() = default;
+    explicit GeolocationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class NotificationPermissionRequest final : public ObjectOf<ObjectType::NotificationPermissionRequest> {
+public:
+    enum class State { Pending, Allowed, Denied };
+    using DecisionHandler = std::function<void(bool)>;
+
+    NotificationPermissionRequest() = default;
+    explicit NotificationPermissionRequest(DecisionHandler handler) : decisionHandler(std::move(handler)) {}
+
+    void Allow() {
+        state = State::Allowed;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(true);
+        }
+    }
+
+    void Deny() {
+        state = State::Denied;
+        if (decisionHandler) {
+            auto handler = std::move(decisionHandler);
+            handler(false);
+        }
+    }
+
+    State state = State::Pending;
+    DecisionHandler decisionHandler;
+};
+
+class Inspector final : public ObjectOf<ObjectType::Inspector> {
+public:
+    bool isAttached = false;
+    bool isConnected = false;
+    bool isElementSelectionActive = false;
+    bool isFront = false;
+    bool isProfilingPage = false;
+    bool isVisible = false;
 };
 
 }  // namespace NKWebKit
