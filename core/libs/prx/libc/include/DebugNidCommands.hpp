@@ -31,6 +31,8 @@ Command ParseCommand(std::string_view line);
 
 void RunCommandSession(std::FILE* input, std::FILE* output, NidBreakpointTable& table, NidStopRegistry& registry, const NidStopRegistry::Stop& stop);
 
+NidStopRegistry::Session CommandFileSession();
+
 }
 
 #endif
