@@ -1,10 +1,11 @@
 import sys
+import json
 import argparse
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports (no|shared memory through host pointers\b)|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer|has no interface that can join)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space|cannot create a raw socket)", re.IGNORECASE)
 
 HOST_LIMITATION = re.compile(r"^skipping: (not enough free disk space for a file|cannot allocate a buffer) of more than 2 GiB", re.IGNORECASE | re.MULTILINE)
 
@@ -71,7 +72,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="fail when a test is skipped that the job's device is not expected to skip")
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")
-    parser.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="emit skip reasons and policy decisions as JSON")
+    output.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
     parser.add_argument("--require-tests", action="store_true", help="fail if the report contains no testcases")
     args = parser.parse_args(argv)
     try:
@@ -90,6 +93,14 @@ def main(argv=None):
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
         expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window, a display without a 120 Hz mode or no permission to create a raw socket"
+    if args.json:
+        grouped = {}
+        for name, output in found:
+            grouped.setdefault(name, []).append(output)
+        print(json.dumps({"job": args.job, "skips": [
+            {"name": name, "output": "\n".join(outputs), "occurrences": len(outputs), "expected": name not in unexpected}
+            for name, outputs in sorted(grouped.items())], "unexpected": unexpected}, sort_keys=True))
+        return int(bool(unexpected))
     for name in unexpected:
         print(f"error: {name} skipped")
     if unexpected:
