@@ -11,9 +11,11 @@ namespace {
 std::mutex stateMutex;
 HostVolume state;
 std::atomic<std::uint32_t> publishedGain{HostVolume::UnityGain};
+std::atomic<bool> publishedFocus{true};
 
 void publish() {
     publishedGain.store(state.Gain(), std::memory_order_release);
+    publishedFocus.store(state.Focused(), std::memory_order_release);
 }
 
 }
