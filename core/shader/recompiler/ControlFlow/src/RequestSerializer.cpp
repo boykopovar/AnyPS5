@@ -973,6 +973,10 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.exactRobustLoads);
     writer.WriteBool(request.target.robustBufferAccess2);
     writer.WriteBool(request.target.uniformConstantBuffers);
+    if (request.context.compute.has_value()) {
+        writer.WriteU32(request.context.compute->granulatedVgprCount);
+        writer.WriteU32(request.context.compute->sharedVgprBlocks);
+    }
     return base64Encode(buffer);
 }
 
@@ -1048,7 +1052,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.float16WidenNans = reader.ReadBool();
         result.request.target.float16NarrowNans = reader.ReadBool();
     }
-    if (version >= 56u) {
+    if (version >= 57u) {
         result.request.target.gpuResolvedImages = reader.ReadBool();
         result.request.target.descriptorMemory = reader.ReadBool();
         result.request.target.heapDataUniformDwords = reader.ReadU32();
@@ -1058,10 +1062,16 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.deviceScopeLdsMemoryBarriers = reader.ReadBool();
         result.request.target.exactRobustLoads = reader.ReadBool();
         result.request.target.robustBufferAccess2 = reader.ReadBool();
-        if (version < 59u) reader.ReadBool();
+        if (version < 59u) {
+            reader.ReadBool();
+            reader.ReadBool();
+        }
+        if (version >= 58u) result.request.target.uniformConstantBuffers = reader.ReadBool();
     }
-    if (version >= 57u && version < 59u) reader.ReadBool();
-    if (version >= 58u) result.request.target.uniformConstantBuffers = reader.ReadBool();
+    if ((version == 56u || version >= 59u) && result.request.context.compute.has_value()) {
+        result.request.context.compute->granulatedVgprCount = reader.ReadU32();
+        result.request.context.compute->sharedVgprBlocks = reader.ReadU32();
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

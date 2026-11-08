@@ -187,7 +187,7 @@ std::vector<std::uint8_t> AtVersion55(std::vector<std::uint8_t> bytes) {
 }
 
 std::string EncodeAtWriterVersion(std::vector<std::uint8_t> bytes) {
-    Require(bytes.size() > 8u && bytes[4] == 55u);
+    Require(bytes.size() > 8u && (bytes[4] == 55u || bytes[4] == 56u));
     bytes[4] = 59u;
     bytes.insert(bytes.end(), 13u, 0u);
     return EncodeBase64(bytes);
@@ -266,9 +266,6 @@ void VerifyRetiredHeapTargetFields(const ShaderRecompiler::RequestSerializer& se
         bytes[4] = 57u;
         auto plain = request;
         plain.target.uniformConstantBuffers = false;
-        Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == serializer.Serialize(plain));
-        bytes.pop_back();
-        bytes[4] = 56u;
         Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(bytes)).request) == serializer.Serialize(plain));
     }
 }
@@ -447,7 +444,7 @@ int main() {
             Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
             Require(request.target.float16DenormPreserve == preserve);
             auto upgraded = bytes;
-            upgraded[4] = 55u;
+            upgraded[4] = 56u;
             InsertMeshBarycentricFlag(upgraded);
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, {0u, 0u, 0u});
             if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
@@ -496,7 +493,7 @@ int main() {
                     layerRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
                 }
                 Require(layerRejected);
-                layered[4] = 55u;
+                layered[4] = 56u;
                 InsertMeshBarycentricFlag(layered);
                 layered.insert(layered.begin() + 259u, {0u, 0u});
                 InsertPixelDefaultsAfterFrontFace(layered);
@@ -531,7 +528,7 @@ int main() {
             Require(replay.request.context.pixel->rasterPrimitive == ShaderRecompiler::RasterPrimitive::Rectangle);
             Require(replay.request.context.vertex->paClVsOutCntl == 0x00050a05u);
             Require(replay.request.target.float16DenormPreserve == preserve);
-            bytes[4] = 55u;
+            bytes[4] = 56u;
             InsertMeshBarycentricFlag(bytes);
             bytes.insert(bytes.begin() + 259u, {0u, 0u});
             InsertPixelDefaultsAfterFrontFace(bytes);
@@ -670,7 +667,7 @@ int main() {
                 if (fixture.pixel) main38.insert(main38.begin() + 259u, {0u, 0u});
                 if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(main38, false, false);
                 auto upgraded = main38;
-                upgraded[4] = 55u;
+                upgraded[4] = 56u;
                 if (fixture.pixel) {
                     const auto tail = PixelTailDefaults(true, true);
                     upgraded.insert(upgraded.begin() + 317u, tail.begin(), tail.end());
@@ -772,7 +769,7 @@ int main() {
                     const auto replay25 = serializer.Deserialize(EncodeBase64(main25));
                     Require(!fixture.pixel || (replay25.request.context.pixel->layerExported == layer && replay25.request.context.pixel->ditheredAlphaToCoverage == dither && replay25.request.context.pixel->reversedBlend == 0u));
                     Require(replay25.request.target.float16DenormPreserve == preserve && (!fixture.tessellation || replay25.request.graphics->tessellation->primitiveGroupSize == 37u));
-                    main25[4] = 55u;
+                    main25[4] = 56u;
                     InsertMeshBarycentricFlag(main25);
                     if (fixture.pixel) {
                         main25.insert(main25.begin() + 260u, 0u);
@@ -838,6 +835,31 @@ int main() {
             rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
         }
         Require(rejected);
+    }
+
+    {
+        ShaderRecompiler::RecompileRequest compute{};
+        compute.shader.stage = ShaderRecompiler::ShaderStage::Compute;
+        compute.context.waveSize = 64;
+        compute.context.compute = ShaderRecompiler::ShaderComputeStageInfo{};
+        compute.context.compute->scratchDwords = 24u;
+        compute.context.compute->granulatedVgprCount = 13u;
+        compute.context.compute->sharedVgprBlocks = 2u;
+        const auto encoded = serializer.Serialize(compute);
+        const auto replay = serializer.Deserialize(encoded);
+        Require(replay.request.context.compute.has_value() && replay.request.context.compute->granulatedVgprCount == 13u && replay.request.context.compute->sharedVgprBlocks == 2u);
+        auto version56 = DecodeBase64(encoded);
+        Require(version56.size() > 29u && version56[4] == 59u && std::all_of(version56.end() - 21, version56.end() - 8, [](std::uint8_t value) { return value == 0u; }));
+        version56.erase(version56.end() - 21, version56.end() - 8);
+        version56[4] = 56u;
+        const auto replay56 = serializer.Deserialize(EncodeBase64(version56));
+        Require(replay56.request.context.compute.has_value() && replay56.request.context.compute->granulatedVgprCount == 13u && replay56.request.context.compute->sharedVgprBlocks == 2u);
+        Require(serializer.Serialize(replay56.request) == encoded);
+        auto version55 = version56;
+        version55.resize(version55.size() - 2u * sizeof(std::uint32_t));
+        version55[4] = 55u;
+        const auto replay55 = serializer.Deserialize(EncodeBase64(version55));
+        Require(replay55.request.context.compute.has_value() && replay55.request.context.compute->scratchDwords == 24u && replay55.request.context.compute->granulatedVgprCount == 0u && replay55.request.context.compute->sharedVgprBlocks == 0u);
     }
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
@@ -1099,7 +1121,7 @@ int main() {
         const auto replay49 = serializer.Deserialize(EncodeBase64(bytes));
         Require(replay49.request.shader.stage == ShaderRecompiler::ShaderStage::TessellationEvaluation && replay49.request.target.tessellationEvaluationSubgroups);
         auto upgraded = bytes;
-        upgraded[4] = 55u;
+        upgraded[4] = 56u;
         upgraded.push_back(1u);
         upgraded.push_back(0u);
         upgraded.push_back(0u);
