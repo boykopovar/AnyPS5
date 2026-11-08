@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -76,6 +77,29 @@ void CheckRetain(TRetain retain, std::size_t referenceOffset) {
     const std::int32_t finalCount = 4001;
     std::memcpy(expected.data() + offset, &finalCount, sizeof(finalCount));
     Require(Same(guarded, expected), "concurrent count or adjacent bytes changed");
+}
+
+void APS5_VABI InfoLine(const LibreSsl3Ssl*, int, int) {}
+
+void CheckInfoCallback() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    auto expected = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3Ssl>, object) + 312;
+    const LibreSsl3InfoCallback callback = InfoLine;
+    SSL_set_info_callback_nid_postfix(&guarded.object, callback);
+    std::memcpy(expected.data() + offset, &callback, sizeof(callback));
+    Require(Same(guarded, expected), "callback stored outside offset 312");
+    SSL_set_info_callback_nid_postfix(&guarded.object, nullptr);
+    std::memset(expected.data() + offset, 0, sizeof(callback));
+    Require(Same(guarded, expected), "null callback did not clear offset 312");
+    bool threw = false;
+    try {
+        SSL_set_info_callback_nid_postfix(nullptr, callback);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL");
 }
 
 struct Versions {
@@ -261,6 +285,7 @@ void CheckX509Version() {
 int main() {
     CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
+    CheckInfoCallback();
     CheckVersionBounds();
     CheckClientRandom();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
