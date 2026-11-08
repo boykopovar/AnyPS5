@@ -29,7 +29,6 @@ int APS5_VABI ucal_setGregorianChange_nid_postfix();
 int APS5_VABI ucal_setMillis_nid_postfix();
 int APS5_VABI ucol_close_nid_postfix();
 int APS5_VABI ucol_countAvailable_nid_postfix();
-int APS5_VABI ucol_getAttribute_nid_postfix();
 int APS5_VABI ucol_getAvailable_nid_postfix();
 int APS5_VABI ucol_getContractionsAndExpansions_nid_postfix();
 int APS5_VABI ucol_getKeywordValues_nid_postfix();
