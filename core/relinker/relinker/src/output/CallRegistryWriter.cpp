@@ -1,7 +1,10 @@
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <cstdint>
 #include <locale>
+#include <map>
+#include <set>
 #include <sstream>
+#include <utility>
 
 namespace Relinker {
 
@@ -121,6 +124,56 @@ std::string CallRegistryWriter::WriteModuleImports(const std::vector<CallRegistr
         out << "\n";
     }
 
+    out << "]\n";
+    return out.str();
+}
+
+std::string CallRegistryWriter::WriteHookTable(const std::vector<CallRegistryEntry>& entries) {
+    struct Hook {
+        std::vector<FileByteOffset> targetOffsets;
+        std::set<FileByteOffset> callSites;
+        bool callSitesResolved = true;
+        bool weak = false;
+    };
+    std::map<std::pair<std::string, std::string>, Hook> hooks;
+    for (const auto& e : entries) {
+        Hook& hook = hooks[{e.Nid, e.Library}];
+        hook.targetOffsets.push_back(e.TargetOffset);
+        hook.callSites.insert(e.CallSites.begin(), e.CallSites.end());
+        hook.callSitesResolved = hook.callSitesResolved && e.CallSitesResolved;
+        hook.weak = hook.weak || e.Weak;
+    }
+
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << "[\n";
+    std::size_t index = 0;
+    for (const auto& [key, hook] : hooks) {
+        out << "  {\n";
+        out << "    \"hook\": " << index << ",\n";
+        out << "    \"nid\": " << _jsonString(key.first) << ",\n";
+        out << "    \"library\": " << _jsonString(key.second) << ",\n";
+        out << "    \"targetOffsets\": [";
+        for (std::size_t j = 0; j < hook.targetOffsets.size(); ++j) {
+            if (j > 0) out << ", ";
+            out << _hexOffset(hook.targetOffsets[j]);
+        }
+        out << "],\n";
+        out << "    \"callSites\": [";
+        bool first = true;
+        for (const FileByteOffset site : hook.callSites) {
+            if (!first) out << ", ";
+            out << _hexOffset(site);
+            first = false;
+        }
+        out << "],\n";
+        out << "    \"callSitesResolved\": " << (hook.callSitesResolved ? "true" : "false") << ",\n";
+        out << "    \"weak\": " << (hook.weak ? "true" : "false") << "\n";
+        out << "  }";
+        ++index;
+        if (index < hooks.size()) out << ",";
+        out << "\n";
+    }
     out << "]\n";
     return out.str();
 }
