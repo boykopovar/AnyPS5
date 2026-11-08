@@ -87,7 +87,6 @@ int APS5_VABI uldn_localeDisplayName_nid_postfix();
 int APS5_VABI uldn_openForContext_nid_postfix();
 int APS5_VABI uldn_regionDisplayName_nid_postfix();
 int APS5_VABI uldn_scriptDisplayName_nid_postfix();
-int APS5_VABI ulistfmt_close_nid_postfix();
 int APS5_VABI ulistfmt_closeResult_nid_postfix();
 int APS5_VABI ulistfmt_format_nid_postfix();
 int APS5_VABI ulistfmt_formatStringsToResult_nid_postfix();

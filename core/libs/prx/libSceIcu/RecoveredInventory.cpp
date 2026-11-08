@@ -343,10 +343,6 @@ int APS5_VABI uldn_scriptDisplayName_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ulistfmt_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ulistfmt_closeResult_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
