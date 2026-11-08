@@ -2,21 +2,28 @@
 
 ### Functional
 
-- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 132 pending surface, font or rendering exports.
+- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 118 pending surface, font or rendering exports.
 
 ### Functional image and surface exports
 
 - [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp) implements 19 Cairo image/surface/stride exports with caller-owned and internally-owned pixel buffers, reference-counted surfaces, format and stride handling, device scales, subsurfaces and error surfaces. CPU image flush/mark-dirty require no deferred device synchronization. Windows and Linux sanitizer tests and native Cairo 1.18.0 differential metadata checks passed; no PS5 console comparison or complete rasterizer is claimed.
 
+### Functional font options
+
+- [FontOptions.cpp](../../../core/libs/prx/libcairo/FontOptions.cpp) implements eight font-option lifecycle, antialias and hint-setting helpers with Cairo-compatible owned state and a protected nil object. Tested on Windows and Linux sanitizers.
+
+### Functional regions
+
+- [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp) implements six region lifecycle and rectangle operations with canonical band geometry and Cairo-compatible errors; Windows, Linux sanitizers and native Cairo/Pixman geometry comparisons passed.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 132 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 118 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
 | `cairo_scaled_font_get_font_face` | `+BL3-h8zGDo` |
 | `cairo_paint` | `+PEo5Z7DOlY` |
-| `cairo_font_options_set_hint_metrics` | `+TktRPDfw0Y` |
 | `cairo_set_font_options` | `-aqFIBn0h78` |
 | `cairo_device_to_user_distance` | `-v5CZVGkN3k` |
 | `cairo_font_face_set_user_data` | `1GGpdjyZslI` |
@@ -57,8 +64,6 @@
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
 | `cairo_get_line_cap` | `Hkp7M+pJILk` |
-| `cairo_region_get_rectangle` | `I5wa74016LQ` |
-| `cairo_font_options_set_hint_style` | `IDmch1bKy34` |
 | `cairo_set_miter_limit` | `IKnEk6g6ZV0` |
 | `cairo_translate` | `IdKE2DrNBck` |
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
@@ -68,13 +73,11 @@
 | `cairo_destroy` | `K6aayzvQMlE` |
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
-| `cairo_region_create` | `MGMwq9DNMyE` |
 | `cairo_fill` | `Ndvm8s28Gyc` |
 | `cairo_transform` | `OHgp1uE8P2c` |
 | `cairo_set_line_join` | `Ori3CK8Sx6g` |
 | `cairo_pop_group_to_source` | `Oyzf6kDk6Ns` |
 | `cairo_mesh_pattern_set_corner_color_rgba` | `P+Hm5enx01Y` |
-| `cairo_font_options_copy` | `P2IjaGD66NE` |
 | `cairo_identity_matrix` | `PaSEtyxiC0o` |
 | `cairo_save` | `Pj8asGd55jA` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
@@ -83,7 +86,6 @@
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
 | `cairo_path_extents` | `S6ieIssLpCA` |
 | `cairo_ft_scaled_font_unlock_face` | `SJMLSxaYvWU` |
-| `cairo_font_options_get_antialias` | `SNSLa0ggfpw` |
 | `cairo_mesh_pattern_move_to` | `T0JOV6EajrA` |
 | `cairo_paint_with_alpha` | `TAIhaLjmAlg` |
 | `cairo_set_fill_rule` | `THcHgZElshs` |
@@ -93,8 +95,6 @@
 | `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
 | `cairo_get_target` | `Wr3nsor1aNc` |
 | `cairo_append_path` | `XX9tocaUX+g` |
-| `cairo_region_union_rectangle` | `Ya+vgrJjBQE` |
-| `cairo_region_reference` | `Yarxt1LHaf0` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_get_line_join` | `azNGOQLubLc` |
@@ -115,11 +115,8 @@
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
 | `cairo_new_path` | `hhuvB3JXuMM` |
 | `cairo_push_group` | `hlh15JjNtWg` |
-| `cairo_font_options_destroy` | `huXPyr6A9to` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
-| `cairo_font_options_create` | `j2xKmRzIV84` |
 | `cairo_device_to_user` | `jyf32aEUoMs` |
-| `cairo_font_options_set_antialias` | `kNua19l9-0I` |
 | `cairo_glyph_free` | `lAEbTbSUTTo` |
 | `cairo_select_font_face` | `ldk9m5h+-no` |
 | `cairo_line_to` | `mSda1B-vfkM` |
@@ -129,7 +126,6 @@
 | `cairo_set_line_cap` | `oFltTuV0f7Y` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
-| `cairo_font_options_set_subpixel_order` | `pk6gDcQRKxs` |
 | `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
 | `cairo_close_path` | `rENdf2qgOE4` |
@@ -141,8 +137,6 @@
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
-| `cairo_region_destroy` | `vnHq+jcDKBM` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
-| `cairo_region_num_rectangles` | `xoe4ss9GmYc` |
 | `cairo_set_line_width` | `zwMGP3ASKMI` |
