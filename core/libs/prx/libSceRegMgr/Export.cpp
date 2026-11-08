@@ -67,6 +67,47 @@ public:
         return 0;
     }
 
+    int setInt(int64_t key, int32_t value) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it != entries_.end() && it->second.type != TypeInt) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        RegEntry& entry = entries_[key];
+        entry.type = TypeInt;
+        entry.intVal = value;
+        entry.strVal.clear();
+        entry.binVal.clear();
+        return 0;
+    }
+
+    int setStr(int64_t key, const char* value, size_t length) {
+        if (value == nullptr) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it != entries_.end() && it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        size_t stringLength = 0;
+        while (stringLength < length && value[stringLength] != '\0') ++stringLength;
+        RegEntry& entry = entries_[key];
+        entry.type = TypeStr;
+        entry.intVal = 0;
+        entry.strVal.assign(value, stringLength);
+        entry.binVal.clear();
+        return 0;
+    }
+
+    int setBin(int64_t key, const void* value, size_t size) {
+        if (value == nullptr) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it != entries_.end() && it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        const auto* bytes = static_cast<const std::uint8_t*>(value);
+        RegEntry& entry = entries_[key];
+        entry.type = TypeBin;
+        entry.intVal = 0;
+        entry.strVal.clear();
+        entry.binVal.assign(bytes, bytes + size);
+        return 0;
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<int64_t, RegEntry> entries_;
@@ -90,16 +131,15 @@ int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int string
     return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (size == 0) NotImplemented_nid_no_patch(__func__);
+    return gStore.setBin(optionId, data, size);
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return gStore.setInt(static_cast<std::uint32_t>(optionId), inInt);
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (stringLength == 0) NotImplemented_nid_no_patch(__func__);
+    return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data) {
     (void)key;
@@ -111,7 +151,6 @@ std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk,
 
 int APS5_VABI sceRegMgrCheckError(void) {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRegMgrCheckIntVal(void) {

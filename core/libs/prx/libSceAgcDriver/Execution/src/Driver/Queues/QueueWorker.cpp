@@ -74,7 +74,7 @@ void Driver::deferCompletion(const Submission& submission) {
     completionDeferred() = true;
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f deferred completion serial=%llu to the draw pipeline\n", TraceMs(), static_cast<unsigned long long>(submission.serial));
-    DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
+    DrawPipeline::Queue0().Enqueue(DrawPipeline::CommitKind::Completion, [this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
         completeSubmission(serial, received, labelWrites, progress, holdsFlip);
     }, {});
 }
@@ -134,6 +134,11 @@ const std::atomic<std::uint64_t>*& Driver::workerQueued() {
     return queued;
 }
 
+std::atomic<std::uint64_t>*& Driver::workerPacket() {
+    static thread_local std::atomic<std::uint64_t>* packet = nullptr;
+    return packet;
+}
+
 void Driver::reapCompletionLabels() {
     std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::try_to_lock);
     if (!gpuLock.owns_lock()) {
@@ -190,6 +195,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 auto& worker = workers.at(id);
                 auto& pending = worker.pending;
                 workerQueued() = &worker.queued;
+                workerPacket() = &worker.executingPacket;
                 if (traceGpu && pending.empty()) std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
                 const auto ready = [&] { return failure || stopping || !pending.empty(); };
                 const auto allQueuesIdle = [&] {
@@ -254,6 +260,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 }
                 submission = std::move(pending.front());
                 pending.pop_front();
+                worker.executingPacket.store(0, std::memory_order_relaxed);
                 if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 struct OrderHold {
@@ -268,7 +275,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || !waitFreeBefore(submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received);
+                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }
@@ -281,7 +288,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
+                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }

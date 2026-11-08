@@ -90,7 +90,7 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 864, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -179,7 +179,8 @@ std::size_t PayloadOffset(std::size_t keyBytes) {
 class SharedPlanTable {
 public:
     std::shared_ptr<const IrResourcePlan> Get(std::span<const std::byte> payload, std::uint64_t shaderHash) {
-        const Key key{HashBytes(payload), HashBytes(payload, 0x5eed0003ull), payload.size(), shaderHash};
+        const auto hashes = HashBytes<2>(payload, {0u, 0x5eed0003ull});
+        const Key key{hashes[0], hashes[1], payload.size(), shaderHash};
         {
             std::lock_guard lock(mutex);
             if (const auto found = plans.find(key); found != plans.end()) {
@@ -303,7 +304,7 @@ public:
         out.insert(out.end(), bytes.begin(), bytes.end());
     }
 
-    void Flags(const std::vector<bool>& flags) {
+    void Flags(const ElementFlags& flags) {
         Value<std::uint64_t>(flags.size());
         for (const bool flag : flags) Value(flag);
     }
@@ -404,10 +405,10 @@ public:
         return SharedSpirv(std::move(words));
     }
 
-    void Flags(std::vector<bool>& flags) {
+    void Flags(ElementFlags& flags) {
         const auto count = Count(1);
-        flags.assign(count, false);
-        for (std::size_t i = 0; i < count; ++i) flags[i] = Get<bool>();
+        flags.clear();
+        for (std::size_t i = 0; i < count; ++i) flags.push_back(Get<bool>());
     }
 
     void Text(std::string& text) {
@@ -1958,7 +1959,8 @@ void BuildPlanKey(const RecompileRequest& request, std::uint32_t hostSubgroupSiz
 }
 
 std::string EntryName(std::span<const std::byte> key) {
-    return hex(HashBytes(key, 0x5eed0001ull)) + hex(HashBytes(key, 0x5eed0002ull)) + ".bin";
+    const auto hashes = HashBytes<2>(key, {0x5eed0001ull, 0x5eed0002ull});
+    return hex(hashes[0]) + hex(hashes[1]) + ".bin";
 }
 
 void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out) {
