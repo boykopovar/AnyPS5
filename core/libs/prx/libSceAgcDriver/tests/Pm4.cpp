@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceAgc/Patch/include/Rewind.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -2137,6 +2138,39 @@ void testRewindTailTrace() {
     check(busy <= 150.0, "the queue worker's busy share counts nested REWIND tails more than once");
 }
 
+void testRewindControlCopy() {
+    constexpr std::size_t Gates = 8;
+    alignas(8) static std::uint32_t done = 0;
+    static std::vector<std::uint32_t> words;
+    words.clear();
+    for (std::size_t index = 0; index < Gates; ++index) {
+        const auto rewind = makePacket(0x59, {0});
+        words.insert(words.end(), rewind.begin(), rewind.end());
+    }
+    const auto last = writeWord(done, 1);
+    words.insert(words.end(), last.begin(), last.end());
+    submitWords(words);
+    std::thread writer([&] {
+        for (std::size_t index = 0; index < Gates; ++index) sceAgcRewindPatchSetRewindState(&words[index * 2], 1);
+    });
+    writer.join();
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the tail behind the last REWIND did not run");
+}
+
+void testRewindSize() {
+    alignas(8) static std::uint32_t done = 0;
+    for (const auto& rewind : {makePacket(0x59, {0x80000000u, 0}), makePacket(0x59, {0x80000000u, 0, 0})}) {
+        auto words = rewind;
+        const auto last = writeWord(done, 1);
+        words.insert(words.end(), last.begin(), last.end());
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        expectFailure([&] { sceAgcDriverSubmitDcb(&packet); }, "a REWIND packet must be two dwords");
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 0, "a rejected REWIND submission executed");
+}
+
 struct RenderingGateState {
     std::mutex mutex;
     std::condition_variable changed;
@@ -2578,7 +2612,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
