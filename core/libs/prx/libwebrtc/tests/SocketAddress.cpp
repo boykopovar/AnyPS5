@@ -102,6 +102,39 @@ void TestUnspecified() {
     Require(!IsNil(address));
 }
 
+void TestConstructors() {
+    WebRtcSocketAddress defaulted;
+    std::memset(&defaulted, 0x5A, sizeof(defaulted));
+    _ZN3rtc13SocketAddressC1Ev_nid_postfix(&defaulted);
+    Require(defaulted.hostname.size == 0);
+    Require(defaulted.hostname.capacity == 15);
+    Require(defaulted.hostname.buffer[0] == '\0');
+    Require(defaulted.ip.family == WebRtcAfUnspec);
+    Require(defaulted.port == 0);
+    Require(defaulted.scopeId == 0);
+    Require(!defaulted.literal);
+    Require(IsNil(defaulted));
+
+    WebRtcIpAddress ip;
+    std::memset(&ip, 0, sizeof(ip));
+    ip.family = WebRtcAfInet;
+    const std::uint8_t bytes[4] = {10, 1, 2, 3};
+    std::memcpy(&ip.address.ip4, bytes, sizeof(bytes));
+
+    WebRtcSocketAddress address;
+    std::memset(&address, 0x5A, sizeof(address));
+    _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(&address, &ip, 8080);
+    Require(address.hostname.size == 0);
+    Require(address.hostname.capacity == 15);
+    Require(_ZNK3rtc13SocketAddress4portEv_nid_postfix(&address) == 8080);
+    Require(_ZNK3rtc13SocketAddress6ipaddrEv_nid_postfix(&address) != nullptr);
+    Require(_ZNK3rtc9IPAddresseqERKS0__nid_postfix(&address.ip, &ip));
+    Require(address.scopeId == 0);
+    Require(!address.literal);
+    Require(IsComplete(address));
+    Require(!IsNil(address));
+}
+
 void TestNullAddressThrows() {
     try {
         _ZNK3rtc13SocketAddress4portEv_nid_postfix(nullptr);
@@ -118,6 +151,7 @@ int main() {
     TestIpv4();
     TestIpv6();
     TestUnspecified();
+    TestConstructors();
     TestNullAddressThrows();
     return 0;
 }
