@@ -1,4 +1,5 @@
 #include "prx/libSceContentDelete/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -18,7 +19,12 @@ constexpr int AlreadyInitialized = static_cast<int>(0x809D5003u);
 extern "C" {
 
 int APS5_VABI sceContentDeleteInitialize(const ContentDeleteInitParam* initParam) {
-    if (initParam == nullptr || initParam->heap_size != 0x4000) return InvalidArgument;
+    if (initParam == nullptr) return InvalidArgument;
+    ContentDeleteInitParam localParam{};
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&localParam, initParam, sizeof(localParam));
+    errno = savedErrno;
+    if (!read || localParam.heap_size != 0x4000) return InvalidArgument;
     bool expected = false;
     if (!g_initialized.compare_exchange_strong(expected, true)) return AlreadyInitialized;
     return 0;
