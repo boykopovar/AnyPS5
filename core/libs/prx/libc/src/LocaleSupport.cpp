@@ -1423,8 +1423,16 @@ template<typename Text> const SceV2TimeGetVtable<Text> g_sceV2TimeGetVtable{
     SceV2TimeGetDateOrder_nid_no_patch, SceV2TimeGetTime_nid_no_patch<Text>, SceV2TimeGetDate_nid_no_patch<Text>, SceV2TimeGetWeekday_nid_no_patch<Text>,
     SceV2TimeGetMonthname_nid_no_patch<Text>, SceV2TimeGetYear_nid_no_patch<Text>, SceV2TimeGetField_nid_no_patch<Text>};
 constexpr auto g_sceV2TimeGetUshortVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily, DestroySceV2UshortTimeGetFacet_nid_no_patch>();
-constexpr auto g_sceV2TimePutCharVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
-constexpr auto g_sceV2TimePutWideVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
+template<typename Text> struct SceV2TimePutVtable {
+    GuestLocale::FacetVtable facet;
+    GuestLocale::OutputIterator (APS5_VABI *put)(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const GuestTm* time, char specifier, char modifier);
+};
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2TimePut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text fill, const GuestTm* time, char specifier, char modifier);
+
+template<typename Text> const SceV2TimePutVtable<Text> g_sceV2TimePutVtable{
+    {DestroySceV2TimePutFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2TimePutFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2TimePut_nid_no_patch<Text>};
 constexpr auto g_sceV2TimePutUshortVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
 
 constexpr char g_sceV2Empty[] = "";
@@ -2150,7 +2158,7 @@ SceV2FacetKind g_sceV2MoneyPutChar{&_ZNSt8__sce_v29money_putIcNS_19ostreambuf_it
 SceV2FacetKind g_sceV2MoneypunctChar{&_ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<false>, nullptr};
 SceV2FacetKind g_sceV2MoneypunctCharIntl{&_ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<true>, nullptr};
 SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<char>), &g_sceV2TimeGetVtable<char>.facet, InitializeSceV2TimeGetFacet, nullptr};
-SceV2FacetKind g_sceV2TimePutChar{&_ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutCharVtable.facet, InitializeSceV2TimePutFacet, nullptr};
+SceV2FacetKind g_sceV2TimePutChar{&_ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutVtable<char>.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeWide{&_ZNSt8__sce_v25ctypeIwE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeWideVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
 SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2NumPutWide{&_ZNSt8__sce_v27num_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumPutVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
@@ -2162,7 +2170,7 @@ SceV2FacetKind g_sceV2MoneyPutWide{&_ZNSt8__sce_v29money_putIwNS_19ostreambuf_it
 SceV2FacetKind g_sceV2MoneypunctWide{&_ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<false>, nullptr};
 SceV2FacetKind g_sceV2MoneypunctWideIntl{&_ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<true>, nullptr};
 SceV2FacetKind g_sceV2TimeGetWide{&_ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetVtable<char16_t>.facet, InitializeSceV2WideTimeGetFacet, nullptr};
-SceV2FacetKind g_sceV2TimePutWide{&_ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutWideVtable.facet, InitializeSceV2TimePutFacet, nullptr};
+SceV2FacetKind g_sceV2TimePutWide{&_ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutVtable<char16_t>.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtWide{&_ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix, sizeof(SceV2WideCodecvtFacet), &g_sceV2CodecvtWideVtable.facet, InitializeSceV2WideCodecvtFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeUshort{&_ZNSt8__sce_v25ctypeItE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeUshortVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
 SceV2FacetKind g_sceV2NumGetUshort{&g_sceV2NumGetUshortId, sizeof(GuestLocale::Facet), &g_sceV2NumGetUshortVtable.facet, InitializeSceV2PlainFacet, nullptr};
@@ -3857,6 +3865,36 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetField_nid
     }
     if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
     return first;
+}
+
+constexpr std::int32_t SceV2IosBadBit = 0x4;
+constexpr std::int32_t SceV2IosKeptStates = 0x13;
+constexpr int SceV2InvalidArgument = 22;
+
+template<typename Text> GuestLocale::OutputIterator APS5_VABI SceV2TimePut_nid_no_patch(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::SceV2IosBase* stream, Text, const GuestTm* time, char specifier, char modifier) {
+    using Unit = std::conditional_t<std::is_same_v<Text, char>, char, std::uint16_t>;
+    const Unit format[5] = {Unit('!'), Unit('%'), static_cast<Unit>(modifier != 0 ? modifier : specifier), static_cast<Unit>(modifier != 0 ? specifier : '\0'), Unit{}};
+    int* error = __error_nid_postfix();
+    const int saved = *error;
+    std::basic_string<Unit> text;
+    std::size_t count = 0;
+    for (std::size_t grow = 16;; grow *= 2) {
+        text.append(grow, Unit{});
+        if constexpr (std::is_same_v<Text, char>) {
+            count = strftime_nid_postfix(text.data(), text.size(), format, time);
+        } else {
+            count = wcsftime_nid_postfix(text.data(), text.size(), format, time);
+            if (count == 0 && *error == SceV2InvalidArgument) {
+                stream->state = (stream->state & SceV2IosKeptStates) | SceV2IosBadBit;
+                if ((stream->state & stream->exceptions) != 0) NotImplemented_nid_no_patch("std::__sce_v2::time_put<wchar_t>::do_put throwing ios_base::failure");
+                return out;
+            }
+        }
+        if (count != 0) break;
+    }
+    *error = saved;
+    for (std::size_t index = 1; index < count; ++index) PutSceV2Character(out, static_cast<Text>(text[index]));
+    return out;
 }
 
 }
