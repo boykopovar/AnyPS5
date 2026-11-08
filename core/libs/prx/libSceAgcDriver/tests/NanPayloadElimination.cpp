@@ -171,5 +171,39 @@ int main() {
         return first.HasUses() && third.HasUses() && !second.HasUses();
     });
 
+    passed &= run("an integer compare of the raw result bits sees the payload and keeps the selects", [] {
+        Builder b;
+        auto& sum = b.nanRule(IrOpcode::FPAdd32, b.unknown(), b.unknown());
+        auto& same = b.emit(IrOpcode::IEqual32, IrType::Bool, {&sum, &b.constant(0x7fc00000u)});
+        b.keep(b.select(same, b.constant(1u), b.constant(0u)));
+        return b.eliminate().removedSelects == 0u && sum.HasUses();
+    });
+
+    passed &= run("an xor that clears the exponent turns the payload into a value the clamp sees", [] {
+        Builder b;
+        auto& sum = b.nanRule(IrOpcode::FPAdd32, b.unknown(), b.unknown());
+        auto& flipped = b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&sum, &b.constant(0x7f800000u)});
+        b.keep(b.saturate(flipped));
+        return b.eliminate().removedSelects == 0u && sum.HasUses();
+    });
+
+    passed &= run("a compare of the magnitude against a constant inside the NaN range keeps the selects", [] {
+        Builder b;
+        auto& sum = b.nanRule(IrOpcode::FPAdd32, b.unknown(), b.unknown());
+        auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&sum, &b.constant(0x7fffffffu)});
+        auto& above = b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude, &b.constant(0x7fc00000u)});
+        b.keep(b.select(above, b.constant(1u), b.constant(0u)));
+        return b.eliminate().removedSelects == 0u && sum.HasUses();
+    });
+
+    passed &= run("a compare of the magnitude against the infinity bits gives the same answer for every NaN", [] {
+        Builder b;
+        auto& sum = b.nanRule(IrOpcode::FPAdd32, b.unknown(), b.unknown());
+        auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&sum, &b.constant(0x7fffffffu)});
+        auto& above = b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude, &b.constant(0x7f800000u)});
+        b.keep(b.select(above, b.constant(1u), b.constant(0u)));
+        return b.eliminate().removedSelects >= 1u && !sum.HasUses();
+    });
+
     return passed ? 0 : 1;
 }
