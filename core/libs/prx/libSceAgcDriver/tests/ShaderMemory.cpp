@@ -8251,7 +8251,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTgAAAA=", "new requests did not use serialization version 56");
+    require(requestPrefix(encoded, 8u) == "NVNQQTkAAAA=", "new requests did not use serialization version 57");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8372,7 +8372,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTkAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8491,9 +8491,9 @@ void verifyDepthExportClamp() {
         const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
-            "depth export: a version 56 request lost the bounds or the version 45 target tail");
+            "depth export: a version 57 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 56u, "depth export: a depth exporting request did not use serialization version 56");
+        require(bytes.size() > 8u && bytes[4] == 57u, "depth export: a depth exporting request did not use serialization version 57");
         const auto eraseVersion55MergeFields = [](std::vector<std::uint8_t>& serialized, RecompileRequest marked) {
             static constexpr std::array<std::uint8_t, 4> marker{0xefu, 0xcdu, 0xabu, 0x89u};
             marked.context.pixel->targetMerges.assign(1u, {});
@@ -8501,7 +8501,7 @@ void verifyDepthExportClamp() {
             const auto markedBytes = decodeBase64(RequestSerializer{}.Serialize(marked));
             const auto descriptorEnd = std::search(markedBytes.begin(), markedBytes.end(), marker.begin(), marker.end()) - markedBytes.begin() + 4;
             const auto fields = serialized.begin() + descriptorEnd + 2;
-            require(markedBytes.size() == serialized.size() && serialized.end() - fields > 16 && std::all_of(fields, fields + 16, [](std::uint8_t value) { return value == 0u; }), "the version 55 and 56 color target merge fields do not follow the merge's depth and stencil flags");
+            require(markedBytes.size() == serialized.size() && serialized.end() - fields > 16 && std::all_of(fields, fields + 16, [](std::uint8_t value) { return value == 0u; }), "the version 55, 56 and 57 color target merge fields do not follow the merge's depth and stencil flags");
             serialized.erase(fields, fields + 16);
         };
         eraseVersion55MergeFields(bytes, tail);
@@ -8539,7 +8539,7 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 56u, "a two-sample dithered request did not use serialization version 56");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 57u, "a two-sample dithered request did not use serialization version 57");
             eraseVersion55MergeFields(ditheredBytes, dithered);
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
@@ -8996,7 +8996,7 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 60u + pointTailBytes && legacy[4] == 56u, "a merged hull request did not use serialization version 56");
+    require(legacy.size() > 60u + pointTailBytes && legacy[4] == 57u, "a merged hull request did not use serialization version 57");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 7u - pointTailBytes);
     legacy.pop_back();
     legacy.pop_back();
@@ -11329,6 +11329,51 @@ void verifyFmaskImageMode() {
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK requires a direct 32-bit image load", "an incompatible FMASK operation was accepted");
 }
 
+void verifyPixelQuadPermReads() {
+    using namespace ShaderRecompiler;
+    constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+    constexpr std::array<std::uint32_t, 7> quadCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformQuad};
+    constexpr std::array<std::uint32_t, 6> quadPerm{0xbefe0ac1u, 0x7e0202fau, 0xff00b100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    constexpr std::array<std::uint32_t, 6> quadPermRowMask{0xbefe0ac1u, 0x7e0202fau, 0x5f00b100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    constexpr std::array<std::uint32_t, 6> rowShift{0xbefe0ac1u, 0x7e0202fau, 0xff011100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    const auto compile = [&](std::span<const std::uint32_t> code, bool quad) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x58000u, code, 0, {}};
+        request.context.waveSize = 32u;
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->inputAddr = PixelInputBit(PixelInput::PositionX);
+        request.context.pixel->posX = true;
+        request.context.pixel->quadPixelMask = 0xfu;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.pixel->targetExportMapping.fill(0xe4u);
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = quad ? std::span<const std::uint32_t>(quadCapabilities) : std::span<const std::uint32_t>(shuffleCapabilities);
+        request.layout.pushConstantSizeBytes = 128u;
+        request.useCache = false;
+        return Recompile(request);
+    };
+    const auto declares = [](const RecompileResult& result, spv::Op opcode) {
+        const auto& words = result.spirv.Words();
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad perm: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == static_cast<std::uint32_t>(opcode)) return true;
+            cursor += count;
+        }
+        return false;
+    };
+    for (const auto code : {std::span<const std::uint32_t>(quadPerm), std::span<const std::uint32_t>(quadPermRowMask)}) {
+        const auto quad = compile(code, true);
+        require(declares(quad, spv::OpGroupNonUniformQuadBroadcast) && !declares(quad, spv::OpGroupNonUniformShuffle), "a pixel quad_perm read did not go through quad operations");
+        const auto shuffle = compile(code, false);
+        require(declares(shuffle, spv::OpGroupNonUniformShuffle) && !declares(shuffle, spv::OpGroupNonUniformQuadBroadcast), "a pixel quad_perm read without quad operations did not keep its shuffle");
+    }
+    const auto shifted = compile(rowShift, true);
+    require(declares(shifted, spv::OpGroupNonUniformShuffle) && !declares(shifted, spv::OpGroupNonUniformQuadBroadcast), "a pixel row shift read went through quad operations");
+}
+
 void verifyCubeDepthCompareMode() {
     using namespace ShaderRecompiler;
     ImageResource image{};
@@ -11993,6 +12038,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
+        verifyPixelQuadPermReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{
