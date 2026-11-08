@@ -3,7 +3,8 @@
 ### Silent stubs
 
 - [libSceBluetoothHid](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): the host still has no device backend or event worker. Registration retains only lifecycle state and never delivers the recovered 104-byte callback events. Custom worker scheduling throws; device ioctl failures and resource exhaustion are not modeled.
-- [sceBluetoothHidGetDeviceName, sceBluetoothHidGetInputReport, sceBluetoothHidSetOutputReport, sceBluetoothHidDisconnectDevice, sceBluetoothHidGetDeviceInfo, sceBluetoothHidGetFeatureReport, sceBluetoothHidGetReportDescriptor, sceBluetoothHidInterruptOutput and sceBluetoothHidSetFeatureReport](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): their pre-initialization return of NotInitialized (0x81540004) is unmeasured and follows the sourced lifecycle exports by analogy; after initialization, calls continue throwing through NotImplemented_nid_no_patch.
+- [sceBluetoothHidGetDeviceName, sceBluetoothHidGetInputReport, sceBluetoothHidSetOutputReport, sceBluetoothHidDisconnectDevice, sceBluetoothHidGetDeviceInfo, sceBluetoothHidGetFeatureReport, sceBluetoothHidInterruptOutput and sceBluetoothHidSetFeatureReport](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): their pre-initialization return of NotInitialized (0x81540004) is unmeasured and follows the sourced lifecycle exports by analogy; after initialization, calls continue throwing through NotImplemented_nid_no_patch.
+- [sceBluetoothHidGetReportDescriptor](../../../core/libs/prx/libSceBluetoothHid/Export.cpp): returns NotInitialized (0x81540004) before initialization, validates descriptor pointer, size, and device handle returning InvalidArgument (0x81540001); throws runtime_error without a device backend.
 
 ### Unknown function info
 

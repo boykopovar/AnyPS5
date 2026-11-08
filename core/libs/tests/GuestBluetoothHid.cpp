@@ -103,6 +103,17 @@ int main() {
         threw = true;
     }
     Require(threw, "set feature report did not throw");
+    char descriptorBuffer[64]{};
+    Require(sceBluetoothHidGetReportDescriptor(0, descriptorBuffer, sizeof(descriptorBuffer)) == invalidArgument, "null handle refused");
+    Require(sceBluetoothHidGetReportDescriptor(1, nullptr, sizeof(descriptorBuffer)) == invalidArgument, "null buffer refused");
+    Require(sceBluetoothHidGetReportDescriptor(1, descriptorBuffer, 0) == invalidArgument, "zero size refused");
+    threw = false;
+    try {
+        sceBluetoothHidGetReportDescriptor(1, descriptorBuffer, sizeof(descriptorBuffer));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "get report descriptor without device did not throw");
     Require(sceBluetoothHidUnregisterDevice(0x44f, 0x1000) == 0, "device unregistration failed");
     Require(sceBluetoothHidUnregisterCallback() == 0, "callback unregistration failed");
     Require(sceBluetoothHidUnregisterCallback() == noCallback, "duplicate callback unregistration");

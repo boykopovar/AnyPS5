@@ -123,8 +123,9 @@ int APS5_VABI sceBluetoothHidGetFeatureReport(std::uint64_t deviceHandle, std::u
 int APS5_VABI sceBluetoothHidGetReportDescriptor(std::uint64_t deviceHandle, void* descriptor, std::size_t size) {
     std::lock_guard lock(stateMutex);
     if (!initialized) return NotInitialized;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (descriptor == nullptr || size == 0) return InvalidArgument;
+    if (deviceHandle == 0) return InvalidArgument;
+    throw std::runtime_error("sceBluetoothHidGetReportDescriptor: device backend is not available");
 }
 
 int APS5_VABI sceBluetoothHidInterruptOutput(std::uint64_t deviceHandle, std::uint8_t reportId, const void* data, std::size_t size) {
