@@ -28,3 +28,4 @@
 #include "Configuration.hpp"
 
 #include "ConverterHelpers.hpp"
+#include "NumberFormat.hpp"
