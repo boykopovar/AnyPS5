@@ -308,3 +308,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
+
+target_sources(libSceIcu PRIVATE CollationTailoredSet.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_collation_tailored_set_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/CollationTailoredSet.cpp)
+    target_include_directories(guest_icu_collation_tailored_set_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_collation_tailored_set_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_collation_tailored_set_tests)
+    add_test(NAME guest_icu_collation_tailored_set COMMAND guest_icu_collation_tailored_set_tests)
+    set_tests_properties(guest_icu_collation_tailored_set PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_collation_tailored_set PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
