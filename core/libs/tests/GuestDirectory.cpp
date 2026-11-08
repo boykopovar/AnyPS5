@@ -16,9 +16,23 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static const char* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<const char*>(page);
+}
 static std::map<std::string, std::uint32_t> ReadFileNumbers(void* directory) {
     std::map<std::string, std::uint32_t> numbers;
     rewinddir_nid_postfix(directory);
@@ -198,6 +212,19 @@ int main() {
     Require(closedir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
     Require(opendir_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(chdir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        *__error_nid_postfix() = 0;
+        Require(opendir_nid_postfix(unusable) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(chdir_nid_postfix(unusable) == -1 && *__error_nid_postfix() == 14);
+    }
+    const std::string tooLong(1024, 'a');
+    *__error_nid_postfix() = 0;
+    Require(opendir_nid_postfix(tooLong.c_str()) == nullptr && *__error_nid_postfix() == 63);
+    *__error_nid_postfix() = 0;
+    Require(chdir_nid_postfix(tooLong.c_str()) == -1 && *__error_nid_postfix() == 63);
     *__error_nid_postfix() = 0;
     Require(readdir_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
