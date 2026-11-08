@@ -53,6 +53,11 @@ int main() {
     FT_UInt points = 0;
     FT_UInt contours = 0;
     FT_Stroker_GetCounts(expectedStroker, &points, &contours);
+    FT_UInt actualPointCapacity = 0;
+    FT_UInt actualContourCapacity = 0;
+    FT_Stroker_GetCounts(actualStroker, &actualPointCapacity, &actualContourCapacity);
+    std::fprintf(stderr, "reference capacity=%u/%u guest capacity=%u/%u\n", points, contours,
+                 actualPointCapacity, actualContourCapacity);
     Output expected(points, contours);
     Output actual(points, contours);
     FT_Stroker_Export(expectedStroker, &expected.outline);
