@@ -308,3 +308,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
+
+target_sources(libSceIcu PRIVATE Idna.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_idna_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuIdna.cpp)
+    target_include_directories(guest_icu_idna_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_idna_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_idna_tests)
+    add_test(NAME guest_icu_idna COMMAND guest_icu_idna_tests)
+    set_tests_properties(guest_icu_idna PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_idna PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
