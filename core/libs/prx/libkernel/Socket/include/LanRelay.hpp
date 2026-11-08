@@ -1,12 +1,14 @@
 #ifndef CORE_LIBS_PRX_LIBKERNEL_SOCKET_INCLUDE_LANRELAY_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_SOCKET_INCLUDE_LANRELAY_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct sockaddr;
