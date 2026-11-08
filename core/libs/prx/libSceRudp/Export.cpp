@@ -14,6 +14,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 
 // Offline reliable-UDP: the library initialises and contexts can be created and bound, but no connection can
 // ever be established because there is no network.
@@ -717,8 +718,14 @@ int APS5_VABI sceRudpGetLocalInfo(int ctxId, int* socketId, void* addr, std::uin
     if (vport) *vport = context.vport;
     if (muxMode) *muxMode = context.muxMode;
     if (addr && addrLen && *addrLen > 0) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
+        std::uint8_t socketAddress[0x1c]{};
+        std::uint32_t socketAddressSize = sizeof(socketAddress);
+        if (sceNetGetsockname(context.socketId, socketAddress, &socketAddressSize) != 0) {
+            throw std::runtime_error("sceRudpGetLocalInfo: the answer for a socket sceNetGetsockname rejects was not measured");
+        }
+        const std::uint32_t copied = *addrLen > sizeof(socketAddress) ? static_cast<std::uint32_t>(sizeof(socketAddress)) : *addrLen;
+        std::memcpy(addr, socketAddress, copied);
+        *addrLen = copied;
     }
     return 0;
 }
