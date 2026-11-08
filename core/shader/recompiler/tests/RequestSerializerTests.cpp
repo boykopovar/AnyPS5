@@ -127,6 +127,12 @@ void EraseTargetMergeVersion55Fields(std::vector<std::uint8_t>& bytes, std::ptrd
     bytes.erase(at, at + 16);
 }
 
+void EraseTargetMergeStorageFormat(std::vector<std::uint8_t>& bytes, std::ptrdiff_t offset) {
+    const auto at = bytes.begin() + offset + 40 + 15;
+    Require(bytes.end() - at > 1 && *at == 0u);
+    bytes.erase(at);
+}
+
 void EraseDefaultTargetMerge(std::vector<std::uint8_t>& bytes, std::ptrdiff_t offset) {
     const auto merge = PixelTailDefaults(false, true);
     const auto at = bytes.begin() + offset;
@@ -581,6 +587,17 @@ int main() {
                         Require(version57.size() > 21u && version57[4] == 57u && version57[version57.size() - 1u] == 0u && version57[version57.size() - 2u] == 0u && version57[version57.size() - 3u] == 0u && version57[version57.size() - 4u] == 0u);
                         const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
                         Require(replay57.request.graphics->tessellation->mergedHull == merged && replay57.request.context.vertex->pointList && replay57.request.context.vertex->pointSize == 3.0f && replay57.request.context.vertex->pointSizeMin == 1.0f && replay57.request.context.vertex->pointSizeMax == 8.0f);
+                        auto version56 = version57;
+                        if (fixture.pixel) EraseTargetMergeStorageFormat(version56, 333);
+                        version56[4] = 56u;
+                        const auto replay56 = serializer.Deserialize(EncodeBase64(version56));
+                        Require(replay56.request.graphics->tessellation->mergedHull == merged && replay56.request.context.vertex->pointList && replay56.request.context.vertex->pointSize == 3.0f && replay56.request.context.vertex->pointSizeMin == 1.0f && replay56.request.context.vertex->pointSizeMax == 8.0f);
+                        Require(serializer.Serialize(replay56.request) == EncodeBase64(version57));
+                        auto version55 = version56;
+                        version55[4] = 55u;
+                        const auto replay55 = serializer.Deserialize(EncodeBase64(version55));
+                        Require(replay55.request.graphics->tessellation->mergedHull == merged && replay55.request.context.vertex->pointList && replay55.request.context.vertex->pointSize == 3.0f && replay55.request.context.vertex->pointSizeMin == 1.0f && replay55.request.context.vertex->pointSizeMax == 8.0f);
+                        Require(serializer.Serialize(replay55.request) == EncodeBase64(version57));
                         auto version54 = version57;
                         if (fixture.pixel) EraseTargetMergeVersion55Fields(version54, 333);
                         version54[4] = 54u;
