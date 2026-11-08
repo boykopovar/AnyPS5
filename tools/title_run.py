@@ -613,6 +613,10 @@ def validate_layout(args, found, ids, titles, source, platform):
     package_trees = [title["package"] for title in found.values()]
     trees = list(package_trees)
     files = [args.titles, args.build / "CMakeCache.txt"]
+    content = getattr(args, "content", None)
+    if content is not None:
+        files.extend(content / spec["content"] for title_id in ids
+                     for spec in titles.get(title_id, {}).get("files", {}).values() if "content" in spec)
     if args.compare:
         files.append(args.compare)
     for title_id in ids:
