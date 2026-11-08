@@ -1937,8 +1937,7 @@ bool ReadConsoleJob(std::uint32_t instance, const std::uint8_t* job, const std::
 extern "C" {
 
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) {
-    (void)reserved;
-    if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (reserved != 0 || !context) return SCE_AJM_ERROR_INVALID_PARAMETER;
     *context = g_nextContext.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
@@ -1951,7 +1950,7 @@ int APS5_VABI sceAjmFinalize(uint32_t context) {
 int APS5_VABI sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t reserved) {
     (void)context;
     (void)codec;
-    (void)reserved;
+    if (reserved != 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
