@@ -674,21 +674,25 @@ int APS5_VABI scePadSetAutoPowerOffCount(std::int32_t count) {
 
 int APS5_VABI scePadEnableUsbConnection(bool enabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (enabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
 int APS5_VABI scePadEnableAutoDetect(bool enabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (enabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
 int APS5_VABI scePadEnablePlayPauseEmulation(bool enabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (enabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
 int APS5_VABI scePadDisableTrackingLedBatterySaver(bool disabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (disabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
@@ -797,6 +801,7 @@ int APS5_VABI scePadSetUserNumber(std::int32_t handle, std::int32_t number) {
 
 int APS5_VABI scePadDisableTransportButtons(bool disabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (disabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
@@ -890,11 +895,13 @@ int APS5_VABI scePadGetActiveProfileInfo(std::int32_t handle, PadActiveProfileIn
 int APS5_VABI scePadDisableActiveProfileChange(std::int32_t handle, bool disabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (disabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
 int APS5_VABI scePadDisableActiveProfileChangeByDeviceId(std::int32_t deviceId, bool disabled) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (disabled) NotImplemented_nid_no_patch(__func__);
     return PAD_OK;
 }
 
@@ -984,13 +991,15 @@ int APS5_VABI scePadSetToggleAllReleaseLeonardo(std::int32_t handle) {
 int APS5_VABI scePadEnableControllerIndicator(std::int32_t handle) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    return PAD_OK;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI scePadEnableProfileIndicator(std::int32_t handle) {
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
-    return PAD_OK;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI scePadSetProfileIndicatorAnimation(std::int32_t handle, std::uint8_t animation) {

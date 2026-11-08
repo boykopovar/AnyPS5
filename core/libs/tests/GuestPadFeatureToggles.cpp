@@ -25,19 +25,14 @@ int main() {
     }
     Require(scePadDisableDataConversion(pad, false) == PAD_OK);
     Require(scePadDisableActiveProfileChange(pad, false) == PAD_OK);
-    Require(scePadDisableActiveProfileChange(pad, true) == PAD_OK);
     for (int deviceId : {-1, 0, 1, 123456})
-        Require(scePadDisableActiveProfileChangeByDeviceId(deviceId, true) == PAD_OK);
+        Require(scePadDisableActiveProfileChangeByDeviceId(deviceId, false) == PAD_OK);
     Require(scePadEnablePs4CompatibleMode(pad, false) == PAD_OK);
-    Require(scePadEnableControllerIndicator(pad) == PAD_OK);
-    Require(scePadEnableProfileIndicator(pad) == PAD_OK);
-    for (bool value : {false, true}) {
-        Require(scePadDisableTrackingLedBatterySaver(value) == PAD_OK);
-        Require(scePadDisableTransportButtons(value) == PAD_OK);
-        Require(scePadEnableAutoDetect(value) == PAD_OK);
-        Require(scePadEnableUsbConnection(value) == PAD_OK);
-        Require(scePadEnablePlayPauseEmulation(value) == PAD_OK);
-    }
+    Require(scePadDisableTrackingLedBatterySaver(false) == PAD_OK);
+    Require(scePadDisableTransportButtons(false) == PAD_OK);
+    Require(scePadEnableAutoDetect(false) == PAD_OK);
+    Require(scePadEnableUsbConnection(false) == PAD_OK);
+    Require(scePadEnablePlayPauseEmulation(false) == PAD_OK);
     for (int deviceClass : {-1, 0, 1, 128})
         Require(scePadEnableSpecificDeviceClass(deviceClass) == PAD_ERROR_INVALID_ARG);
     return 0;
