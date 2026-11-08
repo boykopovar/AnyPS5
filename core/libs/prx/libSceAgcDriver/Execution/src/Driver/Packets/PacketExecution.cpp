@@ -164,10 +164,16 @@ void Driver::execute(const Submission& submission) {
         std::uint32_t queue;
         bool held;
         bool working;
-        void Release() {
+        bool landing = false;
+        void Release(bool lands = false) {
             if (!held) return;
             held = false;
-            driver.releaseFlipHold();
+            landing = lands;
+            driver.releaseFlipHold(lands);
+        }
+        void Land() {
+            if (!std::exchange(landing, false)) return;
+            driver.landFlipHold();
         }
         void Finish() {
             if (!working) return;
@@ -177,6 +183,7 @@ void Driver::execute(const Submission& submission) {
         }
         ~FlipHold() {
             Release();
+            Land();
             if (working) driver.finishFlipWork(0);
         }
     } flipHold{*this, submission.queue, submission.holdsFlip, submission.holdsFlip};
@@ -462,8 +469,9 @@ void Driver::execute(const Submission& submission) {
             if (queueTiming) frame->CollectBackground();
             frame->NoteFlipBatches(batchesAtFlip, unsignaledAtFlip);
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial.load()), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
-            flipHold.Release();
+            flipHold.Release(true);
             submission.flips.at(cursor)->GpuReady(frame);
+            flipHold.Land();
         } else if (opcode == 0x15 || opcode == 0x16) {
             packetCounters.CountDispatch();
             landPendingWaits(submission.queue);

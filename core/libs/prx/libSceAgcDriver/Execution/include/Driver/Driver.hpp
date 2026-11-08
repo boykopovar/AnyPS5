@@ -150,7 +150,8 @@ private:
     void holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
     bool awaitsTitle(std::uint64_t awaited) const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
-    void releaseFlipHold();
+    void releaseFlipHold(bool lands);
+    void landFlipHold();
     void finishFlipWork(std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
@@ -506,6 +507,7 @@ private:
     std::atomic<std::uint64_t> idleEpoch{0};
     std::atomic<std::uint64_t> queue0Awaited{0};
     std::atomic<std::uint32_t> flipsAhead{0};
+    std::atomic<std::uint32_t> flipsLanding{0};
     std::atomic<std::uint32_t> flipHolders{0};
     std::atomic<std::uint32_t> flipWorkOpen{0};
     std::atomic<std::uint64_t> flipWorkSerial{0};

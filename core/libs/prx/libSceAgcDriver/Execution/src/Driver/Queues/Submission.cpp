@@ -371,10 +371,16 @@ void Driver::waitFlipWork(std::uint64_t workSerial) {
     localDevice.reset();
 }
 
-void Driver::releaseFlipHold() {
+void Driver::releaseFlipHold(bool lands) {
     std::lock_guard lock(mutex);
     flipsAhead.fetch_sub(1, std::memory_order_acq_rel);
+    if (lands) flipsLanding.fetch_add(1, std::memory_order_acq_rel);
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
+}
+
+void Driver::landFlipHold() {
+    std::lock_guard lock(mutex);
+    flipsLanding.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void Driver::finishFlipWork(std::uint64_t workSerial) {
@@ -594,7 +600,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         checkStopping();
         require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
         reserveOutputs(submission);
-        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0) {
+        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0 && flipsLanding.load(std::memory_order_acquire) == 0) {
             const auto now = FrameTiming::Clock::now();
             auto frame = std::make_shared<FrameTiming>(++frameSerial);
             frame->IncludeSubmission(accepted, now, now, now, true);

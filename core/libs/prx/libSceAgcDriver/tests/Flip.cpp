@@ -59,6 +59,7 @@ struct State {
     std::atomic<int> ready = 0;
     std::atomic<int> failed = 0;
     AgcDriver::FlipInfo last{};
+    std::vector<std::int64_t> order;
 };
 
 class FlipRelease final {
@@ -123,6 +124,35 @@ public:
         state->last = info;
         return std::make_shared<Request>(state);
     }
+};
+
+class OrderedRequest final : public AgcDriver::IFlipRequest {
+public:
+    OrderedRequest(std::shared_ptr<State> value, std::int64_t argument) : state(std::move(value)), argument(argument) {}
+    void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override {
+        std::unique_lock lock(state->mutex);
+        if (argument == 1) {
+            state->entered = true;
+            state->changed.notify_all();
+            if (!state->changed.wait_for(lock, std::chrono::seconds(10), [&] { return !state->block; })) throw std::runtime_error("the first flip was never released");
+        }
+        state->order.push_back(argument);
+        state->changed.notify_all();
+    }
+    void Fail(std::exception_ptr error) noexcept override {
+        if (!error) std::terminate();
+        ++state->failed;
+    }
+private:
+    std::shared_ptr<State> state;
+    std::int64_t argument;
+};
+
+class OrderedOutput final : public AgcDriver::IVideoOutput {
+public:
+    void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
+    std::shared_ptr<State> state = std::make_shared<State>();
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo& info) override { return std::make_shared<OrderedRequest>(state, info.argument); }
 };
 
 void submitFlip(std::uint32_t handle = 7) {
@@ -369,6 +399,30 @@ void testComputeRenderingWait() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+void testCpuFlipsKeepOrder() {
+    auto output = std::make_shared<OrderedOutput>();
+    output->state->block = true;
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, 0, 1, 1});
+    {
+        std::unique_lock lock(output->state->mutex);
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->entered; }), "the first CPU flip did not reach its output");
+    }
+    AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, 0, 1, 2});
+    {
+        std::lock_guard lock(output->state->mutex);
+        output->state->block = false;
+    }
+    output->state->changed.notify_all();
+    {
+        std::unique_lock lock(output->state->mutex);
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->order.size() == 2; }), "the CPU flips did not all reach their output");
+        check(output->state->order == std::vector<std::int64_t>({1, 2}), "a later CPU flip reached its output before an earlier one");
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+}
+
 void testComputeFlip() {
     auto output = std::make_shared<Output>();
     AgcDriverRegisterVideoOutput_nid_postfix(7, output);
@@ -494,6 +548,12 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "present-mode") {
             testPresentMode();
             std::puts("present mode selection tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "cpu-flip-order") {
+            testCpuFlipsKeepOrder();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC CPU flip order test passed");
             return 0;
         }
         if (argc == 2 && std::string(argv[1]) == "failure-log") {
