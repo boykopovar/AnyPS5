@@ -204,6 +204,23 @@ static void StaysOffByDefault() {
     Require(LanRelay::StartRelay("", "", nullptr) == nullptr, "empty variables start no relay");
 }
 
+static void InvalidSettingsLogOneLineAndStayOff() {
+    std::FILE* log = std::tmpfile();
+    Require(log != nullptr, "a log file is available");
+    Require(LanRelay::StartRelay("127.0.0.1:0", nullptr, log) == nullptr, "a bad listen address starts no relay");
+    Require(LanRelay::StartRelay(nullptr, "127.0.0.1:47001", log) == nullptr, "peers without a listen address start no relay");
+    std::rewind(log);
+    int lines = 0;
+    char line[512];
+    while (std::fgets(line, sizeof line, log) != nullptr) {
+        ++lines;
+        Require(std::strstr(line, "ANYPS5_LAN_") != nullptr && std::strstr(line, "LAN relay is off") != nullptr,
+            "each refusal names the variable and says the relay is off");
+    }
+    std::fclose(log);
+    Require(lines == 2, "each refused setting logs exactly one line");
+}
+
 static void StartsWhenConfigured() {
     auto relay = LanRelay::StartRelay("127.0.0.1:47123", "", nullptr);
     Require(relay != nullptr && relay->IsOpen() && relay->Port() != 0, "a listen address starts the relay");
@@ -222,6 +239,7 @@ int main() {
     OpensAndClosesTwoRelaysWithoutLeaks();
     LeavesNoDescriptorsBehind();
     StaysOffByDefault();
+    InvalidSettingsLogOneLineAndStayOff();
     StartsWhenConfigured();
     return 0;
 }
