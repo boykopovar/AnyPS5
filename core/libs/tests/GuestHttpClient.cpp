@@ -175,7 +175,9 @@ void CheckRepresentations(const std::string& base) {
             passed = false;
         }
     };
-    for (const char* name : {"etag-206-omit", "date-206-omit", "date-boundary", "etag-200-match", "date-200-match", "both-200-match"}) {
+    for (const char* name : {"etag-206-omit", "date-206-omit", "date-boundary", "etag-200-match", "date-200-match", "both-200-match",
+                             "date-leap-second", "date-minimum-year", "etag-initial-trailer", "etag-206-trailer",
+                             "etag-206-trailer-framing", "etag-200-trailer", "etag-200-mixed-trailer"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
             Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "validated source open failed");
@@ -187,7 +189,10 @@ void CheckRepresentations(const std::string& base) {
             Read(client.get(), 0, 31);
         });
     }
-    for (const char* name : {"etag-200-absent", "etag-200-changed", "etag-200-weak", "etag-200-invalid", "date-200-absent", "date-200-changed", "both-200-absent", "etag-206-changed", "date-206-changed", "late-size", "late-range", "late-short", "late-chunk", "late-redirect-path", "late-redirect-query", "late-redirect-host"}) {
+    for (const char* name : {"etag-200-absent", "etag-200-changed", "etag-200-weak", "etag-200-invalid", "date-200-absent", "date-200-changed", "both-200-absent", "etag-206-changed", "date-206-changed", "late-size", "late-range", "late-short", "late-chunk", "late-redirect-path", "late-redirect-query", "late-redirect-host",
+                             "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
+                             "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
+                             "etag-200-trailer-name", "date-200-trailer-only"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
             Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "changing source open failed");
@@ -211,7 +216,11 @@ void CheckRepresentations(const std::string& base) {
             Read(client.get(), 0, 777, true);
         });
     }
-    for (const char* name : {"absent", "absent-chunk", "absent-close", "weak", "weak-date", "invalid-tag", "tag-space", "tag-quote", "tag-unclosed", "recent-date", "invalid-date", "date-without-date", "complete-range", "initial-full", "initial-chunk", "initial-close"}) {
+    for (const char* name : {"absent", "absent-chunk", "absent-close", "weak", "weak-date", "invalid-tag", "tag-space", "tag-quote", "tag-unclosed", "recent-date", "invalid-date", "date-without-date", "complete-range", "initial-full", "initial-chunk", "initial-close",
+                             "date-short-year", "date-short-day", "date-short-time", "date-full-names", "date-wrong-case",
+                             "date-wrong-weekday", "date-early-year", "date-invalid-day", "date-short-response-time",
+                             "date-wrong-response-weekday", "date-extra-response-space", "date-rfc850", "date-asctime",
+                             "date-trailer-only", "weak-trailer-date"}) {
         run(name, [&](const std::string& url) {
             auto client = Create();
             Check(Aps5HttpClient_Open_nid_postfix(client.get(), url.c_str()) == 1, "snapshot source open failed");

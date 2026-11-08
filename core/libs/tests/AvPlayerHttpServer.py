@@ -10,17 +10,51 @@ import urllib.parse
 
 identity_requests = {}
 identity_targets = []
+date_snapshots = {
+    "date-short-year": ("Wed, 01 Jan 20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-short-day": ("Wed, 1 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-short-time": ("Wed, 01 Jan 2020 0:0:0 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-full-names": ("Wednesday, 01 January 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-wrong-case": ("wed, 01 jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-wrong-weekday": ("Thu, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-early-year": ("Sun, 01 Jan 1899 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-invalid-day": ("Mon, 31 Feb 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-short-response-time": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 0:02:00 GMT"),
+    "date-wrong-response-weekday": ("Wed, 01 Jan 2020 00:00:00 GMT", "Thu, 01 Jan 2020 00:02:00 GMT"),
+    "date-extra-response-space": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed,  01 Jan 2020 00:02:00 GMT"),
+    "date-rfc850": ("Wednesday, 01-Jan-20 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-asctime": ("Wed Jan  1 00:00:00 2020", "Wed, 01 Jan 2020 00:02:00 GMT"),
+    "date-trailer-only": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:00:59 GMT"),
+    "weak-trailer-date": ("Wed, 01 Jan 2020 00:00:00 GMT", "Wed, 01 Jan 2020 00:02:00 GMT"),
+}
+date_validators = {
+    "date-leap-second": "Sat, 31 Dec 2016 23:59:60 GMT",
+    "date-minimum-year": "Mon, 01 Jan 1900 00:00:00 GMT",
+}
+trailer_full_responses = {"etag-200-trailer", "etag-200-mixed-trailer"}
+trailer_responses = {
+    "etag-initial-trailer", "etag-206-trailer", "etag-206-trailer-framing",
+    *trailer_full_responses, "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-206-trailer-changed",
+    "etag-200-trailer-conflict", "etag-206-trailer-conflict", "etag-200-trailer-duplicate",
+    "etag-200-trailer-malformed", "etag-200-trailer-name", "date-200-trailer-only",
+}
 fallbacks = {
     "absent", "absent-chunk", "absent-close", "weak", "weak-date", "invalid-tag", "tag-space",
     "tag-quote", "tag-unclosed", "recent-date", "invalid-date", "date-without-date",
     "fallback-206", "fallback-short", "fallback-chunk", "fallback-refused",
-}
+} | set(date_snapshots)
 single_responses = {"complete-range", "initial-full", "initial-chunk", "initial-close"}
-validated_responses = {"etag-206-omit", "date-206-omit", "date-boundary", "etag-200-match", "date-200-match", "both-200-match"}
+validated_responses = {
+    "etag-206-omit", "date-206-omit", "date-boundary", "etag-200-match", "date-200-match", "both-200-match",
+    *date_validators, "etag-initial-trailer", "etag-206-trailer", "etag-206-trailer-framing", *trailer_full_responses,
+}
 invalid_responses = {
     "etag-200-absent", "etag-200-changed", "etag-200-weak", "etag-200-invalid", "date-200-absent",
     "date-200-changed", "both-200-absent", "etag-206-changed", "date-206-changed", "late-size", "late-range",
     "late-short", "late-chunk", "late-redirect-path", "late-redirect-query", "late-redirect-host",
+    "etag-200-trailer-changed", "etag-200-trailer-weak", "etag-200-trailer-conflict",
+    "etag-206-trailer-conflict", "etag-206-trailer-changed", "etag-200-trailer-duplicate", "etag-200-trailer-malformed",
+    "etag-200-trailer-name", "date-200-trailer-only",
 }
 requests = []
 targets = []
@@ -146,13 +180,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             assert match is not None, history
             start, end = map(int, match.groups())
-            expected = None if initial else "Wed, 01 Jan 2020 00:00:00 GMT" if name.startswith("date-") else '"identity-v1"'
+            expected = None if initial else date_validators.get(name, "Wed, 01 Jan 2020 00:00:00 GMT") if name.startswith("date-") else '"identity-v1"'
             assert self.headers.get("If-Range") == expected, history
         content = pathlib.Path("app0", "alternate.bin" if full or name == "complete-range" else "payload.bin").read_bytes()
         total = len(content)
         status = 200 if full else 206
         failed = not initial and name in invalid_responses and len(history) == 2
-        if not initial and (name.endswith("200-match") or failed and "200-" in name):
+        if not initial and (name.endswith("200-match") or name in trailer_full_responses or failed and "200-" in name):
             status = 200
         if failed and name.startswith("late-redirect-"):
             location = "/identity/late-target/payload.bin"
@@ -182,7 +216,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         etag = '"identity-v1"'
         if name.startswith("date-") or name in {"weak-date", "recent-date", "invalid-date"}:
             etag = None
-            modified = "Wed, 01 Jan 2020 00:00:00 GMT"
+            modified = date_validators.get(name, "Wed, 01 Jan 2020 00:00:00 GMT")
         elif name.startswith("both-"):
             modified = "Wed, 01 Jan 2020 00:00:00 GMT" if initial else None
         if name == "date-boundary":
@@ -193,6 +227,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             modified = "not a date"
         elif name == "date-without-date":
             date = None
+        elif name == "date-leap-second":
+            date = "Sun, 01 Jan 2017 00:02:00 GMT"
+        if name in date_snapshots:
+            modified, date = date_snapshots[name]
         if name in fallbacks:
             etag = {
                 "weak": 'W/"identity-v1"', "weak-date": 'W/"identity-v1"', "invalid-tag": "identity-v1",
@@ -216,7 +254,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 etag = 'W/"identity-v1"'
             elif name.endswith("invalid"):
                 etag = '"identity v1"'
-        chunked = name == "initial-chunk" or full and name in {"absent-chunk", "fallback-chunk"} or failed and name == "late-chunk"
+        trailers = []
+        trailer_response = name == "etag-initial-trailer" or not initial and name in trailer_responses and (name in validated_responses or failed)
+        if name == "etag-initial-trailer" or not initial and name in {"etag-206-trailer", "etag-200-trailer"}:
+            trailers, etag = [b'ETag: "identity-v1"'], None
+        elif not initial and name in {"etag-200-mixed-trailer", "etag-206-trailer-framing"}:
+            trailers = [b'ETag: "identity-v1"']
+            if name.endswith("framing"):
+                trailers += [b"Content-Length: 0", b"Content-Range: bytes 0-0/1", b"Transfer-Encoding: invalid"]
+        elif failed and name in trailer_responses:
+            if name == "date-200-trailer-only":
+                trailers, modified = [b"Last-Modified: Wed, 01 Jan 2020 00:00:00 GMT"], None
+            elif name.endswith("changed"):
+                trailers, etag = [b'ETag: "identity-v2"'], None
+            elif name.endswith("weak"):
+                trailers, etag = [b'ETag: W/"identity-v1"'], None
+            elif name.endswith("conflict"):
+                trailers, etag = [b'ETag: "identity-v2"'], '"identity-v1"'
+            elif name.endswith("duplicate"):
+                trailers, etag = [b'ETag: "identity-v1"', b'ETag: "identity-v2"'], None
+            elif name.endswith("malformed"):
+                trailers = [b"not a field"]
+            elif name.endswith("name"):
+                trailers = [b"ETag : \"identity-v1\""]
+        if initial and name == "date-trailer-only":
+            trailers = [b"Date: Wed, 01 Jan 2020 00:02:00 GMT"]
+        elif initial and name == "weak-trailer-date":
+            trailers = [b'ETag: W/"identity-v1"']
+        chunked = trailer_response or bool(trailers) or name == "initial-chunk" or full and name in {"absent-chunk", "fallback-chunk"} or failed and name == "late-chunk"
         closed = name == "initial-close" or full and name == "absent-close"
         short = full and name == "fallback-short" or failed and name == "late-short"
         self.send_response_only(status)
@@ -238,7 +303,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if chunked and (name == "fallback-chunk" or failed and name == "late-chunk"):
             self.wfile.write(b"ZZ\r\n")
         elif chunked:
-            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+            self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n0\r\n" + b"".join(field + b"\r\n" for field in trailers) + b"\r\n")
         else:
             self.wfile.write(body)
 
@@ -269,11 +334,11 @@ with Server(("127.0.0.1", 0), Handler) as server:
             elif name in single_responses:
                 assert len(history) == 1, (name, history)
             else:
-                validator = "Wed, 01 Jan 2020 00:00:00 GMT" if name.startswith("date-") else '"identity-v1"'
+                validator = date_validators.get(name, "Wed, 01 Jan 2020 00:00:00 GMT") if name.startswith("date-") else '"identity-v1"'
                 assert history[1] == ("bytes=90000-99999", validator), (name, history)
                 if name in invalid_responses:
                     assert history[2:] == [("bytes=90000-99999", validator)], (name, history)
-                elif name.endswith("200-match"):
+                elif name.endswith("200-match") or name in trailer_full_responses:
                     assert len(history) == 2, (name, history)
                 else:
                     assert history[2:] == [("bytes=0-65535", validator)], (name, history)
