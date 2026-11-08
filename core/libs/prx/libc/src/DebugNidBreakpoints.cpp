@@ -94,6 +94,15 @@ std::size_t NidBreakpointTable::Size() const {
     return count_.load(std::memory_order_acquire);
 }
 
+std::size_t NidBreakpointTable::List(std::uint64_t* out, std::size_t capacity) const {
+    std::lock_guard lock(mutex_);
+    const std::size_t count = count_.load(std::memory_order_relaxed);
+    const std::size_t written = count < capacity ? count : capacity;
+    for (std::size_t i = 0; i < written; ++i)
+        out[i] = nids_[i].load(std::memory_order_relaxed);
+    return written;
+}
+
 bool NidBreakpointTable::Empty() const {
     return count_.load(std::memory_order_acquire) == 0;
 }
