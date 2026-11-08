@@ -140,6 +140,21 @@ static void CheckEnvironmentList() {
     Check(table.DuplicateCount() == 2);
 }
 
+static void CheckList() {
+    Debug::NidBreakpointTable table;
+    std::uint64_t listed[4] = {};
+    Check(table.List(listed, 4) == 0);
+    Check(Debug::AddNidList("4J2sUJmuHZQ,hcuQgD53UxM,Q3VBxCXhUHs", table, nullptr) == 3);
+    Check(table.List(listed, 4) == 3);
+    std::uint64_t a = 0;
+    std::uint64_t b = 0;
+    std::uint64_t c = 0;
+    Check(Debug::ParseNid("4J2sUJmuHZQ", a) && Debug::ParseNid("hcuQgD53UxM", b) && Debug::ParseNid("Q3VBxCXhUHs", c));
+    Check(listed[0] == a && listed[1] == b && listed[2] == c);
+    Check(table.List(listed, 2) == 2);
+    Check(listed[0] == a && listed[1] == b);
+}
+
 int main() {
     CheckParseKnownValues();
     CheckParseRejectsMalformed();
@@ -150,5 +165,6 @@ int main() {
     CheckArmedLockFree();
     CheckEnvironmentList();
     CheckMalformedReport();
+    CheckList();
     return 0;
 }
