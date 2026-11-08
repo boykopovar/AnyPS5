@@ -716,5 +716,57 @@ int main() {
         return valid;
     });
 
+    passed &= run("repaired result NaN predicates preserve payload trees", [] {
+        struct Case { std::uint32_t fallback; bool quiet; bool mismatch; std::uint64_t flags; bool reusable; };
+        constexpr std::array<Case, 6> cases{{
+            {0xffc00000u, false, false, 0u, true}, {0x7fc12345u, true, false, 0u, true},
+            {0x7f800000u, false, false, 0u, false}, {0u, true, false, 0u, false},
+            {0xffc00000u, false, true, 0u, false}, {0xffc00000u, true, false, 1u, false},
+        }};
+        bool valid = true;
+        for (const auto& test : cases) {
+            Builder b;
+            auto& source = b.unknown();
+            const auto isNan = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}), &b.constant(0x7f800000u)}); };
+            auto& predicate = isNan(source);
+            auto& payload = b.unknown();
+            auto& selected = test.quiet ? b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&payload, &b.constant(0x00400000u)}) : payload;
+            auto& nan = b.emit(IrOpcode::SelectU32, IrType::U32, {&isNan(payload), &selected, &b.constant(test.fallback)});
+            auto& repaired = b.emit(IrOpcode::SelectU32, IrType::U32, {&predicate, &nan, test.mismatch ? &payload : &source}, test.flags);
+            auto& query = isNan(repaired);
+            auto& observer = b.emit(IrOpcode::ReferenceU32, IrType::Void, {&query});
+            b.keep(repaired);
+            b.eliminate();
+            valid &= test.reusable ? !query.HasUses() && observer.Argument(0)->Resolve() == predicate.Resolve() : query.HasUses();
+            valid &= repaired.HasUses();
+        }
+        return valid;
+    });
+
+    passed &= run("NaN status lifts through payload selection without altering payloads", [] {
+        for (bool mismatch : {false, true}) {
+            Builder b;
+            auto& raw = b.unknown();
+            auto& extra = b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&raw, &b.constant(0x7fc12345u)});
+            const auto isNan = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}), &b.constant(0x7f800000u)}); };
+            auto& base = isNan(raw);
+            auto& canonical = b.emit(IrOpcode::SelectU32, IrType::U32, {&base, &b.constant(0xffc00000u), &raw});
+            auto& condition = isNan(extra);
+            auto& payload = mismatch ? raw : extra;
+            auto& repaired = b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &payload, &canonical});
+            auto& query = isNan(repaired);
+            auto& observer = b.emit(IrOpcode::ReferenceU32, IrType::Void, {&query});
+            b.keep(repaired);
+            b.eliminate();
+            if (mismatch) { if (!query.HasUses()) return false; }
+            else {
+                auto* combined = observer.Argument(0)->Resolve();
+                if (query.HasUses() || combined->Opcode() != IrOpcode::LogicalOr || combined->Argument(0)->Resolve() != base.Resolve() || combined->Argument(1)->Resolve() != condition.Resolve()) return false;
+            }
+            if (!repaired.HasUses()) return false;
+        }
+        return true;
+    });
+
     return passed ? 0 : 1;
 }
