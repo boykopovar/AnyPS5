@@ -25,6 +25,21 @@ struct Settings {
 
 Settings ReadSettings(const char* listen, const char* peers);
 
+constexpr std::uint8_t FrameVersion = 1;
+constexpr std::size_t FrameHeaderSize = 11;
+constexpr std::size_t MaxDatagramSize = 65507;
+constexpr std::size_t MaxFramePayload = MaxDatagramSize - FrameHeaderSize;
+
+struct Frame {
+    std::uint32_t Instance = 0;
+    std::uint16_t SourcePort = 0;
+    std::uint16_t DestinationPort = 0;
+    std::vector<std::uint8_t> Payload;
+};
+
+std::vector<std::uint8_t> EncodeFrame(const Frame& frame);
+std::optional<Frame> DecodeFrame(const std::vector<std::uint8_t>& datagram);
+
 class Relay {
 public:
     Relay() = default;
