@@ -51,10 +51,12 @@ public:
     void Close();
     bool IsOpen() const;
     std::uint16_t Port() const;
+    std::uint32_t Instance() const;
 
 private:
     std::uintptr_t handle = ~std::uintptr_t(0);
     std::uint16_t port = 0;
+    std::uint32_t instance = 0;
 };
 
 std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log);
