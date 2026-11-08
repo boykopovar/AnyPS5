@@ -42,7 +42,7 @@ void Reserve(String* string, std::size_t size) {
 
 std::size_t Clamp(const String* source, std::size_t position, std::size_t count) {
     if (position > source->size) _ZNKSs5_XranEv_nid_postfix(source);
-    return std::min(count, source->size - position);
+    return std::min<std::size_t>(count, source->size - position);
 }
 
 void EraseRange(String* string, std::size_t position, std::size_t count) {
