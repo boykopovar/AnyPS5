@@ -524,10 +524,6 @@ std::uint64_t APS5_VABI WKFrameGetCertificateInfo(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0xe0);
 }
 
-std::uint64_t APS5_VABI WKFrameHandleGetFrameID(const void* self) {
-    return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x10);
-}
-
 std::uint64_t APS5_VABI WKInspectorGetPage(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x28);
 }
