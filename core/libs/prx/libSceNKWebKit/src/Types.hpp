@@ -244,4 +244,14 @@ public:
     DecisionHandler decisionHandler;
 };
 
+class Inspector final : public ObjectOf<ObjectType::Inspector> {
+public:
+    bool isAttached = false;
+    bool isConnected = false;
+    bool isElementSelectionActive = false;
+    bool isFront = false;
+    bool isProfilingPage = false;
+    bool isVisible = false;
+};
+
 }  // namespace NKWebKit
