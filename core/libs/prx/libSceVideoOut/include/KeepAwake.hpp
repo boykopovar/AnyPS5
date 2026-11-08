@@ -20,4 +20,6 @@ private:
     bool held = false;
 };
 
+const KeepAwakeBackend& SdlKeepAwakeBackend();
+
 #endif
