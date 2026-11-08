@@ -3610,14 +3610,26 @@ void metadataPassTests() {
 alignas(4096) std::array<std::uint8_t, 4096> cmaskMemory{};
 
 constexpr std::size_t GcnSliceBytes = 64u * 64u * 4u;
+constexpr std::size_t GcnSlicesBytes = 3u * GcnSliceBytes;
 
 void gcnColorSliceTests() {
     using AgcDriver::Graphics::DecodeColorBuffer;
-    void* block = GuestHeap::GuestHeapAlignForGpu_nid_postfix(256, 3u * GcnSliceBytes);
+#if defined(__linux__) && defined(ANYPS5_ENABLE_ASAN)
+    void* block = MAP_FAILED;
+    for (std::uintptr_t hint = 0x60000000; hint < (std::uintptr_t{1} << 40u) && block == MAP_FAILED; hint += std::uintptr_t{1} << 32u)
+        block = mmap(reinterpret_cast<void*>(hint), GcnSlicesBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    Require(block != MAP_FAILED, "cannot map the GCN color slices below the 40-bit PS4 GPU address space");
+    struct Release {
+        void* block;
+        ~Release() { munmap(block, GcnSlicesBytes); }
+    } release{block};
+#else
+    void* block = GuestHeap::GuestHeapAlignForGpu_nid_postfix(256, GcnSlicesBytes);
     struct Release {
         void* block;
         ~Release() { GuestHeap::GuestHeapFree_nid_postfix(block); }
     } release{block};
+#endif
     const auto base = reinterpret_cast<std::uintptr_t>(block);
     Require(base < (std::uintptr_t{1} << 40u), "guest heap memory is beyond the 40-bit PS4 GPU address space");
     auto queue = makeState();
