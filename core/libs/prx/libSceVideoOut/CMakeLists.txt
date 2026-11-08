@@ -114,6 +114,12 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(video_out_keep_awake_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/KeepAwake.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/KeepAwake.cpp)
+    target_include_directories(video_out_keep_awake_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(video_out_keep_awake_tests)
+    add_test(NAME video_out_keep_awake COMMAND video_out_keep_awake_tests)
+    set_tests_properties(video_out_keep_awake PROPERTIES TIMEOUT 20)
+
     add_test_executable(guest_video_out_firmware_answers_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutFirmwareAnswers.cpp)
     target_include_directories(guest_video_out_firmware_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_video_out_firmware_answers_tests PRIVATE libSceVideoOut libkernel libc)
