@@ -139,4 +139,27 @@ NidBreakpointTable& NidBreakpoints() {
     return table;
 }
 
+std::size_t AddNidList(std::string_view list, NidBreakpointTable& table) {
+    std::size_t added = 0;
+    while (!list.empty()) {
+        const std::size_t comma = list.find(',');
+        std::string_view entry = list.substr(0, comma);
+        list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+
+        while (!entry.empty() && (entry.front() == ' ' || entry.front() == '\t'))
+            entry.remove_prefix(1);
+        while (!entry.empty() && (entry.back() == ' ' || entry.back() == '\t'))
+            entry.remove_suffix(1);
+        if (entry.empty())
+            continue;
+
+        std::uint64_t nid = 0;
+        if (!ParseNid(entry, nid))
+            continue;
+        if (table.Add(nid) == NidBreakpointTable::AddResult::Added)
+            ++added;
+    }
+    return added;
+}
+
 }
