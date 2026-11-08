@@ -36,6 +36,9 @@ long ReadAvailable(Handle read, char* buffer, std::size_t capacity);
 long Pending(Handle read);
 bool WriteAll(Handle destination, const char* data, std::size_t length);
 void Close(Handle handle);
+std::uint64_t FileSize(Handle file);
+bool RenameFile(const std::string& from, const std::string& to);
+bool RemoveFile(const std::string& path);
 
 class Tee {
 public:
