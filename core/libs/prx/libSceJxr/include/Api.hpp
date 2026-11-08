@@ -4,10 +4,26 @@
 #include <cstddef>
 #include <cstdint>
 #include "prx/libSceJxr/GuestPixelInfo.h"
-#include "prx/libSceJxr/Stream.hpp"
 #include "prx/libSceJxr/include/GuidExports.hpp"
+#include "prx/libSceJxr/Stream.hpp"
+
+struct JxrGuestFormatConverter {
+    std::byte beforeDecoder[9 * sizeof(void*)];
+    void* decoder;
+    JxrGuestGuid pixelFormat;
+};
+
+static_assert(alignof(JxrGuestFormatConverter) == 8);
+static_assert(offsetof(JxrGuestFormatConverter, decoder) == 72);
+static_assert(offsetof(JxrGuestFormatConverter, pixelFormat) == 80);
+static_assert(sizeof(JxrGuestFormatConverter) == 96);
+
+using JxrGuestFormatConvert = std::int64_t (APS5_VABI *)(JxrGuestFormatConverter*, const void*, std::uint8_t*, std::uint32_t);
+static_assert(sizeof(JxrGuestFormatConvert) == sizeof(void*));
 
 struct tagPKImageEncode;
+
+static_assert(sizeof(void*) == 8);
 struct JxrGuestPostProcInfo {
     std::int32_t mbDc;
     std::uint8_t mbTexture;
@@ -19,6 +35,9 @@ static_assert(offsetof(JxrGuestPostProcInfo, mbTexture) == 4);
 static_assert(offsetof(JxrGuestPostProcInfo, blockDc) == 8);
 static_assert(offsetof(JxrGuestPostProcInfo, blockTexture) == 72);
 static_assert(sizeof(JxrGuestPostProcInfo) == 88);
+
+
+
 
 extern "C" {
 
@@ -84,15 +103,19 @@ std::int64_t APS5_VABI PKCreateFactory_CreateStream_nid_postfix(void** stream);
 std::int64_t APS5_VABI PKCreateFactory_Release_nid_postfix(void** factory);
 std::int64_t APS5_VABI PKCreateFactory_nid_postfix(void** factory, std::uint32_t version);
 int APS5_VABI PKFormatConverter_Convert_nid_postfix();
-int APS5_VABI PKFormatConverter_Copy_nid_postfix();
+std::int64_t APS5_VABI PKFormatConverter_Copy_nid_postfix(JxrGuestFormatConverter* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride);
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix();
-int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix();
-int APS5_VABI PKFormatConverter_GetResolution_nid_postfix();
-int APS5_VABI PKFormatConverter_GetSize_nid_postfix();
-int APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix();
-int APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix();
-int APS5_VABI PKFormatConverter_Initialize_nid_postfix();
-int APS5_VABI PKFormatConverter_Release_nid_postfix();
+std::int64_t APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat);
+std::int64_t APS5_VABI PKFormatConverter_GetResolution_nid_postfix(JxrGuestFormatConverter* converter, float* x, float* y);
+std::int64_t APS5_VABI PKFormatConverter_GetSize_nid_postfix(JxrGuestFormatConverter* converter, std::int32_t* width, std::int32_t* height);
+std::int64_t APS5_VABI PKFormatConverter_GetSourcePixelFormat_nid_postfix(JxrGuestFormatConverter* converter, JxrGuestGuid* pixelFormat);
+std::int64_t APS5_VABI PKFormatConverter_InitializeConvert_nid_postfix(JxrGuestFormatConverter* converter,
+                                                                       JxrGuestGuid sourceFormat,
+                                                                       char* extension,
+                                                                       JxrGuestGuid targetFormat);
+std::int64_t APS5_VABI PKFormatConverter_Initialize_nid_postfix(JxrGuestFormatConverter* converter, void* decoder,
+                                                                 char* extension, JxrGuestGuid targetFormat);
+std::int64_t APS5_VABI PKFormatConverter_Release_nid_postfix(void** converter);
 int APS5_VABI PKImageDecode_Copy_nid_postfix();
 int APS5_VABI PKImageDecode_Create_WMP_nid_postfix();
 int APS5_VABI PKImageDecode_Create_nid_postfix();
