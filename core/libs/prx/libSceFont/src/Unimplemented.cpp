@@ -398,10 +398,6 @@ int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsOb
     return Font::GraphicsAppendGradientSegment(graphicsObject, gradient, position, color);
 }
 
-int APS5_VABI sceFontSupportSystemUpdation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceFontGraphicsCanvasRenewal() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -534,8 +530,8 @@ int APS5_VABI sceFontGraphicsProcessRenderSequence() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontOutlineVertexesInterfaceInit() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontOutlineVertexesInterfaceInit(void* interface, const void* first, const void* second, std::uint64_t count) {
+    return Font::OutlineVertexesInterfaceInit(interface, first, second, count);
 }
 
 int APS5_VABI sceFontGraphicsSurfaceSetTargetView() {
