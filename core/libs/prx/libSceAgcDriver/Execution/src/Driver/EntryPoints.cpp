@@ -299,6 +299,7 @@ extern "C" void AgcDriverSetGuestMemoryTransactionHookForTest_nid_no_patch(void 
 
 extern "C" void AgcDriverGuestMemoryTransaction_nid_no_patch(void (*body)(void* context), void* context, std::exception_ptr* failure) {
     captureFailure(failure, [&] {
+        if (AgcDriver::GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("a guest memory transaction was entered with the GPU lock held; it waits for flushes that need that lock");
         auto& driver = AgcDriver::DriverDetail::Driver::Get();
         driver.WaitIdle();
         const auto idle = driver.SerialProgress().second;

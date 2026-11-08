@@ -27,6 +27,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -345,6 +346,169 @@ void testParkedRewindReplays(const std::filesystem::path& tool) {
     const auto code = std::system(command.c_str());
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     check(readFile(dump) == copied, "the replay did not run the copy chained from the released REWIND tail");
+}
+
+constexpr std::uint32_t RewindHeader = 0xc0005900u;
+constexpr std::size_t PageWords = 1024;
+
+class RewindCapture {
+public:
+    explicit RewindCapture(const std::filesystem::path& directory) : directory(directory), writer(directory), words(BlockBytes / sizeof(std::uint32_t)) {}
+
+    std::uint64_t address(std::size_t index) const {
+        return at(layout.base) + index * sizeof(std::uint32_t);
+    }
+
+    void place(std::size_t index, std::span<const std::uint32_t> values) {
+        std::copy(values.begin(), values.end(), words.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    std::vector<std::uint32_t> writeData(std::size_t label, std::uint32_t value) const {
+        std::array<std::uint32_t, 16> encoded{};
+        CommandBuffer buffer{encoded.data(), encoded.data() + encoded.size(), encoded.data(), encoded.data() + encoded.size(), nullptr, nullptr, 0};
+        sceAgcDcbWriteData(&buffer, GraphicsMemory, 0, address(label), &value, 1, 0, 1);
+        return {encoded.data(), buffer.cursor_up};
+    }
+
+    std::vector<std::uint32_t> chain(std::size_t target, std::size_t count) const {
+        return {0xc0023f00u, static_cast<std::uint32_t>(address(target)), static_cast<std::uint32_t>(address(target) >> 32u), (1u << 20u) | static_cast<std::uint32_t>(count)};
+    }
+
+    void start() {
+        writer.WriteRange(at(layout.base), BlockBytes, AgcDriver::FrameRangeKind::Watched, 0x04, AgcDriver::FrameRangeAccess::Readable | AgcDriver::FrameRangeAccess::Writable | AgcDriver::FrameRangeAccess::Gpu);
+        writer.WriteSnapshot(at(layout.base), std::as_bytes(std::span(words)));
+        AgcDriver::FrameCall call;
+        call.kind = FrameCallKind::FrameStart;
+        call.ordinal = ++ordinal;
+        writer.WriteCall(call);
+    }
+
+    void submit(std::size_t index, std::size_t count) {
+        AgcDriver::FrameCall call;
+        call.kind = FrameCallKind::Submit;
+        call.ordinal = ++ordinal;
+        call.thread = 1;
+        call.address = address(index);
+        call.size = count;
+        call.accepted = submitted;
+        call.completed = submitted;
+        ++submitted;
+        writer.WriteCall(call);
+    }
+
+    void delta(std::uint64_t inFlight, std::initializer_list<std::pair<std::size_t, std::size_t>> pages) {
+        ++group;
+        for (const auto& [first, last] : pages) writer.WriteDelta(group, submitted - inFlight, address(first * PageWords), std::as_bytes(std::span(words).subspan(first * PageWords, (last - first) * PageWords)));
+        AgcDriver::FrameCall call;
+        call.kind = FrameCallKind::Memory;
+        call.ordinal = ++ordinal;
+        call.thread = 1;
+        call.accepted = submitted;
+        call.completed = submitted - inFlight;
+        call.values = {group};
+        writer.WriteCall(call);
+    }
+
+    std::uint32_t replay(const std::filesystem::path& tool, std::size_t label) {
+        std::uintptr_t base = 0;
+        std::size_t size = 0;
+        GuestArena::GuestArenaRange_nid_postfix(&base, &size);
+        writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+        const auto dump = directory / "label.bin";
+        const auto log = directory / "replay.log";
+        std::filesystem::remove(dump);
+        auto command = "\"" + tool.string() + "\" \"" + directory.string() + "\" --strict --dump " + std::to_string(address(label)) + ":4:\"" + dump.string() + "\" > \"" + (directory / "replay.json").string() + "\" 2> \"" + log.string() + "\"";
+#ifdef _WIN32
+        command = "\"" + command + "\"";
+#endif
+        const auto code = std::system(command.c_str());
+        const auto errors = readFile(log);
+        check(code == 0, "agc_frame_replay of " + directory.filename().string() + " exited with " + std::to_string(code) + ": " + std::string(reinterpret_cast<const char*>(errors.data()), errors.size()));
+        const auto bytes = readFile(dump);
+        check(bytes.size() == sizeof(std::uint32_t), "the replay dumped " + std::to_string(bytes.size()) + " bytes of the label");
+        std::uint32_t value = 0;
+        std::memcpy(&value, bytes.data(), sizeof(value));
+        return value;
+    }
+
+private:
+    std::filesystem::path directory;
+    Layout layout = allocate();
+    AgcDriver::FrameCaptureWriter writer;
+    std::vector<std::uint32_t> words;
+    std::uint64_t ordinal = 0;
+    std::uint64_t group = 0;
+    std::uint64_t submitted = 0;
+};
+
+std::filesystem::path rewindCaptureDirectory() {
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    return directory;
+}
+
+void testChainedRewindGates(const std::filesystem::path& tool) {
+    RewindCapture capture(rewindCaptureDirectory());
+    constexpr std::size_t Label = 3 * PageWords;
+    constexpr std::size_t Segment = 2 * PageWords;
+    capture.place(0, std::array{RewindHeader, 0u, 0u, 0u, 0u, 0u, 0u, 0u});
+    capture.start();
+    capture.submit(0, 8);
+    const auto write = capture.writeData(Label, Done);
+    capture.place(1, std::array{AgcDriver::Pm4::RewindValid, RewindHeader, AgcDriver::Pm4::RewindValid});
+    capture.place(4, capture.chain(Segment, write.size()));
+    capture.place(Segment, write);
+    capture.delta(0, {{0, 1}, {2, 3}});
+    check(capture.replay(tool, Label) == Done, "the replay did not run the segment behind the second of two REWINDs released by one memory group");
+}
+
+void testRewindControlAtPageStart(const std::filesystem::path& tool) {
+    RewindCapture capture(rewindCaptureDirectory());
+    constexpr std::size_t Writes = 1000;
+    constexpr std::size_t Control = 5 * PageWords;
+    constexpr std::size_t Scratch = 7 * PageWords;
+    constexpr std::size_t Label = 8 * PageWords;
+    const auto busy = capture.writeData(Scratch, Done);
+    const auto start = Control - 1 - Writes * busy.size();
+    for (std::size_t index = 0; index < Writes; ++index) capture.place(start + index * busy.size(), busy);
+    capture.place(Control - 1, std::array{RewindHeader});
+    capture.start();
+    const auto write = capture.writeData(Label, Done);
+    capture.submit(start, Control + 1 + write.size() - start);
+    capture.place(Control, std::array{AgcDriver::Pm4::RewindValid});
+    capture.place(Control + 1, write);
+    capture.delta(1, {{5, 6}});
+    check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose control word starts a memory chunk");
+}
+
+void testZeroRewindControlRewritten(const std::filesystem::path& tool) {
+    RewindCapture capture(rewindCaptureDirectory());
+    constexpr std::size_t Label = 3 * PageWords;
+    const auto write = capture.writeData(Label, Done);
+    capture.place(0, std::array{RewindHeader, 0u});
+    capture.start();
+    capture.submit(0, 2 + write.size());
+    capture.place(2, write);
+    capture.delta(1, {{0, 1}});
+    capture.place(1, std::array{AgcDriver::Pm4::RewindValid});
+    capture.delta(0, {{0, 1}});
+    check(capture.replay(tool, Label) == Done, "the replay did not run the tail of a REWIND whose block was rewritten while its control stayed zero");
+}
+
+void testEarlyReleaseRestoredInOrder(const std::filesystem::path& tool) {
+    RewindCapture capture(rewindCaptureDirectory());
+    constexpr std::size_t Label = 3 * PageWords;
+    constexpr std::uint32_t Reset = 2;
+    const auto write = capture.writeData(Label, Done);
+    capture.place(0, std::array{RewindHeader, 0u});
+    capture.start();
+    capture.submit(0, 2 + write.size());
+    capture.place(1, std::array{AgcDriver::Pm4::RewindValid});
+    capture.place(2, write);
+    capture.place(Label, std::array{Reset});
+    capture.delta(0, {{0, 1}, {3, 4}});
+    const auto label = capture.replay(tool, Label);
+    check(label == Reset, "the replay left " + std::to_string(label) + " in a label that the group released early holds as " + std::to_string(Reset) + " after the tail wrote " + std::to_string(Done));
 }
 
 void testReservationError(const std::filesystem::path& tool) {
@@ -671,6 +835,19 @@ void testMultisampleDepthPasses(const std::filesystem::path& tool) {
     }
     check(rejection.find("accepted during a guest memory transaction") != std::string::npos, "a guest memory transaction ended without failing although a submission was accepted inside it: " + rejection);
     AgcDriverWaitIdle_nid_postfix();
+    failure = nullptr;
+    {
+        std::lock_guard held(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriverGuestMemoryTransaction_nid_no_patch([](void*) {}, nullptr, &failure);
+    }
+    rejection.clear();
+    try {
+        if (failure) std::rethrow_exception(failure);
+    } catch (const std::runtime_error& error) {
+        rejection = error.what();
+    }
+    check(rejection.find("with the GPU lock held") != std::string::npos, "a guest memory transaction entered with the GPU lock held did not fail: " + rejection);
+    failure = nullptr;
     check(std::async(std::launch::async, [] {
         std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex(), std::try_to_lock);
         return lock.owns_lock();
@@ -768,8 +945,9 @@ void testMultisampleDepthPasses(const std::filesystem::path& tool) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2 && !(argc == 3 && (std::string(argv[2]) == "concurrent" || std::string(argv[2]) == "pipelines" || std::string(argv[2]) == "reservation_error" || std::string(argv[2]) == "rewind" || std::string(argv[2]) == "multisample_depth" || std::string(argv[2]) == "single_sample_depth"))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|multisample_depth|single_sample_depth]\n");
+    const std::array<std::string_view, 10> modes{"concurrent", "pipelines", "reservation_error", "rewind", "rewind_chained", "rewind_page_start", "rewind_zero_control", "rewind_in_order", "multisample_depth", "single_sample_depth"};
+    if (argc != 2 && !(argc == 3 && std::find(modes.begin(), modes.end(), argv[2]) != modes.end())) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_chained|rewind_page_start|rewind_zero_control|rewind_in_order|multisample_depth|single_sample_depth]\n");
         return 2;
     }
     try {
@@ -777,6 +955,10 @@ int main(int argc, char** argv) {
         if (argc == 3 && std::string(argv[2]) == "concurrent") testConcurrentCopies(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "reservation_error") testReservationError(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "rewind") testParkedRewindReplays(argv[1]);
+        else if (argc == 3 && std::string(argv[2]) == "rewind_chained") testChainedRewindGates(argv[1]);
+        else if (argc == 3 && std::string(argv[2]) == "rewind_page_start") testRewindControlAtPageStart(argv[1]);
+        else if (argc == 3 && std::string(argv[2]) == "rewind_zero_control") testZeroRewindControlRewritten(argv[1]);
+        else if (argc == 3 && std::string(argv[2]) == "rewind_in_order") testEarlyReleaseRestoredInOrder(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "multisample_depth") testMultisampleDepthPasses(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "single_sample_depth") testSingleSampleDepthPasses(argv[1]);
         else testCaptureAndReplay(argv[1], argc == 3);
