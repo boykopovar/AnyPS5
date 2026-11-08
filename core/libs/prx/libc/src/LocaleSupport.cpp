@@ -26,6 +26,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 #include "SceTypes.hpp"
 
@@ -1397,8 +1398,30 @@ template<typename Text> const SceV2MoneyPutVtable<Text> g_sceV2MoneyPutVtable{
 constexpr auto g_sceV2MoneyPutUshortVtable = MakeSceV2FacetVtable<2, g_sceV2MoneyPutFamily>();
 constexpr auto g_sceV2MoneypunctUshortVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
 constexpr auto g_sceV2MoneypunctUshortIntlVtable = MakeSceV2FacetVtable<9, g_sceV2MoneypunctFamily, DestroySceV2UshortMoneypunctFacet_nid_no_patch>();
-constexpr auto g_sceV2TimeGetCharVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily>();
-constexpr auto g_sceV2TimeGetWideVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily>();
+template<typename Text> struct SceV2TimeGetVtable {
+    using Get = SceV2InputIterator<Text> (APS5_VABI *)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
+    GuestLocale::FacetVtable facet;
+    std::int32_t (APS5_VABI *dateOrder)(const GuestLocale::Facet* self);
+    Get getTime;
+    Get getDate;
+    Get getWeekday;
+    Get getMonthname;
+    Get getYear;
+    SceV2InputIterator<Text> (APS5_VABI *get)(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char modifier);
+};
+
+std::int32_t APS5_VABI SceV2TimeGetDateOrder_nid_no_patch(const GuestLocale::Facet* self);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetTime_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetDate_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetWeekday_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetMonthname_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetYear_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time);
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetField_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char modifier);
+
+template<typename Text> const SceV2TimeGetVtable<Text> g_sceV2TimeGetVtable{
+    {DestroySceV2PlainFacet_nid_no_patch, DeleteSceV2Facet_nid_no_patch<DestroySceV2PlainFacet_nid_no_patch>, RetainFacet, ReleaseFacet},
+    SceV2TimeGetDateOrder_nid_no_patch, SceV2TimeGetTime_nid_no_patch<Text>, SceV2TimeGetDate_nid_no_patch<Text>, SceV2TimeGetWeekday_nid_no_patch<Text>,
+    SceV2TimeGetMonthname_nid_no_patch<Text>, SceV2TimeGetYear_nid_no_patch<Text>, SceV2TimeGetField_nid_no_patch<Text>};
 constexpr auto g_sceV2TimeGetUshortVtable = MakeSceV2FacetVtable<7, g_sceV2TimeGetFamily, DestroySceV2UshortTimeGetFacet_nid_no_patch>();
 constexpr auto g_sceV2TimePutCharVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
 constexpr auto g_sceV2TimePutWideVtable = MakeSceV2FacetVtable<1, g_sceV2TimePutFamily, DestroySceV2TimePutFacet_nid_no_patch>();
@@ -2126,7 +2149,7 @@ SceV2FacetKind g_sceV2MoneyGetChar{&_ZNSt8__sce_v29money_getIcNS_19istreambuf_it
 SceV2FacetKind g_sceV2MoneyPutChar{&_ZNSt8__sce_v29money_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutVtable<char>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneypunctChar{&_ZNSt8__sce_v210moneypunctIcLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<false>, nullptr};
 SceV2FacetKind g_sceV2MoneypunctCharIntl{&_ZNSt8__sce_v210moneypunctIcLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<char>), &g_sceV2MoneypunctVtable<char>.facet, InitializeSceV2MoneypunctFacet<true>, nullptr};
-SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<char>), &g_sceV2TimeGetCharVtable.facet, InitializeSceV2TimeGetFacet, nullptr};
+SceV2FacetKind g_sceV2TimeGetChar{&_ZNSt8__sce_v28time_getIcNS_19istreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<char>), &g_sceV2TimeGetVtable<char>.facet, InitializeSceV2TimeGetFacet, nullptr};
 SceV2FacetKind g_sceV2TimePutChar{&_ZNSt8__sce_v28time_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutCharVtable.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeWide{&_ZNSt8__sce_v25ctypeIwE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeWideVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
 SceV2FacetKind g_sceV2NumGetWide{&_ZNSt8__sce_v27num_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2NumGetVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
@@ -2138,7 +2161,7 @@ SceV2FacetKind g_sceV2MoneyGetWide{&_ZNSt8__sce_v29money_getIwNS_19istreambuf_it
 SceV2FacetKind g_sceV2MoneyPutWide{&_ZNSt8__sce_v29money_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(GuestLocale::Facet), &g_sceV2MoneyPutVtable<char16_t>.facet, InitializeSceV2PlainFacet, nullptr};
 SceV2FacetKind g_sceV2MoneypunctWide{&_ZNSt8__sce_v210moneypunctIwLb0EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<false>, nullptr};
 SceV2FacetKind g_sceV2MoneypunctWideIntl{&_ZNSt8__sce_v210moneypunctIwLb1EE2idE_nid_postfix, sizeof(SceV2MoneypunctFacet<std::uint16_t>), &g_sceV2MoneypunctVtable<std::uint16_t>.facet, InitializeSceV2WideMoneypunctFacet<true>, nullptr};
-SceV2FacetKind g_sceV2TimeGetWide{&_ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetWideVtable.facet, InitializeSceV2WideTimeGetFacet, nullptr};
+SceV2FacetKind g_sceV2TimeGetWide{&_ZNSt8__sce_v28time_getIwNS_19istreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimeGetFacet<std::uint16_t>), &g_sceV2TimeGetVtable<char16_t>.facet, InitializeSceV2WideTimeGetFacet, nullptr};
 SceV2FacetKind g_sceV2TimePutWide{&_ZNSt8__sce_v28time_putIwNS_19ostreambuf_iteratorIwNS_11char_traitsIwEEEEE2idE_nid_postfix, sizeof(SceV2TimePutFacet), &g_sceV2TimePutWideVtable.facet, InitializeSceV2TimePutFacet, nullptr};
 SceV2FacetKind g_sceV2CodecvtWide{&_ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix, sizeof(SceV2WideCodecvtFacet), &g_sceV2CodecvtWideVtable.facet, InitializeSceV2WideCodecvtFacet, nullptr};
 SceV2FacetKind g_sceV2CtypeUshort{&_ZNSt8__sce_v25ctypeItE2idE_nid_postfix, sizeof(SceV2WideCtypeFacet), &g_sceV2CtypeUshortVtable.facet, InitializeSceV2WideCtypeFacet, nullptr};
@@ -2774,9 +2797,25 @@ int SceV2FieldBase(std::uint32_t field) {
     return static_cast<signed char>(field & 0xff);
 }
 
-template<typename Text> int GetSceV2LocaleText(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, std::size_t fields, const Text* names) {
-    for (std::size_t offset = 0; names[0] != Text{} && names[offset] != Text{}; ++offset) {
+template<typename Text, typename Name> bool SceV2LocaleTextMatches(SceV2InputIterator<Text>& first, Name name, const GuestLocale::Facet* ctype) {
+    if (ctype == nullptr) {
+        if constexpr (std::is_same_v<Text, Name>) return name == PeekSceV2Character(first);
+        else return static_cast<std::int32_t>(name) == static_cast<std::int32_t>(static_cast<std::make_unsigned_t<Text>>(PeekSceV2Character(first)));
+    }
+    const auto& virtuals = *reinterpret_cast<const typename SceV2TextFacets<Name>::Ctype*>(ctype->vtable);
+    const Name lowered = virtuals.toLower(ctype, name);
+    return lowered == virtuals.toLower(ctype, static_cast<Name>(PeekSceV2Character(first)));
+}
+
+template<typename Text, typename Name> int GetSceV2LocaleText(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, std::size_t fields, const Name* names, bool caseSensitive = true) {
+    for (std::size_t offset = 0; names[0] != Name{} && names[offset] != Name{}; ++offset) {
         if (names[offset] == names[0]) ++fields;
+    }
+    const GuestLocale::Facet* ctype = nullptr;
+    if (!caseSensitive) {
+        auto* global = _ZNSt8__sce_v26locale5_InitEb_nid_postfix(true);
+        ctype = UseSceV2Facet(SceV2TextFacets<Name>::CtypeKind(), global);
+        ReleaseSceV2Facet(reinterpret_cast<GuestLocale::Facet*>(global));
     }
     if (fields == 0) return -2;
     std::string columns(fields, '\0');
@@ -2789,10 +2828,10 @@ template<typename Text> int GetSceV2LocaleText(SceV2InputIterator<Text>& first, 
             while (names[offset] != Text{} && names[offset] != names[0]) ++offset;
             if (columns[field] != '\0') {
                 offset += static_cast<std::size_t>(static_cast<signed char>(columns[field]));
-            } else if (names[offset += column] == Text{} || names[offset] == names[0]) {
+            } else if (names[offset += column] == Name{} || names[offset] == names[0]) {
                 columns[field] = matched;
                 answer = static_cast<int>(field);
-            } else if (SceV2InputEnded(first, last) || names[offset] != PeekSceV2Character(first)) {
+            } else if (SceV2InputEnded(first, last) || !SceV2LocaleTextMatches(first, names[offset], ctype)) {
                 columns[field] = matched;
             } else {
                 prefix = true;
@@ -3547,6 +3586,276 @@ template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2MoneyGetDigits_n
     std::size_t index = 0;
     if (digits[0] == '-') data[index++] = atoms[SceV2MoneyMinusAtom];
     for (; index < digits.size(); ++index) data[index] = atoms[digits[index] - '0'];
+    return first;
+}
+
+constexpr short SceV2CtypeDigitMask = 0x20;
+constexpr std::int32_t SceV2DateDmy = 1;
+constexpr std::int32_t SceV2DateMdy = 2;
+constexpr std::int32_t SceV2DateYmd = 3;
+constexpr std::int32_t SceV2DateYdm = 4;
+
+template<typename Text> bool IsSceV2Class(const GuestLocale::Facet* ctype, short mask, Text character) {
+    if constexpr (std::is_same_v<Text, char>) return (reinterpret_cast<const SceV2CtypeFacet*>(ctype)->table[static_cast<unsigned char>(character)] & mask) != 0;
+    else return reinterpret_cast<const SceV2CtypeWideVtable*>(ctype->vtable)->is(ctype, mask, character);
+}
+
+template<typename Text> char NarrowSceV2Character(const GuestLocale::Facet* ctype, Text character) {
+    return reinterpret_cast<const typename SceV2TextFacets<Text>::Ctype*>(ctype->vtable)->narrow(ctype, character, '\0');
+}
+
+template<typename Text> std::int32_t GetSceV2TimeInteger(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, int low, int high, int* value, int* digitsRead, const GuestLocale::Facet* ctype) {
+    const int limit = high < 10 ? 1 : high < 100 ? 2 : high < 1000 ? 3 : 4;
+    char digits[32];
+    std::size_t length = 0;
+    *digitsRead = 0;
+    while (!SceV2InputEnded(first, last) && *digitsRead < limit && IsSceV2Class(ctype, SceV2MoneySpaceMask, PeekSceV2Character(first))) {
+        AdvanceSceV2Character(first);
+        ++*digitsRead;
+    }
+    if (!SceV2InputEnded(first, last) && *digitsRead < limit) {
+        const char sign = NarrowSceV2Character(ctype, PeekSceV2Character(first));
+        if (sign == '-' || sign == '+') {
+            digits[length++] = sign;
+            AdvanceSceV2Character(first);
+        }
+    }
+    while (!SceV2InputEnded(first, last) && *digitsRead < limit && NarrowSceV2Character(ctype, PeekSceV2Character(first)) == '0') {
+        ++*digitsRead;
+        AdvanceSceV2Character(first);
+    }
+    if (*digitsRead > 0) digits[length++] = '0';
+    while (!SceV2InputEnded(first, last)) {
+        const char digit = NarrowSceV2Character(ctype, PeekSceV2Character(first));
+        if (static_cast<unsigned char>(digit - '0') > 9 || *digitsRead >= limit) break;
+        digits[length] = digit;
+        if (length < sizeof(digits) - 1) ++length;
+        ++*digitsRead;
+        AdvanceSceV2Character(first);
+    }
+    if (*digitsRead == 0) length = 0;
+    digits[length] = '\0';
+    int error = 0;
+    char* end = nullptr;
+    const std::int64_t parsed = _ZNSt8__sce_v26_StolxEPKcPPciPi_nid_postfix(digits, &end, 10, &error);
+    std::int32_t state = SceV2InputEnded(first, last) ? SceV2IosEofBit : 0;
+    if (parsed > high || parsed < low || end == digits || error != 0) state |= SceV2IosFailBit;
+    else *value = static_cast<int>(parsed);
+    return state;
+}
+
+template<typename Text> std::int32_t GetSceV2TimeInteger(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, int low, int high, int* value, const GuestLocale::Facet* ctype) {
+    int digitsRead = 0;
+    return GetSceV2TimeInteger(first, last, low, high, value, &digitsRead, ctype);
+}
+
+template<typename Text> const SceV2TimeGetVtable<Text>& SceV2TimeGetVirtuals(const GuestLocale::Facet* self) {
+    return *reinterpret_cast<const SceV2TimeGetVtable<Text>*>(self->vtable);
+}
+
+template<typename Text> int GetSceV2TimeName(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, const GuestLocale::Facet* self, bool months) {
+    if constexpr (std::is_same_v<Text, char>) {
+        const auto* facet = reinterpret_cast<const SceV2TimeGetFacet<char>*>(self);
+        return GetSceV2LocaleText(first, last, 0, months ? facet->months : facet->days, false);
+    } else {
+        const auto* facet = reinterpret_cast<const SceV2TimeGetFacet<std::uint16_t>*>(self);
+        return GetSceV2LocaleText(first, last, 0, reinterpret_cast<const char16_t*>(months ? facet->months : facet->days), false);
+    }
+}
+
+template<typename Text> void SkipSceV2Spaces(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, const GuestLocale::Facet* ctype) {
+    while (!SceV2InputEnded(first, last) && IsSceV2Class(ctype, SceV2MoneySpaceMask, PeekSceV2Character(first))) AdvanceSceV2Character(first);
+}
+
+template<typename Text> void SkipSceV2DateSeparator(SceV2InputIterator<Text>& first, SceV2InputIterator<Text>& last, const GuestLocale::Facet* ctype) {
+    SkipSceV2Spaces(first, last, ctype);
+    if (!SceV2InputEnded(first, last)) {
+        const char separator = NarrowSceV2Character(ctype, PeekSceV2Character(first));
+        if (separator == ':' || separator == ',' || separator == '/') AdvanceSceV2Character(first);
+    }
+    SkipSceV2Spaces(first, last, ctype);
+}
+
+template<typename Text> SceV2InputIterator<Text> GetSceV2TimeFormat(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time, const char* format) {
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    for (; *format != '\0'; ++format) {
+        if (SceV2InputEnded(first, last)) {
+            *state |= SceV2IosFailBit;
+            break;
+        }
+        if (*format == '%') {
+            ++format;
+            first = SceV2TimeGetVirtuals<Text>(self).get(self, first, last, stream, state, time, *format, 0);
+        } else if (*format == ' ') {
+            SkipSceV2Spaces(first, last, ctype);
+        } else if (NarrowSceV2Character(ctype, PeekSceV2Character(first)) != *format) {
+            *state |= SceV2IosFailBit;
+            break;
+        } else {
+            AdvanceSceV2Character(first);
+        }
+    }
+    if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
+    return first;
+}
+
+std::int32_t APS5_VABI SceV2TimeGetDateOrder_nid_no_patch(const GuestLocale::Facet* self) {
+    return reinterpret_cast<const SceV2TimeGetFacet<char>*>(self)->dateOrder;
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetTime_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time) {
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    *state |= GetSceV2TimeInteger(first, last, 0, 23, &time->tm_hour, ctype);
+    if (*state != 0 || NarrowSceV2Character(ctype, PeekSceV2Character(first)) != ':') {
+        *state |= SceV2IosFailBit;
+    } else {
+        AdvanceSceV2Character(first);
+        *state |= GetSceV2TimeInteger(first, last, 0, 59, &time->tm_min, ctype);
+    }
+    if (*state != 0 || NarrowSceV2Character(ctype, PeekSceV2Character(first)) != ':') {
+        *state |= SceV2IosFailBit;
+    } else {
+        AdvanceSceV2Character(first);
+        *state |= GetSceV2TimeInteger(first, last, 0, 60, &time->tm_sec, ctype);
+    }
+    return first;
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetDate_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time) {
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    const auto& virtuals = SceV2TimeGetVirtuals<Text>(self);
+    std::int32_t order = virtuals.dateOrder(self);
+    if (order == 0) order = SceV2DateMdy;
+    if (!SceV2InputEnded(first, last)) {
+        if (!IsSceV2Class(ctype, SceV2CtypeDigitMask, PeekSceV2Character(first))) {
+            first = virtuals.getMonthname(self, first, last, stream, state, time);
+            order = SceV2DateMdy;
+        } else if (order == SceV2DateMdy) {
+            *state |= GetSceV2TimeInteger(first, last, 1, 12, &time->tm_mon, ctype);
+            --time->tm_mon;
+        } else if (order == SceV2DateDmy) {
+            *state |= GetSceV2TimeInteger(first, last, 1, 31, &time->tm_mday, ctype);
+        } else {
+            first = virtuals.getYear(self, first, last, stream, state, time);
+        }
+    }
+    SkipSceV2DateSeparator(first, last, ctype);
+    if (!SceV2InputEnded(first, last)) {
+        if (!IsSceV2Class(ctype, SceV2CtypeDigitMask, PeekSceV2Character(first))) {
+            if (order == SceV2DateMdy) {
+                *state |= SceV2IosFailBit;
+            } else {
+                first = virtuals.getMonthname(self, first, last, stream, state, time);
+                if (order == SceV2DateYdm) order = SceV2DateYmd;
+            }
+        } else if (order == SceV2DateDmy || order == SceV2DateYmd) {
+            *state |= GetSceV2TimeInteger(first, last, 1, 12, &time->tm_mon, ctype);
+            --time->tm_mon;
+        } else {
+            *state |= GetSceV2TimeInteger(first, last, 1, 31, &time->tm_mday, ctype);
+        }
+    }
+    SkipSceV2DateSeparator(first, last, ctype);
+    if (SceV2InputEnded(first, last)) {
+        *state |= SceV2IosFailBit;
+    } else if (!IsSceV2Class(ctype, SceV2CtypeDigitMask, PeekSceV2Character(first))) {
+        if (order != SceV2DateYdm) *state |= SceV2IosFailBit;
+        else first = virtuals.getMonthname(self, first, last, stream, state, time);
+    } else if (order == SceV2DateYdm) {
+        *state |= GetSceV2TimeInteger(first, last, 1, 12, &time->tm_mon, ctype);
+        --time->tm_mon;
+    } else if (order == SceV2DateYmd) {
+        *state |= GetSceV2TimeInteger(first, last, 1, 31, &time->tm_mday, ctype);
+    } else {
+        first = virtuals.getYear(self, first, last, stream, state, time);
+    }
+    if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
+    return first;
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetWeekday_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase*, std::int32_t* state, GuestTm* time) {
+    const int number = GetSceV2TimeName(first, last, self, false);
+    if (number < 0) *state |= SceV2IosFailBit;
+    else time->tm_wday = static_cast<int>(static_cast<unsigned>(number) >> 1);
+    return first;
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetMonthname_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase*, std::int32_t* state, GuestTm* time) {
+    const int number = GetSceV2TimeName(first, last, self, true);
+    if (number < 0) *state |= SceV2IosFailBit;
+    else time->tm_mon = static_cast<int>(static_cast<unsigned>(number) >> 1);
+    return first;
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetYear_nid_no_patch(const GuestLocale::Facet*, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time) {
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    int answer = 0;
+    int digitsRead = 0;
+    const std::int32_t result = GetSceV2TimeInteger(first, last, 0, 9999, &answer, &digitsRead, ctype);
+    *state |= result;
+    if ((result & SceV2IosFailBit) == 0) {
+        if (digitsRead > 2) time->tm_year = answer - 1900;
+        else if (answer < 69) time->tm_year = answer + 100;
+        else if (answer < 100) time->tm_year = answer;
+    }
+    return first;
+}
+
+template<typename Text> SceV2InputIterator<Text> APS5_VABI SceV2TimeGetField_nid_no_patch(const GuestLocale::Facet* self, SceV2InputIterator<Text> first, SceV2InputIterator<Text> last, GuestLocale::SceV2IosBase* stream, std::int32_t* state, GuestTm* time, char specifier, char) {
+    const GuestLocale::Facet* ctype = UseSceV2Facet(SceV2TextFacets<Text>::CtypeKind(), *stream->locale);
+    const auto& virtuals = SceV2TimeGetVirtuals<Text>(self);
+    int answer = 0;
+    *state = 0;
+    const auto integer = [&](int low, int high, int* value) { *state |= GetSceV2TimeInteger(first, last, low, high, value, ctype); };
+    const auto format = [&](const char* text) { first = GetSceV2TimeFormat(self, first, last, stream, state, time, text); };
+    switch (specifier) {
+        case 'a': case 'A': first = virtuals.getWeekday(self, first, last, stream, state, time); break;
+        case 'b': case 'B': case 'h': first = virtuals.getMonthname(self, first, last, stream, state, time); break;
+        case 'c': format("%a %b %d %H : %M : %S %Y"); break;
+        case 'C':
+            integer(0, 99, &answer);
+            if ((*state & SceV2IosFailBit) == 0) time->tm_year = answer * 100 - 1900;
+            break;
+        case 'd': case 'e': integer(1, 31, &time->tm_mday); break;
+        case 'D': format("%m / %d / %y"); break;
+        case 'H': integer(0, 23, &time->tm_hour); break;
+        case 'I':
+            integer(1, 12, &answer);
+            if ((*state & SceV2IosFailBit) == 0) time->tm_hour = answer == 12 ? 0 : answer;
+            break;
+        case 'j': integer(1, 366, &time->tm_yday); break;
+        case 'm':
+            integer(1, 12, &answer);
+            if ((*state & SceV2IosFailBit) == 0) time->tm_mon = answer - 1;
+            break;
+        case 'M': integer(0, 59, &time->tm_min); break;
+        case 'n': case 't': format(" "); break;
+        case 'p':
+            answer = GetSceV2LocaleText(first, last, 0, ":AM:am:PM:pm", false);
+            if (answer < 0) *state |= SceV2IosFailBit;
+            else if (answer >= 2) time->tm_hour += 12;
+            break;
+        case 'r': format("%I : %M : %S %p"); break;
+        case 'R': format("%H : %M"); break;
+        case 'S': integer(0, 60, &time->tm_sec); break;
+        case 'T': case 'X': format("%H : %M : %S"); break;
+        case 'U': case 'W': integer(0, 53, &time->tm_yday); break;
+        case 'w': integer(0, 6, &time->tm_wday); break;
+        case 'x': format("%d / %m / %y"); break;
+        case 'y':
+            integer(0, 99, &answer);
+            if ((*state & SceV2IosFailBit) == 0) time->tm_year = answer < 69 ? answer + 100 : answer;
+            break;
+        case 'Y':
+            integer(0, 9999, &answer);
+            if ((*state & SceV2IosFailBit) == 0) time->tm_year = answer - 1900;
+            break;
+        case '%':
+            if (!SceV2InputEnded(first, last) && PeekSceV2Character(first) == static_cast<Text>('%')) AdvanceSceV2Character(first);
+            break;
+        default: *state = SceV2IosFailBit; break;
+    }
+    if (SceV2InputEnded(first, last)) *state |= SceV2IosEofBit;
     return first;
 }
 
