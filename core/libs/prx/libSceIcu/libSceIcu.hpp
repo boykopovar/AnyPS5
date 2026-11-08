@@ -37,3 +37,5 @@
 
 #include "ConverterHelpers.hpp"
 #include "RecoveredSignatures.hpp"
+#include "BreakIterator.hpp"
+#include "Data.hpp"
