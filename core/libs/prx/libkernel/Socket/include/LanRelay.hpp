@@ -72,12 +72,19 @@ public:
     bool SendFrame(const Endpoint& peer, std::uint16_t sourcePort, std::uint16_t destinationPort, const std::vector<std::uint8_t>& payload);
     std::optional<Frame> Receive(int timeoutMilliseconds);
     bool SendToPeers(std::uint16_t sourcePort, std::uint16_t destinationPort, const std::vector<std::uint8_t>& payload);
+    bool StartDelivery();
+    void StopDelivery();
 
 private:
     std::uintptr_t handle = ~std::uintptr_t(0);
     std::uint16_t port = 0;
     std::uint32_t instance = 0;
     std::vector<Endpoint> peers;
+    std::atomic<bool> delivering{false};
+    std::thread receiver;
+    std::unique_ptr<Relay> localSender;
+
+    void Deliver();
 };
 
 std::unique_ptr<Relay> StartRelay(const char* listen, const char* peers, std::FILE* log);
