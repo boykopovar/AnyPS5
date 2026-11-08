@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -240,6 +241,20 @@ void CheckThreadWithoutEpochWalksEveryTime() {
     Require(first && second, "a thread that never bumped its epoch reused an entry");
 }
 
+void CheckNoStampAfterCoversEveryRange() {
+    BumpCollectEpoch();
+    const auto probe = Base + 11 * Page + 16;
+    const auto before = TrackerGeneration();
+    Store(probe);
+    Require(CollectWrites(probe & ~(Page - 1), Page) != 0, "a collect failed");
+    Require(NewestStamp(probe, 4) > before, "a collected store left no stamp after the generation");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> stored{{{Base + 12 * Page, Base + 12 * Page}, {probe, probe + 4}}};
+    Require(!NoStampAfter(stored, before), "a range stored after the generation counted as settled");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> quiet{{{probe, probe}, {Base + 100 * Block, Base + 100 * Block + 4}}};
+    Require(NoStampAfter(quiet, before), "an empty or untouched range counted as stored after the generation");
+    Require(NoStampAfter({}, before), "no ranges counted as stored after the generation");
+}
+
 void CheckStoreInNewEpochIsFound() {
     BumpCollectEpoch();
     const auto address = Base + 7 * Page + 8;
@@ -267,6 +282,7 @@ int main() {
         CheckNeighbouringBlockStoreIsFound();
         CheckInvalidationReachesBlockKeyedEntry();
         CheckThreadWithoutEpochWalksEveryTime();
+        CheckNoStampAfterCoversEveryRange();
         CheckStoreInNewEpochIsFound();
     } catch (const std::exception& error) {
         std::cerr << "collect memo generation test failed: " << error.what() << "\n";

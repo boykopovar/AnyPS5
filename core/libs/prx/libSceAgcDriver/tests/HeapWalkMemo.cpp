@@ -22,8 +22,9 @@ void require(bool condition, const std::string& message) {
 
 HeapWalkEntry sizedEntry(std::size_t words, std::shared_ptr<const ShaderRecompiler::RecompileResult> result = nullptr) {
     HeapWalkEntry entry;
-    entry.values.resize(words);
-    entry.values.shrink_to_fit();
+    std::vector<std::uint32_t> values(words);
+    values.shrink_to_fit();
+    entry.values = std::make_shared<const std::vector<std::uint32_t>>(std::move(values));
     entry.result = std::move(result);
     return entry;
 }
@@ -68,7 +69,7 @@ void oldestEntriesDroppedTests() {
     require(memo.find(1) == nullptr && memo.find(keys / 2) == nullptr, "the oldest heap walk entries stayed past the budget");
     require(results.front().expired() && results[keys / 2 - 1].expired(), "a heap walk entry the budget dropped still holds its result");
     const auto* newest = memo.find(keys);
-    require(newest != nullptr && newest->size() == 1 && newest->front().values.size() == words, "the newest heap walk entry is not findable under the budget");
+    require(newest != nullptr && newest->size() == 1 && newest->front().values->size() == words, "the newest heap walk entry is not findable under the budget");
     require(!results.back().expired(), "the newest heap walk entry lost its result");
     std::cout << "the heap walk memo keeps " << memo.current.size() << " of " << keys << " entries within its budget of " << memo.budget << " bytes\n";
 }

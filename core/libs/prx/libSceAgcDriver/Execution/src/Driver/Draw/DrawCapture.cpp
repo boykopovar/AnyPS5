@@ -111,7 +111,7 @@ bool Driver::materializeHeapDirect(const DrawStageContext& context, std::size_t 
     stageCapture.direct = true;
     auto& reads = materialized.reads;
     if (reads.complete) {
-        auto owned = std::make_shared<const std::vector<std::uint32_t>>(std::move(reads.values));
+        auto owned = std::move(reads.values);
         std::size_t cursor = 0;
         for (const auto& [begin, end] : reads.ranges) {
             const auto count = static_cast<std::size_t>((end - begin) / sizeof(std::uint32_t));

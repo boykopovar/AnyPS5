@@ -4377,7 +4377,7 @@ std::shared_ptr<ShaderResources> ResourceCache::Find(const Key& key) {
         return nullptr;
     }
     entries.splice(entries.begin(), entries, found->second);
-    noteUse(key);
+    noteUse(*found->second);
     return found->second->second;
 }
 
@@ -4401,20 +4401,27 @@ void ResourceCache::noteEvicted(const Key& key) {
     publishAgingWindow();
     if (shrankLast) shrinkWindow = std::min(shrinkWindow * 2u, MaximumShrinkWindow);
     shrankLast = false;
-    usedKeys.clear();
-    usesSinceCheck = 0;
+    resetUses();
     usesWindowStart.store(operations.load(std::memory_order_relaxed), std::memory_order_relaxed);
     std::fprintf(stderr, "[rescache] capacity %zu -> %zu entries: keys it evicted keep coming back\n", previous, capacity);
 }
 
-void ResourceCache::noteUse(const Key& key) {
-    if (fixedCapacity || capacity <= baseEntries) return;
-    usedKeys.insert(KeyHash{}(key));
-    if (++usesSinceCheck < capacity * shrinkWindow) return;
-    const auto used = usedKeys.size();
-    const auto uses = usesSinceCheck;
-    usedKeys.clear();
+void ResourceCache::resetUses() {
+    ++useWindow;
+    usedEntries = 0;
     usesSinceCheck = 0;
+}
+
+void ResourceCache::noteUse(Entry& entry) {
+    if (fixedCapacity || capacity <= baseEntries) return;
+    if (entry.usedWindow != useWindow) {
+        entry.usedWindow = useWindow;
+        ++usedEntries;
+    }
+    if (++usesSinceCheck < capacity * shrinkWindow) return;
+    const auto used = usedEntries;
+    const auto uses = usesSinceCheck;
+    resetUses();
     usesWindowStart.store(operations.load(std::memory_order_relaxed), std::memory_order_relaxed);
     if (used * 4u > capacity) return;
     const auto previous = capacity;
@@ -4571,7 +4578,7 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
         entries.erase(found->second);
         index.erase(found);
     }
-    entries.emplace_front(key, std::move(resources));
+    entries.push_front({key, std::move(resources)});
     index.emplace(key, entries.begin());
     if (capacity == 0) {
         const char* value = std::getenv("APS5_RESOURCE_CACHE_ENTRIES");
@@ -4580,7 +4587,7 @@ void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> reso
         capacity = fixedCapacity ? static_cast<std::size_t>(parsed) : baseEntries;
         publishAgingWindow();
     }
-    noteUse(key);
+    noteUse(entries.front());
     while (entries.size() > capacity) {
         noteEvicted(entries.back().first);
         if (evicted != nullptr) evicted->push_back(std::move(entries.back().second));
@@ -4668,7 +4675,7 @@ bool ResourceCache::Touch(const Key& key) {
     const auto found = index.find(key);
     if (found == index.end()) return false;
     entries.splice(entries.begin(), entries, found->second);
-    noteUse(key);
+    noteUse(*found->second);
     return true;
 }
 
@@ -4688,8 +4695,7 @@ void ResourceCache::Clear() {
     evictedOrder.clear();
     evictionsSinceCheck = 0;
     returnsSinceCheck = 0;
-    usedKeys.clear();
-    usesSinceCheck = 0;
+    resetUses();
     usesWindowStart.store(operations.load(std::memory_order_relaxed), std::memory_order_relaxed);
     shrinkWindow = baseShrinkWindow;
     shrankLast = false;
@@ -6829,6 +6835,15 @@ void ShaderResources::bufferRanges(std::uint32_t dataStage, const std::vector<Vk
     }
 }
 
+bool ShaderResources::constantBufferRanges(std::uint32_t dataStage) const {
+    if (dataStage >= addressedElements.size()) return true;
+    return std::all_of(addressedElements[dataStage].begin(), addressedElements[dataStage].end(), [&](std::size_t index) {
+        const auto& allocation = allocations[index];
+        const bool owned = !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
+        return owned || (index < resolvedAddresses.size() && resolvedAddresses[index].address != 0);
+    });
+}
+
 std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const CompiledShader& shader, const DrawBindings* rewritten) const {
     if (!heapStage || !HeapShader(shader)) return {shaderDataBuffer(shader), 0};
     const auto& offsets = rewritten != nullptr && rewritten->addressOffsets ? rewritten->heapOffsets : heapOffsets;
@@ -6843,11 +6858,25 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
     VkDeviceAddress table = 0;
     VkDeviceAddress fault = 0;
     std::uint32_t tableDwords = 0;
-    const auto binds = [&](ShaderRecompiler::DescriptorRole role) {
-        return std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) { return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const auto& binding) { return binding.role == role; }); });
-    };
-    const bool tableBound = binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
-    const bool faultBound = binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
+    const bool sameStages = rootRoles.count == shaders.size() && std::equal(shaders.begin(), shaders.end(), rootRoles.programs.begin(), [](const CompiledShader& shader, const ShaderRecompiler::RecompileResult* program) { return shader.program == program; });
+    if (!sameStages) {
+        const auto binds = [&](ShaderRecompiler::DescriptorRole role) {
+            return std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) { return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const auto& binding) { return binding.role == role; }); });
+        };
+        rootRoles.table = binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
+        rootRoles.fault = binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
+        rootRoles.count = shaders.size() <= rootRoles.programs.size() ? shaders.size() : std::numeric_limits<std::size_t>::max();
+        for (std::size_t index = 0; index < shaders.size() && index < rootRoles.programs.size(); ++index) rootRoles.programs[index] = shaders[index].program;
+    }
+    static const bool verifyRoles = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    if (verifyRoles && sameStages) {
+        const auto binds = [&](ShaderRecompiler::DescriptorRole role) {
+            return std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) { return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const auto& binding) { return binding.role == role; }); });
+        };
+        if (binds(ShaderRecompiler::DescriptorRole::BdaPagetable) != rootRoles.table || binds(ShaderRecompiler::DescriptorRole::FaultBuffer) != rootRoles.fault) throw std::runtime_error("AGC graphics: the BDA roots kept for a GPU heap draw's stages differ from their bindings");
+    }
+    const bool tableBound = rootRoles.table;
+    const bool faultBound = rootRoles.fault;
     if (bda != nullptr && (tableBound || faultBound)) {
         if (tableBound) {
             table = bda->TableAddress();
@@ -6903,10 +6932,24 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
 
 void ShaderResources::writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
+    static const bool verify = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    const std::vector<VkDeviceAddressRangeEXT>* kept = nullptr;
+    if (overrides == nullptr && !verify) {
+        auto& cached = pushedRanges[stage];
+        if (!cached.built) {
+            cached.constant = constantBufferRanges(static_cast<std::uint32_t>(stage));
+            cached.built = cached.constant || !resolvedAddresses.empty();
+            if (cached.constant) bufferRanges(static_cast<std::uint32_t>(stage), nullptr, cached.ranges);
+        }
+        if (cached.constant) kept = &cached.ranges;
+    }
     struct RangeStorage {};
-    auto& ranges = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
-    ranges.clear();
-    bufferRanges(static_cast<std::uint32_t>(stage), overrides, ranges);
+    auto& scratch = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
+    if (kept == nullptr) {
+        scratch.clear();
+        bufferRanges(static_cast<std::uint32_t>(stage), overrides, scratch);
+    }
+    const auto& ranges = kept != nullptr ? *kept : scratch;
     Require(ranges.size() == placement.pushedBuffers, "a stage's buffer addresses do not match its push layout's buffer count");
     heapPushedStages.fetch_add(1, std::memory_order_relaxed);
     Require(empty != 0u, "a stage with pushed buffers has no shader data to stand in for an empty buffer");

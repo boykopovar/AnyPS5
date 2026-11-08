@@ -381,6 +381,20 @@ public:
     void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
     void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
     void writePushedBuffers(std::span<std::byte, PipelinePushConstantBytes> bytes, std::size_t stage, const ShaderRecompiler::StagePushPlacement& placement, const std::vector<VkDeviceAddressRangeEXT>* overrides, VkDeviceAddress empty) const;
+    bool constantBufferRanges(std::uint32_t dataStage) const;
+    struct PushedRanges {
+        bool built = false;
+        bool constant = false;
+        std::vector<VkDeviceAddressRangeEXT> ranges;
+    };
+    mutable std::array<PushedRanges, ShaderRecompiler::RuntimeAbi::StageCount> pushedRanges;
+    struct RootRoles {
+        std::array<const ShaderRecompiler::RecompileResult*, 8> programs{};
+        std::size_t count = std::numeric_limits<std::size_t>::max();
+        bool table = false;
+        bool fault = false;
+    };
+    mutable RootRoles rootRoles;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     std::size_t BindingCount() const { return bindings.size(); }
@@ -901,7 +915,13 @@ private:
     void dropReleasedTextures(std::vector<std::shared_ptr<ShaderResources>>* evicted);
     void noteEvicted(const Key& key);
     void noteReturn(const Key& key);
-    void noteUse(const Key& key);
+    struct Entry {
+        Key first;
+        std::shared_ptr<ShaderResources> second;
+        std::uint64_t usedWindow = 0;
+    };
+    void noteUse(Entry& entry);
+    void resetUses();
     void removeImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted);
     struct KeyHash {
         std::size_t operator()(const Key& key) const noexcept {
@@ -928,7 +948,7 @@ private:
         }
     };
     mutable AgcDriver::Mutex mutex;
-    std::list<std::pair<Key, std::shared_ptr<ShaderResources>>> entries;
+    std::list<Entry> entries;
     std::unordered_map<Key, decltype(entries)::iterator, KeyHash> index;
     std::size_t capacity = 0;
     bool fixedCapacity = false;
@@ -936,7 +956,8 @@ private:
     std::unordered_map<std::size_t, decltype(evictedOrder)::iterator> evictedKeys;
     std::size_t evictionsSinceCheck = 0;
     std::size_t returnsSinceCheck = 0;
-    std::unordered_set<std::size_t> usedKeys;
+    std::uint64_t useWindow = 1;
+    std::size_t usedEntries = 0;
     std::size_t usesSinceCheck = 0;
     static constexpr std::size_t InitialShrinkWindow = 8;
     static constexpr std::size_t MaximumShrinkWindow = 1024;

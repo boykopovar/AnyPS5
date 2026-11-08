@@ -670,6 +670,21 @@ using WriteRanges = Recorder::WriteRanges;
 // GPU) or follows the write-back.
 AtomicSharedPtr<const WriteRanges> pendingWrites;
 
+struct PendingWritesSeen {
+    std::uint64_t generation = std::numeric_limits<std::uint64_t>::max();
+    std::shared_ptr<const WriteRanges> ranges;
+};
+
+const std::shared_ptr<const WriteRanges>& currentPendingWrites() {
+    auto& seen = HostThreadLocal<PendingWritesSeen, PendingWritesSeen>();
+    const auto generation = publishGeneration.load(std::memory_order_acquire);
+    if (generation != seen.generation) {
+        seen.ranges = pendingWrites.load(std::memory_order_acquire);
+        seen.generation = generation;
+    }
+    return seen.ranges;
+}
+
 bool HookSnapshotEnabled() {
     // Debug aid: APS5_NO_HOOK_SNAPSHOT=1 takes the GpuMutex on every access as before.
     static const bool enabled = std::getenv("APS5_NO_HOOK_SNAPSHOT") == nullptr;
@@ -685,8 +700,7 @@ bool SnapshotOverlaps(const WriteRanges* snapshot, std::uint64_t address, std::s
 
 bool SnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0) return false;
-    const auto snapshot = pendingWrites.load(std::memory_order_acquire);
-    return SnapshotOverlaps(snapshot.get(), address, bytes);
+    return SnapshotOverlaps(currentPendingWrites().get(), address, bytes);
 }
 
 }
@@ -694,11 +708,11 @@ bool SnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
 bool Recorder::ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before) {
     if (!HookSnapshotEnabled()) return false;
     const bool labels = !QueuedLabelRanges().empty();
-    const auto now = pendingWrites.load(std::memory_order_acquire);
+    const auto* now = currentPendingWrites().get();
     for (const auto& [begin, end] : ranges) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (labels && QueuedLabelOverlaps(begin, bytes)) return false;
-        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now.get(), begin, bytes)) return false;
+        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now, begin, bytes)) return false;
     }
     return !StorageTexture::AnyPendingOverlaps(ranges) && !AnyShadowedOverlaps(ranges);
 }
@@ -713,8 +727,7 @@ bool SnapshotCovers(const WriteRanges* snapshot, std::uint64_t address, std::uin
 }
 
 bool SnapshotCovers(std::uint64_t address, std::uint64_t end) {
-    const auto snapshot = pendingWrites.load(std::memory_order_acquire);
-    return SnapshotCovers(snapshot.get(), address, end);
+    return SnapshotCovers(currentPendingWrites().get(), address, end);
 }
 
 // Attribution of the pending-write syncs the hook makes (the [hooksync] line every 10 s, under
@@ -1809,7 +1822,7 @@ bool Recorder::SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes) {
 }
 
 std::shared_ptr<const Recorder::WriteRanges> Recorder::PendingWriteSnapshot() {
-    return pendingWrites.load(std::memory_order_acquire);
+    return currentPendingWrites();
 }
 
 bool Recorder::SnapshotOverlaps(const WriteRanges* snapshot, std::uint64_t address, std::size_t bytes) {

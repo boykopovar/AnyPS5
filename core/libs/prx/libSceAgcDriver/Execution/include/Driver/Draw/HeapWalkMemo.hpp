@@ -18,7 +18,7 @@ struct HeapWalkEntry {
     std::vector<std::uint32_t> userData;
     std::vector<ShaderRecompiler::TargetMerge> merges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
-    std::vector<std::uint32_t> values;
+    std::shared_ptr<const std::vector<std::uint32_t>> values;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> accessible;
     ShaderRecompiler::SrtUserDataUse userDataUse;
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
