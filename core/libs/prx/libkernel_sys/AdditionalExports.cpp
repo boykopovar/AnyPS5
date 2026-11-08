@@ -18,6 +18,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1699,8 +1700,11 @@ int APS5_VABI sceKernelGetPackageInfo() {
 
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    const int saved = errno;
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::memcpy(version, parameters + 0x14, sizeof(*version));
+    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x14, sizeof(*version));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -1710,8 +1714,11 @@ int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid() {
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    const int saved = errno;
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    const bool copied = GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

@@ -18,6 +18,9 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
     instruction.destination = destinationOperand(decoded);
     currentOpcode = instruction.op;
     currentProgramCounter = instruction.programCounter;
+    currentInstruction = &instruction;
+    vectorsRead.reset();
+    relativeVectorRead = false;
     if (instruction.op == RdnaOpcode::Unknown || instruction.op == RdnaOpcode::Count) {
         throw std::runtime_error("decoded opcode has no IR translation at pc " + std::to_string(instruction.programCounter));
     }
@@ -72,6 +75,8 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
         target.reg = 255u;
         writeOperand(target, &readRawU32(source).Value());
     }
+    currentInstruction = nullptr;
+    trackInactiveExecHalves(instruction);
 }
 
 namespace {
