@@ -67,7 +67,7 @@ void EmitScratchPoolAcquire(SpirvEmitterState& state) {
         FailEmit("scratch pool was not declared before function emission");
     }
     const auto device = ConstantU32(state, spv::ScopeDevice);
-    const auto acquire = ConstantU32(state, spv::MemorySemanticsAcquireMask | spv::MemorySemanticsUniformMemoryMask);
+    const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
     const auto length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, TypeU32(state), length, state.scratchPoolVariable, 0u);
     const auto slotDwords = ScratchPoolSlotDwords(state);
@@ -94,10 +94,10 @@ void EmitScratchPoolAcquire(SpirvEmitterState& state) {
         EmitLabel(state, body);
         const auto candidate = LoadU32(state, state.scratchPoolCandidateVariable);
         const auto observed = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observed, PoolWord(state, candidate), device, ConstantU32(state, spv::MemorySemanticsMaskNone));
+        state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observed, PoolWord(state, candidate), device, relaxed);
         EmitIfCondition(state, EmitCompareU32Constant(state, spv::OpIEqual, observed, 0u), [&] {
             const auto previous = state.module.AllocateId();
-            state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, PoolWord(state, candidate), device, acquire, acquire, ConstantU32(state, 1u), ConstantU32(state, 0u));
+            state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, PoolWord(state, candidate), device, relaxed, relaxed, ConstantU32(state, 1u), ConstantU32(state, 0u));
             state.module.AddFunction(spv::OpStore, state.scratchPoolWonVariable, Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, previous, 0u), ConstantU32(state, 1u), ConstantU32(state, 0u)));
         });
         const auto acquired = EmitCompareU32Constant(state, spv::OpIEqual, LoadU32(state, state.scratchPoolWonVariable), 1u);
@@ -114,7 +114,7 @@ void EmitScratchPoolAcquire(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpAtomicStore, PoolWord(state, EmitAddU32(state, slots, slot)), device, ConstantU32(state, 0u), ConstantU32(state, InvocationsPerGroup(state)));
         state.module.AddFunction(spv::OpStore, state.scratchPoolSlotVariable, slot);
     });
-    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask | spv::MemorySemanticsWorkgroupMemoryMask));
+    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), device, ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask | spv::MemorySemanticsWorkgroupMemoryMask));
     state.scratchPoolSlot = LoadU32(state, state.scratchPoolSlotVariable);
     const auto header = EmitBinaryU32(state, spv::OpIMul, slots, ConstantU32(state, HeaderWordsPerSlot));
     const auto slotBase = EmitAddU32(state, header, EmitBinaryU32(state, spv::OpIMul, state.scratchPoolSlot, ConstantU32(state, slotDwords)));

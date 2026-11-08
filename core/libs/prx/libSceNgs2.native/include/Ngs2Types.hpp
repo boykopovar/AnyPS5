@@ -103,8 +103,10 @@ static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH = 0x10000005;
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER = 0x1000000a;
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER = 0x10000009;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP = 0x20000000;
+static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_COMPRESSOR = 0x20000002;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX = 0x20000004;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER = 0x20000005;
+static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER = 0x20000006;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_SETUP = 0x20010000;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_I3DL2 = 0x20010001;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
@@ -471,6 +473,19 @@ struct Ngs2VoicePortDelayParam {
     std::uint32_t port;
     std::uint32_t num_samples;
 };
+
+struct Ngs2SubmixerVoiceCompressorParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t flags;
+    float threshold;
+    float ratio;
+    float knee;
+    float attack_time;
+    float release_time;
+    float level;
+    std::uint32_t reserved;
+};
+static_assert(sizeof(Ngs2SubmixerVoiceCompressorParam) == 0x28);
 
 struct Ngs2VoicePatchParam {
     Ngs2VoiceParamHeader header;
