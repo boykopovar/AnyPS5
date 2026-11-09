@@ -19,6 +19,7 @@ int main() {
     Require(pthread_switch_delete_np_nid_postfix() == GUEST_ENOTSUP);
 
     Require(sceKernelAddResource() == 0);
+    Require(sceKernelUseCronosStreaming() == 0);
     Require(sceKernelEventLogInit() == 0);
     Require(sceKernelIsGenuineKratosCex() == 0);
     Require(sceKernelReleaseTraceDirectMemory() == 0);
