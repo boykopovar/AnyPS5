@@ -27,7 +27,7 @@ int APS5_VABI UnexpectedPosixAlign_nid_no_patch(void**, std::size_t, std::size_t
 }
 
 int main() {
-    std::array<void*, 7> api{reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
+    std::array<void*, 10> api{reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch),
         reinterpret_cast<void*>(Callocate_nid_no_patch), reinterpret_cast<void*>(Reallocate_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedAlign_nid_no_patch), reinterpret_cast<void*>(UnexpectedRealign_nid_no_patch),
         reinterpret_cast<void*>(UnexpectedPosixAlign_nid_no_patch)};
@@ -38,8 +38,15 @@ int main() {
     certificate.certInfo = reinterpret_cast<LibreSsl3X509CertInfo*>(&info);
     Require(X509_set_pubkey_nid_postfix(&certificate, &pkey) == 1);
     Require(info.key != nullptr && info.key->pkey == &pkey);
+    LibreSsl3X509Pubkey* first = info.key;
+    LibreSsl3EvpPkey replacement{};
+    Require(X509_set_pubkey_nid_postfix(&certificate, &replacement) == 1);
+    Require(info.key != nullptr && info.key->pkey == &replacement);
+    if (info.key != first) free_nid_postfix(first);
     Require(X509_set_pubkey_nid_postfix(&certificate, nullptr) == 0);
     Require(X509_set_pubkey_nid_postfix(nullptr, &pkey) == 0);
     free_nid_postfix(info.key);
+    certificate.certInfo = nullptr;
+    Require(X509_set_pubkey_nid_postfix(&certificate, &pkey) == 0);
     std::puts("libSceLibreSsl3 X509_set_pubkey tests passed");
 }
