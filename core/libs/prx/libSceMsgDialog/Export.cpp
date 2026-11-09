@@ -113,6 +113,7 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
  if (MsgDialog::HostMessageBoxEnabled(std::getenv("ANYPS5_MSG_DIALOG_HOST"), kAppleBuild) && MsgDialog::BuildRequest(parsed, hostRequest)) {
   g_presented = false;
   g_pollsLeft = std::numeric_limits<int>::max();
+  g_status = kStatusRunning;
   g.unlock();
   const auto answer = MsgDialog::ShowHostMessageBox(parsed.text, hostRequest);
   g.lock();
@@ -123,7 +124,9 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
    APS5_HIT("MSGDIALOG", "open: buttons=%zu -> host box, button %d", hostRequest.buttons.size(), g_buttonId);
    return kErrOk;
   }
-  g_presented = Present(parsed);
+  APS5_HIT("MSGDIALOG", "open: host box unavailable, using the in-game dialog");
+ }
+ g_presented = Present(parsed);
  if (parsed.hasText) APS5_HIT("MSGDIALOG", "open: buttons=%d text=\"%s\" -> %s", parsed.buttonType, MsgDialog::LogText(parsed.text).c_str(), g_presented ? "shown" : "auto answer");
  g_pollsLeft = 2;
  g_openedAt = std::chrono::steady_clock::now();
