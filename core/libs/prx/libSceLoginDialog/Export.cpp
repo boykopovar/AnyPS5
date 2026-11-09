@@ -35,8 +35,15 @@ int APS5_VABI sceLoginDialogInitialize(void) {
 }
 
 int APS5_VABI sceLoginDialogOpen(const LoginDialogParam* param) {
- if (param == nullptr || param->size != sizeof(*param) || param->mode > 1 || !std::all_of(std::begin(param->reserved), std::end(param->reserved), [](std::uint32_t value) { return value == 0; })) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
- for (const auto userId : param->userIds) {
+ LoginDialogParam local{};
+ const int savedErrno = errno;
+ if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) {
+  errno = savedErrno;
+  return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
+ }
+ errno = savedErrno;
+ if (local.size != sizeof(local) || local.mode > 1 || !std::all_of(std::begin(local.reserved), std::end(local.reserved), [](std::uint32_t value) { return value == 0; })) return LOGIN_DIALOG_ERROR_INVALID_ARGUMENT;
+ for (const auto userId : local.userIds) {
   if (userId != -1 && (static_cast<std::uint32_t>(userId) < 0x10000000u || static_cast<std::uint32_t>(userId) >= 0x40000000u)) return LOGIN_DIALOG_ERROR_INVALID_USER;
  }
  int status = g_status.load();
