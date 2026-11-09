@@ -58,7 +58,7 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
     allocation.descriptorSetCount = 1;
     allocation.pSetLayouts = &layout;
     VkDescriptorSet set = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
+    Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
     ++ring.used;
     ring.serials[ring.current] = recorder != nullptr ? recorder->OpenSerial() : std::numeric_limits<std::uint64_t>::max();
     return set;

@@ -261,6 +261,21 @@ def main():
         }).parent / "app0" / "sce_module"
         importer = module_symbols((guests / "c.prx.guest.prx").read_bytes())
         assert "shared#guest" in importer, importer
+
+        for exported, expected, unexpected in (("entry", "entry#guest", "entry"), ("other", "entry", "entry#guest")):
+            guests = relink(relinker, work / f"guest-declared-missing-{exported}", importing_executable([]), {
+                "provider.prx": guest_module([(exported, True)]),
+                "third.prx": guest_module([("entry", True)]),
+                "consumer.prx": needed_module_import("ZZZZZZZZZZZ", "entry#A#B", "provider.prx", (0x61000045,)),
+            }).parent / "app0" / "sce_module"
+            importer = module_symbols((guests / "consumer.prx.guest.prx").read_bytes())
+            assert expected in importer and unexpected not in importer, (exported, importer)
+            output = relink(relinker, work / f"executable-declared-missing-{exported}", importing_executable(["entry#B#B"], ["provider"]), {
+                "provider.prx": guest_module([(exported, True)]),
+                "third.prx": guest_module([("entry", True)]),
+            })
+            imports = imported_symbols(output.read_bytes())
+            assert imports == {expected}, (exported, imports)
     print("Guest symbol name tests passed")
 
 

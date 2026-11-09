@@ -1,0 +1,26 @@
+# libharfbuzz technical debt
+
+### Callable exports
+
+- [Callable exports](../../../core/libs/prx/libharfbuzz/Export.cpp) - The remaining throwing callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libharfbuzz.c) and the [selected export metadata](https://gist.github.com/kyon-eth/510aa3fcaf09cbe8b52048b44e4e67c0/b909f17c99ecd6323c085f70064548789062d57e) from an older `libharfbuzz` image and a later `libSceVshHarfBuzz` image (SHA-256 `25af97e02c1fa8d318ff3697eb8a79057ee9b8c5e5e4ec321f25114aceb05628`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. Their prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch`.
+
+| Name | NID |
+| --- | --- |
+| `hb_ft_face_create_cached` | `RTxFQhlbF+U` |
+| `hb_icu_script_to_script` | `u0E8Xi0easM` |
+| `hb_ot_layout_language_find_feature` | `qos3JIrKrDg` |
+| `hb_ot_layout_script_get_language_tags` | `HH-sRSNiSaU` |
+| `hb_ot_layout_table_get_script_tags` | `wf6CfVJj9PQ` |
+| `hb_shape` | `dM3hP4y99rM` |
+
+### Functional
+
+- [Blob and face lifecycle](../../../core/libs/prx/libharfbuzz/Lifecycle.cpp): Console ABI, HarfBuzz version, object layouts and allocation failures are unverified. The three exports follow pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/tree/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc), including immediate data destruction for copied, empty or oversized blobs and final-reference destruction for borrowed blobs and faces. Table and destruction callbacks cross through guest System V bridges. Backend-owned objects cannot be mixed with foreign HarfBuzz layouts. Bridge allocation failures throw `std::bad_alloc`; unsupported memory modes and null data for nonzero lengths below 2 GiB throw before taking caller ownership. Other inaccessible pointers and callbacks are not validated, and source memory for borrowed blobs must remain valid until the backend releases it. No console or title execution was performed.
+
+- [The eleven buffer exports](../../../core/libs/prx/libharfbuzz/Buffer.cpp) have no console or title verification. Their signatures, 20-byte glyph records, Unicode properties, UTF-16 decoding and buffer behavior follow the pinned [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/tree/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc) public API and backend; the console revision and its Unicode data are unknown. Buffers are opaque host allocations, not console object layouts. Returned arrays belong to that backend and remain valid only until the buffer contents change. Segment-property guessing uses the host process's default language, not a console language setting. Handles from another HarfBuzz instance cannot be mixed with these buffers. Null buffer handles throw except for destruction, which accepts null as the public API does; console null-handle behavior is unverified. Shaping and FreeType face integration remain throwing exports.
+
+- [Font functions](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp): Console ABI, HarfBuzz version and behavior have not been measured. Fourteen font lifecycle, callback-table, immutability, scale and ppem APIs follow source-built [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-font.h). They use backend-owned opaque handles and bridge native callbacks and destruction to guest System V callbacks. Callback data and font data are distinct; replacement and final release follow the backend's reference counting. Foreign object layouts and forwarding from `libSceVshHarfBuzz` are not established. Bridge allocation failure throws `std::bad_alloc`; no console allocation-failure equivalence is claimed.
+- [Font callbacks](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp) are exercised by runtime tests using actual exports before and after NID patching and through native shaping with guest callbacks. They establish adapter behavior only. Null destruction and null-face construction follow the backend; other null font/function-table operations throw because no console contract is established. No title compatibility is claimed.
+
+- [Legacy glyph setter](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp): A null callback throws before changing the table or taking ownership of caller data. The pinned deprecated backend setter installs trampolines that later invoke that null pointer; this host-safety rejection has not been measured on a console. Modern nominal/variation null setters still reset their callbacks through the backend.
+- [hb_ot_tag_to_script](../../../core/libs/prx/libharfbuzz/Export.cpp) follows a disassembly of firmware 13.42 `libSceVshHarfBuzz.sprx` (export at `0x4a850`) and has not been measured on a console. Tags ending in `2` or `3` map through the ten Indic version-2 tags or to `Zzzz`; `DFLT` returns 0; `math` returns `Zmth`; a space in the third or fourth byte repeats the previous byte; any other tag only clears bit 5 of its first byte without validating letters. It does not call the pinned HarfBuzz backend, so it may differ from HarfBuzz 10.0.1 on some tags.

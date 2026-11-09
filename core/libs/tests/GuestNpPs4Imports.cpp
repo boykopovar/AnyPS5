@@ -73,6 +73,11 @@ void CheckTrophyInfo() {
     game.size = sizeof(game) - 8u;
     Require(sceNpTrophyGetGameInfo(context, handle, &game, nullptr) == TrophyInvalidArgument, "game details of a wrong size accepted");
     game.size = sizeof(game);
+    gameData.size = sizeof(gameData) - 8u;
+    Require(sceNpTrophyGetGameInfo(context, handle, nullptr, &gameData) == TrophyInvalidArgument, "game data of a wrong size accepted");
+    Require(sceNpTrophyGetGameInfo(context, handle, &game, &gameData) == TrophyInvalidArgument, "game data of a wrong size accepted with details");
+    Require(sceNpTrophyGetGameInfo(context, -1, &game, &gameData) == TrophyInvalidArgument, "game data of a wrong size accepted with an invalid handle");
+    gameData.size = sizeof(gameData);
     std::memset(game.title, 'x', sizeof(game.title));
     Require(sceNpTrophyGetGameInfo(context, handle, &game, &gameData) == 0, "game info refused");
     Require(game.numTrophies == 3u && game.numGroups == 0u && game.numPlatinum + game.numGold + game.numSilver + game.numBronze == 0u && game.title[0] == '\0', "game details are not the package's three trophies with unknown grades");

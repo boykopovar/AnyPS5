@@ -9,10 +9,6 @@
 #include "prx/libSceAgc/Shader/include/ShaderUtils.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 
-#ifndef APS5_AGC_CREATE_LOG
-#define APS5_AGC_CREATE_LOG 1
-#endif
-
 extern "C" {
 
 int APS5_VABI sceAgcCreateShader(Shader** dst, void* header, const volatile void* code) {
@@ -63,7 +59,6 @@ int APS5_VABI sceAgcCreateShader(Shader** dst, void* header, const volatile void
 
     AgcDriverRegisterShader_nid_postfix(h);
     *dst = h;
-    // APS5_LOG_OUT_IF(APS5_AGC_CREATE_LOG, "OK type=%u sh_regs=%u shader_size=%u", h->type, h->num_sh_registers, h->shader_size);
     return 0;
 }
 

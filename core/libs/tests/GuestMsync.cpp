@@ -54,6 +54,8 @@ int main() {
     Require(Fails(mapped, Page, Async | Invalidate, Invalid));
     const auto top = std::numeric_limits<std::uintptr_t>::max() & ~(Page - 1);
     Require(Fails(reinterpret_cast<void*>(top), 2 * Page, Sync, Invalid));
+    Require(Fails(mapped, std::numeric_limits<std::size_t>::max() - (Page - 1) + 1, Sync, Invalid));
+    Require(Fails(mapped + 1, std::numeric_limits<std::size_t>::max() - (Page - 1), Sync, Invalid));
     Require(Fails(mapped, Page, Invalidate, Busy));
     Require(Fails(mapped, 3 * Page, Sync | Invalidate, Busy));
     Require(Fails(mapped + 1, 16, Invalidate, Busy));

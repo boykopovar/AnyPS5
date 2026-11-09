@@ -28,6 +28,8 @@ public:
     void SaveNow();
     void SaveUnlessBusy();
 
+    friend struct PipelineCacheTestAccess;
+
 private:
     struct FileHeader {
         std::uint32_t magic;
@@ -64,6 +66,12 @@ private:
     std::condition_variable wake;
     bool stopping = false;
     std::thread saver;
+};
+
+struct PipelineCacheTestAccess {
+    static bool HasHeader(const PipelineCache& cache) {
+        return cache.readHeader().has_value();
+    }
 };
 
 }
