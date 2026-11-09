@@ -74,9 +74,7 @@ static void ReservedCoreTests() {
 
     std::vector<CpuTopology::CpuSet> five;
     AddCores(five, 5, 2, 0, 0);
-    std::vector<CpuTopology::CpuSet> six;
-    AddCores(six, 6, 2, 0, 0);
-    Require(!ChooseReservedCore(six, {}, std::nullopt).has_value(), "a host with fewer than eight cores reserves none");
+    Require(!ChooseReservedCore(five, {}, std::nullopt).has_value(), "a host with fewer than six cores reserves none");
     const auto requested = ChooseReservedCore(five, {}, 3u);
     Require(requested.has_value() && requested->chosen.logical == 3 && requested->chosen.core == 2, "a requested logical processor picks its core on any host");
     Require(requested->others == IdsExcept(five, {2, 3}), "a requested core leaves both of its logical processors");
@@ -87,17 +85,17 @@ static void ReservedCoreTests() {
     Require(!ChooseReservedCore(one, {}, 0u).has_value(), "a reservation that leaves the other threads no CPU set is refused");
 
     std::vector<CpuTopology::CpuSet> hybrid;
-    AddCores(hybrid, 8, 2, 1, 0);
+    AddCores(hybrid, 6, 2, 1, 0);
     AddCores(hybrid, 8, 1, 0, 0);
     const auto performance = ChooseReservedCore(hybrid, {}, std::nullopt);
-    Require(performance.has_value() && performance->chosen.logical == 14 && performance->chosen.efficiencyClass == 1, "a hybrid host reserves its highest-numbered performance core");
-    Require(performance->others == IdsExcept(hybrid, {14, 15}), "a hybrid host leaves its efficiency cores to the other threads");
+    Require(performance.has_value() && performance->chosen.logical == 10 && performance->chosen.efficiencyClass == 1, "a hybrid host reserves its highest-numbered performance core");
+    Require(performance->others == IdsExcept(hybrid, {10, 11}), "a hybrid host leaves its efficiency cores to the other threads");
     std::vector<CpuTopology::CpuSet> fewPerformance;
-    AddCores(fewPerformance, 6, 2, 1, 0);
+    AddCores(fewPerformance, 4, 2, 1, 0);
     AddCores(fewPerformance, 8, 1, 0, 0);
-    Require(!ChooseReservedCore(fewPerformance, {}, std::nullopt).has_value(), "a hybrid host with fewer than eight performance cores reserves none");
+    Require(!ChooseReservedCore(fewPerformance, {}, std::nullopt).has_value(), "a hybrid host with fewer than six performance cores reserves none");
     auto performanceParked = hybrid;
-    for (std::size_t index = 0; index < 16; ++index) performanceParked[index].parked = true;
+    for (std::size_t index = 0; index < 12; ++index) performanceParked[index].parked = true;
     Require(!ChooseReservedCore(performanceParked, {}, std::nullopt).has_value(), "a hybrid host with every performance core parked reserves none");
 
     std::vector<CpuTopology::CpuSet> dual;
@@ -117,7 +115,7 @@ static void ReservedCoreTests() {
     std::vector<CpuTopology::CpuSet> quads;
     AddCores(quads, 4, 2, 0, 0);
     AddCores(quads, 4, 2, 0, 1);
-    Require(!ChooseReservedCore(quads, {}, std::nullopt).has_value(), "fewer than eight cores sharing the first cache reserve none");
+    Require(!ChooseReservedCore(quads, {}, std::nullopt).has_value(), "fewer than six cores sharing the first cache reserve none");
 
     std::vector<CpuTopology::CpuSet> groupOneFirst;
     AddCores(groupOneFirst, 8, 2, 0, 0, 1);
