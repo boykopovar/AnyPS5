@@ -56,7 +56,7 @@ bool Equals(const GuestSizeMetrics& m, std::uint16_t xPpem, std::uint16_t yPpem,
 GuestSizeMetrics Request(std::uint32_t type, std::int64_t width, std::int64_t height, std::uint32_t hori, std::uint32_t vert) {
     Fixture fixture(1);
     const GuestSizeRequestRec request{type, width, height, hori, vert};
-    FT_Request_Metrics_nid_postfix(&fixture.face, &request);
+    Require(FT_Request_Metrics_nid_postfix(&fixture.face, &request) == 0, "a valid request succeeds");
     return fixture.size.metrics;
 }
 
@@ -76,6 +76,14 @@ void RequestMetrics() {
     Fixture noRequest(2);
     FT_Request_Metrics_nid_postfix(&noRequest.face, nullptr);
     Require(Equals(noRequest.size.metrics, 0, 0, 65536, 65536, 0, 0, 0, 0), "a face without outlines does not read the request");
+
+    Fixture flat(1);
+    flat.face.ascender = 0;
+    flat.face.descender = 0;
+    const GuestSizeMetrics before = flat.size.metrics;
+    const GuestSizeRequestRec realDim{1, 0, 20 * 64, 0, 0};
+    Require(FT_Request_Metrics_nid_postfix(&flat.face, &realDim) == 0x85, "a zero face dimension is a division by zero");
+    Require(std::memcmp(&before, &flat.size.metrics, sizeof(before)) == 0, "a division by zero leaves the metrics untouched");
 
     Fixture scalable(1);
     Require(Throws([&] { FT_Request_Metrics_nid_postfix(&scalable.face, nullptr); }), "a null request on a scalable face throws");
