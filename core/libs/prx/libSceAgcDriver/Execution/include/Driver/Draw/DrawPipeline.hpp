@@ -164,6 +164,7 @@ private:
     std::deque<Pending> pending;
     std::vector<Job> ran;
     std::exception_ptr failure;
+    std::uint32_t idleWaiters = 0;
     bool running = false;
     bool sleeping = false;
     std::thread thread;
