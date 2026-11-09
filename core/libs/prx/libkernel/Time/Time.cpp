@@ -609,6 +609,19 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+#ifdef _WIN32
+    constexpr std::uint32_t monotonicClocks = (1u << 4) | (1u << 5) | (1u << 7) | (1u << 8) | (1u << 11) | (1u << 12);
+    if (static_cast<std::uint32_t>(clockId) < 32 && ((monotonicClocks >> clockId) & 1u) != 0) {
+        const std::uint64_t nanos = GetMonotonicNanos();
+        if (tp == nullptr) {
+            *__error_nid_postfix() = GUEST_EFAULT;
+            return -1;
+        }
+        tp->tv_sec = static_cast<std::int64_t>(nanos / 1000000000ULL);
+        tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
+        return 0;
+    }
+#endif
     if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
