@@ -250,6 +250,7 @@ constexpr std::array<KeyboardGlyphRows, 8> KeyboardSymbolGlyphs{{
 std::mutex systemOverlayMutex;
 std::optional<ImeKeyboardView> systemOverlay;
 std::optional<ModalDialogView> systemDialog;
+std::optional<HostMenuView> systemHostMenu;
 
 std::int32_t gridWidth(const ImeKeyboardView& view) {
     return view.columns * KeyboardMetrics::KeyWidth + (view.columns - 1) * KeyboardMetrics::Gap;
@@ -585,6 +586,11 @@ OverlayLayout LayOutHostMenu(const HostMenuView& view, VkExtent2D extent) {
 std::optional<ModalDialogView> SystemDialogView() {
     std::lock_guard lock(systemOverlayMutex);
     return systemDialog;
+}
+
+std::optional<HostMenuView> SystemHostMenuView() {
+    std::lock_guard lock(systemOverlayMutex);
+    return systemHostMenu;
 }
 
 std::optional<OverlayLayout> SystemOverlayLayout(VkExtent2D extent) {
