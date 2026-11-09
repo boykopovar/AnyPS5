@@ -78,6 +78,13 @@ int APS5_VABI SSL_CTX_set_max_proto_version_nid_postfix(LibreSsl3SslCtx* context
                            context->minTlsVersion, context->maxTlsVersion, context->maxProtoVersion);
 }
 
+std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context, std::int64_t timeout) {
+    if (!context) return 0;
+    const auto previous = context->sessionTimeout;
+    context->sessionTimeout = timeout;
+    return previous;
+}
+
 std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl, unsigned char* out, std::size_t maxOut) {
     constexpr std::size_t randomSize = sizeof(LibreSsl3Ssl3State::clientRandom);
     if (!out) return randomSize;
