@@ -1,4 +1,4 @@
-add_library(libScePosixForWebKit SHARED EXCLUDE_FROM_ALL Export.cpp Resolver.cpp Filesystem.cpp Wrap.cpp)
+add_library(libScePosixForWebKit SHARED EXCLUDE_FROM_ALL Export.cpp Resolver.cpp Filesystem.cpp TemporaryFile.cpp Wrap.cpp)
 target_include_directories(libScePosixForWebKit PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libScePosixForWebKit PRIVATE libSceNet libkernel_sys libSceLibcInternal)
 if(WIN32)
@@ -45,6 +45,26 @@ if(BUILD_TESTING)
         target_link_libraries(guest_resolver_tests PRIVATE ws2_32)
         set_tests_properties(guest_resolver PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_resolver_system_errors_tests
+            ${LIBS_INCLUDE_DIR}/tests/ResolverSystemErrors.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Resolver.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/HostErrno.cpp)
+        target_include_directories(guest_resolver_system_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_options(guest_resolver_system_errors_tests PRIVATE -ffunction-sections -fdata-sections)
+        target_link_options(guest_resolver_system_errors_tests PRIVATE
+            -Wl,--gc-sections -Wl,--wrap=getaddrinfo -Wl,--wrap=getnameinfo)
+        configure_host_test_executable(guest_resolver_system_errors_tests)
+        add_test(NAME guest_resolver_system_errors COMMAND guest_resolver_system_errors_tests)
+        set_tests_properties(guest_resolver_system_errors PROPERTIES TIMEOUT 20)
+        add_test_executable(guest_legacy_resolver_system_errors_tests ${LIBS_INCLUDE_DIR}/tests/LegacyResolverSystemErrors.cpp)
+        target_include_directories(guest_legacy_resolver_system_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_legacy_resolver_system_errors_tests PRIVATE libScePosixForWebKit libSceNet libc)
+        target_link_options(guest_legacy_resolver_system_errors_tests PRIVATE LINKER:--export-dynamic-symbol=gethostbyname_r)
+        configure_windows_unwind(guest_legacy_resolver_system_errors_tests)
+        add_test(NAME guest_legacy_resolver_system_errors COMMAND guest_legacy_resolver_system_errors_tests)
+        set_tests_properties(guest_legacy_resolver_system_errors PROPERTIES TIMEOUT 20)
     endif()
     add_test_executable(guest_service_database_tests ${LIBS_INCLUDE_DIR}/tests/GuestServiceDatabase.cpp)
     target_include_directories(guest_service_database_tests PRIVATE ${LIBS_INCLUDE_DIR})

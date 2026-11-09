@@ -74,15 +74,7 @@ int APS5_VABI __truncdfhf2_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_atomic_wait_get_deadline_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_atomic_wait_get_remaining_timeout_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -99,10 +91,6 @@ int APS5_VABI __std_max_element_f_nid_postfix() {
 }
 
 int APS5_VABI sceLibcInternalPrimitiveMallocStats_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

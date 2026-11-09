@@ -21,6 +21,13 @@ int ClampToInteger(float value) {
     return static_cast<int>(value);
 }
 
+int TruncateToIntegerOrMin(float value) {
+    if (!(value >= -2147483648.0f && value < 2147483648.0f)) {
+        return std::numeric_limits<int>::min();
+    }
+    return static_cast<int>(value);
+}
+
 int ClampToInteger(double value) {
     if (value >= static_cast<double>(std::numeric_limits<int>::max())) {
         return std::numeric_limits<int>::max();
@@ -98,10 +105,13 @@ bool IsRoundedRectRenderable(const RoundedRect& rr) {
     int blh = rr.m_radii.m_bottomLeft.m_height.m_value;
     int brw = rr.m_radii.m_bottomRight.m_width.m_value;
     int brh = rr.m_radii.m_bottomRight.m_height.m_value;
+    auto saturatedSum = [](int a, int b) {
+        return static_cast<int>(std::min<std::int64_t>(static_cast<std::int64_t>(a) + b, std::numeric_limits<int>::max()));
+    };
     return tlw >= 0 && tlh >= 0 && blw >= 0 && blh >= 0
         && trw >= 0 && trh >= 0 && brw >= 0 && brh >= 0
-        && (tlw + trw) <= w && (blw + brw) <= w
-        && (tlh + blh) <= h && (trh + brh) <= h;
+        && saturatedSum(tlw, trw) <= w && saturatedSum(blw, brw) <= w
+        && saturatedSum(tlh, blh) <= h && saturatedSum(trh, brh) <= h;
 }
 
 }  // namespace
@@ -353,10 +363,10 @@ WebCore::IntSize APS5_VABI _ZNK7WebCore7IntSize18constrainedBetweenERKS0_S2_(
 }
 
 void APS5_VABI _ZN7WebCore7IntRect5scaleEf(WebCore::IntRect* self, float s) {
-    self->m_location.m_x = static_cast<int>(self->m_location.m_x * s);
-    self->m_location.m_y = static_cast<int>(self->m_location.m_y * s);
-    self->m_size.m_width = static_cast<int>(self->m_size.m_width * s);
-    self->m_size.m_height = static_cast<int>(self->m_size.m_height * s);
+    self->m_location.m_x = WebCore::TruncateToIntegerOrMin(self->m_location.m_x * s);
+    self->m_location.m_y = WebCore::TruncateToIntegerOrMin(self->m_location.m_y * s);
+    self->m_size.m_width = WebCore::TruncateToIntegerOrMin(self->m_size.m_width * s);
+    self->m_size.m_height = WebCore::TruncateToIntegerOrMin(self->m_size.m_height * s);
 }
 
 void APS5_VABI _ZN7WebCore7IntRect5uniteERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other) {
