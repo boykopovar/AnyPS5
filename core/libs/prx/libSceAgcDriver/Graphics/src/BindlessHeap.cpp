@@ -23,6 +23,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <spirv/unified1/spirv.hpp>
@@ -1391,7 +1392,11 @@ void NoteHeapStageReason(HeapStageReason reason) {
 }
 
 bool HeapCostTimed() {
-    return pipelineStats();
+    static const bool timed = [] {
+        const char* stats = std::getenv("APS5_PIPELINE_STATS");
+        return stats != nullptr && std::string_view(stats) == "2";
+    }();
+    return timed;
 }
 
 void NoteHeapCost(HeapCost cost, std::uint64_t nanoseconds) {
