@@ -41,6 +41,12 @@ void CheckAsctime(const char* name, const GuestTm& time, const char* expected) {
         std::fprintf(stderr, "asctime %s: expected \"%s\", received \"%s\"\n", name, expected, result);
         correct = false;
     }
+    char buffer[26]{};
+    const char* reentrant = asctime_r_nid_postfix(&time, buffer);
+    if (reentrant != buffer || std::strcmp(buffer, expected) != 0) {
+        std::fprintf(stderr, "asctime_r %s: expected \"%s\", received \"%s\"\n", name, expected, buffer);
+        correct = false;
+    }
 }
 
 }
@@ -80,6 +86,23 @@ int main() {
         char name[24];
         std::snprintf(name, sizeof(name), "index %d", value);
         Check(name, time, "%a|%A|%b|%B|%m|%u|%w", expected[value + 3]);
+    }
+
+    struct WrappedName {
+        int value;
+        const char* expected;
+    };
+    constexpr WrappedName wrapped[] = {
+        {-2147483647 - 1, "Sun|Sunday|Jan|January"}, {-1884104312, "|||"}, {-1073741825, "|||"}, {-1073741824, "Sun|Sun|Jan|Jan"},
+        {536870912, "|||"}, {1073741823, "|||"}, {1073741824, "Sun|Sun|Jan|Jan"}, {1526330116, "Sun|Sun|Jan|Jan"}, {2147483647, "Sun|Sun|Jan|Jan"},
+    };
+    for (const auto& item : wrapped) {
+        GuestTm time = base;
+        time.tm_wday = item.value;
+        time.tm_mon = item.value;
+        char name[32];
+        std::snprintf(name, sizeof(name), "wrapped index %d", item.value);
+        Check(name, time, "%a|%A|%b|%B", item.expected);
     }
 
     struct Field {
@@ -254,6 +277,13 @@ int main() {
     past.tm_wday = 7;
     past.tm_mon = 12;
     CheckAsctime("names past the tables", past, "   2 13:05:09 2026\n");
+    GuestTm wrappedNames = base;
+    wrappedNames.tm_wday = 1073741824;
+    wrappedNames.tm_mon = -1073741825;
+    CheckAsctime("wrapped names", wrappedNames, "Sun   2 13:05:09 2026\n");
+    wrappedNames.tm_wday = -1073741825;
+    wrappedNames.tm_mon = -2147483647 - 1;
+    CheckAsctime("wrapped names from INT_MIN", wrappedNames, " Jan  2 13:05:09 2026\n");
     GuestTm big = base;
     big.tm_mday = 40;
     big.tm_hour = 25;

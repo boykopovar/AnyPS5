@@ -18,4 +18,5 @@ int main() {
     Require(Throws(nullptr, &value) && Throws(&value, nullptr) && Throws(nullptr, nullptr));
     Require(value == -1);
     Require(sceKernelIsTrinityMode() == 0);
+    Require(sceKernelHasTrinityMode() == 0);
 }

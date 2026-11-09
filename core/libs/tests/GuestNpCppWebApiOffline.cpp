@@ -156,6 +156,178 @@ static void TestSessionManagerParameterLifecycles() {
     Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0, "the context did not terminate");
 }
 
+static void TestLeaderboardsParameterLifecycles() {
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(parameter, context, 7) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinitionC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinitionD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition10initializeEPNS1_6Common10LibContextEi(parameter, context, 7) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectIdC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectIdD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectId9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectId10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "object" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeDataC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeDataD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeData9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeData10initializeEPNS1_6Common10LibContextEiNS5_19XPsnAtomicOperationEPKc(parameter, context, 7, 0, present ? "object" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScoreC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScoreD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScore9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            const int result = _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScore10initializeEPNS1_6Common10LibContextEiNS6_12IntrusivePtrINS3_22RecordScoreRequestBodyEEE(parameter, context, 7, present ? &body : &missingBody);
+            if (present || result != ParameterBodyMissing) return result;
+            return ParameterInvalidArgument;
+        });
+}
+
+static void TestUserProfileParameterLifecycles() {
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsC1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsD1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "me" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesC1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesD1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "1,2" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersC1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersD1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers10initializeEPNS1_6Common10LibContextE(parameter, context) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusC1Ev,
+            _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusD1Ev,
+            _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus10initializeEPNS1_6Common10LibContextEm(parameter, context, 1) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityC1Ev,
+            _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityD1Ev,
+            _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            const auto initialize = _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_19WebApiFilterRequestEEE;
+            if (present) return initialize(parameter, context, "en-US", "0", &body);
+            Require(initialize(parameter, context, "en-US", "0", &missingBody) == ParameterBodyMissing, "initialize accepted a missing filter request");
+            Require(initialize(parameter, context, nullptr, "0", &body) == ParameterInvalidArgument, "initialize accepted a null locale");
+            return initialize(parameter, context, "en-US", nullptr, &body);
+        });
+}
+
+template <typename TInitialize>
+static int InitializeSessionWithBody(TInitialize initialize, void* parameter, const std::uint64_t* context, bool present) {
+    if (present) return initialize(parameter, context, "session", &body);
+    Require(initialize(parameter, context, "session", &missingBody) == ParameterBodyMissing, "initialize accepted a missing request body");
+    return initialize(parameter, context, nullptr, &body);
+}
+
+static void TestPlayerSessionParameterLifecycles() {
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "session" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_49PostPlayerSessionsSessionIdInvitationsRequestBodyEEE, parameter, context, present);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_39PatchPlayerSessionsSessionIdRequestBodyEEE, parameter, context, present);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE, parameter, context, present);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersC1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersD1Ev,
+            _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return InitializeSessionWithBody(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_60PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyEEE, parameter, context, present);
+        });
+}
+
 static void TestIteratorDestructors() {
     unsigned char iterator[0x20];
     std::memset(iterator, 0x5a, sizeof(iterator));
@@ -217,6 +389,9 @@ static void TestVectorSizeAndElements() {
 int main() {
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
+    TestLeaderboardsParameterLifecycles();
+    TestUserProfileParameterLifecycles();
+    TestPlayerSessionParameterLifecycles();
     TestIteratorDestructors();
     TestVectorSizeAndElements();
     std::puts("NpCppWebApi offline tests passed");

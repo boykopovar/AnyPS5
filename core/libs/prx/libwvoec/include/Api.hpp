@@ -1,0 +1,85 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libwvoecUnknown00(void);
+int APS5_VABI libwvoecUnknown01(void);
+int APS5_VABI libwvoecUnknown02(void);
+int APS5_VABI libwvoecUnknown03(void);
+int APS5_VABI libwvoecUnknown04(void);
+int APS5_VABI libwvoecUnknown05(void);
+int APS5_VABI libwvoecUnknown06(void);
+int APS5_VABI libwvoecUnknown07(void);
+int APS5_VABI libwvoecUnknown08(void);
+int APS5_VABI libwvoecUnknown09(void);
+int APS5_VABI libwvoecUnknown10(void);
+int APS5_VABI libwvoecUnknown11(void);
+int APS5_VABI libwvoecUnknown12(void);
+int APS5_VABI libwvoecUnknown13(void);
+int APS5_VABI libwvoecUnknown14(void);
+int APS5_VABI libwvoecUnknown15(void);
+int APS5_VABI libwvoecUnknown16(void);
+int APS5_VABI libwvoecUnknown17(void);
+int APS5_VABI libwvoecUnknown18(void);
+int APS5_VABI libwvoecUnknown19(void);
+int APS5_VABI libwvoecUnknown20(void);
+int APS5_VABI libwvoecUnknown21(void);
+int APS5_VABI libwvoecUnknown22(void);
+int APS5_VABI libwvoecUnknown23(void);
+int APS5_VABI libwvoecUnknown24(void);
+int APS5_VABI libwvoecUnknown25(void);
+int APS5_VABI libwvoecUnknown26(void);
+int APS5_VABI libwvoecUnknown27(void);
+int APS5_VABI libwvoecUnknown28(void);
+int APS5_VABI libwvoecUnknown29(void);
+int APS5_VABI libwvoecUnknown30(void);
+int APS5_VABI libwvoecUnknown31(void);
+int APS5_VABI libwvoecUnknown32(void);
+int APS5_VABI libwvoecUnknown33(void);
+int APS5_VABI libwvoecUnknown34(void);
+int APS5_VABI libwvoecUnknown35(void);
+int APS5_VABI libwvoecUnknown36(void);
+int APS5_VABI libwvoecUnknown37(void);
+int APS5_VABI libwvoecUnknown38(void);
+int APS5_VABI libwvoecUnknown39(void);
+int APS5_VABI libwvoecUnknown40(void);
+int APS5_VABI libwvoecUnknown41(void);
+int APS5_VABI libwvoecUnknown42(void);
+int APS5_VABI libwvoecUnknown43(void);
+int APS5_VABI libwvoecUnknown44(void);
+int APS5_VABI libwvoecUnknown45(void);
+int APS5_VABI libwvoecUnknown46(void);
+int APS5_VABI libwvoecUnknown47(void);
+int APS5_VABI libwvoecUnknown48(void);
+int APS5_VABI libwvoecUnknown49(void);
+int APS5_VABI libwvoecUnknown50(void);
+int APS5_VABI libwvoecUnknown51(void);
+int APS5_VABI libwvoecUnknown52(void);
+int APS5_VABI libwvoecUnknown53(void);
+int APS5_VABI libwvoecUnknown54(void);
+int APS5_VABI libwvoecUnknown55(void);
+int APS5_VABI libwvoecUnknown56(void);
+int APS5_VABI libwvoecUnknown57(void);
+int APS5_VABI libwvoecUnknown58(void);
+int APS5_VABI libwvoecUnknown59(void);
+int APS5_VABI libwvoecUnknown60(void);
+int APS5_VABI libwvoecUnknown61(void);
+int APS5_VABI libwvoecUnknown62(void);
+int APS5_VABI libwvoecUnknown63(void);
+int APS5_VABI libwvoecUnknown64(void);
+int APS5_VABI libwvoecUnknown65(void);
+int APS5_VABI libwvoecUnknown66(void);
+int APS5_VABI libwvoecUnknown67(void);
+int APS5_VABI libwvoecUnknown68(void);
+int APS5_VABI libwvoecUnknown69(void);
+int APS5_VABI libwvoecUnknown70(void);
+int APS5_VABI libwvoecUnknown71(void);
+int APS5_VABI libwvoecUnknown72(void);
+int APS5_VABI libwvoecUnknown73(void);
+int APS5_VABI libwvoecUnknown74(void);
+int APS5_VABI libwvoecUnknown75(void);
+int APS5_VABI libwvoecUnknown76(void);
+
+}

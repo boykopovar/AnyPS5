@@ -228,8 +228,8 @@ std::array<float, 4> Texel(const std::uint8_t* target, std::uint32_t x, std::uin
 
 enum class Outcome { Kept, Lost, Skipped };
 
-Outcome Run(AgcDriver::VulkanDevice& device, bool watched, bool seeded, bool hookRead) {
-    const auto name = std::string(seeded ? "seeded" : "unseeded") + ", " + (watched ? "write-watched" : "unwatched") + " memory" + (hookRead ? ", driver read before the store" : "");
+Outcome Run(AgcDriver::VulkanDevice& device, bool watched, bool seeded, bool hookRead, bool leaveWatch = false) {
+    const auto name = std::string(seeded ? "seeded" : "unseeded") + ", " + (watched ? "write-watched" : "unwatched") + " memory" + (hookRead ? ", driver read before the store" : "") + (leaveWatch ? ", left the watch while drawn" : "");
     Block block(watched ? std::size_t{16} * BlockBytes : BlockBytes, watched);
     std::fill(block.data, block.data + block.bytes, std::uint8_t{0xff});
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -253,6 +253,10 @@ Outcome Run(AgcDriver::VulkanDevice& device, bool watched, bool seeded, bool hoo
         for (std::uint32_t y = 0; y < Height; ++y) std::memset(block.data + y * RowBytes, 0x5a, Drawn * 16u);
     }
     Draw(device, color, Program(1, true), Drawn);
+    if (leaveWatch) {
+        AgcDriver::GuestMemory::Unwatch(block.Address(), block.bytes);
+        Require(!AgcDriver::GuestMemory::Watched(block.Address(), TargetBytes), name + ": the drawn target's memory is still write-watched");
+    }
     for (std::uint32_t y = 0; y < Height; ++y) std::memset(block.data + y * RowBytes + Drawn * 16u, 0x42, RowBytes - Drawn * 16u);
     const bool watchedAtStore = AgcDriver::GuestMemory::Watched(block.Address(), TargetBytes);
     if (hookRead) {
@@ -295,6 +299,11 @@ int main() {
                     kept = kept && outcome != Outcome::Lost;
                 }
             }
+        }
+        for (const bool seeded : {false, true}) {
+            const auto outcome = Run(*device, true, seeded, false, true);
+            ran = ran || outcome != Outcome::Skipped;
+            kept = kept && outcome != Outcome::Lost;
         }
         if (!ran) {
             std::puts("linear target CPU write test skipped: no host import on this device");

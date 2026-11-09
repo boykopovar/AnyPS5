@@ -12,8 +12,16 @@ from test_linux_load_alignment import loads
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_SCE_RELRO = 0x61000010
+PT_GNU_RELRO = 0x6474E552
 DEFAULT_BASE = 0x400000
 PT_SCE_VERSION = 0x6FFFFF01
+
+
+def gnu_relro_headers(elf):
+    phoff, = struct.unpack_from("<Q", elf, 0x20)
+    phentsize, phnum = struct.unpack_from("<HH", elf, 0x36)
+    headers = [struct.unpack_from("<IIQQQQQQ", elf, phoff + index * phentsize) for index in range(phnum)]
+    return [header for header in headers if header[0] == PT_GNU_RELRO]
 
 
 def fixture(extra):
@@ -80,6 +88,8 @@ def main():
                     data = output.read_bytes()
                     relro = [load for load in loads(data) if load[3] <= DEFAULT_BASE + 0x1000 < load[3] + load[6]]
                     assert len(relro) == 1 and relro[0][1] == 6 and relro[0][3] == DEFAULT_BASE + 0x1000 and relro[0][5:7] == (0x1000, 0x1000), (name, relro)
+                    gnu_relro = gnu_relro_headers(data)
+                    assert len(gnu_relro) == 1 and gnu_relro[0][1] == 4 and gnu_relro[0][3] == DEFAULT_BASE + 0x1000 and gnu_relro[0][5:7] == (0x1000, 0x1000), (name, gnu_relro)
                     tags, _ = dynamic_strings(data)
                     start = file_offset(data, loads(data), tags[7])
                     assert [struct.unpack_from("<QQq", data, offset) for offset in range(start, start + tags[8], 24)] == [(DEFAULT_BASE + 0x1000, 8, DEFAULT_BASE + 0x210)], name

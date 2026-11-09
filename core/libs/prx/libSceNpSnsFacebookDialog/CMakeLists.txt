@@ -1,14 +1,15 @@
 add_library(libSceNpSnsFacebookDialog SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_link_libraries(libSceNpSnsFacebookDialog PRIVATE libSceIme)
 target_include_directories(libSceNpSnsFacebookDialog PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpSnsFacebookDialog)
 
 if(BUILD_TESTING)
     add_test_executable(guest_np_sns_facebook_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSnsFacebookDialog.cpp)
     target_include_directories(guest_np_sns_facebook_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_sns_facebook_dialog_tests PRIVATE libSceNpSnsFacebookDialog)
+    target_link_libraries(guest_np_sns_facebook_dialog_tests PRIVATE libSceNpSnsFacebookDialog libSceIme)
     add_test(NAME guest_np_sns_facebook_dialog COMMAND guest_np_sns_facebook_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_np_sns_facebook_dialog PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSnsFacebookDialog>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSnsFacebookDialog>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 endif()

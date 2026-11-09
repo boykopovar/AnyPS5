@@ -260,7 +260,9 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     for (auto* next = static_cast<const VkBaseInStructure*>(rendering.pNext); next != nullptr; next = next->pNext) {
         if (next->sType != VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_NV) continue;
         const auto& counts = *reinterpret_cast<const VkAttachmentSampleCountInfoNV*>(next);
-        sampleCounts.emplace(std::vector<VkSampleCountFlagBits>(counts.pColorAttachmentSamples, counts.pColorAttachmentSamples + counts.colorAttachmentCount), counts.depthStencilAttachmentSamples);
+        std::vector<VkSampleCountFlagBits> colors;
+        if (counts.colorAttachmentCount != 0) colors.assign(counts.pColorAttachmentSamples, counts.pColorAttachmentSamples + counts.colorAttachmentCount);
+        sampleCounts.emplace(std::move(colors), counts.depthStencilAttachmentSamples);
     }
     const auto attachmentSamples = [](const std::pair<std::vector<VkSampleCountFlagBits>, VkSampleCountFlagBits>& counts) {
         return VkAttachmentSampleCountInfoNV{VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_NV, nullptr, static_cast<std::uint32_t>(counts.first.size()), counts.first.empty() ? nullptr : counts.first.data(), counts.second};

@@ -208,6 +208,14 @@ int APS5_VABI sceUltReaderWriterLockUnlockWrite(void* rwlock) {
     return ULT_OK;
 }
 
+int APS5_VABI _sceUltReaderWriterLockOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltReaderWriterLockOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltReaderWriterLockCreate(void* rwlock, const char* name, void* waitingQueueResourcePool, const UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltReaderWriterLockCreate(rwlock, name, waitingQueueResourcePool, optParam, buildVersion);
+}
+
 int APS5_VABI sceUltGetReaderWriterLockInfo(void* object, UltReaderWriterLockInfo* info, UltWaitingThreadInfo* waitingThreads, std::uint32_t capacity) {
     if (object == nullptr || info == nullptr) return ULT_ERROR_NULL;
     if (waitingThreads == nullptr && capacity != 0) return ULT_ERROR_NULL;

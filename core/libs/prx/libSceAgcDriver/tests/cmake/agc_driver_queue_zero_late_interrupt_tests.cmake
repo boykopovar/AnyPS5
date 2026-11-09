@@ -1,0 +1,1 @@
+target_link_libraries(agc_driver_queue_zero_late_interrupt_tests PRIVATE libkernel)
