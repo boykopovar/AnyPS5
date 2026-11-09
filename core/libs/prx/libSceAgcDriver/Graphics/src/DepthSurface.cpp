@@ -941,7 +941,7 @@ public:
     void MarkStencilStale(bool written = false) {
         if (!StencilMirrorable()) return;
         const auto [begin, end] = staleStencilRange(*this);
-        if (written || stencilBaseline.size() != static_cast<std::size_t>(end - begin)) TakeStencilBaseline();
+        if (stencilBaseline.size() != static_cast<std::size_t>(end - begin) || (written && !GuestMemory::EqualsCommittedUnsynced(begin, stencilBaseline))) TakeStencilBaseline();
         stencilStale = true;
         stencilMark = nextPlaneSerial();
         noteStalePlane(begin, end);
