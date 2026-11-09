@@ -4,6 +4,7 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
+- [SSL_is_quic](../../../core/libs/prx/libSceLibreSsl3/src/SslIsQuic.cpp) - returns 1 when the 184-byte SSL object carries a QUIC method pointer, 0 otherwise or for a null SSL. The PS5 layout and console behaviour are unverified. Closes when: compared with the console.
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
 - [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem` and `tls_config_set_ciphers` still throw; `tls_config_parse_protocols` is implemented in `TlsProtocols.cpp`. Native PS5 ABI and option interoperability are unverified.
@@ -78,7 +79,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 108 still-unimplemented callable exports: 99 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 107 still-unimplemented callable exports: 98 named and 9 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -188,7 +189,6 @@
 | `OBJ_obj2txt` | `xZ1BME5qDv0` |
 | `SSL_set_quic_transport_params` | `xf6anoZpWRM` |
 | `X509_get0_pubkey` | `xj7cFYOV4+Y` |
-| `SSL_is_quic` | `xpB+BNkO2Z0` |
 | `EVP_MD_block_size` | `zCa75KLWWn4` |
 
 - The formerly NID-only exports named in the inventory above and in [API declarations](../../../core/libs/prx/libSceLibreSsl3/include/Api.hpp) use LibreSSL names whose `tools/nid_names.py` hash equals the NID; the names were taken from the identifiers of the LibreSSL 3.8.4 and 4.0.0 `include`, `crypto`, `ssl` and `tls` sources. A name match does not show that the console function has LibreSSL's prototype or behavior. Unimplemented entries keep the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; the implemented contracts and remaining gaps are listed above. `AES_wrap_key`, `ECDSA_SIG_free`, `ECDSA_do_verify`, `ERR_load_ERR_strings`, `ERR_print_errors_fp` and `i2d_PUBKEY` also hash to the NIDs of six `unknown` rows, which keep their NID names; `PBYz0kpXwg8` hashes to no identifier of those sources.
