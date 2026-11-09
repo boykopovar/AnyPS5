@@ -746,7 +746,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
     Graphics::Require(content.columns > 0, "the performance overlay panel needs at least one column");
     Graphics::Require(content.graph ? content.columns * OverlayMetrics::Advance - 1 >= static_cast<std::int32_t>(OverlayStatistics::FrameHistory) : content.frameTimes.empty(), "the performance overlay graph needs a graph row as wide as its 120 frames");
     OverlayLayout layout;
-    const auto scale = OverlayScale(extent, content);
+    const auto scale = OverlayScale(extent, content, OverlayScaleRequest(std::getenv("ANYPS5_OVERLAY_SCALE")));
     layout.scale = scale;
     const auto width = panelWidth(content.columns, scale);
     const auto height = panelHeight(content, scale);
