@@ -202,6 +202,8 @@ std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* value);
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* value);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
+const void* APS5_VABI WKSessionStateCopyData(const void* sessionState);
+const void* APS5_VABI WKSessionStateCreateFromData(const void* data);
 std::uint32_t APS5_VABI WKSessionStateGetTypeID();
 const void* APS5_VABI WKSizeCreate(NKWebKit::SizeValue size);
 std::uint32_t APS5_VABI WKSizeGetTypeID();
@@ -271,5 +273,9 @@ std::uint32_t APS5_VABI WKContextGetCacheModel(const void* contextRef);
 void APS5_VABI WKContextSetCacheModel(const void* contextRef, std::uint32_t cacheModel);
 bool APS5_VABI WKContextGetAccessibilityEnabled(const void* contextRef);
 void APS5_VABI WKContextSetAccessibilityEnabled(const void* contextRef, bool enabled);
+void APS5_VABI WKContextDisableProcessTermination(const void* contextRef);
+void APS5_VABI WKContextEnableProcessTermination(const void* contextRef);
+void APS5_VABI WKContextAddVisitedLink(const void* contextRef, const void* visitedURLRef);
+void APS5_VABI WKContextClearVisitedLinks(const void* contextRef);
 
 }

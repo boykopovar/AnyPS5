@@ -2701,7 +2701,7 @@ if(BUILD_TESTING)
         foreach(joinProvider IN ITEMS libkernel_sys libkernel_web)
             add_test(NAME guest_timed_join_import_${joinProvider} COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/tests/test_windows_timed_join_imports.py $<TARGET_FILE:relinker> ${PATCHED_DIR}
-                ${joinProvider}.prx $<TARGET_FILE_DIR:guest_timed_join_tests>)
+                ${joinProvider}.prx $<TARGET_FILE:guest_timed_join_tests>)
             set_tests_properties(guest_timed_join_import_${joinProvider} PROPERTIES TIMEOUT 25
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_timed_join_tests>")
         endforeach()
