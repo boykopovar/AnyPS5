@@ -514,7 +514,7 @@ void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderI
                   std::span<const std::uint32_t> userData, std::uint64_t shaderBase, const std::shared_ptr<const AddressRanges>& ranges,
                   const std::shared_ptr<const std::vector<std::uint32_t>>& values, const AddressRanges& accessible,
                   const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture,
-                  const std::shared_ptr<const ShaderRecompiler::RecompileResult>& result, const ShaderRecompiler::HeapStageWords& words) {
+                  const std::shared_ptr<const ShaderRecompiler::RecompileResult>& result, std::shared_ptr<const ShaderRecompiler::HeapStageWords> words) {
     HeapWalkEntry entry;
     entry.variant = invocation.VariantId();
     entry.pushOffset = invocation.Request().layout.pushConstantOffsetBytes;
@@ -528,7 +528,7 @@ void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderI
     entry.userDataUse = capture->userDataUse;
     entry.capture = capture;
     entry.result = result;
-    entry.words = std::make_shared<const ShaderRecompiler::HeapStageWords>(words);
+    entry.words = std::move(words);
     auto& memo = heapWalkMemo();
     const auto heldBefore = memo.heldBytes;
     memo.remember(memoKey, std::move(entry));
@@ -628,7 +628,7 @@ HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShade
     if (complete) materialized.reads = {sharedRanges, shared, capture->userDataUse, capture, true};
     Graphics::HeapCostScope insertCost(Graphics::HeapCost::MemoInsert);
     if (memoOn && complete && (memoKnown || heapWalkMemo().admit(memoKey)))
-        rememberWalk(memoKey, invocation, userData, shaderBase, sharedRanges, shared, reads.accessible, capture, result, *words);
+        rememberWalk(memoKey, invocation, userData, shaderBase, sharedRanges, shared, reads.accessible, capture, result, words);
     materialized.result = std::move(result);
     materialized.words = std::move(words);
     return materialized;

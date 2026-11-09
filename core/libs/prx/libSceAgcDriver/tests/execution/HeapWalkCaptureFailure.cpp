@@ -87,6 +87,21 @@ void ValidTypeYieldsStage(AgcDriver::VulkanDevice& device) {
     Require(materialized.result != nullptr, "a heap walk over valid buffer descriptors declined its stage");
 }
 
+void MemoHitSharesWalkedWords(AgcDriver::VulkanDevice& device) {
+    auto userData = UserData(0u);
+    userData[6] -= 16u;
+    const auto request = Request(device, userData);
+    const auto handle = ShaderRecompiler::PrepareShader(request);
+    const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle);
+    Require(invocation.has_value(), "the prepared shader refused its own request");
+    std::array<AgcDriver::DriverDetail::HeapStageMaterialized, 3> walks;
+    for (auto& walk : walks) {
+        walk = AgcDriver::DriverDetail::MaterializeHeapStage(*invocation, userData, request.shader.codeAddress);
+        Require(walk.result != nullptr && walk.words != nullptr, "a repeated heap walk over valid buffer descriptors declined its stage");
+    }
+    Require(walks[2].words == walks[1].words, "a heap walk memo hit returned a copy of the walked words instead of the words its walk stored");
+}
+
 }
 
 int main() {
@@ -95,6 +110,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         UnsupportedTypeDeclines(*device);
         ValidTypeYieldsStage(*device);
+        MemoHitSharesWalkedWords(*device);
         std::puts("heap walk capture failure tests passed");
         return 0;
     } catch (const std::exception& error) {
