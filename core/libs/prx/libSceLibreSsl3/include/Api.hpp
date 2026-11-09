@@ -63,6 +63,39 @@ static_assert(offsetof(LibreSsl3X509Algor, parameter) == 8);
 static_assert(sizeof(LibreSsl3X509Pubkey) == 24);
 static_assert(offsetof(LibreSsl3X509Pubkey, publicKey) == 8);
 
+struct LibreSsl3CertificateInfo {
+    void* version;
+    void* serialNumber;
+    void* signature;
+    void* issuer;
+    void* validity;
+    void* subject;
+    LibreSsl3X509Pubkey* key;
+    void* issuerUid;
+    void* subjectUid;
+    const LibreSsl3Stack* extensions;
+    unsigned char encoding[24];
+};
+
+struct LibreSsl3Certificate {
+    const LibreSsl3CertificateInfo* certInfo;
+    const LibreSsl3X509Algor* sigAlg;
+    unsigned char rest[200];
+};
+
+struct LibreSsl3X509Extension {
+    const LibreSslAsn1Object* object;
+    int critical;
+    void* value;
+};
+
+static_assert(sizeof(LibreSsl3CertificateInfo) == 104);
+static_assert(offsetof(LibreSsl3CertificateInfo, key) == 48);
+static_assert(offsetof(LibreSsl3CertificateInfo, extensions) == 72);
+static_assert(sizeof(LibreSsl3Certificate) == 216);
+static_assert(offsetof(LibreSsl3Certificate, sigAlg) == 8);
+static_assert(sizeof(LibreSsl3X509Extension) == 24);
+
 struct LibreSsl3Dh {
     int pad;
     int version;
@@ -255,15 +288,15 @@ int APS5_VABI EVP_PKEY_verify_init_nid_postfix();
 const void* APS5_VABI EVP_get_digestbyname_nid_postfix(const char* name);
 int APS5_VABI EVP_sha512_256_nid_postfix();
 int APS5_VABI HKDF_nid_postfix();
-int APS5_VABI HMAC_CTX_free_nid_postfix();
-int APS5_VABI HMAC_CTX_new_nid_postfix();
+void APS5_VABI HMAC_CTX_free_nid_postfix(void* context);
+void* APS5_VABI HMAC_CTX_new_nid_postfix();
 int APS5_VABI OPENSSL_init_ssl_nid_postfix(std::uint64_t options, const void* settings);
 int APS5_VABI tls_config_set_cert_mem_nid_postfix();
 int APS5_VABI PEM_read_bio_PUBKEY_nid_postfix();
 std::uint64_t APS5_VABI SSL_CIPHER_get_id_nid_postfix(const LibreSsl3Cipher* cipher);
 int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix();
 int APS5_VABI SSL_CTX_set0_chain_nid_postfix();
-int APS5_VABI SSL_CTX_set_timeout_nid_postfix();
+std::int64_t APS5_VABI SSL_CTX_set_timeout_nid_postfix(LibreSsl3SslCtx* context, std::int64_t timeout);
 std::int64_t APS5_VABI SSL_SESSION_get_timeout_nid_postfix(const void* session);
 std::int64_t APS5_VABI SSL_SESSION_set_time_nid_postfix(void* session, std::int64_t time);
 int APS5_VABI SSL_do_handshake_nid_postfix();
@@ -313,7 +346,7 @@ int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch();
 int APS5_VABI ERR_load_X509_strings_nid_postfix();
 int APS5_VABI Unknown_AiNud8LR8B4_nid_no_patch();
 int APS5_VABI X509_cmp_current_time_nid_postfix();
-int APS5_VABI X509_get_ext_by_NID_nid_postfix();
+int APS5_VABI X509_get_ext_by_NID_nid_postfix(const LibreSsl3Certificate* certificate, int nid, int lastpos);
 int APS5_VABI EVP_PKEY_security_bits_nid_postfix(const LibreSsl3EvpPkey* key);
 int APS5_VABI X509_check_akid_nid_postfix();
 int APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix();
@@ -339,19 +372,19 @@ int APS5_VABI SSL_get0_verified_chain_nid_postfix();
 int APS5_VABI RSA_set0_crt_params_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* dmp1, LibreSsl3Bignum* dmq1, LibreSsl3Bignum* iqmp);
 int APS5_VABI EVP_PKEY_derive_nid_postfix();
 int APS5_VABI EVP_PKEY_sign_nid_postfix();
-int APS5_VABI X509_get_signature_nid_nid_postfix();
+int APS5_VABI X509_get_signature_nid_nid_postfix(const LibreSsl3Certificate* certificate);
 int APS5_VABI EVP_PKEY_derive_init_nid_postfix();
 int APS5_VABI X509V3_EXT_conf_nid_nid_postfix();
 int APS5_VABI X509_sign_nid_postfix();
 int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix();
 void* APS5_VABI BIO_get_data_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI EVP_PKEY2PKCS8_nid_postfix();
-int APS5_VABI ASN1_TIME_new_nid_postfix();
+Asn1String* APS5_VABI ASN1_TIME_new_nid_postfix();
 int APS5_VABI X509_set_issuer_name_nid_postfix();
 int APS5_VABI X509_add_ext_nid_postfix();
 int APS5_VABI tls_connect_socket_nid_postfix();
 int APS5_VABI SSL_CTX_set_quic_method_nid_postfix();
-int APS5_VABI X509_gmtime_adj_nid_postfix();
+Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, std::int64_t adjustment);
 int APS5_VABI SSL_process_quic_post_handshake_nid_postfix();
 int APS5_VABI Unknown_aLdgrI2jAF0_nid_no_patch();
 int APS5_VABI EC_POINT_clear_free_nid_postfix();
@@ -397,7 +430,7 @@ int APS5_VABI ASN1_TIME_diff_nid_postfix(int* days, int* seconds, const Asn1Stri
 int APS5_VABI OBJ_obj2txt_nid_postfix();
 int APS5_VABI SSL_set_quic_transport_params_nid_postfix();
 int APS5_VABI SSL_is_quic_nid_postfix();
-int APS5_VABI X509_get_X509_PUBKEY_nid_postfix();
+LibreSsl3X509Pubkey* APS5_VABI X509_get_X509_PUBKEY_nid_postfix(const LibreSsl3Certificate* certificate);
 void APS5_VABI ECDSA_SIG_get0_nid_postfix(const LibreSsl3EcdsaSig* sig, const void** r, const void** s);
 int APS5_VABI EVP_MD_block_size_nid_postfix();
 

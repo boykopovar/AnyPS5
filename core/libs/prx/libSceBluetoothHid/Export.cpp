@@ -77,7 +77,9 @@ std::int32_t APS5_VABI sceBluetoothHidUnregisterDevice(std::uint16_t vendorId, s
 
 int APS5_VABI sceBluetoothHidGetDeviceName(std::uint64_t deviceHandle, BluetoothHidDeviceName* name) {
     std::lock_guard lock(stateMutex);
+    (void)deviceHandle;
     if (!initialized) return NotInitialized;
+    if (name == nullptr) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
