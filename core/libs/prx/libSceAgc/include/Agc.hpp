@@ -5,7 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI sceAgcSuspendPointAndCheckStatus(void);
 std::uint32_t* APS5_VABI sceAgcAcbPushMarkerSpan(CommandBuffer* buffer, const char* text, std::uint32_t length, std::uint32_t color);
 std::uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buffer, const char* text, std::uint32_t length, std::uint32_t color);
 int APS5_VABI sceAgcAcquireMemSetEngine(std::uint32_t* packet, std::uint8_t engine);

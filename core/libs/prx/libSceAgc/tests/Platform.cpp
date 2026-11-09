@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Misc/include/Platform.hpp"
+#include "prx/libSceAgc/Misc/include/Suspend.hpp"
 #include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"

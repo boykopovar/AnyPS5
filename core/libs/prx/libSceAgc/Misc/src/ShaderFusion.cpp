@@ -258,6 +258,10 @@ void AppendBytes(std::vector<std::uint8_t>& bytes, const void* data, std::size_t
 
 std::vector<std::uint8_t> FusionKey(const Shader* front, const Shader* back, const GeometryLayout& layout) {
     std::vector<std::uint8_t> key;
+    // The keyed header prefix runs through num_sh_registers (offset 0x5C), so it
+    // covers the type byte at 0x5A (Gs/Hs, front/back) that ValidHalves checked.
+    // Register tables below are ShaderRegister {u32 offset, u32 value} entries,
+    // size 8 align 4, copied whole for the same reason.
     constexpr auto headerBytes = offsetof(Shader, num_sh_registers) + sizeof(Shader::num_sh_registers);
     AppendBytes(key, front, headerBytes);
     AppendBytes(key, back, headerBytes);
@@ -355,6 +359,8 @@ int FuseGeometryHalves(Shader* fused_result, const Shader* front, const Shader* 
 extern "C" {
 
 int APS5_VABI sceAgcFuseShaderHalves_0200(Shader* fused_result, const Shader* front, const Shader* back, void* scratch_mem) {
+    // Null halves are rejected before the pair check; a mismatched pair returns
+    // GRAPHICS5_ERROR_INVALID_SHADER_HALVES (0x8a6c0008, kept for invalid halves).
     if (fused_result == nullptr || front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
     if (front->specials == nullptr || back->specials == nullptr) Fail("sceAgcFuseShaderHalves_0200", "shader half has no special registers");
@@ -406,15 +412,23 @@ int APS5_VABI sceAgcFuseShaderHalves_nid_postfix(Shader* fused_result, const Sha
 }
 
 int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front, const Shader* back) {
-    if (dst == nullptr || front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
+    // Firmware order: the halves pair is validated before the output is touched;
+    // the console faults on a null output with valid halves, here it is rejected.
+    if (front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
     if (GeometryHalves(front)) ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
+    if (dst == nullptr) APS5_INVALID_ARG_EX;
     dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
-    dst->m_align = 4;
+    // The firmware writes the alignment as a 32-bit value at +8, leaving +12
+    // untouched; a full m_align store would clobber those high 32 bits.
+    const std::uint32_t align = 4;
+    std::memcpy(&dst->m_align, &align, sizeof(align));
     return 0;
 }
 
 int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back) {
+    // Same order as _0080 and the firmware body the Vsh debt entry transliterates:
+    // pair validation first (0x8a6c0008 on mismatch), the output last.
     if (front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
     if (dst == nullptr) APS5_INVALID_ARG_EX;
