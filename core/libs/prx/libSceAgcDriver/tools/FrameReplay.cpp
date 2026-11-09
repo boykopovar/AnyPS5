@@ -368,6 +368,7 @@ struct Replay {
     std::atomic<std::uint64_t> failedRegistrations{0};
     std::atomic<std::uint64_t> submits{0};
     std::atomic<std::uint64_t> deltaBytes{0};
+    std::atomic<std::uint64_t> parkRestores{0};
     std::atomic<std::int64_t> paceWaitedNs{0};
     std::atomic<bool> stalled{false};
     std::atomic<std::uint64_t> stalledAt{0};
@@ -513,13 +514,18 @@ struct Replay {
             return;
         case FrameCallKind::Memory: {
             const std::unique_lock lock(memoryMutex);
-            const auto began = Clock::now();
             const bool pacing = options.pace && recording;
-            const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
-            const SettledHold hold{pacing};
-            paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
-            if (!settled && options.strict) throw std::runtime_error("frame replay: the replay did not settle before memory delta " + std::to_string(call.ordinal));
-            restoreGroup(call.values.at(0));
+            bool parkedAsCaptured = true;
+            {
+                const auto began = Clock::now();
+                const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
+                const SettledHold hold{pacing};
+                paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+                if (!settled && options.strict) throw std::runtime_error("frame replay: the replay did not settle before memory delta " + std::to_string(call.ordinal));
+                parkedAsCaptured = !pacing || !settled || call.values.size() < 2 || atCapturedPark(call);
+                restoreGroup(call.values.at(0), false);
+            }
+            if (!parkedAsCaptured) restoreAtCapturedPark(call);
             return;
         }
         case FrameCallKind::FrameStart:
@@ -534,7 +540,34 @@ struct Replay {
         return wait.function == 0 && wait.bytes == 0;
     }
 
-    void restoreGroup(std::uint64_t group) {
+    bool atCapturedPark(const FrameCall& call) {
+        std::array<AgcDriver::AwaitedWait, 64> awaited{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(awaited.data(), awaited.size());
+        std::vector<std::uint64_t> parked;
+        for (std::size_t slot = 0; slot < count; ++slot) parked.push_back(awaited[slot].address);
+        std::ranges::sort(parked);
+        const auto [accepted, completed] = progress();
+        return accepted - completed == call.accepted - call.completed && std::ranges::equal(parked, std::span(call.values).subspan(2));
+    }
+
+    void restoreAtCapturedPark(const FrameCall& call) {
+        const auto began = Clock::now();
+        const auto deadline = began + options.busyTimeout;
+        while (Clock::now() < deadline) {
+            if (atCapturedPark(call) && AgcDriverHoldSettled_nid_postfix(0)) {
+                const SettledHold hold{true};
+                if (!atCapturedPark(call)) continue;
+                restoreGroup(call.values.at(0), true);
+                ++parkRestores;
+                break;
+            }
+            if (AgcDriverSettled_nid_postfix() && !atCapturedPark(call)) break;
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+        paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+    }
+
+    void restoreGroup(std::uint64_t group, bool again) {
         const auto found = groups.find(group);
         if (found == groups.end()) return;
         std::array<AgcDriver::AwaitedWait, 64> awaited{};
@@ -557,7 +590,7 @@ struct Replay {
                 if (at >= 4) std::memcpy(&header, bytes.data() + at - 4, sizeof(header));
                 const bool rewind = (header >> 30u) == 3u && ((header >> 8u) & 0xffu) == 0x59u;
                 if (!rewind && std::find(parked.begin(), parked.end(), chunk->address + at) == parked.end()) continue;
-                controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
+                if (!again) controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
                 std::memcpy(bytes.data() + at, target + at, sizeof(value));
             }
             AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
@@ -578,7 +611,7 @@ struct Replay {
             std::memcpy(&value, bytes.data() + (wait.address - chunk->address), sizeof(value));
             if ((value & AgcDriver::Pm4::RewindValid) == 0 || !AgcDriverHoldSettled_nid_postfix(0)) return false;
             const SettledHold hold{true};
-            restoreGroup(call.values.at(0));
+            restoreGroup(call.values.at(0), false);
             return true;
         }
         return false;
@@ -1258,10 +1291,10 @@ int run(const Options& options) {
         frames += measured.frames;
     }
     const auto slowest = frameMs.empty() ? 0.0 : *std::max_element(frameMs.begin(), frameMs.end());
-    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
+    std::printf("{\"frames\":%zu,\"replay_s\":%.3f,\"fps\":%.3f,\"frame_ms\":{\"p50\":%.3f,\"p90\":%.3f,\"max\":%.3f,\"each\":[%s]},\"passes\":[%s],\"kept_reservations\":%llu,\"submits\":%llu,\"delta_mib\":%.1f,\"park_restores\":%llu,\"pace_timeouts\":%llu,\"pace_wait_s\":%.3f,\"stale_registrations\":%llu,\"failed_registrations\":%llu,\"skipped_mib\":%.1f,\"threads\":%zu,\"released_waits\":%llu,\"of_them_from_earlier_writes\":%llu,\"of_them_synthesized\":%llu,\"unfinished\":%llu,\"frames_compared\":%zu,\"pixels_identical\":%.6f,\"max_channel_diff\":%d,\"load_s\":%.3f,\"journal_s\":%.3f}\n",
                 frames, seconds, seconds > 0 ? static_cast<double>(frames) / seconds : 0.0, percentile(frameMs, 0.5), percentile(frameMs, 0.9), slowest, frameList.c_str(), passList.c_str(),
                 static_cast<unsigned long long>(replay.keptReservations.load()),
-                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.paceTimeouts.load()),
+                static_cast<unsigned long long>(replay.submits.load()), static_cast<double>(replay.deltaBytes.load()) / (1024.0 * 1024.0), static_cast<unsigned long long>(replay.parkRestores.load()), static_cast<unsigned long long>(replay.paceTimeouts.load()),
                 replay.paceWaitedSeconds(), static_cast<unsigned long long>(replay.staleRegistrations.load()), static_cast<unsigned long long>(replay.failedRegistrations.load()),
                 static_cast<double>(replay.skipped.bytes) / (1024.0 * 1024.0), replay.threads, static_cast<unsigned long long>(replay.earlyReleases.load()), static_cast<unsigned long long>(replay.lateReleases.load()),
                 static_cast<unsigned long long>(replay.syntheticReleases.load()),
