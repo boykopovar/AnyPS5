@@ -41,6 +41,7 @@ inline bool CopyEnabled(const char* value, bool apple) {
     return !apple && value != nullptr && std::string_view(value) == "1";
 }
 
+void CopyToHost(const std::u16string& text);
 }
 
 #endif
