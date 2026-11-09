@@ -544,18 +544,22 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (hostMenu.IsOpen() && event.type == SDL_KEYDOWN && event.key.repeat == 0) {
         if (event.key.keysym.scancode == SDL_SCANCODE_UP) {
             hostMenu.Up();
+            printHostMenu(hostMenu);
             return;
         }
         if (event.key.keysym.scancode == SDL_SCANCODE_DOWN) {
             hostMenu.Down();
+            printHostMenu(hostMenu);
             return;
         }
         if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
             hostMenu.Toggle();
+            printHostMenu(hostMenu);
             return;
         }
         if (event.key.keysym.scancode == SDL_SCANCODE_RETURN) {
             if (const auto action = hostMenu.Activate()) applyHostRequests(window, event.key.windowID, requestsFor(*action));
+            printHostMenu(hostMenu);
             return;
         }
     }
