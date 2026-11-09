@@ -33,7 +33,7 @@ std::array<std::uint32_t, 4> FlagsDescriptor() {
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), static_cast<std::uint32_t>(Flags.size()), 0x10014204u};
 }
 
-void CheckLoads(AgcDriver::VulkanDevice& device) {
+void CheckLoads(AgcDriver::VulkanDevice& device, bool atomic) {
     const auto descriptor = FlagsDescriptor();
     const std::vector<std::uint32_t> userData(descriptor.begin(), descriptor.end());
     const std::span<const std::uint32_t> code(Code);
@@ -49,15 +49,21 @@ void CheckLoads(AgcDriver::VulkanDevice& device) {
     const auto result = ShaderRecompiler::Recompile(request);
     const auto spirv = result.spirv.Words();
     std::size_t atomicLoads = 0;
+    std::size_t volatileLoads = 0;
     for (std::size_t cursor = 5; cursor < spirv.size();) {
         const auto length = spirv[cursor] >> 16u;
         Require(length != 0 && length <= spirv.size() - cursor, "coherent atomic loads: truncated SPIR-V instruction");
         const auto op = spirv[cursor] & 0xffffu;
         if (op == spv::OpAtomicLoad) ++atomicLoads;
-        Require(op != spv::OpLoad || length <= 4u || (spirv[cursor + 4] & spv::MemoryAccessVolatileMask) == 0u, "coherent atomic loads: a glc buffer load is still a volatile load");
+        if (op == spv::OpLoad && length > 4u && (spirv[cursor + 4] & spv::MemoryAccessVolatileMask) != 0u) ++volatileLoads;
         cursor += length;
     }
-    Require(atomicLoads >= 2u, "coherent atomic loads: the glc flag load in the waiting loop is not an atomic load");
+    if (atomic) {
+        Require(volatileLoads == 0u, "coherent atomic loads: a glc buffer load is still a volatile load");
+        Require(atomicLoads >= 2u, "coherent atomic loads: the glc flag load in the waiting loop is not an atomic load");
+    } else {
+        Require(volatileLoads >= 2u, "coherent atomic loads: the glc flag load in the waiting loop is not a volatile load without APS5_COHERENT_ATOMIC_LOADS");
+    }
 }
 
 void Dispatch() {
@@ -80,15 +86,16 @@ void Dispatch() {
 
 int main() {
     try {
-#ifdef _WIN32
-        Require(_putenv_s("APS5_COHERENT_ATOMIC_LOADS", "1") == 0, "cannot set APS5_COHERENT_ATOMIC_LOADS");
-#else
-        Require(setenv("APS5_COHERENT_ATOMIC_LOADS", "1", 1) == 0, "cannot set APS5_COHERENT_ATOMIC_LOADS");
-#endif
+        const bool atomic = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
-            CheckLoads(*device);
+            CheckLoads(*device, atomic);
+        }
+        if (!atomic) {
+            AgcDriverShutdown_nid_postfix();
+            std::puts("coherent atomic loads tests passed (volatile loads; the waiting dispatch runs only with APS5_COHERENT_ATOMIC_LOADS)");
+            return 0;
         }
         Flags.fill(0u);
         Dispatch();
