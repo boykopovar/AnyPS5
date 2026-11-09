@@ -171,9 +171,10 @@ int NumericObjectText(char* buffer, int space, const LibreSslAsn1Object* object)
 }
 
 int ObjectText(char* buffer, int space, const LibreSslAsn1Object* object, const char* function) {
-    if (space < 0 || (space > 0 && !buffer)) NotImplemented_nid_no_patch(function);
+    if (space > 0 && !buffer) throw std::invalid_argument(std::string(function) + ": invalid buffer");
     if (space > 0) buffer[0] = '\0';
     if (!object || !object->data) return 0;
+    if (space < 0) throw std::invalid_argument(std::string(function) + ": invalid buffer");
     const int nid = LibreSslObjectNid_nid_no_patch(object);
     if (nid != 0) {
         const char* name = LibreSslObjectLongName_nid_no_patch(nid);
@@ -227,6 +228,26 @@ const char* LibreSslObjectLongName_nid_no_patch(int nid) {
 
 int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreSslAsn1Object* object) {
     return ObjectText(buffer, length, object, __func__);
+}
+
+const char* APS5_VABI OBJ_nid2sn_nid_postfix(int nid) {
+    return Name(nid, false);
+}
+
+int APS5_VABI OBJ_sn2nid_nid_postfix(const char* name) {
+    if (!name) throw std::invalid_argument(std::string(__func__) + ": null name");
+    if (const int added = LibreSslAddedObjectShortNameNid_nid_no_patch(name)) return added;
+    int low = 0;
+    int high = LibreSslObjectShortNameOrderCount;
+    while (low < high) {
+        const int middle = (low + high) / 2;
+        const auto& entry = LibreSslObjects_nid_no_patch[LibreSslObjectShortNameOrder_nid_no_patch[middle]];
+        const int comparison = std::strcmp(name, entry.shortName);
+        if (comparison < 0) high = middle;
+        else if (comparison > 0) low = middle + 1;
+        else return entry.nid;
+    }
+    return 0;
 }
 
 }

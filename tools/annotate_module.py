@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import functools
 import os
 import re
 import shutil
@@ -77,10 +78,18 @@ class Module:
             raise ModuleError("not an ELF file")
         if self.data[4] != 2 or self.data[5] != 1:
             raise ModuleError("not a 64-bit little-endian ELF")
+        if self.data[6] != 1 or self.unpack("<I", 20)[0] != 1:
+            raise ModuleError("unsupported ELF version")
+        if self.unpack("<H", 52)[0] != 64:
+            raise ModuleError("unsupported ELF header size")
         if self.unpack("<H", 0x12)[0] != 0x3E:
             raise ModuleError("not an x86-64 ELF")
         phoff, = self.unpack("<Q", 0x20)
         phentsize, phnum = self.unpack("<HH", 0x36)
+        if phentsize != 56:
+            raise ModuleError("unsupported ELF program header size")
+        if (phnum and phoff < 64) or phoff + phnum * phentsize > len(self.data):
+            raise ModuleError("ELF program header table is outside its supported file range")
         for index in range(phnum):
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
@@ -133,6 +142,8 @@ class Module:
 
     def count_gnu_symbols(self, table):
         buckets, symoffset, bloom_size, _ = self.unpack("<IIII", self.address(table, 16))
+        if bloom_size == 0 or (bloom_size & (bloom_size - 1)) != 0:
+            raise ModuleError("GNU hash Bloom filter count %d is not a power of two" % bloom_size)
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
@@ -224,6 +235,7 @@ class Namer:
 OBJDUMP_NAMES = ("objdump", "gobjdump", "x86_64-linux-gnu-objdump", "x86_64-elf-objdump")
 
 
+@functools.cache
 def gnu_objdump():
     for name in OBJDUMP_NAMES:
         path = shutil.which(name)
