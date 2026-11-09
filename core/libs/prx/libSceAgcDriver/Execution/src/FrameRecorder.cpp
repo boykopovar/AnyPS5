@@ -430,14 +430,21 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         blocks.insert(blocks.end(), written.begin(), written.end());
     }
     auto& driver = DriverDetail::Driver::Get();
+    const struct Hold {
+        DriverDetail::Driver& driver;
+        ~Hold() { driver.ReleaseSettled(); }
+    } hold{driver};
     auto [accepted, completed] = driver.SerialProgress();
     if (completed < accepted && (!added.empty() || !blocks.empty())) {
-        if (!driver.WaitIdleFor(std::chrono::seconds(10))) {
-            stop("stopped: the GPU work submitted before a memory delta did not finish within 10 s");
+        if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
+            stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
             return;
         }
         std::tie(accepted, completed) = driver.SerialProgress();
     }
+    std::vector<std::uint64_t> parked;
+    for (const auto& wait : driver.AwaitedWaits()) parked.push_back(wait.address);
+    std::ranges::sort(parked);
     const auto group = deltaGroups + 1;
     bool any = false;
     std::vector<std::byte> bytes;
@@ -488,7 +495,8 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     call.ordinal = ++ordinal;
     call.accepted = accepted;
     call.completed = completed;
-    call.values = {group};
+    call.values = {group, parked.size()};
+    call.values.insert(call.values.end(), parked.begin(), parked.end());
     writer->WriteCall(call);
 }
 
