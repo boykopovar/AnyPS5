@@ -9,6 +9,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadIdentify.hpp"
+#include "prx/libSceVideoOut/include/HostMenu.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
 #include "prx/libSceVideoOut/include/Port0Presence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
@@ -37,6 +38,8 @@ public:
     }
 
 private:
+    HostMenu::Menu hostMenu;
+
     struct ControllerSlot {
         SDL_GameController* controller = nullptr;
         SDL_JoystickID instanceId = -1;
