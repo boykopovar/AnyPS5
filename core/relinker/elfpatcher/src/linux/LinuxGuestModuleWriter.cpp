@@ -360,6 +360,46 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     const auto phCount = headers.size() + 2;
     if (phCount > std::numeric_limits<std::uint16_t>::max()) throw Domain::RelinkerException("Too many guest program headers");
     const auto extraSize = bytes.size() + phCount * 56 - extraOffset;
+    const auto sources = headers;
+    std::vector<std::size_t> order;
+    for (std::size_t index = 0; index < headers.size(); ++index)
+        if (headers[index].Type == 1) order.push_back(index);
+    std::vector<std::vector<std::uint8_t>> prefixes(headers.size());
+    std::vector<bool> moved(headers.size(), false);
+    auto cursor = static_cast<std::uint64_t>(bytes.size() + phCount * 56);
+    for (std::size_t position = 0; position < order.size(); ++position) {
+        auto& load = headers[order[position]];
+        const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
+        const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
+        if (congruent && prefix == 0) continue;
+        const auto pageStart = load.MappedAddress - prefix;
+        std::vector<std::uint8_t> page(static_cast<std::size_t>(prefix), 0);
+        std::vector<bool> covered(static_cast<std::size_t>(prefix), false);
+        bool sharesMoved = false;
+        for (std::size_t below = 0; below < position; ++below) {
+            const auto& other = sources[order[below]];
+            const auto start = std::max(other.MappedAddress, pageStart);
+            const auto end = std::min(other.MappedAddress + other.MemorySize, load.MappedAddress);
+            if (start < end && moved[order[below]]) sharesMoved = true;
+            for (auto address = start; address < end; ++address) {
+                const auto relative = address - other.MappedAddress;
+                covered[static_cast<std::size_t>(address - pageStart)] = true;
+                page[static_cast<std::size_t>(address - pageStart)] = relative < other.FileSize ? bytes[static_cast<std::size_t>(other.Offset + relative)] : 0;
+            }
+        }
+        const auto mapped = load.Offset - prefix;
+        bool differs = !congruent;
+        for (std::size_t index = 0; index < page.size() && !differs && sharesMoved; ++index)
+            differs = covered[index] && bytes[static_cast<std::size_t>(mapped) + index] != page[index];
+        if (!differs) continue;
+        if (load.Alignment > kDefaultLoadAlignment)
+            throw Domain::RelinkerException("Guest PT_LOAD sharing a page with a moved load is aligned above the page", load.MappedAddress);
+        cursor = Io::AlignUp64(cursor, kDefaultLoadAlignment) + prefix;
+        load.Offset = cursor;
+        cursor += load.FileSize;
+        prefixes[order[position]] = std::move(page);
+        moved[order[position]] = true;
+    }
     headers.push_back({1, 7, extraOffset, extraAddress, extraAddress, extraSize, extraSize, 0x4000});
     headers.push_back({2, 6, dynamicOffset, dynamicAddress, dynamicAddress, dynamicSize, dynamicSize, 8});
     for (const auto& header : headers) {
@@ -371,6 +411,14 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, header.FileSize);
         Io::AppendU64(bytes, header.MemorySize);
         Io::AppendU64(bytes, header.Alignment);
+    }
+    for (const auto index : order) {
+        if (!moved[index]) continue;
+        Io::AlignBuffer(bytes, static_cast<std::size_t>(kDefaultLoadAlignment));
+        bytes.insert(bytes.end(), prefixes[index].begin(), prefixes[index].end());
+        const auto offset = bytes.size();
+        bytes.resize(offset + static_cast<std::size_t>(sources[index].FileSize));
+        std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(sources[index].Offset), static_cast<std::size_t>(sources[index].FileSize), bytes.begin() + static_cast<std::ptrdiff_t>(offset));
     }
     std::fill_n(bytes.begin() + 7, 9, std::uint8_t{0});
     Io::WriteU16(bytes, 16, 3);

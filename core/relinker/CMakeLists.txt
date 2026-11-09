@@ -1128,6 +1128,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_empty_loads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_empty_loads.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_empty_loads PROPERTIES TIMEOUT 30)
+        add_test(NAME linux_guest_congruent_loads COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_congruent_loads.py $<TARGET_FILE:relinker>)
+        set_tests_properties(linux_guest_congruent_loads PROPERTIES TIMEOUT 30)
         add_test(NAME mulx_conversion COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_mulx_conversion.py $<TARGET_FILE:relinker>)
         set_tests_properties(mulx_conversion PROPERTIES TIMEOUT 20)
