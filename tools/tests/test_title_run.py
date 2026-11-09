@@ -151,6 +151,29 @@ class AnalysisTests(unittest.TestCase):
         cut.write_bytes(noisy.read_bytes()[:-20])
         self.assertIsNone(title_run.frame_is_uniform(cut))
 
+    def test_unsupported_frame_bit_depth_is_unreadable(self):
+        frame = bmp(self.root / "unsupported.bmp", 8, 4, lambda x, y: (0, 0, 0))
+        data = bytearray(frame.read_bytes()) + bytes(128)
+        for bits in (25, 31, 33, 39, 40, 48, 64):
+            with self.subTest(bits=bits):
+                struct.pack_into("<H", data, 28, bits)
+                frame.write_bytes(data)
+                uniform = title_run.frame_is_uniform(frame)
+                self.assertIsNone(uniform)
+                self.assertEqual(title_run.classify(True, None, 1.0, True, uniform), "frame-unreadable")
+
+    def test_24_bit_frames_ignore_row_padding(self):
+        frame = self.root / "24bit.bmp"
+        for pixels, uniform in ((bytes(9), True), (bytes(6) + bytes((255, 255, 255)), False)):
+            with self.subTest(uniform=uniform):
+                rows = (pixels + bytes((255, 255, 255))) * 2
+                header = struct.pack("<2sIHHI", b"BM", 54 + len(rows), 0, 0, 54)
+                info = struct.pack("<IiiHHIIiiII", 40, 3, 2, 1, 24, 0, len(rows), 0, 0, 0, 0)
+                frame.write_bytes(header + info + rows)
+                self.assertIs(title_run.frame_is_uniform(frame), uniform)
+                outcome = "blank" if uniform else "rendering"
+                self.assertEqual(title_run.classify(True, None, 1.0, True, uniform), outcome)
+
     def test_classify_reads_the_last_frame(self):
         uniform = bmp(self.root / "uniform.bmp", 8, 4, lambda x, y: (9, 9, 9))
         varied = bmp(self.root / "varied.bmp", 8, 4, lambda x, y: (x * 30, y * 60, 0))
