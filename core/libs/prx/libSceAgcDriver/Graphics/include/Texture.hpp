@@ -681,6 +681,7 @@ private:
     std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
     std::pair<std::uint32_t, std::uint32_t> refreshUnits(std::uint32_t first, std::uint32_t count) const;
+    bool keysReplacedByClear() const;
     void takeRefreshProof(bool aliased);
     bool otherPendingOverlaps() const;
     // Marks `count` tracked layers from `first` pending and registers the image (MarkDirty's

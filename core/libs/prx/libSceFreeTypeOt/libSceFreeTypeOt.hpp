@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libSceFreeTypeOt/include/MemoryAllocation.hpp"
 
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
@@ -8,6 +9,7 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Outline.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
+#include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
 
 extern "C" {
 int APS5_VABI FT_Trace_Get_Count_nid_no_patch();
