@@ -162,6 +162,22 @@ static void CheckConfigurationQueries() {
     Check(Throws([] { FcFontSet* none[] = {nullptr}; FcFontSetMatch(nullptr, none, 1, queryPattern, nullptr); }));
     Check(Throws([] { FcResult unused; FcFontSetMatch(nullptr, nullptr, 0, queryPattern, &unused); }));
     Check(Throws([] { FcFontSet* none[] = {nullptr}; FcResult unused; FcFontSetMatch(nullptr, none, 1, nullptr, &unused); }));
+    for (FcConfig* config : {static_cast<FcConfig*>(nullptr), FcConfigCreate()}) {
+        FcResult matched = FcResultMatch;
+        Check(FcFontMatch(config, pattern, &matched) == nullptr && matched == FcResultNoMatch);
+        FcCharSet* coverage = reinterpret_cast<FcCharSet*>(&matched);
+        for (const FcBool trim : {0, 1}) {
+            FcResult sorted = FcResultTypeMismatch;
+            Check(FcFontSort(config, pattern, trim, &coverage, &sorted) == nullptr && sorted == FcResultNoMatch);
+            Check(coverage == reinterpret_cast<FcCharSet*>(&matched));
+            sorted = FcResultMatch;
+            Check(FcFontSort(config, pattern, trim, nullptr, &sorted) == nullptr && sorted == FcResultNoMatch);
+        }
+    }
+    Check(Throws([] { FcFontMatch(nullptr, queryPattern, nullptr); }));
+    Check(Throws([] { FcResult unused; FcFontMatch(nullptr, nullptr, &unused); }));
+    Check(Throws([] { FcFontSort(nullptr, queryPattern, 1, nullptr, nullptr); }));
+    Check(Throws([] { FcResult unused; FcFontSort(nullptr, nullptr, 1, nullptr, &unused); }));
     for (const int kind : {-1, 0, 1, 2, 3, 0x7fffffff}) {
         Check(FcConfigSubstitute(nullptr, pattern, kind) == 0);
         Check(FcConfigSubstitute(nullptr, nullptr, kind) == 0);

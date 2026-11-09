@@ -24,14 +24,14 @@ FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* obje
 int APS5_VABI FcFontRenderPrepare();
 FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, double value);
 FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
-int APS5_VABI FcFontMatch();
+FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result);
 FcPattern* APS5_VABI FcPatternFilter(FcPattern* pattern, const FcObjectSet* objects);
 FcResult APS5_VABI FcPatternGetFTFace(const FcPattern* pattern, const char* object, int id, void** face);
 FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second);
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second);
 FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int value);
 FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language);
-int APS5_VABI FcFontSort();
+FcFontSet* APS5_VABI FcFontSort(FcConfig* config, FcPattern* pattern, FcBool trim, FcCharSet** coverage, FcResult* result);
 int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* changed);
 FcResult APS5_VABI FcPatternGetCharSet(const FcPattern* pattern, const char* object, int id, FcCharSet** value);
 void APS5_VABI FcCharSetDestroy(FcCharSet* set);
