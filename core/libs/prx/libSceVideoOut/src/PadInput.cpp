@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <cstring>
 #include <filesystem>
 #include <span>
