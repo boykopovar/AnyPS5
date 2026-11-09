@@ -1,4 +1,6 @@
 #include "Optimization/DeadCodeEliminator.hpp"
+#include <algorithm>
+#include <vector>
 
 namespace ShaderRecompiler {
 
@@ -24,9 +26,10 @@ void DeadCodeEliminator::RemoveIdentities(IrProgram& program) const {
 }
 
 void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
+    std::vector<IrValue*> released;
     bool changed;
     do {
-        changed = false;
+        released.clear();
         for (auto blockIt = blocks.rbegin(); blockIt != blocks.rend(); ++blockIt) {
             auto& instructions = (*blockIt)->Instructions();
             auto it = instructions.end();
@@ -36,12 +39,15 @@ void DeadCodeEliminator::Eliminate(std::span<IrBlock* const> blocks) const {
                 if (inst->HasUses() || inst->MayHaveSideEffects()) {
                     continue;
                 }
+                for (IrValue* argument : inst->Arguments()) {
+                    if (argument != nullptr) released.push_back(argument);
+                }
                 inst->Invalidate();
                 it = instructions.erase(it);
                 inst->SetParent(nullptr);
-                changed = true;
             }
         }
+        changed = std::any_of(released.begin(), released.end(), [](const IrValue* value) { return value->Parent() != nullptr && !value->HasUses() && !value->MayHaveSideEffects(); });
     } while (changed);
 }
 
