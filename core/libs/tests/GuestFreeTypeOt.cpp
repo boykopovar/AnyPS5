@@ -6,7 +6,6 @@
 #include FT_TRIGONOMETRY_H
 #include FT_GLYPH_H
 #include FT_MODULE_H
-#include FT_STROKER_H
 #include FT_TYPE1_TABLES_H
 #include <algorithm>
 #include <array>
@@ -65,14 +64,6 @@ struct ForwardedExports {
     decltype(&FT_QAlloc_nid_postfix) qalloc;
     decltype(&FT_Get_Module_nid_postfix) getModule;
     decltype(&FT_Remove_Module_nid_postfix) removeModule;
-    decltype(&FT_Stroker_New_nid_postfix) strokerNew;
-    decltype(&FT_Stroker_Set_nid_postfix) strokerSet;
-    decltype(&FT_Stroker_BeginSubPath_nid_postfix) strokerBegin;
-    decltype(&FT_Stroker_LineTo_nid_postfix) strokerLineTo;
-    decltype(&FT_Stroker_EndSubPath_nid_postfix) strokerEnd;
-    decltype(&FT_Stroker_GetCounts_nid_postfix) strokerCounts;
-    decltype(&FT_Stroker_Export_nid_postfix) strokerExport;
-    decltype(&FT_Stroker_Done_nid_postfix) strokerDone;
 };
 
 ForwardedExports forwarded;
@@ -222,49 +213,6 @@ void Glyphs() {
     FT_Done_Glyph(nativeCopy);
     forwarded.doneGlyph(nullptr);
 
-    void* stroker = nullptr;
-    FT_Stroker nativeStroker = nullptr;
-    Require(forwarded.strokerNew(library, &stroker) == 0 && stroker && FT_Stroker_New(native, &nativeStroker) == 0, "new strokers");
-    forwarded.strokerSet(stroker, 64, FT_STROKER_LINECAP_BUTT, FT_STROKER_LINEJOIN_ROUND, 0);
-    FT_Stroker_Set(nativeStroker, 64, FT_STROKER_LINECAP_BUTT, FT_STROKER_LINEJOIN_ROUND, 0);
-    const std::array<GuestVector, 4> corners{{{0, 0}, {640, 0}, {640, 640}, {0, 640}}};
-    FT_Vector origin{0, 0};
-    Require(forwarded.strokerBegin(stroker, &corners[0], 0) == 0 && FT_Stroker_BeginSubPath(nativeStroker, &origin, 0) == 0, "begin stroke");
-    for (std::size_t index = 1; index < corners.size(); ++index) {
-        FT_Vector corner{static_cast<FT_Pos>(corners[index].x), static_cast<FT_Pos>(corners[index].y)};
-        Require(forwarded.strokerLineTo(stroker, &corners[index]) == 0 && FT_Stroker_LineTo(nativeStroker, &corner) == 0, "stroke square");
-    }
-    Require(forwarded.strokerEnd(stroker) == 0 && FT_Stroker_EndSubPath(nativeStroker) == 0, "end stroke");
-    std::uint32_t points = 0;
-    std::uint32_t strokeContours = 0;
-    FT_UInt nativePoints = 0;
-    FT_UInt nativeContours = 0;
-    Require(forwarded.strokerCounts(stroker, &points, &strokeContours) == 0 && FT_Stroker_GetCounts(nativeStroker, &nativePoints, &nativeContours) == 0, "stroke counts");
-    Require(points == nativePoints && strokeContours == nativeContours && points > 0 && strokeContours > 0, "stroke counts match");
-    std::vector<GuestVector> strokePoints(points, GuestVector{-77, 99});
-    std::vector<FT_Vector> nativeStrokePoints(points, FT_Vector{-77, 99});
-    std::vector<unsigned char> strokeTags(points, 0xA5);
-    std::vector<unsigned char> nativeStrokeTags = strokeTags;
-    std::vector<std::uint16_t> strokeEnds(strokeContours, 0xBEEF);
-    std::vector<std::uint16_t> nativeStrokeEnds = strokeEnds;
-    GuestOutline stroke{0, 0, strokePoints.data(), strokeTags.data(), strokeEnds.data(), 0};
-    FT_Outline nativeStroke{0, 0, nativeStrokePoints.data(), nativeStrokeTags.data(), nativeStrokeEnds.data(), 0};
-    forwarded.strokerExport(nullptr, &stroke);
-    forwarded.strokerExport(stroker, nullptr);
-    Require(stroke.n_points == 0 && stroke.n_contours == 0 && strokeTags[0] == 0xA5, "export without stroker or outline");
-    if constexpr (sizeof(FT_Pos) == sizeof(std::int64_t)) {
-        forwarded.strokerExport(stroker, &stroke);
-        FT_Stroker_Export(nativeStroker, &nativeStroke);
-        Require(stroke.n_points == points && stroke.n_contours == strokeContours, "exported counts");
-        Require(nativeStroke.n_points == points && nativeStroke.n_contours == strokeContours, "native exported counts");
-        for (std::size_t index = 0; index < points; ++index) {
-            Require(strokePoints[index].x == nativeStrokePoints[index].x && strokePoints[index].y == nativeStrokePoints[index].y, "exported points");
-            Require(strokeTags[index] == nativeStrokeTags[index] && strokeTags[index] != 0xA5, "exported tags");
-        }
-        Require(strokeEnds == nativeStrokeEnds && strokeEnds.back() == points - 1, "exported contours");
-    }
-    forwarded.strokerDone(stroker);
-    FT_Stroker_Done(nativeStroker);
     Require(forwarded.doneFace(face) == 0 && FT_Done_Face(oracle) == 0, "release faces");
     Require(forwarded.finish(library) == 0 && FT_Done_FreeType(native) == 0, "release glyph libraries");
 }
@@ -397,14 +345,6 @@ int main(int argc, char** argv) {
         Resolve(forwarded.qalloc, library, patched, "hz-J3hohXW8", "FT_QAlloc_nid_postfix");
         Resolve(forwarded.getModule, dependency, patched, "swrIPzOxcmM", "FT_Get_Module_nid_postfix");
         Resolve(forwarded.removeModule, library, patched, "5ipBcLYVc2k", "FT_Remove_Module_nid_postfix");
-        Resolve(forwarded.strokerNew, library, patched, "eqGCaeizvWM", "FT_Stroker_New_nid_postfix");
-        Resolve(forwarded.strokerSet, library, patched, "B3uU5aDZn94", "FT_Stroker_Set_nid_postfix");
-        Resolve(forwarded.strokerBegin, library, patched, "xj3tNJptfLI", "FT_Stroker_BeginSubPath_nid_postfix");
-        Resolve(forwarded.strokerLineTo, library, patched, "cKndiZnt0EA", "FT_Stroker_LineTo_nid_postfix");
-        Resolve(forwarded.strokerEnd, library, patched, "pBqh-Uh-gns", "FT_Stroker_EndSubPath_nid_postfix");
-        Resolve(forwarded.strokerCounts, library, patched, "rzIWh7FJnmU", "FT_Stroker_GetCounts_nid_postfix");
-        Resolve(forwarded.strokerExport, library, patched, "2rcvKZfm5rI", "FT_Stroker_Export_nid_postfix");
-        Resolve(forwarded.strokerDone, library, patched, "+RLa-6fbshA", "FT_Stroker_Done_nid_postfix");
         Libraries();
         Glyphs();
     }

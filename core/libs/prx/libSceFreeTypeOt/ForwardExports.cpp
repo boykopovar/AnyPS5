@@ -395,11 +395,6 @@ int APS5_VABI FT_Stroker_CubicToForward_nid_no_patch(void* stroker, const FreeTy
 }
 APS5_EXPORT("6+yXRlVrjbc", FT_Stroker_CubicToForward_nid_no_patch);
 
-void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline) {
-    return FT_Stroker_Export_nid_postfix(stroker, outline);
-}
-APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
-
 }
 
 #endif
