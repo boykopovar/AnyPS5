@@ -437,7 +437,6 @@ int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority
 
 int APS5_VABI sceAcm_ConvReverb_SharedIr() {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAcm_IFFT(AcmBatchInfo* batch, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {
