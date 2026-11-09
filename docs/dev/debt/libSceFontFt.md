@@ -8,7 +8,7 @@
 
 ### Unknown function info
 
-- [Alias and glyph selection exports](../../../core/libs/prx/libSceFontFt/Export.cpp): alias initialization/termination take a handle pointer; alias registration takes a string and font ID or path. Glyph selection takes a 32-bit selector and returns a table pointer whose layout remains unresolved. Their protected implementations are unchanged.
+- [Alias exports](../../../core/libs/prx/libSceFontFt/Export.cpp): alias initialization/termination take a handle pointer; alias registration takes a string and font ID or path. Their protected implementations are unchanged.
 
 - [sceFontFtSupportSystemFonts](../../../core/libs/prx/libSceFontFt/Export.cpp) (libSceFontFt) - still throws. Read from the disassembly of the PS4 libSceFontFt.sprx on firmware 10.71, not from a PS5 module and not measured on a console. sceFontFtSupportSystemFonts is the same code as sceFontFtSupportOpenType; both pass FTA_Support_Format_OpenType. sceFontSelectGlyphsFt returns a static table with 0x0F1F at 0 and 0x0F03 at 4 for selector 0 and null otherwise.
 - [sceFontSelectGlyphsFt](../../../core/libs/prx/libSceFontFt/Export.cpp) (libSceFontFt) - implemented and verified against the PS5 4.03 module. `sceFontSelectGlyphsFt` returns the static 8-byte record `0x0F1F, 0xF200, 0x0F03, 0xF8F0` (u16s) for selector 0 and null otherwise; what the 0xF200 and 0xF8F0 fields mean was not read.

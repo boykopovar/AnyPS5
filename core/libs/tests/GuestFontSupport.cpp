@@ -30,7 +30,9 @@ int main() {
     Require(selection != nullptr);
     const auto* selectionTags = reinterpret_cast<const std::uint16_t*>(selection);
     Require(selectionTags[0] == 0x0F1F);
+    Require(selectionTags[1] == 0xF200);
     Require(selectionTags[2] == 0x0F03);
+    Require(selectionTags[3] == 0xF8F0);
     Require(sceFontSelectGlyphsFt(1) == nullptr);
     Require(sceFontSelectGlyphsFt(-1) == nullptr);
 
