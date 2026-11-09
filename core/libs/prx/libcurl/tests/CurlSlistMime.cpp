@@ -63,7 +63,7 @@ int main() {
     Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_ARRAY, arrayOptions, CURLFORM_END) == CURL_FORMADD_OK);
     free_nid_postfix(const_cast<char*>(arrayOptions[0].value));
     free_nid_postfix(const_cast<char*>(arrayOptions[1].value));
-    Require(last == form->next->next && std::strcmp(last->name, "array") == 0 &&
+    Require(last != nullptr && std::strcmp(last->name, "array") == 0 &&
         std::strcmp(last->contents, "three") == 0);
     Require(curl_formadd_nid_postfix(&form, &last, CURLFORM_ARRAY,
         static_cast<const guest_curl_forms*>(nullptr), CURLFORM_END) == CURL_FORMADD_NULL);

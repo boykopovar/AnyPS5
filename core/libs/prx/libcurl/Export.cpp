@@ -17,6 +17,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <vector>
+#include <cstdio>
 
 #ifdef _WIN32
 #define CURL_ARGS_START(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
@@ -841,9 +842,27 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
             guest->showfilename = host->showfilename;
             guest->userp = host->userp;
             guest->contentlen = host->contentlen;
+            // curl_formadd uses the host allocator unless curl_global_init_mem has
+            // already run. Form nodes cross the guest ABI, so owned text fields
+            // must be copied into guest allocations before the temporary host
+            // form is released.
+            const auto copyText = [](const char* text) -> char* {
+                if (!text) return nullptr;
+                const auto length = std::strlen(text) + 1;
+                auto* copy = static_cast<char*>(malloc_nid_postfix(length));
+                if (!copy) throw std::bad_alloc();
+                std::memcpy(copy, text, length);
+                return copy;
+            };
+            if (!(host->flags & CURL_HTTPPOST_PTRNAME)) guest->name = copyText(host->name);
+            if (!(host->flags & (CURL_HTTPPOST_PTRCONTENTS | CURL_HTTPPOST_BUFFER | CURL_HTTPPOST_CALLBACK)))
+                guest->contents = copyText(host->contents);
+            guest->contenttype = copyText(host->contenttype);
+            guest->showfilename = copyText(host->showfilename);
             return guest;
         };
         if (hostHead) hostNodes.push_back(hostHead);
+        if (hostTail) ensureGuest(hostTail);
         for (std::size_t index = 0; index < hostNodes.size(); ++index) {
             auto* const host = hostNodes[index];
             ensureGuest(host);
@@ -851,16 +870,18 @@ std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** htt
             ensureGuest(host->more);
         }
         for (auto* const host : hostNodes) {
-            auto* const guest = hostToGuestAll.at(host);
+            const auto mapped = hostToGuestAll.find(host);
+            if (mapped == hostToGuestAll.end()) throw std::overflow_error("curl_formadd unmapped host node");
+            auto* const guest = mapped->second;
             guest->next = ensureGuest(host->next);
             guest->more = ensureGuest(host->more);
         }
-        *httppost = hostHead ? hostToGuestAll.at(hostHead) : nullptr;
-        *last_post = hostTail ? hostToGuestAll.at(hostTail) : nullptr;
-        cleanup.form = nullptr;
-        for (auto* const host : hostNodes) {
-            if (!hostToGuest.contains(host)) Curl_cfree(host);
-        }
+        const auto guestHead = hostToGuestAll.find(hostHead);
+        const auto guestTail = hostToGuestAll.find(hostTail);
+        if ((hostHead && guestHead == hostToGuestAll.end()) || (hostTail && guestTail == hostToGuestAll.end()))
+            throw std::overflow_error("curl_formadd unmapped form endpoint");
+        *httppost = hostHead ? guestHead->second : nullptr;
+        *last_post = hostTail ? guestTail->second : nullptr;
         return result;
     } catch (const std::bad_alloc&) {
         for (auto* const guest : createdGuest) free_nid_postfix(guest);
