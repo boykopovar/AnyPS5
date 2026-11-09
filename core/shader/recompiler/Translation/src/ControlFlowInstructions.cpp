@@ -45,7 +45,7 @@ void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin)
     writeRawU32(inst.destination, newCounter);
     ir.SetExecLo(newExecLo.Value());
     ir.SetExecHi(newExecHi.Value());
-    ir.SetExec(execLanes({newExecLo, newExecHi}).Value());
+    ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
 }
 
 // s_*_saveexec reads its source before it writes the old exec into the destination, so
@@ -84,7 +84,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         if (writeResult) writeU32Pair(inst.destination, {hostExecWord(0u), hostExecWord(1u)});
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(execLanes({newExecLo, newExecHi}).Value());
+        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
@@ -116,7 +116,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         IrValue& combinedLane = ir.Emit(laneOperation, IrType::U1, {&execLane, &sourceLaneOperand});
         newLane = IrU1(negateResult ? ir.LogicalNot(combinedLane) : combinedLane);
     } else {
-        newLane = execLanes({newExec, IrU32(ir.GetExecHi())});
+        newLane = threadBit({newExec, IrU32(ir.GetExecHi())});
     }
     if (writeResult) writeSaved(hostExecWord(0u), newLane);
     const IrU1 nonZero(ir.INotEqual(newExec.Value(), ir.Constant(0u)));
@@ -376,6 +376,7 @@ IrU32 TranslationContext::readRelativeVector(const RdnaOperand& base, IrValue& o
         throw std::runtime_error(std::string(name) + " source is not a vector register");
     }
     const auto access = relativeWindowAccess(ir, program, base.reg, offset, name, currentVectorLimit);
+    relativeVectorRead = true;
     if (access.index == nullptr) {
         IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(0)));
         for (std::uint32_t reg = base.reg; reg < currentVectorLimit; ++reg) {
@@ -389,6 +390,7 @@ IrU32 TranslationContext::readRelativeVector(const RdnaOperand& base, IrValue& o
 }
 
 void TranslationContext::writeRelativeVector(const RdnaOperand& base, IrValue& offset, IrU32 value, const char* name, IrValue* enable) {
+    if (sharedVectorCount != 0u) throw std::runtime_error(std::string(name) + " in a program with wave-shared VGPRs is not modeled");
     const RdnaOperand& destination = base;
     if (destination.kind != RdnaOperandKind::VectorRegister) {
         throw std::runtime_error(std::string(name) + " destination is not a vector register");
@@ -473,6 +475,7 @@ void TranslationContext::vReadlaneB32(const RdnaInstruction& inst) {
 void TranslationContext::vWritelaneB32(const RdnaInstruction& inst) {
     const IrU32 value = readU32(sourceAt(inst, 0u));
     const IrU32 lane = readU32(sourceAt(inst, 1u));
+    if (sharedVectorRegister(inst.destination.reg)) throw std::runtime_error("v_writelane_b32 to wave-shared VGPR v" + std::to_string(inst.destination.reg) + " is not modeled");
     const IrU32 previous = readRawU32(plainOperand(inst.destination));
     const IrU32 result(ir.Emit(IrOpcode::WriteLane, IrType::U32, {&value.Value(), &lane.Value(), &previous.Value()}));
     ir.SetVectorReg(static_cast<VectorReg>(inst.destination.reg), result.Value());

@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_OUTLINE_H
+#include FT_SYNTHESIS_H
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -156,6 +157,55 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary* library, const unsign
     return 0;
 }
 
+int APS5_VABI FT_Open_Face_nid_postfix(GuestLibrary* library, const GuestOpenArgs* args, std::int64_t faceIndex, GuestFaceRec** aface) {
+    if (!args) return FT_Err_Invalid_Argument;
+    if (!library) return FT_Err_Invalid_Library_Handle;
+    if ((args->flags & FT_OPEN_MEMORY) && (args->flags & FT_OPEN_PATHNAME)) return FT_Err_Invalid_Argument;
+    if (args->flags & (FT_OPEN_STREAM | FT_OPEN_DRIVER | FT_OPEN_PARAMS)) {
+        throw std::runtime_error("FT_Open_Face: opening from a stream, driver or parameters is not implemented");
+    }
+    auto face = std::make_unique<GuestFace>();
+    FT_Open_Args native{};
+    if (args->flags & FT_OPEN_MEMORY) {
+        if (args->memory_size < std::numeric_limits<FT_Long>::min() || args->memory_size > std::numeric_limits<FT_Long>::max()) {
+            throw std::runtime_error("FT_Open_Face: a font buffer size outside the host FT_Long range is not implemented");
+        }
+        native.flags = FT_OPEN_MEMORY;
+        native.memory_base = args->memory_base;
+        native.memory_size = static_cast<FT_Long>(args->memory_size);
+    } else if (args->flags & FT_OPEN_PATHNAME) {
+        if (!args->pathname) return FT_Err_Invalid_Argument;
+        if (!ReadFontFile(args->pathname, face->bytes)) return FT_Err_Cannot_Open_Resource;
+        if (face->bytes.size() > static_cast<std::size_t>(std::numeric_limits<FT_Long>::max())) {
+            throw std::runtime_error("FT_Open_Face: a font file larger than the host FT_Long range is not implemented");
+        }
+        native.flags = FT_OPEN_MEMORY;
+        native.memory_base = face->bytes.data();
+        native.memory_size = static_cast<FT_Long>(face->bytes.size());
+    }
+    FT_Face host = nullptr;
+    const FT_Error error = FT_Open_Face(library->host, &native, static_cast<FT_Long>(OpenFaceIndex(faceIndex)), aface ? &host : nullptr);
+    if (error != 0 || !aface) return error;
+    PublishFace(library, std::move(face), host, aface);
+    return 0;
+}
+
+int APS5_VABI FT_Attach_File_nid_postfix(GuestFaceRec* face, const char* filepathname) {
+    if (!filepathname) return FT_Err_Invalid_Argument;
+    const GuestFace* owner = FaceOf(face);
+    if (!owner) return FT_Attach_File(nullptr, filepathname);
+    std::vector<unsigned char> bytes;
+    if (!ReadFontFile(filepathname, bytes)) return FT_Err_Cannot_Open_Resource;
+    if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<FT_Long>::max())) {
+        throw std::runtime_error("FT_Attach_File: a file larger than the host FT_Long range is not implemented");
+    }
+    FT_Open_Args native{};
+    native.flags = FT_OPEN_MEMORY;
+    native.memory_base = bytes.data();
+    native.memory_size = static_cast<FT_Long>(bytes.size());
+    return FT_Attach_Stream(owner->host, &native);
+}
+
 int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec* face) {
     const GuestFace* owner = FaceOf(face);
     return FT_Reference_Face(owner ? owner->host : nullptr);
@@ -304,42 +354,6 @@ int APS5_VABI FT_Load_Char_nid_postfix(GuestFaceRec* face, std::uint64_t charCod
     return error;
 }
 
-int APS5_VABI FT_Outline_Get_Orientation_nid_postfix(GuestOutline* outline) {
-    if (!outline || outline->n_points == 0) return FT_ORIENTATION_TRUETYPE;
-    const auto initial = outline->points[0];
-    GuestBBox bounds{initial.x, initial.y, initial.x, initial.y};
-    for (unsigned index = 1; index < outline->n_points; ++index) {
-        const auto point = outline->points[index];
-        bounds.xMin = std::min(bounds.xMin, point.x);
-        bounds.yMin = std::min(bounds.yMin, point.y);
-        bounds.xMax = std::max(bounds.xMax, point.x);
-        bounds.yMax = std::max(bounds.yMax, point.y);
-    }
-    if (bounds.xMin == bounds.xMax || bounds.yMin == bounds.yMax ||
-        bounds.xMin < -0x1000000 || bounds.yMin < -0x1000000 ||
-        bounds.xMax > 0x1000000 || bounds.yMax > 0x1000000) return FT_ORIENTATION_NONE;
-    const auto xMagnitude = static_cast<std::uint32_t>((bounds.xMin < 0 ? -bounds.xMin : bounds.xMin) |
-                                                       (bounds.xMax < 0 ? -bounds.xMax : bounds.xMax));
-    const int xShift = std::max(0, static_cast<int>(std::bit_width(xMagnitude)) - 15);
-    const int yShift = std::max(0, static_cast<int>(std::bit_width(static_cast<std::uint32_t>(bounds.yMax - bounds.yMin))) - 15);
-    std::int64_t area = 0;
-    unsigned first = 0;
-    for (unsigned contour = 0; contour < outline->n_contours; ++contour) {
-        const unsigned last = outline->contours[contour];
-        auto previousX = outline->points[last].x >> xShift;
-        auto previousY = outline->points[last].y >> yShift;
-        for (unsigned index = first; index <= last; ++index) {
-            const auto x = outline->points[index].x >> xShift;
-            const auto y = outline->points[index].y >> yShift;
-            area += (y - previousY) * (x + previousX);
-            previousX = x;
-            previousY = y;
-        }
-        first = last + 1;
-    }
-    return area > 0 ? FT_ORIENTATION_POSTSCRIPT : area < 0 ? FT_ORIENTATION_TRUETYPE : FT_ORIENTATION_NONE;
-}
-
 int APS5_VABI FT_Render_Glyph_nid_postfix(GuestGlyphSlotRec* slot, std::int32_t render_mode) {
     GuestFace* owner = FaceOf(slot);
     if (owner) WriteBackOutline(*owner);
@@ -348,23 +362,42 @@ int APS5_VABI FT_Render_Glyph_nid_postfix(GuestGlyphSlotRec* slot, std::int32_t 
     return error;
 }
 
-int APS5_VABI FT_Outline_Copy_nid_postfix(const GuestOutline* source, GuestOutline* target) {
-    if (!source || !target) return FT_Err_Invalid_Outline;
-    if (source->n_points != target->n_points || source->n_contours != target->n_contours) return FT_Err_Invalid_Argument;
-    if (source == target) return FT_Err_Ok;
-    if (source->n_points) {
-        std::memmove(target->points, source->points, source->n_points * sizeof(GuestVector));
-        std::memmove(target->tags, source->tags, source->n_points * sizeof(unsigned char));
-    }
-    if (source->n_contours) std::memmove(target->contours, source->contours, source->n_contours * sizeof(std::uint16_t));
-    target->flags = (source->flags & ~FT_OUTLINE_OWNER) | (target->flags & FT_OUTLINE_OWNER);
-    return FT_Err_Ok;
+void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(GuestGlyphSlotRec* slot) {
+    GuestFace* owner = FaceOf(slot);
+    if (owner) WriteBackOutline(*owner);
+    FT_GlyphSlot_Oblique(owner ? owner->host->glyph : nullptr);
+    if (owner) SyncSlot(*owner);
+}
+
+void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(GuestGlyphSlotRec* slot) {
+    GuestFace* owner = FaceOf(slot);
+    if (owner) WriteBackOutline(*owner);
+    FT_GlyphSlot_Embolden(owner ? owner->host->glyph : nullptr);
+    if (owner) SyncSlot(*owner);
 }
 
 int APS5_VABI FT_Select_Charmap_nid_postfix(GuestFaceRec* face, std::int32_t encoding) {
     GuestFace* owner = FaceOf(face);
     const FT_Error error = FT_Select_Charmap(owner ? owner->host : nullptr, static_cast<FT_Encoding>(encoding));
     if (error == 0) owner->rec.charmap = owner->charmapPointers.at(FT_Get_Charmap_Index(owner->host->charmap));
+    return error;
+}
+
+int APS5_VABI FT_Get_SubGlyph_Info_nid_postfix(GuestGlyphSlotRec* slot, std::uint32_t subIndex, std::int32_t* index, std::uint32_t* flags,
+                                              std::int32_t* arg1, std::int32_t* arg2, GuestMatrix* transform) {
+    const GuestFace* owner = FaceOf(slot);
+    FT_Int hostIndex = 0;
+    FT_UInt hostFlags = 0;
+    FT_Int hostArg1 = 0;
+    FT_Int hostArg2 = 0;
+    FT_Matrix hostTransform{};
+    const FT_Error error = FT_Get_SubGlyph_Info(owner ? owner->host->glyph : nullptr, subIndex, &hostIndex, &hostFlags, &hostArg1, &hostArg2, &hostTransform);
+    if (error != 0) return error;
+    *index = hostIndex;
+    *flags = hostFlags;
+    *arg1 = hostArg1;
+    *arg2 = hostArg2;
+    *transform = {hostTransform.xx, hostTransform.xy, hostTransform.yx, hostTransform.yy};
     return error;
 }
 
@@ -378,6 +411,33 @@ int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec* face, GuestCharMapRec* ch
         return error;
     }
     return FT_Err_Invalid_Argument;
+}
+
+std::uint32_t APS5_VABI FT_Face_GetCharVariantIndex_nid_postfix(GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetCharVariantIndex(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)),
+                                       static_cast<FT_ULong>(static_cast<std::uint32_t>(variantSelector)));
+}
+
+int APS5_VABI FT_Face_GetCharVariantIsDefault_nid_postfix(GuestFaceRec* face, std::uint64_t charcode, std::uint64_t variantSelector) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetCharVariantIsDefault(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)),
+                                           static_cast<FT_ULong>(static_cast<std::uint32_t>(variantSelector)));
+}
+
+std::uint32_t* APS5_VABI FT_Face_GetVariantSelectors_nid_postfix(GuestFaceRec* face) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetVariantSelectors(owner ? owner->host : nullptr);
+}
+
+std::uint32_t* APS5_VABI FT_Face_GetVariantsOfChar_nid_postfix(GuestFaceRec* face, std::uint64_t charcode) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetVariantsOfChar(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)));
+}
+
+std::uint32_t* APS5_VABI FT_Face_GetCharsOfVariant_nid_postfix(GuestFaceRec* face, std::uint64_t variantSelector) {
+    const GuestFace* owner = FaceOf(face);
+    return FT_Face_GetCharsOfVariant(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(variantSelector)));
 }
 
 std::uint64_t APS5_VABI FT_Get_First_Char_nid_postfix(GuestFaceRec* face, std::uint32_t* glyphIndex) {

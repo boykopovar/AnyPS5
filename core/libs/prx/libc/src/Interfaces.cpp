@@ -12,16 +12,20 @@
 #include <linux/if_link.h>
 #include <net/if_arp.h>
 #include <netpacket/packet.h>
+#elif defined(__APPLE__)
+#include <net/if_dl.h>
+#include <net/if_media.h>
+#include <net/if_types.h>
 #endif
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <algorithm>
 #include <cerrno>
 #include <fstream>
 #endif
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -114,7 +118,63 @@ std::vector<std::uint8_t> BroadcastAddress(const std::vector<std::uint8_t>& addr
     return broadcast;
 }
 
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+constexpr std::uint8_t guestLinkFamily = 18;
+constexpr std::size_t guestLinkNameArea = 8 + 16;
+constexpr std::size_t guestLinkMinimum = 54;
+constexpr std::uint8_t guestTypeOther = 0x1;
+constexpr std::uint8_t guestTypeEthernet = 0x6;
+constexpr std::uint8_t guestTypePpp = 0x17;
+constexpr std::uint8_t guestTypeLoopback = 0x18;
+constexpr std::uint8_t guestLinkStateDown = 1;
+constexpr std::uint8_t guestLinkStateUp = 2;
+constexpr std::size_t guestInterfaceDataSize = 152;
+
+template<typename TValue>
+void Store(std::vector<std::uint8_t>& bytes, std::size_t offset, TValue value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+
+std::vector<std::uint8_t> GuestLinkAddress(const std::string& name, std::uint16_t index, std::uint8_t type, const std::uint8_t* hardware, std::size_t hardwareLength) {
+    std::size_t size = std::max(guestLinkMinimum, guestLinkNameArea + hardwareLength);
+    size = Aligned(size);
+    if (size > 0xFF) throw std::runtime_error("getifaddrs: link-level address of " + name + " does not fit sockaddr_dl");
+    std::vector<std::uint8_t> guest(size, 0);
+    guest[0] = static_cast<std::uint8_t>(size);
+    guest[1] = guestLinkFamily;
+    Store(guest, 2, index);
+    guest[4] = type;
+    guest[5] = static_cast<std::uint8_t>(name.size());
+    guest[6] = static_cast<std::uint8_t>(hardwareLength);
+    std::memcpy(guest.data() + 8, name.data(), name.size());
+    if (hardwareLength != 0) std::memcpy(guest.data() + 8 + name.size(), hardware, hardwareLength);
+    return guest;
+}
+#endif
+
 #ifdef _WIN32
+std::vector<std::uint8_t> GuestInterfaceData(const IP_ADAPTER_ADDRESSES* adapter, std::uint8_t type, std::uint8_t hardwareLength) {
+    MIB_IF_ROW2 row{};
+    row.InterfaceLuid = adapter->Luid;
+    const auto result = GetIfEntry2(&row);
+    if (result != NO_ERROR) throw std::runtime_error("getifaddrs: GetIfEntry2 failed with " + std::to_string(result));
+    std::vector<std::uint8_t> data(guestInterfaceDataSize, 0);
+    data[0] = type;
+    data[2] = hardwareLength;
+    data[3] = type == guestTypeEthernet ? 14 : 0;
+    data[4] = adapter->OperStatus == IfOperStatusUp ? guestLinkStateUp : guestLinkStateDown;
+    Store(data, 6, static_cast<std::uint16_t>(guestInterfaceDataSize));
+    Store(data, 8, static_cast<std::uint32_t>(adapter->Mtu));
+    Store(data, 16, static_cast<std::uint64_t>(row.TransmitLinkSpeed));
+    const std::pair<std::uint64_t, std::size_t> counters[] = {
+        {row.InUcastPkts + row.InNUcastPkts, 24}, {row.InErrors, 32}, {row.OutUcastPkts + row.OutNUcastPkts, 40}, {row.OutErrors, 48},
+        {row.InOctets, 64}, {row.OutOctets, 72}, {row.InNUcastPkts, 80}, {row.OutNUcastPkts, 88},
+        {row.InDiscards, 96}, {row.OutDiscards, 104}, {row.InUnknownProtos, 112},
+    };
+    for (const auto& [value, offset] : counters) Store(data, offset, value);
+    return data;
+}
+
 std::vector<std::uint8_t> PrefixMask(int family, unsigned prefix) {
     const unsigned bits = family == AF_INET ? 32 : 128;
     if (prefix > bits) prefix = bits;
@@ -154,11 +214,19 @@ int HostEntries(std::vector<Entry>& entries) {
     if (result == ERROR_NOT_ENOUGH_MEMORY) { *__error_nid_postfix() = 12; return -1; }
     if (result != NO_ERROR) throw std::runtime_error("getifaddrs: GetAdaptersAddresses failed with " + std::to_string(result));
     for (auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data()); adapter; adapter = adapter->Next) {
-        std::string name;
+        const std::string name = InterfaceName(adapter);
+        const auto index = adapter->IfIndex ? adapter->IfIndex : adapter->Ipv6IfIndex;
+        if (index == 0 || index > 0xFFFF) throw std::runtime_error("getifaddrs: interface index of " + name + " does not fit sockaddr_dl");
+        const std::uint8_t type = adapter->IfType == IF_TYPE_ETHERNET_CSMACD ? guestTypeEthernet
+            : adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ? guestTypeLoopback : adapter->IfType == IF_TYPE_PPP ? guestTypePpp : guestTypeOther;
+        if (adapter->PhysicalAddressLength > sizeof(adapter->PhysicalAddress)) throw std::runtime_error("getifaddrs: invalid hardware address length on " + name);
+        const std::uint8_t hardwareLength = type == guestTypeLoopback ? 0 : static_cast<std::uint8_t>(adapter->PhysicalAddressLength);
+        entries.push_back(Entry{name, InterfaceFlags(adapter),
+            GuestLinkAddress(name, static_cast<std::uint16_t>(index), type, adapter->PhysicalAddress, hardwareLength), {}, {},
+            GuestInterfaceData(adapter, type, hardwareLength)});
         for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
             const sockaddr* address = unicast->Address.lpSockaddr;
             if (!address || (address->sa_family != AF_INET && address->sa_family != AF_INET6)) continue;
-            if (name.empty()) name = InterfaceName(adapter);
             Entry entry{name, InterfaceFlags(adapter), GuestAddress(address), PrefixMask(address->sa_family, unicast->OnLinkPrefixLength), {}};
             if (address->sa_family == AF_INET && (entry.flags & guestBroadcast))
                 entry.destination = BroadcastAddress(entry.address, entry.netmask);
@@ -169,16 +237,6 @@ int HostEntries(std::vector<Entry>& entries) {
 }
 #else
 #ifdef __linux__
-constexpr std::uint8_t guestLinkFamily = 18;
-constexpr std::size_t guestLinkNameArea = 8 + 16;
-constexpr std::size_t guestLinkMinimum = 54;
-constexpr std::uint8_t guestTypeOther = 0x1;
-constexpr std::uint8_t guestTypeEthernet = 0x6;
-constexpr std::uint8_t guestTypePpp = 0x17;
-constexpr std::uint8_t guestTypeLoopback = 0x18;
-constexpr std::uint8_t guestLinkStateDown = 1;
-constexpr std::uint8_t guestLinkStateUp = 2;
-constexpr std::size_t guestInterfaceDataSize = 152;
 constexpr unsigned int hostLowerUp = 0x10000;
 #endif
 
@@ -190,27 +248,6 @@ struct HostInterface {
 };
 
 #ifdef __linux__
-template<typename TValue>
-void Store(std::vector<std::uint8_t>& bytes, std::size_t offset, TValue value) {
-    std::memcpy(bytes.data() + offset, &value, sizeof(value));
-}
-
-std::vector<std::uint8_t> GuestLinkAddress(const std::string& name, std::uint16_t index, std::uint8_t type, const std::uint8_t* hardware, std::size_t hardwareLength) {
-    std::size_t size = std::max(guestLinkMinimum, guestLinkNameArea + hardwareLength);
-    size = Aligned(size);
-    if (size > 0xFF) throw std::runtime_error("getifaddrs: link-level address of " + name + " does not fit sockaddr_dl");
-    std::vector<std::uint8_t> guest(size, 0);
-    guest[0] = static_cast<std::uint8_t>(size);
-    guest[1] = guestLinkFamily;
-    Store(guest, 2, index);
-    guest[4] = type;
-    guest[5] = static_cast<std::uint8_t>(name.size());
-    guest[6] = static_cast<std::uint8_t>(hardwareLength);
-    std::memcpy(guest.data() + 8, name.data(), name.size());
-    if (hardwareLength != 0) std::memcpy(guest.data() + 8 + name.size(), hardware, hardwareLength);
-    return guest;
-}
-
 std::optional<std::uint64_t> ReadSysfsCounter(const std::string& name, const char* file) {
     std::ifstream input("/sys/class/net/" + name + "/" + file);
     long long value = 0;
@@ -264,6 +301,39 @@ std::vector<std::uint8_t> GuestInterfaceData(const std::string& name, unsigned i
     }
     return data;
 }
+#elif defined(__APPLE__)
+bool HostLinkActive(const std::string& name, unsigned int hostFlags) {
+    const int probe = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (probe < 0) throw std::runtime_error(std::string("getifaddrs: no socket to read the media status of ") + name + ": " + std::strerror(errno));
+    ifmediareq request{};
+    std::memcpy(request.ifm_name, name.c_str(), name.size() + 1);
+    const int result = ::ioctl(probe, SIOCGIFMEDIA, &request);
+    ::close(probe);
+    if (result == 0 && (request.ifm_status & IFM_AVALID)) return (request.ifm_status & IFM_ACTIVE) != 0;
+    return (hostFlags & IFF_UP) && (hostFlags & IFF_RUNNING);
+}
+
+std::vector<std::uint8_t> GuestInterfaceData(const std::string& name, unsigned int hostFlags, const void* hostData, std::uint8_t type, std::uint8_t hardwareLength) {
+    if (!hostData) throw std::runtime_error("getifaddrs: no if_data for " + name + " in the host list");
+    if_data host{};
+    std::memcpy(&host, hostData, sizeof(host));
+    std::vector<std::uint8_t> data(guestInterfaceDataSize, 0);
+    data[0] = type;
+    data[2] = hardwareLength;
+    data[3] = type == guestTypeLoopback ? 0 : host.ifi_hdrlen;
+    if (type == guestTypeLoopback) data[4] = (hostFlags & IFF_UP) ? guestLinkStateUp : guestLinkStateDown;
+    else data[4] = HostLinkActive(name, hostFlags) ? guestLinkStateUp : guestLinkStateDown;
+    Store(data, 6, static_cast<std::uint16_t>(guestInterfaceDataSize));
+    Store(data, 8, static_cast<std::uint32_t>(host.ifi_mtu));
+    Store(data, 12, static_cast<std::uint32_t>(host.ifi_metric));
+    Store(data, 16, static_cast<std::uint64_t>(host.ifi_baudrate));
+    const std::pair<std::uint32_t, std::size_t> counters[] = {
+        {host.ifi_ipackets, 24}, {host.ifi_ierrors, 32}, {host.ifi_opackets, 40}, {host.ifi_oerrors, 48}, {host.ifi_collisions, 56},
+        {host.ifi_ibytes, 64}, {host.ifi_obytes, 72}, {host.ifi_imcasts, 80}, {host.ifi_omcasts, 88}, {host.ifi_iqdrops, 96}, {host.ifi_noproto, 112},
+    };
+    for (const auto& [value, offset] : counters) Store(data, offset, static_cast<std::uint64_t>(value));
+    return data;
+}
 #endif
 
 std::uint32_t InterfaceFlags(unsigned int host) {
@@ -311,6 +381,21 @@ int HostEntries(std::vector<Entry>& entries) {
                 const std::uint8_t hardwareLength = type == guestTypeLoopback ? 0 : std::min<std::uint8_t>(link.sll_halen, sizeof(link.sll_addr));
                 owner.link = Entry{owner.name, InterfaceFlags(item->ifa_flags),
                     GuestLinkAddress(owner.name, static_cast<std::uint16_t>(link.sll_ifindex), type, link.sll_addr, hardwareLength), {}, {},
+                    GuestInterfaceData(owner.name, item->ifa_flags, item->ifa_data, type, hardwareLength)};
+                owner.linked = true;
+                continue;
+            }
+#elif defined(__APPLE__)
+            if (item->ifa_addr->sa_family == AF_LINK) {
+                const auto& link = *reinterpret_cast<const sockaddr_dl*>(item->ifa_addr);
+                HostInterface& owner = interfaceFor(CheckedName(item->ifa_name));
+                if (owner.linked) throw std::runtime_error("getifaddrs: two link-level entries for " + owner.name);
+                if (link.sdl_index == 0) throw std::runtime_error("getifaddrs: link-level entry of " + owner.name + " has no interface index");
+                const std::uint8_t type = link.sdl_type == IFT_ETHER ? guestTypeEthernet : link.sdl_type == IFT_LOOP ? guestTypeLoopback
+                    : link.sdl_type == IFT_PPP ? guestTypePpp : guestTypeOther;
+                const std::uint8_t hardwareLength = type == guestTypeLoopback ? 0 : link.sdl_alen;
+                owner.link = Entry{owner.name, InterfaceFlags(item->ifa_flags),
+                    GuestLinkAddress(owner.name, link.sdl_index, type, reinterpret_cast<const std::uint8_t*>(link.sdl_data + link.sdl_nlen), hardwareLength), {}, {},
                     GuestInterfaceData(owner.name, item->ifa_flags, item->ifa_data, type, hardwareLength)};
                 owner.linked = true;
                 continue;

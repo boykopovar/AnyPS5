@@ -3,6 +3,7 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <cerrno>
+#include <dlfcn.h>
 #include <csignal>
 #include <ctime>
 #include <mach-o/dyld.h>
@@ -14,6 +15,7 @@
 #include <unistd.h>
 #else
 #include <cerrno>
+#include <dlfcn.h>
 #include <csignal>
 #include <ctime>
 #include <link.h>
@@ -21,6 +23,7 @@
 #include <unistd.h>
 #endif
 #include "prx/libc/include/CallTrace.hpp"
+#include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -86,6 +89,23 @@ bool Selected(std::string_view library) {
         if (token == "all" || token == library) return true;
     }
     return false;
+}
+
+std::string DefiningLibrary(const void* target) {
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION memory{};
+    if (VirtualQuery(target, &memory, sizeof(memory)) != sizeof(memory)) return {};
+    std::wstring path(32768, L'\0');
+    const auto length = GetModuleFileNameW(static_cast<HMODULE>(memory.AllocationBase), path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) return {};
+    path.resize(length);
+    const auto filename = std::filesystem::path(path).filename().u8string();
+    return {reinterpret_cast<const char*>(filename.data()), filename.size()};
+#else
+    Dl_info info{};
+    if (::dladdr(target, &info) == 0 || info.dli_fname == nullptr) return {};
+    return std::filesystem::path(info.dli_fname).filename().string();
+#endif
 }
 
 bool WriteCallCounts(const std::filesystem::path& path) {
@@ -299,13 +319,7 @@ public:
 
     void Write() {
         Text("\n");
-        std::size_t written = 0;
-        while (written < _length) {
-            const ssize_t result = ::write(STDERR_FILENO, _buffer + written, _length - written);
-            if (result < 0 && errno == EINTR) continue;
-            if (result <= 0) break;
-            written += static_cast<std::size_t>(result);
-        }
+        log_file::CrashWrite(log_file::StandardError, _buffer, _length);
         _length = 0;
     }
 
@@ -434,7 +448,15 @@ void APS5_VABI CallTraceRecord_nid_no_patch(const void* record, std::uint64_t re
 }
 
 void* TraceImport_nid_no_patch(void* target, const char* name, const char* library) {
-    if (target == nullptr || name == nullptr || library == nullptr || !Selected(library)) return target;
+    if (target == nullptr || name == nullptr || library == nullptr) return target;
+    std::string definingLibrary;
+    if (*library == '\0') {
+        const auto* selected = std::getenv("APS5_TRACE_CALLS");
+        if (selected == nullptr || *selected == '\0') return target;
+        definingLibrary = DefiningLibrary(target);
+        library = definingLibrary.c_str();
+    }
+    if (!Selected(library)) return target;
     std::lock_guard lock(g_mutex);
     if (g_ring.load(std::memory_order_relaxed) == nullptr) {
         MapThunkArea();

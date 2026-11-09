@@ -1,5 +1,9 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpTrophy/include/InventoryExports.hpp"
+#include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -10,9 +14,11 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -83,36 +89,60 @@ std::uint64_t BigEndian64(const std::uint8_t* bytes) {
 }
 
 std::optional<std::map<std::string, TrpEntry>> ReadPackage(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return std::nullopt;
+    const auto end = file.tellg();
+    if (end < static_cast<std::streamoff>(TrpHeaderBytes)) return std::map<std::string, TrpEntry>{};
+    const auto fileSize = static_cast<std::uint64_t>(end);
+    file.seekg(0);
     std::array<std::uint8_t, TrpHeaderBytes> header{};
     if (!file.read(reinterpret_cast<char*>(header.data()), header.size()) || BigEndian32(header.data()) != TrpMagic) return std::map<std::string, TrpEntry>{};
     const auto count = BigEndian32(header.data() + 0x10);
     if (BigEndian32(header.data() + 0x14) != TrpEntryBytes) return std::map<std::string, TrpEntry>{};
+    if (count > (fileSize - TrpHeaderBytes) / TrpEntryBytes) return std::map<std::string, TrpEntry>{};
     std::map<std::string, TrpEntry> entries;
     for (std::uint32_t i = 0; i < count; ++i) {
         std::array<std::uint8_t, TrpEntryBytes> entry{};
         if (!file.read(reinterpret_cast<char*>(entry.data()), entry.size())) return std::map<std::string, TrpEntry>{};
         const std::string name(reinterpret_cast<const char*>(entry.data()), strnlen(reinterpret_cast<const char*>(entry.data()), 32));
-        entries[name] = {BigEndian64(entry.data() + 32), BigEndian64(entry.data() + 40)};
+        const TrpEntry contents{BigEndian64(entry.data() + 32), BigEndian64(entry.data() + 40)};
+        if (contents.offset > fileSize || contents.size > fileSize - contents.offset) return std::map<std::string, TrpEntry>{};
+        entries[name] = contents;
     }
     return entries;
 }
 
-void LoadState(Context& context) {
+std::set<int> LoadState(const Context& context) {
+    std::error_code error;
+    const bool exists = std::filesystem::exists(context.state, error);
+    if (error) throw std::filesystem::filesystem_error("sceNpTrophy: cannot check the unlock state", context.state, error);
+    if (!exists) return {};
     std::ifstream file(context.state);
-    int id = 0;
-    while (file >> id) {
-        if (id >= 0 && id < context.trophies) context.unlocked.insert(id);
+    if (!file) throw std::runtime_error("sceNpTrophy: cannot read the unlock state " + context.state.string());
+    std::set<int> unlocked;
+    for (;;) {
+        file >> std::ws;
+        if (file.bad()) throw std::runtime_error("sceNpTrophy: cannot read the unlock state " + context.state.string());
+        if (file.eof()) return unlocked;
+        int id = 0;
+        if (!(file >> id)) throw std::runtime_error("sceNpTrophy: malformed unlock state " + context.state.string());
+        if (id >= 0 && id < context.trophies) unlocked.insert(id);
     }
 }
 
-void SaveState(const Context& context) {
+void SaveState(const Context& context, const std::set<int>& unlocked) {
     std::filesystem::create_directories(context.state.parent_path());
     const auto temporary = context.state.string() + ".tmp";
     {
-        std::ofstream file(temporary, std::ios::trunc);
-        for (const auto id : context.unlocked) file << id << '\n';
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        for (const auto id : unlocked) file << id << '\n';
+        file.flush();
+        if (!file) {
+            file.close();
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
+            throw std::runtime_error("sceNpTrophy: cannot write the unlock state " + temporary);
+        }
     }
     std::filesystem::rename(temporary, context.state);
 }
@@ -157,6 +187,8 @@ int CopyIcon(const Context& context, const std::string& name, void* buffer, std:
     if (*size < entry->second.size) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
     std::ifstream file(context.package, std::ios::binary);
     file.seekg(static_cast<std::streamoff>(entry->second.offset));
+    const GuestArena::HostWrite destination(buffer, entry->second.size);
+    if (!destination.Open()) throw std::runtime_error("sceNpTrophy: the icon buffer is not writable");
     if (!file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(entry->second.size))) return NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT;
     *size = entry->second.size;
     return 0;
@@ -226,7 +258,7 @@ int APS5_VABI sceNpTrophyRegisterContext(int contextId, int handle, std::uint64_
     }
     std::snprintf(name, sizeof(name), "trophy%02u.%d", context->serviceLabel, context->userId);
     context->state = std::filesystem::path("_trophy") / name;
-    LoadState(*context);
+    context->unlocked = LoadState(*context);
     context->registered = true;
     return 0;
 }
@@ -251,8 +283,10 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
-    context->unlocked.insert(trophyId);
-    SaveState(*context);
+    auto updated = context->unlocked;
+    updated.insert(trophyId);
+    SaveState(*context, updated);
+    context->unlocked = std::move(updated);
     *platinumId = NP_TROPHY_INVALID_ID;
     return 0;
 }
@@ -404,14 +438,13 @@ int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyConfigHasGroupFeature(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
+    if (!config) return 0;
+    return config[0x90] & 1;
 }
 
-int APS5_VABI sceNpTrophyGroupArrayGetNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {
+    return std::popcount(groupArray[0]);
 }
 
 int APS5_VABI sceNpTrophyIntAbortHandle(void) {
@@ -469,19 +502,23 @@ int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyNumInfoGetTotal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
+    return static_cast<int>(numInfo[0] + numInfo[1] + numInfo[2] + numInfo[3]);
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
+    int count = 0;
+    for (std::size_t index = 0; index < 16; ++index) {
+        flagArray[index] = setInfo[index] | setInfo[16 + index] | setInfo[32 + index] | setInfo[48 + index];
+        count += std::popcount(flagArray[index]);
+    }
+    return count;
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
+    int count = 0;
+    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(setInfo[index]);
+    return count;
 }
 
 int APS5_VABI sceNpTrophyShowTrophyList(void) {
@@ -545,8 +582,7 @@ int APS5_VABI sceNpTrophySystemCreateHandle(void) {
 }
 
 int APS5_VABI sceNpTrophySystemDbgCtl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
@@ -575,13 +611,11 @@ int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
@@ -705,13 +739,11 @@ int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {
@@ -773,5 +805,67 @@ int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+O9vU1CpGZA", libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+not13BEdVI", libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FJZW2oHUHFk", libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bGnKq23jqek", libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lX611WLCvX0", libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("n4AHGHb-pfY", libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch);
 
 }

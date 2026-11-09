@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
@@ -25,6 +26,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -180,6 +189,43 @@ void TestAdvanceRetainsRewrittenBuffer() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::copy(second.begin(), second.end(), buffer.begin());
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
+void TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        buffer = second;
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::fill(buffer.begin(), buffer.end(), 0.5f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
 void TestAdvanceRetainsVolume() {
     const auto buffer = Grain(0.02f);
     auto reduced = buffer;
@@ -300,15 +346,18 @@ void TestBufferReusedAcrossPortsKeepsEachPortsGrain(bool advanced) {
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestAdvanceRetainsRewrittenBuffer();
     TestAdvanceRetainsVolume();
+    TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared();
     TestAdvanceBurstRetainsEveryGrain();
     TestPushingThreadWaitsForAdvance();
     TestBuffersSetBeforeOnePushPlayInOrder();
     TestBurstThenGapKeepsEveryBuffer();
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
+    TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet();
     TestRenderingSizedByLevelStaysWithinQueueDepth();
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);

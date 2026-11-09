@@ -33,6 +33,15 @@ class CompareResultsTests(unittest.TestCase):
                     self.assertEqual(result.returncode, int(different), result.stdout + result.stderr)
                     self.assertEqual(result.stderr, "")
 
+    def test_deeply_nested_json_is_an_invalid_report_not_a_difference(self):
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        self.after.write_text("[" * 200000, encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("nested too deeply", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_bom_does_not_hide_invalid_json_or_invalid_reports(self):
         self.before.write_text(json.dumps(self.report), encoding="utf-8")
         for payload in ("{", "[]", '{"schema_version": 2}'):
@@ -232,6 +241,23 @@ class CompareResultsTests(unittest.TestCase):
                                  "--max-differences", "-1"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
+
+    def test_diagnostic_limit_retains_only_visible_differences_while_counting_all(self):
+        before = copy.deepcopy(self.report)
+        before["rows"] = [
+            {"input": [index, 0, 0, 0], "output": [0, 0]}
+            for index in range(1000)
+        ]
+        after = copy.deepcopy(before)
+        for row in after["rows"]:
+            row["output"] = [1, 2]
+        count, differences = compare_results.compare_limited(before, after, 3)
+        self.assertEqual(count, 2000)
+        self.assertEqual(differences, [
+            (1, "v10", 0, 1),
+            (1, "v11", 0, 2),
+            (2, "v10", 0, 1),
+        ])
 
 
 

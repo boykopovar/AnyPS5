@@ -30,6 +30,8 @@ struct TranslateOptions {
     std::uint32_t userDataBaseRegister = 0;
     std::uint32_t userDataCount = 64;
     std::uint32_t scratchDwords = 0;
+    std::uint32_t sharedVectorBase = 0;
+    std::uint32_t sharedVectorCount = 0;
     std::uint32_t sharedMemoryBytes = 0;
     std::uint64_t shaderHash = 0;
     bool fragmentShaderBarycentricEnabled = false;
@@ -38,7 +40,9 @@ struct TranslateOptions {
     bool float32FlushToZero = false;
     bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
+    bool float64 = false;
     bool gcnLegacyVertexInputs = false;
+    bool nativeFloat16Fma = false;
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
