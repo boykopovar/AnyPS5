@@ -99,7 +99,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
 
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
     static const std::size_t inFlight = VulkanDevice::FlipInFlight();
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_PRESENT_REPORT") != nullptr;
     std::shared_ptr<VulkanDevice> presenting;
     timing.Mark("validate");
     try {
