@@ -60,6 +60,8 @@ private:
     void reloadInputMapping();
     void dispatchPadChords(DisplayWindow& window);
     void applyRequests(const Pad::InputRequests& requests, bool windowFocused, DisplayWindow& window);
+    void startInputMappingWatch();
+    void watchInputMapping(std::string titleId, Pad::InputMappingWatch watch);
     void publish(std::uint64_t frame, int slot);
     void setMouseMode(bool enabled);
     void openAvailableControllers();
