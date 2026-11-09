@@ -550,6 +550,13 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     if (!input || ignoreInput) return;
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
     if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
+    if (event.type == SDL_KEYUP) {
+        const int slot = hostMenuKeySlot(event.key.keysym.scancode);
+        if (slot >= 0 && hostMenuKeysDown[static_cast<std::size_t>(slot)]) {
+            hostMenuKeysDown[static_cast<std::size_t>(slot)] = false;
+            return;
+        }
+    }
     if (hostMenu.IsOpen() && event.type == SDL_KEYDOWN && event.key.repeat == 0) {
         if (const int slot = hostMenuKeySlot(event.key.keysym.scancode); slot >= 0) hostMenuKeysDown[static_cast<std::size_t>(slot)] = true;
         if (event.key.keysym.scancode == SDL_SCANCODE_UP) {
