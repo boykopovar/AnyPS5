@@ -38,6 +38,9 @@ using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::URL;
 using NKWebKit::HttpAbi::HTTPHeaderName;
 
+static_assert(sizeof(NKWebKit::WebCoreAbi::HTTPHeaderMap) == sizeof(NKWebKit::HttpAbi::HTTPHeaderMap));
+static_assert(alignof(NKWebKit::WebCoreAbi::HTTPHeaderMap) == alignof(NKWebKit::HttpAbi::HTTPHeaderMap));
+
 double defaultTimeoutInterval = 0;
 
 ResourceRequestBase& Checked(ResourceRequestBase* self) {
@@ -132,7 +135,8 @@ bool APS5_VABI _ZNK7WebCore19ResourceRequestBase13isConditionalEv(const Resource
         HTTPHeaderName::IfUnmodifiedSince,
     };
     for (auto header : conditionalHeaders) {
-        if (_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(&request.httpHeaderFields, header))
+        auto* headers = reinterpret_cast<const NKWebKit::HttpAbi::HTTPHeaderMap*>(&request.httpHeaderFields);
+        if (_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(headers, header))
             return true;
     }
     return false;
