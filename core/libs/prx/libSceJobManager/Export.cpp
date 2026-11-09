@@ -739,9 +739,9 @@ int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::
     const std::lock_guard guard(manager->lock);
     if (free == 0) return SequenceNoneFree;
     const int index = std::countr_zero(free);
-    free &= ~(std::uint32_t{1} << index);
     Sequence& sequence = sequences[static_cast<std::size_t>(index)].value;
     if (!sequence.Open(manager, limits, priority, name)) return SequenceNoNodes;
+    free &= ~(std::uint32_t{1} << index);
     *out = &sequence;
     return 0;
 }

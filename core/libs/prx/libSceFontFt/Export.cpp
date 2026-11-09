@@ -95,8 +95,8 @@ int APS5_VABI sceFontFtTermAliases(FontFtAliases** aliases) {
 }
 
 const FontFtGlyphSelection* APS5_VABI sceFontSelectGlyphsFt(std::int32_t selector) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    static const std::uint16_t glyphSelection[] = {0x0F1F, 0xF200, 0x0F03, 0xF8F0};
+    return selector == 0 ? reinterpret_cast<const FontFtGlyphSelection*>(glyphSelection) : nullptr;
 }
 
 }
