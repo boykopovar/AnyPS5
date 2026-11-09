@@ -1127,8 +1127,13 @@ void testParameterSetsBound() {
 
 void testComputeQueues() {
     SceVideodec2::ComputeMemoryInfo memory{sizeof(SceVideodec2::ComputeMemoryInfo), 0, nullptr};
-    checkThrows([] { sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr); });
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr) == static_cast<int>(0x811D0102u), "a null compute memory info must be refused");
+    SceVideodec2::ComputeMemoryInfo shortInfo{0x10, 0x5a5a5a5a5a5a5a5aull, nullptr};
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&shortInfo) == static_cast<int>(0x811D0101u) && shortInfo.cpuGpuMemorySize == 0x5a5a5a5a5a5a5a5aull, "a 16-byte compute memory info must be refused");
+    SceVideodec2::ComputeMemoryInfo highInfo{0xcccccccc00000018ull, 0x5a5a5a5a5a5a5a5aull, nullptr};
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&highInfo) == static_cast<int>(0x811D0101u) && highInfo.cpuGpuMemorySize == 0x5a5a5a5a5a5a5a5aull, "the size check must read all 64 bits");
     check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&memory) == 0 && memory.cpuGpuMemorySize == (1u << 20u), "the compute work memory is not 1 MiB");
+    check(sceVideodec2ReleaseComputeQueue_nid_postfix(0) == static_cast<int>(0x811D0110u), "releasing queue 0 must be refused");
     const SceVideodec2::ComputeConfigInfo config{sizeof(SceVideodec2::ComputeConfigInfo), 0, 0, false};
     std::uint64_t first = 0;
     std::uint64_t second = 0;
