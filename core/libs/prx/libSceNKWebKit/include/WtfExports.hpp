@@ -9,6 +9,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace NKWebKit::WtfAbi {
+struct SHA1;
+}  // namespace NKWebKit::WtfAbi
+
 extern "C" {
 
 [[noreturn]] void APS5_VABI WTFCrash();
@@ -156,6 +160,9 @@ std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERK
 void APS5_VABI _ZN3WTF3URL10invalidateEv(NKWebKit::WtfAbi::URL* self);
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime);
 void APS5_VABI _ZN3WTF40releaseFastMallocFreeMemoryForThisThreadEv();
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF4SHA116computeHexDigestEv(NKWebKit::WtfAbi::SHA1* self);
+void APS5_VABI _ZN3WTF4SHA1C1Ev(NKWebKit::WtfAbi::SHA1* self);
+void APS5_VABI _ZN3WTF4SHA1C2Ev(NKWebKit::WtfAbi::SHA1* self);
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKDsj(const NKWebKit::WtfAbi::StringImpl* impl, const char16_t* data, unsigned length);
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKh(const NKWebKit::WtfAbi::StringImpl* impl, const unsigned char* data);
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKhj(const NKWebKit::WtfAbi::StringImpl* impl, const unsigned char* data, unsigned length);
