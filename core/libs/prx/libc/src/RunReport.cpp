@@ -599,7 +599,7 @@ bool RecipeVariableAllowed(std::string_view name) {
         for (auto& character : result) character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
         return result;
     }(name);
-    for (const char* secret : {"TOKEN", "KEY", "PASSWORD", "SECRET"}) {
+    for (const char* secret : {"TOKEN", "KEY", "PASSWORD", "PASSCODE", "SECRET", "CREDENTIAL", "COOKIE", "AUTH", "SESSION", "LOGIN"}) {
         if (upper.find(secret) != std::string::npos) return false;
     }
     return true;
