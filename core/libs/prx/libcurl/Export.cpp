@@ -8,6 +8,7 @@
 
 #include <array>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -117,6 +118,29 @@ struct GuestFunction<R (*)(A...)> {
 template<class T, class... A>
 auto CallGuest(CallbackSlot& slot, A... args) {
     return reinterpret_cast<typename GuestFunction<T>::Type>(slot.function)(args...);
+}
+
+struct MimeCallbackContext {
+    guest_curl_read_callback read;
+    guest_curl_seek_callback seek;
+    guest_curl_free_callback release;
+    void* argument;
+};
+
+size_t MimeRead(char* buffer, size_t size, size_t count, void* opaque) {
+    auto* context = static_cast<MimeCallbackContext*>(opaque);
+    return context->read(buffer, size, count, context->argument);
+}
+
+int MimeSeek(void* opaque, curl_off_t offset, int origin) {
+    auto* context = static_cast<MimeCallbackContext*>(opaque);
+    return context->seek(context->argument, offset, origin);
+}
+
+void MimeFree(void* opaque) {
+    auto* context = static_cast<MimeCallbackContext*>(opaque);
+    if (context->release) context->release(context->argument);
+    std::free(context);
 }
 
 size_t Write(char* buffer, size_t size, size_t count, void* opaque) {
@@ -1006,7 +1030,16 @@ CURL* APS5_VABI curl_easy_init_nid_postfix() {
 }
 
 std::int32_t APS5_VABI curl_mime_data_cb_nid_postfix(curl_mimepart* part, std::int64_t datasize, guest_curl_read_callback readfunc, guest_curl_seek_callback seekfunc, guest_curl_free_callback freefunc, void* arg) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!part) return CURLE_BAD_FUNCTION_ARGUMENT;
+    if (!readfunc) return ::curl_mime_data_cb(part, datasize, nullptr, nullptr, nullptr, nullptr);
+
+    auto* context = static_cast<MimeCallbackContext*>(std::malloc(sizeof(MimeCallbackContext)));
+    if (!context) return CURLE_OUT_OF_MEMORY;
+    *context = {readfunc, seekfunc, freefunc, arg};
+    const CURLcode result = ::curl_mime_data_cb(part, datasize, MimeRead,
+        seekfunc ? MimeSeek : nullptr, MimeFree, context);
+    if (result != CURLE_OK) std::free(context);
+    return result;
 }
 
 std::int32_t APS5_VABI curl_multi_fdset_nid_postfix(CURLM* multi_handle, guest_fd_set* read_fd_set, guest_fd_set* write_fd_set, guest_fd_set* exc_fd_set, int* max_fd) {
