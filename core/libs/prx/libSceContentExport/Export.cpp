@@ -106,8 +106,11 @@ int APS5_VABI sceContentExportFromFileWithTitleIdList(std::int32_t expId, const 
 }
 
 int APS5_VABI sceContentExportInit(const ContentExportInitParam* param) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param->mallocFunc == nullptr || param->freeFunc == nullptr) throw std::invalid_argument(std::string(__func__) + ": missing allocator functions");
+    bool expected = false;
+    if (!g_initialized.compare_exchange_strong(expected, true)) throw std::logic_error(std::string(__func__) + ": already initialized");
+    return 0;
 }
 
 int APS5_VABI sceContentExportMalloc(void) {
